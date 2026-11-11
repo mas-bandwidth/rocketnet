@@ -29,7 +29,9 @@ struct rocketnet_server_socket_process_packets_t
 static inline uint64_t rocketnet_server_process_packets_bytes( int capacity )
 {
     if ( capacity < 1 )
+    {
         return 0;
+    }
     rocketnet_carve_t carve = { 0, false };
     rocketnet_carve( carve, (uint64_t) capacity, sizeof( rocketnet_address_t ) );
     rocketnet_carve( carve, (uint64_t) capacity, sizeof( int ) );
@@ -50,11 +52,15 @@ static inline bool rocketnet_server_process_packets_create( void * context, stru
     memset( view, 0, sizeof( *view ) );
     const uint64_t bytes = rocketnet_server_process_packets_bytes( capacity );
     if ( !bytes )
+    {
         return false;
+    }
 
     uint8_t * base = (uint8_t *) rocketnet_malloc( context, (size_t) bytes );
     if ( !base )
+    {
         return false;
+    }
 
     rocketnet_carve_t carve = { 0, false };
     view->from = (rocketnet_address_t *) ( base + rocketnet_carve( carve, (uint64_t) capacity, sizeof( rocketnet_address_t ) ) );
@@ -67,7 +73,9 @@ static inline bool rocketnet_server_process_packets_create( void * context, stru
 static inline void rocketnet_server_process_packets_destroy( void * context, struct rocketnet_server_socket_process_packets_t * view )
 {
     if ( view->from )
+    {
         rocketnet_free( context, view->from );
+    }
     memset( view, 0, sizeof( *view ) );
 }
 

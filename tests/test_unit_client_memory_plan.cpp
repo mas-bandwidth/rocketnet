@@ -40,7 +40,9 @@ static void * plan_alloc( void * context, size_t bytes )
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
 
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );

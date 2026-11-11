@@ -52,7 +52,9 @@
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -237,8 +239,10 @@ static void fuzz_sealed( struct fuzz_reader_t * r )
 
     rocketnet_fuzz_require( wire_sequence == (uint32_t) sequence, "the wire carries the sequence's low 32 bits" );
     if ( sequence > behind )
+    {
         rocketnet_fuzz_require( rocketnet_reconstruct_sequence( wire_sequence, sequence - 1 - behind ) == sequence,
                                 "reconstruction within 2^30 of the highest opened recovers the sequence" );
+    }
 
     static uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     uint8_t opened_nonce[ROCKETNET_SESSION_NONCE_BYTES];
@@ -274,7 +278,9 @@ static void fuzz_ack_read_write( struct fuzz_reader_t * r )
     const uint64_t highest_sent = fuzz_u64( r );
     const int bytes = r->pos < r->size ? (int) ( r->size - r->pos ) : 0;
     if ( bytes <= 0 )
+    {
         return;
+    }
 
     // a slice of its own, so ASan bounds the reader at the declared size
 
@@ -345,7 +351,9 @@ static void fuzz_ack_build_read( struct fuzz_reader_t * r )
     rocketnet_fuzz_require( rocketnet_ack_block_read( &block, built, bytes, highest ) == bytes, "a built block reads back whole" );
     rocketnet_fuzz_require( block.largest == highest, "a built block names the highest opened" );
     if ( highest == 0 )
+    {
         return;
+    }
 
     // every sequence the block names received is in the window, at or above
     // the window's floor; the block never speaks below it
@@ -444,7 +452,9 @@ static void fuzz_address( struct fuzz_reader_t * r )
         {
             const uint8_t c = fuzz_u8( r );
             if ( c == 0 )
+            {
                 break;
+            }
             text[n++] = (char) c;
         }
 
@@ -452,7 +462,9 @@ static void fuzz_address( struct fuzz_reader_t * r )
 
         struct rocketnet_address_t a;
         if ( !rocketnet_address_parse( &a, text ) )
+        {
             return;
+        }
         rocketnet_address_to_string( &a, again );
 
         struct rocketnet_address_t b;
@@ -471,10 +483,12 @@ static void fuzz_address( struct fuzz_reader_t * r )
         fuzz_bytes( r, a.data.ipv4, sizeof( a.data.ipv4 ) );
     }
     else
+    {
         for ( int i = 0; i < 8; i++ )
         {
             a.data.ipv6[i] = (uint16_t) ( fuzz_u8( r ) | ( fuzz_u8( r ) << 8 ) );
         }
+    }
 
     a.port = (uint16_t) ( fuzz_u8( r ) | ( fuzz_u8( r ) << 8 ) );
     rocketnet_address_to_string( &a, text );
@@ -495,7 +509,9 @@ static void fuzz_write_seed( const char * dir, const char * name, uint8_t select
 {
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+    {
         abort(); // a truncated path would write some other file
+    }
 
     FILE * f = rocketnet_test_fopen( path, "wb" );
     if ( !f )
@@ -554,10 +570,12 @@ static void fuzz_write_seeds( const char * dir )
         memset( &replay, 0, sizeof( replay ) );
         replay.highest_opened = 1000;
         for ( uint64_t q = 900; q <= 1000; q++ )
+        {
             if ( q % 7 != 0 )
             {
                 replay.window[( q % ROCKETNET_REPLAY_WINDOW_BITS ) / 64] |= 1ULL << ( q % 64 );
             }
+        }
 
         uint8_t built[ROCKETNET_ACK_BLOCK_MAX_BYTES];
         const int bytes = rocketnet_ack_block_build( built, (int) sizeof( built ), &replay );
@@ -640,7 +658,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
+    {
         return 0;
+    }
 
     struct fuzz_reader_t r = { data, size, 1 };
 

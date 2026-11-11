@@ -322,7 +322,9 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
         *error_offset = 0;
     }
     if ( bytes > ROCKETNET_PCAPNG_MAX_FILE_BYTES )
+    {
         return ROCKETNET_PCAPNG_FILE_OVER_CAP;
+    }
 
     std::vector<int> interfaces;
     size_t offset = 0;
@@ -337,17 +339,25 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
 
         const size_t remaining = bytes - offset;
         if ( remaining < 12 )
+        {
             return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+        }
 
         const uint8_t * block = buffer + offset;
         const uint32_t type = rocketnet_pcapng_get_u32( block );
         const uint32_t total = rocketnet_pcapng_get_u32( block + 4 );
         if ( total % 4 )
+        {
             return ROCKETNET_PCAPNG_BLOCK_LENGTH_NOT_MULTIPLE_OF_4;
+        }
         if ( total < 12 || total > remaining )
+        {
             return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+        }
         if ( rocketnet_pcapng_get_u32( block + total - 4 ) != total )
+        {
             return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+        }
 
         const uint8_t * body = block + 8;
         const uint32_t body_bytes = total - 12;
@@ -357,7 +367,9 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
             if ( type != ROCKETNET_PCAPNG_BLOCK_SHB || body_bytes < 16 ||
                  rocketnet_pcapng_get_u32( body ) != ROCKETNET_PCAPNG_BYTE_ORDER_MAGIC ||
                  rocketnet_pcapng_get_u16( body + 4 ) != 1 || rocketnet_pcapng_get_u16( body + 6 ) != 0 )
+            {
                 return ROCKETNET_PCAPNG_NOT_A_SECTION;
+            }
             section = true;
         }
         else if ( type == ROCKETNET_PCAPNG_BLOCK_SHB )
@@ -367,21 +379,29 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
         else if ( type == ROCKETNET_PCAPNG_BLOCK_IDB )
         {
             if ( body_bytes < 8 )
+            {
                 return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+            }
 
             const int linktype = (int) rocketnet_pcapng_get_u16( body );
             if ( linktype != ROCKETNET_PCAPNG_LINKTYPE_IPV4 && linktype != ROCKETNET_PCAPNG_LINKTYPE_USER0 )
+            {
                 return ROCKETNET_PCAPNG_UNKNOWN_LINKTYPE;
+            }
             interfaces.push_back( linktype );
         }
         else if ( type == ROCKETNET_PCAPNG_BLOCK_EPB )
         {
             if ( body_bytes < 20 )
+            {
                 return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+            }
 
             const uint32_t interface_id = rocketnet_pcapng_get_u32( body );
             if ( interface_id >= interfaces.size() )
+            {
                 return ROCKETNET_PCAPNG_UNKNOWN_INTERFACE;
+            }
 
             const uint64_t high = rocketnet_pcapng_get_u32( body + 4 );
             const uint64_t low = rocketnet_pcapng_get_u32( body + 8 );
@@ -389,11 +409,15 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
             const uint32_t original = rocketnet_pcapng_get_u32( body + 16 );
             const uint32_t room = body_bytes - 20;
             if ( captured != original || captured > room )
+            {
                 return ROCKETNET_PCAPNG_BAD_PACKET_LENGTH;
+            }
 
             const uint32_t padded = ( captured + 3 ) & ~3u;
             if ( padded > room )
+            {
                 return ROCKETNET_PCAPNG_BAD_PACKET_LENGTH;
+            }
 
             rocketnet_pcapng_packet_t packet;
             packet.interface_id = (int) interface_id;
@@ -407,17 +431,23 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
             while ( option < body_bytes )
             {
                 if ( body_bytes - option < 4 )
+                {
                     return ROCKETNET_PCAPNG_BAD_OPTION;
+                }
 
                 const uint32_t code = rocketnet_pcapng_get_u16( body + option );
                 const uint32_t length = rocketnet_pcapng_get_u16( body + option + 2 );
                 if ( code == ROCKETNET_PCAPNG_OPT_ENDOFOPT )
+                {
                     break;
+                }
 
                 const uint32_t value_room = body_bytes - option - 4;
                 const uint32_t value_padded = ( length + 3 ) & ~3u;
                 if ( value_padded > value_room )
+                {
                     return ROCKETNET_PCAPNG_BAD_OPTION;
+                }
                 if ( code == ROCKETNET_PCAPNG_OPT_COMMENT )
                 {
                     packet.comment.assign( (const char *) body + option + 4, length );
@@ -436,7 +466,9 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
     }
 
     if ( !section )
+    {
         return ROCKETNET_PCAPNG_NOT_A_SECTION;
+    }
 
     return ROCKETNET_PCAPNG_OK;
 }
@@ -450,7 +482,9 @@ inline int rocketnet_pcapng_read_file( const std::string & path, std::vector<uin
 
     FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
+    {
         return ROCKETNET_PCAPNG_CANNOT_OPEN;
+    }
 
     uint8_t chunk[4096];
     size_t n;
@@ -473,15 +507,21 @@ inline int rocketnet_pcapng_udp_payload( const std::vector<uint8_t> & frame,
                                          uint32_t * destination_address, uint16_t * destination_port )
 {
     if ( frame.size() < 28 )
+    {
         return 0;
+    }
 
     const uint8_t * p = frame.data();
     if ( p[0] != 0x45 || p[9] != 17 )
+    {
         return 0;
+    }
 
     const uint32_t total = ( (uint32_t) p[2] << 8 ) | p[3];
     if ( total != frame.size() )
+    {
         return 0;
+    }
 
     uint32_t sum = 0;
     for ( int i = 0; i < 20; i += 2 )
@@ -493,11 +533,15 @@ inline int rocketnet_pcapng_udp_payload( const std::vector<uint8_t> & frame,
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
     }
     if ( sum != 0xFFFF )
+    {
         return 0;
+    }
 
     const uint32_t udp_length = ( (uint32_t) p[24] << 8 ) | p[25];
     if ( udp_length != total - 20 )
+    {
         return 0;
+    }
     *source_address = ( (uint32_t) p[12] << 24 ) | ( (uint32_t) p[13] << 16 ) | ( (uint32_t) p[14] << 8 ) | p[15];
     *destination_address = ( (uint32_t) p[16] << 24 ) | ( (uint32_t) p[17] << 16 ) | ( (uint32_t) p[18] << 8 ) | p[19];
     *source_port = (uint16_t) ( ( p[20] << 8 ) | p[21] );
@@ -547,8 +591,12 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
     }
 #endif // #if defined( _WIN32 )
     for ( size_t i = 1; i < names.size(); i++ )
+    {
         for ( size_t j = i; j > 0 && names[j] < names[j - 1]; j-- )
+        {
             names[j].swap( names[j - 1] );
+        }
+    }
 }
 
 #endif // ROCKETNET_TESTS_PCAPNG_H

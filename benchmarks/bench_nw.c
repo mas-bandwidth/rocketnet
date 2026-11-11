@@ -55,7 +55,9 @@ static void nw_check_error( const char * call, nw_error_t error )
     {
         code = nw_error_get_error_code( error );
         if ( nw_error_get_error_domain( error ) != nw_error_domain_posix )
+        {
             code = EIO;                         /* not an errno; refuse under a code never tolerated */
+        }
     }
 
     bench_receive_refused_or_empty_except( call, code, nw_teardown_errors,
@@ -113,7 +115,9 @@ static void nw_receive_loop( nw_connection_t connection )
       uint64_t batch_ns = bench_time_ns() - t0;
 
       if ( bench_window_tick( &bench_windows, batch_ns, batch_packets, batch_bytes, 1, content == NULL ? 1 : 0, batch_fold, 1 ) )
+      {
           exit( 0 );
+      }
 
       nw_receive_loop( connection );
     } );
@@ -157,7 +161,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
           exit( 1 );
       }
       if ( state == nw_listener_state_ready )
+      {
           printf( "nw listener ready on port %d\n", port );
+      }
     } );
 
     nw_listener_start( listener );
@@ -182,7 +188,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     nw_connection_set_state_changed_handler( connection, ^( nw_connection_state_t state, nw_error_t error ) {
       (void) error;
       if ( state == nw_connection_state_ready )
+      {
           dispatch_semaphore_signal( ready );
+      }
       if ( state == nw_connection_state_failed )
       {
           fprintf( stderr, "nw connection failed\n" );
@@ -215,7 +223,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
+        {
             break;
+        }
 
         if ( !skip )
         {
@@ -232,12 +242,16 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                     /* a send completion that failed is not a sent packet, and
                        a long run of them is a host that cannot do this */
                   if ( error == NULL )
+                  {
                       sent += bench_send_ok( &nw_send_health, "nw_connection_send" );
+                  }
                   else
+                  {
                       sent += bench_send_refused( &nw_send_health, "nw_connection_send",
                                                   nw_error_get_error_domain( error ) == nw_error_domain_posix
                                                       ? nw_error_get_error_code( error )
                                                       : EIO );
+                  }
                   dispatch_semaphore_signal( batch_done );
                 } );
                 dispatch_release( data );

@@ -65,9 +65,13 @@ uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 static inline bool rocketnet_address_accept_received_source( struct rocketnet_address_t * from, bool dual_stack )
 {
     if ( !rocketnet_address_is_ipv4_in_ipv6( from ) )
+    {
         return true;
+    }
     if ( !dual_stack )
+    {
         return false;
+    }
 
     rocketnet_address_convert_ipv6_to_ipv4( from );
 

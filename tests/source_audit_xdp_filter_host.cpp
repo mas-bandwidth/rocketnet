@@ -57,9 +57,13 @@ static std::string xdp_host_lexical_code( const std::string & source )
         if ( line_comment )
         {
             if ( c == '\n' )
+            {
                 line_comment = false;
+            }
             else
+            {
                 code[i] = ' ';
+            }
             continue;
         }
 
@@ -72,7 +76,9 @@ static std::string xdp_host_lexical_code( const std::string & source )
                 block_comment = false;
             }
             else if ( c != '\n' )
+            {
                 code[i] = ' ';
+            }
             continue;
         }
 
@@ -83,9 +89,13 @@ static std::string xdp_host_lexical_code( const std::string & source )
                 code[i] = ' ';
             }
             if ( escaped )
+            {
                 escaped = false;
+            }
             else if ( c == '\\' )
+            {
                 escaped = true;
+            }
             else if ( ( string_literal && c == '"' ) || ( char_literal && c == '\'' ) )
             {
                 string_literal = false;
@@ -133,11 +143,17 @@ static std::string xdp_host_lexical_code( const std::string & source )
         const size_t first = line.find_first_not_of( " \t\r" );
         const std::string directive = first == std::string::npos ? std::string() : line.substr( first );
         if ( directive.compare( 0, 6, "#if 0" ) == 0 )
+        {
             disabled_depth++;
+        }
         else if ( disabled_depth > 0 && directive.compare( 0, 3, "#if" ) == 0 )
+        {
             disabled_depth++;
+        }
         else if ( disabled_depth > 0 && directive.compare( 0, 6, "#endif" ) == 0 )
+        {
             disabled_depth--;
+        }
         else if ( disabled_depth == 0 )
         {
             active.append( line );
@@ -186,7 +202,9 @@ static void test_xdp_transport_host_every_counter_has_a_case()
             const size_t open = self.find( '(', occurrence + needle.size() );
             const size_t close = open == std::string::npos ? std::string::npos : self.find( ')', open + 1 );
             if ( close == std::string::npos )
+            {
                 continue;
+            }
 
             const size_t token = self.find( names[i], open + 1 );
             if ( token != std::string::npos && token < close &&

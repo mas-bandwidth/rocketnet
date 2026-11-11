@@ -159,12 +159,16 @@ static inline void bench_receive_refused_or_empty_except( const char * call, int
     }
 
     if ( error == EAGAIN || error == EWOULDBLOCK || error == EINTR )
+    {
         return;
+    }
 
     for ( int i = 0; i < tolerated_count; i++ )
     {
         if ( error == tolerated[i] )
+        {
             return;
+        }
     }
 
     char detail[192];
@@ -233,7 +237,9 @@ static inline int bench_send_observe( struct bench_send_health_t * health, const
     health->last_refusal_error = error;
     health->consecutive_refusals++;
     if ( health->consecutive_refusals < BENCH_SEND_REFUSAL_LIMIT )
+    {
         return 0;
+    }
 
     char detail[224];
     snprintf( detail, sizeof( detail ),
@@ -272,10 +278,12 @@ static inline int bench_send_batch_observe( struct bench_send_health_t * health,
         sent = accepted;
     }
     else
+    {
         for ( int i = 0; i < accepted; ++i )
         {
             sent += bench_send_ok( health, call );
         }
+    }
 
     for ( int i = accepted; i < attempted; ++i )
     {
@@ -290,7 +298,9 @@ static inline int bench_send_batch_observe( struct bench_send_health_t * health,
 static inline void bench_send_validate( const struct bench_send_health_t * health )
 {
     if ( health->refused == health->back_pressure )
+    {
         return;
+    }
 
     char detail[224];
     snprintf( detail, sizeof( detail ),
@@ -352,7 +362,9 @@ static inline void bench_hist_add( struct bench_hist_t * hist, uint64_t ns, uint
 static inline uint64_t bench_hist_quantile( const struct bench_hist_t * hist, double q )
 {
     if ( hist->total == 0 )
+    {
         return 0;
+    }
 
     uint64_t target = (uint64_t) ( q * (double) hist->total );
     uint64_t seen = 0;
@@ -361,7 +373,9 @@ static inline uint64_t bench_hist_quantile( const struct bench_hist_t * hist, do
     {
         seen += hist->counts[i];
         if ( seen > target )
+        {
             return ( (uint64_t) i << BENCH_HIST_SHIFT ) + ( 1 << ( BENCH_HIST_SHIFT - 1 ) );
+        }
     }
 
     return (uint64_t) BENCH_HIST_BUCKETS << BENCH_HIST_SHIFT;   /* overflowed: report the cap */
@@ -474,13 +488,17 @@ static inline void bench_window_emit( struct bench_windows_t * w, uint64_t now )
         const double share = (double) w->timed_packets / (double) w->packets;
 
         if ( w->timed == 0 )
+        {
             printf( "WINDOW %d NS COLUMNS VOID: %llu packets arrived and NO batch was cleanly timed -- every one ended on an empty syscall. p50_ns/p99_ns above are not measurements. pps and bytes stand.\n",
                     w->window_index, (unsigned long long) w->packets );
+        }
         else if ( share < BENCH_TIMED_SHARE_FLOOR )
+        {
             printf( "WINDOW %d NS COLUMNS UNREPRESENTATIVE: p50_ns/p99_ns rest on %llu of %llu packets (%.4f%%), in %llu fully drained batches. Fully drained batches are the congested ones, so this is a biased subsample, not a thin fair one. Do not cite the ns columns for this window. pps and bytes stand.\n",
                     w->window_index, (unsigned long long) w->timed_packets,
                     (unsigned long long) w->packets, share * 100.0,
                     (unsigned long long) w->timed );
+        }
     }
 
     fflush( stdout );
@@ -521,7 +539,9 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
     double elapsed = (double) ( now - w->window_start_ns ) / 1e9;
     double limit = ( w->window_index < 0 ) ? w->warmup_seconds : w->window_seconds;
     if ( elapsed < limit )
+    {
         return 0;
+    }
 
     if ( w->window_index >= 0 )
     {
@@ -535,7 +555,9 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
 
     w->window_index++;
     if ( w->window_index >= w->num_windows )
+    {
         return 1;
+    }
 
     w->window_start_ns = now;
     w->packets = 0;
@@ -580,7 +602,9 @@ static inline int bench_parse_poll_usec( int argc, char ** argv, int first )
     for ( int i = first; i < argc; i++ )
     {
         if ( strncmp( argv[i], "poll=", 5 ) == 0 )
+        {
             return atoi( argv[i] + 5 );
+        }
     }
 
     return 0;
@@ -617,13 +641,17 @@ static inline uint64_t bench_pace_wait( uint64_t start_ns, uint64_t sent, uint64
     uint64_t now = bench_time_ns();
 
     if ( pace_pps == 0 )
+    {
         return now;
+    }
 
     for ( ;; )
     {
         uint64_t allowed = (uint64_t) ( (double) ( now - start_ns ) / 1e9 * (double) pace_pps );
         if ( sent < allowed )
+        {
             return now;
+        }
         now = bench_time_ns();
     }
 }

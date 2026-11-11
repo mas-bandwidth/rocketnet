@@ -64,7 +64,9 @@ static uint8_t * stop_spread_start_packet( void * p, const rocketnet_address_t *
         return NULL;
     }
     if ( f->refused_port != 0 && to->port == f->refused_port )
+    {
         return NULL;
+    }
     if ( f->used >= f->capacity )
     {
         f->refused_for_room++;
@@ -82,7 +84,9 @@ static void stop_spread_finish_packet( void * p, uint64_t, uint8_t * frame, int 
 {
     stop_spread_fixture_t * f = (stop_spread_fixture_t *) p;
     if ( frame[ROCKETNET_FRAME_WIRE_OFFSET] != ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    {
         return;
+    }
     const int client = f->reserved_to.port - 1000;
     rocketnet_unit_check( client >= 0 && client < STOP_SPREAD_MAX_CLIENTS );
     f->staged[client]++;
@@ -103,7 +107,9 @@ static void stop_spread_flush( void * p )
         f->staged[i] = 0;
     }
     if ( f->hold_flushed )
+    {
         f->in_flight += f->used;
+    }
     f->used = 0;
 }
 
@@ -123,7 +129,9 @@ static int stop_spread_flushed( const stop_spread_fixture_t * f )
 {
     int total = 0;
     for ( int i = 0; i < STOP_SPREAD_MAX_CLIENTS; i++ )
+    {
         total += f->flushed[i];
+    }
     return total;
 }
 
@@ -193,7 +201,9 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
     server->io.operations = operations;
 
     for ( int i = 0; i < clients; i++ )
+    {
         stop_spread_connect( server, i );
+    }
 
     return server;
 }
@@ -203,7 +213,9 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
 static void stop_spread_stop_server( rocketnet_server_transport_t * server, int clients )
 {
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client_shutdown( server, i );
+    }
     rocketnet_unit_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
     rocketnet_server_transport_stop( server );
 }
@@ -246,7 +258,9 @@ static void test_server_stop_spreads_disconnect_bursts_across_updates()
     rocketnet_unit_check( f->refused_for_room == 0 );
     rocketnet_unit_check( stop_spread_flushed( f ) == owed );
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
 
     // ceil( 80 / 24 ) = 4 steps: the stop call and three more (the state read
     // in the loop condition is a step as well, so the updates are at most that)
@@ -349,7 +363,9 @@ static void test_server_stop_abandons_bursts_without_send_room()
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + (uint64_t) clients );
     const uint8_t zero_key[ROCKETNET_KEY_BYTES] = {};
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( memcmp( server->disconnect_burst_keys[i], zero_key, ROCKETNET_KEY_BYTES ) == 0 );
+    }
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -373,7 +389,9 @@ static void test_server_stop_without_room_waits_for_sends_in_flight()
     stop_spread_stop_server( server, clients );
 
     for ( int poll = 0; poll < 4; poll++ )
+    {
         rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    }
     rocketnet_unit_check( f->stops == 0 );
     rocketnet_unit_check( server->disconnect_burst_count == clients );
 
@@ -382,7 +400,9 @@ static void test_server_stop_without_room_waits_for_sends_in_flight()
     rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
     rocketnet_unit_check( f->stops == 1 );
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
 
     rn_test_server_transport_stop_and_destroy( server );
@@ -540,7 +560,9 @@ static void test_server_stop_waits_for_flushed_sends()
     rocketnet_unit_check( f->stops == 0 );
 
     for ( int poll = 0; poll < 4; poll++ )
+    {
         rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    }
     rocketnet_unit_check( f->stops == 0 );
 
     f->in_flight = 0;
@@ -556,7 +578,9 @@ static int g_stop_spread_dropped_lines;
 static void stop_spread_log_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level == ROCKETNET_LOG_LEVEL_DEBUG && strstr( message, "dropped disconnect burst" ) != NULL )
+    {
         g_stop_spread_dropped_lines++;
+    }
 }
 
 // A running server keeps at most max_clients bursts waiting. With the ring at
@@ -577,7 +601,9 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     // the staging has less room than a burst, so each kick's burst waits
 
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client( server, i );
+    }
     rocketnet_unit_check( server->disconnect_burst_count == clients );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped );
 
@@ -609,7 +635,9 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rocketnet_server_transport_stop( server );
     rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_unit_check( f->flushed[i] == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    }
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
@@ -629,7 +657,9 @@ static void test_server_stop_sends_burst_staged_in_link_simulator()
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x6C ^ i );
+    }
 
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
@@ -830,11 +860,15 @@ static int g_stop_spread_reentry_calls;
 static void stop_spread_reentry_callback( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level != ROCKETNET_LOG_LEVEL_DEBUG || strstr( message, "dropped disconnect burst" ) == NULL )
+    {
         return;
+    }
 
     g_stop_spread_dropped_lines++;
     if ( g_stop_spread_reentry_calls != 0 )
+    {
         return;
+    }
 
     g_stop_spread_reentry_calls++;
     rocketnet_server_transport_disconnect_client( g_stop_spread_reentry_server, g_stop_spread_reentry_slot );
@@ -855,7 +889,9 @@ static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
     const uint64_t * counters = server->protocol.counters->values;
 
     for ( int i = 0; i < clients; i++ )
+    {
         rocketnet_server_transport_disconnect_client( server, i );
+    }
     rocketnet_unit_check( server->disconnect_burst_count == clients );
 
     const int again = clients - 1;
@@ -897,7 +933,9 @@ static int g_stop_spread_asserts;
 static void stop_spread_error_capture( void *, enum rocketnet_log_level_t level, const char * message, size_t )
 {
     if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "not stopped" ) != NULL )
+    {
         g_stop_spread_not_stopped_errors++;
+    }
 }
 
 static void stop_spread_assert_capture( const char *, const char *, const char *, int )

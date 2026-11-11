@@ -43,7 +43,9 @@ static bool rocketnet_config_size_known( const char * type, size_t bytes, size_t
     for ( int i = 0; i < num_known; i++ )
     {
         if ( known[i] == bytes && bytes <= current_bytes )
+        {
             return true;
+        }
     }
 
     rocketnet_error( "%s is %" PRIu64 " bytes here, not a size this library knows (this library's is %" PRIu64 "); refused", type, (uint64_t) bytes, (uint64_t) current_bytes );
@@ -56,7 +58,9 @@ static bool rocketnet_config_size_known( const char * type, size_t bytes, size_t
 int rocketnet_config_write_sized( const char * type, void * config, size_t config_bytes, const void * defaults, size_t defaults_bytes, const size_t * known, int num_known )
 {
     if ( !rocketnet_config_size_known( type, config_bytes, defaults_bytes, known, num_known ) )
+    {
         return 0;
+    }
 
     memcpy( config, defaults, config_bytes );
     return 1;
@@ -70,7 +74,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     memcpy( config, defaults, defaults_bytes );
 
     if ( !rocketnet_config_size_known( type, source_bytes, defaults_bytes, known, num_known ) )
+    {
         return 0;
+    }
 
     memcpy( config, source, source_bytes );
 
@@ -80,7 +86,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 int rocketnet_client_transport_default_config_sized( struct rocketnet_client_transport_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return 0;
+    }
 
     struct rocketnet_client_transport_config_t defaults;
     rocketnet_client_transport_default_config_current( &defaults );
@@ -91,7 +99,9 @@ int rocketnet_client_transport_default_config_sized( struct rocketnet_client_tra
 int rocketnet_server_transport_default_config_sized( struct rocketnet_server_transport_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return 0;
+    }
 
     struct rocketnet_server_transport_config_t defaults;
     rocketnet_server_transport_default_config_current( &defaults );
@@ -102,7 +112,9 @@ int rocketnet_server_transport_default_config_sized( struct rocketnet_server_tra
 int rocketnet_message_default_config_sized( struct rocketnet_message_config_t * config, size_t config_bytes )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return 0;
+    }
 
     struct rocketnet_message_config_t defaults;
     rocketnet_message_default_config( &defaults );
@@ -116,13 +128,17 @@ int rocketnet_message_default_config_sized( struct rocketnet_message_config_t * 
 static const struct rocketnet_client_transport_config_t * rocketnet_client_transport_config_read_sized( struct rocketnet_client_transport_config_t * read, const struct rocketnet_client_transport_config_t * config, size_t config_bytes, bool * refused )
 {
     if ( config == NULL )
+    {
         return NULL;
+    }
 
     struct rocketnet_client_transport_config_t defaults;
     rocketnet_client_transport_default_config_current( &defaults );
 
     if ( !rocketnet_config_read_sized( "rocketnet_client_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_client_transport_config_known_bytes ) ) )
+    {
         *refused = true;
+    }
 
     return read;
 }
@@ -130,13 +146,17 @@ static const struct rocketnet_client_transport_config_t * rocketnet_client_trans
 static const struct rocketnet_server_transport_config_t * rocketnet_server_transport_config_read_sized( struct rocketnet_server_transport_config_t * read, const struct rocketnet_server_transport_config_t * config, size_t config_bytes, bool * refused )
 {
     if ( config == NULL )
+    {
         return NULL;
+    }
 
     struct rocketnet_server_transport_config_t defaults;
     rocketnet_server_transport_default_config_current( &defaults );
 
     if ( !rocketnet_config_read_sized( "rocketnet_server_transport_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_server_transport_config_known_bytes ) ) )
+    {
         *refused = true;
+    }
 
     return read;
 }
@@ -144,13 +164,17 @@ static const struct rocketnet_server_transport_config_t * rocketnet_server_trans
 static const struct rocketnet_message_config_t * rocketnet_message_config_read_sized( struct rocketnet_message_config_t * read, const struct rocketnet_message_config_t * config, size_t config_bytes, bool * refused )
 {
     if ( config == NULL )
+    {
         return NULL;
+    }
 
     struct rocketnet_message_config_t defaults;
     rocketnet_message_default_config( &defaults );
 
     if ( !rocketnet_config_read_sized( "rocketnet_message_config_t", read, &defaults, sizeof( defaults ), config, config_bytes, ROCKETNET_KNOWN_BYTES( rocketnet_message_config_known_bytes ) ) )
+    {
         *refused = true;
+    }
 
     return read;
 }
@@ -162,7 +186,9 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_sized( v
     const struct rocketnet_client_transport_config_t * effective = rocketnet_client_transport_config_read_sized( &read, config, config_bytes, &refused );
 
     if ( refused )
+    {
         return NULL;
+    }
 
     return rocketnet_client_transport_create_current( context, connect_token, effective, time );
 }
@@ -192,7 +218,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void 
     const struct rocketnet_message_config_t * message_effective = rocketnet_message_config_read_sized( &message_read, message_config, message_config_bytes, &refused );
 
     if ( refused )
+    {
         return NULL;
+    }
 
     return rocketnet_message_client_create( context, connect_token, transport_effective, message_effective, memory, memory_bytes, send_kbps );
 }

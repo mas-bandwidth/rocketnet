@@ -118,7 +118,9 @@ static void run_receiver( int port, double warmup, double window, int windows, i
            packets at all, so no empty syscall is ever inside a timed
            region that produced any (#98 item 8) */
         if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, 1, batch_empty, batch_fold, 1 ) )
+        {
             break;
+        }
 
         if ( poll_usec > 0 && batch_packets == 0 )
         {
@@ -158,7 +160,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
+        {
             break;
+        }
 
         if ( !skip )
         {

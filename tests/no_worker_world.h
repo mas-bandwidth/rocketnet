@@ -205,7 +205,9 @@ static void no_worker_step( no_worker_world_t * world, bool send_messages, doubl
         for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )
         {
             if ( !rocketnet_server_client_connected( world->server, slot ) )
+            {
                 continue;
+            }
 
             uint8_t * out = rocketnet_server_start_message( world->server, (uint64_t) slot, NO_WORKER_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE, 8 );
             check( out != NULL );

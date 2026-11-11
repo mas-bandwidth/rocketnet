@@ -140,8 +140,12 @@ struct split_capture_t
 static inline int split_capture_is_named( int counter )
 {
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
+    {
         if ( split_capture_named_counters[i] == counter )
+        {
             return 1;
+        }
+    }
     return 0;
 }
 
@@ -244,12 +248,16 @@ static inline void split_capture_emit_counter( struct split_capture_t * capture,
 static inline void split_capture_connection_counters( struct split_capture_t * capture, int index )
 {
     if ( !capture->source.counters_per_connection )
+    {
         return;
+    }
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
+    {
         if ( capture->entries[index].named[i] )
         {
             split_capture_emit_counter( capture, index, split_capture_named_counters[i], capture->entries[index].named[i] );
         }
+    }
 }
 
 /* Takes a connected sample as the connection's last, with its own named
@@ -261,10 +269,12 @@ static inline void split_capture_keep( struct split_capture_t * capture, int ind
     entry->seen_connected = 1;
     entry->ended = 0;
     if ( capture->source.counters_per_connection )
+    {
         for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
         {
             entry->named[i] = capture->source.counter( capture->source.context, index, split_capture_named_counters[i] );
         }
+    }
 }
 
 /* The side's counters: the named set always, then every other nonzero one;
@@ -274,13 +284,17 @@ static inline void split_capture_keep( struct split_capture_t * capture, int ind
 static inline void split_capture_counters( struct split_capture_t * capture, int with_connections )
 {
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
+    {
         split_capture_emit_counter( capture, -1, split_capture_named_counters[i],
                                     capture->source.counter( capture->source.context, -1, split_capture_named_counters[i] ) );
+    }
     const int n = rocketnet_num_counters();
     for ( int counter = 0; counter < n; ++counter )
     {
         if ( split_capture_is_named( counter ) )
+        {
             continue;
+        }
 
         const uint64_t value = capture->source.counter( capture->source.context, -1, counter );
         if ( value )
@@ -290,7 +304,9 @@ static inline void split_capture_counters( struct split_capture_t * capture, int
     }
 
     if ( !with_connections || !capture->source.counters_per_connection )
+    {
         return;
+    }
 
     for ( int index = 0; index < capture->count; ++index )
     {
@@ -305,7 +321,9 @@ static inline void split_capture_counters( struct split_capture_t * capture, int
 static inline int split_capture_tick( struct split_capture_t * capture, double now )
 {
     if ( now < capture->next_sample )
+    {
         return 0;
+    }
     capture->next_sample = now + SPLIT_CAPTURE_INTERVAL_S;
 
     int kicks = 0;
@@ -346,7 +364,9 @@ static inline int split_capture_tick( struct split_capture_t * capture, double n
 static inline void split_capture_mark_run( struct split_capture_t * capture, int index, double time, uint64_t sequence )
 {
     if ( index < 0 || index >= capture->count )
+    {
         return;
+    }
     capture->entries[index].run_time = time;
     capture->entries[index].run_sequence = sequence;
 }

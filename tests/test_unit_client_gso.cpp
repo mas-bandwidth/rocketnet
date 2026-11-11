@@ -89,7 +89,9 @@ struct fake_gso_socket_t
 static int fake_gso_stride( const struct msghdr * header )
 {
     if ( !header->msg_control )
+    {
         return 0;
+    }
 
     for ( const struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg; cmsg = CMSG_NXTHDR( const_cast<struct msghdr *>( header ), const_cast<struct cmsghdr *>( cmsg ) ) )
     {
@@ -347,8 +349,12 @@ static void test_client_gso_send_runs_segment_by_stride()
 
     rocketnet_unit_check( test_socket.num_packets == 10 );
     for ( int i = 0; i < 10; i++ )
+    {
         for ( int j = 0; j < packet_bytes[i]; j++ )
+        {
             rocketnet_unit_check( test_socket.packet_data[i][j] == (uint8_t) ( 10 + i ) );
+        }
+    }
 
     rocketnet_unit_check( test_gso.packets_sent == 10 );
     rocketnet_unit_check( test_gso.segment_messages_sent == 2 );
@@ -423,8 +429,12 @@ static void test_client_gso_send_falls_back_on_live_refusal()
     }
 
     for ( int i = 0; i < 4; i++ )
+    {
         for ( int j = 0; j < packet_bytes[i]; j++ )
+        {
             rocketnet_unit_check( test_socket.packet_data[i][j] == (uint8_t) ( 20 + i ) );
+        }
+    }
 
     rocketnet_unit_check( !test_gso.segment );
     rocketnet_unit_check( test_gso.segment_refusals == 1 );

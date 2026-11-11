@@ -226,7 +226,9 @@ static void salt_mismatch_build_token_request( uint8_t * request, const uint8_t 
                                                token.signed_connect_data, token.signature );
 
     if ( forged )
+    {
         request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1] ^= 1;
+    }
 }
 
 // the cookie exchange for this request, then the request with its cookie
@@ -234,7 +236,9 @@ static int salt_mismatch_process_with_cookie( struct salt_mismatch_server_t * te
                                               uint8_t * response, int * response_bytes )
 {
     if ( salt_mismatch_process( test, request, response, response_bytes ) != ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
+    {
         return -1;
+    }
 
     memcpy( request + ROCKETNET_PREFILTER_BYTES,
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,

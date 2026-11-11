@@ -89,7 +89,9 @@ static void fake_iocp_release_aborts( int count )
     for ( int i = 0; i < FAKE_IOCP_RECEIVES && count != 0 && fake_iocp.aborts_held > 0; i++ )
     {
         if ( !fake_iocp.posted[i] )
+        {
             continue;
+        }
         fake_iocp.posted[i] = false;
         fake_iocp.aborts_held--;
         fake_iocp_queue( ROCKETNET_CLIENT_IOCP_COMPLETION_RECEIVE, i, false, 0, NULL );

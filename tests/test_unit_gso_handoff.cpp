@@ -141,7 +141,9 @@ struct gso_segment_socket_t
 static int gso_segment_stride( const struct msghdr * header )
 {
     if ( header->msg_controllen < sizeof( struct cmsghdr ) )
+    {
         return 0;
+    }
 
     struct msghdr mutable_header = *header;
     for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &mutable_header ); cmsg != NULL; cmsg = CMSG_NXTHDR( &mutable_header, cmsg ) )
@@ -160,7 +162,9 @@ static int gso_segment_stride( const struct msghdr * header )
 static uint16_t gso_segment_port( const struct msghdr * header )
 {
     if ( !header->msg_name || header->msg_namelen < (int) sizeof( struct sockaddr_in ) )
+    {
         return 0;
+    }
 
     const struct sockaddr_in * name = (const struct sockaddr_in *) header->msg_name;
     return ntohs( name->sin_port );
@@ -190,7 +194,9 @@ static int gso_segment_send( struct mmsghdr * messages, unsigned int count, void
 
         check( messages[i].msg_hdr.msg_iovlen == 1 );
         if ( socket->plain_ports_n < 8 )
+        {
             socket->plain_ports[socket->plain_ports_n++] = port;
+        }
         socket->plain_packets++;
     }
 
@@ -309,11 +315,17 @@ static void gso_refusal_log( void * context, enum rocketnet_log_level_t level, c
     (void) context;
     (void) length;
     if ( strstr( message, "live GSO send refused" ) == NULL )
+    {
         return;
+    }
     if ( level == ROCKETNET_LOG_LEVEL_SPAM )
+    {
         gso_refusal_spam++;
+    }
     else
+    {
         gso_refusal_warnings++;
+    }
 }
 
 static void test_server_gso_segment_refusal_warns_once()
@@ -372,7 +384,9 @@ static void test_server_gso_receive_queue_rotation()
     int seen[4] = { 0, 0, 0, 0 };
 
     for ( int q = 0; q < queues; q++ )
+    {
         check( rocketnet_server_gso_test_publish_marked( gso, q, (uint8_t) ( q + 1 ), (uint32_t) ROCKETNET_GSO_RECV_QUEUE_SIZE ) );
+    }
 
     rocketnet_server_gso_receive_packets( gso );
     check( view->num_packets == view->capacity );

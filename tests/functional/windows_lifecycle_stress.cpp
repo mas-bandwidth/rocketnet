@@ -87,7 +87,9 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 static void windows_lifecycle_check_line( bool condition, const char * expression, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "windows lifecycle stress check failed: %s:%d: %s\n", __FILE__, line, expression );
     fflush( stdout );
     exit( 1 );
@@ -131,12 +133,16 @@ static void * windows_library_malloc( void * context, size_t bytes )
     {
         const SIZE_T allocated = HeapSize( windows_library_heap, 0, p );
         if ( allocated == (SIZE_T) -1 || allocated > (SIZE_T) INT64_MAX )
+        {
             windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+        }
         else
         {
             const int64_t previous = windows_library_allocated_bytes.fetch_add( (int64_t) allocated, std::memory_order_relaxed );
             if ( previous > INT64_MAX - (int64_t) allocated )
+            {
                 windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+            }
         }
     }
     return p;
@@ -148,12 +154,16 @@ static void windows_library_free( void * context, void * p )
     const SIZE_T allocated = HeapSize( windows_library_heap, 0, p );
     windows_lifecycle_check( HeapFree( windows_library_heap, 0, p ) != 0 );
     if ( allocated == (SIZE_T) -1 || allocated > (SIZE_T) INT64_MAX )
+    {
         windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+    }
     else
     {
         const int64_t previous = windows_library_allocated_bytes.fetch_sub( (int64_t) allocated, std::memory_order_relaxed );
         if ( previous < (int64_t) allocated )
+        {
             windows_library_accounting_failed.store( 1, std::memory_order_relaxed );
+        }
     }
 }
 
@@ -193,7 +203,9 @@ static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
     HANDLE heaps[256];
     const DWORD heap_count = GetProcessHeaps( 256, heaps );
     if ( heap_count == 0 || heap_count > 256 )
+    {
         return -1;
+    }
 
     const HANDLE library_heap = windows_library_heap;
 
@@ -207,7 +219,9 @@ static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
         memset( &summary, 0, sizeof( summary ) );
         summary.cb = sizeof( summary );
         if ( !HeapSummary( heaps[i], 0, &summary ) )
+        {
             return -1;
+        }
         counts->heap_handles[i] = heaps[i];
         counts->heap_used_bytes[i] = (int64_t) summary.cbAllocated;
         if ( heaps[i] == library_heap )
@@ -227,7 +241,9 @@ static int64_t windows_threads()
     int64_t program_threads = -1;
     int64_t os_threads = -1;
     if ( !process_resources_walk_threads( &program_threads, &os_threads, NULL ) )
+    {
         return -1;
+    }
 
     return program_threads + os_threads;
 }
@@ -303,13 +319,17 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 ||
          before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
+    {
         return false;
+    }
     // the process thread count includes the operating system's thread pool
     // workers, which come and go on their own; the library's threads are
     // checked exactly by the SDK identity ledger, so threads are reported here
     // and not compared
     if ( before->asan != after->asan )
+    {
         return false;
+    }
 
     const int64_t allowance = windows_memory_allowance_bytes( seconds );
     const bool memory_flat = before->asan || after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
@@ -348,7 +368,9 @@ static windows_resource_counts_t windows_stable_counts()
 
         const windows_resource_counts_t current = windows_read_counts();
         if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes && current.asan == previous.asan && current.library_allocated_bytes == previous.library_allocated_bytes )
+        {
             return current;
+        }
         previous = current;
     }
 
@@ -407,7 +429,9 @@ static const windows_cell_t * windows_cell( const char * server_transport )
     for ( int i = 0; i < windows_cell_count; i++ )
     {
         if ( strcmp( windows_cells[i].server_transport, server_transport ) == 0 )
+        {
             return &windows_cells[i];
+        }
     }
 
     windows_lifecycle_check( false );
@@ -553,7 +577,9 @@ static bool windows_wait_connected( rocketnet_server_transport_t * server, rocke
 
         const int state = rocketnet_client_transport_state( client );
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             return true;
+        }
 
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         {
@@ -590,7 +616,9 @@ static bool windows_wait_server_empty( rocketnet_server_transport_t * server, ro
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             return true;
+        }
         rocketnet_platform_sleep( 0.0002 );
     }
 
@@ -611,11 +639,15 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
             (long long) before->library_allocated_bytes, (long long) after->library_allocated_bytes,
             (long long) windows_memory_allowance_bytes( seconds ) );
     if ( before->asan )
+    {
         printf( ", private_bytes %lld -> %lld (ASan quarantine/shadow diagnostic)",
                 (long long) before->private_bytes, (long long) after->private_bytes );
+    }
     else
+    {
         printf( ", private_bytes %lld -> %lld (allowed under +%lld)", (long long) before->private_bytes,
                 (long long) after->private_bytes, (long long) windows_private_allowance_bytes() );
+    }
     printf( ", %.3fs%s", seconds, flat ? "" : " FAIL resource count moved" );
     const HANDLE library_heap = windows_library_heap;
     const HANDLE process_heap = GetProcessHeap();
@@ -680,18 +712,26 @@ static bool windows_ledger_same_live( const rocketnet_lifecycle_resources_t * ex
                                       const rocketnet_lifecycle_resources_t * actual )
 {
     if ( expected->live_count != actual->live_count )
+    {
         return false;
+    }
 
     for ( unsigned i = 0; i < expected->live_count; ++i )
     {
         bool found = false;
 
         for ( unsigned j = 0; j < actual->live_count; ++j )
+        {
             if ( expected->live[i].generation == actual->live[j].generation &&
                  expected->live[i].kind == actual->live[j].kind && expected->live[i].raw == actual->live[j].raw )
+            {
                 found = true;
+            }
+        }
         if ( !found )
+        {
             return false;
+        }
     }
 
     return true;
@@ -707,17 +747,21 @@ static bool windows_ledger_result( const char * case_name, const windows_cell_t 
     printf( "%s [%s] SDK identities %s: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+    {
         printf( ", %s created +%" PRIu64 " closed +%" PRIu64, kinds[kind],
                 actual->created[kind] - expected->created[kind],
                 actual->closed[kind] - expected->closed[kind] );
+    }
     printf( "\n" );
 
     if ( !same )
     {
         for ( unsigned i = 0; i < actual->live_count; ++i )
+        {
             printf( "  SDK live kind=%s raw=0x%" PRIxPTR " generation=%" PRIu64 " site=%s\n", kinds[actual->live[i].kind],
                     actual->live[i].raw, actual->live[i].generation,
                     actual->live[i].site ? actual->live[i].site : "unknown" );
+        }
     }
 
     fflush( stdout );
@@ -742,10 +786,12 @@ static bool windows_ledger_held_result( const char * case_name, const windows_ce
     unsigned actual_kind_count[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = {};
 
     for ( unsigned i = 0; i < expected->live_count; ++i )
+    {
         if ( expected->live[i].kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS )
         {
             expected_kind_count[expected->live[i].kind]++;
         }
+    }
 
     for ( unsigned j = 0; j < actual->live_count; ++j )
     {
@@ -757,10 +803,12 @@ static bool windows_ledger_held_result( const char * case_name, const windows_ce
 
         bool accounted = held->generation > expected->latest_generation;
         for ( unsigned i = 0; i < expected->live_count && !accounted; ++i )
+        {
             if ( expected->live[i].generation == held->generation && expected->live[i].kind == held->kind && expected->live[i].raw == held->raw )
             {
                 accounted = true;
             }
+        }
 
         if ( !accounted )
         {
@@ -769,28 +817,34 @@ static bool windows_ledger_held_result( const char * case_name, const windows_ce
     }
 
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+    {
         if ( expected_kind_count[kind] != actual_kind_count[kind] )
         {
             same = false;
         }
+    }
 
     static const char * kinds[ROCKETNET_LIFECYCLE_RESOURCE_KINDS] = { "Thread", "Event", "socket", "IOCP", "timer", "RIO buffer ID", "RIO completion queue ID", "RIO request queue ID" };
 
     printf( "%s [%s] SDK identities %s, the last stop's transport held: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
+    {
         printf( ", %s live %u -> %u created +%" PRIu64 " closed +%" PRIu64, kinds[kind], expected_kind_count[kind], actual_kind_count[kind],
                 actual->created[kind] - expected->created[kind],
                 actual->closed[kind] - expected->closed[kind] );
+    }
     printf( "\n" );
 
     if ( !same )
     {
         for ( unsigned i = 0; i < actual->live_count; ++i )
+        {
             printf( "  SDK live kind=%s raw=0x%" PRIxPTR " generation=%" PRIu64 " site=%s\n",
                     actual->live[i].kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS ? kinds[actual->live[i].kind] : "unknown",
                     actual->live[i].raw, actual->live[i].generation,
                     actual->live[i].site ? actual->live[i].site : "unknown" );
+        }
     }
 
     fflush( stdout );
@@ -958,9 +1012,13 @@ static void windows_server_restart_cycle( const windows_cell_t * cell, rocketnet
 
         const int state = rocketnet_client_transport_state( client );
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && rocketnet_server_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         if ( state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             break;
+        }
 
         if ( state != previous_state )
         {
@@ -1012,7 +1070,9 @@ static unsigned windows_reserved_restart_port( const windows_cell_t * cell )
     {
         const SOCKET probe = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
         if ( probe == INVALID_SOCKET )
+        {
             return 0;
+        }
 
         struct sockaddr_in address;
         memset( &address, 0, sizeof( address ) );
@@ -1024,7 +1084,9 @@ static unsigned windows_reserved_restart_port( const windows_cell_t * cell )
 
         closesocket( probe );
         if ( result == 0 )
+        {
             return port;
+        }
         port = base + ( port - base + 1 ) % slice;
     }
 

@@ -38,7 +38,9 @@ static const char * action_name( int action )
 {
     static const char * names[] = { "W16", "W48", "B2", "A", "R", "T" };
     if ( action < 0 || action > 5 )
+    {
         return "?";
+    }
     return names[action];
 }
 
@@ -142,10 +144,14 @@ static ref_slot_t * ref_at( ref_t * m, uint64_t n )
 static int ref_admit( const ref_t * m, uint32_t count, uint64_t span, uint64_t * pos )
 {
     if ( count == 0 || count > m->w || m->next - m->uprime > m->w - count )
+    {
         return 0;
+    }
     uint64_t p = m->ring_next;
     if ( span > m->b )
+    {
         return 0;
+    }
     const uint64_t remaining = m->b - p % m->b;
     if ( span > remaining )
     {
@@ -153,10 +159,14 @@ static int ref_admit( const ref_t * m, uint32_t count, uint64_t span, uint64_t *
     }
 
     if ( ( p % m->b ) + span > m->b )
+    {
         return 0;
+    }
     const uint64_t floor = m->uprime < m->next ? m->slot[m->uprime & ( m->w - 1 )].span_start : p;
     if ( p < floor || p - floor > m->b - span )
+    {
         return 0;
+    }
     *pos = p;
 
     return 1;
@@ -178,17 +188,25 @@ static void ref_reset( ref_t * m, uint32_t w, uint32_t b, uint64_t first )
 static void ref_note_uprime( ref_t * m )
 {
     if ( m->u == m->next )
+    {
         m->uprime = m->u;
+    }
     else
+    {
         m->uprime = ref_at( m, m->u )->first;
+    }
 }
 
 static int ref_span_free( const ref_t * m, uint64_t start, uint32_t len )
 {
     const uint32_t base = (uint32_t) ( start % m->b );
     for ( uint32_t i = 0; i < len; i++ )
+    {
         if ( m->span_bytes[base + i] )
+        {
             return 0;
+        }
+    }
     return 1;
 }
 
@@ -302,7 +320,9 @@ static void world_check( world_t * w )
             }
         }
         else
+        {
             seq_check( !w->region->receive_descriptors[index].live || w->region->receive_descriptors[index].number != s->number );
+        }
         if ( s->held && w->pool )
         {
             seq_check( w->region->send_descriptors[s->descriptor].in_use );
@@ -442,7 +462,9 @@ static int world_write_block( world_t * w )
     const int ref_ok = ref_admit( &w->ref, count, span, &expect );
     uint32_t descriptor = RN_DESCRIPTOR_NONE;
     if ( !world_take_descriptor( w, bytes, &descriptor ) )
+    {
         return 0;
+    }
 
     uint64_t first = 0, ring = 0;
     const uint32_t got = rn_window_send_first_write_block( &w->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, descriptor, &first, &ring );
@@ -470,7 +492,9 @@ static int world_write_block( world_t * w )
 static int world_ack_completes_live( const world_t * w )
 {
     if ( w->ref.u >= w->ref.next )
+    {
         return 0;
+    }
     const ref_slot_t * oldest = &w->ref.slot[w->ref.u & ( w->ref.w - 1 )];
     const uint64_t first = oldest->first;
     const uint32_t count = oldest->block_count ? oldest->block_count : 1;
@@ -497,7 +521,9 @@ static void world_free_message( world_t * w, uint64_t first )
 {
     ref_slot_t * s = ref_at( &w->ref, first );
     if ( !s->used || !s->held || s->number != first )
+    {
         return;
+    }
     const uint32_t count = s->block_count ? s->block_count : 1;
     int all_acked = 1;
     int any_live = 0;
@@ -521,7 +547,9 @@ static void world_free_message( world_t * w, uint64_t first )
     }
 
     if ( !all_acked || any_live )
+    {
         return;
+    }
 
     if ( w->pool )
     {
@@ -546,7 +574,9 @@ static int world_ack_number( world_t * w, uint64_t n )
     {
         const ref_slot_t * oldest = ref_at( &w->ref, w->ref.u );
         if ( oldest->number != w->ref.u || !oldest->acked )
+        {
             break;
+        }
         w->ref.u++;
     }
 
@@ -559,14 +589,18 @@ static int world_ack_number( world_t * w, uint64_t n )
 static int world_ack( world_t * w )
 {
     if ( w->ref.u >= w->ref.next )
+    {
         return 0;
+    }
     return world_ack_number( w, w->ref.u );
 }
 
 static int world_release( world_t * w )
 {
     if ( w->ref.released >= w->ref.next )
+    {
         return 0;
+    }
     const uint64_t first = w->ref.released;
     ref_slot_t * s = ref_at( &w->ref, first );
     seq_check( s->used && s->live && s->number == first );
@@ -596,7 +630,9 @@ static int world_release( world_t * w )
 static int world_retransmit( world_t * w )
 {
     if ( w->ref.released >= w->ref.next )
+    {
         return 0;
+    }
     const uint64_t n = w->ref.released;
     const ref_slot_t * s = ref_at( &w->ref, n );
     rocketnet_message_record_t record;
@@ -620,11 +656,17 @@ static void world_apply( world_t * w, int action )
     action_note( action );
     g_step++;
     if ( action == 0 )
+    {
         world_write_single( w, 16 );
+    }
     else if ( action == 1 )
+    {
         world_write_single( w, 48 );
+    }
     else if ( action == 2 )
+    {
         world_write_block( w );
+    }
     else if ( action == 3 )
     {
         if ( !world_ack_completes_live( w ) )
@@ -633,9 +675,13 @@ static void world_apply( world_t * w, int action )
         }
     }
     else if ( action == 4 )
+    {
         world_release( w );
+    }
     else
+    {
         world_retransmit( w );
+    }
     world_check( w );
 }
 
@@ -900,7 +946,9 @@ static void probe_exhaustive( world_t * w )
         }
 
         if ( k < 0 )
+        {
             break;
+        }
     }
 
     rocketnet_unit_check( sequences == 46656 );
@@ -942,17 +990,29 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
         const uint32_t pick = (uint32_t) ( next_random() % 10 );
         int action;
         if ( pick < 3 )
+        {
             action = 0;
+        }
         else if ( pick == 3 )
+        {
             action = 1;
+        }
         else if ( pick == 4 )
+        {
             action = 2;
+        }
         else if ( pick < 8 )
+        {
             action = 3;
+        }
         else if ( pick == 8 )
+        {
             action = 4;
+        }
         else
+        {
             action = 5;
+        }
         world_apply( w, action );
 
         // An exhausted region refuses every further send until reset (sticky,

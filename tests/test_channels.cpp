@@ -522,15 +522,25 @@ static bool channels_random_record( channels_random_t * random, const uint8_t * 
     record->code = channels_random_range( random, 0, reliable_allowed ? 4 : 1 );
     const bool has_channel = record->code == 1 || record->code == 3 || record->code == 4;
     if ( has_channel )
+    {
         record->channel = (uint32_t) ( channels_random_range( random, 0, 3 ) == 0 ? channels_random_range( random, 256, channels_num_channels - 1 ) : channels_random_range( random, 0, 255 ) );
+    }
     if ( record->code >= 2 )
+    {
         record->number = channels_random( random ) & ROCKETNET_MESSAGE_U24_MASK;
+    }
     if ( record->code == 1 || record->code == 4 )
+    {
         record->sequencing = channels_random( random ) & ROCKETNET_MESSAGE_U24_MASK;
+    }
     if ( has_channel )
+    {
         record->ordering = channels_random( random ) & ROCKETNET_MESSAGE_U24_MASK;
+    }
     if ( record->code == 2 && channels_random_range( random, 0, 7 ) == 0 )
+    {
         record->control = 1;
+    }
     if ( record->code >= 2 && !record->control && channels_random_range( random, 0, 3 ) == 0 )
     {
         record->block = 1;
@@ -545,7 +555,9 @@ static bool channels_random_record( channels_random_t * random, const uint8_t * 
         const bool last = record->fragment == record->fragments;
         bytes = last ? channels_random_range( random, 1, ROCKETNET_MESSAGE_FRAGMENT_BYTES ) : ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         if ( header + bytes > max_bytes )
+        {
             return false;
+        }
         // place the block's base so its whole span is inside a 65536 ring
         const int stride_units = ROCKETNET_MESSAGE_FRAGMENT_BYTES / 16;
         const int span = (int) record->fragments * ROCKETNET_MESSAGE_FRAGMENT_BYTES + ( last ? channels_round16( bytes ) : 16 );
@@ -555,11 +567,15 @@ static bool channels_random_record( channels_random_t * random, const uint8_t * 
     else
     {
         if ( max_bytes - header < 1 )
+        {
             return false;
+        }
         const int cap = max_bytes - header < 1300 ? max_bytes - header : 1300;
         bytes = channels_random_range( random, 0, 3 ) == 0 ? channels_random_range( random, 1, cap ) : channels_random_range( random, 1, cap < 40 ? cap : 40 );
         if ( record->code == 3 || record->code == 4 )
+        {
             record->ring = (uint32_t) channels_random_range( random, 0, ( 65536 - channels_round16( bytes ) ) / 16 );
+        }
     }
     record->bytes = bytes;
     record->data = pool + channels_random_range( random, 0, 2048 );
@@ -773,7 +789,9 @@ static void channels_test_round_trip_and_never_overreads()
                 struct rocketnet_message_record_t record;
                 const int space = rocketnet_message_writer_space( &writer );
                 if ( !channels_random_record( &random, pool, space, true, &record ) )
+                {
                     break;
+                }
                 channels_check( rocketnet_message_record_valid( &record ) );
                 channels_check( rocketnet_message_writer_add( &writer, &record ) == 1 );
                 sent.push_back( record );
@@ -918,7 +936,9 @@ static void rn_trap_write( const char * text )
     {
         const ssize_t written = write( 2, text, length );
         if ( written <= 0 )
+        {
             break;
+        }
         text += written;
         length -= (size_t) written;
     }
@@ -1035,7 +1055,9 @@ extern "C" int posix_memalign( void ** out, size_t alignment, size_t bytes )
 
     void * p = __libc_memalign( alignment, bytes );
     if ( !p )
+    {
         return 12; // ENOMEM
+    }
     *out = p;
 
     return 0;
@@ -1426,7 +1448,9 @@ static void test_channels_allocator_send_store()
 
     uint32_t most = 0;
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
         most = layout.store_chunks[c] > most ? layout.store_chunks[c] : most;
+    }
     config.send_queue_messages = (int) most + 1;
     check( rocketnet_message_validate_config( &config ) );
 
@@ -1494,8 +1518,12 @@ static void test_channels_allocator_send_store()
         // no fallback into a larger class, and no other class moved
 
         for ( int other = 0; other < RN_STORE_NUM_CLASSES; other++ )
+        {
             if ( other != c )
+            {
                 check( rn_send_store_free_chunks( store, other ) == rn_send_store_total_chunks( store, other ) );
+            }
+        }
 
         // the bytes written are still there: no two sends share a chunk
 
@@ -1503,7 +1531,9 @@ static void test_channels_allocator_send_store()
         {
             const uint8_t * data = rn_region_send_write_pointer( region, taken[i] );
             for ( int b = 0; b < class_bytes[c]; b++ )
+            {
                 check( data[b] == (uint8_t) ( (uint32_t) c * 64 + ( i & 63 ) ) );
+            }
         }
 
         // free in random order, refill, and the counts hold at every step
@@ -1523,7 +1553,9 @@ static void test_channels_allocator_send_store()
         }
 
         for ( uint32_t i = 0; i < total; i++ )
+        {
             check( rn_region_send_alloc( region, class_bytes[c] ) != RN_DESCRIPTOR_NONE );
+        }
 
         // the class full: the store's refusal, counted as itself, takes no descriptor
 
@@ -1839,7 +1871,9 @@ static void test_channels_allocator_trap_witness()
     for ( int net = 0; net < 4; net++ )
     {
         if ( net == 2 && !RN_TEST_TRAP_LIBC )
+        {
             continue;
+        }
         fflush( stdout );
         fflush( stderr );
 
@@ -1936,10 +1970,14 @@ static void rn_soak_check_accounting( const rn_region_t * region )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !descriptor->in_use )
+        {
             continue;
+        }
         descriptors_used++;
         if ( descriptor->chunk != RN_CHUNK_NONE )
+        {
             used[rn_send_store_chunk_class( descriptor->chunk )]++;
+        }
     }
 
     check( descriptors_used + region->descriptors_free == region->queue );
@@ -1990,9 +2028,13 @@ static void rn_soak_queue_append( rn_region_t * region, uint32_t channel_index, 
     rn_channel_send_t * channel = &region->channel_send[channel_index];
     region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
     if ( channel->queue_tail != RN_DESCRIPTOR_NONE )
+    {
         region->send_descriptors[channel->queue_tail].queue_next = d;
+    }
     else
+    {
         channel->queue_head = d;
+    }
     channel->queue_tail = d;
 }
 
@@ -2003,7 +2045,9 @@ static void rn_soak_queue_pop( rn_region_t * region, uint32_t channel_index )
     channel->queue_head = region->send_descriptors[d].queue_next;
     region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
     if ( channel->queue_head == RN_DESCRIPTOR_NONE )
+    {
         channel->queue_tail = RN_DESCRIPTOR_NONE;
+    }
 }
 
 static void rn_soak_send( rn_soak_side_t * side )
@@ -2018,13 +2062,21 @@ static void rn_soak_send( rn_soak_side_t * side )
         const uint32_t pick = rn_random() % 16;
         int bytes;
         if ( pick < 8 )
+        {
             bytes = 1 + (int) ( rn_random() % RN_STORE_SMALL_BYTES );
+        }
         else if ( pick < 12 )
+        {
             bytes = RN_STORE_SMALL_BYTES + 1 + (int) ( rn_random() % ( RN_STORE_MEDIUM_BYTES - RN_STORE_SMALL_BYTES ) );
+        }
         else if ( pick < 15 )
+        {
             bytes = RN_STORE_MEDIUM_BYTES + 1 + (int) ( rn_random() % ( RN_STORE_LARGE_BYTES - RN_STORE_MEDIUM_BYTES ) );
+        }
         else
+        {
             bytes = RN_STORE_LARGE_BYTES + 1 + (int) ( rn_random() % (uint32_t) ( config->max_message_bytes - RN_STORE_LARGE_BYTES ) );
+        }
 
         const uint64_t store_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
         const uint64_t queue_full = rn_counter( side->sender_counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL );
@@ -2045,7 +2097,9 @@ static void rn_soak_send( rn_soak_side_t * side )
             // is the normal one-pool refusal guarded below.
 
             if ( rn_region_exhausted( region ) && ( ds + dq ) == 0 )
+            {
                 break;
+            }
             check( ds + dq == 1 );       // exactly one reason, counted once
             side->refused_store += ds;
             side->refused_queue += dq;
@@ -2098,7 +2152,9 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             // the window's two bounds (6.2): the count, and the ring bytes
 
             if ( side->next_number + fragments > side->oldest_unacked + region->window )
+            {
                 return;
+            }
 
             uint64_t ring = side->ring_next;
             if ( ring / region->ring_bytes != ( ring + span - 1 ) / region->ring_bytes )
@@ -2106,7 +2162,9 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 ring = ( ring / region->ring_bytes + 1 ) * region->ring_bytes;
             }
             if ( side->sent_count == region->packets || side->ref_next + fragments > region->sent_ref_entries )
+            {
                 return;
+            }
 
             descriptor->enqueue_ticket = 0;
             descriptor->schedule_flags = 0;
@@ -2236,7 +2294,9 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 const uint32_t r = (uint32_t) ( side->receiver_next & ( receiver->window - 1 ) );
                 uint64_t * word = &receiver->received_bits[r / 64];
                 if ( ( *word & ( 1ULL << ( r % 64 ) ) ) == 0 )
+                {
                     break;
+                }
                 *word &= ~( 1ULL << ( r % 64 ) );
                 side->receiver_next++;
             }
@@ -2273,9 +2333,13 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
     {
         rn_sent_packet_t * entry = &region->sent_packets[( side->sent_head + i ) % region->packets];
         if ( entry->packet_id == 0 )
+        {
             continue;
+        }
         if ( !all && entry->send_time >= (double) tick && ( rn_random() & 1 ) )
+        {
             continue;
+        }
 
         const uint32_t index_slot = rn_sent_index_slot( region, entry->packet_id );
         check( region->sent_index[index_slot].used && region->sent_index[index_slot].packet_id == entry->packet_id );
@@ -2326,7 +2390,9 @@ static void rn_soak_ack( rn_soak_side_t * side, uint64_t tick, bool all )
     {
         rn_sent_packet_t * entry = &region->sent_packets[( side->sent_head + i ) % region->packets];
         if ( entry->packet_id == 0 )
+        {
             continue;
+        }
         for ( uint32_t r = 0; r < entry->ref_count; r++ )
         {
             scratch_refs[refs + r] = region->sent_refs[entry->ref_first + r];
@@ -2515,12 +2581,18 @@ static void test_channels_allocator_no_live_allocation()
             rn_soak_write_and_receive( &sides[i], time );
             rn_soak_ack( &sides[i], time, true );
             for ( uint32_t c = 0; c < sides[i].sender->num_channels; c++ )
+            {
                 if ( sides[i].sender->channel_send[c].queue_head != RN_DESCRIPTOR_NONE )
+                {
                     queued = true;
+                }
+            }
         }
 
         if ( !queued )
+        {
             break;
+        }
     }
 
     for ( int i = 0; i < 2 * num_slots; i++ )
@@ -3020,7 +3092,9 @@ static void test_channels_window_receive_over_the_lossy_simulator_leg( float los
             for ( int n = oldest; n < end; n++ )
             {
                 if ( accepted[n] )
+                {
                     continue;
+                }
 
                 const uint8_t body[2] = { (uint8_t) n, (uint8_t) ( n >> 8 ) };
                 rocketnet_message_record_t record = channels_record( ROCKETNET_MESSAGE_CODE_RELIABLE, body, sizeof( body ) );
@@ -3036,7 +3110,9 @@ static void test_channels_window_receive_over_the_lossy_simulator_leg( float los
             }
         }
         else
+        {
             drained++;
+        }
 
         for ( int bytes = rocketnet_network_simulator_receive( wire, &address, now, &address, received );
               bytes > 0;
@@ -3229,11 +3305,15 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
             uint64_t first = 0, p = 0;
             uint32_t count = 0;
             if ( block )
+            {
                 count = rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
                                                           F + 17, RN_DESCRIPTOR_NONE, &first, &p );
+            }
             else if ( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
                                                   16, RN_DESCRIPTOR_NONE, &first, &p ) == RN_WINDOW_SEND_NUMBERED )
+            {
                 count = 1;
+            }
 
             if ( count )
             {
@@ -3296,7 +3376,9 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
             const uint64_t n = send_cursor++ % numbered;
             channels_window_exchange_record_t * item = &records[n];
             if ( item->acked || n == newly_numbered )
+            {
                 continue;
+            }
             channels_window_exchange_write( wire, &address, item, n, packet, sizeof( packet ), now );
             sent++;
         }
@@ -3342,7 +3424,9 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
                     }
                 }
                 else
+                {
                     check( answer == RN_WINDOW_RECEIVE_DUPLICATE && item->accepted );
+                }
             }
         }
 
@@ -3353,13 +3437,17 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
         {
             channels_window_exchange_record_t * item = &records[n];
             if ( !item->accepted || item->released )
+            {
                 continue;
+            }
 
             if ( item->block )
             {
                 const uint64_t first = n - item->fragment;
                 if ( !records[first].accepted || !records[first + 1].accepted )
+                {
                     continue;
+                }
             }
 
             rn_window_receive_release( &receive, n );
@@ -3376,9 +3464,13 @@ static void test_channels_window_send_and_receive_over_the_lossy_simulator_leg( 
         }
 
         if ( next_message == messages && send.U == send.next )
+        {
             drained++;
+        }
         else
+        {
             drained = 0;
+        }
     }
 
     rn_trap_armed = 0;
@@ -3618,7 +3710,9 @@ static uint32_t test_channels_ordered_write_pass( rn_ordered_t * ordered, double
     {
         const int written = rn_ordered_write( ordered, now, pointers, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
         if ( written == 0 )
+        {
             break;
+        }
 
         for ( int p = 0; p < written; p++ )
         {
@@ -4450,7 +4544,9 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         {
             channels_lossy_soak_record_t * item = &records[n];
             if ( !item->accepted || item->released )
+            {
                 continue;
+            }
 
             if ( item->block )
             {
@@ -4467,7 +4563,9 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
                 }
 
                 if ( !all_have )
+                {
                     continue;
+                }
             }
 
             rn_window_receive_release( &receive, n );
@@ -4483,9 +4581,13 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
         }
 
         if ( next_message == total_messages && send.U == send.next && send.U_prime == send.next && receive.R == send.next )
+        {
             drained++;
+        }
         else
+        {
             drained = 0;
+        }
     }
 
     rn_trap_armed = 0;
@@ -4629,7 +4731,9 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
             const uint32_t channel = (uint32_t) ( next_message % num_channels );
             uint8_t * p = rn_channels_start( &sender->channels, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, msg_bytes );
             if ( !p )
+            {
                 break;
+            }
 
             const uint64_t id = (uint64_t) next_message + 1;
             memcpy( p, &id, 8 );
@@ -4724,9 +4828,13 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
         }
 
         if ( next_message == total_messages && delivered_total == total_messages && sender->ack.resend_count == 0 )
+        {
             drained++;
+        }
         else
+        {
             drained = 0;
+        }
     }
 
     check( next_message == total_messages && drained == 16 );
@@ -5015,7 +5123,9 @@ static void test_channels_window_witness_floor_is_u_prime()
     {
         const uint32_t start4 = (uint32_t) ( p4 % B );
         for ( uint32_t j = start4; j < start4 + 16; j++ )
+        {
             check( live[j] == 0 ); // LiveSpansDisjoint
+        }
     }
 
     check( step9 == RN_WINDOW_SEND_STALL );
@@ -5144,7 +5254,9 @@ const char * rocketnet_channels_test_resolve( const char * name )
     for ( int i = 0; i < rocketnet_channels_test_count(); i++ )
     {
         if ( strcmp( channels_tests[i].name, name ) == 0 || strcmp( channels_tests[i].alias, name ) == 0 )
+        {
             return channels_tests[i].name;
+        }
     }
 
     return NULL;
@@ -5157,7 +5269,9 @@ int rocketnet_channels_run_named( const char * name )
     for ( int i = 0; i < rocketnet_channels_test_count(); i++ )
     {
         if ( strcmp( channels_tests[i].name, name ) != 0 )
+        {
             continue;
+        }
         printf( "%s\n", name );
         fflush( stdout );
         channels_tests[i].function();
@@ -5175,12 +5289,16 @@ int rocketnet_channels_run_named( const char * name )
 static int rocketnet_channels_is_allocator_test( const char * name )
 {
     if ( !name )
+    {
         return 0;
+    }
 
     for ( int i = 0; i < rocketnet_channels_test_count(); i++ )
     {
         if ( strcmp( channels_tests[i].name, name ) != 0 && strcmp( channels_tests[i].alias, name ) != 0 )
+        {
             continue;
+        }
         return strncmp( channels_tests[i].name, "test_channels_allocator_", 24 ) == 0 ||
                strcmp( channels_tests[i].name, "test_channels_window_send_and_receive_over_the_lossy_simulator" ) == 0 ||
                strcmp( channels_tests[i].name, "test_channels_window_lossy_soak" ) == 0;
@@ -5194,7 +5312,9 @@ void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )
     *malloc_function = NULL;
     *free_function = NULL;
     if ( !rocketnet_channels_is_allocator_test( name ) )
+    {
         return;
+    }
     *malloc_function = rn_test_malloc_hook;
     *free_function = rn_test_free_hook;
 }
@@ -5202,6 +5322,8 @@ void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )
 void rocketnet_channels_prepare_log( const char * name )
 {
     if ( !rocketnet_channels_is_allocator_test( name ) )
+    {
         return;
+    }
     rocketnet_log_function( rn_test_log_function, NULL );
 }

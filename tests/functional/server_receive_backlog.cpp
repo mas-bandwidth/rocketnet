@@ -36,7 +36,9 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 static void server_receive_backlog_check( bool condition, const char * expression, int line )
 {
     if ( condition )
+    {
         return;
+    }
     printf( "server_receive_backlog check failed: %s at line %d\n", expression, line );
     fflush( stdout );
     exit( 1 );
@@ -86,10 +88,12 @@ static int server_receive_backlog_connected_clients( const std::vector<struct ro
     int connected = 0;
 
     for ( size_t i = 0; i < clients.size(); ++i )
+    {
         if ( rocketnet_client_transport_state( clients[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             ++connected;
         }
+    }
 
     return connected;
 }
@@ -124,15 +128,19 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
 
     const uint64_t queues = rocketnet_loopback_hub_bytes( server_receive_backlog_max_clients );
     if ( !server_bytes || !client_bytes )
+    {
         return 0; // A missing plan falls back to the strict default bound.
+    }
 
     const uint64_t bytes = server_bytes + server_receive_backlog_max_clients * client_bytes + queues;
     const long bound = suite_rss_bound_mb( bytes, 32 );
     char verbose[256];
     if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+    {
         printf( "%s rss_budget server_bytes=%llu client_bytes=%llu clients=%d queue_bytes=%llu margin_mb=32 bound_mb=%ld\n",
                 name, (unsigned long long) server_bytes, (unsigned long long) client_bytes,
                 server_receive_backlog_max_clients, (unsigned long long) queues, bound );
+    }
     return bound;
 }
 
@@ -320,7 +328,9 @@ void rocketnet_test_server_async_delivery_with_max_clients()
             }
 
             if ( frame_received == max_clients )
+            {
                 break;
+            }
             rocketnet_platform_sleep( 0.0001 );
         } while ( rocketnet_platform_time() < deadline );
 

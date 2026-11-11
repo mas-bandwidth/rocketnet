@@ -30,7 +30,9 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
     if ( region && region->counters )
+    {
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &region->counters->values[counter], 1 );
+    }
 }
 
 // ----------------------------------------------------------------
@@ -86,7 +88,9 @@ bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_ind
     const rn_region_t * region = ack->region;
     const rn_send_number_t * slot = &region->send_numbers[slot_index];
     if ( slot->descriptor == RN_DESCRIPTOR_NONE || slot->descriptor >= region->queue )
+    {
         return false;
+    }
 
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot->descriptor];
     return descriptor->in_use && descriptor->fragments > 1;
@@ -106,10 +110,14 @@ uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uin
 {
     const rn_region_t * region = ack->region;
     if ( slot >= region->window )
+    {
         return RN_RESEND_NONE;
+    }
     const rn_resend_link_t * entry = &region->resend_fifo[slot];
     if ( !rn_resend_entry_linked( entry ) || rn_resend_entry_is_chunk( entry ) != chunk )
+    {
         return RN_RESEND_NONE;
+    }
     return rn_resend_index( entry->next );
 }
 
@@ -121,9 +129,13 @@ uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uin
 static bool rn_resend_fifo_index_ok( rn_window_ack_t * ack, uint32_t index )
 {
     if ( index == RN_RESEND_NONE || index < ack->region->window )
+    {
         return true;
+    }
     if ( ack->error == ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         ack->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
+    }
     return false;
 }
 
@@ -134,32 +146,48 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_link_t * fifo = ack->region->resend_fifo;
     if ( !rn_resend_fifo_index_ok( ack, slot ) || slot == RN_RESEND_NONE )
+    {
         return false;
+    }
     rn_resend_link_t * entry = &fifo[slot];
     if ( !rn_resend_entry_linked( entry ) )
+    {
         return true;
+    }
 
     const bool chunk = rn_resend_entry_is_chunk( entry );
     const uint32_t prev = rn_resend_index( entry->prev );
     const uint32_t next = rn_resend_index( entry->next );
     if ( !rn_resend_fifo_index_ok( ack, prev ) || !rn_resend_fifo_index_ok( ack, next ) )
+    {
         return false;
+    }
     uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
     uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
     uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
 
     if ( *sent == slot )
+    {
         *sent = next;
+    }
 
     if ( prev != RN_RESEND_NONE )
+    {
         rn_resend_set_next( &fifo[prev], next );
+    }
     else
+    {
         *head = next;
+    }
 
     if ( next != RN_RESEND_NONE )
+    {
         rn_resend_set_prev( &fifo[next], prev );
+    }
     else
+    {
         *tail = prev;
+    }
 
     entry->prev = 0;
     entry->next = 0;
@@ -174,10 +202,14 @@ static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, uint32_t slot )
 {
     if ( !rn_resend_fifo_index_ok( ack, slot ) || slot == RN_RESEND_NONE || !rn_resend_fifo_index_ok( ack, after ) )
+    {
         return;
+    }
 
     if ( !rn_resend_fifo_unlink( ack, slot ) )
+    {
         return;
+    }
 
     rn_resend_link_t * fifo = ack->region->resend_fifo;
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -185,7 +217,9 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
     const uint32_t next = after == RN_RESEND_NONE ? *head : rn_resend_index( fifo[after].next );
     if ( !rn_resend_fifo_index_ok( ack, next ) )
+    {
         return;
+    }
 
     rn_resend_link_t * entry = &fifo[slot];
     entry->next = chunk ? RN_RESEND_CHUNK : 0u;
@@ -193,14 +227,22 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     rn_resend_set_prev( entry, after );
 
     if ( after != RN_RESEND_NONE )
+    {
         rn_resend_set_next( &fifo[after], slot );
+    }
     else
+    {
         *head = slot;
+    }
 
     if ( next != RN_RESEND_NONE )
+    {
         rn_resend_set_prev( &fifo[next], slot );
+    }
     else
+    {
         *tail = slot;
+    }
 
     ack->resend_count++;
 }
@@ -213,12 +255,16 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
     uint32_t tail = chunk ? ack->chunk_tail : ack->resend_tail;
     if ( tail == slot )
+    {
         tail = rn_resend_index( ack->region->resend_fifo[slot].prev );
+    }
     rn_resend_fifo_insert_after( ack, tail, slot );
 
     uint32_t * sent = chunk ? &ack->chunk_sent : &ack->resend_sent;
     if ( *sent == RN_RESEND_NONE && rn_resend_entry_linked( &ack->region->resend_fifo[slot] ) )
+    {
         *sent = slot;
+    }
 }
 
 // proofs/tla/RNResendFifoLayout.tla PushMark: a refused resend goes to the front of its
@@ -274,7 +320,9 @@ static uint32_t rn_sent_index_hash( uint64_t packet_id, uint32_t cap )
 static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, uint32_t * out_slot )
 {
     if ( packet_id == 0 || region->sent_index_entries == 0 )
+    {
         return false;
+    }
 
     const uint32_t cap = region->sent_index_entries;
     uint32_t slot = rn_sent_index_hash( packet_id, cap );
@@ -282,7 +330,9 @@ static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, 
     {
         const rn_sent_index_t * entry = &region->sent_index[slot];
         if ( !entry->used )
+        {
             return false;
+        }
 
         if ( entry->packet_id == packet_id )
         {
@@ -339,7 +389,9 @@ static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
         if ( ++steps == cap )
         {
             if ( ack->error == ROCKETNET_DISCONNECT_REASON_NONE )
+            {
                 ack->error = ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
+            }
             return;
         }
 
@@ -363,7 +415,9 @@ static void rn_sent_index_remove( rn_window_ack_t * ack, uint64_t packet_id )
 {
     uint32_t slot = 0;
     if ( rn_sent_index_find( ack->region, packet_id, &slot ) )
+    {
         rn_sent_index_remove_at( ack, slot );
+    }
 }
 
 // ----------------------------------------------------------------
@@ -380,7 +434,9 @@ static void rn_window_ack_reclaim_head( rn_window_ack_t * ack )
     {
         rn_sent_packet_t * head = &region->sent_packets[ack->pkt_head % P];
         if ( head->packet_id != 0 )
+        {
             break;
+        }
         ack->ref_head += head->ref_count + head->unreliable_receipts;
         head->ref_first = 0;
         head->ref_count = 0;
@@ -405,7 +461,9 @@ static void rn_window_ack_refresh_oldest( rn_window_ack_t * ack )
     const rn_window_send_t * send = ack->send;
     const rn_region_t * region = ack->region;
     if ( ack->has_oldest && ack->oldest_number == send->U && send->U < send->next )
+    {
         return;
+    }
 
     ack->oldest_number = send->U;
 
@@ -470,7 +528,9 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
 
 #if ROCKETNET_DEV
     for ( uint32_t n = 0; n < region->window; n++ )
+    {
         rocketnet_assert( region->resend_fifo[n].prev == 0 && region->resend_fifo[n].next == 0 );
+    }
 #endif // #if ROCKETNET_DEV
 
     ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
@@ -507,7 +567,9 @@ void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now )
     rocketnet_assert( ack );
     rn_resend_gaps_t * gaps = &ack->gaps;
     if ( now == gaps->update_now )
+    {
         return;
+    }
 
     gaps->prev_now = gaps->update_now;
     gaps->update_now = now;
@@ -525,7 +587,9 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 {
     rn_resend_gaps_t * gaps = &ack->gaps;
     if ( gaps->prev_now <= 0.0 || gaps->update_now != now )
+    {
         return;                                             // no update before this one to measure against
+    }
 
     const int c = rn_window_ack_slot_is_chunk( ack, slot_index ) ? 1 : 0;
     const double gap = now - last_send;
@@ -533,13 +597,21 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
     const double late = gap - gaps->prev_delay[c];
     gaps->count[c]++;
     if ( gap < gaps->gap_min[c] )
+    {
         gaps->gap_min[c] = gap;
+    }
     if ( gap > gaps->gap_max[c] )
+    {
         gaps->gap_max[c] = gap;
+    }
     if ( early < gaps->early_min[c] )
+    {
         gaps->early_min[c] = early;
+    }
     if ( late > gaps->late_max[c] )
+    {
         gaps->late_max[c] = late;
+    }
 }
 
 #endif // #if ROCKETNET_DEV
@@ -550,7 +622,9 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, int32_t status )
 {
     if ( serial == 0 )
+    {
         return;
+    }
 
     rn_region_t * region = ack->region;
     rocketnet_assert( status == ROCKETNET_RECEIPT_STATUS_ACKED || status == ROCKETNET_RECEIPT_STATUS_LOSS );
@@ -601,7 +675,9 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
 {
     rocketnet_assert( ack );
     if ( ( count == 0 && receipt_count == 0 ) || packet_id == 0 )
+    {
         return;
+    }
 
     rocketnet_assert( count == 0 || numbers );
     rocketnet_assert( receipt_count == 0 || serials );
@@ -628,16 +704,22 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
         rocketnet_assert( slot->number == n );
 
         if ( rn_send_number_never_sent( slot->last_send ) )
+        {
             rn_window_ack_record_first_send( ack, slot, now );
+        }
 
 #if ROCKETNET_DEV
         if ( slot->last_send >= 0.0 )                       // a resend: not a first send, not a failed send's retry
+        {
             rn_window_ack_gaps_measure( ack, slot_index, slot->last_send, now );
+        }
 #endif // #if ROCKETNET_DEV
 
         slot->last_send = now;
         if ( !slot->acked )
+        {
             rn_resend_fifo_push_tail( ack, slot_index );
+        }
     }
 
     // 2. Reclaim any already-acked entries at the head of the sent-packet ring,
@@ -679,9 +761,13 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t ref_first = (uint32_t) ( ack->ref_tail % max_refs );
 
     for ( uint32_t i = 0; i < count; i++ )
+    {
         region->sent_refs[( ack->ref_tail + i ) % max_refs] = (uint32_t) numbers[i];
+    }
     for ( uint32_t i = 0; i < receipt_count; i++ )
+    {
         region->sent_refs[( ack->ref_tail + count + i ) % max_refs] = serials[i];
+    }
     ack->ref_tail += total;
 
     rn_sent_packet_t * entry = &region->sent_packets[entry_index];
@@ -714,7 +800,9 @@ int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
     rocketnet_assert( ack );
 
     if ( ack->has_rtt || !( rtt > 0.0 ) )
+    {
         return 0;
+    }
 
     ack->srtt = rtt;
     ack->rttvar = rtt;
@@ -740,7 +828,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     uint32_t index_slot = 0;
     if ( !rn_sent_index_find( region, packet_id, &index_slot ) )
+    {
         return 0;
+    }
 
     const uint32_t entry_index = region->sent_index[index_slot].entry;
     rocketnet_assert( entry_index < region->packets );
@@ -790,7 +880,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         // and it is the only test between a stale packet and the later number.
 
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
+        {
             continue;
+        }
 
         // a number that passed the skips is the one the packet carried: it
         // leaves its resend sequence before it is marked acked
@@ -813,7 +905,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
             if ( descriptor->in_use && ( descriptor->flags & ( RN_SEND_FLAG_RECEIPT_PROMOTED | RN_SEND_FLAG_RECEIPT_RELIABLE ) ) &&
                  descriptor->fragments_acked + 1 == descriptor->fragments )
+            {
                 rn_window_ack_receipt_emit( ack, descriptor->serial, ROCKETNET_RECEIPT_STATUS_ACKED );
+            }
 
             rn_region_send_free_fragment( region, d );
         }
@@ -828,7 +922,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     rn_window_ack_reclaim_head( ack );
 
     if ( send->U != u_before )
+    {
         rn_window_ack_refresh_oldest( ack );
+    }
 
     return 1;
 }
@@ -843,7 +939,9 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
     // send_packets since then remain queued for this update.
 
     if ( ack->receipt_head < ack->receipt_visible_tail )
+    {
         ack->receipt_head = ack->receipt_visible_tail;
+    }
 
     ack->receipt_visible_head = ack->receipt_head;
     ack->receipt_visible_tail = ack->receipt_head;
@@ -872,16 +970,22 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     // remain in the map for late ACKs.
 
     if ( ack->receipt_sweep < ack->pkt_head )
+    {
         ack->receipt_sweep = ack->pkt_head;
+    }
 
     while ( ack->receipt_sweep < ack->pkt_tail )
     {
         rn_sent_packet_t * entry = &ack->region->sent_packets[ack->receipt_sweep % ack->region->packets];
         if ( entry->packet_id != 0 && now < entry->send_time + ack->resend_delay_max )
+        {
             break;
+        }
 
         if ( entry->packet_id != 0 )
+        {
             rn_window_ack_receipt_resolve( ack, entry, ROCKETNET_RECEIPT_STATUS_LOSS );
+        }
         ack->receipt_sweep++;
     }
 }
@@ -891,11 +995,15 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !ack || capacity < 0 || ( !out && capacity > 0 ) )
+    {
         return 0;
+    }
 
     uint64_t first = ack->receipt_visible_head;
     if ( first < ack->receipt_head )
+    {
         first = ack->receipt_head;
+    }
 
     const uint64_t available = ack->receipt_visible_tail > first ? ack->receipt_visible_tail - first : 0;
     const uint64_t copied = available < (uint64_t) capacity ? available : (uint64_t) capacity;
@@ -913,13 +1021,17 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 {
     rocketnet_assert( ack );
     if ( count == 0 || !packet_ids )
+    {
         return 0;
+    }
 
     uint32_t matched = 0;
     for ( uint32_t i = 0; i < count; i++ )
     {
         if ( rn_window_ack_on_ack( ack, packet_ids[i], now ) )
+        {
             matched++;
+        }
     }
 
     return matched;
@@ -932,7 +1044,9 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
     rocketnet_assert( ack );
     (void) now;
     if ( count == 0 || !numbers )
+    {
         return;
+    }
 
     rn_region_t * region = ack->region;
     const uint32_t W = region->window;
@@ -979,11 +1093,15 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
     if ( ack->error != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         return 1;
+    }
 
     const rn_window_send_t * send = ack->send;
     if ( send->U >= send->next )
+    {
         return 0;
+    }
 
     rn_window_ack_refresh_oldest( ack );
 
@@ -1007,7 +1125,9 @@ uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack )
     for ( uint64_t p = ack->pkt_head; p < ack->pkt_tail; p++ )
     {
         if ( region->sent_packets[p % P].packet_id != 0 )
+        {
             live++;
+        }
     }
 
     return live;

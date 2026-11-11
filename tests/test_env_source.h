@@ -55,7 +55,9 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
     {
         char probe[1];
         if ( rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
+        {
             return 0;
+        }
     }
 
     // an empty value is stored present and empty on every platform, so a
@@ -93,15 +95,21 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
         const int present = query_status == 0 && existing != NULL;
         free( existing );
         if ( query_status != 0 )
+        {
             return query_status;
+        }
         if ( present )
+        {
             return 0;
+        }
     }
 
     return _putenv_s( name, value );
 #else
     if ( !overwrite && getenv( name ) )
+    {
         return 0;
+    }
     return setenv( name, value, 1 );
 #endif // #if defined( _WIN32 )
 }

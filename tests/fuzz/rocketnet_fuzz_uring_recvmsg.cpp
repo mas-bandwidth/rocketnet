@@ -92,7 +92,9 @@ static_assert( IPPROTO_IP == FUZZ_IPPROTO_IP && IPPROTO_UDP == FUZZ_IPPROTO_UDP 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
     if ( condition )
+    {
         return;
+    }
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -120,7 +122,9 @@ static fuzz_uring_result_t fuzz_uring_run( const uint8_t * data, size_t size )
 {
     fuzz_uring_result_t result = { -1, 0, 0 };
     if ( size < 1 || size - 1 > (size_t) ROCKETNET_URING_RECV_BUFFER_BYTES )
+    {
         return result;
+    }
 
 #if ROCKETNET_FUZZ_URING_ACTIVE
     const bool gro = ( data[0] & 1 ) != 0;
@@ -334,7 +338,9 @@ static int fuzz_uring_seed_build( const fuzz_uring_seed_t * seed, uint8_t * out 
     const int control_area = ( seed->mode & 1 ) ? FUZZ_GRO_CONTROL_BYTES : 0;
     const int bytes = FUZZ_RECVMSG_OUT_BYTES + FUZZ_NAME_AREA_BYTES + control_area + seed->payload_bytes - seed->short_by;
     if ( bytes < 0 || 1 + bytes > FUZZ_URING_SEED_MAX )
+    {
         return 0;
+    }
 
     memset( out, 0, FUZZ_URING_SEED_MAX );
     out[0] = seed->mode;

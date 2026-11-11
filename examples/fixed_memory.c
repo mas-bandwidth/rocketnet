@@ -61,14 +61,18 @@ static void * budget_malloc( void * context, size_t bytes )
 
     unsigned char * block = (unsigned char *) malloc( charge );
     if ( !block )
+    {
         return NULL;
+    }
 
     memcpy( block, &charge, sizeof( charge ) );
     if ( b )
     {
         b->live += charge;
         if ( b->live > b->peak )
+        {
             b->peak = b->live;
+        }
     }
 
     return block + HEADER_BYTES;
@@ -77,13 +81,17 @@ static void * budget_malloc( void * context, size_t bytes )
 static void budget_free( void * context, void * p )
 {
     if ( !p )
+    {
         return;
+    }
 
     unsigned char * block = (unsigned char *) p - HEADER_BYTES;
     size_t charge;
     memcpy( &charge, block, sizeof( charge ) );
     if ( context )
+    {
         ( (struct budget_t *) context )->live -= charge;
+    }
 
     free( block );
 }
@@ -104,13 +112,17 @@ static enum rocketnet_status_t connect_client( struct rocketnet_server_t * serve
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     if ( !rocketnet_server_ipv4_address( server, address, sizeof( address ) ) )
+    {
         return ROCKETNET_STATUS_INVALID_ADDRESS;
+    }
     rocketnet_server_public_key( server, server_public_key );
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 10, next_client_id++, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, token );
     if ( token_status != ROCKETNET_STATUS_OK )
+    {
         return token_status;
+    }
 
     return rocketnet_client_connect( client, token );
 }
@@ -128,9 +140,13 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
 
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
             received += batch->num_messages;
+        }
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
             received += batch->num_messages;
+        }
 
         // unreliable: a message with no room this frame is skipped, and the next frame sends another
 
@@ -173,18 +189,24 @@ int main( void )
 {
     enum rocketnet_status_t status = rocketnet_init( NULL, budget_malloc, budget_free );
     if ( status != ROCKETNET_STATUS_OK )
+    {
         return fail( "init", status );
+    }
 
     struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 2, &status );
     if ( !hub )
+    {
         return fail( "loopback hub create", status );
+    }
 
     // the configs the objects are created with are the configs they are sized with
 
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t server_config;
     if ( ( status = rocketnet_server_default_config( &server_config ) ) != ROCKETNET_STATUS_OK )
+    {
         return fail( "server default config", status );
+    }
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     server_config.max_clients = 2;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
@@ -193,7 +215,9 @@ int main( void )
 
     struct rocketnet_client_config_t client_config;
     if ( ( status = rocketnet_client_default_config( &client_config ) ) != ROCKETNET_STATUS_OK )
+    {
         return fail( "client default config", status );
+    }
     client_config.transport = "loopback";
     client_config.loopback_hub = hub;
     client_config.step_driven = true;
@@ -214,20 +238,30 @@ int main( void )
 
     struct rocketnet_server_t * server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
     if ( !server )
+    {
         return fail( "server create", status );
+    }
     if ( ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
+    {
         return fail( "server start", status );
+    }
 
     struct rocketnet_client_t * client = rocketnet_client_create( &client_budget, &client_config, &status );
     if ( !client )
+    {
         return fail( "client create", status );
+    }
 
     for ( int connection = 0; connection < 2; connection++ )
     {
         if ( ( status = connect_client( server, client ) ) != ROCKETNET_STATUS_OK )
+        {
             return fail( "client connect", status );
+        }
         if ( !run_frames( server, client ) )
+        {
             return fail( "messages", ROCKETNET_STATUS_OK );
+        }
 
         // disconnect, then reconnect: the next connect frees the old attempt before it allocates
 
@@ -257,26 +291,38 @@ int main( void )
     budget_reset( &server_budget, server_peak - 1 );
     server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
     if ( server )
+    {
         status = rocketnet_server_start( server );
+    }
     printf( "server with %zu bytes: %s\n", server_peak - 1, rocketnet_status_name( status ) );
     if ( status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+    {
         return fail( "server under budget", status );
+    }
     rn_cli_server_stop_and_destroy( server );
 
     budget_reset( &server_budget, server_required );
     server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
     if ( !server || ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
+    {
         return fail( "server start", status );
+    }
 
     budget_reset( &client_budget, client_peak - 1 );
     client = rocketnet_client_create( &client_budget, &client_config, &status );
     if ( client )
+    {
         status = connect_client( server, client );
+    }
     printf( "client with %zu bytes: %s\n", client_peak - 1, rocketnet_status_name( status ) );
     if ( status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+    {
         return fail( "client under budget", status );
+    }
     if ( client )
+    {
         rocketnet_client_destroy( client );
+    }
     rn_cli_server_stop_and_destroy( server );
 
     if ( server_budget.live || client_budget.live )
@@ -287,7 +333,9 @@ int main( void )
 
     rn_cli_loopback_hub_destroy( hub );
     if ( ( status = rocketnet_term() ) != ROCKETNET_STATUS_OK )
+    {
         return fail( "term", status );
+    }
 
     printf( "PASS\n" );
 

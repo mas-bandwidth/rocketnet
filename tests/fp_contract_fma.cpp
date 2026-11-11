@@ -13,7 +13,9 @@
 int main()
 {
     if ( test_fp_contract_off() )
+    {
         return 1;
+    }
     printf( "test_fp_contract_off: two roundings with FMA code generation\n" );
     return 0;
 }

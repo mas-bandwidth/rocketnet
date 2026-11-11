@@ -79,7 +79,7 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
 
     int status = -1;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_internal( fake, token, &config, 1000.0,
-                                                                                                 &rocketnet_fake_client_operations_base, fake, &status );
+                                                                                                       &rocketnet_fake_client_operations_base, fake, &status );
     check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
 
     if ( transport )
@@ -151,7 +151,9 @@ static bool port_zero_buffer_untouched( const void * buffer, size_t bytes )
     for ( size_t i = 0; i < bytes; ++i )
     {
         if ( view[i] != PORT_ZERO_SENTINEL )
+        {
             return false;
+        }
     }
 
     return true;

@@ -141,7 +141,9 @@ static void sequence_wrap_record_acks( struct sequence_wrap_seam_t * seam, int c
         for ( int i = seam->packets - 1; i >= 0; i-- )
         {
             if ( seam->packet_id[i] != packet_ids[k] )
+            {
                 continue;
+            }
             seam->acked++;
             if ( seam->sequence[i] > SEQUENCE_WRAP_FIELD_LIMIT )
             {
@@ -238,7 +240,9 @@ static bool sequence_wrap_pair_setup( struct sequence_wrap_pair_t * pair )
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d",
@@ -278,7 +282,9 @@ static void sequence_wrap_drain( struct sequence_wrap_pair_t * pair, int at_clie
         const int got = at_client ? rocketnet_message_client_receive( pair->client, 0, &data, &bytes )
                                   : rocketnet_message_server_receive( pair->server, 0, 0, &data, &bytes );
         if ( !got )
+        {
             break;
+        }
 
         if ( d && bytes == 8 && data[0] == 0x5E )
         {
@@ -293,9 +299,13 @@ static void sequence_wrap_drain( struct sequence_wrap_pair_t * pair, int at_clie
         }
 
         if ( at_client )
+        {
             rocketnet_message_client_release( pair->client, data );
+        }
         else
+        {
             rocketnet_message_server_release( pair->server, data );
+        }
     }
 }
 
@@ -347,7 +357,9 @@ static void sequence_wrap_check_counters( const char * name, const struct rocket
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
         if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
+        {
             continue;
+        }
         const uint64_t value = rocketnet_counter_value( counters, i );
         if ( value != 0 )
         {
@@ -378,14 +390,20 @@ static void test_sequence_wrap_session_both_directions( void )
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                    rocketnet_message_server_client_connected( pair.server, 0 ) );
           i++ )
+    {
         sequence_wrap_step( &pair, false, NULL, NULL );
+    }
     if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         const struct rocketnet_counters_t * client_counters = rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
         printf( "sequence wrap: client state %d after the connect steps\n", rocketnet_message_client_state( pair.client ) );
         for ( int i = 0; i < rocketnet_num_counters(); i++ )
+        {
             if ( rocketnet_counter_value( client_counters, i ) != 0 )
+            {
                 printf( "sequence wrap: client %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( client_counters, i ) );
+            }
+        }
     }
 
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
@@ -441,6 +459,7 @@ static void test_sequence_wrap_session_both_directions( void )
         const struct sequence_wrap_seam_t * seam = &sequence_wrap_seams[side];
         char print[16];
         if ( rocketnet_test_getenv( "ROCKETNET_SEQUENCE_WRAP_PRINT", print, sizeof( print ) ) )
+        {
             printf( "SEQUENCE_WRAP %s packets=%d lowest=0x%llx highest=0x%llx past_wrap=%d acked=%d acked_past_wrap=%d "
                     "samples_past_wrap=%d sample_min=%.6f sample_max=%.6f srtt=%.6f resent=%llu duplicate=%llu\n",
                     side_names[side], seam->packets, (unsigned long long) seam->lowest_sequence,
@@ -449,6 +468,7 @@ static void test_sequence_wrap_session_both_directions( void )
                     objects[side]->connections[0].ordered.ack.srtt,
                     (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT],
                     (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] );
+        }
 
         // the session started at the seam's value and the field wrapped,
         // with at least SEQUENCE_WRAP_STEPS packets sent each way
@@ -538,14 +558,18 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                    rocketnet_message_server_client_connected( pair.server, 0 ) );
           i++ )
+    {
         sequence_wrap_step( &pair, false, NULL, NULL );
+    }
 
     const struct rocketnet_counters_t * client_counters = rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
     const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) );
     if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
         printf( "sequence wrap edge: client state %d after the connect steps, CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK = %llu\n",
                 rocketnet_message_client_state( pair.client ),
                 (unsigned long long) rocketnet_counter_value( client_counters, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK ) );
+    }
     check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
 

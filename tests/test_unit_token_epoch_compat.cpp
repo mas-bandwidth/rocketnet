@@ -129,7 +129,9 @@ static enum rocketnet_client_state_t epoch_compat_pump( epoch_compat_t * t, doub
     {
         epoch_compat_frame( t, time + 0.1 * i, true );
         if ( rocketnet_client_state( t->client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
             break;
+        }
     }
     return rocketnet_client_state( t->client );
 }

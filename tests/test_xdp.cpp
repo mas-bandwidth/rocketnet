@@ -18,7 +18,9 @@ int main()
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
     rocketnet_server_socket_forbid_commit();
 
     const bool passed = rocketnet_server_socket_test_buffer_exchange();

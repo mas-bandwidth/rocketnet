@@ -46,7 +46,9 @@ void rocketnet_client_transport_default_config_current( struct rocketnet_client_
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return;
+    }
 
     rocketnet_client_transport_default_config_current( config );
 }
@@ -60,7 +62,9 @@ void rocketnet_server_transport_default_config_current( struct rocketnet_server_
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return;
+    }
 
     rocketnet_server_transport_default_config_current( config );
 }
@@ -68,7 +72,9 @@ void rocketnet_server_transport_default_config( struct rocketnet_server_transpor
 void rocketnet_message_default_config( struct rocketnet_message_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
+    {
         return;
+    }
 
     rocketnet_assert( config );
 
@@ -213,7 +219,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     if ( !rocketnet_config_validate( "message", config, fields, num_fields ) )
     {
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -228,7 +236,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config reliable_messages_in_flight %d is not a power of two", W );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -238,7 +248,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config receive_message_buffer_bytes %d is not a multiple of 16", B );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -248,7 +260,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config max_message_bytes %d is above receive_message_buffer_bytes %d", config->max_message_bytes, B );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -258,7 +272,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config max_message_bytes %d needs %d fragments, above reliable_messages_in_flight %d", config->max_message_bytes, fragments, W );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -277,7 +293,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config packets_in_flight %d is below reliable_messages_in_flight %d", config->packets_in_flight, W );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -287,7 +305,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config message_resend_delay_min_ms %d is above message_resend_delay_max_ms %d", config->message_resend_delay_min_ms, config->message_resend_delay_max_ms );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -295,7 +315,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     {
         rocketnet_error( "message config message_resend_delay_initial_ms %d is outside message_resend_delay_min_ms %d to message_resend_delay_max_ms %d", config->message_resend_delay_initial_ms, config->message_resend_delay_min_ms, config->message_resend_delay_max_ms );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -307,7 +329,9 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
         rocketnet_error( "message config reliable_message_timeout_ms %d fits fewer than %d sends of message_resend_delay_initial_ms %d",
                          config->reliable_message_timeout_ms, ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS, config->message_resend_delay_initial_ms );
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
@@ -319,12 +343,16 @@ int rocketnet_message_validate_config_internal( const struct rocketnet_message_c
     if ( !rn_region_reserve_sizes( config, &reserve_sizes ) )
     {
         if ( status )
+        {
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
         return 0;
     }
 
     if ( status )
+    {
         *status = ROCKETNET_STATUS_OK;
+    }
 
     return 1;
 }
@@ -361,12 +389,16 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
     const int name_length = (int) strlen( field_name );
 
     if ( prefix_length + name_length + 1 > buffer_size )
+    {
         return false;
+    }
 
     memcpy( buffer, prefix, (size_t) prefix_length );
 
     for ( int i = 0; i < name_length; i++ )
+    {
         buffer[prefix_length + i] = (char) toupper( (unsigned char) field_name[i] );
+    }
 
     buffer[prefix_length + name_length] = '\0';
 
@@ -387,21 +419,29 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     char prefix[64];
     const int written = snprintf( prefix, sizeof( prefix ), "ROCKETNET_%s_", transport_name );
     if ( written <= 0 || written >= (int) sizeof( prefix ) )
+    {
         return false;
+    }
 
     for ( int i = 0; prefix[i] != '\0'; i++ )
+    {
         prefix[i] = (char) toupper( (unsigned char) prefix[i] );
+    }
 
     const int prefix_length = (int) strlen( prefix );
     const int name_length = (int) strlen( field_name );
 
     if ( prefix_length + name_length + 1 > buffer_size )
+    {
         return false;
+    }
 
     memcpy( buffer, prefix, (size_t) prefix_length );
 
     for ( int i = 0; i < name_length; i++ )
+    {
         buffer[prefix_length + i] = (char) toupper( (unsigned char) field_name[i] );
+    }
 
     buffer[prefix_length + name_length] = '\0';
 
@@ -420,15 +460,21 @@ static bool rocketnet_config_numeric_charset( const char * value, bool allow_neg
 
     const char * cursor = value;
     if ( allow_negative && *cursor == '-' )
+    {
         cursor++;
+    }
 
     if ( *cursor == '\0' )
+    {
         return false;
+    }
 
     for ( ; *cursor != '\0'; cursor++ )
     {
         if ( *cursor < '0' || *cursor > '9' )
+        {
             return false;
+        }
     }
 
     return true;
@@ -437,16 +483,22 @@ static bool rocketnet_config_numeric_charset( const char * value, bool allow_neg
 static bool rocketnet_config_parse_int( const char * value, int * out )
 {
     if ( !rocketnet_config_numeric_charset( value, true ) )
+    {
         return false;
+    }
 
     char * end = NULL;
     errno = 0;
     long long parsed = strtoll( value, &end, 10 );
     if ( end == value || *end != '\0' || errno == ERANGE )
+    {
         return false;
+    }
 
     if ( parsed < INT32_MIN || parsed > INT32_MAX )
+    {
         return false;
+    }
 
     *out = (int) parsed;
 
@@ -463,13 +515,17 @@ bool rocketnet_config_parse_int_value( const char * value, int * out )
 static bool rocketnet_config_parse_uint64( const char * value, uint64_t * out )
 {
     if ( !rocketnet_config_numeric_charset( value, false ) )
+    {
         return false;
+    }
 
     char * end = NULL;
     errno = 0;
     unsigned long long parsed = strtoull( value, &end, 10 );
     if ( end == value || *end != '\0' || errno == ERANGE )
+    {
         return false;
+    }
 
     *out = (uint64_t) parsed;
 
@@ -504,7 +560,9 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
         case ROCKETNET_CONFIG_KIND_BYTES:
         {
             if ( rocketnet_base64_encode_data( base, (size_t) field->size, buffer, (size_t) buffer_size ) <= 0 )
+            {
                 snprintf( buffer, (size_t) buffer_size, "(unprintable)" );
+            }
         }
         break;
 
@@ -544,7 +602,9 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     }
 
     if ( found == 0 )
+    {
         return true;
+    }
 
     if ( value[0] == '\0' )
     {
@@ -594,9 +654,13 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
 
     char displaced[192];
     if ( secret )
+    {
         snprintf( displaced, sizeof( displaced ), "(redacted)" );
+    }
     else
+    {
         rocketnet_config_field_to_string( config, field, displaced, sizeof( displaced ) );
+    }
 
     uint8_t * base = (uint8_t *) config + field->offset;
 
@@ -647,7 +711,9 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
             const int decoded_bytes = rocketnet_base64_decode_data( value, decoded, (size_t) field->size );
             const bool decoded_whole = decoded_bytes == field->size;
             if ( decoded_whole )
+            {
                 memcpy( base, decoded, (size_t) field->size );
+            }
 
             // the staging holds the decoded bytes, a secret key's among
             // them, on the parse and on a refused decode alike: wiped
@@ -701,7 +767,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
     {
         const struct rocketnet_config_field_t * field = &fields[i];
         if ( ( field->flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+        {
             continue;
+        }
 
         char env_name[128];
         if ( !rocketnet_config_env_var_name_for( transport_name, field->name, env_name, sizeof( env_name ) ) )
@@ -713,7 +781,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
         const int found = rocketnet_platform_getenv( env_name, value, sizeof( value ) );
         if ( found == 0 )
+        {
             continue;
+        }
 
         if ( found < 0 )
         {
@@ -730,7 +800,9 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         const bool applied = rocketnet_config_apply_env_value( transport_name, config, field, env_name, value );
         sodium_memzero( value, sizeof( value ) );
         if ( !applied )
+        {
             return false;
+        }
     }
 
     return true;
@@ -755,7 +827,9 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
                 int value;
                 memcpy( &value, base, sizeof( value ) );
                 if ( value == 0 && ( field->flags & ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) != 0 )
+                {
                     break;
+                }
 
                 if ( (int64_t) value < field->min_value || (int64_t) value > field->max_value )
                 {
@@ -845,7 +919,9 @@ bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * 
 
     static const uint8_t test_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     if ( !rocketnet_development_values_refused() || memcmp( filter, test_filter, sizeof( test_filter ) ) != 0 )
+    {
         return false;
+    }
 
     rocketnet_error( "%s packet_filter is the published test filter; a production build (ROCKETNET_DEV=0) refuses it: set your own in the config or ROCKETNET_%s_PACKET_FILTER", side, side[0] == 'c' ? "CLIENT" : "SERVER" );
     return true;
@@ -858,7 +934,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
     rocketnet_assert( fields );
 
     if ( development )
+    {
         return true;
+    }
 
     static const char * simulator_names[] = {
         "simulated_loss_percent",
@@ -873,7 +951,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
     {
         const struct rocketnet_config_field_t * field = &fields[i];
         if ( field->kind != ROCKETNET_CONFIG_KIND_INT )
+        {
             continue;
+        }
 
         bool simulator_field = false;
         for ( int j = 0; j < (int) ( sizeof( simulator_names ) / sizeof( simulator_names[0] ) ); j++ )
@@ -886,7 +966,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
         }
 
         if ( !simulator_field )
+        {
             continue;
+        }
 
         int value;
         memcpy( &value, (const uint8_t *) config + field->offset, sizeof( value ) );
@@ -909,7 +991,9 @@ static int rocketnet_transport_id_from_name( const char * name, int name_length 
     for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; i++ )
     {
         if ( (int) strlen( rocketnet_transport_name( i ) ) == name_length && memcmp( rocketnet_transport_name( i ), name, (size_t) name_length ) == 0 )
+        {
             return i;
+        }
     }
 
     return -1;
@@ -934,14 +1018,20 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         const char * start = value;
         while ( *start == ' ' || *start == '\t' )
+        {
             start++;
+        }
 
         const char * end = start + strlen( start );
         while ( end > start && ( end[-1] == ' ' || end[-1] == '\t' ) )
+        {
             end--;
+        }
 
         if ( end == start || ( end - start == 4 && memcmp( start, "auto", 4 ) == 0 ) )
+        {
             is_auto = true;
+        }
     }
 
     if ( is_auto )
@@ -951,7 +1041,9 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         for ( int i = 0; i < num_available; i++ )
         {
             if ( rocketnet_transport_pin_only( available[i], server ) )
+            {
                 continue;
+            }
 
             if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {
@@ -974,11 +1066,15 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
         const char * name = cursor;
         while ( name < token_end && ( *name == ' ' || *name == '\t' ) )
+        {
             name++;
+        }
 
         const char * name_end = token_end;
         while ( name_end > name && ( name_end[-1] == ' ' || name_end[-1] == '\t' ) )
+        {
             name_end--;
+        }
 
         const int name_length = (int) ( name_end - name );
 
@@ -1039,7 +1135,9 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         }
 
         if ( !comma )
+        {
             break;
+        }
 
         cursor = comma + 1;
     }
@@ -1060,7 +1158,9 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         for ( int i = 0; i < num_available; i++ )
         {
             if ( rocketnet_transport_pin_only( available[i], server ) )
+            {
                 continue;
+            }
 
             const size_t used = strlen( auto_names );
             snprintf( auto_names + used, sizeof( auto_names ) - used, "%s%s", used > 0 ? "," : "", rocketnet_transport_name( available[i] ) );
@@ -1073,7 +1173,9 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         for ( int i = 0; i < num_available; i++ )
         {
             if ( rocketnet_transport_pin_only( available[i], server ) )
+            {
                 continue;
+            }
 
             if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
             {

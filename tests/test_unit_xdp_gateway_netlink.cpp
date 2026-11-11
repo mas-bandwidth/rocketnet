@@ -1092,7 +1092,9 @@ static void test_xdp_transport_gateway_netlink_interrupted_dump_bounded()
     fake_netlink_t fake;
     fake_netlink = &fake;
     for ( int i = 0; i < ROCKETNET_GATEWAY_NETLINK_DUMP_ATTEMPTS; i++ )
+    {
         fake.script.push_back( interrupted_route_datagram() );
+    }
     fake.script.push_back( default_route_datagram() );
 
     uint8_t gateway[16];
@@ -1171,7 +1173,9 @@ static int fake_dumps( const fake_netlink_t & fake )
     {
         uint16_t type = 0;
         if ( request_is_dump( fake.requests[i], &type ) )
+        {
             dumps++;
+        }
     }
     return dumps;
 }

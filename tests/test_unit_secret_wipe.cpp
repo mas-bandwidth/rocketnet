@@ -61,8 +61,12 @@ static void plant_canary( uint8_t * bytes, int count )
 static int canary_survives( const uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
+    {
         if ( bytes[i] == k_canary )
+        {
             return 1;
+        }
+    }
     return 0;
 }
 
@@ -366,8 +370,12 @@ struct wp_x25519_tally_t
 static bool wp_x25519_all_zero( const uint8_t * bytes )
 {
     for ( int i = 0; i < 32; i++ )
+    {
         if ( bytes[i] != 0 )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -375,13 +383,19 @@ static bool wp_x25519_field( const wycheproof_test_t & test, const char * name, 
 {
     std::map<std::string, std::string>::const_iterator it = test.fields.find( name );
     if ( it == test.fields.end() )
+    {
         return false;
+    }
 
     std::vector<uint8_t> bytes;
     if ( !wycheproof_hex( it->second, bytes ) )
+    {
         return false;
+    }
     if ( bytes.size() != 32 )
+    {
         return false;
+    }
     memcpy( out, &bytes[0], 32 );
 
     return true;

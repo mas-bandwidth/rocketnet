@@ -17,7 +17,9 @@ int rn_channels_reliable_receipt_base( int type )
 
     if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ||
          type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT )
+    {
         return ROCKETNET_CHANNEL_RECEIPT_BASE( type );
+    }
 
     return -1;
 }

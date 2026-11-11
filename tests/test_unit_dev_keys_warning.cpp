@@ -157,12 +157,16 @@ static long dev_warning_rss_bound_mb()
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+    {
         return 0;
+    }
 
     uint64_t planned = plan.total_bytes;
     const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
     if ( !rocketnet_memory_add( planned, 1, hub ) )
+    {
         return 0;
+    }
     return suite_rss_bound_mb( planned, 32 );
 #else
     return 0; // keep the suite-wide bound when create refuses before allocation

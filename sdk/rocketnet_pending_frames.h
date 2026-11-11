@@ -20,10 +20,14 @@ template <size_t Capacity> struct rocketnet_pending_frames_t
     bool append( const uint64_t * source, size_t length )
     {
         if ( length > available() )
+        {
             return false;
+        }
 
         for ( size_t i = 0; i < length; ++i )
+        {
             frames[count + i] = source[i];
+        }
 
         count += length;
 
@@ -34,14 +38,20 @@ template <size_t Capacity> struct rocketnet_pending_frames_t
     bool flush( Reserve reserve, Write write, Submit submit )
     {
         if ( !count )
+        {
             return true;
+        }
 
         uint32_t index = 0;
         if ( reserve( (uint32_t) count, &index ) != count )
+        {
             return false;
+        }
 
         for ( size_t i = 0; i < count; ++i )
+        {
             write( index + (uint32_t) i, frames[i] );
+        }
 
         submit( (uint32_t) count );
         count = 0;

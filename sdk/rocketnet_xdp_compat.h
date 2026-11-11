@@ -75,11 +75,15 @@ static inline rocketnet_xdp_program_t * rocketnet_xdp_program_open( struct bpf_o
 #if ROCKETNET_XDP_LEGACY_LIBBPF
     struct bpf_program * program = bpf_object__find_program_by_name( object, "server_xdp_filter" );
     if ( !program )
+    {
         return NULL;
+    }
 
     bpf_program__set_type( program, BPF_PROG_TYPE_XDP );
     if ( bpf_object__load( object ) != 0 )
+    {
         return NULL;
+    }
 
     return program;
 #else

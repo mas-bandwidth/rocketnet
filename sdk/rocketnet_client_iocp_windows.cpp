@@ -25,7 +25,9 @@ static void rocketnet_client_iocp_post( rocketnet_client_iocp_t * iocp, int rece
     rocketnet_assert( iocp->state[receive] == ROCKETNET_CLIENT_IOCP_RECEIVE_IDLE );
 
     if ( iocp->closed )
+    {
         return;
+    }
 
     if ( !iocp->port->post_receive( iocp->port_context, receive, iocp->buffers + (size_t) receive * (size_t) iocp->buffer_bytes, iocp->buffer_bytes ) )
     {
@@ -73,7 +75,9 @@ int rocketnet_client_iocp_init( rocketnet_client_iocp_t * iocp, const rocketnet_
     }
 
     for ( int i = 0; i < num_receives; i++ )
+    {
         rocketnet_client_iocp_post( iocp, i );
+    }
 
     return iocp->num_posted;
 }
@@ -124,7 +128,9 @@ static void rocketnet_client_iocp_dequeue( rocketnet_client_iocp_t * iocp, doubl
             // an error, an abort, an unreadable source or an empty datagram:
             // nothing to copy, so the buffer goes back to the kernel
             if ( !iocp->closed )
+            {
                 iocp->receives_failed++;
+            }
 
             iocp->state[receive] = (uint8_t) ROCKETNET_CLIENT_IOCP_RECEIVE_IDLE;
             rocketnet_client_iocp_post( iocp, receive );
@@ -137,13 +143,17 @@ static void rocketnet_client_iocp_dequeue( rocketnet_client_iocp_t * iocp, doubl
 static void rocketnet_client_iocp_retry_idle( rocketnet_client_iocp_t * iocp )
 {
     if ( iocp->num_idle == 0 || iocp->closed )
+    {
         return;
+    }
 
     iocp->num_idle = 0;
     for ( int i = 0; i < iocp->num_receives; i++ )
     {
         if ( iocp->state[i] == ROCKETNET_CLIENT_IOCP_RECEIVE_IDLE )
+        {
             rocketnet_client_iocp_post( iocp, i );
+        }
     }
 }
 
@@ -164,7 +174,9 @@ int rocketnet_client_iocp_receive_batch( rocketnet_client_iocp_t * iocp, rocketn
     rocketnet_client_iocp_retry_idle( iocp );
 
     if ( iocp->ready_count < max_packets )
+    {
         rocketnet_client_iocp_dequeue( iocp, 0.0 );
+    }
 
     int num_packets = 0;
     while ( num_packets < max_packets && iocp->ready_count > 0 )
@@ -198,7 +210,9 @@ bool rocketnet_client_iocp_wait( rocketnet_client_iocp_t * iocp, bool readable, 
     rocketnet_assert( iocp );
 
     if ( !iocp->woken && !( readable && iocp->ready_count > 0 ) )
+    {
         rocketnet_client_iocp_dequeue( iocp, timeout_seconds > 0.0 ? timeout_seconds : 0.0 );
+    }
 
     if ( iocp->woken )
     {
@@ -222,7 +236,9 @@ void rocketnet_client_iocp_wake( rocketnet_client_iocp_t * iocp )
         // swallowed for the life of the client
 
         if ( !iocp->port->post_wake( iocp->port_context ) )
+        {
             iocp->wake_posted.store( false, std::memory_order_release );
+        }
     }
 }
 
@@ -240,7 +256,9 @@ bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits,
     }
 
     for ( int i = 0; i < max_waits && iocp->num_posted > 0; i++ )
+    {
         rocketnet_client_iocp_dequeue( iocp, wait_seconds );
+    }
 
     return iocp->num_posted == 0;
 }
@@ -292,7 +310,9 @@ static bool rocketnet_client_iocp_address_read( const sockaddr_storage * storage
 
     if ( ( storage->ss_family == AF_INET && bytes < (int) sizeof( sockaddr_in ) ) ||
          ( storage->ss_family == AF_INET6 && bytes < (int) sizeof( sockaddr_in6 ) ) )
+    {
         return false;
+    }
 
     return rocketnet_platform_sockaddr_to_address( storage, dual_stack, address );
 }
@@ -311,13 +331,17 @@ static bool rocketnet_client_iocp_win32_post_receive( void * context, int receiv
     const int result = WSARecvFrom( (SOCKET) client->socket->handle, &op->buffer, 1, NULL, &op->flags,
                                     (sockaddr *) &op->from, &op->from_bytes, &op->overlapped, NULL );
     if ( result == 0 )
+    {
         return true; // completed at once; the completion is still queued on the port
+    }
 
     // pending covers a queued datagram longer than the buffer too: Windows 11 does not fail that post at once with WSAEMSGSIZE, its one completion carries the truncation (tests/test_iocp.cpp test_windows_oversize_receive_at_post)
 
     const int error = WSAGetLastError();
     if ( error == WSA_IO_PENDING )
+    {
         return true;
+    }
 
     rocketnet_debug( "iocp client: WSARecvFrom post failed: %d", error );
 
@@ -343,7 +367,9 @@ static int rocketnet_client_iocp_win32_dequeue( void * context, rocketnet_client
     {
         const DWORD error = GetLastError();
         if ( error != WAIT_TIMEOUT )
+        {
             rocketnet_debug( "iocp client: completion dequeue failed: %lu", error );
+        }
 
         return 0;
     }
@@ -381,7 +407,9 @@ static bool rocketnet_client_iocp_win32_post_wake( void * context )
 {
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     if ( PostQueuedCompletionStatus( client->port, 0, ROCKETNET_CLIENT_IOCP_WAKE_KEY, NULL ) )
+    {
         return true;
+    }
 
     rocketnet_debug( "iocp client: wake post failed: %lu", GetLastError() );
 
@@ -398,7 +426,9 @@ static void rocketnet_client_iocp_win32_close( void * context )
 {
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
     if ( client->socket && rocketnet_platform_socket_handle_is_valid( client->socket->handle ) )
+    {
         CancelIoEx( (HANDLE) client->socket->handle, NULL );
+    }
     rocketnet_platform_socket_close( client->socket );
 }
 
@@ -478,7 +508,9 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
 static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * client, int max_waits, double wait_seconds )
 {
     if ( !rocketnet_client_iocp_close( &client->core, max_waits, wait_seconds ) )
+    {
         return false;
+    }
 
     if ( client->port )
     {
@@ -509,7 +541,9 @@ static void rocketnet_client_iocp_destroy( void * transport )
 {
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     if ( !client )
+    {
         return;
+    }
 
     void * context = client->context;
 
@@ -538,7 +572,9 @@ static int rocketnet_client_iocp_receive( void * transport, rocketnet_address_t 
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) transport;
     int bytes = 0;
     if ( rocketnet_client_iocp_receive_batch( &client->core, from, data, capacity, &bytes, 1 ) == 0 )
+    {
         return 0;
+    }
 
     return bytes <= capacity ? bytes : 0;
 }

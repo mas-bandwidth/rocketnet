@@ -44,7 +44,9 @@ static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
     char text[64];
     const int found = rocketnet_platform_getenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
     if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+    {
         return 1;
+    }
 
     char * end = NULL;
     errno = 0;
@@ -83,7 +85,9 @@ void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_functio
 void rocketnet_dev_session_sequence_taken( uint64_t sequence )
 {
     if ( rocketnet_dev_sequence_taken_function )
+    {
         rocketnet_dev_sequence_taken_function( rocketnet_dev_sequence_taken_context, sequence );
+    }
 }
 
 // the hash-key seed seam (sdk/rocketnet_test_seams.h): per thread, so a case
@@ -105,14 +109,18 @@ void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kin
 {
     const uint64_t seed = rocketnet_dev_hash_key_seed_value;
     if ( seed == 0 )
+    {
         return;
+    }
 
     // BLAKE2b of the seed (little endian) and the table kind: one key per
     // seed and kind, the same on every platform
 
     uint8_t input[9];
     for ( int i = 0; i < 8; i++ )
+    {
         input[i] = (uint8_t) ( seed >> ( 8 * i ) );
+    }
     input[8] = (uint8_t) table_kind;
     crypto_generichash( key, key_bytes, input, sizeof( input ), NULL, 0 );
 }
@@ -121,7 +129,9 @@ void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kin
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )
 {
     if ( capacity < 1 )
+    {
         return 0;
+    }
 
     const uint64_t n = (uint64_t) capacity;
     return rocketnet_memory_allocations( { sizeof( rocketnet_encryption_map_t ),
@@ -138,11 +148,15 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     // index sentinels outside the stable public-index domain.
 
     if ( capacity < 1 || capacity > INT_MAX / 2 )
+    {
         return NULL;
+    }
 
     struct rocketnet_encryption_map_t * map = (struct rocketnet_encryption_map_t *) rocketnet_malloc( context, sizeof( struct rocketnet_encryption_map_t ) );
     if ( !map )
+    {
         return NULL;
+    }
 
     memset( map, 0, sizeof( struct rocketnet_encryption_map_t ) );
 
@@ -177,7 +191,9 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     }
 
     for ( int i = 0; i < map->index_cells; i++ )
+    {
         map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
+    }
 
     for ( int i = 0; i < capacity; i++ )
     {
@@ -214,8 +230,12 @@ void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
     // secrets, and those are the only secrets here
 
     for ( int i = 0; i < map->capacity; i++ )
+    {
         if ( map->address[i].type != ROCKETNET_ADDRESS_NONE )
+        {
             rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
+        }
+    }
 
     rocketnet_free( map->context, map->index );
     rocketnet_free( map->context, map->free_indices );
@@ -279,25 +299,33 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
         {
             if ( insertion_position )
+            {
                 *insertion_position = position;
+            }
             return -1;
         }
 
         if ( candidate >= (uint32_t) map->capacity )
+        {
             continue;
+        }
 
         const int index = (int) candidate;
         if ( map->address[index].type != ROCKETNET_ADDRESS_NONE &&
              rocketnet_address_equal( &map->address[index], address ) )
         {
             if ( insertion_position )
+            {
                 *insertion_position = position;
+            }
             return index;
         }
     }
 
     if ( insertion_position )
+    {
         *insertion_position = -1;
+    }
 
     return -1;
 }
@@ -327,17 +355,23 @@ static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_ma
         map->test_probes++;
 #endif // #if ROCKETNET_DEV
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
+        {
             break;
+        }
 
         if ( candidate >= (uint32_t) map->capacity )
+        {
             continue;
+        }
 
         const int slot = (int) candidate;
         const int home = (int) ( rocketnet_encryption_map_hash_value( map, &map->address[slot] ) % (uint64_t) map->index_cells );
         const bool stays = hole <= scan ? ( hole < home && home <= scan )
                                         : ( hole < home || home <= scan );
         if ( stays )
+        {
             continue;
+        }
 
         map->index[hole] = candidate;
         map->index[scan] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
@@ -373,14 +407,18 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     rocketnet_assert( address );
 
     if ( rocketnet_encryption_map_full( map ) )
+    {
         return -1;
+    }
 
     const uint64_t hash = rocketnet_encryption_map_hash( map, address );
     int index_position = -1;
     const int found = rocketnet_encryption_map_lookup( map, address, hash, &index_position );
     rocketnet_assert( found == -1 );
     if ( found != -1 || index_position < 0 )
+    {
         return -1;
+    }
 
     const int index = (int) map->free_indices[--map->num_free];
     rocketnet_assert( index >= 0 && index < map->capacity );
@@ -446,17 +484,23 @@ static bool rocketnet_encryption_map_remove_generation( struct rocketnet_encrypt
                                                         uint64_t index_value, uint64_t owner_generation )
 {
     if ( index_value >= (uint64_t) map->capacity )
+    {
         return false;
+    }
 
     const int index = (int) index_value;
     if ( map->address[index].type == ROCKETNET_ADDRESS_NONE || owner_generation != map->generation[index] )
+    {
         return false;
+    }
 
     const uint64_t hash = rocketnet_encryption_map_hash( map, &map->address[index] );
     int index_position = -1;
     if ( rocketnet_encryption_map_lookup( map, &map->address[index], hash, &index_position ) != index ||
          index_position < 0 )
+    {
         return false;
+    }
 
     rocketnet_encryption_map_erase_index( map, index_position );
 
@@ -477,7 +521,9 @@ bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * 
     rocketnet_assert( map );
 
     if ( index < 0 || index >= map->capacity || owner_generation == 0 )
+    {
         return false;
+    }
 
     return rocketnet_encryption_map_remove_generation( map, (uint64_t) index, owner_generation );
 }
@@ -552,7 +598,9 @@ bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map
 
     if ( handle == NULL || index < 0 || index >= map->capacity ||
          map->address[index].type == ROCKETNET_ADDRESS_NONE )
+    {
         return false;
+    }
 
     handle->index = (uint64_t) index;
     handle->generation = map->generation[index];

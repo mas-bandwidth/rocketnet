@@ -124,21 +124,29 @@ static void rocketnet_fuzz_session_send( struct rocketnet_fuzz_pair_t * pair, in
     }
 
     if ( direction == 0 && rocketnet_message_client_state( pair->client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
         return;
+    }
     if ( direction == 1 && !rocketnet_message_server_client_connected( pair->server, 0 ) )
+    {
         return;
+    }
 
     const uint32_t sequence = rocketnet_fuzz_session_next[direction][channel];
 
     uint8_t * out = direction == 0 ? rocketnet_message_client_start( pair->client, channel, channel, bytes )
                                    : rocketnet_message_server_start( pair->server, 0, channel, channel, bytes );
     if ( !out )
+    {
         return;     // a full send queue refuses; nothing was sent
+    }
     rocketnet_fuzz_session_fill( out, bytes, direction, channel, sequence );
     const uint32_t id = direction == 0 ? rocketnet_message_client_finish( pair->client, bytes )
                                        : rocketnet_message_server_finish( pair->server, 0, bytes );
     if ( id == 0 )
+    {
         return;
+    }
     rocketnet_fuzz_session_next[direction][channel] = sequence + 1;
 
     const int session = direction == 0 ? ROCKETNET_FUZZ_SESSION_SERVER : ROCKETNET_FUZZ_SESSION_CLIENT;
@@ -192,7 +200,9 @@ static void rocketnet_fuzz_session_delivered( struct rocketnet_fuzz_pair_t * pai
     }
 
     if ( rocketnet_fuzz_session_tainted )
+    {
         return;     // a forged sender can repeat a real message's bytes; the safety rows assume an honest one
+    }
 
     const int session = direction == 0 ? ROCKETNET_FUZZ_SESSION_SERVER : ROCKETNET_FUZZ_SESSION_CLIENT;
 
@@ -259,9 +269,13 @@ static void rocketnet_fuzz_session_faulty_step( struct rocketnet_fuzz_pair_t * p
         {
             const uint8_t decision = rocketnet_fuzz_u8( cursor ) & 3;
             if ( decision == 0 )            // deliver
+            {
                 pass == 0 ? rocketnet_fuzz_pair_deliver_c2s( pair, i ) : rocketnet_fuzz_pair_deliver_s2c( pair, i );
+            }
             else if ( decision == 1 )       // drop
+            {
                 rocketnet_fuzz_ring_remove( ring, i );
+            }
             else if ( decision == 2 )       // duplicate: one copy now, the other stays for a later step
             {
                 struct rocketnet_fuzz_datagram_t copy = ring->packet[i];
@@ -270,7 +284,9 @@ static void rocketnet_fuzz_session_faulty_step( struct rocketnet_fuzz_pair_t * p
                 rocketnet_fuzz_ring_push( ring, &copy.from, copy.data, copy.bytes );
             }
             else                            // hold back: it is delivered after what comes later
+            {
                 i++;
+            }
         }
     }
 }
@@ -308,7 +324,9 @@ static const uint8_t rocketnet_fuzz_session_sealed_types[] = {
 static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
 {
     if ( size < 1 )
+    {
         return 0;
+    }
 
     struct rocketnet_fuzz_cursor_t cursor = { data, size, 0 };
     const uint8_t selector = rocketnet_fuzz_u8( &cursor );
@@ -630,18 +648,24 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
         {
             const std::string file = entry.path().filename().string();
             if ( file.rfind( "prefilter_", 0 ) != 0 || !entry.is_regular_file() || count >= 12 )
+            {
                 continue;
+            }
 
             static uint8_t body[ROCKETNET_RECEIVE_CEILING + 2];
             FILE * f = rocketnet_test_fopen( entry.path().string().c_str(), "rb" );
             if ( !f )
+            {
                 continue;
+            }
 
             const int got = (int) fread( body, 1, sizeof( body ), f );
 
             fclose( f );
             if ( got < 2 )
+            {
                 continue;
+            }
 
             const int datagram = got - 1 > ROCKETNET_RECEIVE_CEILING ? ROCKETNET_RECEIVE_CEILING : got - 1;
             named_t n = { "garbage_" + file.substr( strlen( "prefilter_" ) ), { 0x00 } };
@@ -668,12 +692,16 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
     }
 
     for ( int direction = 0; direction < 2; direction++ )
+    {
         for ( int channel = 0; channel < ROCKETNET_FUZZ_NUM_CHANNELS; channel++ )
+        {
             if ( rocketnet_fuzz_session_delivered_tally[direction][channel] == 0 )
             {
                 fprintf( stderr, "seed generator: no seed delivers reliability %d %s\n", channel, direction == 0 ? "client -> server" : "server -> client" );
                 complete = false;
             }
+        }
+    }
 
     printf( "seed generator: %d scripts; %s\n", (int) seeds.size(),
             complete ? "every reliability type is delivered both ways" : "INCOMPLETE" );

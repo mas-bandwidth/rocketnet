@@ -36,7 +36,9 @@ static int bounds_send( uint8_t * frame, const uint8_t * staged, size_t packet_b
 
     const int copied = rocketnet_xdp_send_copy( frame, ROCKETNET_XDP_FRAME_SIZE, ROCKETNET_ADDRESS_IPV4, staged, packet_bytes, refused );
     if ( copied < 0 )
+    {
         return -1;
+    }
     return rocketnet_xdp_frame_build( frame, ROCKETNET_XDP_FRAME_SIZE, bounds_server_mac, bounds_gateway_mac, &source, &destination, copied );
 }
 
@@ -94,13 +96,17 @@ static int bounds_receive( const uint8_t * umem, uint64_t addr, uint32_t len, st
 {
     const uint8_t * packet_data = rocketnet_xdp_receive_descriptor( umem, BOUNDS_REGION_BEGIN, BOUNDS_REGION_END, addr, len, drops );
     if ( !packet_data )
+    {
         return -1;
+    }
 
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
     if ( !rocketnet_xdp_frame_receive( packet_data, (size_t) len, ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, drops ) )
+    {
         return -1;
+    }
     memcpy( slot, payload, (size_t) payload_bytes );
     return payload_bytes;
 }
@@ -300,7 +306,9 @@ static void test_xdp_transport_stats_failed_read_keeps_last()
 
     rocketnet_unit_check( !rocketnet_xdp_stats_publish( true, values, 2, last, &failing, counters ) );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+    {
         rocketnet_unit_check( counters[i] == (uint64_t) ( 101 * ( i + 1 ) ) );
+    }
 
     // the lookup fails twice: the sums stand and only the first is reported
 
@@ -308,7 +316,9 @@ static void test_xdp_transport_stats_failed_read_keeps_last()
     memset( counters, 0, sizeof( counters ) );
     rocketnet_unit_check( rocketnet_xdp_stats_publish( false, values, 2, last, &failing, counters ) );
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+    {
         rocketnet_unit_check( counters[i] == (uint64_t) ( 101 * ( i + 1 ) ) );
+    }
     rocketnet_unit_check( !rocketnet_xdp_stats_publish( false, values, 2, last, &failing, counters ) );
     rocketnet_unit_check( counters[0] == 101 );
 

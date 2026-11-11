@@ -124,7 +124,9 @@ static inline const char * rocketnet_dst_schedule_name( int schedule )
         "dup-storm",
     };
     if ( schedule < 0 || schedule >= ROCKETNET_DST_NUM_SCHEDULES )
+    {
         return "none";
+    }
 
     return names[schedule];
 }
@@ -149,9 +151,13 @@ static inline int rocketnet_dst_schedule_parse( const char * name, int * schedul
 static inline uint64_t rocketnet_dst_schedule_sequence_start( int schedule )
 {
     if ( schedule == ROCKETNET_DST_SCHEDULE_SEQ_WRAP_31 )
+    {
         return ( 1ULL << 31 ) - ROCKETNET_DST_SEQ_WRAP_BELOW;
+    }
     if ( schedule == ROCKETNET_DST_SCHEDULE_SEQ_WRAP_32 )
+    {
         return ( 1ULL << 32 ) - ROCKETNET_DST_SEQ_WRAP_BELOW;
+    }
 
     return 0;
 }
@@ -440,7 +446,9 @@ typedef struct rocketnet_dst_world_t
 static inline void rocketnet_dst_fail( rocketnet_dst_world_t * w, const char * check, const char * detail )
 {
     if ( w->failed )
+    {
         return;
+    }
     w->failed = 1;
     w->fail_step = w->step;
     snprintf( w->fail_check, sizeof( w->fail_check ), "%s", check );
@@ -476,7 +484,9 @@ static inline void rocketnet_dst_wire_send( rocketnet_dst_world_t * w, const str
 
     struct rocketnet_dst_schedule_t * s = &w->schedule;
     if ( s->kind != ROCKETNET_DST_SCHEDULE_DUP_STORM || w->step < s->start_step || w->step >= s->end_step )
+    {
         return;
+    }
 
     const int copies = (int) rocketnet_dst_substream_uniform( &s->draws, ROCKETNET_DST_DUP_STORM_MIN_COPIES,
                                                               ROCKETNET_DST_DUP_STORM_MAX_COPIES );
@@ -544,7 +554,9 @@ static inline void rocketnet_dst_endpoint_payload( rocketnet_dst_endpoint_t * en
 static inline int rocketnet_dst_world_client_for_slot( rocketnet_dst_world_t * w, int slot )
 {
     if ( !rocketnet_client_slots_connected( w->server.client_slots, slot ) )
+    {
         return -1;
+    }
 
     const uint64_t id = rocketnet_client_slots_client_id( w->server.client_slots, slot );
     return (int) ( id & 0xFF );
@@ -578,7 +590,9 @@ static inline int rocketnet_dst_world_client_for_address( rocketnet_dst_world_t 
     for ( int i = 0; i < w->num_clients; i++ )
     {
         if ( rocketnet_address_equal( &w->client[i].address, address ) )
+        {
             return i;
+        }
     }
 
     return -1;
@@ -589,7 +603,9 @@ static inline void rocketnet_dst_endpoint_send_control( rocketnet_dst_endpoint_t
                                                         const struct rocketnet_address_t * to )
 {
     if ( bytes <= 0 )
+    {
         return;
+    }
 
     rocketnet_dst_world_t * w = endpoint->world;
     const struct rocketnet_address_t * from = endpoint->is_server ? &w->server_address
@@ -698,8 +714,10 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
                 const int mapping_index = rocketnet_client_slots_mapping_index( w->server.client_slots, slot );
                 const struct rocketnet_address_t * to = rocketnet_encryption_map_address( w->server.encryption_map, mapping_index );
                 if ( to )
+                {
                     rocketnet_dst_endpoint_send_control( endpoint, rocketnet_dst_world_client_for_slot( w, slot ) + 1,
                                                          response, maintenance_bytes, to );
+                }
             }
         }
 
@@ -800,7 +818,9 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     rocketnet_dst_world_t * w = endpoint->world;
     (void) request_bytes;
     if ( endpoint->pending_frame >= 0 || endpoint->outgoing_count >= ROCKETNET_DST_MAX_PACKETS )
+    {
         return NULL;
+    }
 
     const int slot = endpoint->outgoing_count;
     uint8_t * wire_start = endpoint->frame[slot] + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -810,13 +830,17 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     {
         struct rocketnet_address_t to;
         if ( !rocketnet_server_protocol_start_payload( &w->server, client_index, &to, &sequence ) )
+        {
             return NULL;
+        }
         receiver = rocketnet_dst_world_client_for_address( w, &to ) + 1;
     }
     else
     {
         if ( !rocketnet_client_protocol_start_payload( &w->client[endpoint->client_index].protocol, &sequence ) )
+        {
             return NULL;
+        }
     }
 
     memset( context, 0, sizeof( *context ) );
@@ -838,19 +862,25 @@ static inline int rocketnet_dst_endpoint_finish_packet( void * transport, struct
     rocketnet_dst_world_t * w = endpoint->world;
     if ( endpoint->pending_frame < 0 ||
          context->frame != endpoint->frame[endpoint->pending_frame] + ROCKETNET_FRAME_WIRE_OFFSET )
+    {
         return 0;
+    }
 
     int wire_bytes;
     if ( endpoint->is_server )
+    {
         wire_bytes = rocketnet_server_protocol_seal_payload_frame( &w->server, context->client_index,
                                                                    context->sequence, context->packet_id,
                                                                    context->frame, payload_bytes,
                                                                    w->now + w->schedule.clock_offset[0] );
+    }
     else
+    {
         wire_bytes = rocketnet_client_protocol_seal_payload_frame( &w->client[endpoint->client_index].protocol,
                                                                    context->sequence, context->packet_id,
                                                                    context->frame, payload_bytes,
                                                                    w->now + w->schedule.clock_offset[endpoint->client_index + 1] );
+    }
 
     if ( wire_bytes > 0 )
     {
@@ -887,11 +917,15 @@ static inline void rocketnet_dst_endpoint_send_packets( void * transport )
         {
             const int client_index = receiver - 1;
             if ( client_index < 0 || client_index >= w->num_clients )
+            {
                 continue;
+            }
             to = &w->client[client_index].address;
         }
         else
+        {
             to = &w->server_address;
+        }
         rocketnet_dst_world_trace_send( w, endpoint->is_server ? 0 : endpoint->client_index + 1, receiver,
                                         endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes );
         rocketnet_dst_wire_send( w, from, to, endpoint->frame[i] + ROCKETNET_FRAME_WIRE_OFFSET, bytes );
@@ -915,7 +949,9 @@ static inline uint64_t rocketnet_dst_endpoint_connection( void * transport, int 
     // the client's 1, the id of its one connection, while it is CONNECTED
 
     if ( endpoint->is_server )
+    {
         return rocketnet_server_protocol_connection_id( &w->server, client_index );
+    }
 
     return w->client[endpoint->client_index].protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? 1 : 0;
 }
@@ -928,14 +964,20 @@ static inline void rocketnet_dst_endpoint_accept_payload( void * transport, int 
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
     rocketnet_dst_world_t * w = endpoint->world;
     if ( k < 0 || k >= endpoint->payload_count )
+    {
         return;
+    }
 
     if ( endpoint->is_server )
+    {
         rocketnet_server_protocol_accept_payload( &w->server, endpoint->payload_client_index[k],
                                                   endpoint->payload_connection_id[k], endpoint->payload_sequence[k] );
+    }
     else
+    {
         rocketnet_client_protocol_accept_payload( &w->client[endpoint->client_index].protocol,
                                                   endpoint->payload_sequence[k] );
+    }
 }
 
 static inline uint64_t rocketnet_dst_endpoint_payload_connection( void * transport, int k )
@@ -949,7 +991,9 @@ static inline uint64_t rocketnet_dst_endpoint_acked_connection( void * transport
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
     rocketnet_dst_world_t * w = endpoint->world;
     if ( !endpoint->is_server )
+    {
         return 1;
+    }
 
     return k >= 0 && k < w->server.acks->num_acked ? w->server.acked_connection_ids[k] : 0;
 }
@@ -983,7 +1027,9 @@ static inline int rocketnet_dst_endpoint_state( void * transport )
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
     rocketnet_dst_world_t * w = endpoint->world;
     if ( endpoint->is_server )
+    {
         return 1;
+    }
 
     return w->client[endpoint->client_index].protocol.state;
 }
@@ -1012,11 +1058,17 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     }
 
     if ( endpoint->is_server )
+    {
         rocketnet_server_protocol_disconnect_client( &w->server, client_index, packets, &packet_count, &packet_bytes );
+    }
     else
+    {
         rocketnet_client_protocol_disconnect( &w->client[endpoint->client_index].protocol, packets, &packet_count, &packet_bytes );
+    }
     if ( endpoint->is_server && ( target < 0 || target >= w->num_clients ) )
+    {
         return;
+    }
 
     const struct rocketnet_address_t * from = endpoint->is_server ? &w->server_address
                                                                   : &w->client[endpoint->client_index].address;
@@ -1038,7 +1090,9 @@ static inline double rocketnet_dst_endpoint_rtt( void * transport, int client_in
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
     rocketnet_dst_world_t * w = endpoint->world;
     if ( endpoint->is_server )
+    {
         return rocketnet_server_protocol_client_rtt( &w->server, client_index );
+    }
     return rocketnet_client_protocol_rtt( &w->client[endpoint->client_index].protocol );
 }
 
@@ -1082,7 +1136,9 @@ static inline int rocketnet_dst_payload_build( uint8_t * buffer, int size, uint3
                                                uint32_t epoch )
 {
     if ( size < 14 )
+    {
         return 0;
+    }
     buffer[0] = (uint8_t) ( sequence );
     buffer[1] = (uint8_t) ( sequence >> 8 );
     buffer[2] = (uint8_t) ( sequence >> 16 );
@@ -1109,21 +1165,29 @@ static inline int rocketnet_dst_payload_verify( const uint8_t * buffer, int byte
                                                 int * type, int * channel, uint32_t * generation )
 {
     if ( bytes < 14 )
+    {
         return 0;
+    }
     if ( ( buffer[4] & 0xF0 ) != 0xA0 )
+    {
         return 0;
+    }
     *sequence = (uint32_t) buffer[0] | ( (uint32_t) buffer[1] << 8 ) |
                 ( (uint32_t) buffer[2] << 16 ) | ( (uint32_t) buffer[3] << 24 );
     *type = buffer[4] & 7;
     *channel = buffer[5];
     *generation = (uint32_t) buffer[6] | ( (uint32_t) buffer[7] << 8 ) | ( (uint32_t) buffer[8] << 16 );
     if ( *channel >= ROCKETNET_DST_NUM_CHANNELS )
+    {
         return 0;
+    }
 
     for ( int i = 14; i < bytes; i++ )
     {
         if ( buffer[i] != (uint8_t) ( ( (uint32_t) i + *sequence ) % 256 ) )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -1168,7 +1232,9 @@ static inline int rocketnet_dst_draw_size( struct rocketnet_dst_substream_t * tr
 static inline int rocketnet_dst_channel_type( rocketnet_dst_client_t * client, int channel, int direction )
 {
     if ( channel < 8 )
+    {
         return channel;
+    }
 
     const unsigned pick = client->mixed[direction]++ % 3;
     return pick == 0 ? 3 : ( pick == 1 ? 4 : 1 );
@@ -1267,7 +1333,9 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     rocketnet_dst_client_t * client = &w->client[index];
     struct rocketnet_dst_substream_t * traffic = direction == 0 ? &client->traffic : &w->traffic_server;
     if ( rocketnet_dst_substream_real( traffic ) >= 0.5 )
+    {
         return;
+    }
 
     const int channel = (int) rocketnet_dst_substream_uniform( traffic, 0, ROCKETNET_DST_NUM_CHANNELS - 1 );
     const int type = rocketnet_dst_channel_type( client, channel, direction );
@@ -1278,7 +1346,9 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     {
         session = rocketnet_dst_world_slot_for_client( w, index );
         if ( session < 0 )
+        {
             return;
+        }
     }
 
     // a server send belongs to the session its slot holds, which is the
@@ -1295,7 +1365,9 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     const uint64_t identity = direction == 0 ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
     if ( reliable && rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
+    {
         return;
+    }
 
     uint32_t epoch = 0;
     if ( channel == 8 && type == 3 )
@@ -1306,16 +1378,24 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     const uint32_t sequence = rocketnet_dst_next_sequence( client, type, direction );
     uint8_t payload[16384];
     if ( size > (int) sizeof( payload ) )
+    {
         return;
+    }
     if ( !rocketnet_dst_payload_build( payload, size, sequence, direction, type, channel,
                                        generation, w->server_incarnation, epoch ) )
+    {
         return;
+    }
 
     uint32_t sent = 0;
     if ( direction == 0 )
+    {
         sent = rocketnet_message_client_send( client->message, channel, type, payload, size );
+    }
     else
+    {
         sent = rocketnet_message_server_send( w->message_server, slot, channel, type, payload, size );
+    }
 
     if ( sent )
     {
@@ -1361,7 +1441,9 @@ static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int inde
     rocketnet_dst_client_t * client = &w->client[index];
     struct rocketnet_dst_schedule_t * s = &w->schedule;
     if ( slot < 0 )
+    {
         return;
+    }
 
     const int channel = 0;
     const int type = 0;                                     // ROCKETNET_RELIABILITY_UNRELIABLE
@@ -1377,7 +1459,9 @@ static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int inde
         if ( size > (int) sizeof( payload ) ||
              !rocketnet_dst_payload_build( payload, size, sequence, direction, type, channel, generation,
                                            w->server_incarnation, 0 ) )
+        {
             return;
+        }
 
         const uint32_t sent = direction == 0
                                   ? rocketnet_message_client_send( client->message, channel, type, payload, size )
@@ -1391,7 +1475,9 @@ static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int inde
                                       identity, 0, size );
         }
         else if ( client->sequence[type & 7][direction] > 0 )
+        {
             client->sequence[type & 7][direction]--;
+        }
     }
 }
 
@@ -1493,9 +1579,13 @@ static inline void rocketnet_dst_world_draw( rocketnet_dst_world_t * w, uint64_t
 
     w->base_latency = 0.005 + rocketnet_dst_substream_real( &w->link ) * 0.145;
     if ( options->faults & ROCKETNET_DST_FAULT_JITTER )
+    {
         w->base_jitter = rocketnet_dst_substream_real( &w->fault_jitter ) * ( w->base_latency * 0.5 );
+    }
     else
+    {
         w->base_jitter = 0.0;
+    }
 
     if ( options->faults & ROCKETNET_DST_FAULT_LOSS )
     {
@@ -1518,7 +1608,9 @@ static inline void rocketnet_dst_world_draw( rocketnet_dst_world_t * w, uint64_t
         w->loss_percent = (float) chosen;
     }
     else
+    {
         w->loss_percent = 0.0f;
+    }
 
     if ( options->faults & ROCKETNET_DST_FAULT_DUP )
     {
@@ -1541,7 +1633,9 @@ static inline void rocketnet_dst_world_draw( rocketnet_dst_world_t * w, uint64_t
         w->dup_percent = (float) chosen;
     }
     else
+    {
         w->dup_percent = 0.0f;
+    }
 
     int lo = 2, hi = 8;
 
@@ -1634,7 +1728,9 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
             s->held = (uint8_t( * )[ROCKETNET_RECEIVE_CEILING])
                 malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_CEILING] ) * ROCKETNET_DST_BURST_CAPACITY );
             if ( !s->held )
+            {
                 return 0;
+            }
             w->check.allocation_balance++;
             break;
         }
@@ -1691,7 +1787,9 @@ static inline void rocketnet_dst_schedule_step( rocketnet_dst_world_t * w )
                 length = (uint64_t) client->churn_step > w->step ? (uint64_t) client->churn_step - w->step : 0;
             }
             if ( length == 0 )
+            {
                 return;
+            }
             s->start_step = w->step;
             s->end_step = w->step + length;
             s->burst_slot = slot;
@@ -1722,21 +1820,29 @@ static inline void rocketnet_dst_schedule_step( rocketnet_dst_world_t * w )
         // fires at the first step the drawn client holds a session on both ends
         rocketnet_dst_client_t * client = &w->client[s->endpoint];
         if ( client->protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             return;
+        }
 
         for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
         {
             if ( rocketnet_dst_world_client_for_slot( w, slot ) != s->endpoint ||
                  rocketnet_client_slots_client_id( w->server.client_slots, slot ) != client->generation * 256 + (uint64_t) s->endpoint )
+            {
                 continue;
+            }
             if ( s->side == 0 )
+            {
                 client->protocol.send_sequence_session += s->amount;
+            }
             else
             {
                 const int mapping = rocketnet_client_slots_mapping_index( w->server.client_slots, slot );
                 struct rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( w->server.encryption_map, mapping );
                 if ( !entry )
+                {
                     return;
+                }
                 entry->send_sequence_session += s->amount;
             }
             s->pending = 0;
@@ -1756,7 +1862,9 @@ static inline void rocketnet_dst_schedule_observe( rocketnet_dst_world_t * w, in
 {
     struct rocketnet_dst_schedule_t * s = &w->schedule;
     if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
+    {
         return;
+    }
 
     if ( s->replay_identity[session] == identity && s->replay_last[session] > 0 &&
          highest_opened > s->replay_last[session] )
@@ -1782,7 +1890,9 @@ static inline void rocketnet_dst_schedule_observe_wrap( rocketnet_dst_world_t * 
     if ( boundary == 0 || client->wrap_generation == client->generation ||
          client->protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
          client->protocol.send_sequence_session <= boundary )
+    {
         return;
+    }
     client->wrap_generation = client->generation;
     s->fired++;
     rocketnet_dst_schedule_trace( w, (uint64_t) index, client->generation, client->protocol.send_sequence_session );
@@ -1794,7 +1904,9 @@ static inline void rocketnet_dst_schedule_observe_wrap( rocketnet_dst_world_t * 
 static inline double rocketnet_dst_skew_bound( const rocketnet_dst_world_t * w, int e )
 {
     if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_CLOCK_BACK && e == w->schedule.endpoint )
+    {
         return (double) ( ROCKETNET_DST_CLOCK_BACK_MAX_MS + 1 ) * 0.001;
+    }
     return ROCKETNET_DST_SKEW_BOUND_SECONDS;
 }
 
@@ -1818,17 +1930,23 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     const uint64_t simulator_seed = rocketnet_dst_substream_draw( &wire );
     w->sim = rocketnet_network_simulator_create( NULL, 4096, simulator_seed );
     if ( !w->sim )
+    {
         return 0;
+    }
     rocketnet_network_simulator_config( w->sim, w->base_latency, w->base_jitter, w->loss_percent, w->dup_percent );
 
     if ( !rocketnet_address_parse( &w->server_address, "203.0.113.10:40000" ) )
+    {
         return 0;
+    }
 
     memset( &w->server_counters, 0, sizeof( w->server_counters ) );
     memset( &w->client_counters, 0, sizeof( w->client_counters ) );
     rocketnet_dst_check_init( &w->check, seed, 0 );
     if ( !rocketnet_dst_schedule_draw( w, seed, options ) )
+    {
         return 0;
+    }
     w->server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     w->server.send_rate = 10.0;
     memcpy( w->server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
@@ -1855,7 +1973,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.defer_payload_acks = 1;
     if ( !w->server.encryption_map || !w->server.used_token_history || !w->server.client_slots ||
          !w->server.acks )
+    {
         return 0;
+    }
     rocketnet_server_protocol_update( &w->server, w->now );
 
     w->server_endpoint.world = w;
@@ -1864,7 +1984,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server_endpoint.payload = (uint8_t( * )[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
         malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
     if ( !w->server_endpoint.payload )
+    {
         return 0;
+    }
     w->check.allocation_balance++;
 
     rocketnet_message_default_config( &w->message_config );
@@ -1885,7 +2007,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         NULL, &server_link, 1, ROCKETNET_DST_MAX_CLIENTS, &w->message_config, NULL, 0,
         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, w->now );
     if ( !w->message_server )
+    {
         return 0;
+    }
 
     for ( int i = 0; i < w->num_clients; i++ )
     {
@@ -1893,7 +2017,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         char address_string[64];
         snprintf( address_string, sizeof( address_string ), "198.51.100.%d:56789", 10 + i );
         if ( !rocketnet_address_parse( &client->address, address_string ) )
+        {
             return 0;
+        }
         rocketnet_client_protocol_init( &client->protocol, &w->client_counters );
         client->protocol.defer_payload_acks = 1;
         client->endpoint.world = w;
@@ -1902,7 +2028,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
         client->endpoint.payload = (uint8_t( * )[ROCKETNET_RECEIVE_PAYLOAD_BYTES])
             malloc( sizeof( uint8_t[ROCKETNET_RECEIVE_PAYLOAD_BYTES] ) * ROCKETNET_DST_MAX_PAYLOADS );
         if ( !client->endpoint.payload )
+        {
             return 0;
+        }
         w->check.allocation_balance++;
 
         struct rn_message_link_t client_link;
@@ -1911,7 +2039,9 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
             NULL, &client_link, 0, 1, &w->message_config, NULL, 0,
             ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, w->now );
         if ( !client->message )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -1998,11 +2128,15 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
 
     // Refuse before allocating: past the bound the (int) k narrowings would wrap.
     if ( !rocketnet_dst_steps_valid( options->steps ) || !rocketnet_dst_steps_valid( options->fault_steps ) )
+    {
         return 0;
+    }
 
     rocketnet_dst_world_t * w = (rocketnet_dst_world_t *) calloc( 1, sizeof( rocketnet_dst_world_t ) );
     if ( !w )
+    {
         return 0;
+    }
     if ( !rocketnet_dst_world_create( w, seed, options ) )
     {
         rocketnet_dst_world_destroy( w );
@@ -2018,7 +2152,9 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         w->unix_ts = 1700000000ULL + (uint64_t) ( w->now - 1000.0 );
 
         if ( options->steps > options->fault_steps && k + 1 == options->fault_steps )
+        {
             rocketnet_dst_check_settle( &w->check );
+        }
         if ( !w->quiet_applied && options->fault_steps > 0 && k >= options->fault_steps )
         {
             rocketnet_network_simulator_config( w->sim, w->base_latency, 0.0, 0.0f, 0.0f );
@@ -2026,7 +2162,9 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         }
 
         if ( options->force_fail_step >= 0 && (int) k == options->force_fail_step )
+        {
             rocketnet_dst_fail( w, "forced", "the test forced this check" );
+        }
 
         rocketnet_dst_schedule_step( w );
 
@@ -2066,10 +2204,14 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             if ( client->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                  ( client->pause_until < 0 || (int) k >= client->pause_until ) &&
                  !rocketnet_dst_burst_holding( w, i ) )
+            {
                 rocketnet_dst_send_one( w, i, 0, -1 );
+            }
             if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
                  i == w->schedule.endpoint )
+            {
                 rocketnet_dst_send_burst( w, i, 0, w->schedule.burst_slot, ROCKETNET_DST_BURST_MESSAGES );
+            }
             rocketnet_message_client_send_packets( client->message );
         }
 
@@ -2081,10 +2223,14 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             if ( index >= 0 && index < w->num_clients )
             {
                 if ( !rocketnet_dst_burst_holding( w, index ) )
+                {
                     rocketnet_dst_send_one( w, index, 1, slot );
+                }
                 if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
                      index == w->schedule.endpoint )
+                {
                     rocketnet_dst_send_burst( w, index, 1, slot, ROCKETNET_DST_BURST_MESSAGES );
+                }
             }
         }
         rocketnet_message_server_send_packets( w->message_server );
@@ -2140,22 +2286,32 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 const uint64_t identity = (uint64_t) (uint32_t) w->client[i].generation * 256 + (uint64_t) i;
                 const int count = rocketnet_message_client_receipts( w->client[i].message, receipts, ROCKETNET_DST_RECEIPTS );
                 if ( count > ROCKETNET_DST_RECEIPTS )
+                {
                     rocketnet_dst_fail( w, "receipt_list", "a client's receipt list is longer than the harness reads" );
+                }
                 for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                {
                     rocketnet_dst_check_receipt_one_outcome( &w->check, 16 + i, identity, receipts[r].serial, receipts[r].status );
+                }
             }
             for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS; slot++ )
             {
                 const int index = rocketnet_dst_world_client_for_slot( w, slot );
                 if ( index < 0 || index >= w->num_clients )
+                {
                     continue;
+                }
                 // the session the slot holds, as its sends were recorded
                 const uint64_t identity = (uint32_t) ( rocketnet_client_slots_client_id( w->server.client_slots, slot ) >> 8 );
                 const int count = rocketnet_message_server_receipts( w->message_server, slot, receipts, ROCKETNET_DST_RECEIPTS );
                 if ( count > ROCKETNET_DST_RECEIPTS )
+                {
                     rocketnet_dst_fail( w, "receipt_list", "a server slot's receipt list is longer than the harness reads" );
+                }
                 for ( int r = 0; r < count && r < ROCKETNET_DST_RECEIPTS; r++ )
+                {
                     rocketnet_dst_check_receipt_one_outcome( &w->check, slot, identity, receipts[r].serial, receipts[r].status );
+                }
             }
         }
 
@@ -2207,7 +2363,9 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             snprintf( w->fail_detail, sizeof( w->fail_detail ), "%s", w->check.detail );
         }
         if ( w->failed )
+        {
             break;
+        }
     }
 
     {
@@ -2222,7 +2380,9 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         {
             live[slot] = rocketnet_client_slots_connected( w->server.client_slots, slot );
             if ( live[slot] )
+            {
                 live_identity[slot] = rocketnet_client_slots_client_id( w->server.client_slots, slot );
+            }
         }
         for ( int i = 0; i < w->num_clients; i++ )
         {
@@ -2235,8 +2395,10 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             if ( options->steps > options->fault_steps )
             {
                 for ( int i = 0; i < w->num_clients; i++ )
+                {
                     rocketnet_dst_check_liveness_connected( &w->check, i, 1,
                                                             w->client[i].protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+                }
                 rocketnet_dst_check_end( &w->check, w->now, live, live_identity );
             }
             rocketnet_dst_check_conservation( &w->check, &w->server_counters, "server" );
@@ -2307,7 +2469,9 @@ static inline int rocketnet_dst_run_seed( uint64_t seed, uint64_t steps, int pin
 static inline void rocketnet_dst_faults_list( uint32_t faults, char * out, size_t out_bytes )
 {
     if ( out_bytes == 0 )
+    {
         return;
+    }
 
     if ( faults == ROCKETNET_DST_FAULT_ALL )
     {
@@ -2352,7 +2516,9 @@ static inline void rocketnet_dst_faults_list( uint32_t faults, char * out, size_
 static inline int rocketnet_dst_seed_range_next( uint64_t seed, uint64_t last_seed, uint64_t * next_seed )
 {
     if ( seed == last_seed )
+    {
         return 0;
+    }
     *next_seed = seed + 1;
     return 1;
 }
@@ -2371,8 +2537,10 @@ static inline void rocketnet_dst_replay_command( uint64_t seed, const struct roc
         used += snprintf( flags + used, sizeof( flags ) - (size_t) used, " --clients %d", options->clients );
     }
     if ( options->steps != ( options->shape == ROCKETNET_DST_SHAPE_PUSH ? 2000ULL : 4000ULL ) )
+    {
         used += snprintf( flags + used, sizeof( flags ) - (size_t) used, " --steps %llu",
                           (unsigned long long) options->fault_steps );
+    }
 
     if ( options->faults != ROCKETNET_DST_FAULT_ALL )
     {
@@ -2381,8 +2549,10 @@ static inline void rocketnet_dst_replay_command( uint64_t seed, const struct roc
     }
 
     if ( options->schedule > ROCKETNET_DST_SCHEDULE_NONE && options->schedule < ROCKETNET_DST_NUM_SCHEDULES )
+    {
         used += snprintf( flags + used, sizeof( flags ) - (size_t) used, " --schedule %s",
                           rocketnet_dst_schedule_name( options->schedule ) );
+    }
     snprintf( out, out_bytes, "./bin/dst --seeds %llu-%llu%s",
               (unsigned long long) seed, (unsigned long long) seed, flags );
 }

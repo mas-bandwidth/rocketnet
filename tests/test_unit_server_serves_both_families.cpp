@@ -135,7 +135,9 @@ static enum rocketnet_status_t both_families_start( both_families_identity_t * i
 static void both_families_stop( struct rocketnet_server_t * server )
 {
     if ( !server )
+    {
         return;
+    }
     rocketnet_server_stop( server );
     rn_test_server_wait_stopped( server );
     rn_test_server_stop_and_destroy( server );

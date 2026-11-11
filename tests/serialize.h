@@ -495,7 +495,9 @@ typedef struct serialize_uint128_t
         remainder = serialize_uint128_t( 0 );
 
         if ( divisor == serialize_uint128_t( 0 ) )
+        {
             return;
+        }
 
         if ( dividend.hi == 0 && divisor.hi == 0 )
         {
@@ -700,7 +702,9 @@ typedef struct serialize_int128_t
         // signed ordering: the high lanes compare signed, the low lanes break ties unsigned
 
         if ( hi != other.hi )
+        {
             return int64_t( hi ) < int64_t( other.hi );
+        }
 
         return lo < other.lo;
     }
@@ -748,7 +752,9 @@ typedef struct serialize_int128_t
         // the limit of shifting further, documented above
 
         if ( shift < 0 || shift >= 128 )
+        {
             return IsNegative() ? serialize_int128_t( -1 ) : serialize_int128_t( 0 );
+        }
 
         serialize_uint128_t result = serialize_uint128_t( *this ) >> shift;
 
@@ -1099,7 +1105,9 @@ namespace serialize
     inline int bits_required64( uint64_t min, uint64_t max )
     {
         if ( min == max )
+        {
             return 0;
+        }
 
         // subtract in the unsigned domain: max - min overflows signed arithmetic when the range is wider than 2^63
 
@@ -1126,7 +1134,9 @@ namespace serialize
     inline int bits_required128( uint128_t min, uint128_t max )
     {
         if ( min == max )
+        {
             return 0;
+        }
 
         // subtract in the unsigned domain: max - min overflows signed arithmetic when the range is wider than 2^127
 
@@ -1597,7 +1607,9 @@ namespace serialize
                 uint32_t value = ReadBits( 8 - remainderBits );
                 serialize_assert( m_bitsRead % 8 == 0 );
                 if ( value != 0 )
+                {
                     return false;
+                }
             }
 
             return true;
@@ -1776,7 +1788,9 @@ namespace serialize
 
             const int bits = bits_required( uint32_t( min ), uint32_t( max ) );
             if ( bits == 0 )
+            {
                 return true;                // degenerate range: the value IS the range, nothing to send
+            }
 
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^31
 
@@ -1802,7 +1816,9 @@ namespace serialize
 
             const int bits = bits_required64( uint64_t( min ), uint64_t( max ) );
             if ( bits == 0 )
+            {
                 return true;                // degenerate range: the value IS the range, nothing to send
+            }
 
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^63
 
@@ -2035,11 +2051,15 @@ namespace serialize
             }
 
             if ( m_reader.WouldReadPastEnd( bits ) )
+            {
                 return false;
+            }
 
             uint32_t unsigned_value = m_reader.ReadBits( bits );
             if ( unsigned_value > uint32_t( max ) - uint32_t( min ) )
+            {
                 return false;
+            }
 
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^31
 
@@ -2068,7 +2088,9 @@ namespace serialize
             }
 
             if ( m_reader.WouldReadPastEnd( bits ) )
+            {
                 return false;
+            }
 
             uint64_t unsigned_value;
 
@@ -2085,7 +2107,9 @@ namespace serialize
             }
 
             if ( unsigned_value > uint64_t( max ) - uint64_t( min ) )
+            {
                 return false;
+            }
 
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^63
 
@@ -2108,7 +2132,9 @@ namespace serialize
 
             const int bits = bits_required128( uint128_t( min ), uint128_t( max ) );
             if ( m_reader.WouldReadPastEnd( bits ) )
+            {
                 return false;
+            }
 
             // 32 bit groups, least significant first: the same convention as the write path
 
@@ -2142,7 +2168,9 @@ namespace serialize
 
             const uint128_t unsigned_value = ( uint128_t( group3 ) << 96 ) | ( uint128_t( group2 ) << 64 ) | ( uint128_t( group1 ) << 32 ) | uint128_t( group0 );
             if ( unsigned_value > uint128_t( max ) - uint128_t( min ) )
+            {
                 return false;
+            }
 
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^127
 
@@ -2163,7 +2191,9 @@ namespace serialize
             serialize_assert( bits > 0 );
             serialize_assert( bits <= 32 );
             if ( m_reader.WouldReadPastEnd( bits ) )
+            {
                 return false;
+            }
 
             uint32_t read_value = m_reader.ReadBits( bits );
             value = read_value;
@@ -2181,14 +2211,20 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE bool SerializeBytes( uint8_t * data, int64_t bytes )
         {
             if ( bytes < 0 )
+            {
                 return false;
+            }
             if ( !SerializeAlign() )
+            {
                 return false;
+            }
 
             // compare in bytes rather than bits, consistent with the 64 bit bookkeeping
 
             if ( bytes > m_reader.GetBitsRemaining() / 8 )
+            {
                 return false;
+            }
             m_reader.ReadBytes( data, bytes );
 
             return true;
@@ -2203,9 +2239,13 @@ namespace serialize
         {
             const int alignBits = m_reader.GetAlignBits();
             if ( m_reader.WouldReadPastEnd( alignBits ) )
+            {
                 return false;
+            }
             if ( !m_reader.ReadAlign() )
+            {
                 return false;
+            }
 
             return true;
         }
@@ -2798,12 +2838,16 @@ namespace serialize
         }
 
         if ( !stream.SerializeBits( integerValue, bits ) )
+        {
             return false;
+        }
 
         if ( Stream::IsReading )
         {
             if ( integerValue > max_integer_value )
+            {
                 return false;
+            }
 
             const float normalizedValue = float( integerValue ) / float( max_integer_value );
 
@@ -3073,44 +3117,68 @@ namespace serialize
             else if ( ( lead & 0xE0 ) == 0xC0 )
             {
                 if ( lead < 0xC2 )                                                              // overlong
+                {
                     return false;
+                }
                 if ( i + 1 >= length )
+                {
                     return false;
+                }
                 if ( ( (uint8_t) string[i + 1] & 0xC0 ) != 0x80 )
+                {
                     return false;
+                }
                 i += 2;
             }
             else if ( ( lead & 0xF0 ) == 0xE0 )
             {
                 if ( i + 2 >= length )
+                {
                     return false;
+                }
 
                 const uint32_t byte1 = (uint8_t) string[i + 1];
                 const uint32_t byte2 = (uint8_t) string[i + 2];
                 if ( ( byte1 & 0xC0 ) != 0x80 || ( byte2 & 0xC0 ) != 0x80 )
+                {
                     return false;
+                }
                 if ( lead == 0xE0 && byte1 < 0xA0 )                                             // overlong
+                {
                     return false;
+                }
                 if ( lead == 0xED && byte1 >= 0xA0 )                                            // surrogate code point
+                {
                     return false;
+                }
                 i += 3;
             }
             else if ( ( lead & 0xF8 ) == 0xF0 )
             {
                 if ( lead > 0xF4 )                                                              // above U+10FFFF
+                {
                     return false;
+                }
                 if ( i + 3 >= length )
+                {
                     return false;
+                }
 
                 const uint32_t byte1 = (uint8_t) string[i + 1];
                 const uint32_t byte2 = (uint8_t) string[i + 2];
                 const uint32_t byte3 = (uint8_t) string[i + 3];
                 if ( ( byte1 & 0xC0 ) != 0x80 || ( byte2 & 0xC0 ) != 0x80 || ( byte3 & 0xC0 ) != 0x80 )
+                {
                     return false;
+                }
                 if ( lead == 0xF0 && byte1 < 0x90 )                                             // overlong
+                {
                     return false;
+                }
                 if ( lead == 0xF4 && byte1 >= 0x90 )                                            // above U+10FFFF
+                {
                     return false;
+                }
                 i += 4;
             }
             else
@@ -3151,11 +3219,15 @@ namespace serialize
             for ( int i = 0; i < length; i++ )
             {
                 if ( string[i] == '\0' )
+                {
                     return false;
+                }
             }
 
             if ( !serialize_string_is_valid_utf8( string, length ) )
+            {
                 return false;
+            }
 
             string[length] = '\0';
         }
@@ -3203,9 +3275,13 @@ namespace serialize
             if ( wide_wchar )
             {
                 if ( character >= 0xD800 && character <= 0xDFFF )       // a surrogate is not a code point
+                {
                     return false;
+                }
                 if ( character > 0x10FFFF )                             // above Unicode
+                {
                     return false;
+                }
                 i += 1;
             }
             else
@@ -3214,7 +3290,9 @@ namespace serialize
                 {
                     const uint32_t next = (uint32_t) string[i + 1];
                     if ( next < 0xDC00 || next > 0xDFFF )               // high surrogate without its pair
+                    {
                         return false;
+                    }
                     i += 2;
                 }
                 else if ( character >= 0xDC00 && character <= 0xDFFF )
@@ -3303,15 +3381,21 @@ namespace serialize
                 serialize_bits( stream, character, 32 );
 
                 if ( character > 0xFFFF )
+                {
                     return false;                   // not a UTF-16 code unit: nothing conforming emits one
+                }
 
                 if ( character == 0 )
+                {
                     return false;                   // interior NUL: the two-lengths smuggling primitive
+                }
 
                 if ( have_pending )
                 {
                     if ( character < 0xDC00 || character > 0xDFFF )
+                    {
                         return false;               // high surrogate without its low
+                    }
 
                     if ( wide_wchar )
                     {
@@ -3328,7 +3412,9 @@ namespace serialize
                 }
 
                 if ( character >= 0xDC00 && character <= 0xDFFF )
+                {
                     return false;                   // low surrogate with no high before it
+                }
 
                 if ( character >= 0xD800 && character <= 0xDBFF )
                 {
@@ -3341,7 +3427,9 @@ namespace serialize
             }
 
             if ( have_pending )
+            {
                 return false;                       // the final group is a dangling high surrogate
+            }
 
             string[output_index] = L'\0';
         }
@@ -3576,7 +3664,9 @@ namespace serialize
         {
             current = value;
             if ( current <= previous )
+            {
                 return false;
+            }
         }
 
         return true;
@@ -3826,7 +3916,9 @@ namespace serialize
             {
                 uint32_t unsigned_value = uint32_t( offset );
                 if ( !stream.SerializeBits( unsigned_value, bits ) )
+                {
                     return false;
+                }
 
                 offset = unsigned_value;
             }
@@ -3837,10 +3929,14 @@ namespace serialize
                 uint32_t high_half = uint32_t( offset >> 32 );
 
                 if ( !stream.SerializeBits( low_half, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( high_half, bits - 32 ) )
+                {
                     return false;
+                }
 
                 offset = ( uint64_t( high_half ) << 32 ) | low_half;
             }
@@ -3849,7 +3945,9 @@ namespace serialize
             {
                 // reject raw values outside [raw_min,raw_max] smuggled into the bit headroom. reject, never clamp
                 if ( offset > raw_range )
+                {
                     return false;
+                }
 
                 // reconstruct in the unsigned domain, then convert: wraps two's complement for signed storage
 
@@ -3942,40 +4040,60 @@ namespace serialize
             if ( bits <= 32 )
             {
                 if ( !stream.SerializeBits( group0, bits ) )
+                {
                     return false;
+                }
             }
             else if ( bits <= 64 )
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group1, bits - 32 ) )
+                {
                     return false;
+                }
             }
             else if ( bits <= 96 )
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group1, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group2, bits - 64 ) )
+                {
                     return false;
+                }
             }
             else
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group1, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group2, 32 ) )
+                {
                     return false;
+                }
 
                 if ( !stream.SerializeBits( group3, bits - 96 ) )
+                {
                     return false;
+                }
             }
 
             if ( Stream::IsReading )
@@ -3985,7 +4103,9 @@ namespace serialize
                 // reject raw values outside [raw_min,raw_max] smuggled into the bit headroom. reject, never clamp
 
                 if ( offset > raw_range )
+                {
                     return false;
+                }
 
                 // reconstruct in the unsigned domain, then convert: wraps two's complement for signed storage
 
@@ -4405,12 +4525,16 @@ namespace serialize
         }
 
         if ( !stream.SerializeBits( unsigned_value, bits ) )
+        {
             return false;
+        }
 
         if ( Stream::IsReading )
         {
             if ( unsigned_value > uint32_t( Max ) - uint32_t( Min ) )
+            {
                 return false;
+            }
 
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^31
 
@@ -4453,7 +4577,9 @@ namespace serialize
         {
             uint32_t unsigned_value32 = uint32_t( unsigned_value );
             if ( !stream.SerializeBits( unsigned_value32, bits ) )
+            {
                 return false;
+            }
 
             if ( Stream::IsReading )
             {
@@ -4467,10 +4593,14 @@ namespace serialize
             uint32_t hi = uint32_t( unsigned_value >> 32 );
 
             if ( !stream.SerializeBits( lo, 32 ) )
+            {
                 return false;
+            }
 
             if ( !stream.SerializeBits( hi, bits - 32 ) )
+            {
                 return false;
+            }
 
             if ( Stream::IsReading )
             {
@@ -4481,7 +4611,9 @@ namespace serialize
         if ( Stream::IsReading )
         {
             if ( unsigned_value > uint64_t( Max ) - uint64_t( Min ) )
+            {
                 return false;
+            }
 
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^63
 
@@ -4529,7 +4661,9 @@ namespace serialize
         {
             uint32_t value32 = uint32_t( value );
             if ( !stream.SerializeBits( value32, Bits ) )
+            {
                 return false;
+            }
 
             if ( Stream::IsReading )
             {
@@ -4543,10 +4677,14 @@ namespace serialize
             uint32_t hi = uint32_t( value >> 32 );
 
             if ( !stream.SerializeBits( lo, 32 ) )
+            {
                 return false;
+            }
 
             if ( !stream.SerializeBits( hi, Bits - 32 ) )
+            {
                 return false;
+            }
 
             if ( Stream::IsReading )
             {
@@ -4711,7 +4849,9 @@ inline void serialize_copy_string( char * dest, const char * source, size_t dest
     for ( size_t i = 0; i < dest_size - 1; i++ )
     {
         if ( source[i] == '\0' )
+        {
             break;
+        }
         dest[i] = source[i];
     }
 }
@@ -4726,7 +4866,9 @@ inline void serialize_copy_wstring( wchar_t * dest, const wchar_t * source, size
     for ( size_t i = 0; i < dest_size - 1; i++ )
     {
         if ( source[i] == L'\0' )
+        {
             break;
+        }
         dest[i] = source[i];
     }
 }
@@ -6146,7 +6288,9 @@ inline bool serialize_test_assert_fires( void ( *fn )() )
     }
 
     if ( pid < 0 )
+    {
         return false;
+    }
 
     int status = 0;
     waitpid( pid, &status, 0 );
@@ -6369,7 +6513,9 @@ inline void check_fixed_rejects_out_of_range( Storage )
 
     const uint64_t max_encodable = ( bits < 64 ) ? ( ( uint64_t( 1 ) << bits ) - 1 ) : 0xFFFFFFFFFFFFFFFFULL;
     if ( raw_range == max_encodable )
+    {
         return;                             // no headroom: every encoding decodes in range for this configuration
+    }
 
     const uint64_t smuggled = raw_range + 1;
 
@@ -6595,7 +6741,9 @@ inline void check_fixed_wide_rejects_out_of_range( Storage )
 
     const serialize::uint128_t max_encodable = ( bits < 128 ) ? ( ( serialize::uint128_t( 1 ) << bits ) - 1 ) : ~( serialize::uint128_t( 0 ) );
     if ( raw_range == max_encodable )
+    {
         return;                             // no headroom: every encoding decodes in range for this configuration
+    }
 
     serialize::uint128_t smuggled = raw_range + 1;
 
@@ -9024,7 +9172,9 @@ inline bool serialize_test_fp_contraction_is_live()
         memcpy( &pattern_unfused, &unfused, 4 );
 
         if ( pattern_fused != pattern_unfused )
+        {
             return true;
+        }
     }
 
     return false;
@@ -9042,7 +9192,9 @@ inline bool serialize_test_fp_contraction_crosses_statements()
         memcpy( &pattern_unfused, &unfused, 4 );
 
         if ( pattern_across != pattern_unfused )
+        {
             return true;
+        }
     }
 
     return false;
@@ -9060,7 +9212,9 @@ inline bool serialize_test_fp_barrier_holds()
         memcpy( &pattern_unfused, &unfused, 4 );
 
         if ( pattern_barriered != pattern_unfused )
+        {
             return false;
+        }
     }
 
     return true;
@@ -9379,12 +9533,16 @@ template <typename Stream> bool serialize_compressed_float_frozen_reference( Str
     }
 
     if ( !stream.SerializeBits( integerValue, bits ) )
+    {
         return false;
+    }
 
     if ( Stream::IsReading )
     {
         if ( integerValue > maxIntegerValue )
+        {
             return false;
+        }
 
         const float normalizedValue = integerValue / float( maxIntegerValue );
         const float scaledValue = normalizedValue * delta;
@@ -10252,9 +10410,13 @@ inline void test_measure_bound()
             const int64_t span = writeStream.GetBitsProcessed() - start;
             serialize_check( span <= measureStream.GetBitsProcessed() );
             if ( offset == 0 )
+            {
                 serialize_check( span == 16 );                          // 2 bytes from an aligned start...
+            }
             if ( offset == 1 )
+            {
                 serialize_check( span == 23 );                          // ...3 bytes of room needed from offset 1
+            }
         }
     }
 

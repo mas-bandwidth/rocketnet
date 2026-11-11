@@ -350,10 +350,12 @@ static void check_base64_and_config()
     int auto_available = 0;
 
     for ( int i = 0; i < num_available; i++ )
+    {
         if ( !rocketnet_transport_pin_only( available[i] ) )
         {
             auto_available++;
         }
+    }
 
     CHECK( ladder.num_candidates == auto_available );
     CHECK( rocketnet_transport_ladder_parse( "portable", available, num_available, &ladder ) );

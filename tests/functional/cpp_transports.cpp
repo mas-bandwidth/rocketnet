@@ -75,7 +75,9 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 
@@ -138,7 +140,9 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
         }
 
         if ( server_received >= 16 && client_received >= 16 )
+        {
             break;
+        }
 
         rocketnet_platform_sleep( 0.001 );
     }
@@ -160,7 +164,9 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        {
             break;
+        }
         rocketnet_platform_sleep( 0.001 );
     }
 

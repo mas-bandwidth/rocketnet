@@ -453,7 +453,9 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
     uint32_t ticket = region->schedule_ticket_next;
     if ( ticket == 0 )
+    {
         ticket = 1;
+    }
 
     uint32_t next = ticket + 1;
     if ( next == 0 )

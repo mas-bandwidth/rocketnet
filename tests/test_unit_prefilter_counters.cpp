@@ -56,8 +56,12 @@ static void test_prefilter_counters_map_each_kernel_counter()
 
         check( counters.values[prefilter_kernel_counters[i]] == 1000 + (uint64_t) i );
         for ( int j = 0; j < ROCKETNET_SERVER_XDP_NUM_COUNTERS; j++ )
+        {
             if ( j != i )
+            {
                 check( counters.values[prefilter_kernel_counters[j]] == 0 );
+            }
+        }
         check( counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] == 7 );
     }
 }
@@ -94,8 +98,12 @@ static void test_prefilter_counters_are_assigned_not_added()
     {
         int mapped = -1;
         for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        {
             if ( prefilter_kernel_counters[i] == counter )
+            {
                 mapped = i;
+            }
+        }
         check( counters.values[counter] == ( mapped < 0 ? seeded[counter] : first[mapped] ) );
     }
 
@@ -119,8 +127,12 @@ static void test_prefilter_counters_are_assigned_not_added()
     {
         int mapped = -1;
         for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+        {
             if ( prefilter_kernel_counters[i] == counter )
+            {
                 mapped = i;
+            }
+        }
         check( counters.values[counter] == ( mapped < 0 ? seeded[counter] : second[mapped] ) );
     }
 }

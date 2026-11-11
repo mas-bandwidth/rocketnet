@@ -88,7 +88,9 @@ static void usage( void )
 static void set_status( const char * path, const char * line )
 {
     if ( !path )
+    {
         return;
+    }
 
     FILE * f = rocketnet_test_fopen( path, "w" );
     if ( f )
@@ -109,7 +111,9 @@ static void
 results_line( const char * kind, const char * fmt, ... )
 {
     if ( !g_results )
+    {
         return;
+    }
 
     va_list ap;
     va_start( ap, fmt );
@@ -127,7 +131,9 @@ static void
 results_event( const char * fmt, ... )
 {
     if ( !g_results )
+    {
         return;
+    }
 
     va_list ap;
     va_start( ap, fmt );
@@ -149,7 +155,9 @@ static uint64_t resident_bytes( void )
 #else
     FILE * f = fopen( "/proc/self/statm", "r" );
     if ( !f )
+    {
         return 0;
+    }
 
     long total = 0, resident = 0;
     if ( fscanf( f, "%ld %ld", &total, &resident ) != 2 )
@@ -213,7 +221,9 @@ static int interface_for_address( const char * address, char * out, size_t out_s
 
     FILE * f = popen( cmd, "r" );
     if ( !f )
+    {
         return 0;
+    }
 
     if ( fgets( out, (int) out_size, f ) )
     {
@@ -245,7 +255,9 @@ static int in_tree_transport( const char * nic )
 
     FILE * f = popen( cmd, "r" );
     if ( !f )
+    {
         return 1;
+    }
 
     char transport[64] = { 0 }, version[64] = { 0 };
     if ( fscanf( f, "%63s %63s", transport, version ) != 2 )
@@ -258,7 +270,9 @@ static int in_tree_transport( const char * nic )
 
     FILE * u = popen( "uname -r", "r" );
     if ( !u )
+    {
         return 1;
+    }
 
     char kernel[64] = { 0 };
     if ( fgets( kernel, sizeof kernel, u ) )
@@ -336,7 +350,9 @@ static int matrix_sequenced( int mode )
 static int server_reliable_path( int mode, uint32_t length )
 {
     if ( mode == 5 )
+    {
         return length > ROCKETNET_LIVE_UNRELIABLE_LIMIT;
+    }
     return mode == 2 || mode == 3 || mode == 4 || mode == 6 || mode == 7;
 }
 
@@ -382,7 +398,9 @@ static void ledger_progress( struct server_client_t * c, int mode, int channel, 
     }
 
     if ( new_confirm <= s->confirmed )
+    {
         return;
+    }
 
     const struct rocketnet_live_config_t live = g_live;
     uint64_t dbytes = 0, dnums = 0;
@@ -392,7 +410,9 @@ static void ledger_progress( struct server_client_t * c, int mode, int channel, 
     {
         const uint32_t L = rocketnet_live_length( &live, mode, channel, q );
         if ( L < ROCKETNET_SERVER_TINY || !server_reliable_path( mode, L ) )
+        {
             continue;
+        }
 
         const uint32_t F = ROCKETNET_LIVE_BLOCK_STRIDE;
 
@@ -448,9 +468,13 @@ static void matrix_progress( struct server_client_t * c, const uint8_t * data, i
                              ( (uint32_t) data[off + 4] << 16 ) | ( (uint32_t) data[off + 5] << 24 );
         off += 10;
         if ( mode < 0 || mode >= ROCKETNET_LIVE_NUM_MODES )
+        {
             continue;
+        }
         if ( channel < 0 || channel >= matrix_channels( mode ) )
+        {
             continue;
+        }
         ledger_progress( c, mode, channel, seq );
     }
 }
@@ -460,11 +484,15 @@ static void matrix_progress( struct server_client_t * c, const uint8_t * data, i
 static void matrix_stream_mark( struct server_stream_t * s, uint32_t q )
 {
     if ( q >= ROCKETNET_SERVER_MAX_SEQUENCES )
+    {
         return;
+    }
     s->seen[q / 64] |= 1ull << ( q % 64 );
     while ( s->contiguous < s->total && s->contiguous < ROCKETNET_SERVER_MAX_SEQUENCES &&
             ( s->seen[s->contiguous / 64] & ( 1ull << ( s->contiguous % 64 ) ) ) )
+    {
         s->contiguous++;
+    }
 }
 
 // section 3: a message under 7 bytes carries no sequence, so the receiver
@@ -475,7 +503,9 @@ static void matrix_mark_tiny( struct server_stream_t * s, int mode, int channel 
     for ( uint32_t q = 0; q < s->next && q < ROCKETNET_SERVER_MAX_SEQUENCES; q++ )
     {
         if ( s->seen[q / 64] & ( 1ull << ( q % 64 ) ) )
+        {
             continue;
+        }
 
         if ( rocketnet_live_length( &g_live, mode, channel, q ) < ROCKETNET_SERVER_TINY )
         {
@@ -494,7 +524,9 @@ static int matrix_build_progress( const struct server_client_t * c, uint8_t * bu
     int off = 0;
 
     if ( capacity < 1 )
+    {
         return 0;
+    }
     buffer[off++] = ROCKETNET_SERVER_PROGRESS_NIBBLE;
 
     for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
@@ -503,9 +535,13 @@ static int matrix_build_progress( const struct server_client_t * c, uint8_t * bu
         {
             const struct server_stream_t * s = &c->streams[mode][channel];
             if ( s->contiguous == 0 )
+            {
                 continue;                       // nothing contiguous received yet
+            }
             if ( off + 10 > capacity )
+            {
                 return off;
+            }
 
             const uint32_t hi = s->contiguous - 1u;
             const uint32_t bytes = s->bytes_received > 0xffffffffu ? 0xffffffffu : (uint32_t) s->bytes_received;
@@ -547,16 +583,22 @@ static server_progress_send_fn g_progress_send = server_progress_send;
 static void matrix_send_progress( struct rocketnet_message_server_t * server, int client_index, struct server_client_t * c, double now )
 {
     if ( c->last_progress > 0.0 && now - c->last_progress < ROCKETNET_SERVER_PROGRESS_SECONDS )
+    {
         return;
+    }
     c->last_progress = now;
 
     uint8_t report[1 + ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * 10];
     const int n = matrix_build_progress( c, report, (int) sizeof report );
     if ( n <= 1 )
+    {
         return;
+    }
     if ( g_progress_send( server, client_index, ROCKETNET_SERVER_PROGRESS_CHANNEL,
                           ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, report, n ) )
+    {
         c->progress_sent++;
+    }
 }
 
 static void matrix_write_cells( struct server_client_t * c )
@@ -572,7 +614,9 @@ static void matrix_write_cells( struct server_client_t * c )
                 const uint32_t sent = s->bucket_sent[bucket];
                 const uint32_t recv = s->bucket_received[bucket];
                 if ( sent == 0 && recv == 0 )
+                {
                     continue;
+                }
                 results_line( "cell", "%s\t%u\t1\t%d\t%d\t%s\t%u\t%u\t0\t0\t%u\t0\t0\t0\t0\t0\t0",
                               c->label, c->cycle, mode, channel, rocketnet_live_bucket_name( bucket ),
                               sent, recv, sent > recv ? sent - recv : 0u );
@@ -789,7 +833,9 @@ static uint32_t matrix_send_one( struct rocketnet_message_server_t * server, int
 {
     uint8_t * p = rocketnet_message_server_start( server, client_index, channel, mode, (int) length );
     if ( !p )
+    {
         return 0;
+    }
 
     const int written = rocketnet_live_generate( &g_live, 1, mode, channel, cycle, sequence, p, (int) length );
     if ( written != (int) length )
@@ -834,7 +880,9 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
 
                     const uint32_t serial = matrix_send_one( server, client_index, mode, channel, c->cycle, s->next, length );
                     if ( serial == 0 )
+                    {
                         break;
+                    }
 
                     if ( !tiny && reliable )
                     {
@@ -921,7 +969,9 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
             {
                 if ( rocketnet_live_length( &zero, mode, channel, sequence ) !=
                      rocketnet_live_length( &seeded, mode, channel, sequence ) )
+                {
                     changed++;
+                }
             }
         }
     }
@@ -991,7 +1041,9 @@ static int run_self_test( const char * path, const char * label, uint32_t seed )
          g_progress_record.bytes != 11 ||
          g_progress_record.data[0] != ROCKETNET_SERVER_PROGRESS_NIBBLE ||
          emitted.progress_sent != 2 )
+    {
         failures++;
+    }
 
     if ( path )
     {
@@ -1112,7 +1164,9 @@ int main( int argc, char ** argv )
     g_live.seed = seed;
 
     if ( self_test )
+    {
         return run_self_test( self_test_path, label, seed );
+    }
 
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
@@ -1243,7 +1297,9 @@ int main( int argc, char ** argv )
             for ( int i = 0; i < max_clients; i++ )
             {
                 if ( !rocketnet_message_server_client_connected( server, i ) )
+                {
                     continue;
+                }
 
                 if ( !clients[i].window_done )
                 {

@@ -183,7 +183,9 @@ int main( int argc, char ** argv )
     {
         std::vector<double> us;
         for ( int r = 0; r < rounds; r++ )
+        {
             us.push_back( cost_round( requests, shape == 1, expected[shape] ) );
+        }
         std::sort( us.begin(), us.end() );
         printf( "%-6s requests %d rounds %d us_per_request best %.1f median %.1f\n",
                 names[shape], requests, rounds, us[0], us[us.size() / 2] );

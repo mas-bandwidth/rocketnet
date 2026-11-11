@@ -133,11 +133,15 @@ static int load_census_thread_is_os_pool( DWORD tid )
     load_census_query_thread_t query = (load_census_query_thread_t) (void ( * )( void )) load_census_ntdll( "NtQueryInformationThread" );
     HMODULE ntdll = GetModuleHandleA( "ntdll.dll" );
     if ( !query || !ntdll )
+    {
         return 0;
+    }
 
     HANDLE thread = OpenThread( THREAD_QUERY_INFORMATION, FALSE, tid );
     if ( !thread )
+    {
         return 0;
+    }
 
     PVOID start = NULL;
     const LONG status = query( thread, LOAD_CENSUS_THREAD_QUERY_SET_WIN32_START_ADDRESS, &start, sizeof( start ), NULL );
@@ -148,7 +152,9 @@ static int load_census_thread_is_os_pool( DWORD tid )
 
     if ( status < 0 || !start ||
          !GetModuleHandleExA( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR) start, &owner ) )
+    {
         return 0;
+    }
 
     return owner == ntdll;
 }
@@ -159,7 +165,9 @@ static void load_census_type_name( uint64_t handle, char * name, size_t bytes )
 
     load_census_query_object_t query = (load_census_query_object_t) (void ( * )( void )) load_census_ntdll( "NtQueryObject" );
     if ( !query )
+    {
         return;
+    }
     union
     {
         char raw[1024];
@@ -170,7 +178,9 @@ static void load_census_type_name( uint64_t handle, char * name, size_t bytes )
         } type_name;
     } info;
     if ( query( (HANDLE) (uintptr_t) handle, LOAD_CENSUS_OBJECT_TYPE_INFORMATION, &info, sizeof( info ), NULL ) < 0 || !info.type_name.buffer )
+    {
         return;
+    }
 
     const int written = WideCharToMultiByte( CP_UTF8, 0, info.type_name.buffer, info.type_name.length / 2, name, (int) bytes - 1, NULL, NULL );
     name[written > 0 ? written : 0] = '\0';
@@ -184,7 +194,9 @@ static int load_census_take( struct load_census_t * census )
 
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
+    {
         return 0;
+    }
 
     THREADENTRY32 entry;
     entry.dwSize = sizeof( entry );
@@ -196,7 +208,9 @@ static int load_census_take( struct load_census_t * census )
         do
         {
             if ( entry.th32OwnerProcessID != self )
+            {
                 continue;
+            }
 
             if ( census->threads == LOAD_CENSUS_MAX )
             {
@@ -216,7 +230,9 @@ static int load_census_take( struct load_census_t * census )
 
     load_census_query_system_t query = (load_census_query_system_t) (void ( * )( void )) load_census_ntdll( "NtQuerySystemInformation" );
     if ( !query )
+    {
         return 0;
+    }
 
     ULONG bytes = 1u << 22;
     void * buffer = NULL;
@@ -226,26 +242,34 @@ static int load_census_take( struct load_census_t * census )
     {
         buffer = malloc( bytes );
         if ( !buffer )
+        {
             return 0;
+        }
 
         ULONG needed = 0;
         status = query( LOAD_CENSUS_SYSTEM_EXTENDED_HANDLE_INFORMATION, buffer, bytes, &needed );
         if ( status >= 0 )
+        {
             break;
+        }
         free( buffer );
         buffer = NULL;
         bytes *= 2;
     }
 
     if ( !buffer )
+    {
         return 0;
+    }
 
     const load_census_handle_info_t * info = (const load_census_handle_info_t *) buffer;
     const ULONG_PTR pid = (ULONG_PTR) self;
     for ( ULONG_PTR i = 0; i < info->NumberOfHandles; ++i )
     {
         if ( info->Handles[i].UniqueProcessId != pid )
+        {
             continue;
+        }
 
         if ( census->handles == LOAD_CENSUS_MAX )
         {
@@ -273,7 +297,9 @@ static uint64_t load_census_fd_kind( int fd )
 {
     struct stat info;
     if ( fstat( fd, &info ) != 0 )
+    {
         return 0;
+    }
     return ( (uint64_t) info.st_dev << 32 ) ^ (uint64_t) info.st_ino;
 }
 
@@ -281,7 +307,9 @@ static int load_census_fd_is_rng( int fd )
 {
     struct stat info, device;
     if ( fstat( fd, &info ) != 0 || !S_ISCHR( info.st_mode ) )
+    {
         return 0;
+    }
     return ( stat( "/dev/urandom", &device ) == 0 && device.st_rdev == info.st_rdev ) ||
            ( stat( "/dev/random", &device ) == 0 && device.st_rdev == info.st_rdev );
 }
@@ -296,7 +324,9 @@ static int load_census_take( struct load_census_t * census )
     thread_act_array_t threads = NULL;
     mach_msg_type_number_t count = 0;
     if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
+    {
         return 0;
+    }
 
     int ok = count <= LOAD_CENSUS_MAX;
 
@@ -320,15 +350,21 @@ static int load_census_take( struct load_census_t * census )
 
     (void) vm_deallocate( mach_task_self(), (vm_address_t) threads, (vm_size_t) ( count * sizeof( thread_act_t ) ) );
     if ( !ok )
+    {
         return 0;
+    }
 
     const int list_bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( list_bytes <= 0 )
+    {
         return 0;
+    }
 
     struct proc_fdinfo * fds = (struct proc_fdinfo *) malloc( (size_t) list_bytes );
     if ( !fds )
+    {
         return 0;
+    }
 
     const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, list_bytes );
     const int num_fds = used > 0 ? used / (int) PROC_PIDLISTFD_SIZE : 0;
@@ -343,17 +379,23 @@ static int load_census_take( struct load_census_t * census )
 
     free( fds );
     if ( used <= 0 || num_fds >= LOAD_CENSUS_MAX )
+    {
         return 0;
+    }
 #elif defined( __linux__ )
     DIR * tasks = opendir( "/proc/self/task" );
     if ( !tasks )
+    {
         return 0;
+    }
 
     struct dirent * entry;
     while ( ( entry = readdir( tasks ) ) != NULL )
     {
         if ( entry->d_name[0] < '0' || entry->d_name[0] > '9' )
+        {
             continue;
+        }
 
         if ( census->threads == LOAD_CENSUS_MAX )
         {
@@ -372,18 +414,24 @@ static int load_census_take( struct load_census_t * census )
 
     DIR * fds = opendir( "/proc/self/fd" );
     if ( !fds )
+    {
         return 0;
+    }
 
     const int own = dirfd( fds );
 
     while ( ( entry = readdir( fds ) ) != NULL )
     {
         if ( entry->d_name[0] < '0' || entry->d_name[0] > '9' )
+        {
             continue;
+        }
 
         const int fd = (int) strtol( entry->d_name, NULL, 10 );
         if ( fd == own )
+        {
             continue;
+        }
 
         if ( census->handles == LOAD_CENSUS_MAX )
         {
@@ -414,7 +462,9 @@ static int load_census_holds( const struct load_census_entry_t * entries, int co
     for ( int i = 0; i < count; ++i )
     {
         if ( entries[i].id == wanted->id && entries[i].kind == wanted->kind )
+        {
             return 1;
+        }
     }
 
     return 0;
@@ -432,13 +482,17 @@ static int load_census_survivors( const char * prefix, const char * label, int i
 {
     memset( survivors, 0, sizeof( *survivors ) );
     if ( !before->valid || !after->valid )
+    {
         return 0;
+    }
 
     for ( int i = 0; i < after->threads; ++i )
     {
         const struct load_census_entry_t * thread = &after->thread[i];
         if ( load_census_holds( before->thread, before->threads, thread ) )
+        {
             continue;
+        }
 
         if ( thread->os_pool )
         {
@@ -462,7 +516,9 @@ static int load_census_survivors( const char * prefix, const char * label, int i
     {
         const struct load_census_entry_t * handle = &after->handle[i];
         if ( load_census_holds( before->handle, before->handles, handle ) )
+        {
             continue;
+        }
 
         if ( init_scope && handle->rng )
         {
@@ -477,8 +533,10 @@ static int load_census_survivors( const char * prefix, const char * label, int i
             const DWORD tid = GetThreadId( (HANDLE) (uintptr_t) handle->id );
             int pool = 0;
             for ( int j = 0; j < after->threads && !pool; ++j )
+            {
                 pool = after->thread[j].id == tid && after->thread[j].os_pool &&
                        !load_census_holds( before->thread, before->threads, &after->thread[j] );
+            }
 
             if ( pool )
             {

@@ -356,8 +356,10 @@ static void handshake_refusal_releases_claim( int refusal )
             break;
         case 2:
             for ( int i = 0; i < 4; ++i )
+            {
                 check( rocketnet_client_slots_assign( test.server.client_slots, (uint64_t) ( 100 + i ), -1,
                                                       (uint64_t) ( 100 + i ), user_data ) >= 0 );
+            }
             counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS;
             expected = ROCKETNET_SERVER_PROCESS_SEND_DENIED;
             break;
@@ -607,7 +609,9 @@ static void test_claim_table_full_counts_its_own_counter()
         filler[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 1] = (uint8_t) i;
         if ( !rocketnet_used_token_history_claim_record( test.server.used_token_history, filler,
                                                          &filler_address, 2000.0, 1000.0 ) )
+        {
             break;
+        }
         filled++;
     }
 
@@ -652,8 +656,10 @@ static void test_request_rungs_budget_before_claim()
                                                       &other_address, 2000.0, 1000.0 ) );
 
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; ++i )
+    {
         rocketnet_signature_verify_budget_record_failure( &test.server.signature_verify_budget,
                                                           &test.client_address, ROCKETNET_TEST_CREATE_TS );
+    }
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;

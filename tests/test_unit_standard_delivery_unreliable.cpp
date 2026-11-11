@@ -40,7 +40,9 @@ struct rn_delivery_trace_t
 static int trace_bytes( rn_delivery_trace_t * trace, const void * data, int bytes )
 {
     if ( trace->at + bytes > trace->capacity )
+    {
         return -1;
+    }
     memcpy( trace->out + trace->at, data, (size_t) bytes );
     trace->at += bytes;
     return 0;
@@ -77,17 +79,29 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
 
     uint8_t outcome = 0xFF;
     if ( channels->error != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         outcome = 5;
+    }
     else if ( result == ROCKETNET_CHANNEL_DISPATCH_DELIVERED )
+    {
         outcome = 0;
+    }
     else if ( result == ROCKETNET_CHANNEL_DISPATCH_HELD )
+    {
         outcome = 1;
+    }
     else if ( result == ROCKETNET_CHANNEL_DISPATCH_STALE )
+    {
         outcome = 2;
+    }
     else if ( counters->values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] > unreliable_full )
+    {
         outcome = 3;
+    }
     else if ( counters->values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] > hold_full )
+    {
         outcome = 4;
+    }
     rocketnet_unit_check( outcome != 0xFF );
 
     const uint32_t appended = channels->deliveries - before;
@@ -96,7 +110,9 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
     const uint8_t count = (uint8_t) appended;
 
     if ( trace_byte( trace, outcome ) < 0 || trace_byte( trace, count ) < 0 )
+    {
         return -1;
+    }
 
     for ( uint32_t i = before; i < channels->deliveries; i++ )
     {
@@ -107,7 +123,9 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
         const uint8_t header[4] = { (uint8_t) delivery->channel, (uint8_t) delivery->code,
                                     (uint8_t) ( delivery->bytes & 0xFF ), (uint8_t) ( ( delivery->bytes >> 8 ) & 0xFF ) };
         if ( trace_bytes( trace, header, 4 ) < 0 || trace_bytes( trace, delivery->data, delivery->bytes ) < 0 )
+        {
             return -1;
+        }
     }
 
     return 0;
@@ -119,10 +137,14 @@ static int run_trace( const rocketnet_message_config_t * config, const rn_delive
     rocketnet_counters_t counters = {};
     const uint64_t arena_bytes = rn_arena_required_bytes( config, 1 );
     if ( arena_bytes == 0 )
+    {
         return -1;
+    }
     uint8_t * raw = (uint8_t *) malloc( (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     if ( !raw )
+    {
         return -1;
+    }
     uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
     rn_arena_t * arena = rn_arena_create_in_block( block, arena_bytes, config, 1, &counters );
     if ( !arena )
@@ -218,11 +240,17 @@ static int standard_delivery_generate( const char * id, uint8_t * out, int capac
     rn_delivery_trace_t trace = { out, capacity, 0 };
     int result = -1;
     if ( strcmp( id, "m6.code0-delivery-trace" ) == 0 )
+    {
         result = code0_delivery_trace( &trace );
+    }
     else if ( strcmp( id, "m6.code1-sequenced-trace" ) == 0 )
+    {
         result = code1_sequenced_trace( &trace );
+    }
     else if ( strcmp( id, "m6.code1-hold-full-trace" ) == 0 )
+    {
         result = code1_hold_full_trace( &trace );
+    }
     return result == 0 ? trace.at : -1;
 }
 

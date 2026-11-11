@@ -88,11 +88,15 @@ static void * create_status_allocate( void * context, size_t bytes )
         state->max_bytes = bytes;
     }
     if ( state->fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
 
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
@@ -342,7 +346,9 @@ static void create_status_note_reserve( void * context, enum rocketnet_log_level
     (void) length;
 
     if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "resend reserve" ) && strstr( message, "60000" ) )
+    {
         g_create_status_reserve_logged = true;
+    }
 }
 
 static void test_create_refuses_resend_reserve_past_region_fields()
@@ -450,13 +456,21 @@ static void test_create_reports_status_config_refusals()
 
 #if ROCKETNET_DEV
     if ( had_client_env )
+    {
         check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
+    }
     else
+    {
         check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    }
     if ( had_server_env )
+    {
         check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
+    }
     else
+    {
         check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+    }
 #endif // #if ROCKETNET_DEV
 
     // a transport list that does not parse
@@ -486,9 +500,13 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     if ( prior_client_present )
+    {
         check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
+    }
     else
+    {
         check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    }
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
@@ -500,9 +518,13 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
     if ( prior_server_present )
+    {
         check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
+    }
     else
+    {
         check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    }
 #endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
@@ -590,7 +612,9 @@ static void create_status_count_errors( void * context, enum rocketnet_log_level
 
     create_status_log_t * log = (create_status_log_t *) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
         return;
+    }
     log->errors++;
     snprintf( log->last, sizeof( log->last ), "%s", message );
 }

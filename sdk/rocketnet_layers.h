@@ -1636,9 +1636,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create( void * cont
 // reserve_unlimited is for the public zero-budget setting: keep its runtime
 // ceiling while omitting a finite create-time payload reserve
 struct rocketnet_message_client_t * rocketnet_message_client_create_internal( void * context, const uint8_t * connect_token,
-                                                                        const struct rocketnet_client_transport_config_t * transport_config,
-                                                                        const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
+                                                                              const struct rocketnet_client_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is
@@ -1763,9 +1763,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 // reserve_unlimited preserves the public unlimited-budget runtime ceiling
 // without sizing a finite payload reserve for that sentinel
 struct rocketnet_message_server_t * rocketnet_message_server_create_internal( void * context, const char * address,
-                                                                        const struct rocketnet_server_transport_config_t * transport_config,
-                                                                        const struct rocketnet_message_config_t * message_config,
-                                                                        void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );
+                                                                              const struct rocketnet_server_transport_config_t * transport_config,
+                                                                              const struct rocketnet_message_config_t * message_config,
+                                                                              void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited );
 
 // create with configs transport_config_bytes and message_config_bytes long: each
 // known size is read over its defaults and created as above; an unknown size is

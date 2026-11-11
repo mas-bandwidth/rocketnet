@@ -73,7 +73,9 @@ static std::vector<std::string> env_names_overrides( const env_names_log_t & log
     {
         const char * at = strstr( log.lines[i].c_str(), "config override " );
         if ( !at )
+        {
             continue;
+        }
         at += strlen( "config override " );
 
         const char * end = strchr( at, '=' );
@@ -89,8 +91,12 @@ static std::vector<std::string> env_names_overrides( const env_names_log_t & log
 static bool env_names_contains( const std::vector<std::string> & names, const char * name )
 {
     for ( size_t i = 0; i < names.size(); i++ )
+    {
         if ( names[i] == name )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -551,8 +557,12 @@ static int env_names_count_named( const env_names_log_t & log, const char * name
 {
     int count = 0;
     for ( size_t i = 0; i < log.lines.size(); i++ )
+    {
         if ( strstr( log.lines[i].c_str(), name ) && strstr( log.lines[i].c_str(), phrase ) )
+        {
             count++;
+        }
+    }
 
     return count;
 }

@@ -45,9 +45,13 @@
 static int ctv_unhex_digit( char c )
 {
     if ( c >= '0' && c <= '9' )
+    {
         return c - '0';
+    }
     if ( c >= 'a' && c <= 'f' )
+    {
         return c - 'a' + 10;
+    }
 
     return -1;
 }
@@ -57,14 +61,18 @@ static int ctv_unhex_digit( char c )
 static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
 {
     if ( (int) text.size() != count * 2 )
+    {
         return 0;
+    }
 
     for ( int i = 0; i < count; i++ )
     {
         int hi = ctv_unhex_digit( text[(size_t) ( 2 * i )] );
         int lo = ctv_unhex_digit( text[(size_t) ( 2 * i + 1 )] );
         if ( hi < 0 || lo < 0 )
+        {
             return 0;
+        }
         bytes[i] = (uint8_t) ( ( hi << 4 ) | lo );
     }
 
@@ -96,7 +104,9 @@ static int ctv_read_embedded( std::string & out )
     size_t bytes = 0;
     const unsigned char * data = rocketnet_test_fixture( "standard/vectors/connect_token_v1.json", &bytes );
     if ( !data )
+    {
         return 0;
+    }
     out.assign( reinterpret_cast<const char *>( data ), bytes );
 
     return 1;
@@ -455,7 +465,9 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
     int number_of_tests = 0;
     int number_of_groups = 0;
     if ( !wycheproof_load( "ed25519_test.json", tests, &number_of_tests, &number_of_groups ) )
+    {
         return -1;
+    }
 
     int failed = 0;
 
@@ -467,17 +479,25 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
         const std::map<std::string, std::string>::const_iterator msg_text = test.fields.find( "msg" );
         const std::map<std::string, std::string>::const_iterator sig_text = test.fields.find( "sig" );
         if ( pk_text == test.group.end() || msg_text == test.fields.end() || sig_text == test.fields.end() )
+        {
             return -1;
+        }
 
         std::vector<uint8_t> pk;
         std::vector<uint8_t> msg;
         std::vector<uint8_t> sig;
         if ( !wycheproof_hex( pk_text->second, pk ) || pk.size() != 32 )
+        {
             return -1;
+        }
         if ( !wycheproof_hex( msg_text->second, msg ) )
+        {
             return -1;
+        }
         if ( !wycheproof_hex( sig_text->second, sig ) )
+        {
             return -1;
+        }
 
         const bool expected_valid = ( test.result == "valid" );
         bool actual_valid = false;

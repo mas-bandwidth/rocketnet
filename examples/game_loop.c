@@ -48,8 +48,12 @@ static double percentile( double p )
     uint32_t seen = 0;
 
     for ( int bin = 0; bin < BINS; bin++ )
+    {
         if ( ( seen += bins[bin] ) > 0 && seen >= p * count )
+        {
             return bin / 10.0;
+        }
+    }
 
     return max_us;
 }
@@ -293,7 +297,9 @@ int main( int argc, char ** argv )
             accumulator += t - previous;
             previous = t;
             if ( accumulator >= FRAME_DT )
+            {
                 break;
+            }
             rocketnet_sleep( FRAME_DT - accumulator );
         }
 
@@ -312,14 +318,18 @@ int main( int argc, char ** argv )
             const double start = rocketnet_time();
             rocketnet_client_update( client, now );                                             // (1) update
             if ( wrong_order )
+            {
                 rocketnet_client_send_packets( client );                                        // the mistake: sends last frame's queue
+            }
 
             const struct rocketnet_message_batch_t * batch;                                     // (2) receive the state updates
             while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+            {
                 for ( int m = 0; m < batch->num_messages; m++ )
                 {
                     read_message( &to_client, frame, batch->data[m] );
                 }
+            }
 
             // (3) simulate: nothing moves in this example
             // replaceable position: skip this frame when there is no room
@@ -348,7 +358,9 @@ int main( int argc, char ** argv )
                     if ( p )
                     {
                         if ( !rocketnet_client_finish_message( client, write_message( p, frame ) ) )    // and an event
+                        {
                             failure = "a client event was refused";
+                        }
                     }
                     else
                     {
@@ -360,7 +372,9 @@ int main( int argc, char ** argv )
             }
 
             if ( !wrong_order )
+            {
                 rocketnet_client_send_packets( client );                                        // (5) send last
+            }
 
             if ( measuring )
             {

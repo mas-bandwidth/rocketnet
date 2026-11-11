@@ -54,7 +54,9 @@ inline bool rocketnet_xdp_send_wakeup_hard_error( int error )
 inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool stalled, bool buffer_empty, bool handoff_idle )
 {
     if ( rocketnet_xdp_send_wakeup_hard_error( hard_send_error ) || stalled )
+    {
         return true;
+    }
     return buffer_empty && handoff_idle;
 }
 
@@ -81,13 +83,19 @@ inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, u
         stall.consumer = consumer;
         stall.passes = 0;
         if ( stalled.load( std::memory_order_relaxed ) )
+        {
             stalled.store( false, std::memory_order_relaxed );
+        }
         return false;
     }
     if ( stall.passes < bound )
+    {
         stall.passes++;
+    }
     if ( stall.passes < bound || !draining || stalled.load( std::memory_order_relaxed ) )
+    {
         return false;
+    }
     stalled.store( true, std::memory_order_relaxed );
     return true;
 }
@@ -122,9 +130,13 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
         return;
     }
     if ( !rocketnet_xdp_send_wakeup_hard_error( error ) )
+    {
         return;
+    }
     if ( hard_error.load( std::memory_order_relaxed ) == error )
+    {
         return;
+    }
     failures.fetch_add( 1, std::memory_order_relaxed );
     hard_error.store( error, std::memory_order_relaxed );
 }
@@ -135,7 +147,9 @@ inline void rocketnet_xdp_send_wakeup_failed( int error, std::atomic<uint64_t> &
 inline void rocketnet_xdp_send_wakeup_succeeded( std::atomic<int> & hard_error )
 {
     if ( hard_error.load( std::memory_order_relaxed ) != 0 )
+    {
         hard_error.store( 0, std::memory_order_relaxed );
+    }
 }
 
 // A TX wakeup errno that is neither back-pressure (EAGAIN, ENOBUFS), a lost

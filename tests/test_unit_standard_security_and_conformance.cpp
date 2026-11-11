@@ -36,7 +36,9 @@ static int standard_security_and_conformance_generate( const char * id, uint8_t 
             ROCKETNET_CONNECTION_DENIED_PACKET,
         };
         if ( capacity < 18 )
+        {
             return -1;
+        }
 
         for ( int i = 0; i < 6; i++ )
         {

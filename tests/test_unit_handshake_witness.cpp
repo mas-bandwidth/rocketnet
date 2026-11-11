@@ -306,14 +306,18 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
         rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
 
         if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+        {
             return client->state;
+        }
 
         if ( packet_bytes > 0 )
         {
             rocketnet_handshake_process_at( test, &test->client_address, packet, packet_bytes,
                                             response, &response_bytes, payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+            }
         }
 
         if ( time - last_keep_alive_time >= 0.1 )
@@ -322,15 +326,21 @@ static int rocketnet_handshake_pump( struct rocketnet_handshake_server_t * test,
             for ( int i = 0; i < rocketnet_client_slots_max_clients( test->server.client_slots ); i++ )
             {
                 if ( !rocketnet_client_slots_connected( test->server.client_slots, i ) )
+                {
                     continue;
+                }
                 int bytes = rocketnet_server_write_keep_alive( &test->server, i, time, response );
                 if ( bytes > 0 )
+                {
                     rocketnet_client_protocol_process_packet( client, response, bytes, time, payload, sizeof( payload ), &payload_bytes );
+                }
             }
         }
 
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
             return client->state;
+        }
 
         time += 0.05;
     }
@@ -375,7 +385,9 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             rocketnet_handshake_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
             rocketnet_unit_check( rocketnet_client_protocol_connect( client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
             for ( double time = 100.0; time < 112.0; time += 0.05 )
+            {
                 rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
+            }
             break;
 
         case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT:
@@ -395,7 +407,9 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             {
                 rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
                 if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+                {
                     break;
+                }
                 if ( packet_bytes > 0 )
                 {
                     rocketnet_handshake_process_at( &test, &test.client_address, packet, packet_bytes,
@@ -403,7 +417,9 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
                     // deliver cookies; swallow challenges, so the client waits
                     // in state 2 until its timeout
                     if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET )
+                    {
                         rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+                    }
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -427,13 +443,17 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             {
                 rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
                 if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+                {
                     break;
+                }
                 if ( packet_bytes > 0 && client->state < ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
                 {
                     rocketnet_handshake_process_at( &test, &test.client_address, packet, packet_bytes,
                                                     response, &response_bytes, payload, &payload_bytes, &payload_client_index );
                     if ( response_bytes > 0 )
+                    {
                         rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+                    }
                 }
             }
             rocketnet_handshake_server_teardown( &test );
@@ -449,7 +469,9 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             rocketnet_unit_check( rocketnet_handshake_pump( &test, client, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             double connected_time = client->last_receive_time;
             for ( double time = connected_time; time < connected_time + 12.0; time += 0.05 )
+            {
                 rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
+            }
             rocketnet_handshake_server_teardown( &test );
             break;
         }
@@ -461,8 +483,10 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             uint8_t dummy_user_data[ROCKETNET_USER_DATA_BYTES];
             memset( dummy_user_data, 0, sizeof( dummy_user_data ) );
             for ( int i = 0; i < 4; i++ )
+            {
                 rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF100 + (uint64_t) i, -1,
                                                                      0xF100 + (uint64_t) i, dummy_user_data ) == i );
+            }
 
             rocketnet_handshake_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
             rocketnet_unit_check( rocketnet_client_protocol_connect( client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
@@ -484,19 +508,29 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
 static int rocketnet_handshake_bytes_all_zero( const uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
+    {
         if ( bytes[i] != 0 )
+        {
             return 0;
+        }
+    }
     return 1;
 }
 
 static int rocketnet_handshake_ephemeral_and_token_scratch_zero( const struct rocketnet_client_protocol_t * client )
 {
     if ( !rocketnet_handshake_bytes_all_zero( client->client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) )
+    {
         return 0;
+    }
     if ( !rocketnet_handshake_bytes_all_zero( client->token.client_to_server_key, ROCKETNET_KEY_BYTES ) )
+    {
         return 0;
+    }
     if ( !rocketnet_handshake_bytes_all_zero( client->token.server_to_client_key, ROCKETNET_KEY_BYTES ) )
+    {
         return 0;
+    }
 
     return 1;
 }

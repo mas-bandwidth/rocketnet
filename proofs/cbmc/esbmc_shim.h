@@ -69,19 +69,29 @@ uint64_t rocketnet_esbmc_nondet_uint64( void );
 static inline bool rocketnet_esbmc_r_ok( const void * p, size_t n )
 {
     if ( n == 0 )
+    {
         return true;
+    }
     if ( p == NULL )
+    {
         return false;
+    }
 
     size_t obj = __ESBMC_POINTER_OBJECT( p );
     if ( obj == 0 )
+    {
         return false;
+    }
     if ( __ESBMC_is_dynamic[obj] && !__ESBMC_alloc[obj] )
+    {
         return false;
+    }
 
     long off = __ESBMC_POINTER_OFFSET( p );
     if ( off < 0 )
+    {
         return false;
+    }
     size_t sz = __ESBMC_is_dynamic[obj]
                     ? __ESBMC_alloc_size[obj]
                     : __ESBMC_get_object_size( p );

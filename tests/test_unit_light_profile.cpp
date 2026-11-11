@@ -146,7 +146,9 @@ static void test_light_profile_server_1000_required_memory()
     light_message_fields_server( &config );
 
     if ( ROCKETNET_MAX_CLIENTS < 1000 )
+    {
         return;
+    }
 
     config.max_clients = 1000;
 

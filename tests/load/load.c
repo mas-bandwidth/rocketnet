@@ -227,7 +227,9 @@ static int load_timing_init( struct load_timing_t * timing )
 
     const size_t bucket_count = (size_t) LOAD_TIMING_BUCKET_COUNT;
     if ( bucket_count > SIZE_MAX / (size_t) LOAD_TIMING_CALL_COUNT / sizeof( uint64_t ) )
+    {
         return 0;
+    }
     timing->buckets = (uint64_t *) calloc( bucket_count * (size_t) LOAD_TIMING_CALL_COUNT, sizeof( uint64_t ) );
     return timing->buckets != NULL;
 }
@@ -236,7 +238,9 @@ static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timi
 {
     const uint64_t count = timing->count[call];
     if ( count == 0 )
+    {
         return 0;
+    }
 
     const uint64_t target = count * percentile / 100;
     uint64_t seen = 0;
@@ -248,7 +252,9 @@ static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timi
         if ( seen > target )
         {
             if ( bucket == LOAD_TIMING_MAX_BUCKET_US )
+            {
                 return ( timing->max_ns[call] + 999ULL ) / 1000ULL;
+            }
             return bucket + 1;
         }
     }
@@ -300,7 +306,9 @@ static int load_timing_selftest( void )
     memset( &timing, 0, sizeof( timing ) );
     timing.buckets = (uint64_t *) calloc( (size_t) LOAD_TIMING_BUCKET_COUNT, sizeof( uint64_t ) );
     if ( !timing.buckets )
+    {
         return 0;
+    }
 
     int calls = 0;
     LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, calls++ );
@@ -423,28 +431,38 @@ static long count_open_fds( void )
 #if defined( _WIN32 )
     DWORD handles = 0;
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
+    {
         return (long) handles;
+    }
     return -1;
 #elif defined( __APPLE__ )
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
+    {
         return -1;
+    }
 
     struct proc_fdinfo * fds = (struct proc_fdinfo *) malloc( (size_t) bytes );
     if ( !fds )
+    {
         return -1;
+    }
 
     const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, bytes );
     free( fds );
     if ( used < 0 )
+    {
         return -1;
+    }
     return (long) ( used / (int) PROC_PIDLISTFD_SIZE );
 #else
     long cap = 65536;
     struct rlimit rl;
     if ( getrlimit( RLIMIT_NOFILE, &rl ) == 0 && rl.rlim_cur != RLIM_INFINITY &&
          rl.rlim_cur < (rlim_t) cap )
+    {
         cap = (long) rl.rlim_cur;
+    }
 
     long count = 0;
 
@@ -467,7 +485,9 @@ static long count_threads( void )
     thread_act_array_t threads = NULL;
     mach_msg_type_number_t count = 0;
     if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
+    {
         return -1;
+    }
 
     for ( mach_msg_type_number_t i = 0; i < count; i++ )
     {
@@ -500,7 +520,9 @@ static long count_threads( void )
 #elif defined( _WIN32 )
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
+    {
         return -1;
+    }
 
     THREADENTRY32 entry;
     entry.dwSize = sizeof( entry );
@@ -548,7 +570,9 @@ static struct load_census_t load_census_phase[LOAD_PHASES];
 static void load_warm_cycle( void )
 {
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return;
+    }
 
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t server_config;
@@ -573,7 +597,9 @@ static void load_warm_cycle( void )
         rocketnet_client_default_config( &client_config );
         if ( rocketnet_create_dev_connect_token( address, NULL, key, 30, 10, 1, LOAD_PROTOCOL_ID,
                                                  (uint64_t) time( NULL ), NULL, token ) == ROCKETNET_STATUS_OK )
+        {
             client = rocketnet_client_create( NULL, &client_config, &status );
+        }
         if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
         {
             rocketnet_client_destroy( client );
@@ -598,7 +624,9 @@ static void load_warm_cycle( void )
 
                 rocketnet_client_send_packets( client );
                 if ( frame >= 10 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+                {
                     break;
+                }
             }
 
             rocketnet_sleep( 0.01 );
@@ -636,8 +664,10 @@ static int load_resource_verdict( const char * role,
     *census = load_census_survivors( prefix, "operational", 1, &load_census_phase[LOAD_POST_INIT], &load_census_phase[LOAD_PRE_TERM], operational ) &&
               load_census_survivors( prefix, "total", 0, &load_census_phase[LOAD_PRE_INIT], &load_census_phase[LOAD_POST_TERM], total );
     if ( *census )
+    {
         return counted && operational->threads == 0 && operational->handles == 0 &&
                total->threads == 0 && total->handles == 0;
+    }
     memset( operational, 0, sizeof( *operational ) );
     memset( total, 0, sizeof( *total ) );
     return counted && fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
@@ -733,7 +763,9 @@ static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
     limit->hard = rl.rlim_max;
 
     if ( rl.rlim_cur == RLIM_INFINITY || rl.rlim_cur >= required )
+    {
         return 1;
+    }
 
     char soft_text[32];
     char hard_text[32];
@@ -765,7 +797,9 @@ static uint64_t query_rss_bytes( void )
 
             long page_size = sysconf( _SC_PAGESIZE );
             if ( page_size > 0 )
+            {
                 return (uint64_t) rss_pages * (uint64_t) page_size;
+            }
         }
         else
         {
@@ -788,7 +822,9 @@ static uint64_t query_rss_bytes( void )
 #else
     PROCESS_MEMORY_COUNTERS pmc;
     if ( GetProcessMemoryInfo( GetCurrentProcess(), &pmc, sizeof( pmc ) ) )
+    {
         return (uint64_t) pmc.WorkingSetSize;
+    }
     return 0;
 #endif // #if !defined( _WIN32 )
 }
@@ -835,11 +871,15 @@ static int verify_message( const uint8_t * buf, int bytes, uint32_t expected_mag
                            uint32_t * out_client, uint32_t * out_combo, uint32_t * out_seq )
 {
     if ( !buf || bytes != LOAD_PAYLOAD_BYTES )
+    {
         return 0;
+    }
 
     const uint32_t magic = read_u32_le( buf + 0 );
     if ( magic != expected_magic )
+    {
         return 0;
+    }
 
     const uint32_t client_idx = read_u32_le( buf + 4 );
     const uint32_t combo_idx = read_u32_le( buf + 8 );
@@ -848,7 +888,9 @@ static int verify_message( const uint8_t * buf, int bytes, uint32_t expected_mag
     for ( int i = 16; i < LOAD_PAYLOAD_BYTES; i++ )
     {
         if ( buf[i] != pattern_byte( magic, client_idx, combo_idx, seq, i ) )
+        {
             return 0;
+        }
     }
 
     *out_client = client_idx;
@@ -890,12 +932,16 @@ struct load_stream_state_t
 static int stream_seen_test_and_set( struct load_stream_state_t * st, uint32_t seq )
 {
     if ( seq == 0 || seq >= LOAD_MAX_SEQ_TRACKED )
+    {
         return -1;
+    }
 
     const uint32_t byte_idx = seq >> 3;
     const uint8_t mask = (uint8_t) ( 1u << ( seq & 7u ) );
     if ( st->seen_bitmap[byte_idx] & mask )
+    {
         return 1;
+    }
     st->seen_bitmap[byte_idx] |= mask;
 
     return 0;
@@ -1143,7 +1189,9 @@ int main( int argc, char ** argv )
     {
         struct load_fd_limit_t fd_limit;
         if ( !ensure_fd_limit( num_clients, &fd_limit ) )
+        {
             return 1;
+        }
         format_rlim( fd_limit.soft, fd_limit_soft_text, sizeof( fd_limit_soft_text ) );
         format_rlim( fd_limit.hard, fd_limit_hard_text, sizeof( fd_limit_hard_text ) );
     }
@@ -1246,8 +1294,10 @@ int main( int argc, char ** argv )
             plan_reason = "public_memory_overflow";
         }
         else
+        {
             total_public_required_bytes = server_public_required_bytes +
                                           (size_t) num_clients * client_public_required_bytes;
+        }
 
         const enum rocketnet_status_t plan_term_status = rocketnet_term();
         if ( plan_term_status != ROCKETNET_STATUS_OK && strcmp( plan_reason, "none" ) == 0 )
@@ -1645,7 +1695,9 @@ int main( int argc, char ** argv )
         const double now = rocketnet_time();
         const double elapsed = now - traffic_start;
         if ( now >= drain_deadline )
+        {
             break;
+        }
 
         const int in_traffic_window = ( elapsed < duration_seconds );
         if ( !in_traffic_window && !draining )
@@ -1656,10 +1708,12 @@ int main( int argc, char ** argv )
             {
                 wire_window_seconds = now - traffic_start;
                 for ( int i = 0; i < num_clients; i++ )
+                {
                     if ( clients[i] )
                     {
                         load_client_wire_sample( clients[i], &client_wire_end[i] );
                     }
+                }
 
                 load_server_wire_sample( server, &server_wire_end );
                 wire_window_recorded = 1;
@@ -1696,7 +1750,9 @@ int main( int argc, char ** argv )
         for ( int k = 0; k < slice; k++ )
         {
             if ( !in_traffic_window && rocketnet_time() >= drain_deadline )
+            {
                 break;
+            }
 
             const int i = client_update_cursor;
 
@@ -1957,10 +2013,12 @@ int main( int argc, char ** argv )
     {
         wire_window_seconds = rocketnet_time() - traffic_start;
         for ( int i = 0; i < num_clients; i++ )
+        {
             if ( clients[i] )
             {
                 load_client_wire_sample( clients[i], &client_wire_end[i] );
             }
+        }
 
         load_server_wire_sample( server, &server_wire_end );
     }

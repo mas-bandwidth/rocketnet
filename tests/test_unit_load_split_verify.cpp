@@ -228,8 +228,12 @@ static void test_split_verify_receipts_match()
 
     const uint32_t direction = SPLIT_VERIFY_CLIENT_TO_SERVER;
     for ( uint32_t mode = 0; mode < SPLIT_VERIFY_NUM_MODES; ++mode )
+    {
         for ( uint32_t size_class = 0; size_class < SPLIT_VERIFY_NUM_SIZE_CLASSES; ++size_class )
+        {
             split_verify_stream_init( &receiver[split_verify_stream_index( direction, mode, size_class )], 7, direction, mode, size_class );
+        }
+    }
 
     struct split_verify_stream_t * reliable = &receiver[split_verify_stream_index( direction, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL )];
     struct split_verify_stream_t * unreliable = &receiver[split_verify_stream_index( direction, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, SPLIT_VERIFY_SMALL )];

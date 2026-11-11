@@ -118,9 +118,13 @@ static void priority_log_capture( void * context, enum rocketnet_log_level_t lev
 {
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_WARN )
+    {
         return;
+    }
     if ( strstr( message, "thread priority:" ) == NULL && strstr( message, "timer period:" ) == NULL )
+    {
         return;
+    }
     priority_log_lines++;
 
     const size_t n = length < sizeof( priority_log_last ) - 1 ? length : sizeof( priority_log_last ) - 1;

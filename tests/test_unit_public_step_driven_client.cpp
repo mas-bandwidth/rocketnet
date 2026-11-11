@@ -250,9 +250,13 @@ static void test_public_step_driven_client_env_selects_the_mode()
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
     if ( present )
+    {
         check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
+    }
     else
+    {
         check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
+    }
 }
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );

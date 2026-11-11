@@ -218,7 +218,9 @@ static void test_dst_schedule_same_seed_same_trace()
             rocketnet_unit_check( a.trace_hash != plain.trace_hash );
         }
         else if ( rocketnet_dev_session_sequence_start() != start )
+        {
             rocketnet_unit_check( a.schedule_fired == 0 );
+        }
     }
 }
 
@@ -332,7 +334,9 @@ static void dst_quiet_window_seed_passes( uint64_t seed )
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( seed, &options, &result ) );
     if ( !result.passed )
+    {
         printf( "seed %llu: %s %s\n", (unsigned long long) seed, result.check, result.detail );
+    }
     rocketnet_unit_check( result.passed );
 }
 

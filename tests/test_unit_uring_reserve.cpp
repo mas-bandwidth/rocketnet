@@ -28,7 +28,9 @@ static void test_io_uring_transport_reservation_does_not_wrap()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create_fake( 1 );
     rocketnet_unit_check( uring != NULL );
     if ( !uring )
+    {
         return;
+    }
 
     struct rocketnet_address_t to;
     memset( &to, 0, sizeof( to ) );
@@ -91,10 +93,14 @@ static int uring_reserve_fake_peek( void * context, struct rocketnet_server_urin
 
     int count = uring_reserve_fake_size( fake );
     if ( count > max )
+    {
         count = max;
+    }
 
     for ( int i = 0; i < count; i++ )
+    {
         completions[i] = fake->fifo[( fake->head + i ) % URING_RESERVE_FAKE_CAPACITY];
+    }
 
     return count;
 }
@@ -150,7 +156,9 @@ static void uring_reserve_fake_stop_and_destroy( struct rocketnet_server_uring_t
 
     bool stopped = false;
     for ( int i = 0; i < 64 && !stopped; ++i )
+    {
         stopped = rocketnet_server_uring_stopped( uring );
+    }
 
     rocketnet_unit_check( stopped );
     rocketnet_server_uring_destroy( uring );
@@ -171,7 +179,9 @@ static void uring_reserve_stage_sends( struct rocketnet_server_uring_t * uring, 
         uint8_t * frame = rocketnet_server_uring_start_packet( uring, &to, &packet_id );
         rocketnet_unit_check( frame != NULL );
         if ( !frame )
+        {
             return;
+        }
 
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
         rocketnet_server_uring_finish_packet( uring, packet_id, frame, 64 );
@@ -190,7 +200,9 @@ static void test_io_uring_send_burst_spreads_across_socket_pool()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring != NULL );
     if ( !uring )
+    {
         return;
+    }
 
     const int sends = 8;
     uring_reserve_stage_sends( uring, sends );
@@ -200,7 +212,9 @@ static void test_io_uring_send_burst_spreads_across_socket_pool()
     for ( int queue = 0; queue < 2; queue++ )
     {
         if ( fake.sends_on_socket[queue] > 0 )
+        {
             used++;
+        }
     }
 
     rocketnet_unit_check( fake.sends == sends );
@@ -227,14 +241,18 @@ static void test_io_uring_send_burst_beyond_one_socket_buffer_uses_siblings()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring != NULL );
     if ( !uring )
+    {
         return;
+    }
 
     const int sends = 8;
     uring_reserve_stage_sends( uring, sends );
     rocketnet_server_uring_send_packets( uring );
 
     for ( int queue = 0; queue < 2; queue++ )
+    {
         rocketnet_unit_check( fake.sends_on_socket[queue] <= fake.send_capacity );
+    }
 
     uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );

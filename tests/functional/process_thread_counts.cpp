@@ -98,7 +98,9 @@ static int no_worker_thread_count()
 #if defined( __linux__ )
     DIR * dir = opendir( "/proc/self/task" );
     if ( !dir )
+    {
         return -1;
+    }
 
     int count = 0;
     struct dirent * entry;
@@ -122,7 +124,9 @@ static int public_step_thread_count()
 #if defined( __linux__ )
     DIR * dir = opendir( "/proc/self/task" );
     if ( !dir )
+    {
         return -1;
+    }
 
     int count = 0;
 

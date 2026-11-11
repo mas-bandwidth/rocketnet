@@ -95,7 +95,9 @@ static int priorities_drain( rn_region_t * region, rn_packet_builder_t * builder
     {
         const int packets = rn_packet_builder_write( builder, items, num_items, frames, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
         if ( packets == 0 )
+        {
             break;
+        }
         count = priorities_read( region, builder, packets, order, count, max );
     }
 
@@ -105,8 +107,12 @@ static int priorities_drain( rn_region_t * region, rn_packet_builder_t * builder
 static int priorities_position( const int * order, int count, int index )
 {
     for ( int i = 0; i < count; i++ )
+    {
         if ( order[i] == index )
+        {
             return i;
+        }
+    }
     return -1;
 }
 
@@ -247,7 +253,9 @@ static void test_no_starvation_of_low()
     for ( int i = 0; i < 42; i++ )
     {
         if ( order[i] >= 40 )
+        {
             continue;
+        }
         rocketnet_unit_check( order[i] == last + 1 );
 
         last = order[i];
@@ -407,7 +415,9 @@ static void test_send_priorities_no_allocation_after_create()
 
         rocketnet_send_budget_begin_update( &budget, 10.0 + 0.1 * update );
         if ( update == 8 )
+        {
             budget.tokens = 1.0;                                // a refusal: the packet is not written and the clocks roll back
+        }
 
         rn_packet_builder_write( &builder, items, 8, frames, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
     }

@@ -375,8 +375,12 @@ static void test_resend_timing_witness_replays()
         uint64_t out[4];
         const uint32_t resent = resend_timing_write( &f, now, out, 4 );
         for ( uint32_t k = 0; k < resent; k++ )
+        {
             if ( out[k] == record )
+            {
                 attempts++;
+            }
+        }
     }
 
     check( sampled );
@@ -455,8 +459,12 @@ static uint32_t resend_timing_pass_numbers( resend_timing_fixture_t * f, double 
 static bool resend_timing_contains( const uint64_t * numbers, uint32_t count, uint64_t number )
 {
     for ( uint32_t i = 0; i < count; i++ )
+    {
         if ( numbers[i] == number )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -692,7 +700,9 @@ static void test_sent_index_full_scan_is_bounded()
     {
         rn_sent_index_t * cell = &region->sent_index[i];
         if ( cell->used )
+        {
             continue;
+        }
         cell->packet_id = 0x8000000000000000ULL + i;
         cell->entry = 0;
         cell->used = 1;

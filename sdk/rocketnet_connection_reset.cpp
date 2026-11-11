@@ -39,7 +39,9 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     void * keys_context = client->keys_context;
 
     if ( retire_keys )
+    {
         retire_keys( keys_context );
+    }
 
     // key and token erasure must not be optimized away. The following memset
     // establishes the fresh non-secret fields after these secure wipes.
@@ -70,7 +72,9 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
     if ( !server->client_slots || client_index < 0 ||
          client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
+    {
         return;
+    }
 
     int mapping_index = -1;
     uint64_t mapping_generation = 0;
@@ -86,24 +90,34 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
     // untouched. The stale slot is still released afterwards.
 
     if ( mapping_index >= 0 && server->encryption_map )
+    {
         (void) rocketnet_encryption_map_remove_owned( server->encryption_map, mapping_index, mapping_generation );
+    }
 
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
+    {
         rocketnet_client_slots_release( server->client_slots, client_index );
+    }
 
     // proofs/tla/RNSlots.tla Disconnect: the slot's connection id returns to none
 
     if ( server->connection_ids )
+    {
         server->connection_ids[client_index] = 0;
+    }
 
     // proofs/tla/RNSlots.tla Disconnect: the ending path's reason, which the message
     // layer reads when its Observe finds the slot dropped
 
     if ( server->end_reasons )
+    {
         server->end_reasons[client_index] = reason;
+    }
 
     if ( server->acks )
+    {
         rocketnet_server_acks_reset_slot( server->acks, client_index );
+    }
 }
 
 static void rocketnet_message_connection_reset( struct rn_message_object_t * object, int client_index )
@@ -168,7 +182,9 @@ bool rocketnet_reset_inventory_matches( const char * structure,
         for ( size_t j = 0; j < num_decisions; j++ )
         {
             if ( strcmp( members[i].name, decisions[j].name ) != 0 )
+            {
                 continue;
+            }
 
             matches++;
 
@@ -191,7 +207,9 @@ bool rocketnet_reset_inventory_matches( const char * structure,
     {
         size_t matches = 0;
         for ( size_t i = 0; i < num_members; i++ )
+        {
             matches += strcmp( members[i].name, decisions[j].name ) == 0;
+        }
         if ( matches == 0 )
         {
             snprintf( failure, failure_bytes, "%s.%s: decided, but not a member", structure, decisions[j].name );

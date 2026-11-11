@@ -28,10 +28,12 @@ int main( int argc, char ** argv )
     const char * port = getenv( "ROCKETNET_EXAMPLE_PORT" );
 
     for ( int i = 1; i + 1 < argc; i++ )
+    {
         if ( strcmp( argv[i], "--port" ) == 0 )
         {
             port = argv[i + 1];
         }
+    }
 
     char * end = NULL;
     const long port_number = port ? strtol( port, &end, 10 ) : 40000;

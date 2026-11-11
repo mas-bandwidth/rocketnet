@@ -105,7 +105,9 @@ struct resend_timing_row_t
 static double resend_timing_percentile( const double * sorted, int count, double fraction )
 {
     if ( count <= 0 )
+    {
         return 0.0;
+    }
 
     int index = (int) ceil( fraction * (double) count ) - 1;
     if ( index < 0 )
@@ -125,7 +127,9 @@ static double resend_timing_percentile( const double * sorted, int count, double
 static double resend_timing_resend_delay_bound( const rn_window_ack_t * ack )
 {
     if ( !ack->has_rtt )
+    {
         return ack->resend_delay_initial;
+    }
     return std::max( ack->resend_delay_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->resend_delay_max ) );
 }
 
@@ -229,12 +233,16 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         for ( int i = undelivered_from; i < sent; i++ )
         {
             if ( seen[i] )
+            {
                 continue;
+            }
 
             const uint64_t number = first_number + (uint64_t) i;
             const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
             if ( slot->number != number || slot->last_send != h.now )
+            {
                 continue;
+            }
             resend_timing_check( sends[i] < RESEND_TIMING_MAX_SENDS );
 
             const int n = sends[i];
@@ -285,9 +293,11 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         }
 
         for ( int channel = 0; channel < h.message_config.num_channels; channel++ )
+        {
             while ( rocketnet_channel_harness_client_collect( &h, channel, &delivery ) )
             {
             }
+        }
 
         resend_timing_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     }
@@ -335,17 +345,23 @@ void resend_timing_table_over_lossy_links()
     resend_timing_row_t rows[2][4][2];
 
     for ( int s = 0; s < 2; s++ )
+    {
         for ( int r = 0; r < 4; r++ )
+        {
             for ( int l = 0; l < 2; l++ )
             {
                 resend_timing_run( s == 0 ? "rule" : "fixed", s, rtts[r], losses[l], &rows[s][r][l] );
             }
+        }
+    }
 
     printf( "test_resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
             RESEND_TIMING_MESSAGES, RESEND_TIMING_BYTES );
     printf( "schedule rtt_ms loss_pct p50_ms p99_ms p999_ms copies timeouts model_p99_ms resends gap_min_ms gap_max_ms early_min_ms late_max_ms max_sends ceiling_slack_ms\n" );
     for ( int s = 0; s < 2; s++ )
+    {
         for ( int r = 0; r < 4; r++ )
+        {
             for ( int l = 0; l < 2; l++ )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
@@ -356,6 +372,8 @@ void resend_timing_table_over_lossy_links()
                         row->gaps, row->gaps ? row->gap_min_ms : 0.0, row->gap_max_ms, row->gaps ? row->early_min_ms : 0.0,
                         row->gaps ? row->late_max_ms : 0.0, row->max_sends, row->ceiling_slack_ms );
             }
+        }
+    }
 
     fflush( stdout );
 
@@ -363,7 +381,9 @@ void resend_timing_table_over_lossy_links()
     const double eps_ms = 1e-6;
 
     for ( int s = 0; s < 2; s++ )
+    {
         for ( int r = 0; r < 4; r++ )
+        {
             for ( int l = 0; l < 2; l++ )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
@@ -384,6 +404,8 @@ void resend_timing_table_over_lossy_links()
 
                 resend_timing_check( row->ceiling_slack_ms <= eps_ms );
             }
+        }
+    }
 }
 
 /*
@@ -449,7 +471,9 @@ static int block_cost_small_held( const rocketnet_channel_harness_t * h )
     {
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( slot->acked )
+        {
             continue;
+        }
         return ( rn_send_number_unsent_due( slot->last_send ) || h->now >= slot->last_send + rn_window_ack_resend_delay( ack ) ) ? 1 : 0;
     }
 
@@ -573,9 +597,11 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
         }
 
         for ( int channel = 0; channel < h.message_config.num_channels; channel++ )
+        {
             while ( rocketnet_channel_harness_client_collect( &h, channel, &delivery ) )
             {
             }
+        }
 
         resend_timing_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     }
@@ -613,8 +639,10 @@ void block_resend_cost_over_long_path()
     printf( "test_block_resend_cost_over_long_path: one %d-byte reliable-ordered block, rtt 200 ms, 10%% loss, 60 Hz\n", BLOCK_COST_BYTES );
     printf( "schedule  sender delivered completion_s wire_per_payload_byte copies_per_record small_sent small_p99_ms small_held\n" );
     for ( int s = 0; s < 5; s++ )
+    {
         printf( "%-9s %6s %9d %12.3f %21.3f %17.2f %10d %12.1f %10d\n", rows[s].schedule, rows[s].sender, rows[s].delivered, rows[s].completion_s,
                 rows[s].wire_per_payload, rows[s].chunk_copies, rows[s].small_sent, rows[s].small_p99_ms, rows[s].small_held );
+    }
     fflush( stdout );
 
     for ( int s = 0; s < 5; s++ )

@@ -31,7 +31,9 @@ static int client_legacy_fault_calls;
 static int client_legacy_fault_receive( void *, rocketnet_address_t * from, uint8_t *, int )
 {
     if ( client_legacy_fault_calls++ > 0 )
+    {
         return 0;
+    }
     memset( from, 0, sizeof( *from ) );
     from->type = ROCKETNET_ADDRESS_IPV4;
     from->port = 1;

@@ -49,8 +49,12 @@ static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] = {
 static int counters_find( const char * name )
 {
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
         if ( strcmp( counters_rows[i].name, name ) == 0 )
+        {
             return i;
+        }
+    }
     return -1;
 }
 
@@ -82,10 +86,14 @@ static std::vector<std::string> counters_split_list( const char * list )
             }
             item.clear();
             if ( *c == '\0' )
+            {
                 break;
+            }
         }
         else
+        {
             item += *c;
+        }
     }
 
     return out;
@@ -96,7 +104,9 @@ static bool counters_read_file( const std::string & relative_path, std::string &
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
     FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
+    {
         return false;
+    }
 
     char buffer[65536];
     size_t n;
@@ -154,7 +164,9 @@ static std::set<std::string> counters_named_by_tests()
     for ( size_t i = 0; i < files.size(); i++ )
     {
         if ( files[i] == "tests/test_unit_counter_classes.cpp" )
+        {
             continue;
+        }
 
         std::string text;
         check( counters_read_file( files[i], text ) );
@@ -206,8 +218,12 @@ static const counters_exception_t counters_reachable_not_done[] = { { NULL, NULL
 static bool counters_in_list( const counters_exception_t * list, const std::string & name )
 {
     for ( int i = 0; list[i].name; i++ )
+    {
         if ( name == list[i].name )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -223,7 +239,9 @@ static void test_counters_every_counter_is_named_by_a_test()
     {
         const std::string name = rocketnet_counter_name( i );
         if ( named.count( name ) || counters_in_list( counters_no_code_path, name ) )
+        {
             continue;
+        }
 
         if ( counters_in_list( counters_reachable_not_done, name ) )
         {
@@ -331,7 +349,9 @@ static bool counters_function_body( const std::string & text, const char * funct
             {
                 const size_t close = text.find( "\n}\n", open );
                 if ( close == std::string::npos )
+                {
                     return false;
+                }
                 body = text.substr( open, close - open );
                 return true;
             }
@@ -418,7 +438,9 @@ static void test_counters_every_outcome_in_at_most_one_family()
 
             const int family = counters_rows[counter].family;
             if ( counter == received || family == ROCKETNET_COUNTER_NONE || family == received )
+            {
                 continue;
+            }
             printf( "ROCKETNET_COUNTER_%s is counted in %s (the %s ladder) but sums into %s\n",
                     counted[j].c_str(), ladder.function, ladder.received, counters_rows[family].name );
             shared++;
@@ -447,7 +469,9 @@ static std::string counters_trim( const std::string & text )
 {
     const size_t first = text.find_first_not_of( " \t\r" );
     if ( first == std::string::npos )
+    {
         return "";
+    }
     const size_t last = text.find_last_not_of( " \t\r" );
     return text.substr( first, last - first + 1 );
 }
@@ -461,7 +485,9 @@ static std::vector<std::string> counters_lines( const std::string & text )
         const size_t end = text.find( '\n', start );
         lines.push_back( text.substr( start, end == std::string::npos ? std::string::npos : end - start ) );
         if ( end == std::string::npos )
+        {
             break;
+        }
         start = end + 1;
     }
     return lines;
@@ -470,8 +496,12 @@ static std::vector<std::string> counters_lines( const std::string & text )
 static int counters_line_with( const std::vector<std::string> & lines, const char * needle )
 {
     for ( size_t i = 0; i < lines.size(); i++ )
+    {
         if ( lines[i].find( needle ) != std::string::npos )
+        {
             return (int) i;
+        }
+    }
     return -1;
 }
 
@@ -483,12 +513,16 @@ static std::string counters_comment_above( const std::vector<std::string> & line
     std::string comment;
     int i = line - 1;
     if ( i >= 0 && counters_trim( lines[(size_t) i] ).empty() )
+    {
         i--;
+    }
     while ( i >= 0 )
     {
         const std::string trimmed = counters_trim( lines[(size_t) i] );
         if ( trimmed.compare( 0, 2, "//" ) != 0 )
+        {
             break;
+        }
         comment = trimmed + "\n" + comment;
         i--;
     }
@@ -508,7 +542,9 @@ static void test_server_process_outcomes_budget_exceeded_with_siblings()
 
     const int define_line = counters_line_with( protocol_lines, "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
     if ( define_line < 0 )
+    {
         printf( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is not defined in sdk/rocketnet_server_protocol.h\n" );
+    }
     check( define_line >= 0 );
 
     const char * const define_text = protocol_lines[(size_t) define_line].c_str();
@@ -525,7 +561,9 @@ static void test_server_process_outcomes_budget_exceeded_with_siblings()
     const int counters_define = counters_line_with( counters_lines( counters_text ),
                                                     "#define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED" );
     if ( counters_define >= 0 )
+    {
         printf( "ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED is still defined in sdk/rocketnet_counters.h\n" );
+    }
     check( counters_define < 0 );
 
     // the outcome list comment names it
@@ -534,7 +572,9 @@ static void test_server_process_outcomes_budget_exceeded_with_siblings()
     check( ignored_line >= 0 );
     const std::string outcome_comment = counters_comment_above( protocol_lines, ignored_line );
     if ( outcome_comment.find( "BUDGET_EXCEEDED" ) == std::string::npos )
+    {
         printf( "the ROCKETNET_SERVER_PROCESS_* outcome list comment does not mention BUDGET_EXCEEDED\n" );
+    }
     check( outcome_comment.find( "BUDGET_EXCEEDED" ) != std::string::npos );
 
     // the request entry's doc comment names it
@@ -543,7 +583,9 @@ static void test_server_process_outcomes_budget_exceeded_with_siblings()
     check( request_line >= 0 );
     const std::string request_comment = counters_comment_above( protocol_lines, request_line );
     if ( request_comment.find( "BUDGET_EXCEEDED" ) == std::string::npos )
+    {
         printf( "the request entry's doc comment does not mention BUDGET_EXCEEDED\n" );
+    }
     check( request_comment.find( "BUDGET_EXCEEDED" ) != std::string::npos );
 }
 

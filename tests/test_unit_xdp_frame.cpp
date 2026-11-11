@@ -227,7 +227,9 @@ static void test_build_refuses_missing_inputs_and_short_frames()
     // nothing was written by any refusal
 
     for ( size_t i = 0; i < sizeof( frame ); i++ )
+    {
         rocketnet_unit_check( frame[i] == 0x5A );
+    }
 
     rocketnet_unit_check( rocketnet_xdp_frame_build( frame, 46, server_mac, gateway_mac, &src, &dst, 4 ) == 46 );
 }

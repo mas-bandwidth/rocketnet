@@ -46,7 +46,9 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     // modulo in rn_window_send_position.
 
     if ( holdable && B == 0 )
+    {
         fits = 0;
+    }
     else if ( fits && holdable )
     {
         p = rn_window_send_position( send, span );
@@ -61,8 +63,10 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
         if ( !send->stalled )
         {
             if ( send->region->counters )
+            {
                 rocketnet_platform_atomic_add_u64(
                     (volatile uint64_t *) &send->region->counters->values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL], 1 );
+            }
 
             send->stalled = 1;
         }
@@ -120,7 +124,9 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
     rocketnet_assert( send && send->region && number && ring_start );
 
     if ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
+    {
         return RN_WINDOW_SEND_UNRELIABLE;
+    }
 
     rocketnet_assert( code >= ROCKETNET_MESSAGE_CODE_RELIABLE && code <= ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
     rocketnet_assert( bytes > 0 && bytes <= ROCKETNET_MESSAGE_SINGLE_BYTES );
@@ -131,14 +137,18 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
 
     uint64_t p;
     if ( !rn_window_send_admit( send, 1, span, holdable, &p ) )
+    {
         return RN_WINDOW_SEND_STALL;
+    }
 
     const uint64_t n = send->next;
     rn_window_send_set_number( send, n, descriptor, 0, p );
     send->next++;
 
     if ( holdable )
+    {
         send->ring_next = p + span;
+    }
     send->stalled = 0;
 
     *number = n;
@@ -172,11 +182,15 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 
     uint64_t p;
     if ( !rn_window_send_admit( send, count, span, 1, &p ) )
+    {
         return 0;
+    }
 
     const uint64_t first = send->next;
     for ( uint32_t i = 0; i < count; i++ )
+    {
         rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i, p + (uint64_t) i * F );
+    }
 
     send->next += count;
     send->ring_next = p + span;
@@ -196,11 +210,15 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     rocketnet_assert( send && send->region );
 
     if ( number < send->U || number >= send->next )
+    {
         return 0;
+    }
 
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     if ( entry->number != number || entry->acked )
+    {
         return 0;
+    }
 
     entry->acked = 1;
 
@@ -208,7 +226,9 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     {
         const rn_send_number_t * oldest = &send->region->send_numbers[send->U % send->region->window];
         if ( oldest->number != send->U || !oldest->acked )
+        {
             break;
+        }
 
         send->U++;
     }
@@ -216,7 +236,9 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     const uint64_t old_prime = send->U_prime;
 
     if ( send->U == send->next )
+    {
         send->U_prime = send->U;
+    }
     else
     {
         const rn_send_number_t * oldest = &send->region->send_numbers[send->U % send->region->window];
@@ -225,7 +247,9 @@ int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
     }
 
     if ( send->U_prime != old_prime )
+    {
         send->stalled = 0;
+    }
 
     return 1;
 }

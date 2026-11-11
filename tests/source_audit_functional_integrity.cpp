@@ -24,7 +24,9 @@ static std::string functional_integrity_read( const char * relative )
     char buffer[4096];
     size_t bytes;
     while ( ( bytes = fread( buffer, 1, sizeof( buffer ), file ) ) != 0 )
+    {
         text.append( buffer, bytes );
+    }
     const bool read_ok = ferror( file ) == 0;
     const int close_status = fclose( file );
     rocketnet_unit_check( read_ok && close_status == 0 );
@@ -69,14 +71,18 @@ static void functional_integrity_skip_space( const std::string & text, size_t & 
 {
     while ( pos < text.size() && ( text[pos] == ' ' || text[pos] == '\t' || text[pos] == '\n' ||
                                    text[pos] == '\r' || text[pos] == '\f' || text[pos] == '\v' ) )
+    {
         pos++;
+    }
 }
 
 static bool functional_integrity_take( const std::string & text, size_t & pos, char c )
 {
     functional_integrity_skip_space( text, pos );
     if ( pos == text.size() || text[pos] != c )
+    {
         return false;
+    }
     pos++;
     return true;
 }
@@ -84,10 +90,14 @@ static bool functional_integrity_take( const std::string & text, size_t & pos, c
 static bool functional_integrity_identifier( const std::string & text, size_t & pos, std::string & name )
 {
     if ( pos == text.size() || !functional_integrity_word_char( text[pos] ) || ( text[pos] >= '0' && text[pos] <= '9' ) )
+    {
         return false;
+    }
     const size_t first = pos++;
     while ( pos < text.size() && functional_integrity_word_char( text[pos] ) )
+    {
         pos++;
+    }
     name = text.substr( first, pos - first );
     return true;
 }
@@ -97,7 +107,9 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
     // CMake's quoted CONTENT carries escaped newlines. Decode those before
     // removing C++ comments, including comments inside otherwise empty bodies.
     for ( size_t pos = 0; ( pos = generated.find( "\\n", pos ) ) != std::string::npos; pos++ )
+    {
         generated.replace( pos, 2, "\n" );
+    }
     generated = functional_integrity_without_comments( generated );
     const std::string rows = functional_integrity_without_comments( registry );
     // Scan the two small source forms directly. Besides avoiding regex
@@ -107,22 +119,32 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
     for ( size_t start = 0; start < generated.size(); start++ )
     {
         if ( start != 0 && functional_integrity_word_char( generated[start - 1] ) )
+        {
             continue;
+        }
         size_t pos = start;
         std::string result, name;
         if ( !functional_integrity_identifier( generated, pos, result ) || result != "void" )
+        {
             continue;
+        }
         const size_t before_space = pos;
         functional_integrity_skip_space( generated, pos );
         if ( pos == before_space || !functional_integrity_identifier( generated, pos, name ) ||
              !functional_integrity_take( generated, pos, '(' ) )
+        {
             continue;
+        }
         functional_integrity_skip_space( generated, pos );
         if ( generated.compare( pos, 4, "void" ) == 0 )
+        {
             pos += 4;
+        }
         if ( functional_integrity_take( generated, pos, ')' ) && functional_integrity_take( generated, pos, '{' ) &&
              functional_integrity_take( generated, pos, '}' ) )
+        {
             empty_functions.insert( name );
+        }
     }
     std::set<std::string> failures;
     for ( size_t start = 0; ( start = rows.find( '{', start ) ) != std::string::npos; start++ )
@@ -131,14 +153,20 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
         std::string test, function;
         if ( !functional_integrity_take( rows, pos, '"' ) || !functional_integrity_identifier( rows, pos, test ) ||
              test.size() <= 5 || test.compare( 0, 5, "test_" ) != 0 || pos == rows.size() || rows[pos] != '"' )
+        {
             continue;
+        }
         pos++;
         if ( !functional_integrity_take( rows, pos, ',' ) )
+        {
             continue;
+        }
         functional_integrity_skip_space( rows, pos );
         if ( functional_integrity_identifier( rows, pos, function ) && functional_integrity_take( rows, pos, ',' ) &&
              empty_functions.count( function ) != 0 )
+        {
             failures.insert( test );
+        }
     }
     return failures;
 }
@@ -168,7 +196,9 @@ static void test_functional_cases_have_no_generated_empty_bodies()
     rocketnet_unit_check( registry.find( "rocketnet_functional_tests[]" ) != std::string::npos );
     const std::set<std::string> failures = functional_integrity_empty_cases( cmake, registry );
     for ( std::set<std::string>::const_iterator it = failures.begin(); it != failures.end(); ++it )
+    {
         printf( "functional case %s has a generated empty body\n", it->c_str() );
+    }
     rocketnet_unit_check( failures.empty() );
 }
 

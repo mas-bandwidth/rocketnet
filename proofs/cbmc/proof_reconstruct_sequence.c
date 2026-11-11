@@ -97,14 +97,20 @@ static void assert_nearest_32( uint32_t wire, uint64_t expected, uint64_t result
     __CPROVER_assert( ( result & 0xFFFFFFFFULL ) == (uint64_t) wire,
                       "32-bit result keeps the wire low bits" );
     if ( result <= UINT64_MAX - U32_MOD )
+    {
         __CPROVER_assert( abs_diff( result + U32_MOD, expected ) > abs_diff( result, expected ),
                           "32-bit candidate above is strictly farther" );
+    }
     if ( result >= U32_MOD )
+    {
         __CPROVER_assert( abs_diff( result - U32_MOD, expected ) >= abs_diff( result, expected ),
                           "32-bit candidate below is no nearer" );
+    }
     if ( expected >= U32_HALF )
+    {
         __CPROVER_assert( abs_diff( result, expected ) <= U32_HALF,
                           "32-bit |result - reference| <= 2^31" );
+    }
 }
 
 void harness_reconstruct_sequence( void )

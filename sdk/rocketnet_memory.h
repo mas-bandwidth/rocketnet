@@ -26,7 +26,9 @@
 inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t stride )
 {
     if ( stride && count > ( UINT64_MAX - total ) / stride )
+    {
         return false;
+    }
 
     total += count * stride;
     return true;
@@ -77,7 +79,9 @@ inline uint64_t rocketnet_memory_allocations( std::initializer_list<uint64_t> si
     for ( uint64_t bytes : sizes )
     {
         if ( bytes > SIZE_MAX - overhead || !rocketnet_memory_add( total, 1, bytes + overhead ) )
+        {
             return 0;
+        }
     }
 
     return total <= SIZE_MAX ? total : 0;
@@ -177,12 +181,16 @@ inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet
     for ( int i = 0; i < num_skip; i++ )
     {
         if ( skip[i].offset > at )
+        {
             memset( base + at, 0, skip[i].offset - at );
+        }
         at = skip[i].offset + skip[i].bytes;
     }
 
     if ( at < bytes )
+    {
         memset( base + at, 0, bytes - at );
+    }
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_MEMORY_H

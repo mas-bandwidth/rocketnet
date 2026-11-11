@@ -55,7 +55,9 @@ bool rocketnet_transport_pin_only( int transport, bool server )
 {
     const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( transport );
     if ( !definition )
+    {
         return false;
+    }
 
     return ( server ? definition->server_preference : definition->client_preference ) >= ROCKETNET_TRANSPORT_PIN_ONLY;
 }
@@ -86,23 +88,33 @@ struct rocketnet_transport_lists_t
         for ( int i = 0; i < ROCKETNET_NUM_TRANSPORTS; ++i )
         {
             if ( i )
+            {
                 append( names, ", " );
+            }
             append( names, definitions[i].name );
 
             if ( definitions[i].discovers_bound_port )
             {
                 if ( discovering_names[0] )
+                {
                     append( discovering_names, ", " );
+                }
                 append( discovering_names, definitions[i].name );
             }
 
             if ( !( definitions[i].platforms & ROCKETNET_TRANSPORT_HERE ) )
+            {
                 continue;
+            }
 
             if ( definitions[i].server_preference )
+            {
                 insert( servers, num_servers, i, true );
+            }
             if ( definitions[i].client_preference )
+            {
                 insert( clients, num_clients, i, false );
+            }
         }
     }
 
@@ -127,7 +139,9 @@ struct rocketnet_transport_lists_t
             const int previous = list[index - 1];
             const int previous_rank = server ? definitions[previous].server_preference : definitions[previous].client_preference;
             if ( previous_rank <= rank )
+            {
                 break;
+            }
 
             list[index] = previous;
             --index;
@@ -164,23 +178,31 @@ bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_ope
                                          rocketnet_address_t * bind, rocketnet_server_transport_io_t * transport )
 {
     if ( !transport || transport->instance || !config || !bind || !ops || !ops->create || !ops->destroy || !ops->stop || !ops->stopped )
+    {
         return false;
+    }
 
     const bool staged = ( ops->flags & ROCKETNET_TRANSPORT_STAGED ) != 0;
     if ( staged ? !( ops->start_packet && ops->finish_packet && ops->abort_packet && ops->flush && ops->receive )
                 : !( ops->send_batch && ops->receive_batch ) )
+    {
         return false;
+    }
 
     if ( ( ops->replay_forget || ops->replay_mark || ops->replay_commit ) &&
          !( ops->replay_forget && ops->replay_mark && ops->replay_commit ) )
+    {
         return false;
+    }
 
     // refused attempts must not constrain the next candidate's port
 
     rocketnet_address_t attempt = *bind;
     void * instance = ops->create( context, config, &attempt );
     if ( !instance )
+    {
         return false;
+    }
 
     transport->operations = ops;
     transport->instance = instance;
@@ -196,7 +218,9 @@ void rocketnet_server_transport_io_close( rocketnet_server_transport_io_t * tran
         const bool stopped = transport->operations->stopped( transport->instance );
         rocketnet_assert( stopped );
         if ( !stopped )
+        {
             return;
+        }
 
         transport->operations->destroy( transport->instance );
     }
@@ -207,7 +231,9 @@ void rocketnet_server_transport_io_close( rocketnet_server_transport_io_t * tran
 void rocketnet_server_transport_io_stop( rocketnet_server_transport_io_t * transport )
 {
     if ( transport->instance )
+    {
         transport->operations->stop( transport->instance );
+    }
 }
 
 bool rocketnet_server_transport_io_stopped( const rocketnet_server_transport_io_t * transport )
@@ -221,23 +247,31 @@ bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_ope
 {
     if ( !transport || transport->instance || !config || !bind || !ops ||
          !ops->create || !ops->destroy || !ops->send || !ops->receive )
+    {
         return false;
+    }
 
     // the interface requires wait and wake together: a wait with no wake can
     // never be released, a wake with no wait is never observed. docs/CLIENT-IO.md.
 
     if ( ( ops->wait != NULL ) != ( ops->wake != NULL ) )
+    {
         return false;
+    }
 
     // Progress retains caller storage; shutdown needs the paired terminal
     // callback to consume its remaining suffix without waiting.
     if ( ops->send_batch_progress && !ops->send_batch )
+    {
         return false;
+    }
 
     rocketnet_address_t attempt = *bind;
     void * instance = ops->create( context, config, &attempt );
     if ( !instance )
+    {
         return false;
+    }
 
     transport->operations = ops;
     transport->instance = instance;
@@ -249,7 +283,9 @@ bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_ope
 void rocketnet_client_transport_io_close( rocketnet_client_transport_io_t * transport )
 {
     if ( transport->instance )
+    {
         transport->operations->destroy( transport->instance );
+    }
 
     *transport = {};
 }

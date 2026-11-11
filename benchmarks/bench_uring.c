@@ -119,8 +119,10 @@ static void run_receiver( int port, double warmup, double window, int windows )
     }
 
     for ( int i = 0; i < URING_NUM_BUFFERS; i++ )
+    {
         io_uring_buf_ring_add( buf_ring, buffer_memory + i * URING_BUFFER_SIZE, URING_BUFFER_SIZE, (unsigned short) i,
                                io_uring_buf_ring_mask( URING_NUM_BUFFERS ), i );
+    }
     io_uring_buf_ring_advance( buf_ring, URING_NUM_BUFFERS );
 
     resubmit_multishot( &ring, fd );
@@ -189,7 +191,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
             }
 
             if ( !( cqe->flags & IORING_CQE_F_MORE ) )
+            {
                 need_resubmit = 1;                  /* multishot terminated (e.g. ENOBUFS): re-arm */
+            }
         }
 
         if ( batch_packets > 0 )
@@ -218,7 +222,9 @@ static void run_receiver( int port, double warmup, double window, int windows )
            so no empty enter is ever inside a timed region that produced any
            (#98 item 8) */
         if ( bench_window_tick( &w, batch_ns, batch_packets, batch_bytes, batch_syscalls, batch_empty, batch_fold, 1 ) )
+        {
             break;
+        }
     }
 
     io_uring_queue_exit( &ring );
@@ -270,7 +276,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
+        {
             break;
+        }
 
         if ( !skip )
         {
@@ -348,7 +356,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             while ( options.zero_copy && completed < BENCH_BATCH_SIZE )
             {
                 if ( io_uring_wait_cqe( &ring, &cqe ) < 0 )
+                {
                     break;
+                }
                 syscalls++;
 
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )

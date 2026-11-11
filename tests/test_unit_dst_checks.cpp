@@ -87,7 +87,9 @@ static void test_dst_check_reliable_missing_fails()
     {
         rec_sent( &st, 0, 0, 2, seq );
         if ( seq != 3 )
+        {
             rec_deliver( &st, 0, 0, 2, seq );
+        }
     }
     rocketnet_unit_check( st.failed == 0 );
     rec_end( &st, 0 );
@@ -108,7 +110,9 @@ static void dst_check_fault_window_loss( struct rocketnet_dst_check_state_t * st
     {
         rec_sent( st, 0, 0, type, seq );
         if ( seq != 3 )
+        {
             rec_deliver( st, 0, 0, type, seq );
+        }
     }
     rocketnet_dst_check_settle( st );
     for ( uint32_t seq = 11; seq <= 60; seq++ )
@@ -272,7 +276,9 @@ static void test_dst_check_ack_after_endpoint_reset()
     rocketnet_dst_check_init( &st, 1, 53 );
 
     for ( uint64_t id = 1; id <= 5; id++ )
+    {
         rocketnet_dst_check_issued( &st, 2, id );
+    }
     rocketnet_dst_check_endpoint_reset( &st, 2 );
     rocketnet_dst_check_issued( &st, 2, 1 );
     rocketnet_dst_check_ack_id( &st, 2, 1 );
@@ -294,7 +300,9 @@ static void test_dst_check_ack_ledger_wraps()
 
     const uint64_t last = 3 * ROCKETNET_DST_CHECK_LEDGER_PACKETS + 1;
     for ( uint64_t id = 1; id <= last; id += 2 )
+    {
         rocketnet_dst_check_issued( &st, 0, id );
+    }
     rocketnet_dst_check_ack_id( &st, 0, last );
     rocketnet_dst_check_ack_id( &st, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS + 2 );
     rocketnet_unit_check( st.failed == 0 );
@@ -305,7 +313,9 @@ static void test_dst_check_ack_ledger_wraps()
     static struct rocketnet_dst_check_state_t old;
     rocketnet_dst_check_init( &old, 1, 55 );
     for ( uint64_t id = 1; id <= last; id += 2 )
+    {
         rocketnet_dst_check_issued( &old, 0, id );
+    }
     rocketnet_dst_check_ack_id( &old, 0, last - ROCKETNET_DST_CHECK_LEDGER_PACKETS );
     rocketnet_unit_check( old.failed == 1 );
     rocketnet_unit_check( strcmp( old.check, "acked_means_opened" ) == 0 );

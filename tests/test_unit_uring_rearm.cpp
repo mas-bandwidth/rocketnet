@@ -33,7 +33,9 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create_fake( 1 );
     rocketnet_unit_check( uring != NULL );
     if ( !uring )
+    {
         return;
+    }
 
     // the multishot ends and the one-shot re-arm in the CQE handler finds no
     // submission entry: the queue is left unarmed and the failure is counted

@@ -38,7 +38,9 @@ static int rocketnet_functional_worker( const char * name )
 
     if ( setvbuf( stdout, NULL, _IOFBF, 4096 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
+    {
         return 1;
+    }
 #else
     setvbuf( stdout, NULL, _IOLBF, 0 );
     setvbuf( stderr, NULL, _IOLBF, 0 );
@@ -50,7 +52,9 @@ static int rocketnet_functional_worker( const char * name )
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
 #endif // #if defined( _WIN32 )
     if ( cleared != 0 )
+    {
         return 1;
+    }
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
@@ -68,14 +72,18 @@ static int rocketnet_functional_worker( const char * name )
 
     int result = rocketnet_functional_run_named( name );
     if ( !rocketnet_test_loopback_hub_release() )
+    {
         result = 1;
+    }
 
     // a case that ended the library, or installed an allocator of its own,
     // leaves the suite-wide bound; the installed allocator is read without
     // calling it, so a case's allocator whose context has gone is never called
 
     if ( result == 0 && rocketnet_library_initialized() && rocketnet_allocator_installed( plan_rss_malloc, plan_rss_free ) )
+    {
         plan_rss_report();
+    }
     rocketnet_term();
     fflush( stdout );
 
@@ -128,7 +136,9 @@ static int rocketnet_functional_test_group( const char * name )
     {
         const size_t length = strlen( *nightly );
         if ( length > 0 && ( *nightly )[length - 1] == '*' ? strncmp( name, *nightly, length - 1 ) == 0 : strcmp( name, *nightly ) == 0 )
+        {
             return SUITE_GROUP_NIGHTLY;
+        }
     }
 
     return 0;
@@ -162,21 +172,29 @@ static long rocketnet_transport_control_rss_bound_mb()
 
         rocketnet_server_memory_plan_t plan;
         if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
+        {
             return 0; // a refused plan keeps the strict suite-wide bound
+        }
 
         if ( !rocketnet_memory_add( planned, 1, plan.total_bytes ) )
+        {
             return 0;
+        }
     }
 
     const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
     if ( !rocketnet_memory_add( planned, 1, hub ) )
+    {
         return 0;
+    }
 
     const long bound = suite_rss_bound_mb( planned, 32 );
     char verbose[256];
     if ( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
+    {
         printf( "test_transport_control rss_budget planned_bytes=%llu margin_mb=32 bound_mb=%ld\n",
                 (unsigned long long) planned, bound );
+    }
     return bound;
 }
 
@@ -189,7 +207,9 @@ int main( int argc, char ** argv )
     // ended by the case with SIGKILL
 #if ROCKETNET_DEV
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
+    {
         return rocketnet_posix_hard_killed_child_main( argc, argv );
+    }
 
     if ( !rocketnet_channel_delivery_ring_self_test() )
     {

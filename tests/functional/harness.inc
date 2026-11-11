@@ -75,7 +75,9 @@ const uint8_t rocketnet_functional_production_backend_secret_key[64] = { 0 };
 void rocketnet_functional_production_server_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !config )
+    {
         return;
+    }
 
     uint8_t backend_public[32], backend_secret[64], server_public[32], server_secret[32];
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
@@ -115,12 +117,16 @@ enum rocketnet_status_t rocketnet_functional_production_create_token( const char
     }
 
     if ( count == 0 || !server_public_key || !connect_token )
+    {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     enum rocketnet_status_t status = rocketnet_write_production_connect_token( backend_secret, server_public_key, protocol_id, addresses, count, client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds, timeout_seconds, user_data, token, sizeof( token ) );
     if ( status != ROCKETNET_STATUS_OK )
+    {
         return status;
+    }
 
     return rocketnet_base64_encode_data( token, sizeof( token ), connect_token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) > 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
@@ -140,7 +146,9 @@ static int setenv( const char * name, const char * value, int overwrite )
 {
     size_t required = 0;
     if ( !overwrite && getenv_s( &required, NULL, 0, name ) == 0 && required > 0 )
+    {
         return 0;
+    }
     return _putenv_s( name, value );
 }
 
@@ -181,7 +189,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
     const int line_length = snprintf( line, sizeof( line ), "%s", message );
     if ( line_length < 0 || (size_t) line_length >= sizeof( line ) )
+    {
         return;
+    }
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
     {
@@ -193,7 +203,9 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     char * slot = rocketnet_test_log_ring[rocketnet_test_log_ring_lines % ROCKETNET_FUNCTIONAL_LOG_RING_LINES];
     const int slot_length = snprintf( slot, ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES, "%.6f: %s: %s", rocketnet_platform_time(), rocketnet_log_level_name( level ), line );
     if ( slot_length < 0 || (size_t) slot_length >= ROCKETNET_FUNCTIONAL_LOG_RING_SLOT_BYTES )
+    {
         return;
+    }
     rocketnet_test_log_ring_lines++;
 }
 
@@ -286,12 +298,20 @@ class rocketnet_test_environment_t
     void clear( const char * name )
     {
         if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
+        {
             return;
+        }
         if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
+        {
             return;
+        }
         for ( const auto & entry : entries )
+        {
             if ( entry.name == name )
+            {
                 return;
+            }
+        }
 
         char value[4096];
         const bool present = rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
@@ -323,8 +343,10 @@ public:
     ~rocketnet_test_environment_t()
     {
         for ( const auto & entry : entries )
+        {
             rocketnet_check( ( entry.present ? setenv( entry.name.c_str(), entry.value.c_str(), 1 )
                                              : unsetenv( entry.name.c_str() ) ) == 0 );
+        }
     }
 };
 
@@ -414,9 +436,13 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
         struct rocketnet_server_transport_t * server =
             rocketnet_server_transport_create_internal( NULL, address, config, rocketnet_platform_time(), &status );
         if ( server )
+        {
             return server;
+        }
         if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )
+        {
             return NULL;
+        }
     }
 
     return NULL;

@@ -62,11 +62,15 @@ static bool xdp_stop_fixture_worker_passes()
     {
         xdp_stop_fixture.pass++;
         if ( xdp_stop_fixture.drain_every > 0 && xdp_stop_fixture.pass % xdp_stop_fixture.drain_every == 0 && pending )
+        {
             xdp_stop_fixture.consumer++;
+        }
         pending = xdp_stop_fixture.consumer != xdp_stop_fixture.producer;
         if ( rocketnet_xdp_send_stall_pass( xdp_stop_fixture.stall, xdp_stop_fixture.consumer, pending, xdp_stop_fixture.draining,
                                             xdp_stop_fixture.bound, xdp_stop_fixture.stalled ) )
+        {
             xdp_stop_fixture.abandoned.fetch_add( xdp_stop_fixture.producer - xdp_stop_fixture.consumer );
+        }
     }
     return pending;
 }
@@ -95,7 +99,9 @@ static bool xdp_stop_fixture_send_idle( void * )
     const bool released = rocketnet_xdp_send_queue_released( xdp_stop_fixture.hard_error, xdp_stop_fixture.stalled.load(), xdp_stop_fixture.buffer_empty,
                                                              xdp_stop_fixture.handoff_idle && !pending );
     if ( released && pending && xdp_stop_fixture.drain_every > 0 )
+    {
         xdp_stop_fixture.released_while_draining = true;
+    }
     return released;
 }
 
@@ -168,7 +174,9 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
 
     bool stopped = rocketnet_server_transport_stopped( server );
     for ( int poll = 0; !stopped && poll < polls; ++poll )
+    {
         stopped = rocketnet_server_transport_stopped( server );
+    }
 
     *stopped_after = stopped;
 
@@ -266,7 +274,9 @@ static void test_xdp_send_stall_watch()
     std::atomic<bool> stalled( false );
 
     for ( int i = 0; i < 20; i++ )
+    {
         rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, false, 8, stalled ) );
+    }
     rocketnet_unit_check( !stalled.load() );
 
     rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 5, true, true, 8, stalled ) );
@@ -277,7 +287,9 @@ static void test_xdp_send_stall_watch()
     rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
     rocketnet_unit_check( !stalled.load() );
     for ( int i = 0; i < 7; i++ )
+    {
         rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+    }
     rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
 
     rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, false, true, 8, stalled ) );
@@ -493,9 +505,13 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
         if ( i < limit )
+        {
             rocketnet_unit_check( index == i );
+        }
         else
+        {
             rocketnet_unit_check( index == -1 );
+        }
     }
 
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
@@ -509,9 +525,13 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
         if ( i < limit )
+        {
             rocketnet_unit_check( index == i );
+        }
         else
+        {
             rocketnet_unit_check( index == -1 );
+        }
     }
 
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );

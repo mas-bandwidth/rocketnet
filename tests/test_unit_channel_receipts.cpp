@@ -311,7 +311,9 @@ static uint8_t * receipt_link_start( void * context, int, int bytes, rocketnet_p
 {
     receipt_transport_t * t = (receipt_transport_t *) context;
     if ( bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    {
         return NULL;
+    }
     memset( packet, 0, sizeof( *packet ) );
     packet->frame = t->frame;
     packet->payload_index = 16;

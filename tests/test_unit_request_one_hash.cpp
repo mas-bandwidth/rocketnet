@@ -125,7 +125,9 @@ static void request_one_hash_build( uint8_t * request, int index, const struct r
     rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
     if ( shape == REQUEST_NO_COOKIE )
+    {
         return;
+    }
 
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];

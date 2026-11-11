@@ -82,16 +82,22 @@ static int rn_test_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned
     uint8_t epk[crypto_box_PUBLICKEYBYTES];
     uint8_t nonce[crypto_box_NONCEBYTES];
     if ( crypto_scalarmult_base( epk, esk ) != 0 )
+    {
         return -1;
+    }
 
     crypto_generichash_state state;
     if ( crypto_generichash_init( &state, NULL, 0, crypto_box_NONCEBYTES ) != 0 ||
          crypto_generichash_update( &state, epk, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_update( &state, server_public_key, crypto_box_PUBLICKEYBYTES ) != 0 ||
          crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) != 0 )
+    {
         return -1;
+    }
     if ( crypto_box_easy( c + crypto_box_PUBLICKEYBYTES, m, mlen, nonce, server_public_key, esk ) != 0 )
+    {
         return -1;
+    }
     memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
 
     return 0;
@@ -102,7 +108,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.frozen-token" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         memcpy( out, rocketnet_test_frozen_token, ROCKETNET_CONNECT_TOKEN_BYTES );
         return ROCKETNET_CONNECT_TOKEN_BYTES;
     }
@@ -110,7 +118,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.token-identifier" ) == 0 )
     {
         if ( capacity < ROCKETNET_TOKEN_IDENTIFIER_BYTES )
+        {
             return -1;
+        }
         rocketnet_connect_token_identifier( out, rocketnet_test_frozen_token );
         return ROCKETNET_TOKEN_IDENTIFIER_BYTES;
     }
@@ -121,7 +131,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.bad-address-flags" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         rn_test_fill_signed( &sf );
         sf.address_flags = 0x05;
         rn_test_fill_private( &pf );
@@ -134,7 +146,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.wrong-server-key" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
         rn_test_fill_signed( &sf );
         memcpy( sf.server_public_key, rn_test_wrong_server_public_key, 32 );
         rn_test_fill_private( &pf );
@@ -147,7 +161,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     if ( strcmp( id, "t6.sealed-mismatch" ) == 0 )
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             return -1;
+        }
 
         // a private block whose protocol id disagrees with the signed one
 
@@ -160,7 +176,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         rocketnet_write_connect_token_private( &pf, private_block );
         if ( rn_test_seal_with_ephemeral( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                           rocketnet_test_server_public_key, rocketnet_test_token_vector_ephemeral_secret[3] ) != 0 )
+        {
             return -1;
+        }
 
         uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
         rocketnet_write_signed_connect_data( &sf, signed_buffer );
@@ -332,11 +350,15 @@ static void rn_zero_mint( uint8_t * token, const struct rn_zero_token_t * spec )
         rocketnet_write_uint16( &p, 0x2001 );
         rocketnet_write_uint16( &p, 0x0db8 );
         for ( int i = 0; i < 5; i++ )
+        {
             rocketnet_write_uint16( &p, 0 );
+        }
         rocketnet_write_uint16( &p, 1 );
         rocketnet_write_uint16( &p, 40000 );
         if ( spec->absent_index >= 0 )
+        {
             sf.ipv4_address[spec->absent_index] = 0x01;
+        }
     }
     else
     {
@@ -345,20 +367,26 @@ static void rn_zero_mint( uint8_t * token, const struct rn_zero_token_t * spec )
         const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
         memcpy( sf.ipv4_address, server_address, sizeof( server_address ) );
         if ( spec->absent_index >= 0 )
+        {
             sf.ipv6_address[spec->absent_index] = 0x01;
+        }
     }
 
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
     rocketnet_write_connect_token_private( &pf, private_block );
     if ( spec->private_index >= 0 )
+    {
         private_block[RN_ZERO_PRIVATE_OFFSET + spec->private_index] = 0x01;
+    }
     rocketnet_unit_check( crypto_box_seal( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                            rocketnet_test_server_public_key ) == 0 );
 
     uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
     rocketnet_write_signed_connect_data( &sf, signed_buffer );
     if ( spec->signed_index >= 0 )
+    {
         signed_buffer[RN_ZERO_SIGNED_OFFSET + spec->signed_index] = 0x01;
+    }
 
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     crypto_sign_detached( signature, NULL, signed_buffer, sizeof( signed_buffer ), rocketnet_test_backend_secret_key );
@@ -374,7 +402,9 @@ static void rn_zero_mint( uint8_t * token, const struct rn_zero_token_t * spec )
     p += ROCKETNET_KEY_BYTES;
     memset( p, 0, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - ( p - token ) ) );
     if ( spec->outer_index >= 0 )
+    {
         token[RN_ZERO_OUTER_OFFSET + spec->outer_index] = 0x01;
+    }
 }
 
 static const struct rn_zero_token_t rn_zero_none = { 0, -1, -1, -1, -1 };
@@ -389,7 +419,9 @@ static int rn_zero_client_admits( const uint8_t * token )
 
     const int admitted = rocketnet_client_protocol_connect( &client, token, 1000.0, ROCKETNET_TEST_CREATE_TS );
     if ( admitted )
+    {
         return client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE;
+    }
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
 
@@ -409,7 +441,9 @@ static int rn_zero_exit_clean;
 static void rn_zero_block_seen( uint8_t * block, int bytes, int at_exit )
 {
     if ( at_exit != 1 )
+    {
         return;
+    }
     rn_zero_exit_seen++;
     rn_zero_exit_clean = sodium_is_zero( block, (size_t) bytes );
 }

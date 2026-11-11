@@ -47,7 +47,9 @@ static void coalesced_cmsg_build( coalesced_cmsg_buffer_t * b, int level, int ty
     WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( &b->message );
     check( cmsg != NULL );
     if ( !cmsg )
+    {
         return;
+    }
     cmsg->cmsg_len = cmsg_len;
     cmsg->cmsg_level = level;
     cmsg->cmsg_type = type;

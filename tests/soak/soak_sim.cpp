@@ -158,7 +158,9 @@ static inline double soak_profile_now()
 static inline void soak_profile_charge( int bucket, double start )
 {
     if ( !soak_profile_enabled )
+    {
         return;
+    }
 
     const double elapsed = rocketnet_platform_time() - start;
     soak_profile_seconds[bucket] += elapsed;
@@ -255,7 +257,9 @@ static int wire_receive( struct rocketnet_network_simulator_t * simulator,
     const double start = soak_profile_now();
     const int bytes = rocketnet_network_simulator_receive( simulator, to, current_time, out_from, out_packet );
     if ( bytes > 0 )
+    {
         wire_datagrams_received++;
+    }
     soak_profile_charge( SOAK_PROFILE_WIRE, start );
     return bytes;
 }
@@ -265,7 +269,9 @@ static int wire_receive( struct rocketnet_network_simulator_t * simulator,
 static int soak_profile_report( double total_seconds, uint64_t iterations )
 {
     if ( !soak_profile_enabled )
+    {
         return 0;
+    }
 
     double accounted = 0.0;
     uint64_t regions = 0;
@@ -344,8 +350,10 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
             "  sites in soak_sim.cpp can rule that out.\n" );
 
     if ( unsupportable )
+    {
         printf( "\n  One or more buckets is at the level of the instrument measuring it. The figures are\n"
                 "  printed with that said, rather than withheld.\n" );
+    }
 
     fflush( stdout );
 
@@ -375,7 +383,9 @@ static int verify_payload( const uint8_t * payload_data, int payload_bytes )
     for ( int i = 0; i < payload_bytes; i++ )
     {
         if ( payload_data[i] != (uint8_t) ( start + i ) )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -386,7 +396,9 @@ int main( int argc, char ** argv )
     signal( SIGINT, interrupt_handler );
 
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
         return 1;
+    }
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
@@ -538,8 +550,10 @@ int main( int argc, char ** argv )
     char index_fault_string[256];
     const uint64_t index_fault_iteration = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_INDEX", index_fault_string, sizeof( index_fault_string ) ) ? strtoull( index_fault_string, NULL, 10 ) : 0;
     if ( index_fault_iteration )
+    {
         printf( "soak_sim: simulator index fault ARMED for iteration %llu -- the audit must go red\n",
                 (unsigned long long) index_fault_iteration );
+    }
 
     static struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof( client_counters ) );
@@ -575,7 +589,9 @@ int main( int argc, char ** argv )
     {
         iteration++;
         if ( max_iterations && iteration > max_iterations )
+        {
             break;
+        }
 
         if ( index_fault_iteration && iteration == index_fault_iteration )
         {
@@ -670,9 +686,11 @@ int main( int argc, char ** argv )
                 SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
                               rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes ) );
                 for ( int i = 0; i < burst_count; i++ )
+                {
                     wire_send( simulator, &client_address[c], &server_address,
                                burst + i * ROCKETNET_SEND_BUDGET,
                                burst_bytes, time );
+                }
             }
 
         // client drives, wire carries, server answers, wire carries back
@@ -878,14 +896,18 @@ int main( int argc, char ** argv )
         {
             const uint64_t value = rocketnet_counter_value( soak_ends[e].counters, i );
             if ( value == 0 || rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
+            {
                 continue;
+            }
 
             const char * fault = NULL;
             for ( int j = 0; soak_explained_refusals[j].fault; j++ )
+            {
                 if ( soak_explained_refusals[j].counter == i )
                 {
                     fault = soak_explained_refusals[j].fault;
                 }
+            }
 
             if ( fault )
             {
@@ -918,8 +940,10 @@ int main( int argc, char ** argv )
     // wire that failed can be replayed from the log alone.
 
     if ( failures || hangs || terminals || profile_refused )
+    {
         printf( "soak_sim: FAILED simulator seed=%llu replay: ROCKETNET_SOAK_SIM_SEED=%llu ./bin/soak_sim\n",
                 (unsigned long long) simulator_seed, (unsigned long long) simulator_seed );
+    }
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );

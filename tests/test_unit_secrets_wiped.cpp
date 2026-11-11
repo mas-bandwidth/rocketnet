@@ -79,8 +79,12 @@
 static bool secrets_wiped_all_zero( const uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
+    {
         if ( bytes[i] != 0 )
+        {
             return false;
+        }
+    }
     return true;
 }
 
@@ -228,8 +232,12 @@ static int secrets_wiped_count( const uint8_t * block, size_t bytes, const uint8
 {
     int found = 0;
     for ( size_t i = 0; i + SECRETS_WIPED_PATTERN_BYTES <= bytes; i++ )
+    {
         if ( block[i] == pattern[0] && memcmp( block + i, pattern, SECRETS_WIPED_PATTERN_BYTES ) == 0 )
+        {
             found++;
+        }
+    }
     return found;
 }
 
@@ -293,8 +301,12 @@ static void * secrets_wiped_malloc( void * context, size_t bytes )
 static bool secrets_wiped_in_span( const secrets_wiped_watch_t * watch, size_t offset )
 {
     for ( int s = 0; watch && s < watch->spans; s++ )
+    {
         if ( offset >= watch->offsets[s] && offset < watch->offsets[s] + watch->bytes[s] )
+        {
             return true;
+        }
+    }
     return false;
 }
 
@@ -333,16 +345,24 @@ static void secrets_wiped_free( void * context, void * p )
                 {
                     secrets_wiped_watch_t * watch = NULL;
                     for ( int w = 0; w < secrets_wiped_num_watches; w++ )
+                    {
                         if ( secrets_wiped_watches[w].block == p )
+                        {
                             watch = &secrets_wiped_watches[w];
+                        }
+                    }
 
                     size_t written = 0;
                     for ( size_t i = 0; i < it->second; i++ )
                     {
                         if ( secrets_wiped_in_span( watch, i ) )
+                        {
                             secrets_wiped_secret_left += begin[i] != 0;
+                        }
                         else
+                        {
                             written += begin[i] != copy->second[i];
+                        }
                     }
 
                     if ( written > secrets_wiped_written_most )
@@ -519,8 +539,12 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
 static void * secrets_wiped_containing( const void * p )
 {
     for ( std::map<void *, size_t>::iterator it = secrets_wiped_sizes->begin(); it != secrets_wiped_sizes->end(); ++it )
+    {
         if ( (const uint8_t *) p >= (const uint8_t *) it->first && (const uint8_t *) p < (const uint8_t *) it->first + it->second )
+        {
             return it->first;
+        }
+    }
     return NULL;
 }
 
@@ -549,8 +573,12 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
 {
     int nonzero = 0;
     for ( int s = 0; s < watch->spans; s++ )
+    {
         for ( size_t i = 0; i < watch->bytes[s]; i++ )
+        {
             nonzero += ( (const uint8_t *) watch->block )[watch->offsets[s] + i] != 0;
+        }
+    }
     return nonzero;
 }
 #endif // #if ROCKETNET_DEV
@@ -902,7 +930,9 @@ static long secrets_wiped_destroy_rss_bound_mb()
 
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &server_config, "portable", plan ) )
+    {
         return 0;
+    }
 
     rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
@@ -911,7 +941,9 @@ static long secrets_wiped_destroy_rss_bound_mb()
     rocketnet_client_transport_default_config( &client_transport_config );
     const uint64_t client_transport_bytes = rocketnet_client_transport_required_memory( &client_transport_config, "portable" );
     if ( client_bytes == 0 || client_transport_bytes == 0 )
+    {
         return 0;
+    }
 
     const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + hub ), 64 );
@@ -1264,8 +1296,10 @@ static void test_client_slots_release_of_free_slot_is_refused()
 
     int indices[4];
     for ( int i = 0; i < 4; ++i )
+    {
         indices[i] = rocketnet_client_slots_assign( slots, (uint64_t) ( 10 + i ), i,
                                                     (uint64_t) ( 10 + i ), user_data );
+    }
 
     bool distinct = true;
     for ( int i = 0; i < 4; ++i )
@@ -1358,8 +1392,12 @@ static void test_encryption_map_flat_index_collisions_and_churn_are_bounded()
            rocketnet_encryption_map_test_probe_bound( map ) );
     check( rocketnet_encryption_map_find( map, &colliding[3] ) == -1 );
     for ( int i = 0; i < capacity; ++i )
+    {
         if ( i != 3 )
+        {
             check( rocketnet_encryption_map_find( map, &colliding[i] ) == index[i] );
+        }
+    }
     const int replacement = rocketnet_encryption_map_add( map, &colliding[capacity], 3000.0 );
     check( replacement == removed );
     check( rocketnet_encryption_map_find( map, &colliding[capacity] ) == replacement );
@@ -1594,9 +1632,13 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
             {
                 if ( batch->bytes[i] == (int) sizeof( fresh_message ) &&
                      memcmp( batch->data[i], fresh_message, sizeof( fresh_message ) ) == 0 )
+                {
                     fresh_at_server++;
+                }
                 else
+                {
                     stale_delivered++;
+                }
             }
         }
 
@@ -1606,9 +1648,13 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
             {
                 if ( batch->bytes[i] == (int) sizeof( fresh_message ) &&
                      memcmp( batch->data[i], fresh_message, sizeof( fresh_message ) ) == 0 )
+                {
                     fresh_at_client++;
+                }
                 else
+                {
                     stale_delivered++;
+                }
             }
         }
     }

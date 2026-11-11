@@ -63,7 +63,9 @@ namespace
             free_entries = ring->user_cached_cons - ring->user_cached_prod;
         }
         if ( free_entries < nb )
+        {
             return 0;
+        }
         *index = ring->user_cached_prod;
         ring->user_cached_prod += nb;
         return nb;
@@ -105,7 +107,9 @@ namespace
         uint32_t index = 0;
         rocketnet_unit_check( fake_reserve( ring, MODEL_FILL_FRAMES, &index ) == MODEL_FILL_FRAMES );
         for ( uint32_t i = 0; i < MODEL_FILL_FRAMES; i++ )
+        {
             ring->addr[( index + i ) & ( ring->size - 1 )] = 1000 + i;
+        }
         ring->producer += MODEL_FILL_FRAMES;
     }
 

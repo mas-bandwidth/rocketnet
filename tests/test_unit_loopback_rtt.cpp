@@ -98,7 +98,9 @@ static int loopback_rtt_acked( void * transport, const int ** client_index, cons
         for ( int i = 0; i < loopback_rtt_seam.packets; i++ )
         {
             if ( loopback_rtt_seam.packet_id[i] != ( *packet_ids )[k] )
+            {
                 continue;
+            }
 
             const double sample = loopback_rtt_clock - loopback_rtt_seam.send_time[i];
             if ( loopback_rtt_seam.samples == 0 || sample < loopback_rtt_seam.sample_min )
@@ -152,7 +154,9 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
     pair->server = rocketnet_message_server_create( NULL, "127.0.0.1:0", &server_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->server != NULL );
     if ( !pair->server )
+    {
         return false;
+    }
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d",
@@ -208,7 +212,9 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
             const int got = side == LOOPBACK_RTT_SERVER ? rocketnet_message_client_receive( pair->client, 0, &data, &bytes )
                                                         : rocketnet_message_server_receive( pair->server, 0, 0, &data, &bytes );
             if ( !got )
+            {
                 break;
+            }
 
             if ( bytes == 8 && data[0] == 0xE7 )
             {
@@ -222,9 +228,13 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
             }
 
             if ( side == LOOPBACK_RTT_SERVER )
+            {
                 rocketnet_message_client_release( pair->client, data );
+            }
             else
+            {
                 rocketnet_message_server_release( pair->server, data );
+            }
         }
     }
 
@@ -283,11 +293,13 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
 
     char rtt_print[256];
     if ( rocketnet_test_getenv( "ROCKETNET_LOOPBACK_RTT_PRINT", rtt_print, sizeof( rtt_print ) ) )
+    {
         printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
                 "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
                 side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,
                 loopback_rtt_seam.packets, loopback_rtt_seam.samples, loopback_rtt_seam.sample_min, loopback_rtt_seam.sample_max,
                 m->srtt, m->resend_delay, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
+    }
 
     rn_test_message_client_stop_and_destroy( pair.client );
     rn_test_message_server_stop_and_destroy( pair.server );

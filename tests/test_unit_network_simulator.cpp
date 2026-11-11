@@ -53,11 +53,15 @@ static void * simulator_count_malloc( void * context, size_t bytes )
 {
     const int call = simulator_allocator.calls++;
     if ( call == simulator_allocator.refuse_call )
+    {
         return NULL;
+    }
 
     uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + SIMULATOR_COUNT_HEADER );
     if ( !block )
+    {
         return NULL;
+    }
 
     memcpy( block, &bytes, sizeof( bytes ) );
     simulator_allocator.live_bytes += bytes;
@@ -68,7 +72,9 @@ static void * simulator_count_malloc( void * context, size_t bytes )
 static void simulator_count_free( void * context, void * memory )
 {
     if ( !memory )
+    {
         return;
+    }
 
     uint8_t * block = (uint8_t *) memory - SIMULATOR_COUNT_HEADER;
     size_t bytes;
@@ -337,8 +343,12 @@ static void test_network_simulator_clients_have_distinct_seeds()
 
     bool identical = true;
     for ( int i = 0; i < 40; i++ )
+    {
         if ( first_dropped[i] != second_dropped[i] )
+        {
             identical = false;
+        }
+    }
     check( !identical );
 
     rn_test_client_transport_stop_and_destroy( first );

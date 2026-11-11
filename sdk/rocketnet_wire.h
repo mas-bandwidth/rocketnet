@@ -86,10 +86,14 @@
 static inline int rocketnet_wire_header_bytes( int address_type )
 {
     if ( address_type == 1 )    // ROCKETNET_ADDRESS_IPV4
+    {
         return ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    }
 
     if ( address_type == 2 )    // ROCKETNET_ADDRESS_IPV6
+    {
         return ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+    }
 
     return 0;
 }

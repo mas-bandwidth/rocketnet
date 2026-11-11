@@ -37,14 +37,20 @@
 static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes, int * offsets, int * lengths, int max_segments )
 {
     if ( message_bytes <= 0 )
+    {
         return 0;
+    }
 
     if ( segment_bytes <= 0 )
+    {
         segment_bytes = message_bytes;
+    }
 
     const int count = message_bytes / segment_bytes + ( message_bytes % segment_bytes != 0 ? 1 : 0 );
     if ( count > max_segments )
+    {
         return -1;
+    }
 
     // segment i starts at i * segment_bytes, below message_bytes for every
     // i < count, so no offset passes INT_MAX
@@ -72,7 +78,9 @@ static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes
 static inline int rocketnet_coalesce_send_run( const int * packet_bytes, const struct rocketnet_address_t * to, int count, int max_segments, int max_super_bytes )
 {
     if ( count <= 0 || packet_bytes[0] <= 0 )
+    {
         return 0;
+    }
 
     const int segment_bytes = packet_bytes[0];
     int run_count = 1;
@@ -83,19 +91,29 @@ static inline int rocketnet_coalesce_send_run( const int * packet_bytes, const s
         const int next_bytes = packet_bytes[run_count];
 
         if ( next_bytes <= 0 )
+        {
             break;
+        }
         if ( next_bytes > segment_bytes )
+        {
             break;
+        }
         if ( run_bytes + next_bytes > max_super_bytes )
+        {
             break;
+        }
         if ( !rocketnet_address_equal( &to[run_count], &to[0] ) )
+        {
             break;
+        }
 
         run_count++;
         run_bytes += next_bytes;
 
         if ( next_bytes < segment_bytes )
+        {
             break;                                  // the shorter tail closes the run
+        }
     }
 
     return run_count;

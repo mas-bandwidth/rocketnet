@@ -183,15 +183,21 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
         epoch = 1;
 
         for ( unsigned i = 0; i < Words; ++i )
+        {
             tags[i] = 0;
+        }
     }
 
     void invalidate()
     {
         if ( epoch == UINT64_MAX )
+        {
             initialize();
+        }
         else
+        {
             ++epoch;
+        }
     }
 
     uint64_t word( int i ) const { return tags[i] == epoch ? bits[i] : 0; }

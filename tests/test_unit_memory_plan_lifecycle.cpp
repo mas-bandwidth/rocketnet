@@ -57,7 +57,9 @@ static void * memory_plan_malloc( void * context, size_t bytes )
 
     memory_plan_allocation_t * allocation = (memory_plan_allocation_t *) malloc( sizeof( memory_plan_allocation_t ) + bytes );
     if ( !allocation )
+    {
         return NULL;
+    }
     allocation->bytes = bytes;
     memory_plan_calls++;
     memory_plan_live += bytes;
@@ -73,7 +75,9 @@ static void memory_plan_free( void * context, void * p )
 {
     (void) context;
     if ( !p )
+    {
         return;
+    }
 
     memory_plan_allocation_t * allocation = (memory_plan_allocation_t *) p - 1;
     memory_plan_live -= allocation->bytes;
@@ -148,8 +152,10 @@ static void test_memory_plan_covers_lifecycle()
     const uint64_t server_second_peak = memory_plan_peak_above( server_base );
 
     if ( server_first_peak > server_required || server_second_peak != server_first_peak )
+    {
         printf( "server: required %llu, first cycle peak %llu, second cycle peak %llu\n", (unsigned long long) server_required,
                 (unsigned long long) server_first_peak, (unsigned long long) server_second_peak );
+    }
     check( server_first_peak <= server_required );
     check( server_second_peak == server_first_peak );
 
@@ -206,8 +212,10 @@ static void test_memory_plan_covers_lifecycle()
     const uint64_t client_second_peak = memory_plan_peak_above( client_base );
 
     if ( client_first_peak > client_required || client_second_peak != client_first_peak )
+    {
         printf( "client: required %llu, first cycle peak %llu, second cycle peak %llu\n", (unsigned long long) client_required,
                 (unsigned long long) client_first_peak, (unsigned long long) client_second_peak );
+    }
     check( client_first_peak <= client_required );
     check( client_second_peak == client_first_peak );
 
@@ -312,9 +320,13 @@ static int bounded_arena_canaries_ok( const struct bounded_arena_t * arena )
     for ( size_t i = 0; i < BOUNDED_GUARD_BYTES; i++ )
     {
         if ( arena->base[-(ptrdiff_t) BOUNDED_GUARD_BYTES + (ptrdiff_t) i] != BOUNDED_GUARD_BYTE )
+        {
             return 0;
+        }
         if ( arena->base[arena->bytes + i] != BOUNDED_GUARD_BYTE )
+        {
             return 0;
+        }
     }
 
     return 1;
@@ -339,7 +351,9 @@ static void * bounded_arena_allocate( struct bounded_arena_t * arena, size_t byt
     {
         const struct bounded_segment_t * candidate = &arena->segments[i];
         if ( candidate->used || candidate->bytes < bytes )
+        {
             continue;
+        }
         if ( pick < 0 || ( large ? candidate->bytes > arena->segments[pick].bytes : candidate->bytes < arena->segments[pick].bytes ) )
         {
             pick = i;
@@ -413,7 +427,9 @@ static void bounded_arena_release( struct bounded_arena_t * arena, void * p )
     {
         struct bounded_segment_t * segment = &arena->segments[i];
         if ( !segment->used || segment->offset != offset )
+        {
             continue;
+        }
         segment->used = 0;
         arena->live -= segment->bytes;
         if ( i + 1 < arena->num_segments && !arena->segments[i + 1].used && segment->offset + segment->bytes == arena->segments[i + 1].offset )
@@ -455,13 +471,19 @@ static int bounded_pointer_in_arena( const struct bounded_arena_t * arena, const
 static void * bounded_malloc( void * context, size_t bytes )
 {
     if ( context == &bounded_server_arena )
+    {
         return bounded_arena_allocate( &bounded_server_arena, bytes );
+    }
     if ( context == &bounded_client_arena )
+    {
         return bounded_arena_allocate( &bounded_client_arena, bytes );
+    }
 
     memory_plan_allocation_t * allocation = (memory_plan_allocation_t *) malloc( sizeof( memory_plan_allocation_t ) + bytes );
     if ( !allocation )
+    {
         return NULL;
+    }
     allocation->bytes = bytes;
     bounded_system_live += bytes;
     if ( bounded_system_live > bounded_system_peak )
@@ -476,7 +498,9 @@ static void bounded_free( void * context, void * p )
 {
     (void) context;
     if ( !p )
+    {
         return;
+    }
 
     if ( bounded_pointer_in_arena( &bounded_server_arena, p ) )
     {
@@ -509,7 +533,9 @@ static void bounded_send_client( rocketnet_client_t * client, uint8_t value )
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
     check( out != NULL );
     if ( !out )
+    {
         return;
+    }
     out[0] = 0x4C;
     out[1] = value;
     check( rocketnet_client_finish_message( client, 2 ) != 0 );
@@ -520,7 +546,9 @@ static void bounded_send_server( rocketnet_server_t * server, uint64_t index, ui
     uint8_t * out = rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
     check( out != NULL );
     if ( !out )
+    {
         return;
+    }
     out[0] = 0x53;
     out[1] = value;
     check( rocketnet_server_finish_message( server, 2 ) != 0 );
@@ -545,9 +573,11 @@ static void bounded_exchange( rocketnet_server_t * server, rocketnet_client_t * 
         bounded_pump( server, client );
     }
     if ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
+    {
         printf( "light bounded connect: client state %d, server arena live %zu peak %zu refused %zu, client arena live %zu peak %zu refused %zu\n",
                 rocketnet_client_state( client ), bounded_server_arena.live, bounded_server_arena.peak, bounded_server_arena.refused,
                 bounded_client_arena.live, bounded_client_arena.peak, bounded_client_arena.refused );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     const int index = rocketnet_client_index( client );

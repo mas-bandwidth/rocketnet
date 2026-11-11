@@ -62,11 +62,15 @@ static void * allocate( void * context, size_t bytes )
     allocator_state * state = (allocator_state *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
+    {
         return NULL;
+    }
 
     void * base = malloc( bytes + 128 );
     if ( !base )
+    {
         return NULL;
+    }
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );
@@ -152,9 +156,13 @@ static void test_client_transport_create_ex_reports_every_status()
     rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "not-a-number", 1 );
     check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
     if ( had_prior )
+    {
         rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", prior, 1 );
+    }
     else
+    {
         rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
+    }
 
 #endif // #if ROCKETNET_DEV
 

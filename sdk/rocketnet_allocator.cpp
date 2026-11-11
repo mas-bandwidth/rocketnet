@@ -59,7 +59,9 @@ static void rn_count( rocketnet_counters_t * counters, int counter )
     // an object's regions share its counters, and different connections may send from different threads (16.1), so a refusal adds atomically
 
     if ( counters )
+    {
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
+    }
 }
 
 // ----------------------------------------------------------------
@@ -160,7 +162,9 @@ bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_regi
     // keep all original store headroom, including its alignment slack
 
     if ( S < (uint64_t) config->send_message_buffer_bytes )
+    {
         S = (uint64_t) config->send_message_buffer_bytes;
+    }
 
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
     {
@@ -173,7 +177,9 @@ bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_regi
     sizes->SR = SR;
     sizes->S = S;
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
         sizes->chunks[c] = chunks[c];
+    }
 
     return true;
 }
@@ -196,7 +202,9 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     }
 
     if ( !rocketnet_message_validate_config( config ) )
+    {
         return false;
+    }
 
     const uint64_t C = (uint64_t) config->num_channels;
     const uint64_t W = (uint64_t) config->reliable_messages_in_flight;
@@ -255,7 +263,9 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->region_bytes = offset;
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
         layout->store_chunks[c] = chunks[c];
+    }
 
     return true;
 }
@@ -288,9 +298,13 @@ int rn_send_store_class_for( int bytes )
     // the smallest class that fits, and only that class: no fallback to a larger one (4)
 
     if ( bytes <= RN_STORE_SMALL_BYTES )
+    {
         return RN_STORE_SMALL;
+    }
     if ( bytes <= RN_STORE_MEDIUM_BYTES )
+    {
         return RN_STORE_MEDIUM;
+    }
 
     return RN_STORE_LARGE;
 }
@@ -332,11 +346,15 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
     rocketnet_assert( store && out_index );
 
     if ( bytes <= 0 || bytes > RN_STORE_LARGE_BYTES )
+    {
         return false;
+    }
 
     const rn_store_class_t * cls = &store->classes[rn_send_store_class_for( bytes )];
     if ( cls->free_count == 0 )
+    {
         return false;
+    }
 
     for ( uint32_t i = cls->free_head; i < cls->num_chunks; i++ )
     {
@@ -370,7 +388,9 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index 
 
         generation = ( cls->meta[index] + 1 ) & RN_META_GENERATION;
         if ( generation == 0 )
+        {
             generation = 1;
+        }
     }
     else
     {
@@ -395,24 +415,34 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
     rocketnet_assert( store );
 
     if ( handle == RN_CHUNK_NONE )
+    {
         return false;
+    }
 
     const int c = rn_send_store_chunk_class( handle );
     if ( c >= RN_STORE_NUM_CLASSES )
+    {
         return false;
+    }
 
     rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_HANDLE_INDEX;
     if ( i >= cls->fresh )                  // never taken: its meta is unwritten, and it is not held
+    {
         return false;
+    }
     if ( ( cls->meta[i] & RN_META_LIVE ) == 0 )
+    {
         return false;
+    }
 
     cls->meta[i] &= RN_META_GENERATION;
     cls->free_count++;
 
     if ( i < cls->free_head )
+    {
         cls->free_head = i;
+    }
 
     return true;
 }
@@ -435,12 +465,16 @@ uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t hand
 
     const int c = rn_send_store_chunk_class( handle );
     if ( c >= RN_STORE_NUM_CLASSES )
+    {
         return NULL;
+    }
 
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_HANDLE_INDEX;
     if ( i >= cls->fresh )                 // never taken: its data is unwritten
+    {
         return NULL;
+    }
 
     return cls->data + (uint64_t) i * cls->chunk_bytes;
 }
@@ -452,12 +486,16 @@ uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t
 
     const int c = rn_send_store_chunk_class( handle );
     if ( c >= RN_STORE_NUM_CLASSES )
+    {
         return 0;
+    }
 
     const rn_store_class_t * cls = &store->classes[c];
     const uint32_t i = handle & RN_HANDLE_INDEX;
     if ( i >= cls->fresh )
+    {
         return 0;
+    }
 
     return cls->meta[i] & RN_META_GENERATION;
 }
@@ -604,7 +642,9 @@ void rn_region_carve( rn_region_t * region )
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
 
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
         store_chunks[c] = region->store.classes[c].num_chunks;
+    }
 
     rn_send_store_init_counts( &region->store, region->store_memory, store_chunks );
 
@@ -673,7 +713,9 @@ void rn_region_exhaust( rn_region_t * region )
     rocketnet_assert( region );
 
     if ( region->exhausted )
+    {
         return;
+    }
 
     region->exhausted = 1;
     region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;
@@ -750,7 +792,9 @@ static uint32_t rn_region_descriptor_take( rn_region_t * region )
     descriptor->generation = generation;
 
     if ( keep_free_slot )
+    {
         descriptor->free_slot = free_slot;
+    }
 
     return d;
 }
@@ -782,23 +826,33 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
     // caller's refusal (MESSAGE_SEND_REFUSED, layer 8), not exhaustion
 
     if ( bytes <= 0 || bytes > RN_STORE_LARGE_BYTES || (uint32_t) bytes > region->max_message_bytes )
+    {
         return RN_SEND_FIT_REFUSED;
+    }
 
     // sticky exhaustion: once exhausted, every send is refused until reset
     // (proofs/tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
 
     if ( region->exhausted )
+    {
         return RN_SEND_FIT_EXHAUSTED;
+    }
 
     if ( region->descriptors_free == 0 )
+    {
         return RN_SEND_FIT_QUEUE_FULL;
+    }
 
     uint32_t first = 0;
     if ( !rn_send_store_find( &region->store, bytes, &first ) )
+    {
         return RN_SEND_FIT_STORE_FULL;
+    }
 
     if ( out_first )
+    {
         *out_first = first;
+    }
 
     return RN_SEND_FIT_OK;
 }
@@ -893,7 +947,9 @@ static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t 
 {
     const uint64_t SR = region->span_bytes;
     if ( len16 == 0 || len16 > SR )
+    {
         return false;
+    }
 
     if ( region->span_first == RN_DESCRIPTOR_NONE )
     {
@@ -973,7 +1029,9 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     rocketnet_assert( descriptor->flags & RN_SEND_FLAG_SPAN );
 
     if ( !( descriptor->flags & RN_SEND_FLAG_SPAN ) )
+    {
         return;
+    }
 
     RN_SPAN_COST_VISIT();
 
@@ -985,14 +1043,22 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     descriptor->span_next = RN_DESCRIPTOR_NONE;
 
     if ( prev != RN_DESCRIPTOR_NONE )
+    {
         region->send_descriptors[prev].span_next = next;
+    }
     else
+    {
         region->span_first = next;
+    }
 
     if ( next != RN_DESCRIPTOR_NONE )
+    {
         region->send_descriptors[next].span_prev = prev;
+    }
     else
+    {
         region->span_last = prev;
+    }
 
     if ( region->span_first == RN_DESCRIPTOR_NONE )
     {
@@ -1014,7 +1080,9 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
     rocketnet_assert( region );
 
     if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
+    {
         return RN_SEND_FIT_REFUSED;
+    }
 
     // sticky exhaustion, the same guard as rn_region_send_fit_store: Use (and
     // UseSpan) in proofs/tla/RNConnectionMemory.tla require ~exhausted, so an
@@ -1022,17 +1090,25 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
     // have returned room
 
     if ( region->exhausted )
+    {
         return RN_SEND_FIT_EXHAUSTED;
+    }
 
     if ( region->descriptors_free == 0 )
+    {
         return RN_SEND_FIT_QUEUE_FULL;
+    }
 
     uint32_t start = 0;
     if ( !rn_span_place( region, rn_span_round16( (uint64_t) bytes ), &start ) )
+    {
         return RN_SEND_FIT_STORE_FULL;
+    }
 
     if ( out_start )
+    {
         *out_start = start;
+    }
 
     return RN_SEND_FIT_OK;
 }
@@ -1089,18 +1165,26 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
     rocketnet_assert( region );
 
     if ( out_bytes )
+    {
         *out_bytes = 0;
+    }
     if ( d >= region->descriptors_fresh )   // never taken since the carve: not in use, and unwritten
+    {
         return NULL;
+    }
 
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( !descriptor->in_use )
+    {
         return NULL;
+    }
 
     const uint32_t F = RN_STORE_LARGE_BYTES;
     const bool block = descriptor->fragments > 1;
     if ( ( !block && fragment != 0 ) || ( block && fragment >= descriptor->fragments ) )
+    {
         return NULL;
+    }
 
     const uint8_t * data = NULL;
 
@@ -1111,7 +1195,9 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
     else
     {
         if ( descriptor->chunk == RN_CHUNK_NONE || block )
+        {
             return NULL;
+        }
 
         data = rn_send_store_chunk_data( &region->store, descriptor->chunk );
     }
@@ -1130,13 +1216,19 @@ uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
     rocketnet_assert( region );
 
     if ( d >= region->descriptors_fresh || !region->send_descriptors[d].in_use )
+    {
         return NULL;
+    }
 
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+    {
         return region->send_spans + descriptor->span_start;
+    }
     if ( descriptor->chunk == RN_CHUNK_NONE )
+    {
         return NULL;
+    }
 
     return rn_send_store_chunk_data( &region->store, descriptor->chunk );
 }
@@ -1153,17 +1245,25 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
     rocketnet_assert( d < region->descriptors_fresh );
 
     if ( d >= region->descriptors_fresh )
+    {
         return;
+    }
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );
 
     if ( !descriptor->in_use )
+    {
         return;
+    }
     if ( descriptor->flags & RN_SEND_FLAG_SPAN )
+    {
         rn_span_unlink( region, d );
+    }
     if ( descriptor->chunk != RN_CHUNK_NONE )
+    {
         rn_send_store_free( &region->store, descriptor->chunk );
+    }
 
     rn_region_descriptor_release( region, d );
 }
@@ -1178,17 +1278,23 @@ void rn_region_send_free_fragment( rn_region_t * region, uint32_t d )
     rocketnet_assert( d < region->descriptors_fresh );
 
     if ( d >= region->descriptors_fresh )
+    {
         return;
+    }
 
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_assert( descriptor->in_use );
 
     if ( !descriptor->in_use )
+    {
         return;
+    }
 
     descriptor->fragments_acked++;
     if ( descriptor->fragments_acked >= descriptor->fragments )
+    {
         rn_region_send_free( region, d );
+    }
 }
 
 // ----------------------------------------------------------------
@@ -1206,7 +1312,9 @@ static uint32_t rn_permille( uint64_t used, uint64_t total )
 static uint64_t rn_span_used( const rn_region_t * region )
 {
     if ( region->span_first == RN_DESCRIPTOR_NONE )
+    {
         return 0;
+    }
 
     const uint64_t head = region->span_head;
     const uint64_t tail = region->span_tail;
@@ -1233,7 +1341,9 @@ void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room )
 
         const uint32_t class_permille = rn_permille( used, cls->num_chunks );
         if ( class_permille > permille )
+        {
             permille = class_permille;
+        }
     }
 
     room->span_used_bytes = rn_span_used( region );
@@ -1241,7 +1351,9 @@ void rn_region_send_room( const rn_region_t * region, rn_send_room_t * room )
 
     const uint32_t span_permille = rn_permille( room->span_used_bytes, room->span_bytes );
     if ( span_permille > permille )
+    {
         permille = span_permille;
+    }
 
     room->permille = permille;
 }
@@ -1269,11 +1381,17 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
     }
 
     if ( free_bytes )
+    {
         *free_bytes = free_room;
+    }
     if ( pool_bytes )
+    {
         *pool_bytes = pool;
+    }
     if ( free_messages )
+    {
         *free_messages = region->descriptors_free;
+    }
 
     return rn_region_send_fit( region, bytes ) == RN_SEND_FIT_OK;      // the allocation's own decision
 }
@@ -1312,9 +1430,13 @@ static void rn_region_send_room_log( const rn_region_t * region, int is_server, 
     char who[32];
 
     if ( is_server )
+    {
         snprintf( who, sizeof( who ), "server slot %d", index );
+    }
     else
+    {
         snprintf( who, sizeof( who ), "client" );
+    }
 
     rocketnet_warn( "%s send room %s (%u.%u%% of the fullest pool): store %" PRIu64 " of %" PRIu64 " bytes, spans %" PRIu64 " of %" PRIu64 " bytes, "
                     "messages %u of %u; sends outrun acks, raise send_message_buffer_bytes, receive_message_buffer_bytes or send_queue_messages, or send less",
@@ -1325,7 +1447,9 @@ static void rn_region_send_room_log( const rn_region_t * region, int is_server, 
 void rn_region_send_room_note( rn_region_t * region, int is_server, int index )
 {
     if ( rn_region_send_room_watch( region ) == RN_SEND_ROOM_CROSSED )
+    {
         rn_region_send_room_log( region, is_server, index, "over 75% full" );
+    }
 }
 
 void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index )
@@ -1362,7 +1486,9 @@ bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t by
     const uintptr_t address = (uintptr_t) p;
     const uintptr_t base = (uintptr_t) region->base;
     if ( address < base || bytes > region->bytes )
+    {
         return false;
+    }
 
     return (uint64_t) ( address - base ) <= region->bytes - bytes;
 }
@@ -1377,7 +1503,9 @@ bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uin
     rocketnet_assert( region );
 
     if ( bytes == 0 || offset % 16 != 0 || offset >= region->ring_bytes )
+    {
         return false;
+    }
 
     return bytes <= region->ring_bytes - offset;
 }
@@ -1410,7 +1538,9 @@ static bool rn_arena_plan( const rocketnet_message_config_t * config, int num_re
     }
 
     if ( !rn_region_layout( config, layout ) )
+    {
         return false;
+    }
 
     *header = rn_align64( sizeof( rn_arena_t ) ) + rn_align64( sizeof( rn_region_t ) * (uint64_t) num_regions );
     if ( layout->region_bytes > ( UINT64_MAX - *header ) / (uint64_t) num_regions || *header + layout->region_bytes * (uint64_t) num_regions > (uint64_t) SIZE_MAX )
@@ -1465,7 +1595,9 @@ rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t *
     uint64_t header = 0;
     uint64_t bytes = 0;
     if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
+    {
         return NULL;
+    }
 
     // the create path's one allocation (R2): nothing after it allocates
 
@@ -1495,7 +1627,9 @@ uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int
     uint64_t header = 0;
     uint64_t bytes = 0;
     if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
+    {
         return 0;
+    }
 
     return bytes;
 }
@@ -1516,7 +1650,9 @@ rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const
     uint64_t header = 0;
     uint64_t bytes = 0;
     if ( !rn_arena_plan( config, num_regions, &layout, &header, &bytes ) )
+    {
         return NULL;
+    }
 
     // the caller's block is checked, never truncated: the configuration's exact size and the regions' 64-byte alignment, or nothing
 
@@ -1538,7 +1674,9 @@ rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const
 void rn_arena_destroy( rn_arena_t * arena )
 {
     if ( !arena )
+    {
         return;
+    }
 
     // the regions hold message bytes, never keys: nothing is wiped. The OS
     // zero-fills a page before another process gets it, and wiping would
@@ -1546,7 +1684,9 @@ void rn_arena_destroy( rn_arena_t * arena )
     // used. A caller's block stays the caller's, as it is.
 
     if ( arena->owns_memory )
+    {
         rocketnet_free( arena->context, arena );
+    }
 }
 
 #if ROCKETNET_DEV
@@ -1562,7 +1702,9 @@ rn_region_t * rn_arena_region( rn_arena_t * arena, int index )
     rocketnet_assert( arena );
 
     if ( index < 0 || index >= arena->num_regions )
+    {
         return NULL;
+    }
 
     return &arena->regions[index];
 }
@@ -1583,7 +1725,9 @@ uint64_t rocketnet_message_connection_bytes( const struct rocketnet_message_conf
 {
     rn_region_layout_t layout;
     if ( !rn_region_layout( config, &layout ) )
+    {
         return 0;
+    }
 
     return layout.region_bytes;
 }
@@ -1620,15 +1764,21 @@ rn_text_append( rn_text_t * text, const char * format, ... )
     va_end( args );
 
     if ( written > 0 )
+    {
         text->length += written;
+    }
 }
 
 int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections, char * buffer, int buffer_size )
 {
     if ( buffer && buffer_size > 0 )
+    {
         buffer[0] = '\0';
+    }
     if ( buffer_size < 0 )
+    {
         buffer_size = 0;
+    }
 
     rocketnet_message_config_t defaults;
 
@@ -1641,9 +1791,13 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_region_layout_t layout;
     if ( !rn_region_layout( config, &layout ) )
+    {
         return 0;
+    }
     if ( num_connections < 0 )
+    {
         num_connections = 0;
+    }
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/LOAD.md Table 3)\n" );
@@ -1654,7 +1808,9 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
                     config->sequenced_messages_held, config->max_message_receipts );
 
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
+    {
         rn_text_append( &text, "  %-24s %-9s %" PRIu64 "\n", rn_part_names[part], rn_part_formulas[part], layout.bytes[part] );
+    }
 
     rn_text_append( &text, "store classes %u x %d, %u x %d, %u x %d\n",
                     layout.store_chunks[RN_STORE_SMALL], RN_STORE_SMALL_BYTES,
@@ -1672,7 +1828,9 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 {
     char text[4096];
     if ( rocketnet_message_connection_sizing( config, num_connections, text, (int) sizeof( text ) ) == 0 )
+    {
         return 0;
+    }
 
     // one log line per text line
 
@@ -1681,12 +1839,16 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
     {
         char * end = strchr( line, '\n' );
         if ( end )
+        {
             *end = '\0';
+        }
 
         rocketnet_info( "%s", line );
 
         if ( !end )
+        {
             break;
+        }
 
         line = end + 1;
     }

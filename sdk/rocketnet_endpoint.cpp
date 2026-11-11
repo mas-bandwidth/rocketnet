@@ -31,7 +31,9 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
 
     rocketnet_counters_t * counters = endpoint->region->counters;
     if ( counters )
+    {
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], amount );
+    }
 }
 
 static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
@@ -103,7 +105,9 @@ static uint32_t rn_unreliable_walk_next( const rn_endpoint_t * endpoint, rn_unre
         const rn_unreliable_entry_t * entry = &region->unreliable_ring[( walk->base + walk->step ) % region->unreliable_ring_entries];
         walk->step++;
         if ( rn_unreliable_entry_live( region, entry ) )
+        {
             return entry->descriptor;
+        }
     }
 
     return RN_DESCRIPTOR_NONE;
@@ -140,7 +144,9 @@ static void rn_unreliable_renumber( rn_endpoint_t * endpoint, uint32_t d )
     {
         rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
         if ( entry.descriptor == d || !rn_unreliable_entry_live( region, &entry ) )
+        {
             continue;
+        }
 
         entry.ticket = rn_region_schedule_ticket( region );
         region->send_descriptors[entry.descriptor].enqueue_ticket = entry.ticket;
@@ -164,7 +170,9 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
     rocketnet_assume( d < entries / 2 );
 
     if ( region->schedule_ticket_wrapped )
+    {
         rn_unreliable_renumber( endpoint, d );
+    }
 
     if ( endpoint->unreliable_ring_used == entries )
     {
@@ -177,7 +185,9 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
         {
             const rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
             if ( rn_unreliable_entry_live( region, &entry ) )
+            {
                 region->unreliable_ring[( endpoint->unreliable_ring_head + kept++ ) % entries] = entry;
+            }
         }
         endpoint->unreliable_ring_used = kept;
     }
@@ -325,19 +335,27 @@ static int rn_endpoint_send_route( const rn_endpoint_t * endpoint, int channel, 
     *out_type = reliability;
 
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
+    {
         return RN_ENDPOINT_ROUTE_REFUSED;
+    }
 
     if ( rn_endpoint_reliable_path( reliability ) )
+    {
         return RN_ENDPOINT_ROUTE_CHANNELS;
+    }
 
     if ( !rn_endpoint_unreliable_type( reliability ) ||
          rn_channels_send_allowed( &endpoint->ordered.channels, reliability, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
+    {
         return RN_ENDPOINT_ROUTE_TYPE;
+    }
 
     // one size rule refuses only the configured maximum; larger records promote to the reliable twin
 
     if ( (uint32_t) bytes > (uint32_t) endpoint->config->max_message_bytes )
+    {
         return RN_ENDPOINT_ROUTE_OVER_MAX;
+    }
 
     // one packet's record lives in a payload no larger than both the
     // transport's cap and the message tier's one-packet payload.
@@ -378,9 +396,13 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     if ( route == RN_ENDPOINT_ROUTE_REFUSED )
     {
         if ( endpoint->pending_type != -1 )
+        {
             rocketnet_error( "message start refused: a start is already pending; finish or abort it first" );
+        }
         else
+        {
             rocketnet_error( "message start refused: channel %d is outside 0 .. %d, or max_bytes %d is below 1", channel, endpoint->config->num_channels - 1, bytes );
+        }
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
@@ -391,9 +413,13 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
 
         rocketnet_error( "message start refused: reliability %d is not a reliability this connection sends on channel %d", reliability, channel );
         if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
+        {
             rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel );
+        }
         else
+        {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+        }
         return NULL;
     }
 
@@ -402,7 +428,9 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     // finishes short.
 
     if ( rn_endpoint_unreliable_type( reliability ) )
+    {
         endpoint->max_payload_bytes = rn_endpoint_transport_max( transport_max_payload_bytes );
+    }
 
     if ( route == RN_ENDPOINT_ROUTE_OVER_MAX )
     {
@@ -420,7 +448,9 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         if ( !pointer )
         {
             if ( rn_region_exhausted( region ) )
+            {
                 endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;     // R5
+            }
             else
             {
                 rocketnet_error( "message start refused: reliability %d on channel %d with max_bytes %d (max_message_bytes %d)", reliability, channel, bytes, endpoint->config->max_message_bytes );
@@ -478,7 +508,9 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
         const rn_channels_t * channels = &endpoint->ordered.channels;
         if ( channels->pending != RN_DESCRIPTOR_NONE ||
              rn_channels_send_allowed( channels, type, (uint32_t) channel ) != ROCKETNET_CHANNEL_SEND_OK )
+        {
             return false;
+        }
     }
     else if ( route != RN_ENDPOINT_ROUTE_UNRELIABLE )
     {
@@ -505,13 +537,17 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     }
 
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
+    {
         return 0;
+    }
 
     if ( serial == 0 )
     {
         serial = endpoint->serial + 1;
         if ( serial == 0 )
+        {
             serial = 1;
+        }
     }
 
     // start reserves for its requested capacity; finish decides promotion
@@ -533,12 +569,16 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     {
         const uint32_t d = endpoint->ordered.channels.pending;
         if ( !rn_channels_finish( &endpoint->ordered.channels, (uint32_t) bytes ) )
+        {
             return 0;
+        }
 
         rn_send_descriptor_t * descriptor = &endpoint->region->send_descriptors[d];
         descriptor->serial = serial;
         if ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+        {
             descriptor->flags |= RN_SEND_FLAG_RECEIPT_PROMOTED; // RNReceipts EffectiveKind: reliable completion, no LOSS
+        }
 
         if ( promoted )
         {
@@ -603,11 +643,15 @@ void rn_endpoint_abort( struct rn_endpoint_t * endpoint )
 
     if ( rn_endpoint_reliable_path( endpoint->pending_type ) ||
          endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE )
+    {
         rn_channels_cancel( &endpoint->ordered.channels );
+    }
     else if ( ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE || endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                 endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ) &&
               endpoint->pending_descriptor != RN_DESCRIPTOR_NONE )
+    {
         rn_region_send_free( endpoint->region, endpoint->pending_descriptor );
+    }
 
     endpoint->pending_type = -1;
     endpoint->pending_descriptor = RN_DESCRIPTOR_NONE;
@@ -638,12 +682,18 @@ static int rn_endpoint_sequenced_header_bytes( int channel )
 int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int channel, int reliability, int bytes, int transport_max_payload_bytes, double now )
 {
     if ( endpoint->pending_type != -1 || channel < 0 || channel >= endpoint->config->num_channels || bytes < 1 )
+    {
         return RN_ENDPOINT_IN_PLACE_NO;
+    }
     if ( reliability != ROCKETNET_RELIABILITY_UNRELIABLE && reliability != ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
          reliability != ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+    {
         return RN_ENDPOINT_IN_PLACE_NO;
+    }
     if ( ( endpoint->ordered.channels.enabled_types & ( 1u << reliability ) ) == 0 || rn_region_exhausted( endpoint->region ) )
+    {
         return RN_ENDPOINT_IN_PLACE_NO;                         // the region path refuses and counts it
+    }
 
     int header;
     if ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
@@ -653,14 +703,18 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
         const int transport_max = transport_max_payload_bytes > 0 ? transport_max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         if ( bytes > endpoint->config->max_message_bytes || header + bytes + 1 > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ||
              header + bytes + 1 > transport_max )
+        {
             return RN_ENDPOINT_IN_PLACE_NO;                     // the large single-record path
+        }
     }
     else
     {
         header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? 0 : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
 
         if ( bytes > ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES )
+        {
             return RN_ENDPOINT_IN_PLACE_NO;                     // refused, or the receipt twin's promotion
+        }
     }
 
     // RNOutgoingBuild StartInPlace: a message never overtakes an unreliable
@@ -675,7 +729,9 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
          ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
            ( endpoint->region->channel_send[channel].queue_head != RN_DESCRIPTOR_NONE ||
              endpoint->ordered.ack.chunk_head != RN_RESEND_NONE ) ) )
+    {
         return RN_ENDPOINT_IN_PLACE_QUEUED;
+    }
 
     return header;
 }
@@ -683,7 +739,9 @@ int rn_endpoint_in_place_header( const struct rn_endpoint_t * endpoint, int chan
 bool rn_endpoint_in_place_affordable( struct rn_endpoint_t * endpoint, int payload_bytes, double now )
 {
     if ( !endpoint->send_budget_enabled )
+    {
         return true;                                            // R6: uncapped, no bucket
+    }
 
     // the refill the next write pass would make at this update time, made now
     // (a second refill at the same time adds nothing)
@@ -710,7 +768,9 @@ void rn_endpoint_in_place_begin( struct rn_endpoint_t * endpoint, int channel, i
 uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t * payload, int bytes, double now, int * payload_bytes )
 {
     if ( payload_bytes )
+    {
         *payload_bytes = 0;
+    }
 
     if ( !endpoint || endpoint->pending_type == -1 || !endpoint->pending_in_place || !payload || !payload_bytes )
     {
@@ -719,11 +779,15 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
     }
 
     if ( bytes < 1 || (uint32_t) bytes > endpoint->pending_bytes )
+    {
         return 0;
+    }
 
     uint32_t serial = endpoint->serial + 1;
     if ( serial == 0 )
+    {
         serial = 1;
+    }
 
     const int type = endpoint->pending_type;
     const int header = endpoint->pending_header;
@@ -756,7 +820,9 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
             record.ordering = ordering & ROCKETNET_MESSAGE_U24_MASK;
         }
         else
+        {
             record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;   // 5 travels as code 0 (standard/MESSAGES.md m3)
+        }
 
         record.data = payload + header;
         record.bytes = bytes;
@@ -765,7 +831,9 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
         rocketnet_message_writer_begin( &writer, payload, capacity );
 
         if ( rocketnet_message_writer_add_in_place( &writer, &record ) )
+        {
             length = rocketnet_message_writer_finish( &writer );
+        }
     }
 
     rocketnet_assert( length > 0 );
@@ -804,7 +872,9 @@ uint32_t rn_endpoint_in_place_finish( struct rn_endpoint_t * endpoint, uint8_t *
         {
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
             if ( endpoint->in_place_receipt )
+            {
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, serial ); // local budget drop before wire send
+            }
             endpoint->in_place_receipt = 0;
             return serial;
         }
@@ -824,10 +894,14 @@ void rn_endpoint_in_place_sent( struct rn_endpoint_t * endpoint, uint64_t packet
     // size
 
     if ( endpoint->in_place_receipt )
+    {
         rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, &endpoint->in_place_serial, 1, now );
+    }
 
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
+    {
         rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, wire_bytes );
+    }
 
     endpoint->written++;
     endpoint->in_place_receipt = 0;
@@ -842,10 +916,14 @@ void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint )
     rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
 
     if ( endpoint->in_place_receipt )
+    {
         rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->in_place_serial );
+    }
 
     if ( endpoint->send_budget_enabled && endpoint->in_place_admitted > 0 )
+    {
         rocketnet_send_budget_settle( &endpoint->budget, endpoint->in_place_admitted, 0 );    // proofs/tla/RNSendBudget.tla SendFailed: refund the whole charge
+    }
 
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
@@ -868,13 +946,17 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 
     uint8_t * pointer = rn_endpoint_start( endpoint, channel, reliability, bytes, endpoint->max_payload_bytes );
     if ( !pointer )
+    {
         return 0;
+    }
 
     memcpy( pointer, data, (size_t) bytes );
 
     const uint32_t result = rn_endpoint_finish( endpoint, bytes, serial );
     if ( result == 0 )
+    {
         rn_endpoint_abort( endpoint );
+    }
 
     return result;
 }
@@ -908,11 +990,15 @@ bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
     if ( out )
     {
         for ( uint32_t k = before; k < after && copied < out_capacity; k++ )
+        {
             out[copied++] = endpoint->region->deliveries[k];
+        }
     }
 
     if ( out_count )
+    {
         *out_count = out ? copied : (int) ( after - before );
+    }
 
     return result == ROCKETNET_MESSAGE_VIOLATION_NONE && rn_endpoint_error( endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE;
 }
@@ -941,17 +1027,23 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
     // (11.3), which transport_connected says.
 
     if ( endpoint->ordered.config_received )
+    {
         return;
+    }
     if ( endpoint->config_wait_start < 0.0 )
     {
         if ( transport_connected )
+        {
             endpoint->config_wait_start = now;
+        }
         return;
     }
 
     const double reliable_timeout = (double) endpoint->config->reliable_message_timeout_ms / 1000.0;
     if ( now - endpoint->config_wait_start >= reliable_timeout )
+    {
         endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
+    }
 }
 
 // proofs/tla/RNSendRotation.tla BeginUpdate
@@ -991,11 +1083,15 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
     for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
     {
         if ( steps >= 64 )
+        {
             return 1;                                           // a long acked prefix: let the write walk it
+        }
 
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( !slot->acked )
+        {
             return ( rn_send_number_unsent_due( slot->last_send ) || now >= slot->last_send + delay ) ? 1 : 0;
+        }
 
         cursor = rn_window_ack_resend_next( ack, chunk, cursor );
     }
@@ -1011,7 +1107,9 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
 
     const rn_ordered_t * ordered = &endpoint->ordered;
     if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE && !ordered->send.stalled )
+    {
         return true;
+    }
 
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = endpoint->region;
@@ -1026,7 +1124,9 @@ static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d 
     rn_region_t * region = endpoint->region;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     if ( endpoint->unreliable_count > 0 )
+    {
         endpoint->unreliable_count--;
+    }
 
     descriptor->enqueue_ticket = 0;
     descriptor->schedule_flags = 0;
@@ -1041,13 +1141,17 @@ static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int count
     {
         const rn_send_descriptor_t * descriptor = &endpoint->region->send_descriptors[endpoint->unreliable_head];
         if ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+        {
             rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial ); // local budget drop before wire send
+        }
 
         rn_endpoint_unreliable_unlink( endpoint, endpoint->unreliable_head );
     }
 
     if ( count > already_counted )
+    {
         rn_endpoint_count( endpoint, counter, count - already_counted );
+    }
 }
 
 static int rn_endpoint_sequenced_payload_bytes( const rn_send_descriptor_t * descriptor )
@@ -1077,7 +1181,9 @@ static void rn_endpoint_end_reliable( rn_endpoint_t * endpoint )
         endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
     }
     else
+    {
         endpoint->write_phase = RN_ENDPOINT_WRITE_UNRELIABLE;
+    }
 }
 
 static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
@@ -1104,11 +1210,15 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
     {
         admitted_wire_bytes = rocketnet_send_budget_max_wire_bytes( payload_bytes );
         if ( admitted_wire_bytes == 0 )
+        {
             return -1;
+        }
 
         rocketnet_send_budget_t * budget = &endpoint->budget;
         if ( budget->rank_reached < rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE ) )
+        {
             budget->rank_reached = rocketnet_send_budget_class_rank( ROCKETNET_SEND_CLASS_UNRELIABLE );
+        }
 
         if ( budget->reliable_waiting || (double) admitted_wire_bytes > budget->tokens )
         {
@@ -1139,12 +1249,16 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     // sent this update.
 
     if ( endpoint->packet_written )
+    {
         return 0;                                               // the written packet is not yet sent or failed
+    }
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_IDLE )
     {
         if ( endpoint->send_budget_enabled )
+        {
             rocketnet_send_budget_begin_update( &endpoint->budget, now );
+        }
 
         // every resend waits the same delay, with no back-off (proofs/tla/RNResendTiming.tla)
 
@@ -1216,7 +1330,9 @@ void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
     // capacity cut short continues where it was
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_DONE )
+    {
         endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
+    }
 }
 
 // proofs/tla/RNUnreliableRingLayout.tla WalkStop: a walk ends at the record limit or a large record.
@@ -1236,7 +1352,9 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
 
 
         if ( rn_endpoint_large_sequenced( descriptor ) )
+        {
             break; // send the preceding small records first
+        }
 
         rn_packet_item_t * item = &items[count];
         memset( item, 0, sizeof( *item ) );
@@ -1269,7 +1387,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
     // queued unreliable records copied from their region records.
 
     if ( endpoint->packet_written || !payload )
+    {
         return 0;
+    }
 
     const int request = endpoint->packet_kind == RN_ENDPOINT_PACKET_SEQUENCED_LARGE ? endpoint->large_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     if ( capacity < request )
@@ -1311,7 +1431,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
                 // counted, all of this pass's (R6)
 
                 if ( endpoint->unreliable_builder.unreliable_dropped > 0 )
+                {
                     rn_endpoint_unreliable_drop_all( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET, endpoint->unreliable_builder.unreliable_dropped );
+                }
 
                 endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
                 endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
@@ -1325,11 +1447,15 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             for ( int i = 0; i < count; i++ )
             {
                 if ( !items[i].taken )
+                {
                     continue;
+                }
 
                 const rn_send_descriptor_t * descriptor = &region->send_descriptors[descriptors[i]];
                 if ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+                {
                     endpoint->receipt_serials[endpoint->receipt_count++] = descriptor->serial;
+                }
             }
 
             endpoint->packet_records = endpoint->unreliable_builder.packet[0].records;
@@ -1343,7 +1469,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             for ( int i = 0; i < count; i++ )
             {
                 if ( !items[i].taken )
+                {
                     continue;
+                }
 
                 taken_index[taken_count] = descriptors[i];
                 taken_generation[taken_count] = generations[i];
@@ -1427,14 +1555,20 @@ bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, d
     // the maximum changes nothing.
 
     if ( !endpoint )
+    {
         return false;
+    }
     if ( kbps > ROCKETNET_SEND_BUDGET_MAX_KBPS )
+    {
         return false;
+    }
 
     if ( kbps <= 0 )
     {
         if ( !endpoint->send_budget_enabled )
+        {
             return true;
+        }
 
         memset( &endpoint->budget, 0, sizeof( endpoint->budget ) );
         endpoint->send_budget_enabled = 0;
@@ -1447,7 +1581,9 @@ bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, d
     if ( !endpoint->send_budget_enabled )
     {
         if ( !rocketnet_send_budget_init( &endpoint->budget, (uint32_t) kbps, now ) )
+        {
             return false;
+        }
 
         endpoint->send_budget_enabled = 1;
         endpoint->ordered.budget = &endpoint->budget;
@@ -1467,7 +1603,9 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
     // TransportSend: the commit of a write-pass packet the transport sent.
 
     if ( !endpoint->packet_written )
+    {
         return;
+    }
 
     switch ( endpoint->packet_kind )
     {
@@ -1478,13 +1616,17 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
 
         case RN_ENDPOINT_PACKET_UNRELIABLE:
             if ( endpoint->receipt_count )
+            {
                 rn_window_ack_commit_receipt_packet( &endpoint->ordered.ack, packet_id, endpoint->receipt_serials, endpoint->receipt_count, now ); // RNReceipts WritePacket
+            }
             rn_packet_builder_settle( &endpoint->unreliable_builder, 0, wire_bytes );
             break;
 
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
             if ( endpoint->send_budget_enabled )                       // R6: uncapped, no bucket to settle
+            {
                 rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, wire_bytes );
+            }
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor );
             break;
 
@@ -1512,9 +1654,13 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
     if ( !endpoint->packet_written )
     {
         if ( endpoint->packet_kind == RN_ENDPOINT_PACKET_ORDERED )
+        {
             rn_endpoint_end_reliable( endpoint );
+        }
         else if ( endpoint->packet_kind != RN_ENDPOINT_PACKET_NONE )
+        {
             endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
+        }
 
         endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
         return;
@@ -1532,7 +1678,9 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
         case RN_ENDPOINT_PACKET_UNRELIABLE:
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED, endpoint->packet_records );
             for ( uint32_t i = 0; i < endpoint->receipt_count; i++ )
+            {
                 rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, endpoint->receipt_serials[i] );
+            }
             rn_packet_builder_settle( &endpoint->unreliable_builder, 0, 0 );  // proofs/tla/RNSendBudget.tla SendFailed: refund the whole charge
             endpoint->written++;
             break;
@@ -1540,7 +1688,9 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
         case RN_ENDPOINT_PACKET_SEQUENCED_LARGE:
             rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
             if ( endpoint->send_budget_enabled )                       // proofs/tla/RNSendBudget.tla SendFailed: refund the whole charge
+            {
                 rocketnet_send_budget_settle( &endpoint->budget, endpoint->large_admitted, 0 );
+            }
             rn_endpoint_unreliable_unlink( endpoint, endpoint->large_descriptor );
             endpoint->written++;
             break;
@@ -1574,11 +1724,15 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
     // the remote endpoint's CONFIG past reliable_timeout (rn_endpoint_config_tick)
 
     if ( endpoint->send_error != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         return endpoint->send_error;
+    }
 
     const int reason = rn_ordered_decide( &endpoint->ordered );
     if ( reason != ROCKETNET_DISCONNECT_REASON_NONE )
+    {
         return reason;
+    }
 
     return endpoint->config_error;
 }
