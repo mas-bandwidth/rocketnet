@@ -422,6 +422,15 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     // code's own, and the record after it is still checked.
     int hold[FP_ACTORS] = {};
 
+    // and sometimes the walk stages that interleaving outright: filler a
+    // has loaded the epoch (stale), the main thread runs until it has left
+    // one operation (stage 1), another filler b makes one whole call on a's
+    // client (stage 2), then a goes on (stage 3). The stage only picks which
+    // actor runs next; when the actor it wants is done it gives up.
+    int stage = 0;
+    int stale = -1;
+    int other = -1;
+
     {
         std::unique_lock<std::mutex> lock( walk->mutex );
         walk->changed.wait( lock, [&] {
@@ -457,7 +466,25 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
             {
                 break;
             }
-            const int a = num_free > 0 ? free_live[random.below( num_free )] : live[random.below( num_live )];
+            int a = num_free > 0 ? free_live[random.below( num_free )] : live[random.below( num_live )];
+            if ( stage == 1 )
+            {
+                a = walk->state[0] != FP_DONE ? 0 : -1;
+            }
+            else if ( stage == 2 )
+            {
+                a = walk->state[other] != FP_DONE ? other : -1;
+            }
+            else if ( stage == 3 )
+            {
+                a = stale;
+                stage = 0;
+            }
+            if ( a < 0 )
+            {
+                stage = 0;
+                continue;
+            }
             for ( int b = 0; b < FP_ACTORS; b++ )
             {
                 hold[b] -= hold[b] > 0 ? 1 : 0;
@@ -466,8 +493,9 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
             if ( a > 0 && walk->state[a] == FP_READY )
             {
-                walk->next_client[a] = random.below( FP_CLIENTS );
+                walk->next_client[a] = stage == 2 ? walk->fclient[stale - 1] : random.below( FP_CLIENTS );
             }
+            const bool other_was_ready = stage == 2 && walk->state[a] == FP_READY;
 
             // the plant's condition: a claim about to meet another thread's
             // word, not in, stamped with a later epoch than the caller loaded
@@ -492,11 +520,39 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 {
                     unknown = true;
                 }
+                records.push_back( fp_record( walk ) );
                 if ( a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 4 ) != 0 )
                 {
                     hold[a] = 8 + random.below( 16 );
                 }
-                records.push_back( fp_record( walk ) );
+                if ( stage == 0 && a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 3 ) == 0 )
+                {
+                    // stage the stale claim: the main thread first, then
+                    // another filler that is between calls
+                    int candidates[FP_FILLERS];
+                    int num_candidates = 0;
+                    for ( int g = 1; g < FP_ACTORS; g++ )
+                    {
+                        if ( g != a && walk->state[g] == FP_READY )
+                        {
+                            candidates[num_candidates++] = g;
+                        }
+                    }
+                    if ( num_candidates > 0 && walk->state[0] != FP_DONE )
+                    {
+                        stale = a;
+                        other = candidates[random.below( num_candidates )];
+                        stage = 1;
+                    }
+                }
+                else if ( stage == 1 && a == 0 && std::string( walk->step[0].action ) == "MainLeave" )
+                {
+                    stage = 2;      // one main operation left: the epoch moved under a's call
+                }
+            }
+            else if ( stage == 2 && a == other && !other_was_ready )
+            {
+                stage = 3;          // b's call ended: it parked before its next call, or finished
             }
         }
     }
