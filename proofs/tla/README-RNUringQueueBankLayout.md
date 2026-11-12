@@ -12,8 +12,12 @@ the arithmetic that `start_packet`, `finish_packet` and `abort_packet` share:
 The banks of every queue are laid out end to end. That is the worst case for a stray
 pointer: one byte before a bank lands inside its neighbour.
 
-Status: the model is written and checked; the code (L0) is not yet built. The
-functions named below are the design's, and the code will cite this model.
+Status: built. sdk/rocketnet_uring_send_queue.cpp implements it (start is Start, finish
+and abort are Finish, turn is Flush) and cites each action; the shared arithmetic is
+sdk/rocketnet_send_queue.h, which the XDP transport also calls. The code is bound to
+the model by the trace check (TraceRNUringQueueBankLayout.tla, tests/tla_trace.cpp
+--layer bank, README-TraceCheck.md): its plant, the turn without its reset, is
+rejected at the turn onto the reused bank.
 
 ## The small instance (MCRNUringQueueBankLayout.tla)
 
@@ -24,15 +28,19 @@ functions named below are the design's, and the code will cite this model.
 - A caller may hand finish a pointer 1 byte early, exact, or 1 byte late.
 - 2 flushes.
 
-## Results (captain, pinned jar 936a2620..., TLC 2.19, 4 workers, 2026-11-12)
+## Results (captain, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-12; RUNS.tsv)
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueBankLayout.cfg | pass | pass | 36,237,895 (7,837,115), depth 43, 2 min 28 s |
-| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated (7 states) | 185 (81) |
-| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 863 (336) |
-| MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 33 (20) |
-| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 29 (20) |
+| MCRNUringQueueBankLayout.cfg | pass | pass | 4,578,934 (1,008,425), 37 s |
+| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 1,052 (383) |
+| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 2,357 (846) |
+| MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 41 (25) |
+| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 41 (25) |
+
+The instance went from 4 starts per thread to 3 so the control fits tlacheck's
+110 s budget; every witness still fires (NarrowCounter needs 5 claims on one bank in a
+fill, and two threads make 6).
 
 ## The witnesses, as TLC printed them
 
