@@ -15,9 +15,12 @@
 # parser sweep (the smoke's own binary, run long here), the message decoder,
 # the connect token ladder and its private layouts, the stateful receive
 # path, the wire round trip, the env config overlay, the three pair
-# targets (server transport, client transport, scripted session), and the
-# XDP frame reader, the io_uring recvmsg codec and the netlink reply parsers
-# (the last two do work only on Linux, and compile to a no-op elsewhere).
+# targets (server transport, client transport, scripted session), the
+# endpoint, the differential against the reference netcode, the XDP frame
+# reader, the io_uring recvmsg codec and the netlink reply parsers (the last
+# two do work only on Linux, and compile to a no-op elsewhere), and the XDP
+# filter program run as host C (the Linux leg only: it reads the AF_XDP
+# frame layout). The Linux asan+ubsan leg runs all of them.
 #
 # Each leg's finite fuzz campaign is max_total_time seconds (900 by default).
 # Building and completing that workload have no repository wall-clock cap.
