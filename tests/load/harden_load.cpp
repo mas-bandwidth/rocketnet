@@ -2237,7 +2237,9 @@ static bool harden_build_request( const harden_options_t & o, const uint8_t * ke
 
 #if defined( __linux__ )
 // replay: up to want session packets of real players, read off the wire
-// with AF_PACKET, UDP to the server's port
+// with AF_PACKET, UDP to the server's port. ETH_P_ALL, not ETH_P_IP: Linux hands a
+// host's own outgoing frames only to ETH_P_ALL packet sockets, and the players
+// send from this host; the IP protocol and address checks below drop the rest
 static bool harden_capture( const harden_options_t & o, int want, std::vector<std::vector<uint8_t>> * out )
 {
     struct sockaddr_in server;
@@ -2245,7 +2247,7 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
     {
         return false;
     }
-    const int s = socket( AF_PACKET, SOCK_DGRAM, htons( ETH_P_IP ) );
+    const int s = socket( AF_PACKET, SOCK_DGRAM, htons( ETH_P_ALL ) );
     if ( s < 0 )
     {
         fprintf( stderr, "harden_load hostile: replay needs AF_PACKET (CAP_NET_RAW): %s\n", strerror( errno ) );
@@ -2254,7 +2256,7 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
     struct sockaddr_ll bind_address;
     memset( &bind_address, 0, sizeof( bind_address ) );
     bind_address.sll_family = AF_PACKET;
-    bind_address.sll_protocol = htons( ETH_P_IP );
+    bind_address.sll_protocol = htons( ETH_P_ALL );
     bind_address.sll_ifindex = (int) if_nametoindex( o.capture_dev.c_str() );
     if ( bind_address.sll_ifindex == 0 || bind( s, (struct sockaddr *) &bind_address, sizeof( bind_address ) ) != 0 )
     {
@@ -2274,7 +2276,7 @@ static bool harden_capture( const harden_options_t & o, int want, std::vector<st
             continue;
         }
         const struct iphdr * ip = (const struct iphdr *) buffer;
-        if ( ip->protocol != IPPROTO_UDP || ip->daddr != server.sin_addr.s_addr )
+        if ( ip->version != 4 || ip->protocol != IPPROTO_UDP || ip->daddr != server.sin_addr.s_addr )
         {
             continue;
         }
