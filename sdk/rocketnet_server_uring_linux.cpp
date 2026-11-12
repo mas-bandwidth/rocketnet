@@ -147,7 +147,6 @@ struct rocketnet_server_uring_send_buffer_t
 
 struct rocketnet_server_uring_held_t
 {
-    int queue_index;
     int32_t res;
     uint32_t flags;
 };
@@ -237,14 +236,17 @@ struct rocketnet_server_uring_t
     int max_clients;                            // the server's configured client count
     void * banks_storage;                       // the one allocation both banks' arrays are carved from
 
-    // the receive CQEs held for the fill bank's room, oldest first, in a ring
-    // with a slot for every provided buffer of the most queues: a held
-    // receive owns its buffer, so the ring is never full
-    // (proofs/tla/RNUringReapLayout.tla Reap and CopyHeld)
+    // the receive CQEs held for the fill bank's room: a ring per queue,
+    // oldest first, with a slot for every provided buffer of the queue (a
+    // held receive owns its buffer, so a ring is never full), and the queue
+    // the next copy starts its turn at (proofs/tla/RNUringReapLayout.tla
+    // Reap and CopyHeld)
 
-    struct rocketnet_server_uring_held_t held[ROCKETNET_URING_HELD_RECEIVES];
-    int held_head;
-    int held_count;
+    struct rocketnet_server_uring_held_t held[ROCKETNET_URING_MAX_QUEUES][ROCKETNET_URING_RECV_BUFFERS];
+    int held_head[ROCKETNET_URING_MAX_QUEUES];
+    int held_queue_count[ROCKETNET_URING_MAX_QUEUES];
+    int held_count;                             // every queue's held receives
+    int held_turn;                              // the queue the next copy of a held receive looks at first
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
@@ -1060,8 +1062,9 @@ static bool rocketnet_server_uring_bank_has_room( const struct rocketnet_server_
 
 // a receive CQE with data: copied into the fill bank, or held. it is held
 // while the bank has no room for a whole coalesced receive, and while an
-// earlier receive is held, so receives are copied in the order the kernel
-// posted them (proofs/tla/RNUringReapLayout.tla Reap, the receive held). a held receive keeps
+// earlier receive of its queue is held, so each queue's receives are copied
+// in the order the kernel posted them (proofs/tla/RNUringReapLayout.tla
+// Reap, the receive held). a held receive keeps
 // its ring buffer until its copy and leaves the completion queue, so the
 // CQEs behind it are reaped in the same call (proofs/tla/RNUringDriver.tla
 // Reap, the "recv" case under HoldWithoutRoom). destroy's drain copies at
@@ -1076,13 +1079,14 @@ static void rocketnet_server_uring_receive_or_hold( struct rocketnet_server_urin
     const int buffer_id = rocketnet_uring_buffer_id( cqe->flags );
 
     if ( !uring->destroying && buffer_id >= 0 && buffer_id < ROCKETNET_URING_RECV_BUFFERS &&
-         uring->held_count < ROCKETNET_URING_HELD_RECEIVES &&
-         ( uring->held_count > 0 || !rocketnet_server_uring_bank_has_room( uring ) ) )
+         uring->held_queue_count[queue_index] < ROCKETNET_URING_RECV_BUFFERS &&
+         ( uring->held_queue_count[queue_index] > 0 || !rocketnet_server_uring_bank_has_room( uring ) ) )
     {
-        struct rocketnet_server_uring_held_t * held = &uring->held[( uring->held_head + uring->held_count ) % ROCKETNET_URING_HELD_RECEIVES];
-        held->queue_index = queue_index;
+        const int slot = ( uring->held_head[queue_index] + uring->held_queue_count[queue_index] ) % ROCKETNET_URING_RECV_BUFFERS;
+        struct rocketnet_server_uring_held_t * held = &uring->held[queue_index][slot];
         held->res = cqe->res;
         held->flags = cqe->flags;
+        uring->held_queue_count[queue_index]++;
         uring->held_count++;
         return;
     }
@@ -1090,18 +1094,30 @@ static void rocketnet_server_uring_receive_or_hold( struct rocketnet_server_urin
     rocketnet_server_uring_receive_cqe( uring, queue_index, cqe->res, cqe->flags );
 }
 
-// the held receives, oldest first, into the fill bank while it has room, or
-// all of them in destroy's drain (proofs/tla/RNUringDriver.tla CopyHeld,
-// proofs/tla/RNUringReapLayout.tla CopyHeld)
+// the held receives into the fill bank while it has room, or all of them in
+// destroy's drain: one receive of each queue that holds any in turn, from
+// held_turn, each queue's oldest first. A queue whose source floods (its
+// coalesced receives hold many banks of datagrams) takes one turn in each
+// round, so the other queues' receives are copied the update after they
+// arrive, not behind the whole flood (proofs/tla/RNUringDriver.tla
+// CopyHeld, proofs/tla/RNUringReapLayout.tla CopyHeld)
 
 static void rocketnet_server_uring_copy_held( struct rocketnet_server_uring_t * uring )
 {
     while ( uring->held_count > 0 && ( uring->destroying || rocketnet_server_uring_bank_has_room( uring ) ) )
     {
-        const struct rocketnet_server_uring_held_t held = uring->held[uring->held_head];
-        uring->held_head = ( uring->held_head + 1 ) % ROCKETNET_URING_HELD_RECEIVES;
+        int queue_index = uring->held_turn;
+        while ( uring->held_queue_count[queue_index] == 0 )
+        {
+            queue_index = ( queue_index + 1 ) % uring->num_queues;
+        }
+        uring->held_turn = ( queue_index + 1 ) % uring->num_queues;
+
+        const struct rocketnet_server_uring_held_t held = uring->held[queue_index][uring->held_head[queue_index]];
+        uring->held_head[queue_index] = ( uring->held_head[queue_index] + 1 ) % ROCKETNET_URING_RECV_BUFFERS;
+        uring->held_queue_count[queue_index]--;
         uring->held_count--;
-        rocketnet_server_uring_receive_cqe( uring, held.queue_index, held.res, held.flags );
+        rocketnet_server_uring_receive_cqe( uring, queue_index, held.res, held.flags );
     }
 }
 
@@ -1471,6 +1487,42 @@ uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * 
 int rocketnet_server_uring_test_wait_calls( rocketnet_server_uring_t * uring )
 {
     return uring->test_wait_calls;
+}
+
+void rocketnet_server_uring_test_coalesce( struct rocketnet_server_uring_t * uring, int queue_index, int segments )
+{
+    rocketnet_assert( uring );
+    rocketnet_assert( queue_index >= 0 && queue_index < uring->num_queues );
+    rocketnet_assert( segments >= 1 && segments <= ROCKETNET_URING_MAX_SEGMENTS );
+
+    struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
+    queue->receive_message.msg_controllen = ROCKETNET_URING_GRO_CONTROL_BYTES;
+
+    struct io_uring_recvmsg_out out;
+    memset( &out, 0, sizeof( out ) );
+    out.namelen = sizeof( struct sockaddr_in );
+    out.controllen = ROCKETNET_URING_GRO_CONTROL_BYTES;
+    out.payloadlen = (uint32_t) ( segments * ROCKETNET_URING_TEST_PAYLOAD_BYTES );
+
+    uint8_t control[ROCKETNET_URING_GRO_CONTROL_BYTES];
+    memset( control, 0, sizeof( control ) );
+    struct cmsghdr header;
+    memset( &header, 0, sizeof( header ) );
+    header.cmsg_len = CMSG_LEN( sizeof( int ) );
+    header.cmsg_level = IPPROTO_UDP;
+    header.cmsg_type = UDP_GRO;
+    memcpy( control, &header, sizeof( header ) );
+    const int stride = ROCKETNET_URING_TEST_PAYLOAD_BYTES;
+    memcpy( control + CMSG_LEN( 0 ), &stride, sizeof( stride ) );
+
+    const size_t control_offset = sizeof( out ) + sizeof( struct sockaddr_storage );
+    for ( int b = 0; b < ROCKETNET_URING_RECV_BUFFERS; b++ )
+    {
+        uint8_t * buffer = queue->buffers[b];
+        memcpy( buffer, &out, sizeof( out ) );
+        memcpy( buffer + control_offset, control, sizeof( control ) );
+        memset( buffer + control_offset + sizeof( control ), (uint8_t) b, (size_t) ( segments * ROCKETNET_URING_TEST_PAYLOAD_BYTES ) );
+    }
 }
 
 // the fake transport: create's allocations and arms, with the source in place

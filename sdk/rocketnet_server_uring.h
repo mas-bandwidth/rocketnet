@@ -122,15 +122,14 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 // bound; of a receive split into more, which a local sender's segmented send
 // can produce, the first ROCKETNET_URING_MAX_SEGMENTS are taken and each
 // datagram past them is counted in RECEIVE_DROPPED_OVERFLOW), and held
-// otherwise. the hold has a slot for every provided buffer of the most
-// queues: a held receive owns its buffer.
+// otherwise, in a ring per queue with a slot for every provided buffer (a
+// held receive owns its buffer), copied a queue at a time in turn.
 // A bank holds one update's receive budget for the configured clients, and
 // never less than one send reap (ROCKETNET_URING_SEND_BUDGET), so a reap
 // that is all send completions still fits a bank; the receive budget a call
 // reaps is the bank size, and the process view holds a whole bank.
 
 #define ROCKETNET_URING_MAX_SEGMENTS                                        64
-#define ROCKETNET_URING_HELD_RECEIVES           ( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_RECV_BUFFERS )
 
 static inline int rocketnet_server_uring_bank_packets( int max_clients )
 {
@@ -290,6 +289,10 @@ void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t
 bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
 int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
+// rewrites every buffer of a fake transport's queue as one coalesced receive
+// of segments datagrams (the UDP_GRO cmsg giving the stride
+// ROCKETNET_URING_TEST_PAYLOAD_BYTES), each byte of the payload the buffer id
+void rocketnet_server_uring_test_coalesce( struct rocketnet_server_uring_t * uring, int queue_index, int segments );
 #endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
