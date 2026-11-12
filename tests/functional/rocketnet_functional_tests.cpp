@@ -9407,10 +9407,17 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/vfs.h>
 #include <string>
 #include <vector>
 
+// The namespace, the pair's names, its addresses, the gateway routes and the
+// xsk sockets on the near end are one per kernel, so two veth cases in one
+// kernel take each other's pair down (xsk create fails EBUSY on queue 0). A
+// case takes this lock before it touches any of them and refuses, naming the
+// holder, when another process holds it; the lock goes with the process.
+#define ROCKETNET_XDP_VETH_LOCK         "/run/rocketnet-xdp-veth.lock"
 #define ROCKETNET_XDP_VETH_NETNS        "rnxdpfam"
 #define ROCKETNET_XDP_VETH_NEAR         "rnxdpfam0"
 #define ROCKETNET_XDP_VETH_FAR          "rnxdpfam1"
@@ -9532,11 +9539,45 @@ bool rocketnet_test_xdp_veth_runs_here()
 }
 
 static bool rocketnet_xdp_veth_capture_present = false;
+static int rocketnet_xdp_veth_lock = -1;           // held until the process exits
+
+// one veth case per kernel at a time: a second refuses, naming the holder
+static void rocketnet_xdp_veth_take_lock()
+{
+    if ( rocketnet_xdp_veth_lock >= 0 )
+    {
+        return;
+    }
+
+    const int lock = open( ROCKETNET_XDP_VETH_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644 );
+    rocketnet_check( lock >= 0 );
+
+    if ( flock( lock, LOCK_EX | LOCK_NB ) != 0 )
+    {
+        char holder[32] = "";
+        const ssize_t bytes = pread( lock, holder, sizeof( holder ) - 1, 0 );
+        holder[bytes > 0 ? bytes : 0] = '\0';
+        holder[strcspn( holder, "\r\n" )] = '\0';
+        printf( "xdp veth cases run one per kernel: pid %s holds " ROCKETNET_XDP_VETH_LOCK " (namespace " ROCKETNET_XDP_VETH_NETNS ", veth " ROCKETNET_XDP_VETH_NEAR "/" ROCKETNET_XDP_VETH_FAR " and 10.77.2.0/24 are fixed); run the veth cases one at a time\n",
+                holder[0] ? holder : "(unknown)" );
+        fflush( stdout );
+        close( lock );
+        const bool no_other_veth_case_in_this_kernel = false;
+        rocketnet_check( no_other_veth_case_in_this_kernel );
+    }
+
+    char text[32];
+    const int length = snprintf( text, sizeof( text ), "%d\n", (int) getpid() );
+    rocketnet_check( ftruncate( lock, 0 ) == 0 );
+    rocketnet_check( pwrite( lock, text, (size_t) length, 0 ) == (ssize_t) length );
+    rocketnet_xdp_veth_lock = lock;
+}
 
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
 struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
+    rocketnet_xdp_veth_take_lock();
     atexit( rocketnet_xdp_veth_teardown );
 
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
