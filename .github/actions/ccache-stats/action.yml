@@ -20,9 +20,10 @@ runs:
           echo "ccache on $RUNNER_NAME: this job compiled nothing through the cache"
           exit 0
         fi
-        ccache --show-log-stats -v | grep -E 'Hits|Misses|Uncacheable|Errors|Direct|Preprocessed' || true
-        hits="$(grep -c -E '^(direct_cache_hit|preprocessed_cache_hit)$' "$CCACHE_STATSLOG" || true)"
-        misses="$(grep -c -x 'cache_miss' "$CCACHE_STATSLOG" || true)"
+        # ccache's own summary of this job's log, the counter lines only (a ccache that cannot read the log fails the step)
+        ccache --show-log-stats -v | awk '/Hits|Misses|Uncacheable|Errors|Direct|Preprocessed/'
+        hits="$(awk '/^(direct_cache_hit|preprocessed_cache_hit)$/ { n++ } END { print n + 0 }' "$CCACHE_STATSLOG")"
+        misses="$(awk '/^cache_miss$/ { n++ } END { print n + 0 }' "$CCACHE_STATSLOG")"
         total=$((hits + misses))
         rate=0
         if [ "$total" -gt 0 ]; then rate=$((100 * hits / total)); fi
