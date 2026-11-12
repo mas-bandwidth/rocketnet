@@ -3268,6 +3268,13 @@ jobs:
       - name: Every source is formatted
         run: sh tools/format/check_format.sh
 
+      # tools/bigendian/run_byte_cases.sh (the big-endian job's byte cases)
+      # against a fixture tree and a fake unit binary: a failing or
+      # unregistered case is red, and so are zero cases named and a count
+      # under the committed floor.
+      - name: Test the big-endian byte-case runner
+        run: bash tools/bigendian/test_run_byte_cases.sh
+
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
