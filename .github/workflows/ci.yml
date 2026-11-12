@@ -3296,6 +3296,15 @@ jobs:
           python3 tools/check_continue_on_error.py --self-test
           python3 tools/check_continue_on_error.py
 
+      # tools/check_scheduled_watched.py: the workflows with a cron equal the
+      # nightly watch's --list (the watch itself excepted). Its --remote mode
+      # (registered workflows against main, through the API) is not run
+      # here; --self-test covers both modes on fixtures.
+      - name: Every scheduled workflow is in the nightly watch's list
+        run: |
+          python3 tools/check_scheduled_watched.py --self-test
+          python3 tools/check_scheduled_watched.py
+
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
