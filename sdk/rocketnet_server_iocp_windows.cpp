@@ -357,7 +357,7 @@ static int rocketnet_iocp_lane_index( const rocketnet_address_t * to, int lanes 
 
 // The lane a send operation belongs to: the operations are carved lane by
 // lane, send_queue_size each, so operation i is lane i / send_queue_size's.
-// Create seeds each lane's free queue by it and a completion releases to it.
+// A completion releases to it (create seeds each lane with the same carve).
 // proofs/tla/RNIocpSendLanes.tla OpLane; OwnLane holds only while release
 // reads the carve this way (MCRNIocpSendLanesBrokenReleaseMod, and the trace
 // check's plant below).
@@ -416,8 +416,9 @@ rocketnet_server_iocp_test_lanes_t * rocketnet_server_iocp_test_lanes_create( in
     }
     for ( int i = 0; i < lanes * send_queue_size; ++i )
     {
+        // seeded as create seeds them: each lane its own carve
         const rocketnet_iocp_ref_t ref = { 1, 1, (uint32_t) i };
-        if ( !rocketnet_iocp_queue_push( &test->queues[rocketnet_iocp_op_lane( (uint32_t) i, send_queue_size, lanes )], ref ) )
+        if ( !rocketnet_iocp_queue_push( &test->queues[i / send_queue_size], ref ) )
         {
             rocketnet_server_iocp_test_lanes_destroy( test );
             return NULL;
@@ -746,7 +747,6 @@ struct rocketnet_iocp_run_t
 struct rocketnet_iocp_lane_t
 {
     rocketnet_server_iocp_t * owner = NULL;
-    int base = 0;
     rocketnet_iocp_ref_queue_t free_sends;      // send_queue_size cells
     // The lane's TX worker is its only run producer. Completion workers retire
     // runs. Tickets select fixed physical slots; the mutex publishes the whole
@@ -759,7 +759,6 @@ struct rocketnet_iocp_lane_t
     rocketnet_platform_mutex_t send_mutex = {};
     rocketnet_platform_wake_t * send_wake = NULL;
     rocketnet_platform_thread_t * send_thread = NULL;
-    std::atomic<bool> send_exited{ true }; // also true before its worker is created
     int send_producer = 0; // caller-owned until stop publishes stopping
     // proofs/tla/RNBankFifoLayout.tla Init: as a stack this literal holds banks 1 and 2, right for three banks only.
     int send_free[ROCKETNET_IOCP_SEND_BANKS] = { 1, 2, 0 };
@@ -1908,7 +1907,6 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         rocketnet_iocp_lane_t * lane = new ( lane_storage ) rocketnet_iocp_lane_t();
         iocp->lanes[l] = lane;
         lane->owner = iocp;
-        lane->base = l * layout.send_queue_size;
         if ( !rocketnet_platform_mutex_create( &lane->run_mutex ) || !rocketnet_platform_mutex_create( &lane->send_mutex ) )
         {
             goto failed;
@@ -2001,9 +1999,12 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->state = ROCKETNET_IOCP_OPERATION_FREE;
     }
 
+    // each lane's free queue starts with its own carve, in index order
+    // (proofs/tla/RNIocpSendLanes.tla Init)
     for ( int i = 0; i < iocp->num_sends; ++i )
     {
-        if ( !rocketnet_iocp_queue_push( &rocketnet_iocp_lane_of_index( iocp, (uint32_t) i )->free_sends, rocketnet_iocp_operation_ref( &iocp->sends[i] ) ) )
+        rocketnet_iocp_lane_t * seed_lane = iocp->lanes[i / iocp->send_queue_size];
+        if ( !rocketnet_iocp_queue_push( &seed_lane->free_sends, rocketnet_iocp_operation_ref( &iocp->sends[i] ) ) )
         {
             goto failed;
         }
@@ -2152,12 +2153,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         {
             goto failed;
         }
-        lane->send_exited.store( false, std::memory_order_relaxed );
         iocp->live_lanes.fetch_add( 1, std::memory_order_relaxed );
         lane->send_thread = rocketnet_platform_thread_create( context, rocketnet_iocp_send_worker, lane, status );
         if ( !lane->send_thread )
         {
-            lane->send_exited.store( true, std::memory_order_relaxed );
             iocp->live_lanes.fetch_sub( 1, std::memory_order_relaxed );
             goto failed;
         }
@@ -2646,7 +2645,10 @@ static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_
         {
             refs[k] = bank->staged[lane->order[lane->runs[r].first + k]];
         }
-        if ( run > 1 && rocketnet_iocp_post_send_run( iocp, refs, run ) )
+        // a live refusal clears USO for the transport (USO_FALLBACKS, once);
+        // the bank's later runs are then sent frame by frame, not tried again
+        const bool uso_live = ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO ) != 0;
+        if ( run > 1 && uso_live && rocketnet_iocp_post_send_run( iocp, refs, run ) )
         {
             continue;
         }
@@ -2783,7 +2785,6 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
 
     // the completion workers exit once every lane has: wake them on each
     // lane's exit, so the last one is never missed
-    lane->send_exited.store( true, std::memory_order_release );
     iocp->live_lanes.fetch_sub( 1, std::memory_order_acq_rel );
     for ( int i = 0; i < iocp->num_workers; ++i )
     {

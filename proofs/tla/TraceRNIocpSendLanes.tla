@@ -37,8 +37,7 @@ TraceStep ==
     /\ ~rejected
     /\ ti < Len(TraceLog)
     /\ Next
-    /\ DOMAIN TraceLog[ti + 1] = DOMAIN VarsRec
-    /\ \A f \in DOMAIN TraceLog[ti + 1] : VarsRec'[f] = TraceLog[ti + 1][f]
+    /\ VarsRec' = TraceLog[ti + 1]
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 
