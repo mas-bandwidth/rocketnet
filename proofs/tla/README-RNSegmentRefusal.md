@@ -75,7 +75,7 @@ two workers). Every case has `Threshold = 2` and six runs.
 | `MCRNSegmentRefusalKernel.cfg` | the code on a kernel that refuses all three destinations | pass | 0 | 34 | 1.3 |
 | `MCRNSegmentRefusalBrokenTransport.cfg` | `Mode = "transport"`: the io_uring code before | `OtherDestinationUnaffected` | 12 | 9 | 1.4 |
 | `MCRNSegmentRefusalBrokenConsecutive.cfg` | `Mode = "consecutive"`: the gso code before | `OtherDestinationUnaffected` | 12 | 19 | 1.4 |
-| `MCRNSegmentRefusalBrokenFirst.cfg` | `Mode = "first"`: the iocp code before v1.1.8 | `OtherDestinationUnaffected` | 12 | FIRST_DISTINCT | FIRST_SECONDS |
+| `MCRNSegmentRefusalBrokenFirst.cfg` | `Mode = "first"`: the iocp code before v1.1.8 | `OtherDestinationUnaffected` | 12 | 9 | 0.6 |
 
 ## Counterexamples, checked by hand against the code
 
@@ -94,3 +94,12 @@ run leaves plain. In the gso code before, `segment_consecutive_refusals`
 was reset only by an accepted segmented send; on the same bench, with the
 good client at one packet an update, segmentation was off for every client
 after eight refusals.
+
+**BrokenFirst**: `g`'s run is accepted segmented; `b`'s segmented run is
+refused, resent per datagram with nothing dropped, and USO turns off for the
+transport; `g`'s next run leaves plain. In the iocp code before v1.1.8,
+the `WSAEINVAL` / `WSAEOPNOTSUPP` branch of `rocketnet_iocp_post_send_run`
+cleared `ROCKETNET_IOCP_FEATURE_USO` and returned false, so the caller posted
+the run frame by frame and every later run of every destination too;
+`test_iocp_transport_uso_refusal_is_per_destination` was red on v1.1.7 with
+USO off for the accepting client after the other client's one refusal.

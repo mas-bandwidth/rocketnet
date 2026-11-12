@@ -292,8 +292,13 @@ the create log line names each feature as yes or no.
   own `IPPROTO_UDP` / `UDP_SEND_MSG_SIZE` control message, so a send still
   pending when the next run posts keeps the stride it was posted with. Every
   frame of a run stays owned until that one completion retires the run. A live
-  USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
-  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` is that destination's:
+  the run is resent frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`,
+  and the destination is remembered (the table in `sdk/rocketnet_segment_refused.h`,
+  shared with gso and io_uring) so its later runs leave per datagram; other
+  destinations keep USO. The feature clears only when
+  `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` destinations refused and no
+  USO send was ever accepted (standard/TRANSPORT.md t2.4 rule 7).
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
   and by RIO: IOCP runs one completion worker plus one send worker and RIO one
   I/O worker, so a client's datagrams are not reordered by several workers
@@ -561,7 +566,7 @@ refusal, a segmented send's completion of `-EINVAL`, `-EIO` or `-EOPNOTSUPP`,
 is that destination's (its route: an IPsec policy, say): the run's slots are
 resent at once as one plain `SENDMSG` each, pending in their phase so its index
 is not reset under them, and the destination is remembered (the table in
-`sdk/rocketnet_server_gso.h`) so its later runs leave plain without a refusal.
+`sdk/rocketnet_segment_refused.h`) so its later runs leave plain without a refusal.
 Other destinations keep segmenting. Segmentation turns off for the transport,
 with one warning (`GSO_FALLBACKS`), only when
 `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` destinations refused and no
