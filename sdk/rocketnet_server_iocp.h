@@ -248,6 +248,17 @@ enum rocketnet_server_iocp_test_fault_t
 };
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
+
+// The send lanes' free queues alone, for the trace harness (layer
+// iocp-lanes): no socket, no thread. Acquire returns the operation index
+// taken from the destination's lane, -1 when that lane is empty; release
+// returns false when the lane the index names is full.
+struct rocketnet_server_iocp_test_lanes_t;
+rocketnet_server_iocp_test_lanes_t * rocketnet_server_iocp_test_lanes_create( int lanes, int send_queue_size );
+void rocketnet_server_iocp_test_lanes_destroy( rocketnet_server_iocp_test_lanes_t * test );
+int rocketnet_server_iocp_test_lanes_acquire( rocketnet_server_iocp_test_lanes_t * test, const rocketnet_address_t * to, int * lane_out );
+bool rocketnet_server_iocp_test_lanes_release( rocketnet_server_iocp_test_lanes_t * test, int index );
+int rocketnet_server_iocp_test_lanes_free( const rocketnet_server_iocp_test_lanes_t * test, int lane, int * indexes, int max_indexes );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

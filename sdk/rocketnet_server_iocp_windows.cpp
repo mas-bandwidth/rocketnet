@@ -355,6 +355,25 @@ static int rocketnet_iocp_lane_index( const rocketnet_address_t * to, int lanes 
     return (int) ( hash % (uint32_t) lanes );
 }
 
+// The lane a send operation belongs to: the operations are carved lane by
+// lane, send_queue_size each, so operation i is lane i / send_queue_size's.
+// Create seeds each lane's free queue by it and a completion releases to it.
+// proofs/tla/RNIocpSendLanes.tla OpLane; OwnLane holds only while release
+// reads the carve this way (MCRNIocpSendLanesBrokenReleaseMod, and the trace
+// check's plant below).
+static int rocketnet_iocp_op_lane( uint32_t index, int send_queue_size, int lanes )
+{
+#if defined( ROCKETNET_IOCP_SEND_LANES_PLANT )
+    // the trace check's plant (tests/tla_trace_iocp.cpp): the carve read the
+    // wrong way, index % lanes. Its trace must fail.
+    (void) send_queue_size;
+    return (int) ( index % (uint32_t) lanes );
+#else  // #if defined( ROCKETNET_IOCP_SEND_LANES_PLANT )
+    (void) lanes;
+    return (int) ( index / (uint32_t) send_queue_size );
+#endif // #if defined( ROCKETNET_IOCP_SEND_LANES_PLANT )
+}
+
 #if ROCKETNET_DEV
 // The admission as the unit suite and the trace harness drive it, with no
 // socket: packet_filter NULL is the filter not yet published.
@@ -368,6 +387,79 @@ int rocketnet_server_iocp_test_receive_admit( const uint8_t * packet_filter, con
 int rocketnet_server_iocp_test_lane_index( const rocketnet_address_t * to, int lanes )
 {
     return rocketnet_iocp_lane_index( to, lanes );
+}
+
+// The send lanes' free queues with no socket and no thread, for the trace
+// harness (layer iocp-lanes): seeded as create seeds them, an acquire from
+// the destination's lane as start_packet takes one, a release to the
+// operation's lane as rocketnet_iocp_release_send gives it back. Each lane's
+// queue is the code's own MPMC ref queue.
+struct rocketnet_server_iocp_test_lanes_t
+{
+    int lanes;
+    int send_queue_size;
+    rocketnet_iocp_ref_cell_t * cells;
+    rocketnet_iocp_ref_queue_t queues[ROCKETNET_IOCP_MAX_LANES];
+};
+
+rocketnet_server_iocp_test_lanes_t * rocketnet_server_iocp_test_lanes_create( int lanes, int send_queue_size )
+{
+    rocketnet_assert( lanes >= 1 && lanes <= ROCKETNET_IOCP_MAX_LANES );
+    rocketnet_assert( send_queue_size > 0 && ( send_queue_size & ( send_queue_size - 1 ) ) == 0 );
+    rocketnet_server_iocp_test_lanes_t * test = new rocketnet_server_iocp_test_lanes_t();
+    test->lanes = lanes;
+    test->send_queue_size = send_queue_size;
+    test->cells = new rocketnet_iocp_ref_cell_t[(size_t) lanes * (size_t) send_queue_size];
+    for ( int l = 0; l < lanes; ++l )
+    {
+        rocketnet_iocp_queue_initialize( &test->queues[l], test->cells + (size_t) l * (size_t) send_queue_size, (uint64_t) send_queue_size );
+    }
+    for ( int i = 0; i < lanes * send_queue_size; ++i )
+    {
+        const rocketnet_iocp_ref_t ref = { 1, 1, (uint32_t) i };
+        if ( !rocketnet_iocp_queue_push( &test->queues[rocketnet_iocp_op_lane( (uint32_t) i, send_queue_size, lanes )], ref ) )
+        {
+            rocketnet_server_iocp_test_lanes_destroy( test );
+            return NULL;
+        }
+    }
+    return test;
+}
+
+void rocketnet_server_iocp_test_lanes_destroy( rocketnet_server_iocp_test_lanes_t * test )
+{
+    delete[] test->cells;
+    delete test;
+}
+
+int rocketnet_server_iocp_test_lanes_acquire( rocketnet_server_iocp_test_lanes_t * test, const rocketnet_address_t * to, int * lane_out )
+{
+    const int lane = rocketnet_iocp_lane_index( to, test->lanes );
+    *lane_out = lane;
+    rocketnet_iocp_ref_t ref;
+    return rocketnet_iocp_queue_pop( &test->queues[lane], &ref ) ? (int) ref.index : -1;
+}
+
+// false when the lane the release names is full: only a release to the
+// wrong lane can find it so
+bool rocketnet_server_iocp_test_lanes_release( rocketnet_server_iocp_test_lanes_t * test, int index )
+{
+    const rocketnet_iocp_ref_t ref = { 1, 1, (uint32_t) index };
+    return rocketnet_iocp_queue_push( &test->queues[rocketnet_iocp_op_lane( (uint32_t) index, test->send_queue_size, test->lanes )], ref );
+}
+
+// the lane's free queue in pop order
+int rocketnet_server_iocp_test_lanes_free( const rocketnet_server_iocp_test_lanes_t * test, int lane, int * indexes, int max_indexes )
+{
+    const rocketnet_iocp_ref_queue_t * queue = &test->queues[lane];
+    const uint64_t first = queue->dequeue.load( std::memory_order_relaxed );
+    const uint64_t last = queue->enqueue.load( std::memory_order_relaxed );
+    int count = 0;
+    for ( uint64_t position = first; position != last && count < max_indexes; ++position )
+    {
+        indexes[count++] = (int) queue->cells[position & ( queue->capacity - 1 )].ref.index;
+    }
+    return count;
 }
 #endif // #if ROCKETNET_DEV
 
@@ -784,13 +876,11 @@ static rocketnet_iocp_operation_t * rocketnet_iocp_send_from_ref( rocketnet_serv
     return op->owner_epoch == ref.owner_epoch && op->generation == ref.generation && op->state == state ? op : NULL;
 }
 
-// the lane a send operation belongs to: operations are carved lane by lane
-// (proofs/tla/RNIocpSendLanes.tla OpLane; OwnLane holds only while release
-// reads the carve this way, MCRNIocpSendLanesBrokenReleaseMod)
+// the lane a send operation belongs to (rocketnet_iocp_op_lane)
 static rocketnet_iocp_lane_t * rocketnet_iocp_lane_of_index( rocketnet_server_iocp_t * iocp, uint32_t index )
 {
     rocketnet_assert( index < (uint32_t) iocp->num_sends );
-    return iocp->lanes[index / (uint32_t) iocp->send_queue_size];
+    return iocp->lanes[rocketnet_iocp_op_lane( index, iocp->send_queue_size, iocp->num_lanes )];
 }
 
 static rocketnet_iocp_operation_t * rocketnet_iocp_receive_from_ref( rocketnet_server_iocp_t * iocp,
