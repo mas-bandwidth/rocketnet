@@ -1251,6 +1251,48 @@ static void test_rtt_filter_idle_connection_is_not_a_silence()
 }
 
 REGISTER_UNIT_TEST( test_rtt_filter_idle_connection_is_not_a_silence );
+
+// The first acknowledgement of a connection ends no silence (there is no
+// previous one to be silent since), even when U was owed one for more than
+// 1 s: on an estimator already seeded (the transport's reported round trip,
+// so the first sample is not the unconditional one) it samples, above srtt.
+// The second acknowledgement after another owed second does end a silence.
+static void test_rtt_filter_first_ack_ends_no_silence()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+    check( rn_window_ack_seed_rtt( &f.ack, 0.100 ) == 1 );
+    check( f.ack.has_last_ack == 0 );
+
+    const double t0 = resend_timing_start;
+    uint64_t u = 0;
+    const uint64_t pu = resend_timing_send( &f, t0, &u );
+    const uint64_t pb = resend_timing_send( &f, t0 + 0.900, NULL );
+    check( f.send.U == u );
+
+    // 1.2 s after U's first send, the first ack: pb's round trip is 300 ms
+
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    check( rn_ordered_acks( &f.ordered, &pb, 1, t0 + 1.200 ) == 1 );
+    check( f.ack.silence_end == 0.0 );
+    check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - 0.300 ) ) ) < 1e-12 );
+    check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * 0.300 ) ) < 1e-12 );
+    check( f.send.U == u );
+
+    // U still owed, the next ack 1.2 s later: a silence, and U's packet,
+    // sent before it, gives no sample
+
+    const double srtt_b = f.ack.srtt;
+    check( rn_ordered_acks( &f.ordered, &pu, 1, t0 + 2.400 ) == 1 );
+    check( f.ack.silence_end == t0 + 2.400 );
+    check( f.ack.srtt == srtt_b );
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_first_ack_ends_no_silence );
 #endif // #if ROCKETNET_DEV
 
 // A sent_index with every cell used cannot happen (2P cells hold at most P
