@@ -1,14 +1,16 @@
 # RNSegmentRefusal: a refused segmented send stays with its destination
 
-`RNSegmentRefusal.tla` models how the server's Linux transports answer a
+`RNSegmentRefusal.tla` models how the server's segmenting transports answer a
 UDP segmented send the kernel refuses for one destination: the gso
 transport (`rocketnet_server_gso_flush` in
-`sdk/rocketnet_server_gso_linux.cpp`) and the io_uring transport
+`sdk/rocketnet_server_gso_linux.cpp`), the io_uring transport
 (`rocketnet_server_uring_submit_phase` and `rocketnet_server_uring_reap_cqe`
-in `sdk/rocketnet_server_uring_linux.cpp`), both through the table in
-`sdk/rocketnet_server_gso.h`. It states rule 7 of
-[t2.4](../../standard/TRANSPORT.md#t2.4). The `segment-refusal-gso` and
-`segment-refusal-uring` rows in `COVERAGE.tsv` track the coverage.
+in `sdk/rocketnet_server_uring_linux.cpp`) and the Windows iocp transport
+(`rocketnet_iocp_send_bank` and `rocketnet_iocp_post_send_run` in
+`sdk/rocketnet_server_iocp_windows.cpp`, USO), all through the table in
+`sdk/rocketnet_segment_refused.h`. It states rule 7 of
+[t2.4](../../standard/TRANSPORT.md#t2.4). The `segment-refusal-gso`,
+`segment-refusal-uring` and `segment-refusal-iocp` rows in `COVERAGE.tsv` track the coverage.
 
 ## Why
 
@@ -20,13 +22,18 @@ run and turned segmentation off for every destination at the first
 refusal, and the gso transport resent the run plain but turned segmentation
 off for every destination after eight refusals with no accepted segmented
 send between them. Either way one client's route took segmentation from
-every other client for the server's life.
+every other client for the server's life. The Windows iocp transport kept
+that behaviour until v1.1.8: a `WSAEINVAL` or `WSAEOPNOTSUPP` from the run's
+`WSASendMsg` resent the run per datagram but cleared USO for every
+destination at the first refusal. From v1.1.8 the three transports share
+one table (`sdk/rocketnet_segment_refused.h`) and one rule; the table's
+entry hash is keyed with a random seed drawn at each transport's create.
 
 ## The state
 
 | Model | Code |
 |---|---|
-| `segOn` | `ROCKETNET_SERVER_URING_FEATURE_SEGMENT` in `features`; the gso tier while `disable_gso` has not been set |
+| `segOn` | `ROCKETNET_SERVER_URING_FEATURE_SEGMENT` in `features`; the gso tier while `disable_gso` has not been set; `ROCKETNET_IOCP_FEATURE_USO` in the iocp transport's `features` |
 | `remembered` | the destinations in `rocketnet_segment_refused_t`, read by `rocketnet_segment_refused_contains` |
 | `accepted` | `segment_refused.accepted`: a segmented send was accepted since create |
 | `Threshold` | `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` |
@@ -38,7 +45,7 @@ every other client for the server's life.
 | Action | Code |
 |---|---|
 | `Run(d)` | a run to `d` built segmented while segmentation is on and `d` is not in the table, its accepted send setting `accepted`; otherwise built plain |
-| `Refuse(d)` | the kernel refuses `d`'s segmented run: `rocketnet_segment_refused_add` remembers `d`, the run is resent plain (`rocketnet_server_gso_resend_plain`, `rocketnet_server_uring_resend_plain`), and segmentation turns off for the transport only when `Threshold` destinations refused and none was ever accepted |
+| `Refuse(d)` | the kernel refuses `d`'s segmented run: `rocketnet_segment_refused_add` remembers `d`, the run is resent plain (`rocketnet_server_gso_resend_plain`, `rocketnet_server_uring_resend_plain`; iocp: `rocketnet_iocp_post_send_run` returns false and `rocketnet_iocp_send_bank` posts each frame), and segmentation turns off for the transport only when `Threshold` destinations refused and none was ever accepted |
 | `Done` | the bound on runs (environment action) |
 
 The code's table is direct-mapped: a refusing destination that maps to an
@@ -68,6 +75,7 @@ two workers). Every case has `Threshold = 2` and six runs.
 | `MCRNSegmentRefusalKernel.cfg` | the code on a kernel that refuses all three destinations | pass | 0 | 34 | 1.3 |
 | `MCRNSegmentRefusalBrokenTransport.cfg` | `Mode = "transport"`: the io_uring code before | `OtherDestinationUnaffected` | 12 | 9 | 1.4 |
 | `MCRNSegmentRefusalBrokenConsecutive.cfg` | `Mode = "consecutive"`: the gso code before | `OtherDestinationUnaffected` | 12 | 19 | 1.4 |
+| `MCRNSegmentRefusalBrokenFirst.cfg` | `Mode = "first"`: the iocp code before v1.1.8 | `OtherDestinationUnaffected` | 12 | FIRST_DISTINCT | FIRST_SECONDS |
 
 ## Counterexamples, checked by hand against the code
 

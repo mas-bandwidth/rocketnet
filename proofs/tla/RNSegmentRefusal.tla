@@ -1,10 +1,12 @@
 ---------------------------- MODULE RNSegmentRefusal ----------------------------
 (***************************************************************************)
-(* UDP segmentation refusal on the server's Linux transports, per         *)
-(* destination (sdk/rocketnet_server_gso.h rocketnet_segment_refused_t;    *)
-(* sdk/rocketnet_server_gso_linux.cpp rocketnet_server_gso_flush;          *)
-(* sdk/rocketnet_server_uring_linux.cpp rocketnet_server_uring_reap_cqe     *)
-(* and rocketnet_server_uring_submit_phase).                               *)
+(* UDP segmentation refusal on the server's segmenting transports, per    *)
+(* destination (sdk/rocketnet_segment_refused.h                            *)
+(* rocketnet_segment_refused_t; sdk/rocketnet_server_gso_linux.cpp         *)
+(* rocketnet_server_gso_flush; sdk/rocketnet_server_uring_linux.cpp        *)
+(* rocketnet_server_uring_reap_cqe and rocketnet_server_uring_submit_phase; *)
+(* sdk/rocketnet_server_iocp_windows.cpp rocketnet_iocp_send_bank and      *)
+(* rocketnet_iocp_post_send_run, Windows USO).                             *)
 (*                                                                         *)
 (* Each step is one send run of more than one packet to one destination    *)
 (* (Run).  A run leaves segmented while segmentation is on for the         *)
@@ -34,7 +36,9 @@
 (* run and turns segmentation off for every destination.  "consecutive"    *)
 (* is the gso transport's: the run is resent plain and nothing is          *)
 (* remembered, and Threshold refusals with no accepted segmented send      *)
-(* between them turn segmentation off for every destination.               *)
+(* between them turn segmentation off for every destination.  "first" is   *)
+(* the iocp transport's before v1.1.8: the run is resent plain, nothing is *)
+(* remembered, and the first refusal turns USO off for every destination.  *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -43,13 +47,13 @@ CONSTANTS Dests,            \* the destinations
           KernelSegments,   \* FALSE: the kernel refuses every segmented send
           Threshold,        \* ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
           MaxRuns,          \* bound on runs
-          Mode              \* "perdest" (the code), "transport" or "consecutive"
+          Mode              \* "perdest" (the code), "transport", "consecutive" or "first"
 
 ASSUME Refusing \subseteq Dests
 ASSUME KernelSegments \in BOOLEAN
 ASSUME Threshold \in Nat \ {0}
 ASSUME MaxRuns \in Nat
-ASSUME Mode \in {"perdest", "transport", "consecutive"}
+ASSUME Mode \in {"perdest", "transport", "consecutive", "first"}
 
 VARIABLES segOn,        \* the transport's FEATURE_SEGMENT bit
           remembered,   \* destinations that refused (the table)
@@ -107,6 +111,9 @@ Refuse(d) ==
               /\ streak' = streak + 1
               /\ segOn' = (streak + 1 < Threshold)
               /\ UNCHANGED <<remembered, dropped>>
+         [] Mode = "first" ->
+              /\ segOn' = FALSE
+              /\ UNCHANGED <<remembered, streak, dropped>>
     /\ UNCHANGED <<accepted, wronglyPlain>>
 
 \* the bound on runs is reached
