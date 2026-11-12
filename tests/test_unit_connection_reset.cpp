@@ -1724,7 +1724,6 @@ static void reset_loopback_client_timeout_scenario()
     }
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -1755,7 +1754,6 @@ static void reset_loopback_client_denied_scenario()
     check( denied );
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
-    rocketnet_client_transport_mark_connection_state_for_test( transport );
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {

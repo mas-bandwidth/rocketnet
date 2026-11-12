@@ -286,7 +286,6 @@ struct rocketnet_client_legacy_receive_state_t
     X( step_driven, bool step_driven ) /* an internal unit-test create: the caller runs the step */                  \
     X( step_in_update, bool step_in_update ) /* the public config field: update and send_packets run the step */     \
     X( client_io, rocketnet_client_io_t client_io )                                                                  \
-    X( stats_counted, uint64_t stats_counted ) /* Filling ring slots already counted into the stats */               \
     X( time_callback, double (*time_callback)( void * context ) ) /* the receive stamp clock, read once at create */ \
     X( link_simulator, struct rocketnet_network_simulator_t * link_simulator )                                       \
     X( link_simulator_from, rocketnet_address_t link_simulator_from )                                                \
@@ -428,7 +427,6 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
         memset( client->payload_ring[ring].data, 0xA5, sizeof( client->payload_ring[ring].data ) );
     }
 
-    client->stats_counted = UINT64_MAX;
     rocketnet_client_connection_reset( client );
 
     // the buffers are reset by their counts: their bytes keep the poison and are unreachable, because nothing reads a slot at or past its count
@@ -441,16 +439,7 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
         }
     }
 
-    return client->stats_counted == 0;
-}
-
-void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
-{
-    rocketnet_assert( client );
-
-    // mark a live per-connection counter so the reset witness checks it
-
-    client->stats_counted = 1;
+    return true;
 }
 
 bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketnet_client_transport_t * client,
@@ -473,10 +462,6 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
         }
     }
 
-    if ( !member && client->stats_counted != 0 )
-    {
-        member = "stats_counted";
-    }
     if ( member )
     {
         snprintf( failure, failure_bytes, "rocketnet_client_transport_t.%s: not reset when the connection ended", member );
@@ -531,7 +516,6 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
     // update clears the batch (proofs/tla/RNClientDelivery.tla
     // CountedImpliesHanded). A transport runs one connection, so no later
     // connection reads them.
-    client->stats_counted = 0;
 }
 
 // The deterministic drop and reverse patterns (proofs/tla/Link.tla "everynth" and
@@ -1156,7 +1140,6 @@ static void rocketnet_client_link_hold( rocketnet_client_transport_t * transport
     }
 
     ring->num_packets = 0;
-    transport->stats_counted = 0;
 
     // the window the reverse pattern holds is emitted whole, at the end of the hand-off, as the per-packet path does at the end of its send
 
@@ -3159,12 +3142,25 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     }
 }
 
+// the datagrams and wire bytes of one ring that left the main thread, into the current stats frame and the totals
+
+static void rocketnet_client_transport_count_sent( rocketnet_client_transport_t * client_transport, uint64_t packets, uint64_t bytes )
+{
+    const int stats_index = client_transport->current_stats_index;
+    client_transport->stats_frames[stats_index].packets_sent += packets;
+    client_transport->stats_frames[stats_index].bytes_sent += bytes;
+    client_transport->client_stats.packets_sent += packets;
+    client_transport->client_stats.bytes_sent += bytes;
+}
+
 // RNClientIo HandOff and Defer; main thread, I/O thread path only, with the
-// fills joined. The stats count a slot at the hand-off attempt that first sees
-// it committed (stats_counted keeps a deferred slot from counting twice), not
-// when the I/O thread sends it (rocketnet_client_io_hand_off,
-// proofs/tla/RNClientIo.tla NoReuseBeforeSent, HandOffNeverWaits). The committed slots of the Filling ring are counted into the stats
-// once, then handed to the I/O thread. A ROCKETNET_CLIENT_RINGS_LATE result is
+// fills joined. The stats count the committed slots of the Filling ring when
+// they leave the main thread: handed to the I/O thread, which sends every
+// ring it takes (rocketnet_client_io_hand_off, proofs/tla/RNClientIo.tla
+// NoReuseBeforeSent, HandOffNeverWaits), or to the link simulator. A deferred
+// slot is counted by the hand-off that takes it, so a connection that ends
+// with it still deferred, which drops it unsent, never counts it
+// (packets_sent is datagrams sent). A ROCKETNET_CLIENT_RINGS_LATE result is
 // the deferred hand-off: it counts CLIENT_SEND_DEFERRED and returns at once,
 // the committed slots staying in the Filling ring, open to the game threads,
 // for the next hand-off from send_packet, send_packets or update. No spin, no
@@ -3195,26 +3191,24 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
         destination = rocketnet_client_transport_fill_destination( client_transport );
     }
 
-    const int stats_index = client_transport->current_stats_index;
     const rocketnet_address_t * to = destination ? destination : rocketnet_client_transport_fill_destination( client_transport );
-    const int address_type = to->type;
-
-    for ( uint64_t i = client_transport->stats_counted; i < committed; i++ )
-    {
-        if ( ring->info[i].wire_bytes > 0 )
-        {
-            client_transport->stats_frames[stats_index].packets_sent++;
-            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( address_type ) );
-            client_transport->client_stats.packets_sent++;
-            client_transport->client_stats.bytes_sent += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( address_type ) );
-        }
-    }
-
-    client_transport->stats_counted = committed;
 
     if ( committed == 0 )
     {
         return;
+    }
+
+    // the ring's datagrams and wire bytes, read while the main thread still owns it; added to the stats once they leave
+
+    uint64_t packets = 0;
+    uint64_t bytes = 0;
+    for ( uint64_t i = 0; i < committed; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+        {
+            packets++;
+            bytes += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( to->type ) );
+        }
     }
 
     // The simulator takes the sealed packets instead of the I/O thread when
@@ -3224,6 +3218,7 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
     if ( rocketnet_client_link_active( client_transport ) )
     {
+        rocketnet_client_transport_count_sent( client_transport, packets, bytes );
         rocketnet_client_link_hold( client_transport, to );
         return;
     }
@@ -3232,10 +3227,10 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
 
     if ( result == ROCKETNET_CLIENT_RINGS_HANDED_OFF )
     {
+        rocketnet_client_transport_count_sent( client_transport, packets, bytes );
+
         // RNClientIo Reopen ran inside the hand-off: the ring send_fill now names is Filling and empty
         rocketnet_client_fill_ring( client_transport )->num_packets = 0;
-
-        client_transport->stats_counted = 0;
     }
     else if ( result == ROCKETNET_CLIENT_RINGS_LATE )
     {
