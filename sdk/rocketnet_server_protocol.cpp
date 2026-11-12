@@ -255,10 +255,10 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
 {
     // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
     // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
-    // names both families (second_public_address) advertises the two named
-    // addresses and is not dual_stack here.
+    // names an address of either family is not dual_stack here.
     static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+    static const uint8_t ipv4_wildcard[4] = { 0, 0, 0, 0 };
+    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 && memcmp( server->advertised_ipv4.data.ipv4, ipv4_wildcard, 4 ) == 0 &&
                            server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
                            memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
 

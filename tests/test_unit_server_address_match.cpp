@@ -170,6 +170,43 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
+// A server that names both families with the IPv6 wildcard beside a named
+// IPv4 address ("[::]:40000" and "10.0.0.5:40000") advertises those two and
+// is not dual-stack: a token naming the IPv4 loopback is refused, and one
+// naming the named IPv4 address is accepted.
+
+void test_rocketnet_test_server_address_match_named_ipv4_beside_wildcard()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "10.0.0.5:40000" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
+
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+
+    const uint64_t before = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before + 1 );
+
+    const uint8_t named_ipv4[6] = { 10, 0, 0, 5, 0x40, 0x9c };
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, named_ipv4, NULL );
+
+    const uint64_t before_named = test.counters.values[addr_counter];
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( test.counters.values[addr_counter] == before_named );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
+
 // A token naming both families (rocketnet_write_production_connect_token
 // with two addresses) is accepted by a server that serves either one: an
 // IPv4 server matches the IPv4 address of a request arriving over IPv4
@@ -433,3 +470,4 @@ REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_near_misses_refused
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped_arrival );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_family_mismatch_refused );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_named_ipv4_beside_wildcard );
