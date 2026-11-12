@@ -1732,7 +1732,14 @@ static void hammer_server_step( const refuse_world_t * w, int connected_slot, ha
 {
     const hammer_args_t a = hammer_args( w );
     const int indices[] = { connected_slot, connected_slot, connected_slot, w->empty_slot, -1, 3, INT_MAX, INT_MIN };
-    const int index = indices[hammer_rand() % ( sizeof( indices ) / sizeof( indices[0] ) )];
+    int index = indices[hammer_rand() % ( sizeof( indices ) / sizeof( indices[0] ) )];
+    if ( h->open && index >= 0 && index < 3 && index != h->open_slot && rocketnet_server_client_connected( w->server, index ) )
+    {
+        // one message open per client index: a start on another connected
+        // slot would open a second, which this one-thread walk does not model
+        // (tests/test_unit_wide_fill.cpp does); it asks the open slot instead
+        index = h->open_slot;
+    }
     const bool in_range = index >= 0 && index < 3;
     const bool connected = in_range && rocketnet_server_client_connected( w->server, index );
     const uint32_t what = hammer_rand() % 10;
