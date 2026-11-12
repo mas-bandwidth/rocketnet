@@ -8,8 +8,9 @@
 # fail the script (MSan's exitcode is 0, so the suite runs every test). The
 # C++ library is the MSan-instrumented libc++ the fleet installs under
 # /opt/msan-libcxx-<clang version> (tools/build_msan_libcxx.sh); a runner
-# without it fails with a TOOL-MISSING line. The job stays continue-on-error
-# until it has gated green on the fleet for a while (after v1.0.0-preview-2).
+# without it fails with a TOOL-MISSING line. The job gates: a red gate is a
+# red run (it was continue-on-error until it had gated green on the fleet,
+# which it did every night on main from 2026-11-01 to 2026-11-11).
 name: msan
 
 # NIGHTLY TIER (2026-10-31): 172-187s on the fleet, over the per-commit
@@ -40,7 +41,6 @@ jobs:
     name: MemorySanitizer
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
-    continue-on-error: true
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
