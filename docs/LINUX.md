@@ -646,6 +646,22 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp`).
 
+**Where a full interface queue's drops are counted.** On Linux a UDP send
+that the interface's queue refuses does not fail: without `IP_RECVERR` the
+kernel turns that `ENOBUFS` into success (`udp_send_skb` in
+`net/ipv4/udp.c`, `udp_v6_send_skb` in `net/ipv6/udp.c`) and counts the
+datagram in `SndbufErrors` of `Udp` in `/proc/net/snmp` (`Udp6SndbufErrors`
+in `/proc/net/snmp6` for IPv6). The queue that dropped it counts it too, in
+the interface's TX dropped (`ip -s link show dev <if>`) or its queueing
+discipline's statistics (`tc -s qdisc show dev <if>`). rocketnet's sockets
+never set `IP_RECVERR`, so these drops are not in `SEND_FAILED` on the
+client's `portable` and `gso` transports or the server's `portable`, `gso`
+and `io_uring` transports; `SEND_FAILED` there counts only sends the call
+itself refused. The kernel's counters are per host and per interface, so a
+drop cannot be attributed to one socket or one server. The `xdp` transport
+writes its own TX ring and is not affected. On macOS and Windows whether a
+full interface queue fails the send call is not verified.
+
 `tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.
 Receive drains also bound work spent on empty or rejected datagrams, so a
