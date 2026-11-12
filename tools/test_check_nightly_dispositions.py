@@ -14,6 +14,8 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
+import urllib.error
 import urllib.parse
 from pathlib import Path
 
@@ -67,20 +69,28 @@ class FakeApi:
     /pulls/<n>, /compare/... . `broken` maps a path to how many times it
     answers HTTP 503 before answering (a large number: always)."""
 
-    def __init__(self, runs=None, jobs=None, pulls=None, broken=None):
+    def __init__(self, runs=None, jobs=None, pulls=None, broken=None, errors=None, everything=None):
         self.runs = runs or {}
         self.jobs = jobs or {}
         self.pulls = pulls or {}
         self.broken = dict(broken or {})
+        # path -> exceptions raised in order, one per GET, before the path answers
+        self.errors = {k: list(v) for k, v in (errors or {}).items()}
+        # an exception every GET raises (the API is unreachable)
+        self.everything = everything
         self.calls = []
 
     def __call__(self, url):
         parsed = urllib.parse.urlparse(url)
         path = parsed.path
         self.calls.append(path)
+        if self.everything is not None:
+            raise self.everything
+        if self.errors.get(path):
+            raise self.errors[path].pop(0)
         if self.broken.get(path, 0) > 0:
             self.broken[path] -= 1
-            raise OSError("HTTP Error 503: Service Unavailable")
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
         prefix = f"/repos/{REPO}"
         assert path.startswith(prefix), path
         rest = path[len(prefix):]
@@ -102,6 +112,11 @@ class FakeApi:
 
 class WatchCase(unittest.TestCase):
     def setUp(self):
+        # the runner sets GITHUB_API_URL; the cases name github.com's root
+        environment = unittest.mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop("GITHUB_API_URL", None)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = self.tmp.name
         os.makedirs(os.path.join(self.root, ".github", "workflows"))
@@ -248,22 +263,131 @@ class NotRedYet(WatchCase):
         self.assertExit(1, code, out, "NO-VERDICT nightly.yml :: (run) NO-RUN")
 
 
+def http_error(code, headers=None):
+    return urllib.error.HTTPError("https://api.github.com/x", code, "planted", headers or {}, None)
+
+
+NIGHTLY_RUNS_PATH = f"/repos/{REPO}/actions/workflows/nightly.yml/runs"
+CBMC_RUNS_PATH = f"/repos/{REPO}/actions/workflows/cbmc.yml/runs"
+
+
 class ApiErrors(WatchCase):
-    def test_503_three_tries_then_api_error_and_listing_continues(self):
+    """The HTTP layer is injected: each case raises what GitHub or the network would."""
+
+    def test_503_forever_four_tries_then_could_not_read_and_listing_continues(self):
         self.workflows({"cbmc.yml": CBMC, "nightly.yml": NIGHTLY})
-        runs = dict(GREEN_RUNS)
-        broken = {f"/repos/{REPO}/actions/workflows/cbmc.yml/runs": 99}
-        api = FakeApi(runs, GREEN_JOBS, broken=broken)
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, broken={CBMC_RUNS_PATH: 99})
         code, out = self.watch(api)
-        self.assertExit(1, code, out, "API-ERROR https://api.github.com/repos/mas-bandwidth/rocketnet/actions/"
-                        "workflows/cbmc.yml/runs?", "RUN nightly.yml run=101", "API-ERROR 1")
-        self.assertEqual(3, api.calls.count(f"/repos/{REPO}/actions/workflows/cbmc.yml/runs"))
+        self.assertExit(1, code, out,
+                        "API-ERROR could not read run state: GET https://api.github.com/repos/mas-bandwidth/"
+                        "rocketnet/actions/workflows/cbmc.yml/runs?",
+                        "HTTP 503 after 4 tries", "RUN nightly.yml run=101", "API-ERROR 1",
+                        "nightly watch: RED: could not read run state for 1 request(s)")
+        self.assertEqual(4, api.calls.count(CBMC_RUNS_PATH))
+        self.assertEqual([5, 10, 20], self.sleeps)
+        self.assertNotIn("nightly watch: green", out)
+
+    def test_503_three_times_then_answer_is_green(self):
+        code, out = self.watch(FakeApi(GREEN_RUNS, GREEN_JOBS, broken={NIGHTLY_RUNS_PATH: 3}))
+        self.assertExit(0, code, out, "nightly watch: green")
+        self.assertEqual([5, 10, 20], self.sleeps)
+
+    def test_pull_request_lookup_503_is_could_not_read_not_a_crash(self):
+        # nightly-watch run 43228458260: a 503 on GET /pulls/<n> for a disposition row
+        # ended the old watch with a traceback before it read nightly.yml's last jobs
+        self.rows("nightly.yml\tlinux / unit\t#12\t2026-11-10\tknown cause\n")
+        jobs = {101: [job("linux / unit (main)", "failure"), job("macos / unit (main)")],
+                100: [job("linux / unit (main)"), job("macos / unit (main)")]}
+        api = FakeApi(GREEN_RUNS, jobs, broken={f"/repos/{REPO}/pulls/12": 99})
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, f"API-ERROR could not read run state: GET https://api.github.com/repos/"
+                        f"{REPO}/pulls/12: HTTP 503 after 4 tries", "nightly watch: RED")
+
+    def test_rate_limit_429_waits_what_github_asks(self):
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(429, {"Retry-After": "45"})]})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green")
+        self.assertEqual([45], self.sleeps)
+
+    def test_rate_limit_403_waits_for_the_reset_capped(self):
+        reset = int(NOW.timestamp()) + 30
+        limited = http_error(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset)})
+        far = http_error(403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset + 3600)})
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [limited, far]})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green")
+        self.assertEqual([30, watch.MAX_WAIT], self.sleeps)
+
+    def test_a_short_wait_github_names_never_cuts_the_backoff(self):
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(503, {"Retry-After": "1"})]})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green")
+        self.assertEqual([5], self.sleeps)
+
+    def test_403_that_is_not_a_rate_limit_is_not_retried(self):
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(403)]})
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, "API-ERROR could not read run state:", "HTTP 403, not retried")
+        self.assertEqual(1, api.calls.count(NIGHTLY_RUNS_PATH))
+        self.assertEqual([], self.sleeps)
+
+    def test_404_is_not_retried(self):
+        jobs_path = f"/repos/{REPO}/actions/runs/101/jobs"
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={jobs_path: [http_error(404)]})
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, "HTTP 404, not retried", "API-ERROR 1")
+        self.assertEqual(1, api.calls.count(jobs_path))
+        self.assertEqual([], self.sleeps)
+
+    def test_a_workflow_github_does_not_know_yet_is_pending_when_new(self):
+        # planted-violations.yml on the night it lands: GitHub answers 404 for its runs
+        self.since = {"nightly.yml": NOW - datetime.timedelta(hours=2)}
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(404)]})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "PENDING nightly.yml", "API-ERROR 0")
+
+    def test_a_workflow_github_does_not_know_is_no_run_when_old(self):
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(404)]})
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, "NO-VERDICT nightly.yml :: (run) NO-RUN", "API-ERROR 0")
+
+    def test_connection_refused_and_bad_json_are_retried(self):
+        errors = [ConnectionRefusedError(111, "Connection refused"), ValueError("Expecting value")]
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: errors})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green")
         self.assertEqual([5, 10], self.sleeps)
 
-    def test_503_twice_then_answer_is_green(self):
-        broken = {f"/repos/{REPO}/actions/workflows/nightly.yml/runs": 2}
-        code, out = self.watch(FakeApi(GREEN_RUNS, GREEN_JOBS, broken=broken))
-        self.assertExit(0, code, out, "nightly watch: green")
+    def test_api_down_costs_one_backoff_then_one_try_per_request(self):
+        self.workflows({"cbmc.yml": CBMC, "nightly.yml": NIGHTLY})
+        api = FakeApi(everything=urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")))
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, "after 4 tries", "after 1 try (the API was down for the request before)",
+                        "API-ERROR 2", "nightly watch: RED: could not read run state for 2 request(s)")
+        self.assertEqual(5, len(api.calls))
+        self.assertEqual([5, 10, 20], self.sleeps)
+
+    def test_the_runner_api_root_is_used(self):
+        os.environ["GITHUB_API_URL"] = "https://ghe.invalid/api/v3"
+        seen = []
+
+        def fetch(url):
+            seen.append(url)
+            raise http_error(500)
+        code, out = self.watch(fetch)
+        self.assertExit(1, code, out, "GET https://ghe.invalid/api/v3/repos/")
+        self.assertTrue(all(u.startswith("https://ghe.invalid/api/v3/") for u in seen), seen)
+
+    def test_an_answer_ends_the_down_state(self):
+        self.workflows({"cbmc.yml": CBMC, "nightly.yml": NIGHTLY})
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, broken={CBMC_RUNS_PATH: 99, NIGHTLY_RUNS_PATH: 1})
+        code, out = self.watch(api)
+        # cbmc runs out of tries; nightly's one try (API down) fails too; nothing answered in between
+        self.assertExit(1, code, out, "API-ERROR 2")
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, broken={CBMC_RUNS_PATH: 4})
+        code, out = self.watch(api)
+        # cbmc's four tries all fail; nightly answers on its one try and the jobs GET gets full tries again
+        self.assertExit(1, code, out, "API-ERROR 1", "RUN nightly.yml run=101")
 
 
 class Selection(WatchCase):

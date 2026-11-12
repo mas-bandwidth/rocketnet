@@ -99,6 +99,7 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" != "0" ]; then
+            cat "$tmp/red.txt" >&2
             echo "nightly watch is red (exit $status); see the job summary" >&2
             exit 1
           fi
