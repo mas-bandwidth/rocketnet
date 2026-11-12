@@ -1814,7 +1814,7 @@ struct rocketnet_server_config_t
     /// connection's timeout in seconds, so traffic held up by an outage
     /// shorter than the timeout is processed when it arrives. Standalone
     /// acks and keep-alives and the disconnect pay first from credits of
-    /// their own (one ack for each packet the server sent the client, and
+    /// their own (one ack for each send of the server's that asks for one, and
     /// keep-alive tokens at twice the client send rate), so a correct
     /// client is never refused at any setting; size it for the client's
     /// payload. On by default: a deployment whose clients send more than
