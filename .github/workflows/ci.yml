@@ -632,6 +632,26 @@ jobs:
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         run: ./bin/test_production_client_lifecycle
 
+      # tests/functional/platform_primitives.cpp built standalone: the real
+      # environment readers, the production library's status, simulator and
+      # filter environment refusals (DEV=OFF), localhost lookup (DEV=ON), the
+      # platform thread and its priority, the wake/wait pair. Nothing else
+      # runs these checks. Both DEV settings run it: Debug rows build ON,
+      # Release rows OFF, and the line it prints must name the DEV setting
+      # this row built.
+      - name: "Functional: platform primitives (standalone, both DEV settings)"
+        if: matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/test_platform_primitives | tee platform-primitives.log
+          want=0
+          if [ "${{ matrix.dev }}" = ON ]; then want=1; fi
+          if ! grep -q "^platform primitives OK: DEV=$want," platform-primitives.log; then
+            echo "test_platform_primitives did not report DEV=$want (this row builds ROCKETNET_DEV=${{ matrix.dev }})"
+            exit 1
+          fi
+
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
@@ -3458,6 +3478,15 @@ jobs:
         run: |
           python3 tools/check_fuzz_regressions.py --selftest
           python3 tools/check_fuzz_regressions.py
+
+      # The prefilter and message seeds generated from tests/pcapng: the
+      # committed set must be exactly what the captures give (a renamed or
+      # re-recorded capture left 119 seeds under old names from 2026-10-22
+      # with no check to say so).
+      - name: Test and check the pcapng fuzz seeds
+        run: |
+          python3 tools/pcapng_fuzz_seeds.py --selftest
+          python3 tools/pcapng_fuzz_seeds.py --check
 
       - name: Test the unit-case coverage checker's verdicts
         shell: bash
