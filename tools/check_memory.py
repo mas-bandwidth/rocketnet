@@ -31,7 +31,10 @@ def run(*arguments):
         raise AssertionError(
             f"{binary.name} {' '.join(map(str, arguments))} exited {result.returncode}; "
             f"stdout={result.stdout!r} stderr={result.stderr!r}")
-    return [json.loads(line) for line in result.stdout.splitlines()]
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    if not rows:
+        raise SystemExit(f"{binary.name} {' '.join(map(str, arguments))} printed 0 JSON lines: nothing was checked")
+    return rows
 
 
 for transport in transports:

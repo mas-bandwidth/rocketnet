@@ -35,7 +35,7 @@ foreach(line IN LISTS build_lines)
 endforeach()
 
 if(compile_lines EQUAL 0)
-    list(APPEND failures "no $CC or $CXX compile line found in tests/oss-fuzz/build.sh")
+    message(FATAL_ERROR "0 compile lines: no $CC or $CXX compile line found in ${ROCKETNET_OSS_FUZZ_BUILD_SCRIPT}")
 endif()
 
 if(failures)

@@ -3314,6 +3314,80 @@ jobs:
           python3 tools/check_printed_compared.py --self-test
           python3 tools/check_printed_compared.py
 
+      # The self-tests of the checkers that have no step of their own
+      # (tools/checkers.txt names this step for each). Fixtures and fakes
+      # only: no build, no network; each plants its checker's violation and
+      # its empty input. One line per suite; the suites run in parallel, each
+      # into its own log, and a red one is named with its whole log. An empty
+      # list is red.
+      - name: Self-tests of the registered checkers
+        shell: bash
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/checker-selftests.txt"
+          cat > "$list" <<'SUITES'
+          python3 tools/test_check_dll_consumer.py -v
+          python3 tools/test_check_driver_extension.py -v
+          python3 tools/test_check_examples.py -v
+          python3 tools/test_check_fuzz_oracle.py -v
+          python3 tools/test_check_header_exports.py -v
+          bash tools/test_check_make_jobs.sh
+          bash tools/test_check_memlock.sh
+          python3 tools/test_check_memory.py -v
+          bash tools/test_check_oss_fuzz_fp_contract.sh
+          bash tools/test_run_xdp_filter_guest.sh
+          python3 tools/test_check_package.py -v
+          python3 tools/test_check_platform_policy.py -v
+          python3 tools/test_check_public_header.py -v
+          python3 tools/test_check_release_doc.py -v
+          python3 tools/test_check_sdk_sources.py -v
+          python3 tools/test_check_sodium.py -v
+          python3 tools/test_check_test_scaffolding_boundary.py -v
+          python3 tools/test_check_tla_ledger_merge.py -v
+          python3 tools/test_check_transport_matrix.py -v
+          python3 tools/test_check_xdp_archive.py -v
+          python3 tools/test_check_xdp_guard_control.py -v
+          python3 tools/test_run_backend_examples.py -v
+          python3 tools/test_run_examples.py -v
+          bash scripts/lan-proof-selftest
+          SUITES
+          logs="$RUNNER_TEMP/checker-selftests"
+          mkdir -p "$logs"
+          pids=()
+          suites=()
+          while IFS= read -r suite; do
+            [ -n "$suite" ] || continue
+            bash -c "$suite" > "$logs/${#suites[@]}.log" 2>&1 &
+            pids+=("$!")
+            suites+=("$suite")
+          done < "$list"
+          if [ "${#suites[@]}" -eq 0 ]; then echo "0 checker self-tests listed: nothing was run"; exit 1; fi
+          failed=0
+          for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then
+              echo "ok: ${suites[$i]}"
+            else
+              status=$?
+              failed=$((failed + 1))
+              echo "::group::FAIL (exit $status): ${suites[$i]}"
+              cat "$logs/$i.log"
+              echo "::endgroup::"
+            fi
+          done
+          echo "checker self-tests: ${#suites[@]} run, $failed failed"
+          [ "$failed" -eq 0 ]
+
+      # tools/check_checkers.py: every tools/check_*, tools/run_*,
+      # .github/scripts/*.sh and scripts/*-selftest has a row in
+      # tools/checkers.txt whose self-test this or another workflow step
+      # runs, and whose zero-input command (an empty directory or file) is
+      # red. --self-test plants an unregistered checker, an unwired
+      # self-test, a passing, unrunnable and crashing zero-input command.
+      - name: Every checker is registered, its self-test runs, zero inputs are red
+        run: |
+          python3 tools/check_checkers.py --self-test
+          python3 tools/check_checkers.py
+
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,

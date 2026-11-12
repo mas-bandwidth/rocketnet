@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Prove the native staging test rejects removal of both inactive-index guards."""
+import argparse
 import io
 import os
 from pathlib import Path
@@ -7,21 +8,29 @@ import subprocess
 import tarfile
 import tempfile
 
-root = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1],
+                    help="git checkout whose HEAD is archived and built (default: this repository)")
+root = parser.parse_args().root.resolve()
 build = root / "build"
 build.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="xdp guard control ", dir=build) as directory:
     work = Path(directory)
     source = work / "source"
     source.mkdir()
-    archived = subprocess.check_output(["git", "archive", "HEAD"], cwd=root)
+    try:
+        archived = subprocess.check_output(["git", "archive", "HEAD"], cwd=root)
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f"0 files: git archive HEAD under {root} exited {error.returncode}: nothing to check")
     with tarfile.open(fileobj=io.BytesIO(archived)) as archive:
         archive.extractall(source, filter="data")
     file = source / "sdk/rocketnet_server_socket_linux.cpp"
+    if not file.is_file():
+        raise SystemExit(f"0 files: the archive of HEAD under {root} holds no sdk/rocketnet_server_socket_linux.cpp")
     text = file.read_text()
     guard = "    if ( flow_index < 0 )\n    {\n        return;\n    }\n"
     if text.count(guard) != 2:
-        raise SystemExit("expected the two native finish/abort guards")
+        raise SystemExit(f"expected the two native finish/abort guards, found {text.count(guard)}")
     file.write_text(text.replace(guard, ""))
     output = work / "bin"
     subprocess.run(["cmake", "-S", str(source), "-B", str(work / "build"),

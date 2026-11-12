@@ -6,6 +6,7 @@ only a claim when a workflow file names the runner that proves it. This script
 reads the markdown table directly; it does not parse YAML.
 """
 
+import argparse
 import re
 import sys
 from collections import Counter
@@ -213,7 +214,7 @@ def check_functional(row, text):
     return failures
 
 
-def check_row(row, workflow_cache):
+def check_row(row, workflow_cache, root=ROOT):
     """Return the failures for one table row.
 
     Policy: docs/PLATFORMS.md, "Policy rules": a supported or nightly row must
@@ -240,7 +241,7 @@ def check_row(row, workflow_cache):
             f"(workflow={workflow!r}, runner label={label!r})"
         ]
 
-    path = ROOT / workflow
+    path = root / workflow
     if not path.is_file():
         return [f"{name}: workflow file {workflow!r} does not exist"]
 
@@ -345,12 +346,18 @@ def main():
 
     Policy: docs/PLATFORMS.md, "Checking the table".
     """
-    if "--self-check-broken" in sys.argv[1:]:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--self-check", action="store_true")
+    parser.add_argument("--self-check-broken", action="store_true")
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="the repository root to check (default: this repository)")
+    args = parser.parse_args()
+    if args.self_check_broken:
         problems = self_check(accept_everything)
         for problem in problems:
             print(f"check_platform_policy: {problem}", file=sys.stderr)
         return 1 if problems else 0
-    if "--self-check" in sys.argv[1:]:
+    if args.self_check:
         problems = self_check()
         for problem in problems:
             print(f"check_platform_policy: {problem}", file=sys.stderr)
@@ -358,16 +365,24 @@ def main():
             print("check_platform_policy: self-check: 3 violations reported, clean tree passes")
         return 1 if problems else 0
 
+    root = args.root
     try:
-        rows = parse_table(DOCUMENT.read_text(encoding="utf-8"))
+        rows = parse_table((root / "docs" / "PLATFORMS.md").read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         print(f"check_platform_policy: {error}", file=sys.stderr)
         return 1
+    if not rows:
+        print("check_platform_policy: the platform policy table has 0 rows", file=sys.stderr)
+        return 1
 
     workflow_cache = {}
-    failures = check_wildcard_binds()
+    try:
+        failures = check_wildcard_binds(root=root)
+    except OSError as error:
+        print(f"check_platform_policy: {error}", file=sys.stderr)
+        return 1
     for row in rows:
-        failures.extend(check_row(row, workflow_cache))
+        failures.extend(check_row(row, workflow_cache, root=root))
 
     if failures:
         for failure in failures:

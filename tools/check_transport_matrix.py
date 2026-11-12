@@ -263,13 +263,27 @@ def check_unrun_cells(os_name, step, problems):
         problems.append(f"TRANSPORT_MATRIX_{os_name}: an io_uring cell gated off by the kernel was not reported as an explicit SKIP with its reason (exit {rc}): {out.strip()!r}")
 
 
+INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
+
+
 def main():
+    global ROOT
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", default=ROOT, help="tree holding the registry, ci.yml and the docs (default: this repository)")
+    ROOT = os.path.abspath(parser.parse_args().root)
+    present = [path for path in INPUTS if os.path.isfile(os.path.join(ROOT, path))]
+    if len(present) != len(INPUTS):
+        missing = ", ".join(path for path in INPUTS if path not in present)
+        print(f"TRANSPORT-MATRIX-MISSING {len(present)} files of {len(INPUTS)} under {ROOT}: missing {missing}")
+        return 1
+
     rows = transport_rows(read("sdk/rocketnet_drivers.inc"))
     blocks = matrix_blocks(read(".github/workflows/ci.yml"))
     problems = []
 
     if not rows:
-        problems.append("no ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
+        problems.append("0 ROCKETNET_TRANSPORT rows read from sdk/rocketnet_drivers.inc")
     registry_rows = len(re.findall(r"^ROCKETNET_TRANSPORT\(", read("sdk/rocketnet_drivers.inc"), re.M))
     if registry_rows != len(rows):
         problems.append(f"{registry_rows} ROCKETNET_TRANSPORT rows in sdk/rocketnet_drivers.inc, {len(rows)} parsed: a row shape this check cannot read")

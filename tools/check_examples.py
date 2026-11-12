@@ -13,13 +13,12 @@ unwritten, and it must not then be read uninitialized.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "examples"
-HEADER = ROOT / "sdk" / "rocketnet.h"
 
 ALLOWED_HEADERS = {
     "rocketnet.h",
@@ -73,20 +72,27 @@ def line_of(text, offset):
     return text.count("\n", 0, offset) + 1
 
 
-def main():
-    sources = sorted(EXAMPLES.glob("*.c"))
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Check the examples against the house rules.")
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="tree holding examples/*.c and sdk/rocketnet.h (default: this repository)")
+    args = parser.parse_args(argv)
+    root = args.root.resolve()
+    examples = root / "examples"
+    header = root / "sdk" / "rocketnet.h"
+    sources = sorted(examples.glob("*.c"))
     if not sources:
-        print("FAIL: no examples/*.c", file=sys.stderr)
+        print(f"FAIL: 0 files match {examples}/*.c", file=sys.stderr)
         return 1
-    if not HEADER.is_file():
-        print(f"FAIL: {HEADER} is missing", file=sys.stderr)
+    if not header.is_file():
+        print(f"FAIL: {header} is missing", file=sys.stderr)
         return 1
 
-    declared = set(IDENTIFIER.findall(blank_strings(strip_comments(HEADER.read_text(encoding="utf-8")))))
+    declared = set(IDENTIFIER.findall(blank_strings(strip_comments(header.read_text(encoding="utf-8")))))
     failed = False
 
     for source_path in sources:
-        rel = source_path.relative_to(ROOT).as_posix()
+        rel = source_path.relative_to(root).as_posix()
         source = source_path.read_text(encoding="utf-8")
         cleaned = blank_strings(strip_comments(source))
         source_failed = False
