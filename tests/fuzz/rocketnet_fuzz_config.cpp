@@ -53,6 +53,7 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_fuzz_quiet.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -513,7 +514,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 {
     (void) argc;
     (void) argv;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     int n = 0;
     const struct rocketnet_config_field_t * f = rocketnet_client_transport_config_fields( &n );
