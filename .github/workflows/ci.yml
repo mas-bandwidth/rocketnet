@@ -1416,6 +1416,16 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
+      # The shipped Windows sockets keep datagrams whole: each create (portable,
+      # iocp, rio) sets IP_DONTFRAGMENT, and IPV6_DONTFRAG on IPv6, inline. The
+      # unit case of the shared helper cannot see that, so the options are read
+      # back from real loopback sockets here (tests/test_iocp.cpp; the whole
+      # test_iocp run is nightly).
+      - name: Windows sockets set don't-fragment (real sockets)
+        if: matrix.leg == 'a'
+        shell: bash
+        run: ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
+
       # Leg (c): a Windows test child that fails exits at once and never waits
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
       # tests/windows_no_dialogs.cpp case runs alone in Release and in Debug
