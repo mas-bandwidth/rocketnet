@@ -3639,6 +3639,7 @@ jobs:
           set -euo pipefail
           list="$RUNNER_TEMP/checker-selftests.txt"
           cat > "$list" <<'SUITES'
+          python3 tools/check_client_frame_time.py --self-test
           python3 tools/test_check_dll_consumer.py -v
           python3 tools/test_check_driver_extension.py -v
           python3 tools/test_check_examples.py -v
