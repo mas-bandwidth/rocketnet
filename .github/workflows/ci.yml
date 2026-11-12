@@ -3556,6 +3556,18 @@ jobs:
           python3 tools/check_wire_paths.py --self-test
           python3 tools/check_wire_paths.py
 
+      # GitHub rejects a workflow file whole when it is not valid YAML or not
+      # a workflow (nightly-differential.yml:74, fixed by cbb5ec89a, made a
+      # failed run with no jobs on every push); every other checker reads
+      # workflows with a lenient line parser. --self-test plants that exact
+      # defect, a duplicate key, a tab, run with uses, a misspelt job key, no
+      # jobs, no on and a composite step without its shell.
+      - name: Every workflow file parses as strict YAML and has a workflow's shape
+        if: ${{ !cancelled() }}
+        run: |
+          python3 tools/check_workflow_yaml.py --self-test
+          python3 tools/check_workflow_yaml.py
+
       - name: Every LeakSanitizer suppression names a live function
         if: ${{ !cancelled() }}
         run: |
