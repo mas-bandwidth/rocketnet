@@ -18,7 +18,7 @@ hand; needs GITHUB_TOKEN and --repo or GITHUB_REPOSITORY): reads the
 repository's registered workflows (GET /repos/R/actions/workflows) and the
 files in .github/workflows on main (GET /repos/R/contents/.github/workflows
 ?ref=main). Refused: a registered, active workflow whose file is not on main
-and that carries a cron on the branch of its latest run (GitHub fires crons
+and that carries a cron at the current head of the branch of its latest run (GitHub fires crons
 from the default branch only, so it never runs: VERIFY-2 B4); one whose
 file or branch cannot be read (unknown is red); a scheduled file on main
 that is not registered or not active (disabled: it never fires). Every GET
@@ -140,12 +140,18 @@ def remote(repo, fetch):
             if not runs:
                 problems.append(f"{path}: registered, not on main, and no run names its branch: cannot judge")
                 continue
+            # the branch's current head: a cron removed after the last run is gone, one
+            # added since is there (an unreadable or deleted branch is red: unknown)
             branch = runs[0]["head_branch"]
-            sha = runs[0].get("head_sha") or branch
-            content = fetch(f"/repos/{repo}/contents/{path}?ref={sha}")
+            content = fetch(f"/repos/{repo}/contents/{path}?ref={branch}")
             text = base64.b64decode(content["content"]).decode("utf-8")
             crons = crons_of(text)
         except Exception as error:  # noqa: BLE001
+            if getattr(error, "code", None) == 404:
+                # the file is not at the branch head, or the branch is deleted: no cron
+                # can be waiting there (said, not counted)
+                print(f"SCHEDULED-REMOTE-GONE {path}: not at the head of {branch} (404): no cron there")
+                continue
             problems.append(f"{path}: registered, not on main, unreadable: {error}")
             continue
         if crons:
@@ -244,6 +250,8 @@ def self_test():
             if "/contents/" in path:
                 p, ref = path.split("/contents/")[1].split("?ref=")
                 source = main_files if ref == "main" else (branch_files or {})
+                if f"{p}@{ref}" in source:
+                    return b64(source[f"{p}@{ref}"])
                 if p not in source:
                     raise OSError(f"404 {p}@{ref}")
                 return b64(source[p])
@@ -263,6 +271,32 @@ def self_test():
     expect("remote: a non-scheduled workflow on a branch is fine",
            remote("o/r", fixture([reg(1, "a.yml"), reg(2, "b.yml")], main,
                                  {f"{WORKFLOWS}/b.yml": workflow(None)}, {2: [{"head_branch": "ci/x", "head_sha": "ci/x"}]})), 0)
+    # the branch's CURRENT head decides, not the commit of its last run: a cron removed
+    # from the branch after its last run is gone; a cron added since is there
+    old_sha_cron = {f"{WORKFLOWS}/b.yml@old": workflow("0 3 * * *"), f"{WORKFLOWS}/b.yml@ci/x": workflow(None)}
+    expect("remote: cron only at the last run's old commit, removed from the branch head",
+           remote("o/r", fixture([reg(1, "a.yml"), reg(2, "b.yml")], main, old_sha_cron,
+                                 {2: [{"head_branch": "ci/x", "head_sha": "old"}]})), 0)
+    new_head_cron = {f"{WORKFLOWS}/b.yml@old": workflow(None), f"{WORKFLOWS}/b.yml@ci/x": workflow("0 3 * * *")}
+    expect("remote: cron added on the branch head after its last run",
+           remote("o/r", fixture([reg(1, "a.yml"), reg(2, "b.yml")], main, new_head_cron,
+                                 {2: [{"head_branch": "ci/x", "head_sha": "old"}]})), 1)
+    class NotFound(OSError):
+        code = 404
+
+    def deleted_branch(path):
+        if "/contents/" in path and "ref=gone" in path:
+            raise NotFound("404 gone")
+        return fixture([reg(1, "a.yml"), reg(2, "b.yml")], main, {},
+                       {2: [{"head_branch": "gone", "head_sha": "old"}]})(path)
+    expect("remote: the last run's branch is deleted (404 at its head)", remote("o/r", deleted_branch), 0)
+
+    def server_error(path):
+        if "/contents/" in path and "ref=ci/x" in path:
+            raise OSError("502 bad gateway")
+        return fixture([reg(1, "a.yml"), reg(2, "b.yml")], main, {},
+                       {2: [{"head_branch": "ci/x", "head_sha": "old"}]})(path)
+    expect("remote: the branch head cannot be read (not a 404)", remote("o/r", server_error), 1)
     expect("remote: a scheduled file on main that is disabled",
            remote("o/r", fixture([reg(1, "a.yml", "disabled_manually")], main)), 1)
     expect("remote: a scheduled file on main never registered",
@@ -278,7 +312,7 @@ def self_test():
     if failures:
         print(f"check_scheduled_watched self-test: {len(failures)} failed: {failures}")
         return 1
-    print("check_scheduled_watched self-test: 13 cases passed")
+    print("check_scheduled_watched self-test: 17 cases passed")
     return 0
 
 
