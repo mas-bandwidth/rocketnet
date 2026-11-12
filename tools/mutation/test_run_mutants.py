@@ -5,7 +5,17 @@ A fake ./bin/test stands in for the suite runner: it starts a job in a process
 group of its own (POSIX_SPAWN_SETPGROUP, as tests/suite_runner.h does) and
 sleeps far past the deadline. Real processes, bounded waits, a few seconds in
 all; macOS and Linux.
+
+And the run's own judgement: a run that judged nothing fails. An empty
+selection and a run whose every mutant did not compile each fail with the
+nightly's arguments (--platform linux --baseline tools/mutation/survivors.tsv),
+in main() and in --rejudge; the same run with its mutants detected passes. The
+workers are stubbed (no build): the stub sets each mutant's status as a build
+or test would.
 """
+import contextlib
+import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -123,6 +133,105 @@ class ProcessCleanupTests(unittest.TestCase):
                         tool.wait(timeout=10)
                 self.assert_none_left()
                 self.assertEqual(code, 128 + signum)
+
+
+# a source the Linux build compiles, with a few mutants and no baseline entries
+SMALL = "sdk/rocketnet_hash.cpp"
+# a source with no mutable lines
+EMPTY = "sdk/rocketnet_hash.h"
+BASELINE = str(run_mutants.ROOT / "tools" / "mutation" / "survivors.tsv")
+
+
+def stub_worker(status):
+    class Stub:
+        def __init__(self, index, args, files):
+            pass
+
+        def build(self):
+            return 0, 0.0, ""
+
+        def test(self, timeout):
+            return 0, 1.0, ""
+
+        def mutant(self, mutant, timeout):
+            mutant["status"] = status
+    return Stub
+
+
+class JudgementTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.out = Path(self.dir.name) / "results.json"
+        self.saved = run_mutants.Worker
+
+    def tearDown(self):
+        run_mutants.Worker = self.saved
+        self.dir.cleanup()
+
+    def main(self, status, files, baseline=True):
+        run_mutants.Worker = stub_worker(status)
+        argv = ["run_mutants.py", "--max-mutants", "0", "--workers", "1", "--work-dir", self.dir.name,
+                "--out", str(self.out), "--files"] + files
+        if baseline:
+            argv[1:1] = ["--platform", "linux", "--baseline", BASELINE]
+        text = io.StringIO()
+        saved_argv = sys.argv
+        sys.argv = argv
+        try:
+            with contextlib.redirect_stdout(text):
+                code = run_mutants.main()
+        finally:
+            sys.argv = saved_argv
+        return code, text.getvalue()
+
+    def test_an_empty_selection_fails(self):
+        self.assertEqual(run_mutants.generate(EMPTY, (run_mutants.ROOT / EMPTY).read_text()), [])
+        for baseline in (True, False):
+            with self.subTest(baseline=baseline):
+                code, text = self.main("detected", [EMPTY], baseline)
+                self.assertEqual(code, 1, text)
+                self.assertIn("mutation run judged 0 mutants (0 chosen, 0 did not compile)", text)
+
+    def test_every_mutant_not_compiling_fails(self):
+        for baseline in (True, False):
+            with self.subTest(baseline=baseline):
+                code, text = self.main("did_not_compile", [SMALL], baseline)
+                self.assertEqual(code, 1, text)
+                self.assertIn("mutation run judged 0 mutants (7 chosen, 7 did not compile)", text)
+                self.assertIn("7 of 7 chosen mutants did not compile (100.0%), over the 28% bound", text)
+
+    def test_a_judged_run_passes_and_prints_its_share(self):
+        for baseline in (True, False):
+            with self.subTest(baseline=baseline):
+                code, text = self.main("detected", [SMALL], baseline)
+                self.assertEqual(code, 0, text)
+                self.assertIn("MUTATION-DID-NOT-COMPILE 0 of 7 chosen (0.0%; bound 28%); judged 7", text)
+
+    def test_the_share_bound(self):
+        def run_of(failed, judged):
+            return [{"status": "did_not_compile"}] * failed + [{"status": "detected"}] * judged
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(run_mutants.judgement_errors(run_of(28, 72)), [])
+            self.assertEqual(len(run_mutants.judgement_errors(run_of(29, 71))), 1)
+            self.assertEqual(len(run_mutants.judgement_errors(run_of(0, 0))), 1)
+            self.assertEqual(run_mutants.judgement_errors([{"status": "survived"}, {"status": "not_run"}]), [])
+
+    def rejudge(self, status):
+        mutants = [dict(m, status=status) for m in run_mutants.generate(SMALL, (run_mutants.ROOT / SMALL).read_text())]
+        self.out.write_text(json.dumps({"head": "test", "files": [SMALL], "mutants": mutants}))
+        text = io.StringIO()
+        with contextlib.redirect_stdout(text):
+            code = run_mutants.rejudge(str(self.out), BASELINE)
+        return code, text.getvalue()
+
+    def test_rejudge_applies_the_same_rule(self):
+        code, text = self.rejudge("did_not_compile")
+        self.assertEqual(code, 1, text)
+        self.assertIn("FAILING: mutation run judged 0 mutants (7 chosen, 7 did not compile)", text)
+        self.assertIn("over the 28% bound", text)
+        code, text = self.rejudge("detected")
+        self.assertEqual(code, 0, text)
+        self.assertIn("MUTATION-DID-NOT-COMPILE 0 of 7 chosen", text)
 
 
 if __name__ == "__main__":

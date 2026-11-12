@@ -101,6 +101,38 @@ RISK_OPERATORS = frozenset({
     "delete_statement",
 })
 
+# A run that judged nothing passes nothing. Judged: detected, timed_out or
+# survived (an equivalent or gap survivor is judged); did_not_compile and
+# not_run are not. A run fails when it judged 0 mutants, or when more of its
+# chosen mutants than this share did not compile: a broken build or a
+# generator that emits non-code shows as most of a run not compiling, and the
+# run would otherwise pass on the few left. Measured (2026-11-12): 27 of 397
+# (6.8%) on slice 69/90 of nightly run 43219892575 (head 76edea48e); 89 of
+# 810 (11.0%) over the first slices of the whole-list campaign, the highest
+# lane 23 of 141 (16.3%). The bound keeps the highest measured share at 60%
+# of it (the repo's margin rule): 16.3 / 0.6 = 27.2, so 28%. A small --only
+# or --files run can go over it by chance; such a run judged too little.
+DID_NOT_COMPILE_BOUND = 0.28
+
+
+def judgement_errors(mutants):
+    """Print the did-not-compile share (every run, pass or fail) and return the
+    failure lines: 0 judged, or a share over DID_NOT_COMPILE_BOUND."""
+    chosen = len(mutants)
+    judged = sum(m.get("status") in ("detected", "timed_out", "survived") for m in mutants)
+    failed_build = sum(m.get("status") == "did_not_compile" for m in mutants)
+    share = failed_build / chosen if chosen else 0.0
+    print(f"MUTATION-DID-NOT-COMPILE {failed_build} of {chosen} chosen ({share:.1%}; bound "
+          f"{DID_NOT_COMPILE_BOUND:.0%}); judged {judged}", flush=True)
+    lines = []
+    if judged == 0:
+        lines.append(f"mutation run judged 0 mutants ({chosen} chosen, {failed_build} did not compile)")
+    if share > DID_NOT_COMPILE_BOUND:
+        lines.append(f"{failed_build} of {chosen} chosen mutants did not compile ({share:.1%}), over the "
+                     f"{DID_NOT_COMPILE_BOUND:.0%} bound: the build or the generator is broken, and the run "
+                     "judged too little to pass")
+    return lines
+
 
 def mutant_class(operator):
     return "risk" if operator in RISK_OPERATORS else "other"
@@ -402,7 +434,7 @@ def rejudge(results_path, baseline_path):
             sys.exit(f"{m['id']} is not generated from this tree: check out the run's head {run.get('head')}")
         chosen.append(dict(m, occurrence=generated[m["id"]]["occurrence"]))
     failures = judge_with_baseline(chosen, {baseline_key(m) for m in generated.values()}, set(run["files"]), entries)
-    lines = baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet)
+    lines = baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet) + judgement_errors(chosen)
     for line in lines:
         print(f"FAILING: {line}")
     known = {v: sum(m.get("verdict") == v for m in chosen) for v in ("known_equivalent", "known_gap")}
@@ -1091,6 +1123,12 @@ def main():
         chosen.sort(key=lambda m: order[id(m)])
     print(f"{generated} mutants generated, {len(mutants)} in the slice, {len(chosen)} chosen, {args.workers} workers"
           if slice_of else f"{generated} mutants generated, {len(chosen)} chosen, {args.workers} workers", flush=True)
+    if not chosen:
+        # nothing to build or judge: an empty slice, a generator that emits
+        # nothing, or every file left out
+        for line in judgement_errors(chosen):
+            print(f"FAILING: {line}", flush=True)
+        return 1
 
     files = tree_files(ROOT)
     workers = [Worker(i, args, files) for i in range(args.workers)]
@@ -1147,11 +1185,12 @@ def main():
     score = (counts["detected"] + counts["timed_out"]) / judged if judged else 0.0
     wall = time.monotonic() - started
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    run_lines = judgement_errors(chosen)
     baseline_lines, gaps = None, None
     if survivors:
         entries, ratchet = survivors
         failures = judge_with_baseline(chosen, generated_keys, set(args.files), entries)
-        baseline_lines = baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet)
+        baseline_lines = baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet) + run_lines
         gaps = sum(1 for label, _ in entries.values() if label == "gap")
         verdict_names = ("new", "known_equivalent", "known_gap", "stale", "killed_gap")
     else:
@@ -1163,7 +1202,7 @@ def main():
     verdicts = {v: sum(m.get("verdict") == v for m in chosen) for v in verdict_names}
     summary = dict(counts, total=len(chosen), generated=generated, in_slice=len(mutants), score=round(score, 4),
                    wall_seconds=round(wall, 1), baseline_test_seconds=round(baseline, 2), timeout_seconds=round(timeout, 2),
-                   verdicts=verdicts)
+                   verdicts=verdicts, judgement_failures=run_lines)
     if survivors:
         summary.update(baseline_failures=len(baseline_lines), gap_entries=gaps, gap_ratchet=survivors[1])
     rule = ("every survivor must be in the reviewed baseline " + args.baseline if survivors
@@ -1205,8 +1244,11 @@ def main():
             if m.get("verdict") == key:
                 print(f"{title}: {m['file']}:{m['line']} {m['class']}-class {m['operator']} "
                       f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
-    if verdicts["fail"]:
-        print(f"risk-class survivors failing the rule ({rule}): {verdicts['fail']}", flush=True)
+    for line in run_lines:
+        print(f"FAILING: {line}")
+    if verdicts["fail"] or run_lines:
+        print(f"risk-class survivors failing the rule ({rule}): {verdicts['fail']}; run failures {len(run_lines)}",
+              flush=True)
         return 1
     print(f"no survivor fails the rule ({rule}); reported {verdicts['report']}, "
           f"not judged here {verdicts['not_judged_here']}", flush=True)
