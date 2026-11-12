@@ -76,6 +76,32 @@ SANITIZER_ADAPTATIONS = {
          '        SODIUM_MSAN_UNPOISON(buf, (size_t) readnb);\n    }\n\n    return (readnb == (int) size) - 1;\n'),
     ],
 }
+# Lifecycle adaptation (sodium/README.md, "Windows lock"). The baseline's
+# Windows lock is a CRITICAL_SECTION initialised on first use and never
+# deleted, so unloading the library's DLL leaves it on the process-wide
+# critical-section list (Application Verifier stop Locks 0x201). The SDK
+# takes the lock outside rocketnet_init..rocketnet_term (the key generators),
+# so no term can delete it safely. A statically initialised SRWLOCK has no
+# init and nothing to delete; sodium never takes the lock recursively (enter
+# asserts locked == 0), which an SRWLOCK requires. POSIX branches unchanged.
+LIFECYCLE_ADAPTATIONS = {
+    'sodium.c': [
+        ('static CRITICAL_SECTION _sodium_lock;\nstatic volatile LONG    _sodium_lock_initialized;\n\n'
+         'int\n_sodium_crit_init(void)\n{\n    LONG status = 0L;\n\n'
+         '    while ((status = InterlockedCompareExchange(&_sodium_lock_initialized,\n'
+         '                                                1L, 0L)) == 1L) {\n        Sleep(0);\n    }\n\n'
+         '    switch (status) {\n    case 0L:\n        InitializeCriticalSection(&_sodium_lock);\n'
+         '        return InterlockedExchange(&_sodium_lock_initialized, 2L) == 1L ? 0 : -1;\n'
+         '    case 2L:\n        return 0;\n    default: /* should never be reached */\n        return -1;\n    }\n}\n\n'
+         'int\nsodium_crit_enter(void)\n{\n    if (_sodium_crit_init() != 0) {\n        return -1; /* LCOV_EXCL_LINE */\n    }\n'
+         '    EnterCriticalSection(&_sodium_lock);\n',
+         'static SRWLOCK _sodium_lock = SRWLOCK_INIT;\n\n'
+         'int\nsodium_crit_enter(void)\n{\n'
+         '    AcquireSRWLockExclusive(&_sodium_lock);\n'),
+        ('    LeaveCriticalSection(&_sodium_lock);\n',
+         '    ReleaseSRWLockExclusive(&_sodium_lock);\n'),
+    ],
+}
 UPSTREAM_ADAPTATIONS = {
     'crypto_core/ed25519/ref10/ed25519_ref10.c': [
         # -Wunused-function: the subset never converts a point to precomp.
@@ -390,6 +416,8 @@ def main():
     for name, replacements in BASELINE_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
     for name, replacements in SANITIZER_ADAPTATIONS.items():
+        baseline[name] = adapt(baseline[name], replacements, name)
+    for name, replacements in LIFECYCLE_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
     for name, rules in BASELINE_CONVERSIONS.items():
         baseline[name] = convert(baseline[name], rules, name)
