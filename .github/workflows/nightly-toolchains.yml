@@ -1,3 +1,9 @@
+# MOVED TO MAIN (2026-11-12): this branch copy never reached main, and a cron on
+# a branch never fires, so its schedule (and any temporary push trigger) is
+# removed here. The working version, against today's tree, is the file of the
+# same path on branch fixa/branches (fix-verify-a item 7), which carries the
+# cron once it is on main. This copy is kept for its history only.
+#
 # THE TOOLCHAIN MATRIX: MORE THAN ONE COMPILER PER OPERATING SYSTEM.
 #
 # Every other leg builds with the one compiler its runner defaults to. A game
@@ -52,12 +58,7 @@
 name: nightly-toolchains
 
 on:
-  schedule:
-    - cron: "55 8 * * *"
   workflow_dispatch:
-  push:
-    branches: [nightly/toolchains]
-
 permissions:
   contents: read
 
