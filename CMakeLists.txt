@@ -712,11 +712,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_client_required_memory_validates.cpp
             tests/test_unit_connect_token_vectors.cpp
             tests/test_unit_connection_internal_error_counters.cpp
-            tests/test_unit_create_reports_status.cpp
             tests/test_unit_dev_keys_warning.cpp
             tests/test_unit_dst_core.cpp
             tests/test_unit_finish_requires_start.cpp
-            tests/test_unit_light_profile.cpp
             tests/test_unit_max_clients.cpp
             tests/test_unit_memory_plan_lifecycle.cpp
             tests/test_unit_platform_socket_hygiene.cpp
@@ -733,7 +731,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_server_serves_both_families.cpp
             tests/test_unit_shutdown_request_completion.cpp
             tests/test_unit_sim_schedules.cpp
-            tests/test_unit_sized_config.cpp
             tests/test_unit_status_codes_reached.cpp
             tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
@@ -1173,6 +1170,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/session_reconnect_isolation.cpp
         tests/functional/destroy_early_keep.cpp
         tests/functional/disconnect_reasons_real.cpp
+        tests/functional/production_paths.cpp
+        tests/functional/client_io_threaded.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -1303,7 +1302,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/posix_lifecycle_stress.cpp
             tests/functional/posix_socket_errors.cpp
             tests/functional/corpus_consistency.cpp
-            tests/functional/session_reconnect_isolation.cpp)
+            tests/functional/session_reconnect_isolation.cpp
+            tests/functional/disconnect_reasons_real.cpp
+            tests/functional/production_paths.cpp
+            tests/functional/client_io_threaded.cpp)
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)

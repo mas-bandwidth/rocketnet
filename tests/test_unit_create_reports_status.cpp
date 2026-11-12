@@ -40,24 +40,41 @@
 
 static void create_status_quiet_assert( const char *, const char *, const char *, int ) {}
 
-// the defaults, then the published development keys set by hand
+// the defaults, then the test's own backend key (never the published
+// development key, which a production library refuses), so every case runs
+// against the development library and the production library alike
+
+static const uint8_t create_status_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x43, 0x52, 0x45, 0x41 };
 
 static void create_status_dev_server_config( struct rocketnet_server_config_t * config )
 {
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
-    config->protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    config->protocol_id = 0x435245415445ULL;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x2D ^ i );
+    }
+    uint8_t backend_public_key[32];
+    uint8_t backend_secret_key[64];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    memcpy( config->backend_public_key, backend_public_key, 32 );
+    memcpy( config->packet_filter, create_status_packet_filter, sizeof( config->packet_filter ) );
 }
 
-#if ROCKETNET_DEV
+// the client defaults with the test's own packet filter (never the published
+// test filter, which a production library refuses)
+static void create_status_client_config( struct rocketnet_client_config_t * config )
+{
+    check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
+    memcpy( config->packet_filter, create_status_packet_filter, sizeof( config->packet_filter ) );
+}
+
 static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
 static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
 
 // Whether the variable is set; its value, or empty, in value.
-#if ROCKETNET_DEV
 static bool create_status_getenv( const char * name, std::string & value )
 {
     char buffer[4096];
@@ -65,7 +82,6 @@ static bool create_status_getenv( const char * name, std::string & value )
     value = buffer;
     return present;
 }
-#endif // #if ROCKETNET_DEV
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -120,7 +136,7 @@ static void create_status_release( void * context, void * pointer )
 static void test_create_reports_status_success()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -151,7 +167,7 @@ static void test_create_reports_status_not_initialized()
     check( !rocketnet_library_initialized() );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -178,7 +194,7 @@ REGISTER_UNIT_TEST( test_create_reports_status_not_initialized );
 static void test_create_reports_status_invalid_argument()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -207,7 +223,7 @@ REGISTER_UNIT_TEST( test_create_reports_status_invalid_argument );
 static void test_create_reports_status_config_not_initialized()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     check( client_config.config_bytes == sizeof( client_config ) );
 
     struct rocketnet_server_config_t server_config;
@@ -263,7 +279,7 @@ static void test_create_reports_status_config_not_initialized()
 
     // filled again, the same config creates
 
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
@@ -290,6 +306,50 @@ static void test_create_reports_status_invalid_address()
 }
 REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 
+// No address at all (both NULL, and no ROCKETNET_SERVER_IPV4_ADDRESS or
+// ROCKETNET_SERVER_IPV6_ADDRESS to supply one): refused with
+// INVALID_ARGUMENT and counted once as API misuse.
+
+static void test_create_reports_status_no_address()
+{
+    const char * names[] = { "ROCKETNET_SERVER_IPV4_ADDRESS", "ROCKETNET_SERVER_IPV6_ADDRESS" };
+    std::string prior[2];
+    bool prior_present[2] = { false, false };
+    for ( int i = 0; i < 2; i++ )
+    {
+        prior_present[i] = create_status_getenv( names[i], prior[i] );
+        check( create_status_unsetenv( names[i] ) == 0 );
+    }
+
+    struct rocketnet_server_config_t server_config;
+    create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
+    rocketnet_assert_function( create_status_quiet_assert );
+
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, NULL, NULL, &server_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+
+    rocketnet_assert_function( saved_assert );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        if ( prior_present[i] )
+        {
+            check( create_status_setenv( names[i], prior[i].c_str() ) == 0 );
+        }
+        else
+        {
+            check( create_status_unsetenv( names[i] ) == 0 );
+        }
+    }
+}
+REGISTER_UNIT_TEST( test_create_reports_status_no_address );
+
 // ---- the sent-packet map against the window ---------------------------------
 
 // A packets_in_flight below reliable_messages_in_flight is refused at create
@@ -301,7 +361,7 @@ REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 static void test_create_refuses_sent_map_below_window()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     client_config.reliable_messages_in_flight = 1024;
     client_config.packets_in_flight = 1023;
 
@@ -359,7 +419,7 @@ static void test_create_refuses_resend_reserve_past_region_fields()
     g_create_status_reserve_logged = false;
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     client_config.send_kbps = 2000000;
     client_config.message_resend_delay_max_ms = 60000;
 
@@ -381,7 +441,7 @@ static void test_create_reports_status_config_refusals()
     // a field out of range
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     client_config.num_channels = 0;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -398,7 +458,6 @@ static void test_create_reports_status_config_refusals()
     // A value supplied by the caller is a config-range refusal, even though
     // create also checks environment overrides. Keep the environment absent
     // for this distinction, then restore it for the process running the suite.
-#if ROCKETNET_DEV
     std::string saved_client_env;
     std::string saved_server_env;
     const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
@@ -406,8 +465,7 @@ static void test_create_reports_status_config_refusals()
     check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
-#endif // #if ROCKETNET_DEV
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     // ROCKETNET_SEND_KBPS_UNLIMITED is no budget: accepted, with no ceiling
 
@@ -434,7 +492,7 @@ static void test_create_reports_status_config_refusals()
 
     // a negative rate is refused as an invalid argument; 0 is the default rate
 
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     client_config.send_kbps = -1;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
@@ -454,7 +512,6 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
-#if ROCKETNET_DEV
     if ( had_client_env )
     {
         check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
@@ -471,11 +528,10 @@ static void test_create_reports_status_config_refusals()
     {
         check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
     }
-#endif // #if ROCKETNET_DEV
 
     // a transport list that does not parse
 
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
     client_config.transport = "no-such-transport";
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
@@ -488,10 +544,9 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
 
-#if ROCKETNET_DEV
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
 
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     std::string prior_client;
     const bool prior_client_present = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client );
@@ -525,7 +580,6 @@ static void test_create_reports_status_config_refusals()
     {
         check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
     }
-#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
 
@@ -542,7 +596,7 @@ static void test_create_reports_status_out_of_memory()
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -691,7 +745,7 @@ static void test_create_out_of_memory_logs_one_error()
     check( init_status == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -741,7 +795,7 @@ REGISTER_UNIT_TEST( test_create_out_of_memory_logs_one_error );
 static void test_create_reports_status_null_status()
 {
     struct rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    create_status_client_config( &client_config );
 
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
@@ -772,14 +826,46 @@ REGISTER_UNIT_TEST( test_create_reports_status_null_status );
 
 static void test_create_reports_status_null_config_macro()
 {
+    // the defaults carry the published test packet filter: the development
+    // library accepts it; a production library refuses it by name until
+    // ROCKETNET_CLIENT_PACKET_FILTER names the game's own, and then creates
+
+    std::string prior_filter;
+    const bool prior_filter_present = create_status_getenv( "ROCKETNET_CLIENT_PACKET_FILTER", prior_filter );
+    check( create_status_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" ) == 0 );
+
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, NULL, &status );
+#if ROCKETNET_DEV
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );
     rn_test_client_stop_and_destroy( client );
 
     check( rocketnet_client_required_memory( NULL ) > 0 );
     check( rocketnet_server_required_memory( NULL ) > 0 );
+#else // #if ROCKETNET_DEV
+    check( client == NULL );
+    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+    check( rocketnet_client_required_memory( NULL ) == 0 );
+
+    check( create_status_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", "U0laRQ==" ) == 0 );      // 4 bytes: S I Z E
+    status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, NULL, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+    check( rocketnet_client_required_memory( NULL ) > 0 );
+#endif // #if ROCKETNET_DEV
+
+    if ( prior_filter_present )
+    {
+        check( create_status_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", prior_filter.c_str() ) == 0 );
+    }
+    else
+    {
+        check( create_status_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" ) == 0 );
+    }
+
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( create_status_quiet_assert );
     check( rocketnet_client_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );

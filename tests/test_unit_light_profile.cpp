@@ -9,11 +9,41 @@
 
 #include "test_unit_registry.h"
 #include "rocketnet.h"
+#include "rocketnet_connect_token.h"
 
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #define check rocketnet_unit_check
+
+// the test's own protocol id, backend key and packet filter (never the
+// published development values, which a production library refuses), set
+// over the profile before a size or a create, so the cases run against the
+// development and the production library alike
+
+static const uint8_t light_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x4C, 0x49, 0x47, 0x48 };
+
+static void light_server_keys( struct rocketnet_server_config_t * config )
+{
+    config->protocol_id = 0x4C49474854ULL;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x4C ^ i );
+    }
+    uint8_t backend_public_key[32];
+    uint8_t backend_secret_key[64];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    memcpy( config->backend_public_key, backend_public_key, 32 );
+    memcpy( config->packet_filter, light_packet_filter, sizeof( config->packet_filter ) );
+}
+
+static void light_client_filter( struct rocketnet_client_config_t * config )
+{
+    memcpy( config->packet_filter, light_packet_filter, sizeof( config->packet_filter ) );
+}
 
 // USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
 // required_memory is the lifecycle peak the caller's allocator sees (create,
@@ -26,7 +56,8 @@
 // io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
 // host whose ladder grants fewer transports reports less; the check is at
 // most.
-// This file is linked only into development builds (ROCKETNET_DEV=1).
+// The bounds are the development figures; a production endpoint has no link
+// simulator and reports less, so the at-most checks hold in both builds.
 // The server figures include the disconnect ring of 2 * ROCKETNET_MAX_CLIENTS
 // bursts (proofs/tla/ServerStopSpread.tla RingSize, 1088 bytes an entry) and,
 // on Linux, the xdp plan's per-slot replay records
@@ -220,6 +251,7 @@ static void test_light_profile_server_1000_required_memory()
     }
 
     config.max_clients = 1000;
+    light_server_keys( &config );
 
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
@@ -238,6 +270,7 @@ static void test_light_profile_client_required_memory()
     check( rocketnet_client_light_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.config_bytes == sizeof( config ) );
     light_message_fields_client( &config );
+    light_client_filter( &config );
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
@@ -259,6 +292,7 @@ static void test_light_profile_configs_create()
 
     struct rocketnet_server_config_t server_config;
     check( rocketnet_server_light_config( &server_config ) == ROCKETNET_STATUS_OK );
+    light_server_keys( &server_config );
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
@@ -271,6 +305,7 @@ static void test_light_profile_configs_create()
 
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_light_config( &client_config ) == ROCKETNET_STATUS_OK );
+    light_client_filter( &client_config );
 
     status = ROCKETNET_TEST_STATUS_UNSET;
 
