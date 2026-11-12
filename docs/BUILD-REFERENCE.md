@@ -434,6 +434,25 @@ server pinned to `xdp` refuses start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
+### Replaying a CI job before a dispatch
+
+`tools/replay_ci_steps.py` runs one job's `run:` steps from a workflow here,
+in order, with the runner's `if:` rule, shells, env levels and `$GITHUB_ENV`
+hand-on. Run it from the top of a fresh worktree of the commit, naming the
+job's matrix row:
+
+```sh
+git worktree add --detach ../replay HEAD && cd ../replay
+python3 tools/replay_ci_steps.py .github/workflows/ci.yml lint
+python3 tools/replay_ci_steps.py .github/workflows/ci.yml build-and-test \
+  --set matrix.leg=checks --set matrix.build_type=Release --set matrix.dev=OFF
+```
+
+`--list` prints which steps the row would run. A matrix value the job reads
+and `--set` does not give is an error. Steps that `uses:` an action are not
+run. A green replay says the step commands pass on this host; only the
+dispatched run says CI is green.
+
 ## Building the API reference
 
 `make docs` generates the public API reference at

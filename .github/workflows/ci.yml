@@ -3482,6 +3482,12 @@ jobs:
       - name: Test the parallel step runner
         run: python3 tools/run_parallel.py --self-test
 
+      # tools/replay_ci_steps.py runs a job's steps on a bench as the runner
+      # would, before a dispatch; its self-test holds the if:, env, shell,
+      # anchor and red-step rules to a fixture workflow.
+      - name: Test the CI step replay
+        run: python3 tools/replay_ci_steps.py --self-test
+
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
       # diagnostic pragma in sdk/ is listed with a reason in
       # tools/suppressions_reviewed.txt, and every listed one still exists. A
