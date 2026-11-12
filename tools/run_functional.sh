@@ -40,6 +40,13 @@ if [ "${OS:-}" = "Windows_NT" ] || ! command -v python3 >/dev/null 2>&1; then
 fi
 "$python" "$here/check_skips.py" --variant "$variant" "$log"
 skips=$?
+# Cases run == registered rows - skips: every registry row ran or was SKIPPED
+# (tools/check_test_environment.py --functional-log). Only a passing suite's
+# log is whole enough to hold to that.
+if [ "$suite" -eq 0 ] && [ "$skips" -eq 0 ]; then
+    "$python" "$here/check_test_environment.py" --functional-log "$log"
+    skips=$?
+fi
 
 if [ "$suite" -ne 0 ]; then
     echo "run_functional.sh: the suite exited $suite" >&2

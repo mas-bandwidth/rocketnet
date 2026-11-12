@@ -83,7 +83,7 @@ By hand, the same three replays are:
 ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional --run <case>
 ```
 
-The suite's exec cases are their own binaries under `bin/` and take no argument: `./bin/test_serialize`, `./bin/test_transport_control`, `./bin/test_xdp`. The nightly job picks the binary by name, so the same rule holds there.
+The suite's exec cases are their own binaries under `bin/` and take no argument: `./bin/test_transport_control`, `./bin/test_xdp`. The nightly job picks the binary by name, so the same rule holds there.
 
 ## How to run it by hand
 

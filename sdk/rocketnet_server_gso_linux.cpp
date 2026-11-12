@@ -232,6 +232,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_source;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
+    uint64_t counter_gro_cmsg_faults;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
@@ -1504,6 +1505,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
 }
 
 // the builtin transport's receive_drops hook: the size pass's drops
@@ -2054,6 +2056,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
+        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_too_large = 0;
@@ -2444,6 +2447,7 @@ enum rocketnet_server_gso_test_kind_t
     ROCKETNET_SERVER_GSO_TEST_SHORT,
     ROCKETNET_SERVER_GSO_TEST_VALID,
     ROCKETNET_SERVER_GSO_TEST_GRO,              // a GRO run of ROCKETNET_GSO_RECV_MAX_SEGMENTS valid segments
+    ROCKETNET_SERVER_GSO_TEST_GRO_CTRUNC,       // one valid datagram whose UDP_GRO control the kernel truncated (MSG_CTRUNC)
 };
 
 struct rocketnet_server_gso_test_source_t
@@ -2509,6 +2513,12 @@ static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso
             cmsg->cmsg_type = UDP_GRO;
             cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
             memcpy( CMSG_DATA( cmsg ), &segment_bytes, sizeof( segment_bytes ) );
+        }
+        else if ( source->kind == ROCKETNET_SERVER_GSO_TEST_GRO_CTRUNC )
+        {
+            header->msg_control = queue->controls[i];
+            header->msg_controllen = sizeof( queue->controls[i] );
+            header->msg_flags = MSG_CTRUNC;
         }
         memset( queue->scratch[i], 'v', (size_t) bytes );
         queue->messages[i].msg_len = (unsigned int) bytes;
@@ -2631,6 +2641,52 @@ bool rocketnet_server_gso_test_drain_room()
     rocketnet_server_gso_drain( queue, &full );
     valid = valid && plain.delivered == 3 && plain.largest_vlen == 3 && buffer->dropped_overflow == 0 &&
             buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE;
+
+    // no worker ran, so stop is complete once both stopped flags are set
+
+    gso->test_receive = NULL;
+    gso->test_receive_user = NULL;
+    rocketnet_server_gso_stop( gso );
+    queue->stopped.store( true, std::memory_order_release );
+    gso->send_stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_test_destroy( gso );
+
+    return valid;
+}
+
+// The GRO cmsg faults reach the counters, on the fixture with the receive
+// seam: three datagrams whose UDP_GRO control was truncated are each one
+// fault and one datagram. The worker step drains and publishes them, main's
+// receive folds the bank, and GRO_CMSG_FAULTS reads 3, as io_uring's does.
+
+bool rocketnet_server_gso_test_gro_cmsg_faults()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+    {
+        return false;
+    }
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    gso->features.fetch_or( ROCKETNET_SERVER_GSO_FEATURE_GRO, std::memory_order_relaxed );
+    gso->test_receive = rocketnet_server_gso_test_source_receive;
+
+    struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_GRO_CTRUNC, 3, 0, 0 };
+    gso->test_receive_user = &source;
+
+    bool valid = true;
+
+    valid = valid && !rocketnet_server_gso_worker_step( queue );
+    valid = valid && source.delivered == 3 && queue->ready_buffer != NULL;
+
+    rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == 3;
+    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] == 0;
+    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] == 3;
 
     // no worker ran, so stop is complete once both stopped flags are set
 

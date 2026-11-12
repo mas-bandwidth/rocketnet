@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tests for tools/check_transport_matrix.py: a copy of this repository's
-registry, ci.yml and docs passes; the same copy with one more transport row
+registry, ci.yml, nightly.yml and docs passes; the same copy with one more transport row
 that no TRANSPORT_MATRIX cell runs is refused by name; a registry with no
 rows and an empty tree are refused. Each case runs the tool as a process
 with --root on a fixture in a temporary directory."""
@@ -15,7 +15,7 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 TOOL = TOOLS / "check_transport_matrix.py"
 REPO = TOOLS.parent
-INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
+INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", ".github/workflows/nightly.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
 
 # pin-only, so the auto orders the docs state are unchanged and the one gap
 # is the missing matrix cell
@@ -64,7 +64,7 @@ class TransportMatrixTest(unittest.TestCase):
     def test_an_empty_tree_is_refused(self):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("0 files of 5", result.stdout)
+        self.assertIn("0 files of 6", result.stdout)
 
 
 if __name__ == "__main__":

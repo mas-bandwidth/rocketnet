@@ -198,6 +198,22 @@ static void test_xdp_transport_umem_holds_only_the_fill_frames()
     check( rocketnet_xdp_umem_bytes( ROCKETNET_XDP_MAX_QUEUES + 1 ) == 0 );
 }
 
+// the operator budget's figure counts each queue's UMEM once beside the
+// allocator bytes; a transport without UMEM totals its allocator bytes
+
+static void test_xdp_transport_memory_plan_total_counts_umem_once()
+{
+    rocketnet_server_memory_plan_t plan;
+    check( rocketnet_server_transport_memory_plan( NULL, "xdp", plan ) );
+    check( plan.umem_bytes == rocketnet_xdp_umem_bytes( ROCKETNET_XDP_DEFAULT_QUEUES ) );
+    check( plan.umem_bytes > 0 );
+    check( plan.total_bytes == plan.allocator_bytes + plan.umem_bytes );
+
+    check( rocketnet_server_transport_memory_plan( NULL, "portable", plan ) );
+    check( plan.umem_bytes == 0 );
+    check( plan.total_bytes == plan.allocator_bytes );
+}
+
 // R3 of the pre-flight refuses an interface with a program attached in any
 // mode. libbpf reports prog_id 0 when programs are attached in more than one
 // mode (XDP_ATTACHED_MULTI), so the decision reads every per-mode id. The
@@ -267,6 +283,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rin
 REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
 REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
 REGISTER_UNIT_TEST( test_xdp_transport_umem_holds_only_the_fill_frames );
+REGISTER_UNIT_TEST( test_xdp_transport_memory_plan_total_counts_umem_once );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_any_attached_mode );
 
 #endif // #if ROCKETNET_XDP
