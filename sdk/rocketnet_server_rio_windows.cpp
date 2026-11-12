@@ -2986,13 +2986,15 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     {
         return NULL;
     }
-    int requested = options ? options->lanes : 1;
+    int requested = options ? options->lanes : 0;
 #if ROCKETNET_DEV
     // development library only: ROCKETNET_TEST_RIO_LANES=N (2 .. 32) runs every
-    // RIO server asked for one lane on N lanes, for a whole process, so a suite
-    // whose servers come from many paths runs on lanes. A wildcard bind keeps
-    // its one lane: lanes refuse the wildcard, and that refusal has its own test.
-    if ( requested <= 1 && !rocketnet_rio_address_is_wildcard( bind_address ) )
+    // RIO server that leaves the lane count to the transport (no options, or 0
+    // lanes: num_xdp_queues unset) on N lanes, for a whole process, so a suite
+    // whose servers come from many paths runs on lanes. One lane asked for
+    // explicitly stays one. A wildcard bind keeps its one lane: lanes refuse
+    // the wildcard, and that refusal has its own test.
+    if ( requested == 0 && !rocketnet_rio_address_is_wildcard( bind_address ) )
     {
         char test_lanes[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
         if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES", test_lanes, sizeof( test_lanes ) ) > 0 )
@@ -3018,7 +3020,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     if ( lanes > 1 && rocketnet_rio_address_is_wildcard( bind_address ) )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
-        rocketnet_warn( "rio transport refused: %d lanes need a specific local address, not the wildcard", lanes );
+        rocketnet_warn( "rio transport refused: %d lanes need a specific local address; set bind_ipv4_address or bind_ipv6_address in the server config", lanes );
         return NULL;
     }
     const uint8_t * packet_filter = options ? options->packet_filter : NULL;
@@ -3305,12 +3307,20 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 
 void rocketnet_server_rio_test_hold_send( rocketnet_server_rio_t * rio, bool hold )
 {
-    rocketnet_rio_lane_test_hold_send( rio->lanes[0], hold );
+    for ( int i = 0; i < rio->num_lanes; ++i )
+    {
+        rocketnet_rio_lane_test_hold_send( rio->lanes[i], hold );
+    }
 }
 
 int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio )
 {
-    return rocketnet_rio_lane_test_handed_phases( rio->lanes[0] );
+    int handed = 0;
+    for ( int i = 0; i < rio->num_lanes; ++i )
+    {
+        handed += rocketnet_rio_lane_test_handed_phases( rio->lanes[i] );
+    }
+    return handed;
 }
 
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio )

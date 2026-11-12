@@ -2139,12 +2139,19 @@ static void rio_exchange( rocketnet_server_rio_t * rio, const rocketnet_address_
     rio_settle( rio );
 }
 
+// One lane, asked for explicitly: these cases drive one lane's worker through
+// its test seams, which act on lane 0, so ROCKETNET_TEST_RIO_LANES leaves
+// them alone; the lane cases below open lanes themselves.
 static rocketnet_server_rio_t * rio_open( rocketnet_address_t * bind )
 {
     *bind = address( "127.0.0.1:0" );
 
-    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, bind, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_server_rio_options_t options;
+    options.lanes = 1;
+    options.packet_filter = NULL;
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options );
     CHECK( rio && bind->port );
+    CHECK( rocketnet_server_rio_lanes( rio ) == 1 );
     return rio;
 }
 
