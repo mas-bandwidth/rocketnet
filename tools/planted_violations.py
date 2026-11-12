@@ -583,13 +583,20 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
         return 0
     want_os = args.os or host_os()
     selected = [r for r in rows if r["os"] == want_os]
+    elsewhere = [r for r in rows if r["os"] != want_os]
     if args.only:
         names = set(n.strip() for n in args.only.split(",") if n.strip())
         unknown = names - {r["id"] for r in rows}
         for name in sorted(unknown):
             out(f"PLANT-STALE {name} (--only names no row)")
             problems.append(name)
+        for row in [r for r in elsewhere if r["id"] in names]:
+            out(f"PLANT-NOT-RUN {row['id']} (a {row['os']} row; this run is {want_os})")
         selected = [r for r in selected if r["id"] in names]
+        elsewhere = [r for r in elsewhere if r["id"] in names]
+    other = {name: sum(1 for r in elsewhere if r["os"] == name) for name in OSES if name != want_os}
+    out(f"planted-violations: {len(selected)} {want_os} row(s) selected; not run here, being other systems' rows: "
+        + ", ".join(f"{name} {count}" for name, count in other.items()))
     if args.exclude:
         dropped = set(n.strip() for n in args.exclude.split(",") if n.strip())
         for row in [r for r in selected if r["id"] in dropped]:
