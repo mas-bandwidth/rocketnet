@@ -105,7 +105,11 @@
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
+// The portable server's transmit and receive banks run on the shared
+// rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h), whose owed flag
+// each adds 4 bytes with its padding, adding 8 bytes to the server and
+// nothing to the client (measured); the probe's actual= line is 1469501159.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452583 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
