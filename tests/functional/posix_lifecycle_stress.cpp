@@ -201,6 +201,23 @@ static int posix_threads()
 #endif // #if defined( __APPLE__ )
 }
 
+// A sanitizer (address, memory, thread) replaces malloc with its own
+// allocator, which glibc's mallinfo2 does not see: it reads 0 however much
+// is held, so a live xdp server never moves it. Under one, the heap in use
+// is the sanitizer's own count.
+#if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ )
+#define POSIX_SANITIZER_HEAP 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer ) || __has_feature( thread_sanitizer )
+#define POSIX_SANITIZER_HEAP 1
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer ) || __has_feature( thread_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ )
+#if defined( POSIX_SANITIZER_HEAP ) && defined( __GLIBC__ ) && ROCKETNET_XDP
+// the sanitizer runtimes export it (sanitizer/allocator_interface.h, a header
+// not every toolchain installs)
+extern "C" size_t __sanitizer_get_current_allocated_bytes( void );
+#endif // #if defined( POSIX_SANITIZER_HEAP ) && defined( __GLIBC__ ) && ROCKETNET_XDP
+
 // The heap in use in whole xdp umems (see the header): a leaked umem is a
 // difference, and the few MB the cells hold besides it never reach one. Zero
 // without glibc or xdp, and on macOS.
@@ -211,8 +228,12 @@ static const unsigned long long posix_umem_bytes = (unsigned long long) ROCKETNE
 static long posix_heap_umems()
 {
 #if defined( __GLIBC__ ) && ROCKETNET_XDP
+#if defined( POSIX_SANITIZER_HEAP )
+    return (long) ( (unsigned long long) __sanitizer_get_current_allocated_bytes() / posix_umem_bytes );
+#else
     const struct mallinfo2 info = mallinfo2();
     return (long) ( ( (unsigned long long) info.uordblks + info.hblkhd ) / posix_umem_bytes );
+#endif // #if defined( POSIX_SANITIZER_HEAP )
 #else
     return 0;
 #endif // #if defined( __GLIBC__ ) && ROCKETNET_XDP
