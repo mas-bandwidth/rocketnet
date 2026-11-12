@@ -61,7 +61,7 @@ namespace
     const uint32_t RING_SEND_FRAMES = 2;        // the send region below them
     const uint32_t RING_RX_SIZE = 2;            // the RX ring's entries: RingSize
     const uint32_t RING_STAGE_CAPACITY = 4;     // the staging buffer's packets: StageCap
-    const uint32_t RING_FILL_SIZE = 8;          // the fill ring: FillSize, twice the frames as the server sizes it
+    const uint32_t RING_FILL_SIZE = 8;          // the fill ring's most entries: twice the frames, as the server sizes it
     const uint32_t RING_STAGE_SLOTS = 8;        // the staging arrays: room for the planted peek's overrun
     const int RING_PACKET_BYTES = 64;           // each packet's payload
 
@@ -94,6 +94,7 @@ namespace
         uint32_t fill_consumer;
         uint32_t fill_flags;
         uint64_t fill_addr[RING_FILL_SIZE];
+        uint32_t fill_size;
         struct xsk_ring_prod fill;
 
         // the worker's: its staging buffer, its pending return and the
@@ -145,7 +146,7 @@ namespace
         std::vector<std::string> fq;
         for ( uint32_t i = w.fill_consumer; i != w.fill_producer; i++ )
         {
-            fq.push_back( ring_frame_name( w.fill_addr[i & ( RING_FILL_SIZE - 1 )] ) );
+            fq.push_back( ring_frame_name( w.fill_addr[i & ( w.fill_size - 1 )] ) );
         }
 
         std::vector<std::string> ring;
@@ -208,9 +209,10 @@ namespace
         return (uint32_t) bytes;
     }
 
-    void ring_init( ring_walk_t & w )
+    void ring_init( ring_walk_t & w, uint32_t fill_size )
     {
         w = ring_walk_t();
+        w.fill_size = fill_size;
 
         w.rx.cached_prod = 0;
         w.rx.cached_cons = 0;
@@ -223,9 +225,9 @@ namespace
 
         // libxdp's producer view starts with the whole ring free (xsk_umem__create)
         w.fill.cached_prod = 0;
-        w.fill.cached_cons = RING_FILL_SIZE;
-        w.fill.mask = RING_FILL_SIZE - 1;
-        w.fill.size = RING_FILL_SIZE;
+        w.fill.cached_cons = w.fill_size;
+        w.fill.mask = w.fill_size - 1;
+        w.fill.size = w.fill_size;
         w.fill.producer = &w.fill_producer;
         w.fill.consumer = &w.fill_consumer;
         w.fill.ring = w.fill_addr;
@@ -244,8 +246,13 @@ namespace
 
 static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
 {
+    // an odd seed sizes the fill ring as the server does, twice the frames;
+    // an even seed at exactly the frames (MCRNXdpReceiveRingBrokenFillOfTheFrames'
+    // size), where a flush can find no room and the pending return keeps its
+    // frames for the flush at the top of a later pass (Refill). The code is
+    // the same at either size, and so is the model's step relation.
     static ring_walk_t w;
-    ring_init( w );
+    ring_init( w, seed % 2 == 1 ? RING_FILL_SIZE : RING_FRAMES );
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
@@ -295,7 +302,7 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
             {
                 continue;
             }
-            const uint64_t addr = w.fill_addr[( w.fill_consumer + w.kused ) & ( RING_FILL_SIZE - 1 )];
+            const uint64_t addr = w.fill_addr[( w.fill_consumer + w.kused ) & ( w.fill_size - 1 )];
             const uint32_t len = ring_build_packet( w, addr, ++sequence );
             w.kused++;
             ring_post( w, addr, len );
@@ -414,7 +421,7 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
 
     char constants[256];
     snprintf( constants, sizeof( constants ), "    Frames <- TraceFrames\n    RingSize = %d\n    StageCap = %d\n    PendCap = %d\n    FillSize = %d\n",
-              (int) RING_RX_SIZE, (int) RING_STAGE_CAPACITY, (int) RING_FRAMES, (int) RING_FILL_SIZE );
+              (int) RING_RX_SIZE, (int) RING_STAGE_CAPACITY, (int) RING_FRAMES, (int) w.fill_size );
     return tla_write_trace( out, name, "TraceRNXdpReceiveRing", definitions, constants, records ) ? 0 : 1;
 }
 
