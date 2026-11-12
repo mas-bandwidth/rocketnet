@@ -109,6 +109,24 @@ inline bool suite_nightly()
     return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
 }
 
+// ROCKETNET_TEST_KEEP_GOING=1, on the nightly tier only: a failing case no
+// longer ends the run. Every collected case runs; each failure prints as it
+// would, and the summary names each failed case and counts the cases run
+// against the cases collected. The suite still exits 1 on any failure. A
+// per-commit run stops at the first failure, so the variable without
+// ROCKETNET_TEST_NIGHTLY=1 fails the suite before any case runs.
+
+inline bool suite_keep_going_requested()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_KEEP_GOING", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
+}
+
+inline bool suite_keep_going()
+{
+    return suite_keep_going_requested() && suite_nightly();
+}
+
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 
 inline bool suite_env_is_set( const char * name )
@@ -972,9 +990,10 @@ inline int suite_emit_captured( const std::string & output, bool show_all )
 // A passing case prints its name (an exec case, the test names it printed); a
 // failing case prints everything it wrote and, when the runner failed it
 // (time, memory, a signal, an exit with no check line), one check line.
-// Returns false once a failure is printed.
+// Returns false once a failure is printed, unless keep_going
+// (suite_keep_going), when it prints on past the failure.
 
-inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture )
+inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture, bool keep_going )
 {
     while ( printed < results.size() && results[printed].done )
     {
@@ -987,7 +1006,11 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
                 printf( "check failed: %s\n", result.detail.c_str() );
             }
             fflush( stdout );
-            return false;
+            if ( !keep_going )
+            {
+                return false;
+            }
+            continue;
         }
 
         if ( capture && ( !result.exec || suite_emit_captured( result.output, false ) == 0 ) )
@@ -1063,6 +1086,13 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // copied name reads as uninitialised (tools/run_msan.sh).
     // A registered case group_of marks SUITE_GROUP_NIGHTLY is not collected
     // outside the nightly tier.
+
+    if ( suite_keep_going_requested() && !suite_nightly() )
+    {
+        printf( "check failed: ROCKETNET_TEST_KEEP_GOING=1 is for the nightly tier only; set ROCKETNET_TEST_NIGHTLY=1 or unset it\n" );
+        fflush( stdout );
+        return false;
+    }
 
     const size_t first = pending.size();
     const bool nightly = suite_nightly();
@@ -1242,10 +1272,42 @@ inline void suite_print_skipped()
     fflush( stdout );
 }
 
+// Under suite_keep_going the run is not stopped by a failure, so passed alone
+// cannot judge it: every failed case is named, the cases run are counted
+// against the cases collected, and any failure or any case left unrun fails
+// the suite.
+
+inline bool suite_keep_going_summary( const std::vector<suite_result> & results )
+{
+    int failed = 0;
+    int ran = 0;
+    for ( size_t i = 0; i < results.size(); i++ )
+    {
+        if ( !results[i].done )
+        {
+            continue;
+        }
+        ran++;
+        if ( results[i].failed )
+        {
+            failed++;
+            printf( "FAILED %s\n", results[i].name.c_str() );
+        }
+    }
+    printf( "keep going: %d failed; %d of %d collected cases ran\n", failed, ran, (int) results.size() );
+    fflush( stdout );
+
+    return failed == 0 && ran == (int) results.size();
+}
+
 inline int suite_finish( const std::vector<suite_result> & results, bool passed )
 {
     suite_print_report( results );
     suite_print_skipped();
+    if ( suite_keep_going() && !suite_keep_going_summary( results ) )
+    {
+        passed = false;
+    }
     if ( !passed )
     {
         return 1;
@@ -1554,6 +1616,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<running_t> running;
     size_t next = 0;
     size_t printed = 0;
+    const bool keep_going = suite_keep_going();
     bool passed = true;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
@@ -1747,7 +1810,7 @@ inline int suite_main( int argc, char ** argv,
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
-        passed = suite_print_ready( results, printed, capture );
+        passed = suite_print_ready( results, printed, capture, keep_going );
         if ( passed && !running.empty() )
         {
             std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
@@ -1947,6 +2010,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<running_t> running;
     size_t next = 0;
     size_t printed = 0;
+    const bool keep_going = suite_keep_going();
     bool passed = true;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
@@ -2116,7 +2180,7 @@ inline int suite_main( int argc, char ** argv,
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
-        passed = suite_print_ready( results, printed, capture );
+        passed = suite_print_ready( results, printed, capture, keep_going );
     }
 
     // a failure ends the run: the cases still running are ended
