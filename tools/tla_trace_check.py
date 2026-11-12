@@ -39,6 +39,16 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
+    # tests/tla_trace_iocp.cpp registers both IOCP layers: each plant
+    # includes the transport's one .cpp, so they share a file
+    "iocp-admit": {
+        "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
+        "quiet": True,
+    },
+    "iocp-lanes": {
+        "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
