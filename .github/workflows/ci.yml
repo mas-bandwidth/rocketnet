@@ -354,6 +354,14 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
           cmake --build build --parallel 8
 
+      # The XDP packet blaster's manifest and oracle rules
+      # (tools/test_xdp_packet_blaster.py over tools/xdp_packet_blaster_cases.json,
+      # the blaster run --dry-run): no socket, root or clock, under a second.
+      # The CMake target existed and nothing built it (VERIFY-3 A-10).
+      - name: XDP packet blaster contract test
+        if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'unit'
+        run: cmake --build build --target test_xdp_packet_blaster
+
       # bin/test_wide compiles the SDK again with ROCKETNET_MAX_CHANNELS=512 for
       # the cases that need a channel index of 256 or more (CMakeLists.txt).
       - name: Build the wide-channel unit suite
