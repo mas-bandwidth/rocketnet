@@ -6,13 +6,14 @@ Drives benchmarks/client_frame_time (see benchmarks/client_frame_time.md):
 starts its server on loopback, runs its client at the space client profile
 (15 MTU packets a tick, 60 Hz) and prints one row:
 
-    CLIENT-FRAME-TIME transport=<t> frames=<n> frame_p99_us=<x> frame_max_us=<x> allocs=<n> verdict=<PASS|FAIL|REPORT>
+    CLIENT-FRAME-TIME transport=<t> frames=<n> frame_p99_us=<x> frame_max_us=<x> max_us=<x>[ report-only] allocs=<n> verdict=<PASS|FAIL>
 
 The row asserts, every night:
   - zero allocations through the library's allocator hooks inside client
     calls in steady state (always enforced: it does not depend on the machine)
-  - the worst client frame is at or under --max-us (enforced unless
-    --report-only; a runner that is not reserved quiet records it instead)
+  - the worst client frame is at or under --max-us (with --report-only, on a
+    runner that is not reserved quiet, a frame over it is a FAIL verdict that
+    exits 0 and prints ::warning title=REPORT-ONLY-FAIL::<verdict line>)
 
 and then proves both assertions can fail (the red proof), with the meter's
 plants inside the library's own calls:
@@ -115,21 +116,28 @@ def main() -> int:
             sys.stdout.write(proof_output)
             failures.append("red proof %s exited %d, not %d" % (name, code, expected))
 
-    verdict = "FAIL" if failures else ("REPORT" if args.report_only else "PASS")
-    print(
-        "CLIENT-FRAME-TIME transport=%s frames=%s frame_p99_us=%s frame_max_us=%s max_us_gate=%s allocs=%s verdict=%s"
-        % (
-            transport,
-            frames,
-            "%.2f" % p99 if p99 is not None else "na",
-            "%.2f" % worst if worst is not None else "na",
-            "report-only" if args.report_only else "%.1f" % args.max_us,
-            allocs,
-            verdict,
-        )
+    # report-only: the worst frame is compared and printed, and over --max-us
+    # is a FAIL verdict that exits 0 with the REPORT-ONLY-FAIL annotation the
+    # nightly watch reads (tools/check_nightly_dispositions.py); allocations
+    # and the red proofs still fail the job
+
+    report_fail = args.report_only and not failures and worst is not None and worst > args.max_us
+    verdict = "FAIL" if failures or report_fail else "PASS"
+    line = "CLIENT-FRAME-TIME transport=%s frames=%s frame_p99_us=%s frame_max_us=%s max_us=%.1f%s allocs=%s verdict=%s" % (
+        transport,
+        frames,
+        "%.2f" % p99 if p99 is not None else "na",
+        "%.2f" % worst if worst is not None else "na",
+        args.max_us,
+        " report-only" if args.report_only else "",
+        allocs,
+        verdict,
     )
+    print(line)
     for failure in failures:
         print("FAIL: " + failure)
+    if report_fail:
+        print("::warning title=REPORT-ONLY-FAIL::" + line)
     return 1 if failures else 0
 
 
