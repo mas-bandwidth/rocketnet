@@ -5517,7 +5517,7 @@ static void test_message_whole_frame_in_place_finish_edges()
             check( dropped_serial == 3 );
             check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == over + 1 );
             check( pair.net->server->sent_log.size() == sent );
-            check( (int) slot->written == written_drop );
+            check( (int) slot->written == written_drop + 1 );       // the frame start took counts, as a failed send does
             check( slot->in_place_admitted == 0 && slot->in_place_receipt == 0 );
             check( slot->budget.tokens == 0.0 );
             check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );

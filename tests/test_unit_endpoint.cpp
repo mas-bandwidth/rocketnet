@@ -1964,6 +1964,49 @@ static void test_endpoint_start_refusals_count_their_own_counter()
     rn_arena_destroy( arena );
 }
 
+// A whole-frame in-place send the bucket can no longer pay at its finish
+// (proofs/tla/RNOutgoingBuild.tla Seal, the drop branch) took a transport
+// frame at its start: the drop is counted OVER_BUDGET and, as a packed
+// build's drop and a failed send do, uses up one of the update's packets.
+static void test_endpoint_in_place_over_budget_finish_is_a_written_packet()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+    check( endpoint.send_budget_enabled );
+
+    const int header = rn_endpoint_in_place_header( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 1000.0 );
+    check( header >= 0 );
+    check( rn_endpoint_in_place_affordable( &endpoint, header + 100 + 1, 1000.0 ) );
+    rn_endpoint_in_place_begin( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, header );
+
+    // the bucket empties between the start and the finish; time does not move
+
+    endpoint.budget.tokens = 0.0;
+    const int written_before = endpoint.written;
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES] = {};
+    int payload_bytes = -1;
+    check( rn_endpoint_in_place_finish( &endpoint, frame, 100, 1000.0, &payload_bytes ) != 0 );
+    check( payload_bytes == 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 1 );
+    check( endpoint.written == written_before + 1 );
+
+    rn_arena_destroy( arena );
+}
+
 // A frame smaller than the packet the plan asked for is never written into:
 // rn_endpoint_write_packet fails the packet and writes nothing, and the
 // message is due again for a frame of the size asked for. (The servers and
@@ -2176,6 +2219,7 @@ REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_mes
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
 REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
+REGISTER_UNIT_TEST( test_endpoint_in_place_over_budget_finish_is_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
