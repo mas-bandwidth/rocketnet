@@ -242,18 +242,18 @@ jobs:
           cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
           cmake --build build-production --target functional_production --parallel 8
 
-      # serial: the Linux tier holds the XDP cases, which share the host's XDP
-      # state and cannot run beside other cases
       - name: Unit suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
         run: ./bin/test
 
-      - name: Functional suite, nightly tier (serial)
+      # parallel, one job per core: the Linux tier's XDP cases share the
+      # host's XDP state, and each runs in a group of its own, apart from every
+      # other case (tests/functional/main.cpp, rocketnet_functional_xdp_group)
+      - name: Functional suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_TEST_REPORT: "1"
-          ROCKETNET_TEST_JOBS: "1"
         run: bash tools/run_functional.sh dev ./bin/functional
 
       - name: Functional suite, portable rung pinned by env
