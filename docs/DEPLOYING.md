@@ -108,6 +108,15 @@ Cold, on a fresh box, as root:
 
     # 2. RUNTIME TIER (idempotent, re-run any time):
     scripts/rocketnet-provision eth0 7
+    #    The interface is the one carrying the public address. On one
+    #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
+    #    NIC and provisions that (R2), and the server attaches there and tags
+    #    what it sends; QinQ, 802.1ad and VLANs on bonds or bridges are
+    #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
+    #    NIC without it refuses an xdp pin, and auto falls to the next rung.
+    #    The socket transports pay for connection tracking under a stateful
+    #    firewall; LINUX.md section 6 gives the notrack rule and what the
+    #    ruleset must accept with it.
     #    On a kernel before 6.12 (Ubuntu 22.04 and 24.04) this also turns
     #    off the real-time throttle (R8), which otherwise stops every
     #    spinning XDP worker about 50 ms in every second, and 0.2 to 1 s at
@@ -197,8 +206,8 @@ Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
 transport matrix, and `.github/workflows/nightly-soak.yml` runs
 `bash tools/run_xdp_filter_guest.sh` inside a four-CPU virtme-ng guest on the
-built `server_xdp.o` and `test_xdp_filter`, requiring all 18 `BPF_PROG_TEST_RUN`
-and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 18 cases passed`;
+built `server_xdp.o` and `test_xdp_filter`, requiring all 19 `BPF_PROG_TEST_RUN`
+and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 19 cases passed`;
 see `ROOTGATE.md`). No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
 supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.
