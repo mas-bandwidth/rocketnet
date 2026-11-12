@@ -651,6 +651,9 @@ def main():
     if args.self_test:
         return self_test()
     root = Path(args.root).resolve()
+    if not (root / "sdk" / "rocketnet_counters.h").is_file():
+        print("FAIL check_counter_observed: no sdk/rocketnet_counters.h under %s: 0 counters, nothing was checked" % root)
+        return 1
     if not args.build or not args.platform:
         print("FAIL check_counter_observed: give --build (a configured CMake build directory) and --platform")
         return 2
