@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Source coverage of the fuzz harnesses, per target and per area: yojimbo's
-# tools/fuzz_coverage.sh for rocketnet. Builds the fuzz_replay_* targets with
+# Source coverage of the fuzz harnesses, per target and per area. Builds the
+# fuzz_replay_* targets with
 # source-based coverage, runs each over its committed corpus plus a batch of
 # pseudo-random inputs (the replay driver's standalone mode), and prints, for
 # every area of the untrusted-input surface, the lines and functions each

@@ -10341,7 +10341,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
 // client's MAC was learned took the gateway's hairpin) is pinned by test_xdp's
 // test_xdp_transport_reply_mac_refreshed_at_finish. The application sends its first
 // messages to a client the update just connected; the client processes
-// payloads only once connected (as netcode.io's client), so a payload that
+// payloads only once connected (TRANSPORT.md t11.3), so a payload that
 // beat the keep-alive is refused WRONG_STATE and lost. On hulk the xdp
 // server sent CONFIG and ARM, then the keep-alive ~200 us later, in every
 // trace; the gso server sent the keep-alive first.

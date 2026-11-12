@@ -112,7 +112,7 @@ Two constants reproduce the class, as reversed witnesses:
 
 - `RepeatKeepAlive = FALSE`: the server sends the establishing keep-alive once, at the
   response, and no more until the client acknowledges one. This is the protocol
-  without netcode's rule.
+  without the repeated keep-alive of TRANSPORT.md t13.1.
 - `KeepAliveClock = "anysend"`: the keep-alive is paced off the last send of anything,
   so a payload stream suppresses it. This is the #90 regression the server's comment
   at `rocketnet_server_protocol_write_keep_alive_if_due` records.
@@ -207,7 +207,7 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 8 -cleanup -deadlock -lncheck 
      -config MCClientConnection.cfg MCClientConnection
 ```
 
-**Payloads** are accepted only in state 4, as netcode.io's client: the server's
+**Payloads** are accepted only in state 4 (TRANSPORT.md t11.3): the server's
 first payloads can reach the client ahead of the keep-alive that connects it
 (the keep-alive lost, as `KindLoss = "firstkind"` does, or reordered behind
 them), and a payload delivered in state 3 let the application reply on a

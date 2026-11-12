@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Suite runner. Each test is a process, and cases run in parallel, one
-    job per core. The output is the netcode
-    shape: one line per test, its name, in suite order, then
+    job per core. The output is one line per test, its name, in suite
+    order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
     fails. The functional runner keeps 120s in every build; the unit runner

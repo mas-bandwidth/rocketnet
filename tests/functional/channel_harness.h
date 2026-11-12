@@ -10,10 +10,9 @@
 
     The SDK message objects run over an rn_message_link_t transport seam. The
     harness binds both real message objects to deterministic protocol-backed
-    links, with the simulator as the wire between them. This is what the
-    harness takes from yojimbo's and netcode's soak tests (two endpoints
-    driven over a simulated link, deterministic seed for exact replay) and
-    what it refuses: real sockets, wall-clock sleeps, and any non-mocked
+    links, with the simulator as the wire between them: two endpoints driven
+    over a simulated link, with a deterministic seed for exact replay. It
+    refuses real sockets, wall-clock sleeps, and any non-mocked
     time (time is an argument the test advances, so a failing run replays
     exactly).
 

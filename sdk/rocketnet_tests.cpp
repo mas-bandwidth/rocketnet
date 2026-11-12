@@ -5368,8 +5368,8 @@ void rocketnet_test_server_keep_alive_pacing()
 
 void rocketnet_test_client_payload_before_first_keep_alive()
 {
-    // a payload racing ahead of the first keep-alive is ignored, as
-    // netcode.io's client does: delivered, it let the application reply on
+    // a payload racing ahead of the first keep-alive is ignored
+    // (TRANSPORT.md t11.3): delivered, it let the application reply on
     // a connection that could not yet send. The keep-alive still connects
     // the client, and the payloads after it are delivered
 
@@ -5687,8 +5687,8 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
             }
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-            // before connected the client ignores the payload, as
-            // netcode.io's client does, counted wrong state
+            // before connected the client ignores the payload
+            // (TRANSPORT.md t11.3), counted wrong state
 
             const int delivered = rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
             if ( !connected_before )
@@ -5829,8 +5829,8 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
 
             // the standalone ack, sealed from _sending connection response_
-            // and sent once. The client now ignores payloads there (as
-            // netcode.io's client), so it accrues no debt to send it for,
+            // and sent once. The client now ignores payloads there
+            // (TRANSPORT.md t11.3), so it accrues no debt to send it for,
             // but the packet stays legal, and the server's pacing must
             // survive it all the same.
 
