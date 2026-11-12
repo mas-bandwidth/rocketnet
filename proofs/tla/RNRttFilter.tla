@@ -250,11 +250,13 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 
-\* Liveness: time goes on, the sender keeps sending, a due ack arrives, and
-\* the path turns good (the last bad interval ends).
+\* Liveness: time goes on, the sender keeps sending and resends what is
+\* unacknowledged (RNResendTiming), a due ack arrives, and the path turns
+\* good (the last bad interval ends).
 Fairness ==
     /\ WF_vars(Tick)
     /\ WF_vars(Send)
+    /\ WF_vars(\E i \in 1..M : Resend(i))
     /\ WF_vars(\E s \in Slots : Ack(s))
     /\ SF_vars(Tick /\ good')
 LiveSpec == Spec /\ Fairness
