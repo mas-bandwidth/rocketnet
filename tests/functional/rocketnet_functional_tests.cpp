@@ -10365,13 +10365,26 @@ static bool wire_totals_connect( struct rocketnet_client_transport_t * client, s
 // server's sent totals until that thread has run. pumping with a 1 ms sleep
 // per step lets the receive thread catch up, then the cross-side checks hold.
 
+static void wire_totals_print( const char * what, const wire_totals_t * c, const wire_totals_t * s )
+{
+    printf( "%s: client sent %llu packets %llu bytes, received %llu packets %llu bytes; server sent %llu packets %llu bytes, received %llu packets %llu bytes\n",
+            what,
+            (unsigned long long) c->packets_sent, (unsigned long long) c->bytes_sent,
+            (unsigned long long) c->packets_received, (unsigned long long) c->bytes_received,
+            (unsigned long long) s->packets_sent, (unsigned long long) s->bytes_sent,
+            (unsigned long long) s->packets_received, (unsigned long long) s->bytes_received );
+}
+
 static bool wire_totals_drain( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
 {
+    wire_totals_t c, s;
+    memset( &c, 0, sizeof( c ) );
+    memset( &s, 0, sizeof( s ) );
+
     for ( int i = 0; i < 5000; i++ )
     {
         wire_totals_pump( client, server, time, 1 );
 
-        wire_totals_t c, s;
         wire_totals_client( client, &c );
         wire_totals_server( server, &s );
         if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
@@ -10380,7 +10393,83 @@ static bool wire_totals_drain( struct rocketnet_client_transport_t * client, str
         }
     }
 
+    wire_totals_print( "wire_totals_drain gave up after 5000 pumps", &c, &s );
+
     return false;
+}
+
+// The drain for an exchange over real UDP sockets, where the kernel may drop
+// a loopback datagram under machine load. Both counters are charged at the
+// hand-off, so a dropped datagram leaves the receiver behind the sender by a
+// constant count for good while both sides keep counting: that is loss, and
+// the caller may run its exchange once more. A receiver that stops counting
+// or falls further behind is a stall, and a receiver ahead of its sender is a
+// double count: both fail at once.
+
+enum wire_drain_result_t
+{
+    WIRE_DRAIN_EQUAL,
+    WIRE_DRAIN_CONSTANT_LOSS,
+    WIRE_DRAIN_FAILED
+};
+
+static wire_drain_result_t wire_totals_drain_judged( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                                     double * time, const char * what )
+{
+    const int pumps = 5000;
+    const int window = 1000;
+
+    wire_totals_t c, s, c_window, s_window;
+    memset( &c, 0, sizeof( c ) );
+    memset( &s, 0, sizeof( s ) );
+    memset( &c_window, 0, sizeof( c_window ) );
+    memset( &s_window, 0, sizeof( s_window ) );
+
+    for ( int i = 0; i < pumps; i++ )
+    {
+        wire_totals_pump( client, server, time, 1 );
+
+        wire_totals_client( client, &c );
+        wire_totals_server( server, &s );
+
+        if ( c.packets_received > s.packets_sent || s.packets_received > c.packets_sent )
+        {
+            wire_totals_print( what, &c, &s );
+            printf( "%s: a receiver counted more packets than its sender sent (a double count)\n", what );
+            return WIRE_DRAIN_FAILED;
+        }
+
+        if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
+        {
+            return WIRE_DRAIN_EQUAL;
+        }
+
+        if ( i == pumps - window )
+        {
+            c_window = c;
+            s_window = s;
+        }
+    }
+
+    const uint64_t up = c.packets_sent - s.packets_received;
+    const uint64_t down = s.packets_sent - c.packets_received;
+    const uint64_t up_before = c_window.packets_sent - s_window.packets_received;
+    const uint64_t down_before = s_window.packets_sent - c_window.packets_received;
+    const bool both_counting = c.packets_received > c_window.packets_received && s.packets_received > s_window.packets_received;
+
+    wire_totals_print( what, &c, &s );
+    printf( "%s: after %d pumps the server is %llu packets behind the client and the client %llu behind the server (%llu and %llu %d pumps earlier)\n",
+            what, pumps, (unsigned long long) up, (unsigned long long) down,
+            (unsigned long long) up_before, (unsigned long long) down_before, window );
+
+    if ( up == up_before && down == down_before && both_counting )
+    {
+        printf( "%s: a constant deficit while both sides keep counting: datagrams lost on loopback\n", what );
+        return WIRE_DRAIN_CONSTANT_LOSS;
+    }
+
+    printf( "%s: the deficit moved or a receiver stopped counting: not loss\n", what );
+    return WIRE_DRAIN_FAILED;
 }
 
 // the drain for a later connection: the server's lifetime totals are larger
@@ -10643,7 +10732,10 @@ void wire_totals_reset_per_connection_not_per_server()
 // settled baseline, then N packets each way whose sealed UDP payload sizes are
 // known from finish_packet, so each counter delta is exact.
 
-static void wire_bytes_per_family_exchange( const char * public_address, const char * connect_host,
+static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                           double * time_in, int ip_udp_header_bytes );
+
+static bool wire_bytes_per_family_exchange( const char * public_address, const char * connect_host,
                                             uint64_t client_id, int ip_udp_header_bytes )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
@@ -10678,7 +10770,30 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
     rocketnet_check( client != NULL );
     rocketnet_check( wire_totals_connect( client, server, &time ) );
-    rocketnet_check( wire_totals_drain( client, server, &time ) );
+
+    const wire_drain_result_t settled = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family baseline" );
+    rocketnet_check( settled != WIRE_DRAIN_FAILED );
+
+    const bool exchanged = settled == WIRE_DRAIN_EQUAL && wire_bytes_per_family_measure( client, server, &time, ip_udp_header_bytes );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+
+    return exchanged;
+}
+
+// N packets each way from a settled baseline, every counter delta exact.
+// false only when a loopback datagram was lost (a constant deficit).
+
+static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                           double * time_in, int ip_udp_header_bytes )
+{
+    double time = *time_in;
 
     wire_totals_t client_before, server_before;
     wire_totals_client( client, &client_before );
@@ -10724,7 +10839,13 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
 
     rocketnet_server_transport_send_packets( server );
 
-    rocketnet_check( wire_totals_drain( client, server, &time ) );
+    const wire_drain_result_t drained = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family exchange" );
+    *time_in = time;
+    rocketnet_check( drained != WIRE_DRAIN_FAILED );
+    if ( drained == WIRE_DRAIN_CONSTANT_LOSS )
+    {
+        return false;
+    }
 
     wire_totals_t client_after, server_after;
     wire_totals_client( client, &client_after );
@@ -10748,21 +10869,31 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     rocketnet_check( server_after.bytes_sent - server_before.bytes_sent == server_wire + headers );
     rocketnet_check( client_after.bytes_received - client_before.bytes_received == server_wire + headers );
 
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
-    rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server, time );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    return true;
+}
 
-    rocketnet_test_env_restore( &client_guard );
-    rocketnet_test_env_restore( &server_guard );
+// One lost loopback datagram is the machine, not the library: run the whole
+// exchange once more on a fresh server, client and sockets. A second loss, a
+// moving deficit, a stalled or double-counting receiver, and every exact
+// counter check still fail.
+
+static void wire_bytes_per_family( const char * public_address, const char * connect_host, uint64_t client_id, int ip_udp_header_bytes )
+{
+    if ( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) )
+    {
+        return;
+    }
+
+    printf( "wire_bytes_per_family %s: a loopback datagram was lost; running the exchange once more on fresh sockets\n", public_address );
+    rocketnet_check( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) );
 }
 
 void test_transport_wire_bytes_per_family()
 {
-    wire_bytes_per_family_exchange( "127.0.0.1:0", "127.0.0.1", 0x5704ULL,
-                                    ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
-    wire_bytes_per_family_exchange( "[::1]:0", "[::1]", 0x5705ULL,
-                                    ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    wire_bytes_per_family( "127.0.0.1:0", "127.0.0.1", 0x5704ULL,
+                           ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    wire_bytes_per_family( "[::1]:0", "[::1]", 0x5705ULL,
+                           ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 }
 
 struct rocketnet_functional_test_t
