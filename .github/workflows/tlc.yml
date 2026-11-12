@@ -30,6 +30,12 @@
 # about 505 s at two at once (they ran in 167 to 178 s each on a 4-CPU bench
 # slot). tools/check_tla_records.py checks the file on every commit.
 #
+# Budget margin: a PASS record over 60% of its 110 s budget (66 s) is refused
+# on every commit (tools/check_tla_records.py) unless proofs/tla/BUDGETS.tsv
+# declares a budget of at least twice its seconds for it, or it becomes
+# nightly debt. A declared case runs in its own slice under `timeout` at that
+# budget_s and is held to its record like any other.
+#
 # Neither job runs any other timeout-debt case: those have taken up to 87
 # hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch that
 # is not a release gate.

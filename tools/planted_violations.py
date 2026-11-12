@@ -30,7 +30,10 @@ per commit (on: push or pull_request) or on a schedule (on: schedule), except
 reusable-call jobs (`uses:`), whose verdicts are the called workflow's jobs;
 plus every entry of tools/checkers.txt when that file exists (first
 whitespace-separated field of each non-comment line; a row covers an entry when
-its command contains the entry's text). Several rows may cover one job (one per
+its command or setup contains the entry's text, or the entry's registered
+self-test command, the line's second tab-separated field, whitespace collapsed:
+a checker whose one CI step is its self-test is run by a row that runs that
+self-test with the checker planted broken). Several rows may cover one job (one per
 step that is a check); a job needs at least one.
 
 Wiring is checked, not assumed (--check-table, and before every run):
@@ -247,14 +250,24 @@ def inventory(root, workflows=None):
             if job.uses:
                 continue
             keys.append((f"{name}:{job.id}", "job"))
+    for entry in checker_selftests(root):
+        keys.append((f"checker:{entry}", "checker"))
+    return keys
+
+
+def checker_selftests(root):
+    """{entry: registered self-test command, collapsed ('' when the line has none)} for
+    every tools/checkers.txt line, in file order; {} when the file does not exist."""
+    found = {}
     checkers = Path(root) / CHECKERS
     if checkers.exists():
         for line in checkers.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
+            if not line.strip() or line.strip().startswith("#"):
                 continue
-            keys.append((f"checker:{line.split()[0]}", "checker"))
-    return keys
+            fields = line.split("\t")
+            selftest = collapse(fields[1]) if len(fields) > 1 and fields[1].strip() != "-" else ""
+            found[line.split()[0]] = selftest
+    return found
 
 
 def step_tokens(run_text):
@@ -348,13 +361,22 @@ def judge_table(root, rows, workflows=None):
                         env[str(key)] = str(value)
         row["_env"] = env
         row["_wd"] = matching[0].get("working-directory")
+    selftests = checker_selftests(root)
     for key, kind in inventory(root, workflows):
         if kind == "job":
             if key not in covered:
                 problems.append(f"PLANT-MISSING {key}")
         else:
             entry = key[len("checker:"):]
-            if not any(entry in r["command"] or entry in r["setup"] for r in rows):
+            selftest = selftests.get(entry, "")
+
+            def runs(row):
+                texts = (row["command"], row["setup"])
+                if any(entry in text for text in texts):
+                    return True
+                return bool(selftest) and any(selftest in collapse(unescape(text)) for text in texts)
+
+            if not any(runs(r) for r in rows):
                 problems.append(f"PLANT-MISSING {key}")
     return problems
 
@@ -741,6 +763,17 @@ def self_test(out=say):
         code, lines = go(complete, "--check-table")
         expect("checkers.txt entry with no row is PLANT-MISSING", "PLANT-MISSING checker:never.sh" in lines)
         expect("checkers.txt entry a row runs is covered", "PLANT-MISSING checker:lazy.sh" not in lines)
+        # an entry whose row runs only its registered self-test (field 2) is covered; one whose
+        # self-test no row runs is still missing
+        (repo / CHECKERS).write_text(
+            "# path\tself-test\tzero\tworkflow\tjob\tstep\n"
+            "tools/judge.py\tsh   check.sh data.txt\t-\tw.yml\tgood\tCheck\n"
+            "tools/alone.py\tsh alone-selftest.sh\t-\tw.yml\tgood\tCheck\n", encoding="utf-8")
+        code, lines = go(complete, "--check-table")
+        expect("checkers.txt entry whose self-test a row runs is covered",
+               "PLANT-MISSING checker:tools/judge.py" not in lines)
+        expect("checkers.txt entry whose self-test no row runs is PLANT-MISSING",
+               "PLANT-MISSING checker:tools/alone.py" in lines)
         (repo / CHECKERS).unlink()
         # a table that does not parse exits 2
         bad = Path(tmp) / "bad.tsv"
