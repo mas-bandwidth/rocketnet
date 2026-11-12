@@ -11532,6 +11532,258 @@ void rocketnet_test_xdp_vlan_tag_stripped_ipv4()
     rocketnet_xdp_max_size_both_ways( false, "test_xdp_transport_vlan_tag_stripped_ipv4" );
 }
 
+// A capture on the near end, in this namespace: an AF_PACKET tap sees a frame
+// only after the XDP program passed it to the kernel stack, never one it
+// redirected. Returns the tcpdump pid once the pcap header is written.
+
+static pid_t rocketnet_xdp_veth_capture_near( const char * case_name, const char * filter, char * path, size_t path_bytes )
+{
+    snprintf( path, path_bytes, "/tmp/rocketnet_xdp_near_XXXXXX" );
+    const int fd = mkstemp( path );
+    rocketnet_check( fd >= 0 );
+    close( fd );
+
+    const pid_t pid = fork();
+    rocketnet_check( pid >= 0 );
+    if ( pid == 0 )
+    {
+        const int null_fd = open( "/dev/null", O_WRONLY );
+        if ( null_fd >= 0 )
+        {
+            dup2( null_fd, 1 );
+            dup2( null_fd, 2 );
+        }
+        execlp( "tcpdump", "tcpdump", "--immediate-mode", "-i", ROCKETNET_XDP_VETH_NEAR, "-n", "-U", "-s", "0", "-w", path, filter, (char *) NULL );
+        _exit( 127 );
+    }
+
+    bool ready = false;
+    const double wait_start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - wait_start < 10.0 )
+    {
+        struct stat pcap_stat;
+        if ( stat( path, &pcap_stat ) == 0 && pcap_stat.st_size >= 24 )
+        {
+            ready = true;
+            break;
+        }
+        if ( waitpid( pid, NULL, WNOHANG ) == pid )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.01 );
+    }
+
+    if ( !ready )
+    {
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the near-end capture never became ready", case_name );
+    }
+    rocketnet_check( ready );
+    return pid;
+}
+
+// the lines of a pcap read back with each frame's tag, that contain every one
+// of the given texts
+static int rocketnet_xdp_veth_count_lines( const char * path, const char * text, const char * also )
+{
+    char command[256];
+    snprintf( command, sizeof( command ), "tcpdump -n -e -r %s 2>/dev/null", path );
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
+    int count = 0;
+    for ( const std::string & line : lines )
+    {
+        if ( line.find( text ) != std::string::npos && ( also == NULL || line.find( also ) != std::string::npos ) )
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+// OTHER VID AND UNTAGGED. The server's address is on VLAN 77 of the near end.
+// The client's address moves, on the far end, between three devices, and
+// each phase sends ROCKETNET_XDP_VETH_COUNT payloads with its own byte:
+//
+//   1. on the VLAN 77 device: the server's own VLAN. All are delivered.
+//   2. on a VLAN 78 device: another VLAN. The program passes each frame to
+//      the kernel stack: the near-end capture, which sees only frames the
+//      program passed, has every one. The redirected counter does not move,
+//      and the server delivers none.
+//   3. on the bare far end: untagged. The program redirects each frame to the
+//      server, which delivers it. This is the design, not a gap. A NIC with
+//      rx-vlan-offload on strips the tag before XDP runs, so a frame of the
+//      server's own VLAN reaches the program untagged and cannot be told from
+//      a frame sent with no tag (docs/LINUX.md, "A VLAN": the transport
+//      "takes only frames tagged with that VLAN ID (and untagged frames, which
+//      is how a NIC with rx-vlan-offload on delivers them)").
+//
+// The far-end capture shows each phase's frames on the wire as tagged 77,
+// tagged 78 and untagged. A static neighbor entry takes the place of ARP,
+// because nothing answers on VLAN 78 or untagged.
+
+static void rocketnet_xdp_vlan_other_vid_and_untagged( const char * case_name )
+{
+    rocketnet_xdp_veth_vlan = 77;
+    rocketnet_xdp_veth_vlan_tag_in_data = true;
+    char server_address[128];
+    struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    struct rocketnet_client_transport_t * client = rocketnet_xdp_veth_client( server_address );
+    rocketnet_check( rocketnet_xdp_veth_capture_present );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    uint8_t near_mac[6];
+    {
+        const std::vector<std::string> lines = rocketnet_xdp_veth_lines( "cat /sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/address" );
+        rocketnet_check( lines.size() == 1 );
+        unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
+        rocketnet_check( sscanf( lines[0].c_str(), "%x:%x:%x:%x:%x:%x", &octet[0], &octet[1], &octet[2], &octet[3], &octet[4], &octet[5] ) == 6 );
+        for ( int i = 0; i < 6; i++ )
+        {
+            near_mac[i] = (uint8_t) octet[i];
+        }
+    }
+    char near_mac_text[32];
+    snprintf( near_mac_text, sizeof( near_mac_text ), "%02x:%02x:%02x:%02x:%02x:%02x", near_mac[0], near_mac[1], near_mac[2], near_mac[3], near_mac[4], near_mac[5] );
+
+    char near_pcap[64];
+    const pid_t near_capture = rocketnet_xdp_veth_capture_near( case_name, "vlan 78 and udp dst port 40411", near_pcap, sizeof( near_pcap ) );
+
+    const int count = ROCKETNET_XDP_VETH_COUNT;
+    const uint8_t phase_byte[3] = { 0xa7, 0xb8, 0xc0 };
+    int delivered[3] = { 0, 0, 0 };
+    uint64_t redirected_delta[3] = { 0, 0, 0 };
+
+    for ( int phase = 0; phase < 3; phase++ )
+    {
+        char command[256];
+        if ( phase == 1 )
+        {
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr del 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR ".77" );
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link add link " ROCKETNET_XDP_VETH_FAR " name " ROCKETNET_XDP_VETH_FAR ".78 type vlan id 78" );
+            rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " ethtool -K " ROCKETNET_XDP_VETH_FAR ".78 tx off >/dev/null" );
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link set " ROCKETNET_XDP_VETH_FAR ".78 up" );
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR ".78" );
+            snprintf( command, sizeof( command ), "ip -n " ROCKETNET_XDP_VETH_NETNS " neigh replace 10.77.2.1 lladdr %s dev " ROCKETNET_XDP_VETH_FAR ".78 nud permanent", near_mac_text );
+            rocketnet_xdp_veth_run( command );
+        }
+        else if ( phase == 2 )
+        {
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr del 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR ".78" );
+            rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR );
+            snprintf( command, sizeof( command ), "ip -n " ROCKETNET_XDP_VETH_NETNS " neigh replace 10.77.2.1 lladdr %s dev " ROCKETNET_XDP_VETH_FAR " nud permanent", near_mac_text );
+            rocketnet_xdp_veth_run( command );
+        }
+
+        uint8_t payload_out[100];
+        memset( payload_out, phase_byte[phase], sizeof( payload_out ) );
+        const uint64_t redirected_before = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED );
+
+        // a send every 10 ms, then 0.5 s for the last to land: every frame of
+        // the phase is judged before the next phase moves the address
+
+        int sent = 0;
+        start = rocketnet_platform_time();
+        double last_send = 0.0;
+        while ( rocketnet_platform_time() - start < 3.0 )
+        {
+            const double now = rocketnet_platform_time();
+            if ( sent < count && now - last_send >= 0.01 )
+            {
+                rocketnet_client_transport_send_packet( client, payload_out, (int) sizeof( payload_out ) );
+                sent++;
+                last_send = now;
+            }
+            rocketnet_client_transport_update( client, now );
+            rocketnet_server_transport_update( server, now );
+            rocketnet_server_transport_send_packets( server );
+
+            const int num_payloads = rocketnet_server_transport_num_payloads( server );
+            for ( int i = 0; i < num_payloads; i++ )
+            {
+                int payload_client_index, payload_bytes;
+                uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+                for ( int p = 0; p < 3; p++ )
+                {
+                    delivered[p] += payload_bytes == (int) sizeof( payload_out ) && payload[0] == phase_byte[p] ? 1 : 0;
+                }
+            }
+
+            static uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+            while ( rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) > 0 )
+            {
+            }
+
+            if ( sent == count && now - last_send > 0.5 )
+            {
+                break;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rocketnet_check( sent == count );
+
+        redirected_delta[phase] = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED ) - redirected_before;
+        rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: phase %d (%s): sent %d, server delivered %d, xdp redirected moved by %llu", case_name, phase + 1,
+                          phase == 0 ? "VLAN 77, the server's" : ( phase == 1 ? "VLAN 78, another" : "untagged" ), sent, delivered[phase], (unsigned long long) redirected_delta[phase] );
+    }
+
+    kill( near_capture, SIGINT );
+    waitpid( near_capture, NULL, 0 );
+    if ( rocketnet_xdp_veth_capture_pid > 0 )
+    {
+        rocketnet_platform_sleep( 0.25 );
+        kill( rocketnet_xdp_veth_capture_pid, SIGINT );
+        waitpid( rocketnet_xdp_veth_capture_pid, NULL, 0 );
+        rocketnet_xdp_veth_capture_pid = -1;
+    }
+
+    // the wire, from the far end: the frames to the server, by tag; and the
+    // near end's kernel stack, which sees only frames the program passed
+
+    const char * to_server = " > 10.77.2.1.40411: ";
+    const int far_77 = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, ": vlan 77, " );
+    const int far_78 = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, ": vlan 78, " );
+    const int far_all = rocketnet_xdp_veth_count_lines( rocketnet_xdp_veth_pcap, to_server, NULL );
+    const int far_untagged = far_all - far_77 - far_78;
+    const int near_78 = rocketnet_xdp_veth_count_lines( near_pcap, to_server, ": vlan 78, " );
+    unlink( near_pcap );
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: far end saw to the server %d tagged 77, %d tagged 78, %d untagged; the near end's kernel stack saw %d tagged 78", case_name, far_77, far_78, far_untagged, near_78 );
+
+    rocketnet_check( delivered[0] == count );
+    rocketnet_check( redirected_delta[0] >= (uint64_t) count );
+
+    rocketnet_check( delivered[1] == 0 );
+    rocketnet_check( redirected_delta[1] == 0 );
+    rocketnet_check( far_78 >= count );
+    rocketnet_check( near_78 >= count );
+
+    rocketnet_check( delivered[2] == count );
+    rocketnet_check( redirected_delta[2] >= (uint64_t) count );
+    rocketnet_check( far_untagged >= count );
+
+    rn_native_client_transport_stop_and_destroy( client );
+    rocketnet_xdp_veth_teardown();
+}
+
+void rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4()
+{
+    rocketnet_xdp_vlan_other_vid_and_untagged( "test_xdp_transport_vlan_other_vid_and_untagged_ipv4" );
+}
+
 // the stacked devices the transport refuses by name: QinQ, an 802.1ad VLAN,
 // a VLAN on a device that is neither a NIC nor veth, and the address on a
 // bond, a bridge or a macvlan. Each pin on xdp is refused with the reason;
@@ -14910,6 +15162,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_vlan_tag_in_data_ipv4", rocketnet_test_xdp_vlan_tag_in_data_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_vlan_tag_in_data_ipv6", rocketnet_test_xdp_vlan_tag_in_data_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_vlan_tag_stripped_ipv4", rocketnet_test_xdp_vlan_tag_stripped_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_vlan_other_vid_and_untagged_ipv4", rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_vlan_stacked_devices_refused", rocketnet_test_xdp_vlan_stacked_devices_refused, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
