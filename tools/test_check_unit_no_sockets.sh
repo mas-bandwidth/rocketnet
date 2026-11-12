@@ -31,6 +31,16 @@ int main(int argc, char **argv) {
     }
     const char *mode = getenv("RN_SOCKET_CHECK_MODE");
     if (mode && strcmp(mode, "fail") == 0) return 7;
+    if (mode && strcmp(mode, "pair") == 0) {
+        /* VERIFY-3 W8: a socketpair exchanging a datagram, no socket() call */
+        int v[2];
+        char b = 'x';
+        if (socketpair(AF_UNIX, SOCK_DGRAM, 0, v) != 0) return 8;
+        if (send(v[0], &b, 1, 0) != 1 || recv(v[1], &b, 1, 0) != 1) return 9;
+        close(v[0]);
+        close(v[1]);
+        return 0;
+    }
     if (mode && strcmp(mode, "child") == 0) return run_child(argv[0], "socket-child");
     if (mode && strcmp(mode, "clean") == 0) return run_child(argv[0], "quiet-child");
     return 0;
@@ -47,15 +57,21 @@ grep -F '0 cases ran' "$tmp/none.log"
 status=0
 RN_SOCKET_CHECK_MODE=child bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" > "$tmp/child.log" || status=$?
 test "$status" = 1
-grep -F '1 socket() call(s); first opener socket-child: socket(' "$tmp/child.log"
+grep -F '1 network call(s); first caller socket-child: socket(' "$tmp/child.log"
 # arguments after the binary reach it (a shard runs as ./bin/test --shard i/2):
 # one argument makes the fixture open a socket itself
 status=0
 RN_SOCKET_CHECK_MODE=clean bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" forwarded > "$tmp/forwarded.log" || status=$?
 test "$status" = 1
-grep -F '1 socket() call(s); first opener forwarded: socket(' "$tmp/forwarded.log"
+grep -F '1 network call(s); first caller forwarded: socket(' "$tmp/forwarded.log"
+# a socketpair exchanging a datagram, with no socket() call, is a network call
+status=0
+RN_SOCKET_CHECK_MODE=pair bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" > "$tmp/pair.log" || status=$?
+test "$status" = 1
+grep -F 'network call(s); first caller (the suite runner): socketpair(' "$tmp/pair.log"
 status=0
 RN_SOCKET_CHECK_MODE=fail bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" > "$tmp/fail.log" || status=$?
 test "$status" = 7
 grep -F 'exited 7' "$tmp/fail.log"
-echo 'Socket gate controls passed: clean, zero cases, exec child, forwarded arguments, and failing suite.'
+grep -F 'ok check_unit_no_sockets: no network system call' "$tmp/clean.log"
+echo 'Socket gate controls passed: clean, zero cases, exec child, forwarded arguments, socketpair, and failing suite.'
