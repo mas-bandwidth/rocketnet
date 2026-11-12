@@ -9,7 +9,9 @@ in `project.yaml` is empty until Glenn fills it.
 The fuzz targets themselves live in [tests/fuzz/](../fuzz); `build.sh` compiles
 the development library (ROCKETNET_DEV=1, the published development
 keys the targets mint tokens with) from `sdk/` and the vendored `sodium/`,
-links every target present in `tests/fuzz/`, zips each target's committed seed
+links the thirteen targets its list names (every target in `tests/fuzz/` but
+`rocketnet_fuzz_endpoint`, `rocketnet_fuzz_xdp_filter` and the differential
+target), zips each target's committed seed
 corpus to `<target>_seed_corpus.zip` and copies its dictionary
 (`tests/fuzz/dict/<target>.dict`, or the shared `tests/fuzz/rocketnet.dict`).
 

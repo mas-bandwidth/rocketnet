@@ -128,8 +128,10 @@ the platform source names `WS2_32`, `Qwave` and `winmm` itself.
 LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in
-`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
-target in the table above; the netcode differential target stays Linux only.
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for twelve
+of the targets in the table above: not `rocketnet_fuzz_uring_recvmsg`,
+`rocketnet_fuzz_gateway_netlink` or `rocketnet_fuzz_xdp_filter`, which read
+Linux kernel interfaces, nor the differential target, which stays on Linux.
 
 ### Without libFuzzer: the replay drivers
 
@@ -348,7 +350,9 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 `tests/oss-fuzz/` holds `build.sh`, `Dockerfile` and `project.yaml` for running
 these targets on OSS-Fuzz. `build.sh` compiles the development library from
-`sdk/` and the vendored `sodium/`, links every target present here, zips
+`sdk/` and the vendored `sodium/`, links the thirteen targets its list names
+(every target here but `rocketnet_fuzz_endpoint`, `rocketnet_fuzz_xdp_filter`
+and the differential target), zips
 each target's corpus to `<target>_seed_corpus.zip` and copies its
 dictionary. Every compile line carries `-ffp-contract=off`, which
 `tools/check_oss_fuzz_fp_contract.cmake` enforces (the `oss_fuzz_fp_contract`

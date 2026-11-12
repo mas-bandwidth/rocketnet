@@ -31,9 +31,16 @@
 #
 # Linux (the nightly's link set: bpf, xdp, io_uring) or macOS (CoreFoundation
 # and SystemConfiguration); rocketnet_fuzz_differential checks out the pinned
-# netcode reference into the build directory, as the nightly does.
+# netcode reference into the build directory, as the nightly does. Bash 4 or
+# later (associative arrays, wait -n): on macOS, whose /bin/bash is 3.2, run it
+# with a newer bash first on PATH (Homebrew's).
 
 set -euo pipefail
+
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+    echo "fuzz_ndebug.sh: needs bash 4 or later (associative arrays, wait -n); this is bash $BASH_VERSION" >&2
+    exit 2
+fi
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"

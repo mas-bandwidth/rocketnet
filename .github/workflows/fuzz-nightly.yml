@@ -216,7 +216,8 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # THE NDEBUG CAMPAIGN: the same eleven targets, but the library under them
+  # THE NDEBUG CAMPAIGN: fifteen of the sixteen targets above (all but
+  # rocketnet_fuzz_xdp_filter), but the library under them
   # is built Release (NDEBUG) as well as the harness, so rocketnet_assert is
   # compiled out (sdk/rocketnet_internal.h) and a bound that only an assert
   # holds is fuzzed the way a release build runs it. The fuzz job above

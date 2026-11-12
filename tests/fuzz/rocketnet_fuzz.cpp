@@ -38,6 +38,7 @@
 #include <memory>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 static const uint8_t rocketnet_fuzz_filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
@@ -714,7 +715,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     // nothing else: no rocketnet_init, so no platform threads and no
     // sodium, and the harness stays as deterministic as the parsers are
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     const int have_dir = rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) );

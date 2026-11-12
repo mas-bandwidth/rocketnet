@@ -91,6 +91,10 @@ rocketnet_fuzz_xdp_filter: rocketnet_fuzz_xdp_filter.cpp $(XDP_HOST_OBJ) $(LIB)
 # themselves through rocketnet_fuzz_pair.h, so they rebuild when it changes.
 rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session: rocketnet_fuzz_pair.h
 
+# the harnesses that silence the library's log install their assert handler
+# from rocketnet_fuzz_quiet.h, so they rebuild when it changes.
+$(TARGETS): rocketnet_fuzz_quiet.h
+
 $(TARGETS): %: %.cpp $(LIB)
 	$(CXX) $(FLAGS) $(SANITIZE) $< $(LIB) $(LINKS) -o $@
 

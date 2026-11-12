@@ -49,6 +49,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sodium.h>
+#include "rocketnet_fuzz_quiet.h"
 
 static uint64_t decode_u64( const uint8_t * p )
 {
@@ -134,7 +135,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
     netcode_log_level( NETCODE_LOG_LEVEL_DEBUG );
     netcode_set_printf_function( netcode_log_sink );
 

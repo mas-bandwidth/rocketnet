@@ -56,6 +56,7 @@
 #include <string.h>
 
 #include <vector>
+#include "rocketnet_fuzz_quiet.h"
 
 // A switch in the environment is on when it is set (to a value of under 64
 // bytes); through rocketnet_test_getenv, since MSVC refuses getenv (C4996).
@@ -379,7 +380,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 {
     (void) argc;
     (void) argv;
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
     return 0;
 }
 

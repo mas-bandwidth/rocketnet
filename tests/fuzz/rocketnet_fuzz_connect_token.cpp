@@ -51,6 +51,7 @@
 #include <cstdio>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 // the valid baseline, minted once: the signed data and signature never vary,
 // so every structured input mutates the same bytes
@@ -302,7 +303,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     rocketnet_fuzz_build_base_token();
 
