@@ -41,6 +41,16 @@ runs:
         host="$(uname -sm)"
         if [ -r /etc/os-release ]; then host="$host $(. /etc/os-release && echo "$ID-$VERSION_ID") $(getconf GNU_LIBC_VERSION 2>/dev/null | tr ' ' '-')"; fi
         echo "runner $RUNNER_NAME: $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo '?') processors, $host"
+        windows=no
+        case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) windows=yes ;; esac
+        # Windows: the runner-packages play puts ccache.exe, and msvc\cl.exe (the same binary under the compiler's
+        # name), in C:\ProgramData\nova\ccache. The Visual Studio generator honours no compiler launcher, so the
+        # configure step passes ROCKETNET_VS_CCACHE_GLOBALS as CMAKE_VS_GLOBALS and MSBuild runs msvc\cl.exe, which
+        # finds the real cl.exe on the PATH MSBuild sets for the tool.
+        if [ "$windows" = yes ] && ! command -v ccache >/dev/null 2>&1 && [ -x /c/ProgramData/nova/ccache/ccache.exe ]; then
+          export PATH="/c/ProgramData/nova/ccache:$PATH"
+          echo 'C:\ProgramData\nova\ccache' >> "$GITHUB_PATH"
+        fi
         if ! command -v ccache >/dev/null 2>&1; then
           echo "CCACHE-ABSENT on $RUNNER_NAME: this job compiles uncached"
           exit 0
@@ -59,6 +69,13 @@ runs:
         mkdir -p "$dir"
         stats="$RUNNER_TEMP/ccache-stats.log"
         : > "$stats"
+        if [ "$windows" = yes ]; then
+          dir="$(cygpath -m "$dir")"
+          stats="$(cygpath -m "$stats")"
+          if [ -f /c/ProgramData/nova/ccache/msvc/cl.exe ]; then
+            echo "ROCKETNET_VS_CCACHE_GLOBALS=CLToolExe=cl.exe;CLToolPath=C:/ProgramData/nova/ccache/msvc/;TrackFileAccess=false;UseMultiToolTask=true" >> "$GITHUB_ENV"
+          fi
+        fi
         {
           echo "CCACHE_DIR=$dir"
           echo "CCACHE_MAXSIZE=$size"

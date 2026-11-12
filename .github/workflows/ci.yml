@@ -1303,7 +1303,10 @@ jobs:
   # stale object is a green for the wrong reason; the Linux and macOS jobs
   # compile through ccache (.github/actions/ccache), which keys each object
   # on the compiler, the flags and the preprocessed source and so never
-  # serves a stale one. The Windows runners have no ccache.
+  # serves a stale one. The Windows jobs compile through it too: the Visual
+  # Studio generator honours no compiler launcher, so the configure step
+  # passes ROCKETNET_VS_CCACHE_GLOBALS (set by the action) as CMAKE_VS_GLOBALS
+  # and MSBuild runs ccache under cl.exe's name; unset, the build is uncached.
   #
   # The doctrine the row itself carries (#81's baseline): the portable driver
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
@@ -1346,6 +1349,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check committed XDP fallback source on Windows
         if: matrix.leg == 'a'
@@ -1362,7 +1366,8 @@ jobs:
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
       # (ROCKETNET_DEV=OFF) as a consumer sees it.
       - name: Configure
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }} "-DCMAKE_VS_GLOBALS=$ROCKETNET_VS_CCACHE_GLOBALS"
+        shell: bash
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -1675,6 +1680,9 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/Release/{1}', runner.os, matrix.leg) }}
         run: *enforce_unit_functional_timing
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,
   # one message of every reliability type, receipts, clean disconnect, clean
@@ -1786,7 +1794,8 @@ jobs:
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64 "-DCMAKE_VS_GLOBALS=$ROCKETNET_VS_CCACHE_GLOBALS"
+        shell: bash
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -1854,7 +1863,8 @@ jobs:
           exit "$missing"
 
       - name: Configure (Windows)
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64
+        run: cmake -B build -G "Visual Studio 18 2026" -A x64 "-DCMAKE_VS_GLOBALS=$ROCKETNET_VS_CCACHE_GLOBALS"
+        shell: bash
 
       - name: Build the unit suite (Windows)
         run: cmake --build build --config Release --target test --parallel
