@@ -617,8 +617,8 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( struct 
 // loss as a percentage, and the last second's packet rates and bandwidth
 // both ways. The rates come from elapsed-time buckets (about 4 ms boundary
 // resolution) over the trailing second, so the cost per update is flat.
-// rtt seeds from the handshake's round trips and is continuously refreshed
-// by the acks; jitter and packet loss are computed from the ACK history.
+// rtt is the minimum first-ack sample, zero before the first one (standard
+// t15.5); jitter and packet loss are computed from the ACK history.
 // These numbers feed time synchronization. The cumulative totals count every
 // wire datagram and byte over the client's current connection, handshake
 // included

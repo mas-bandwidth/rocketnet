@@ -4373,9 +4373,9 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
 
     rocketnet_ack_endpoint_update_stats( &client_transport->protocol.ack );
 
-    // rtt seeds from the handshake's round trips and the acks refresh it continuously from there: once positive first-ack samples exist they are the estimate
+    // standard/TRANSPORT.md t15.5: the minimum strictly positive first-ack sample, zero while none is retained
 
-    stats->rtt = client_transport->protocol.ack.rtt > 0.0f ? client_transport->protocol.ack.rtt : (float) ( client_transport->protocol.rtt_estimate * 1000.0 );
+    stats->rtt = client_transport->protocol.ack.rtt;
     stats->jitter = client_transport->protocol.ack.jitter;
     stats->packet_loss = client_transport->protocol.ack.packet_loss;
 
