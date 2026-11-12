@@ -72,7 +72,7 @@ struct rn_message_object_layout_t
     uint64_t slot_connection_ids;   // the slots machine's arrays (rn_slots_t), one entry per connection
     uint64_t slot_changed;
     uint64_t send_writers;          // the send pass's writer list, two int32_t per connection (none for one connection)
-    uint64_t views;                // offset of the first connection's views; each connection's next at + view_stride
+    uint64_t views;                 // offset of the first connection's views; each connection's next at + view_stride
     uint64_t view_stride;
     uint64_t arena;
     uint64_t arena_bytes;
