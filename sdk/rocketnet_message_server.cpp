@@ -1707,6 +1707,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
 }
 
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
+// proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     // RNOutgoingBuild BeginFlush: a pending in-place start aborted, then every
