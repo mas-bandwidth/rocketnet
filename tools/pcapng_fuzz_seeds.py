@@ -111,6 +111,8 @@ def check_seeds(root):
                 actual[path.name] = path.read_bytes()
 
     problems = []
+    if not expected:
+        problems.append("no seed at all: tests/pcapng holds no capture this tool reads")
     for name in sorted(expected):
         if name not in actual:
             problems.append("missing %s" % name)
@@ -172,6 +174,28 @@ def selftest():
         pre_files[0].unlink()
         rc = check_seeds(root)
         assert rc == 1, "check did not fail after a seed was deleted"
+
+        # the drift that went unseen from 2026-10-22: a capture renamed, its
+        # seeds still named for the old file
+        write_seeds(root)
+        assert check_seeds(root) == 0, "check failed on a freshly written set"
+        (pcapng_dir / "b.pcapng").rename(pcapng_dir / "test_b.pcapng")
+        assert check_seeds(root) == 1, "check did not fail after a capture was renamed"
+        (pcapng_dir / "test_b.pcapng").rename(pcapng_dir / "b.pcapng")
+
+        # a seed nobody generates
+        (pre_dir / (PREFIX_PREFILTER + "stray")).write_bytes(b"\x00stray")
+        assert check_seeds(root) == 1, "check did not fail on an extra seed"
+        (pre_dir / (PREFIX_PREFILTER + "stray")).unlink()
+
+        # a changed byte in a committed seed
+        first = sorted(pre_dir.glob(PREFIX_PREFILTER + "*"))[0]
+        first.write_bytes(first.read_bytes() + b"\x01")
+        assert check_seeds(root) == 1, "check did not fail on a changed seed"
+
+    # no captures at all is not a pass
+    with tempfile.TemporaryDirectory() as d:
+        assert check_seeds(Path(d)) == 1, "check passed with no capture to read"
 
     print("pcapng_fuzz_seeds selftest: ok")
     return 0
