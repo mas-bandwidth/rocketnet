@@ -1002,8 +1002,13 @@ bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char *
 
         if ( line_start )
         {
-            int number_end = 0;
-            line_irq = sscanf( line, " %d%n", irq, &number_end ) == 1 && line[number_end] == ':';
+            char * number_end = NULL;
+            const long number = strtol( line, &number_end, 10 );
+            line_irq = number_end != line && *number_end == ':' && number >= 0 && number <= INT_MAX;
+            if ( line_irq )
+            {
+                *irq = (int) number;
+            }
             named = false;
         }
 

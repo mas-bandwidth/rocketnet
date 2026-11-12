@@ -5639,9 +5639,9 @@ struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int
         }
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    snprintf( result.text, sizeof( result.text ), "Winsock %d %s", error, name );
+    (void) snprintf( result.text, sizeof( result.text ), "Winsock %d %s", error, name );
 #else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    snprintf( result.text, sizeof( result.text ), "errno %d %s (%s)", error, name, strerror( error ) );
+    (void) snprintf( result.text, sizeof( result.text ), "errno %d %s", error, name );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return result;
 }

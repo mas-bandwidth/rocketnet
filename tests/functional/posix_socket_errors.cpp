@@ -2609,7 +2609,7 @@ static void posix_port_log( void * context, enum rocketnet_log_level_t level, co
     (void) level;
     (void) length;
 
-    if ( strstr( message, "failed to bind socket" ) != NULL && strstr( message, strerror( EADDRINUSE ) ) != NULL )
+    if ( strstr( message, "failed to bind socket" ) != NULL && strstr( message, "EADDRINUSE" ) != NULL )
     {
         posix_port_bind_refusals++;
     }

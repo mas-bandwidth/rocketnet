@@ -13194,7 +13194,7 @@ void rocketnet_test_xdp_interrupt_reader_long_lines()
         rocketnet_check( irq == 45 );
         rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
 
-        fclose( interrupts );
+        (void) fclose( interrupts );
     }
 
     // 400 cpus in the kernel's layout: the continuation of the line is not
@@ -13204,7 +13204,7 @@ void rocketnet_test_xdp_interrupt_reader_long_lines()
     for ( int cpu = 0; cpu < 400; cpu++ )
     {
         char count[16];
-        snprintf( count, sizeof( count ), " %10u", 1000u + (unsigned) cpu );
+        (void) snprintf( count, sizeof( count ), " %10u", 1000u + (unsigned) cpu );
         length = interrupt_reader_append( length, count );
     }
     length = interrupt_reader_append( length, "  IR-PCI-MSI 524288-edge      eth0-TxRx-0\n" );
@@ -13220,7 +13220,7 @@ void rocketnet_test_xdp_interrupt_reader_long_lines()
     rocketnet_check( irq == 46 );
     rocketnet_check( !rocketnet_server_socket_interrupt_next_irq( interrupts, "eth0", &irq ) );
 
-    fclose( interrupts );
+    (void) fclose( interrupts );
 }
 
 #endif // #if ROCKETNET_XDP
