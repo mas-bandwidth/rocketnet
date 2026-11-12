@@ -31,7 +31,16 @@
     --big-bytes fragmented reliable ordered message every --big-every ticks.
     Every message carries magic, kind, client id, connection id, a per
     (connection, kind) sequence and a pattern the receiver checks byte for
-    byte. Inbound messages from the clients are verified the same way. Each
+    byte. With --fill-jobs N the unreliable messages are written on N job
+    threads instead of the main thread: the wide fill of rocketnet_layers.h's
+    threading contract, the game's own jobs filling between update and
+    send_packets. Each job owns a contiguous run of the connected clients
+    (one filler per client), writes each message in place as one SINGLE
+    payload (rocketnet_server_transport_start_packet, then
+    rocketnet_message_single_finish and finish_packet), and main joins them
+    before it writes the reliable and big messages through the message
+    server and calls send_packets. Inbound messages from the clients are
+    verified the same way. Each
     second it prints "harden_tick:" (connected, frames, overruns past one
     frame, the work time per frame avg/p99/max split into update, receive,
     write and send_packets, messages and packets per second, start refusals),
@@ -72,6 +81,7 @@
 
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_message.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_internal.h"
@@ -88,6 +98,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
 #include <ctime>
 #include <mutex>
 #include <string>
@@ -132,6 +143,7 @@ typedef int harden_socket_t;
 #define HARDEN_KIND_INPUT_RELIABLE 4
 #define HARDEN_KINDS 5
 #define HARDEN_CHANNEL_UNRELIABLE 0
+#define HARDEN_MAX_FILL_JOBS 64
 #define HARDEN_CHANNEL_RELIABLE 1
 #define HARDEN_CHANNEL_BIG 2
 #define HARDEN_MAX_SIZES 16
@@ -374,6 +386,7 @@ struct harden_options_t
     int base = 1;
     int burst = 15;
     int burst_clients = 0;
+    int fill_jobs = 0;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
     int reliable_every = 1;
@@ -514,6 +527,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->burst_clients = atoi( v );
         }
+        else if ( strcmp( a, "--fill-jobs" ) == 0 )
+        {
+            o->fill_jobs = atoi( v );
+        }
         else if ( strcmp( a, "--sizes" ) == 0 )
         {
             if ( !harden_parse_sizes( v, o ) )
@@ -598,7 +615,7 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
     }
     if ( o->max_clients < 1 || o->clients < 0 || o->threads < 1 || o->threads > HARDEN_MAX_THREADS || o->seconds <= 0.0 || o->hz <= 0.0 ||
          o->join_rate <= 0.0 || o->churn_clients < 0 || o->churn_clients > o->clients || o->churn_rate < 0.0 || o->messages < 0 ||
-         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES ||
+         o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES ||
          o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 )
     {
@@ -1041,6 +1058,141 @@ struct harden_server_slot_t
     harden_stream_t inbound[HARDEN_KINDS];
 };
 
+// the wide fill: --fill-jobs threads, started once and woken each frame,
+// write the unreliable messages between update and send_packets
+// (rocketnet_layers.h, threading contract). main hands them the frame's plan,
+// one item per connected client, and waits on the condition variable for all
+// of them: the join the contract asks for. Job j owns items
+// [n*j/N, n*(j+1)/N), so a client has one filler; its slot's sequence is
+// touched by that job alone until main joins
+
+struct harden_fill_item_t
+{
+    int slot;
+    int count;
+    uint64_t client_id;
+    uint32_t connection;
+};
+
+struct harden_fill_job_t
+{
+    alignas( 64 ) uint64_t messages = 0;
+    uint64_t start_refused = 0;
+    uint64_t finish_refused = 0;
+};
+
+struct harden_fill_pool_t
+{
+    std::mutex mutex;
+    std::condition_variable start_cv;
+    std::condition_variable done_cv;
+    uint64_t generation = 0;
+    int remaining = 0;
+    bool quit = false;
+    struct rocketnet_server_transport_t * transport = NULL;
+    const harden_options_t * o = NULL;
+    const std::vector<harden_fill_item_t> * plan = NULL;
+    std::vector<harden_server_slot_t> * slots = NULL;
+    std::vector<harden_fill_job_t> jobs;
+    std::vector<std::thread> threads;
+};
+
+static void harden_fill_range( harden_fill_pool_t * pool, int job )
+{
+    const std::vector<harden_fill_item_t> & plan = *pool->plan;
+    const harden_options_t & o = *pool->o;
+    harden_fill_job_t & stats = pool->jobs[(size_t) job];
+    const int num_jobs = (int) pool->jobs.size();
+    const int begin = (int) ( (int64_t) plan.size() * job / num_jobs );
+    const int end = (int) ( (int64_t) plan.size() * ( job + 1 ) / num_jobs );
+    for ( int k = begin; k < end; k++ )
+    {
+        const harden_fill_item_t & item = plan[(size_t) k];
+        harden_server_slot_t & slot = ( *pool->slots )[(size_t) item.slot];
+        for ( int n = 0; n < item.count; n++ )
+        {
+            // sizes cycle per client here, not across the server as on main
+            const int bytes = o.sizes[slot.next[HARDEN_KIND_BURST] % (uint32_t) o.num_sizes];
+            struct rocketnet_packet_context_t context;
+            uint8_t * p = rocketnet_server_transport_start_packet( pool->transport, item.slot, bytes + 1, &context );
+            if ( !p )
+            {
+                stats.start_refused++;
+                continue;
+            }
+            harden_write_message( p, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, slot.next[HARDEN_KIND_BURST] );
+            const int length = rocketnet_message_single_finish( p, context.payload_capacity, bytes );
+            if ( length <= 0 )
+            {
+                rocketnet_server_transport_abort_packet( pool->transport, &context );
+                stats.finish_refused++;
+                continue;
+            }
+            if ( rocketnet_server_transport_finish_packet( pool->transport, &context, length ) <= 0 )
+            {
+                // dropped, not sent: the sequence is not taken, as a refused start on main
+                stats.finish_refused++;
+                continue;
+            }
+            slot.next[HARDEN_KIND_BURST]++;
+            stats.messages++;
+        }
+    }
+}
+
+static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
+{
+    uint64_t seen = 0;
+    for ( ;; )
+    {
+        {
+            std::unique_lock<std::mutex> lock( pool->mutex );
+            pool->start_cv.wait( lock, [&]
+                                 { return pool->quit || pool->generation != seen; } );
+            if ( pool->quit )
+            {
+                return;
+            }
+            seen = pool->generation;
+        }
+        harden_fill_range( pool, job );
+        {
+            std::lock_guard<std::mutex> lock( pool->mutex );
+            pool->remaining--;
+            if ( pool->remaining == 0 )
+            {
+                pool->done_cv.notify_one();
+            }
+        }
+    }
+}
+
+// one fill phase: wake every job on the plan and wait for all of them
+static void harden_fill_run( harden_fill_pool_t * pool, const std::vector<harden_fill_item_t> & plan )
+{
+    std::unique_lock<std::mutex> lock( pool->mutex );
+    pool->plan = &plan;
+    pool->remaining = (int) pool->jobs.size();
+    pool->generation++;
+    pool->start_cv.notify_all();
+    pool->done_cv.wait( lock, [&]
+                        { return pool->remaining == 0; } );
+}
+
+static void harden_fill_stop( harden_fill_pool_t * pool )
+{
+    {
+        std::lock_guard<std::mutex> lock( pool->mutex );
+        pool->quit = true;
+    }
+    pool->start_cv.notify_all();
+    for ( std::thread & t : pool->threads )
+    {
+        t.join();
+    }
+    pool->threads.clear();
+}
+
 static void harden_print_resources( const char * tag, double t, const process_resources_t & r )
 {
     printf( "harden_sample: tag=%s t=%.0f", tag, t );
@@ -1095,8 +1247,8 @@ static int harden_server_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients,
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs,
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -1109,6 +1261,25 @@ static int harden_server_main( const harden_options_t & o )
     struct rocketnet_server_transport_t * transport = message_server ? rocketnet_message_server_transport( message_server ) : NULL;
 
     std::vector<harden_server_slot_t> slots( (size_t) o.max_clients );
+    harden_fill_pool_t pool;
+    std::vector<harden_fill_item_t> plan;
+    if ( o.fill_jobs > 0 )
+    {
+        if ( !transport )
+        {
+            printf( "harden_verdict: role=server verdict=FAIL reason=fill_jobs_need_transport\n" );
+            return 1;
+        }
+        pool.transport = transport;
+        pool.o = &o;
+        pool.slots = &slots;
+        pool.jobs.resize( (size_t) o.fill_jobs );
+        for ( int j = 0; j < o.fill_jobs; j++ )
+        {
+            pool.threads.emplace_back( harden_fill_job_main, &pool, j );
+        }
+        plan.reserve( (size_t) o.max_clients );
+    }
     harden_verify_t verify;
     harden_frame_window_t w;
     uint64_t total_messages = 0, total_start_refused = 0, total_frames = 0, total_overruns = 0;
@@ -1148,6 +1319,39 @@ static int harden_server_main( const harden_options_t & o )
     const double cut_c2s_at = end_at + o.quiet_seconds;
     const double cut_s2c_at = cut_c2s_at + 1.5 * o.quiet_seconds;
     const double cleanup_at = cut_s2c_at + 0.5 * o.quiet_seconds;
+    // one client's reliable ordered and big messages, on main through the
+    // message server (after the join when the jobs fill)
+    auto write_reliable_and_big = [&]( int i, uint64_t id, uint32_t connection, harden_server_slot_t & slot )
+    {
+        if ( o.reliable_every > 0 && tick % (uint64_t) o.reliable_every == 0 )
+        {
+            uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
+            if ( p )
+            {
+                harden_write_message( p, o.reliable_bytes, HARDEN_KIND_RELIABLE, id, connection, slot.next[HARDEN_KIND_RELIABLE]++ );
+                rocketnet_server_finish_message( server, o.reliable_bytes );
+                w.messages++;
+            }
+            else
+            {
+                w.start_refused++;
+            }
+        }
+        if ( o.big_every > 0 && ( tick + (uint64_t) i ) % (uint64_t) o.big_every == 0 )
+        {
+            uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_BIG, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.big_bytes );
+            if ( p )
+            {
+                harden_write_message( p, o.big_bytes, HARDEN_KIND_BIG, id, connection, slot.next[HARDEN_KIND_BIG]++ );
+                rocketnet_server_finish_message( server, o.big_bytes );
+                w.messages++;
+            }
+            else
+            {
+                w.start_refused++;
+            }
+        }
+    };
     for ( ;; )
     {
         const double frame_start = harden_now();
@@ -1223,6 +1427,13 @@ static int harden_server_main( const harden_options_t & o )
                     }
                 }
                 bursting_seen++;
+                if ( o.fill_jobs > 0 )
+                {
+                    // the jobs write the unreliable messages; this client's
+                    // reliable and big ones follow the join
+                    plan.push_back( harden_fill_item_t{ i, count, id, connection } );
+                    continue;
+                }
                 for ( int n = 0; n < count; n++ )
                 {
                     const int bytes = o.sizes[size_cursor];
@@ -1237,34 +1448,22 @@ static int harden_server_main( const harden_options_t & o )
                     rocketnet_server_finish_message( server, bytes );
                     w.messages++;
                 }
-                if ( o.reliable_every > 0 && tick % (uint64_t) o.reliable_every == 0 )
+                write_reliable_and_big( i, id, connection, slot );
+            }
+            if ( o.fill_jobs > 0 )
+            {
+                harden_fill_run( &pool, plan );
+                for ( harden_fill_job_t & job : pool.jobs )
                 {
-                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
-                    if ( p )
-                    {
-                        harden_write_message( p, o.reliable_bytes, HARDEN_KIND_RELIABLE, id, connection, slot.next[HARDEN_KIND_RELIABLE]++ );
-                        rocketnet_server_finish_message( server, o.reliable_bytes );
-                        w.messages++;
-                    }
-                    else
-                    {
-                        w.start_refused++;
-                    }
+                    w.messages += job.messages;
+                    w.start_refused += job.start_refused + job.finish_refused;
+                    job = harden_fill_job_t();
                 }
-                if ( o.big_every > 0 && ( tick + (uint64_t) i ) % (uint64_t) o.big_every == 0 )
+                for ( const harden_fill_item_t & item : plan )
                 {
-                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) i, HARDEN_CHANNEL_BIG, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.big_bytes );
-                    if ( p )
-                    {
-                        harden_write_message( p, o.big_bytes, HARDEN_KIND_BIG, id, connection, slot.next[HARDEN_KIND_BIG]++ );
-                        rocketnet_server_finish_message( server, o.big_bytes );
-                        w.messages++;
-                    }
-                    else
-                    {
-                        w.start_refused++;
-                    }
+                    write_reliable_and_big( item.slot, item.client_id, item.connection, slots[(size_t) item.slot] );
                 }
+                plan.clear();
             }
         }
         const double t_write = harden_now();
@@ -1330,6 +1529,7 @@ static int harden_server_main( const harden_options_t & o )
             if ( !process_resources_read( &r ) )
             {
                 printf( "harden_verdict: role=server verdict=FAIL reason=resource_read\n" );
+                harden_fill_stop( &pool );
                 return 1;
             }
             const char * tag = resources_started ? "peak" : "post_warmup";
@@ -1365,6 +1565,8 @@ static int harden_server_main( const harden_options_t & o )
             next = harden_now();
         }
     }
+    // the fill jobs end with the frames: the cuts and the cleanup are main's
+    harden_fill_stop( &pool );
 
     total_messages += w.messages;
     total_start_refused += w.start_refused;

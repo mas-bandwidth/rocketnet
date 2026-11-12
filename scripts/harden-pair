@@ -26,6 +26,7 @@
 #   --seconds S, --clients N, --threads T, --burst-clients K, --hostile-pps P,
 #   --frame-p99-us U, --quiet-seconds Q, --warm-seconds W, --xdp-queues Q
 #                                     as scripts/harden-cell
+#   --fill-jobs J                     the server writes its unreliable messages on J job threads
 #   --port P                          the server's UDP port (default 40000)
 #   --client-remote DIR               the client machine's checkout (default --remote)
 #   --server-env K=V                  an environment setting for the server (repeatable)
@@ -83,6 +84,7 @@ while [ $# -gt 0 ]; do
         --clients) clients="$2"; shift 2 ;;
         --threads) threads="$2"; shift 2 ;;
         --burst-clients) burst_clients="$2"; shift 2 ;;
+        --fill-jobs) fill_jobs="$2"; shift 2 ;;
         --hostile-pps) hostile_pps="$2"; shift 2 ;;
         --frame-p99-us) frame_p99_us="$2"; shift 2 ;;
         --warm-seconds) warm_seconds="$2"; shift 2 ;;

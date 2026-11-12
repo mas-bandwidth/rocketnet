@@ -2,8 +2,9 @@
 # harden-rows: the rows of the server transport hardening matrix, sourced by
 # scripts/harden-cell (one machine, two namespaces) and scripts/harden-pair
 # (two machines). harden_row <row> sets server_shape, client_shape, netem,
-# hostile, duplicates and min_delivery, reading burst_clients; it returns 1
-# for a row it does not know.
+# hostile, duplicates and min_delivery, reading burst_clients and fill_jobs
+# (--fill-jobs: the unreliable writes on that many job threads, 0 = main);
+# it returns 1 for a row it does not know.
 
 harden_row()
 {
@@ -52,4 +53,5 @@ harden_row()
             return 1
             ;;
     esac
+    server_shape+=(--fill-jobs "${fill_jobs:-0}")
 }
