@@ -801,6 +801,8 @@ MCRNRioWorkerBrokenUnboundedRetry.cfg	MCRNRioWorker.tla	temporal	StopCompletes	c
 MCRNRioWorkerBrokenOneBatchPerPass.cfg	MCRNRioWorker.tla	invariant	LeakOnlyAfterStalls	check	rnrioworker	required	-
 MCRNRioWorkerInlineStopBatchPerPass.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerReachLateCancelLeak.cfg	MCRNRioWorker.tla	invariant	NotReachedLateCancelLeak	check	rnrioworker	required	-
+MCRNRioWorkerReachRefusedPost.cfg	MCRNRioWorker.tla	invariant	NotReachedRefusedPostAtExit	check	rnrioworker	required	-
+MCRNRioWorkerBrokenUncountedPost.cfg	MCRNRioWorker.tla	invariant	StopSendsFinished	check	rnrioworker	required	-
 MCRNSchedulerBrokenRtxById.cfg	MCRNScheduler.tla	invariant	RtxHeadBoost	check	rnscheduler	required	-
 MCRNUnreliableRingLayoutBrokenWalkFromHead.cfg	MCRNUnreliableRingLayout.tla	invariant	WalkExact	check	rnunreliableringlayout	required	-
 MCReceiveOrderDeadlineWindow.cfg	MCReceiveOrder.tla	invariant	OneLiveMappingPerToken	check	receiveorder	required	-
