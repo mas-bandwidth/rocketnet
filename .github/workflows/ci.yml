@@ -1010,6 +1010,16 @@ jobs:
           ./bin/source_audit | tee source-audit-dev.log
           grep -qx test_config_env_every_name_read_is_documented source-audit-dev.log
 
+      # Every counter the library keeps is observed moving by a test compiled
+      # into this build (tools/check_counter_observed.py): public rows and each
+      # platform's own transport counters, judged on the development build
+      # whose DEV blocks the tests read.
+      - name: Every counter is observed by a test
+        if: matrix.leg == 'unit' && matrix.dev == 'ON'
+        run: |
+          python3 tools/check_counter_observed.py --self-test
+          python3 tools/check_counter_observed.py --build build --platform ${{ runner.os == 'Linux' && 'linux' || 'macos' }}
+
       - name: Check export source gate
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
@@ -1465,6 +1475,11 @@ jobs:
         timeout-minutes: 2
         run: |
           set -euo pipefail
+          # the File API codemodel names every target's sources for
+          # tools/check_counter_observed.py (Visual Studio writes no
+          # compile_commands.json); the query must exist before configuring
+          mkdir -p build/.cmake/api/v1/query
+          : > build/.cmake/api/v1/query/codemodel-v2
           cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }} "-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"
         shell: bash
 
@@ -1482,6 +1497,17 @@ jobs:
       - name: Check the public header is clean and self-contained
         if: matrix.leg == 'a'
         run: python tools/check_public_header.py --build build --config Release
+
+      # Every counter the library keeps is observed moving by a test compiled
+      # into this build (tools/check_counter_observed.py): the Windows
+      # transports' counters are judged here, on the development build.
+      - name: Every counter is observed by a test (Windows)
+        if: matrix.leg == 'a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/check_counter_observed.py --self-test
+          python tools/check_counter_observed.py --build build --platform windows
 
       - name: Replay the fuzz corpora without libFuzzer
         if: matrix.leg != 'c'
