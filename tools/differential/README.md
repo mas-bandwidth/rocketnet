@@ -138,11 +138,13 @@ nonzero.
 `bash tools/differential/selftest.sh [NETCODE_DIR]` copies the tracked files
 to a scratch directory, requires the stock copy to print `PASS` and exit 0,
 then plants one fault at a time in the copy and requires each to print
-`FAIL` and exit nonzero: the protocol id rung removed (two rows turn
-`rocketnet-weaker`), the version rung removed (only the expected rocketnet
-decision of a raw row sees it), the timeout rung removed (the permitted
-stricter row turns `agree`), a reference cell altered, and a corpus row
-deleted. The checkout is never changed.
+`FAIL`, exit nonzero, and fail only on the rows that fault touches: the
+protocol id rung removed (`wrong_protocol_id` turns `rocketnet-weaker`), the
+version rung removed (only the expected rocketnet decisions of the raw and
+version rows see it), the timeout rung removed (the permitted stricter row
+turns `agree`), a reference cell altered, and a corpus row deleted. Each
+restored file is touched so the incremental build drops the plant, and the
+restored copy must pass again at the end. The checkout is never changed.
 
 `.github/workflows/nightly-differential.yml` runs the self-test and then the
 gate, live against the pinned netcode source, every night on the fleet. The
