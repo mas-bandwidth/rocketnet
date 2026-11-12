@@ -131,6 +131,88 @@ static void test_client_io_step_uses_send_batch_when_set()
 }
 REGISTER_UNIT_TEST( test_client_io_step_uses_send_batch_when_set );
 
+// A ring longer than one batch: the batch table without a progress callback
+// flushes each full batch of ROCKETNET_CLIENT_IO_BATCH live slots during the
+// walk and sends the rest after it, in slot order, skipping aborted slots.
+// The rig's 4-slot rings never fill a batch, so this case lays out its own
+// ring 0 (VERIFY-4 W7, sdk/rocketnet_client_io.h `num_sends ==
+// ROCKETNET_CLIENT_IO_BATCH`).
+
+#define CLIENT_IO_FULL_SLOTS ( 2 * ROCKETNET_CLIENT_IO_BATCH + 4 )
+
+static int client_io_full_batch_sizes[8];
+static int client_io_full_batch_calls;
+
+static void client_io_full_send_batch( void * transport, const rocketnet_platform_send_t * sends, int count )
+{
+    rocketnet_unit_check( client_io_full_batch_calls < 8 );
+    client_io_full_batch_sizes[client_io_full_batch_calls++] = count;
+    rocketnet_fake_client_send_batch( transport, sends, count );
+}
+
+static void test_client_io_step_full_ring_flushes_whole_batches()
+{
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_batch;
+    operations.send_batch = client_io_full_send_batch;
+    client_io_full_batch_calls = 0;
+
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_step_test_open( &fake, &operations, &transport );
+
+    // slot 5 is aborted (zero bytes), so the first batch closes at slot 64
+    // and 2 * 64 + 3 live slots go out as 64, 64, 3
+
+    uint8_t * data = new uint8_t[(size_t) CLIENT_IO_FULL_SLOTS * ROCKETNET_FRAME_STRIDE]();
+    int * counts = new int[CLIENT_IO_FULL_SLOTS]();
+    for ( int slot = 0; slot < CLIENT_IO_FULL_SLOTS; slot++ )
+    {
+        counts[slot] = slot == 5 ? 0 : 4 + slot % 7;
+        uint8_t * bytes = data + (size_t) slot * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
+        bytes[0] = (uint8_t) slot;
+    }
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    rig->view[0].data = data;
+    rig->view[0].wire_bytes = (const uint8_t *) counts;
+
+    client_io_step_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_step_test_time, &clock );
+
+    rocketnet_address_t to = {};
+    rocketnet_address_load_ipv4( &to, 0x7f000001, 9001 );
+
+    rocketnet_unit_check( rocketnet_client_io_hand_off( &io, CLIENT_IO_FULL_SLOTS, &to ) == ROCKETNET_CLIENT_RINGS_HANDED_OFF );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+
+    rocketnet_unit_check( client_io_full_batch_calls == 3 );
+    rocketnet_unit_check( client_io_full_batch_sizes[0] == ROCKETNET_CLIENT_IO_BATCH );
+    rocketnet_unit_check( client_io_full_batch_sizes[1] == ROCKETNET_CLIENT_IO_BATCH );
+    rocketnet_unit_check( client_io_full_batch_sizes[2] == 3 );
+    rocketnet_unit_check( fake.send_calls == 0 );
+    rocketnet_unit_check( fake.num_sent == CLIENT_IO_FULL_SLOTS - 1 );
+
+    // every live slot once, in slot order, byte exact in length and first byte
+
+    for ( int slot = 0, sent = 0; slot < CLIENT_IO_FULL_SLOTS; slot++ )
+    {
+        if ( slot == 5 )
+        {
+            continue;
+        }
+        rocketnet_unit_check( fake.sent[sent].bytes == counts[slot] );
+        rocketnet_unit_check( fake.sent[sent].data[0] == (uint8_t) slot );
+        sent++;
+    }
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+    delete[] counts;
+    delete[] data;
+}
+REGISTER_UNIT_TEST( test_client_io_step_full_ring_flushes_whole_batches );
+
 // Three hand-offs with no step between: two rings queue (MaxReady 2) and the
 // third is deferred, its slots still in the Filling ring with the destination
 // they were committed for. The steps send the queued rings oldest first, then
