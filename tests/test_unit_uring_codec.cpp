@@ -645,14 +645,17 @@ REGISTER_UNIT_TEST( test_uring_recvmsg_gro_stride );
 // from its staging slot and refuses a run of more than one packet to the
 // refusing port, or to every port.
 
+#define URING_SEGMENT_FAKE_FIFO 8192             // completions the fake holds: a few thousand sends in one flush
+
 struct uring_segment_fake_t
 {
-    struct rocketnet_server_uring_test_completion_t fifo[64];
+    struct rocketnet_server_uring_test_completion_t fifo[URING_SEGMENT_FAKE_FIFO];
     int head;
     int tail;
     struct rocketnet_server_uring_t * uring;
     uint16_t refuse_port;                   // nonzero: segmented runs to this port are refused
     bool refuse_all;                        // every segmented run is refused: a kernel that cannot segment
+    uint16_t accept_port;                   // nonzero: segmented runs to every other port are refused
     int refusals;
     int segmented;
     int plain;
@@ -665,9 +668,9 @@ static int uring_segment_fake_count( struct uring_segment_fake_t * fake )
 
 static void uring_segment_fake_push( struct uring_segment_fake_t * fake, uint64_t user_data, int32_t res, uint32_t flags )
 {
-    rocketnet_unit_check( uring_segment_fake_count( fake ) < 64 );
+    rocketnet_unit_check( uring_segment_fake_count( fake ) < URING_SEGMENT_FAKE_FIFO );
 
-    struct rocketnet_server_uring_test_completion_t * completion = &fake->fifo[fake->tail % 64];
+    struct rocketnet_server_uring_test_completion_t * completion = &fake->fifo[fake->tail % URING_SEGMENT_FAKE_FIFO];
     completion->user_data = user_data;
     completion->res = res;
     completion->flags = flags;
@@ -685,7 +688,7 @@ static int uring_segment_fake_peek( void * context, struct rocketnet_server_urin
 
     for ( int i = 0; i < count; i++ )
     {
-        completions[i] = fake->fifo[( fake->head + i ) % 64];
+        completions[i] = fake->fifo[( fake->head + i ) % URING_SEGMENT_FAKE_FIFO];
     }
 
     return count;
@@ -715,7 +718,7 @@ static void uring_segment_fake_submitted( void * context, uint64_t user_data )
         int run_packets = 0;
         rocketnet_server_uring_test_send_slot( fake->uring, (int) rocketnet_uring_tag_index( user_data ), &port, &run_packets );
 
-        if ( run_packets > 1 && ( fake->refuse_all || ( fake->refuse_port != 0 && port == fake->refuse_port ) ) )
+        if ( run_packets > 1 && ( fake->refuse_all || ( fake->refuse_port != 0 && port == fake->refuse_port ) || ( fake->accept_port != 0 && port != fake->accept_port ) ) )
         {
             fake->refusals++;
             uring_segment_fake_push( fake, user_data, -EIO, 0 );
@@ -871,6 +874,77 @@ static void test_uring_segment_refused_everywhere_turns_off()
 }
 
 REGISTER_UNIT_TEST( test_uring_segment_refused_everywhere_turns_off );
+
+// the cost of more refusing destinations than the refused table holds: one
+// destination accepts segmented sends (so segmentation never turns off for
+// the transport), D others refuse every segmented run, and each of the D + 1
+// sends a run of two packets every update. The table holds
+// ROCKETNET_SEGMENT_REFUSED_ENTRIES destinations, direct mapped, so with D
+// above it the displaced destinations pay a refusal and a plain resend again
+// on their next run, every update. Measured: refused segmented sends per
+// update in steady state, and sends submitted per update (v1.1.0 and v1.1.1
+// turned io_uring segmentation off at the first refusal: from then on two
+// plain sends a destination and no refusal). Nothing is dropped.
+
+static void uring_segment_many_refusers( int D, int * refusals_per_update, int * sends_per_update )
+{
+    struct uring_segment_fake_t * fake = new uring_segment_fake_t();
+    memset( fake, 0, sizeof( *fake ) );
+    fake->accept_port = 40001;
+
+    struct rocketnet_server_uring_test_source_t source;
+    struct rocketnet_server_uring_t * uring = uring_segment_open( fake, &source );
+
+    const int warm = 20;
+    const int measured = 20;
+    int refusals_before = 0;
+    int sends_before = 0;
+    for ( int u = 0; u < warm + measured; u++ )
+    {
+        if ( u == warm )
+        {
+            refusals_before = fake->refusals;
+            sends_before = fake->refusals + fake->segmented + fake->plain;
+        }
+        uring_segment_stage( uring, 40001, 2 );
+        for ( int d = 0; d < D; d++ )
+        {
+            uring_segment_stage( uring, (uint16_t) ( 50000 + d ), 2 );
+        }
+        rocketnet_server_uring_send_packets( uring );
+    }
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ( D + 1 ) * ( warm + measured ) ) );
+
+    *refusals_per_update = ( fake->refusals - refusals_before ) / measured;
+    *sends_per_update = ( fake->refusals + fake->segmented + fake->plain - sends_before ) / measured;
+
+    uring_segment_close( uring );
+    delete fake;
+}
+
+static void test_uring_segment_many_refusing_destinations_cost()
+{
+    const int Ds[] = { 8, 64, 65, 128, 1000 };
+    for ( int i = 0; i < (int) ( sizeof( Ds ) / sizeof( Ds[0] ) ); i++ )
+    {
+        int refusals = 0;
+        int sends = 0;
+        uring_segment_many_refusers( Ds[i], &refusals, &sends );
+        printf( "    D=%d refusing destinations: %d refused segmented sends and %d sends per update (v1.1.1: 0 and %d)\n", Ds[i], refusals, sends, 2 * ( Ds[i] + 1 ) );
+
+        // at most the table's entries are remembered: every destination
+        // beyond them is refused again each update
+        rocketnet_unit_check( refusals <= Ds[i] );
+        rocketnet_unit_check( refusals >= ( Ds[i] > ROCKETNET_SEGMENT_REFUSED_ENTRIES ? Ds[i] - ROCKETNET_SEGMENT_REFUSED_ENTRIES : 0 ) );
+    }
+}
+
+REGISTER_UNIT_TEST( test_uring_segment_many_refusing_destinations_cost );
 
 #endif // #if ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
