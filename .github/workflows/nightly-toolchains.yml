@@ -60,6 +60,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
 
   # THE MSVC TOOLSETS. One leg per toolset, on the one Windows runner through
@@ -154,9 +158,6 @@ jobs:
     concurrency:
       group: nightly-toolchains-linux-${{ github.event_name }}-${{ matrix.compiler.cc }}-${{ matrix.build_type }}-${{ matrix.ref }}
       cancel-in-progress: false
-    defaults:
-      run:
-        shell: bash
     env:
       CC_NAME: ${{ matrix.compiler.cc }}
       CXX_NAME: ${{ matrix.compiler.cxx }}
@@ -240,9 +241,6 @@ jobs:
     concurrency:
       group: nightly-toolchains-macos-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: false
-    defaults:
-      run:
-        shell: bash
     env:
       MINIMUM: "12.0"
     steps:

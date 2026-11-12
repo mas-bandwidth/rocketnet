@@ -32,6 +32,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   cbmc:
     name: cbmc (arithmetic leaf proofs)
@@ -44,11 +48,9 @@ jobs:
       # service's PATH. Append it (never prepend) for this job's later steps,
       # so a system tool always wins over a copy there.
       - name: Append the fleet sdk tools to the end of PATH
-        shell: bash
         run: echo "PATH=$PATH:$HOME/sdk/bin" >> "$GITHUB_ENV"
 
       - name: Check the pinned tools are present
-        shell: bash
         run: |
           set -euo pipefail
           pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }

@@ -22,6 +22,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   examples:
     name: ${{ matrix.os }}
@@ -36,7 +40,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -85,7 +88,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -130,7 +132,6 @@ jobs:
         run: python3 tools/run_examples.py --build build
 
       - name: Build universal and run the x86_64 slice under Rosetta 2
-        shell: bash
         run: |
           set -euo pipefail
           cmake -S . -B build-universal \
@@ -166,6 +167,9 @@ jobs:
   examples-windows:
     name: windows-2025
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

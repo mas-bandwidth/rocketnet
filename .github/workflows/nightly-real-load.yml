@@ -51,6 +51,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   real-load:
     name: 1000 clients over the LAN, per server transport
@@ -76,13 +80,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Report unit cases
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/test_real_load_report.py -v
 
       - name: Run the cells
-        shell: bash
         run: |
           set -euo pipefail
           # a refused or failed cell does not end the loop: every cell runs,
@@ -145,7 +147,6 @@ jobs:
 
       - name: Report
         if: ${{ !cancelled() }}
-        shell: bash
         run: |
           set -euo pipefail
           base="$RUNNER_TEMP/real-load"

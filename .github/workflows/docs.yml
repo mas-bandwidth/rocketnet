@@ -25,6 +25,10 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   docs:
     name: docs (MrDocs HTML reference build)

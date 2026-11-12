@@ -101,6 +101,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
 
   # THE LINUX SECOND COMPILER: clang, which no per-commit Linux row names --
@@ -132,8 +136,8 @@ jobs:
 
       - name: Print compiler versions
         run: |
-          clang --version | head -1
-          clang++ --version | head -1
+          clang --version | sed -n 1p
+          clang++ --version | sed -n 1p
 
       - name: Configure (clang)
         run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
@@ -273,6 +277,9 @@ jobs:
   windows-functional-nightly:
     name: windows / Release functional nightly tier
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       matrix:
@@ -306,7 +313,9 @@ jobs:
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_TEST_REPORT: "1"
-        run: ./bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional.exe
 
       - name: Production functional suite, portable rung pinned by env
         shell: bash
@@ -314,7 +323,9 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./build-production/bin/Release/functional_production.exe
+        run: |
+          set -euo pipefail
+          ./build-production/bin/Release/functional_production.exe
 
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
   # 2026-10-22 step for step (its comment there is the doctrine: a real race
@@ -356,7 +367,6 @@ jobs:
           ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -451,7 +461,6 @@ jobs:
       # work directory over 100 characters long must pass. It boots a guest,
       # so it is here and not on the per-commit gate (about a minute).
       - name: One xdp repetition from a work directory over 100 characters long
-        shell: bash
         run: |
           set -euo pipefail
           long="$RUNNER_TEMP/rocketnet-xdp-cell-from-a-long-work-directory/$(printf '%040d' 0)"
@@ -466,11 +475,9 @@ jobs:
           scripts/transport-cells-repeat --runs 1 --cell xdp/portable
 
       - name: Every Linux transport cell, fifty times in a row
-        shell: bash
         run: scripts/transport-cells-repeat --runs 50
 
       - name: The Linux transport cells and the functional suite per cell, under ASan
-        shell: bash
         run: scripts/transport-cells-repeat --asan --runs 1 --jobs 4
 
       - name: Keep the logs of a failing run
@@ -519,7 +526,6 @@ jobs:
         run: make -j4
 
       - name: Every macOS transport cell, fifty times in a row
-        shell: bash
         run: scripts/transport-cells-repeat --runs 50
 
       - name: Keep the logs of a failing run
@@ -549,6 +555,9 @@ jobs:
   windows-transport-cells-repeat:
     name: windows / transport cells x50
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       matrix:
@@ -570,7 +579,9 @@ jobs:
 
       - name: The Windows transport cells, fifty times in a row
         shell: bash
-        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
+        run: |
+          set -euo pipefail
+          scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
 
       - name: Keep the logs of a failing run
         if: failure()
@@ -606,6 +617,9 @@ jobs:
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     # Debug only, by the owner's ruling of 2026-10-20: a Windows Debug run over the
     # functional per-case peak-RSS bound runs with that bound lifted, and the
@@ -640,6 +654,7 @@ jobs:
       - name: Run tests (RSS telemetry, deterministic verdict)
         shell: bash
         run: |
+          set -euo pipefail
           ./bin/Debug/test.exe
           ./bin/Debug/test_sodium.exe
 
@@ -650,7 +665,9 @@ jobs:
         shell: bash
         env:
           ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
-        run: ./bin/Debug/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
         shell: bash
@@ -658,6 +675,7 @@ jobs:
           ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
           ROCKETNET_SERVER_TRANSPORT: iocp
         run: |
+          set -euo pipefail
           set -o pipefail
           ./bin/Debug/functional.exe | tr -d '\r' | tee functional-iocp.log
           grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
@@ -668,6 +686,7 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
+          set -euo pipefail
           ./bin/Debug/test_serialize.exe
           ./bin/Debug/test_lifecycle.exe
 
@@ -717,6 +736,9 @@ jobs:
   windows-transport-extension:
     name: external transport backend / windows-2025
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -752,6 +774,9 @@ jobs:
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -783,34 +808,46 @@ jobs:
 
       - name: Run unit suite under ASan
         shell: bash
-        run: ./bin/Release/test.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test.exe
 
       - name: Run lifecycle suite under ASan
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/Release/test_lifecycle.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_lifecycle.exe
 
       - name: Run IOCP and RIO transport suite under ASan
         shell: bash
-        run: ./bin/Release/test_iocp.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_iocp.exe
 
       - name: Run functional suite under ASan (default)
         shell: bash
-        run: ./bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional.exe
 
       - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=iocp)
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: iocp
-        run: ./bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional.exe
 
       - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=rio)
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: rio
-        run: ./bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional.exe
 
   # THE WINDOWS TOOLCHAIN MATRIX: clang-cl x64, built and tested, and an MSVC
   # ARM64 cross build, build-checked only.
@@ -852,34 +889,53 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure clang-cl x64
-        run: cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
+        run: |
+          set -euo pipefail
+          cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
 
       - name: Build clang-cl x64
-        run: cmake --build build-clang --config Release --parallel 4
+        run: |
+          set -euo pipefail
+          cmake --build build-clang --config Release --parallel 4
 
       - name: Unit suite (clang-cl)
-        run: ./build-clang/bin/Release/test.exe
+        run: |
+          set -euo pipefail
+          ./build-clang/bin/Release/test.exe
 
       - name: Functional suite (clang-cl)
-        run: ./build-clang/bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./build-clang/bin/Release/functional.exe
 
       - name: C and C++ consumers of the clang-cl libraries
-        run: python tools/check_dll_consumer.py --build build-clang
+        run: |
+          set -euo pipefail
+          python tools/check_dll_consumer.py --build build-clang
 
       - name: Install and relocate the clang-cl SDK; run C/C++ static/shared consumers
-        run: python tools/check_package.py build-clang --config Release
+        run: |
+          set -euo pipefail
+          python tools/check_package.py build-clang --config Release
 
       - name: Production library boundary (clang-cl)
-        run: python tools/check_exports.py build-clang/bin/Release/rocketnet.dll build-clang/Release/rocketnet.lib
+        run: |
+          set -euo pipefail
+          python tools/check_exports.py build-clang/bin/Release/rocketnet.dll build-clang/Release/rocketnet.lib
 
       - name: Configure MSVC ARM64 cross build
-        run: cmake -B build-arm64 -A ARM64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
+        run: |
+          set -euo pipefail
+          cmake -B build-arm64 -A ARM64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
 
       - name: Build the ARM64 static and shared libraries
-        run: cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev
+        run: |
+          set -euo pipefail
+          cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev
 
       - name: rocketnet.dll is an ARM64 image with the production exports
         run: |
+          set -euo pipefail
           set -o pipefail
           vs=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -property installationPath | tr -d '\r')
           dumpbin=$(ls "$(cygpath "$vs")"/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe | tail -1)
@@ -950,7 +1006,6 @@ jobs:
           fetch-depth: 0
 
       - name: Mutation campaign, the day's slice; risk-class survivors on lines changed since the last release fail
-        shell: bash
         env:
           MUTATION_FULL: ${{ inputs.mutation_full && '1' || '0' }}
           MUTATION_WORKERS: ${{ inputs.mutation_workers || '4' }}
@@ -1027,7 +1082,6 @@ jobs:
 
       - name: Survivors to the job summary
         if: always()
-        shell: bash
         run: |
           if [[ -f build/mutation/summary.md ]]; then
             cat build/mutation/summary.md >> "$GITHUB_STEP_SUMMARY"

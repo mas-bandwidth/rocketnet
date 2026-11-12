@@ -24,6 +24,10 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
 
   # The second check of the release gates (docs/RELEASING.md). tools/release.py

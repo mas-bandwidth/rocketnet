@@ -50,6 +50,10 @@ concurrency:
   group: tlc-records-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   stale:
     name: Model records are current
@@ -60,16 +64,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Model coverage rows are true
-        shell: bash
         run: python3 tools/check_tla_coverage.py --all --actions-strict
       - name: Coverage checker tests pass
-        shell: bash
         run: python3 tools/test_check_tla_coverage.py
       - name: Nightly case planner controls pass
-        shell: bash
         run: python3 tools/test_plan_tlc_nightly.py
       - name: Check the fleet's Go is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
@@ -86,7 +86,6 @@ jobs:
             echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
           fi
       - name: Build the pinned public runner and check records
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -147,7 +146,6 @@ jobs:
       # bounded FAIL/124 of a CASES.tsv bench row that declares the debt and
       # its reason, and check_tla_records.py refuses any other non-PASS record.
       - name: Check required outcomes and explicit timeout debt
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/test_check_tla_records.py -v
@@ -155,7 +153,6 @@ jobs:
           # The pinned tlacheck agrees: no committed record is stale.
           [ "$(cat "$TLC_EVIDENCE/stale.json")" = "[]" ] || { echo "TLC-STALE committed records: $(cat "$TLC_EVIDENCE/stale.json")"; exit 1; }
       - name: TLA ledgers merge clean
-        shell: bash
         run: |
           python3 tools/check_tla_ledger_merge.py
 
@@ -179,7 +176,6 @@ jobs:
 
       - name: Remove temporary proof state after preserving evidence
         if: always() && env.TLC_EVIDENCE != '' && steps.nightly-evidence.outcome == 'success'
-        shell: bash
         run: rm -rf -- "$TLC_EVIDENCE"
 
   # The night's selection, so the re-run job can carry K and N in its name.
@@ -198,11 +194,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Nightly case planner controls pass
-        shell: bash
         run: python3 tools/test_plan_tlc_nightly.py
       - name: Choose the night's slice
         id: plan
-        shell: bash
         env:
           FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
         run: |
@@ -228,10 +222,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Re-run comparer controls pass
-        shell: bash
         run: python3 tools/test_compare_tlc_rerun.py
       - name: Check the fleet's Go is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
@@ -248,7 +240,6 @@ jobs:
             echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
           fi
       - name: Re-run the slice and compare each result with its record
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -322,5 +313,4 @@ jobs:
 
       - name: Remove temporary proof state after preserving evidence
         if: always() && env.TLC_EVIDENCE != '' && steps.rerun-evidence.outcome == 'success'
-        shell: bash
         run: rm -rf -- "$TLC_EVIDENCE"

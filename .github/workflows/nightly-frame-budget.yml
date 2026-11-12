@@ -39,6 +39,10 @@ concurrency:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   linux-frame-budget:
     name: frame budget (${{ matrix.ref }} / linux-quiet portable)
@@ -83,7 +87,6 @@ jobs:
           persist-credentials: false
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -127,6 +130,9 @@ jobs:
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false

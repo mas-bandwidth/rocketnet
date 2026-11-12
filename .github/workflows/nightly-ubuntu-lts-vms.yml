@@ -53,6 +53,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   ubuntu-lts-vm:
     name: ubuntu ${{ matrix.version }} vm
@@ -87,7 +91,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's qemu packages and KVM are present
-        shell: bash
         run: |
           set -euo pipefail
           echo "WORK=${RUNNER_TEMP}/ubuntu-lts-vm-${SERIES}" >> "$GITHUB_ENV"
@@ -105,7 +108,6 @@ jobs:
           exit "$missing"
 
       - name: Verify the ${{ matrix.version }} cloud image (cached by SHA256)
-        shell: bash
         run: |
           set -euo pipefail
           rm -rf "$WORK"
@@ -158,7 +160,6 @@ jobs:
           echo "${SUM}  $WORK/base.img" | sha256sum -c -
 
       - name: Boot the ${{ matrix.version }} guest (KVM, cloud-init, stock kernel)
-        shell: bash
         run: |
           set -euo pipefail
           cd "$WORK"
@@ -253,7 +254,6 @@ jobs:
           fi
 
       - name: Copy the checked-out tree into the guest
-        shell: bash
         run: |
           set -euo pipefail
           tar -C "$GITHUB_WORKSPACE" --exclude ./.git --exclude ./build --exclude ./bin -cf "$WORK/src.tar" .
@@ -261,7 +261,6 @@ jobs:
           "$WORK/g" 'mkdir -p ~/src && tar -C ~/src -xf ~/src.tar && rm ~/src.tar'
 
       - name: Install the stock packages (docs/BUILDING.md)
-        shell: bash
         env:
           PACKAGES: ${{ matrix.packages }}
         run: |
@@ -272,7 +271,6 @@ jobs:
           "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
 
       - name: Builds, suites and package check on the guest kernel
-        shell: bash
         run: |
           set -euo pipefail
           "$WORK/g" "cd ~/src && bash scripts/ubuntu-lts-vm-guest ${SERIES}" 2>&1 | tee "$WORK/guest.log"
@@ -285,7 +283,6 @@ jobs:
 
       - name: Collect the guest logs
         if: failure()
-        shell: bash
         run: |
           set -uo pipefail
           # a log that was never written is not an error here; the verdict is
@@ -303,7 +300,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: |
@@ -320,7 +316,6 @@ jobs:
 
       - name: Tear down the guest
         if: always()
-        shell: bash
         run: |
           set -uo pipefail
           # cleanup, not a verdict: a guest already gone is the goal

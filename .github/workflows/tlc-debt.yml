@@ -34,6 +34,10 @@ concurrency:
   group: tlc-debt-${{ github.event_name }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   plan:
     name: Timeout debt plan
@@ -47,10 +51,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Nightly case planner controls pass
-        shell: bash
         run: python3 tools/test_plan_tlc_nightly.py
       - name: Check the fleet's Go is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
@@ -68,7 +70,6 @@ jobs:
           fi
       - name: List the timeout-debt cases
         id: plan
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -130,7 +131,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the case to its declared result
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -211,5 +211,4 @@ jobs:
 
       - name: Remove temporary proof state after preserving evidence
         if: always() && env.TLC_EVIDENCE != '' && steps.debt-evidence.outcome == 'success'
-        shell: bash
         run: rm -rf -- "$TLC_EVIDENCE"
