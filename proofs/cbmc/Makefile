@@ -51,6 +51,21 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 
 SDK = ../../sdk
 
+# One CBMC proof and its verdict: $(1) the name, $(2) the arguments after the
+# flags. Passes only on exit 0 with the line VERIFICATION SUCCESSFUL, so a
+# checker that exits 0 without proving anything (a wrapper, a changed banner,
+# a stub) is a HOLD, never a pass.
+define run_cbmc_proof
+	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	status=0; \
+	$(CBMC) $(CBMC_FLAGS) $(2) > "$$work/proof.log" 2>&1 || status=$$?; \
+	cat "$$work/proof.log"; \
+	if [ $$status -ne 0 ] || ! grep -q '^VERIFICATION SUCCESSFUL' "$$work/proof.log"; then \
+	  echo "$(1) HOLD: no VERIFICATION SUCCESSFUL (exit $$status)"; exit 1; \
+	fi; \
+	echo "$(1) VERIFICATION SUCCESSFUL"
+endef
+
 # The deployed constants each bound is printed beside, read from the sdk
 # headers. A macro written as an arithmetic expression carries its deployed
 # value in a trailing comment. Keep literal parentheses out of these shell
@@ -105,9 +120,7 @@ all: replay-delta-1-3 replay-far reconstruct \
 # The quick nightly instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
 	@echo "replay-delta-1-3 bound delta 1..3 deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS); deltas 4..$(shell expr $(REPLAY_WINDOW_BITS) - 1) are not proved by this target"
-	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
-	    -DREPLAY_DELTA_BOUND=4 \
-	    --function harness_replay_near proof_replay_advance.c
+	$(call run_cbmc_proof,replay-delta-1-3,--unwind $(REPLAY_UNWIND) -I$(SDK) -DREPLAY_DELTA_BOUND=4 --function harness_replay_near proof_replay_advance.c)
 
 # The full declared near-window instance. Unwind 65 initializes all 64
 # symbolic words and covers either production range-clear path. The path
@@ -171,9 +184,7 @@ replay-near-4096: replay-near-4096-completeness $(addprefix replay-near-4096-,$(
 
 replay-near-4096-completeness: proof_replay_advance.c
 	@echo "replay-near-4096 bound delta 1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 -I$(SDK) \
-	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
-	    --function harness_replay_near_partition_completeness proof_replay_advance.c
+	$(call run_cbmc_proof,replay-near-4096-completeness,--unwind 1 -I$(SDK) -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) --function harness_replay_near_partition_completeness proof_replay_advance.c)
 	@echo "replay-near-4096-partition-completeness VERIFICATION SUCCESSFUL full-domain=1..$(shell expr $(REPLAY_WINDOW_BITS) - 1) partitions=$(words $(REPLAY_NEAR_PARTITIONS))"
 
 define replay_near_partition_target
@@ -185,14 +196,13 @@ $(foreach partition,$(REPLAY_NEAR_PARTITIONS),$(eval $(call replay_near_partitio
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
-	    --function harness_replay_far proof_replay_advance.c
+	$(call run_cbmc_proof,replay-far,--unwind $(REPLAY_UNWIND) -I$(SDK) --function harness_replay_far proof_replay_advance.c)
 
 RECONSTRUCT_FLAGS = -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
 
 reconstruct: proof_reconstruct_sequence.c
 	@echo "reconstruct bound 32-bit and 24-bit wire half-ranges deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c
+	$(call run_cbmc_proof,reconstruct,--unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c)
 
 ESBMC ?= esbmc
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
@@ -364,15 +374,15 @@ ack-run-exhaustive-mutant-%: ack_run_exhaustive.cpp
 
 read-write: proof_read_write.c
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
+	$(call run_cbmc_proof,read-write,--unwind 9 -I$(SDK) proof_read_write.c)
 
 message-read: proof_message_read.c
 	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c
+	$(call run_cbmc_proof,message-read,--unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c)
 
 xdp-free-list: proof_xdp_free_list.c
 	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
-	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
+	$(call run_cbmc_proof,xdp-free-list,--unwind 5 -I$(SDK) proof_xdp_free_list.c)
 
 # Paired reachability controls. Each nightly target above has a
 # `<target>-reachability` partner that recompiles the same harness with a
