@@ -8665,6 +8665,19 @@ void rocketnet_test_message_objects_loopback_from_t1000()
         // rocketnet_client_transport_disconnect and _fill_destination), not before
 
         rocketnet_client_transport_update( rocketnet_message_client_transport( client ), now );
+
+        // a message still in flight when the send loop ended (an unreliable
+        // ping sent in the round whose first copy already landed) can be
+        // delivered here; the message server requires every delivered
+        // message to be received before its next update, so drain them
+
+        const uint8_t * late = NULL;
+        int late_bytes = 0;
+        while ( rocketnet_message_server_receive( server, NULL, NULL, &late, &late_bytes ) )
+        {
+            rocketnet_message_server_release( server, late );
+        }
+
         rocketnet_check( rocketnet_message_server_update( server, now ) == ROCKETNET_UPDATE_OK );
         if ( !rocketnet_message_server_client_connected( server, 0 ) )
         {
