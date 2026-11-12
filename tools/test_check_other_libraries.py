@@ -26,6 +26,8 @@ SPELLINGS = (
     "Bit" + "Reader",
     "Read" + "Stream",
     "the seri" + "alize library",
+    "as seri" + "alize splits them",
+    "(examples, soak, seri" + "alize)",
     "Network " + "Next",
     "network" + "next",
     "next" + ".h",
@@ -46,6 +48,9 @@ class TextTest(unittest.TestCase):
     def test_rocketnet_words_pass(self):
         for line in ("// reliable ordered delivery on channel 3",
                      "// serialize the compare and tag",
+                     "// a group serializes a shared write",
+                     "// RocketNet does not serialize application messages",
+                     "// serialize access; serialize straight into the message",
                      "// the next packet goes out on the next update",
                      "// generic network code is the caller's",
                      "// ROCKETNET_RELIABLE_ORDERED",
@@ -96,6 +101,28 @@ class TreeTest(unittest.TestCase):
 
     def test_repository_is_clean(self):
         self.assertEqual(check.check(check.ROOT, check.tracked_files(check.ROOT)), [])
+
+
+class NotesTest(unittest.TestCase):
+
+    def test_newest_notes_are_checked_older_kept(self):
+        word = "rak" + "net"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "docs").mkdir()
+            (root / "docs" / "RELEASE-NOTES-v1.1.7.md").write_text(f"compared with {word}\n")
+            (root / "docs" / "RELEASE-NOTES-v1.1.10.md").write_text("clean\n")
+            files = ["docs/RELEASE-NOTES-v1.1.7.md", "docs/RELEASE-NOTES-v1.1.10.md"]
+            self.assertEqual(check.check(root, files), [])
+            (root / "docs" / "RELEASE-NOTES-v1.1.10.md").write_text(f"like {word}\n")
+            self.assertEqual(len(check.check(root, files)), 1)
+
+    def test_newest_is_by_version_and_release_after_preview(self):
+        self.assertEqual(check.newest_notes(["docs/RELEASE-NOTES-v1.1.9.md", "docs/RELEASE-NOTES-v1.1.10.md"]),
+                         "docs/RELEASE-NOTES-v1.1.10.md")
+        self.assertEqual(check.newest_notes(["docs/RELEASE-NOTES-v1.0.0-preview-6.md", "docs/RELEASE-NOTES-v1.0.0.md"]),
+                         "docs/RELEASE-NOTES-v1.0.0.md")
+        self.assertIsNone(check.newest_notes(["README.md"]))
 
 
 if __name__ == "__main__":
