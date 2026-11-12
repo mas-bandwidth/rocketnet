@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <set>
 #include <string>
+#include <vector>
 
 static std::string functional_integrity_read( const char * relative )
 {
@@ -140,8 +141,20 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
         {
             pos += 4;
         }
-        if ( functional_integrity_take( generated, pos, ')' ) && functional_integrity_take( generated, pos, '{' ) &&
-             functional_integrity_take( generated, pos, '}' ) )
+        if ( !functional_integrity_take( generated, pos, ')' ) || !functional_integrity_take( generated, pos, '{' ) )
+        {
+            continue;
+        }
+        // A body that only returns does no more work than an empty one.
+        const size_t body = pos;
+        std::string word;
+        functional_integrity_skip_space( generated, pos );
+        if ( !functional_integrity_identifier( generated, pos, word ) || word != "return" ||
+             !functional_integrity_take( generated, pos, ';' ) )
+        {
+            pos = body;
+        }
+        if ( functional_integrity_take( generated, pos, '}' ) )
         {
             empty_functions.insert( name );
         }
@@ -171,6 +184,52 @@ static std::set<std::string> functional_integrity_empty_cases( std::string gener
     return failures;
 }
 
+// The quoted CONTENT argument of every file(GENERATE ...) call in a CMake
+// text, raw (escapes kept), one per element. Only those strings become
+// generated sources, so only they are scanned: the rest of CMakeLists.txt is
+// CMake, where "/*" is a glob, not a comment.
+static std::vector<std::string> functional_integrity_generated_contents( const std::string & cmake )
+{
+    std::vector<std::string> contents;
+    for ( size_t at = 0; ( at = cmake.find( "file(GENERATE", at ) ) != std::string::npos; at++ )
+    {
+        const size_t keyword = cmake.find( "CONTENT", at );
+        if ( keyword == std::string::npos )
+        {
+            break;
+        }
+        size_t pos = keyword + 7;
+        if ( !functional_integrity_take( cmake, pos, '"' ) )
+        {
+            continue;
+        }
+        std::string content;
+        while ( pos < cmake.size() && cmake[pos] != '"' )
+        {
+            if ( cmake[pos] == '\\' && pos + 1 < cmake.size() )
+            {
+                content += cmake[pos++];
+            }
+            content += cmake[pos++];
+        }
+        contents.push_back( content );
+        at = pos;
+    }
+    return contents;
+}
+
+static std::set<std::string> functional_integrity_cmake_empty_cases( const std::string & cmake, const std::string & registry )
+{
+    std::set<std::string> failures;
+    const std::vector<std::string> contents = functional_integrity_generated_contents( cmake );
+    for ( size_t i = 0; i < contents.size(); i++ )
+    {
+        const std::set<std::string> found = functional_integrity_empty_cases( contents[i], registry );
+        failures.insert( found.begin(), found.end() );
+    }
+    return failures;
+}
+
 static void test_functional_cases_have_no_generated_empty_bodies()
 {
     const std::string row = "{ \"test_windows_delivery\", windows_delivery, NULL },\n";
@@ -189,12 +248,34 @@ static void test_functional_cases_have_no_generated_empty_bodies()
     rocketnet_unit_check( functional_integrity_empty_cases( "//" + long_comment + "\\nvoid windows_delivery() {}", row ) == expected );
     rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() {/*" + long_comment + "*/ check(delivered); }", row ).empty() );
 
+    rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() { return; }", row ) == expected );
+    rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() { return check(delivered); }", row ).empty() );
+
+    // The CMake text around the CONTENT string is CMake, not C++: a glob such
+    // as tests/functional/*.cpp before the generated body must not hide it.
+    const std::string planted_cmake =
+        "file(GLOB planted \"${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp\")\n"
+        "file(GENERATE OUTPUT \"${SHIM}\" CONTENT\n\"#pragma once\\n#include \\\"rocketnet.h\\\"\\nvoid windows_delivery() {}\\n\")\n";
+    rocketnet_unit_check( functional_integrity_cmake_empty_cases( planted_cmake, row ) == expected );
+    rocketnet_unit_check( functional_integrity_cmake_empty_cases( "file(GLOB planted \"tests/*.cpp\")\nvoid windows_delivery() {}\n", row ).empty() );
+
     const std::string cmake = functional_integrity_read( "CMakeLists.txt" );
     const std::string registry = functional_integrity_read( "tests/functional/rocketnet_functional_tests.cpp" );
     // A missing or renamed input must not silently turn this into an empty scan.
     rocketnet_unit_check( cmake.find( "ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER" ) != std::string::npos );
     rocketnet_unit_check( registry.find( "rocketnet_functional_tests[]" ) != std::string::npos );
-    const std::set<std::string> failures = functional_integrity_empty_cases( cmake, registry );
+    // The scan must reach the production shim's generated text itself.
+    const std::vector<std::string> contents = functional_integrity_generated_contents( cmake );
+    bool shim_scanned = false;
+    for ( size_t i = 0; i < contents.size(); i++ )
+    {
+        if ( contents[i].find( "void rocketnet_functional_production_server_config(" ) != std::string::npos )
+        {
+            shim_scanned = true;
+        }
+    }
+    rocketnet_unit_check( shim_scanned );
+    const std::set<std::string> failures = functional_integrity_cmake_empty_cases( cmake, registry );
     for ( std::set<std::string>::const_iterator it = failures.begin(); it != failures.end(); ++it )
     {
         printf( "functional case %s has a generated empty body\n", it->c_str() );
