@@ -3452,6 +3452,15 @@ jobs:
           python3 tools/check_byte_order.py --self-test
           python3 tools/check_byte_order.py
 
+      # Every check has a planted violation (tools/planted_violations.tsv): every job of every
+      # per-commit and scheduled workflow has a row, every row names a real step and carries
+      # that step's own command. The plants themselves run nightly (planted-violations.yml);
+      # this is the table's consistency only, no plant is run.
+      - name: Every check has a planted violation in the table
+        run: |
+          python3 tools/planted_violations.py --self-test
+          python3 tools/planted_violations.py --check-table
+
       # The validation-tool self-test suites the repository ships
       # (tools/test_check_frame_budget.py, test_check_server_calls.py,
       # test_check_split_load.py, test_check_test_environment.py,
