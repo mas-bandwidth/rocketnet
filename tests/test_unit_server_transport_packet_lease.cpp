@@ -10,7 +10,7 @@
 // rocketnet_assert(false). No real time, sockets or threads.
 
 #include "test_unit_registry.h"
-#include "native_shutdown.h"
+#include "unit_shutdown.h"
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -180,7 +180,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
 static void lease_world_destroy( lease_world_t * world )
 {
     rocketnet_client_transport_io_close( &world->client_io );
-    rn_native_server_transport_stop_and_destroy( world->server );
+    rn_test_server_transport_stop_and_destroy( world->server );
 }
 
 // 1. A packet started before a send flush (send_packets or update) and finished
@@ -307,7 +307,7 @@ static void test_server_transport_finish_after_stop()
         memset( frame + ctx.payload_index, 0xDD, 16 );
 
         rocketnet_server_transport_stop( server );
-        rn_native_server_transport_wait_stopped( server );
+        check( rocketnet_server_transport_stopped( server ) );
 
         const uint64_t misuses_before = rocketnet_api_misuse_count();
         check( rocketnet_server_transport_finish_packet( server, &ctx, 16 ) == 0 );

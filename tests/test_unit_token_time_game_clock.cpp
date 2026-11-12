@@ -13,7 +13,7 @@
 // no socket.
 
 #include "test_unit_registry.h"
-#include "native_shutdown.h"
+#include "unit_shutdown.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
@@ -89,12 +89,14 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.token_epoch_unix_seconds = epoch;
+    // stepped by update: the unit suite starts no client I/O thread
+    config.step_driven = 1;
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_internal( NULL, token_data, &config, time, &status );
     if ( transport )
     {
-        rn_native_client_transport_stop_and_destroy( transport );
+        rn_test_client_transport_stop_and_destroy( transport );
         return ROCKETNET_STATUS_OK;
     }
 
