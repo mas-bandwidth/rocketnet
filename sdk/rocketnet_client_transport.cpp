@@ -3819,6 +3819,20 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
     {
         rocketnet_client_transport_abort_packet_unchecked( client_transport, &trusted );
     }
+    else if ( client_transport->packet_leases.retired( *context ) )
+    {
+        // a lease reset by update, send_packets or stop: refused, counted and
+        // logged in every build, never asserted (rocketnet_layers.h)
+        rocketnet_api_misuse_record();
+        rocketnet_error( "client abort packet refused: the lease was reset by update, send_packets or stop" );
+    }
+    else
+    {
+        // no start, a second abort, an abort after finish, or a modified or
+        // wrong-owner context
+        rocketnet_assert( false );
+        rocketnet_api_misuse_record();
+    }
 
     context->frame = NULL;
 }
@@ -3886,7 +3900,20 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     uint64_t backend_id;
     if ( !client_transport->packet_leases.take( *context, trusted, backend_id ) )
     {
-        rocketnet_assert( false );
+        if ( client_transport->packet_leases.retired( *context ) )
+        {
+            // a lease reset by update, send_packets or stop: refused, counted
+            // and logged in every build, never asserted (rocketnet_layers.h)
+            rocketnet_api_misuse_record();
+            rocketnet_error( "client finish packet refused: the lease was reset by update, send_packets or stop" );
+        }
+        else
+        {
+            // no start, a second finish, a finish after abort, or a modified
+            // or wrong-owner context
+            rocketnet_assert( false );
+            rocketnet_api_misuse_record();
+        }
 
         context->frame = NULL;
         return 0;

@@ -3695,6 +3695,20 @@ void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * ser
     {
         rocketnet_server_transport_abort_packet_unchecked( server_transport, &trusted, backend_id );
     }
+    else if ( server_transport->packet_leases.retired( *context ) )
+    {
+        // a lease reset by update, send_packets or stop: refused, counted and
+        // logged in every build, never asserted (rocketnet_server.h)
+        rocketnet_api_misuse_record();
+        rocketnet_error( "server abort packet refused: the lease was reset by update, send_packets or stop" );
+    }
+    else
+    {
+        // no start, a second abort, an abort after finish, or a modified or
+        // wrong-owner context
+        rocketnet_assert( false );
+        rocketnet_api_misuse_record();
+    }
     context->frame = NULL;
 }
 
@@ -3799,7 +3813,8 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
         // Return 0, count api_misuses, and log. Do not assert: a debug-only
         // trap compiled out of release is not a refusal the caller can see.
         // The frame is not sealed. Any other miss (no start, a second finish,
-        // a finish after abort, a modified or wrong-owner context) still asserts.
+        // a finish after abort, a modified or wrong-owner context) asserts in
+        // a debug build and is counted in every build.
         if ( server_transport->packet_leases.retired( *context ) )
         {
             rocketnet_api_misuse_record();
@@ -3809,6 +3824,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
         }
 
         rocketnet_assert( false );
+        rocketnet_api_misuse_record();
         context->frame = NULL;
         return 0;
     }
