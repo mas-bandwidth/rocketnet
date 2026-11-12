@@ -3287,6 +3287,15 @@ jobs:
           python3 tools/check_or_true.py --self-test
           python3 tools/check_or_true.py
 
+      # tools/check_continue_on_error.py: a job or step that continues on
+      # error concludes success whatever it did; none outside
+      # tools/continue_on_error_allowlist.txt (empty). --self-test plants a
+      # step, a job, a composite action and the empty tree.
+      - name: No continue-on-error hides a result
+        run: |
+          python3 tools/check_continue_on_error.py --self-test
+          python3 tools/check_continue_on_error.py
+
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
