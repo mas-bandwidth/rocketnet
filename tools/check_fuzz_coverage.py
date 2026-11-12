@@ -70,6 +70,10 @@ def check(rows, floors, system, every):
     """Returns (ok, lines)."""
     lines = []
     ok = True
+    if not rows:
+        # nothing read is never a pass (tools/check_checkers.py: zero inputs are red)
+        ok = False
+        lines.append("FUZZ-COV-MISSING: the results hold no target row")
     for target, value in rows:
         floor = floors.get((target, system))
         match = NUMBER.match(value)
@@ -118,6 +122,7 @@ def self_test():
         ("--all: a floor row that did not run is refused", "t\t120/1000 12.00% fn 5/50\nu\t0/1000 0.00% fn 0/50\n", "Linux", True, False, "FUZZ-COV-NOT-RUN all"),
         ("without --all a subset run passes", "t\t120/1000 12.00% fn 5/50\n", "Linux", False, True, "fuzz coverage t"),
         ("an empty results file with --all is refused", "", "Linux", True, False, "FUZZ-COV-NOT-RUN t"),
+        ("an empty results file is refused", "", "Linux", False, False, "FUZZ-COV-MISSING: the results hold no target row"),
         ("--all: an off row needs no result", "t\t120/1000 12.00% fn 5/50\nall\t160/1000 16.00% fn 6/50\n", "Linux", True, True, "fuzz coverage all"),
     ]
     failed = 0
