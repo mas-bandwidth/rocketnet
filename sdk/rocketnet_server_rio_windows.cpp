@@ -1260,6 +1260,8 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
+        // a held port names its cause (ADDRESS_IN_USE), as the probe does
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         goto failed;
     }
     address_bytes = sizeof( address );
@@ -3016,12 +3018,24 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         }
     }
 #endif // #if ROCKETNET_DEV
-    const int lanes = rocketnet_server_rio_lane_count( requested );
+    int lanes = rocketnet_server_rio_lane_count( requested );
     if ( !lanes )
     {
         rocketnet_warn( "rio transport refused: %d lanes is outside 1..%d", requested, ROCKETNET_RIO_MAX_LANES );
         return NULL;
     }
+#if ROCKETNET_DEV
+    // development library only: ROCKETNET_TEST_RIO_LANES_PLANT set makes one
+    // lane whatever was asked, the plant row of CI's lanes leg; every check
+    // of the lanes actually made must then fail
+    {
+        char plant[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES_PLANT", plant, sizeof( plant ) ) > 0 )
+        {
+            lanes = 1;
+        }
+    }
+#endif // #if ROCKETNET_DEV
     // More than one lane shares the port with SO_REUSEADDR, so the lanes take
     // a specific local address: a squatter on that exact address and port is
     // refused by the probe below, and one on the wildcard is less specific
