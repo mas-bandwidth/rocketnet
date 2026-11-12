@@ -251,10 +251,11 @@ static const uint8_t salt_mismatch_new_salt[ROCKETNET_CONNECTION_SALT_BYTES] = {
     0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x33
 };
 
-static void test_new_token_replaces_stale_half_open_mapping()
+static void salt_mismatch_replace_case( const char * client_address )
 {
     struct salt_mismatch_server_t test;
     salt_mismatch_server_setup( &test );
+    check( rocketnet_address_parse( &test.client_address, client_address ) );
 
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -341,6 +342,17 @@ static void test_new_token_replaces_stale_half_open_mapping()
     check( rocketnet_used_token_history_claim_check( test.server.used_token_history, stale_token, &other, 1000.0 ) );
 
     salt_mismatch_server_teardown( &test );
+}
+
+// The bound-token refusal asks the history about an address that holds no
+// binding (sdk/rocketnet_server_protocol.cpp, the zeroed `unbound`), so it
+// holds for every client address: also for 1.1.1.1:257, whose parsed fields
+// are the bytes a struct filled with 0x01 holds (IPv4, 1.1.1.1, port 0x0101).
+
+static void test_new_token_replaces_stale_half_open_mapping()
+{
+    salt_mismatch_replace_case( "198.51.100.7:56789" );
+    salt_mismatch_replace_case( "1.1.1.1:257" );
 }
 
 REGISTER_UNIT_TEST( test_new_token_replaces_stale_half_open_mapping );

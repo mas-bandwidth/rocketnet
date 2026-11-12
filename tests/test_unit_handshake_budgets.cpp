@@ -546,12 +546,51 @@ REGISTER_UNIT_TEST( test_handshake_refused_source_spends_no_work_budget );
 // with one valid token spends the work budget, a verify, a sealed-box open and
 // a key exchange on every request of every update.
 
-#define BUDGETS_REFUSE_SMALL_ORDER_KEY 0
-#define BUDGETS_REFUSE_SEALED_BLOCK    1
+#define BUDGETS_REFUSE_SMALL_ORDER_KEY        0
+#define BUDGETS_REFUSE_SEALED_BLOCK           1
+#define BUDGETS_REFUSE_SEALED_PROTOCOL_ID     2
+#define BUDGETS_REFUSE_SEALED_EXPIRE          3
 
 static void budgets_build_refused_request( uint8_t * request, int index, const struct rocketnet_address_t * address,
                                            const uint8_t * cookie_key, int refusal )
 {
+    if ( refusal == BUDGETS_REFUSE_SEALED_PROTOCOL_ID || refusal == BUDGETS_REFUSE_SEALED_EXPIRE )
+    {
+        // a block that opens under a signature that verifies, whose sealed
+        // protocol id or expiry disagrees with the signed one: SEALED_MISMATCH
+        struct rocketnet_signed_connect_data_t signed_fields;
+        struct rocketnet_connect_token_private_t private_fields;
+        budgets_fill_vector_fields( &signed_fields, &private_fields );
+        signed_fields.create_timestamp = (uint64_t) ROCKETNET_TEST_CREATE_TS - 1 - (uint64_t) index;
+        private_fields.client_id = (uint64_t) index;
+        if ( refusal == BUDGETS_REFUSE_SEALED_PROTOCOL_ID )
+        {
+            private_fields.protocol_id ^= 1;
+        }
+        else
+        {
+            private_fields.expire_timestamp += 1;
+        }
+
+        // sealed by hand: rocketnet_write_connect_token writes the signed
+        // protocol id and expiry into the block, by construction
+
+        uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
+        rocketnet_write_connect_token_private( &private_fields, private_block );
+        check( crypto_box_seal( signed_fields.sealed_private_block, private_block, sizeof( private_block ), signed_fields.server_public_key ) == 0 );
+
+        uint8_t signed_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+        rocketnet_write_signed_connect_data( &signed_fields, signed_data );
+        uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+        check( crypto_sign_detached( signature, NULL, signed_data, sizeof( signed_data ), rocketnet_test_backend_secret_key ) == 0 );
+
+        const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+        rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public,
+                                                   signed_data, signature );
+        budgets_write_cookie( request, address, cookie_key, rocketnet_test_salt );
+        return;
+    }
+
     budgets_build_request( request, index, address, cookie_key );
 
     const int key_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
@@ -590,8 +629,15 @@ static void budgets_charged_refusal_limits_its_source( int refusal )
     budgets_server_setup( &test );
     test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
 
-    const int reason = refusal == BUDGETS_REFUSE_SMALL_ORDER_KEY ? ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY
-                                                                 : ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK;
+    int reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH;
+    if ( refusal == BUDGETS_REFUSE_SMALL_ORDER_KEY )
+    {
+        reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY;
+    }
+    else if ( refusal == BUDGETS_REFUSE_SEALED_BLOCK )
+    {
+        reason = ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK;
+    }
     const uint64_t budget = (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET;
     const int sent = 100;
 
@@ -650,6 +696,17 @@ static void test_handshake_small_order_key_charges_failure_budget() { budgets_ch
 static void test_handshake_unopened_sealed_block_charges_failure_budget() { budgets_charged_refusal_limits_its_source( BUDGETS_REFUSE_SEALED_BLOCK ); }
 REGISTER_UNIT_TEST( test_handshake_small_order_key_charges_failure_budget );
 REGISTER_UNIT_TEST( test_handshake_unopened_sealed_block_charges_failure_budget );
+
+// SEALED_MISMATCH is charged the same way (sdk/rocketnet_server_protocol.cpp,
+// rocketnet_server_process_opened_request): a sealed block that opens and
+// disagrees with the signed fields, in its protocol id or its expiry.
+
+static void test_handshake_sealed_mismatch_charges_failure_budget()
+{
+    budgets_charged_refusal_limits_its_source( BUDGETS_REFUSE_SEALED_PROTOCOL_ID );
+    budgets_charged_refusal_limits_its_source( BUDGETS_REFUSE_SEALED_EXPIRE );
+}
+REGISTER_UNIT_TEST( test_handshake_sealed_mismatch_charges_failure_budget );
 
 // The refusals past the verify that the sender does not choose charge
 // nothing: a client id already connected, and a full server's denial. Sent
@@ -1286,6 +1343,75 @@ static void test_handshake_cookie_reply_collision_refuses_one_update()
 }
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_collision_refuses_one_update );
+
+// every bit of the bitmap answers its source once per update, the edges
+// included: under a fixed key, a source whose index is bit 0, the last bit of
+// word 0, the first bit of word 1 and the bitmap's last bit each gets its
+// cookie, and its second request in the update is refused
+// (proofs/tla/RNCookieReplyLimits.tla CookieRequest)
+
+static void test_handshake_cookie_reply_edge_bits_answer_once()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+    for ( int i = 0; i < ROCKETNET_SERVER_COOKIE_REPLY_KEY_BYTES; i++ )
+    {
+        test.server.cookie_reply_source_key[i] = (uint8_t) ( 0x33 + 7 * i );
+    }
+
+    const int bits = 64 * test.server.cookie_reply_source_words;
+    const int wanted[4] = { 0, 63, 64, bits - 1 };
+    struct rocketnet_address_t sources[4];
+    bool found[4] = { false, false, false, false };
+    for ( int host = 1; host <= 16; host++ )
+    {
+        for ( int port = 1; port <= 65535; port++ )
+        {
+            char addr_str[64];
+            snprintf( addr_str, sizeof( addr_str ), "192.0.2.%d:%d", host, port );
+            struct rocketnet_address_t address;
+            check( rocketnet_address_parse( &address, addr_str ) );
+            const int index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &address );
+            check( index >= 0 && index < bits );
+            for ( int w = 0; w < 4; w++ )
+            {
+                if ( !found[w] && index == wanted[w] )
+                {
+                    sources[w] = address;
+                    found[w] = true;
+                }
+            }
+        }
+        if ( found[0] && found[1] && found[2] && found[3] )
+        {
+            break;
+        }
+    }
+
+    int sent = 0;
+    for ( int w = 0; w < 4; w++ )
+    {
+        check( found[w] );
+        check( !( test.server.cookie_reply_sources[wanted[w] >> 6] & ( 1ULL << ( wanted[w] & 63 ) ) ) );
+        check( budgets_send_cookieless( &test, &sources[w], 0xC1000 + sent++, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+        check( test.server.cookie_reply_sources[wanted[w] >> 6] & ( 1ULL << ( wanted[w] & 63 ) ) );
+        check( budgets_send_cookieless( &test, &sources[w], 0xC1000 + sent++, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
+
+    // and in the next update each is answered again
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+    for ( int w = 0; w < 4; w++ )
+    {
+        check( budgets_send_cookieless( &test, &sources[w], 0xC1000 + sent++, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    }
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == (uint64_t) sent );
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_edge_bits_answer_once );
 
 // the bitmap's size: the next power of two at or above 16 times the most
 // connection requests one update can process (io_uring's receive bank, never

@@ -27,7 +27,17 @@
 # matrix does, and never on the host: a machine with no VM tier fails the
 # xdp cell with one VM-TIER-MISSING line naming what it lacks
 # (scripts/vm-tier-missing lists the VM tier: vng, qemu-system-x86_64, a
-# writable /dev/kvm, a readable ~/vm-kernels/vmlinuz-$(uname -r)). The
+# writable /dev/kvm, a readable ~/vm-kernels/vmlinuz-$(uname -r)). Each
+# run's guest runs its cases from a script file under the output directory
+# (vng carries its guest command on the guest kernel's 2048-byte command
+# line, so the case list never goes there), and boots under
+# scripts/vm-boot-guard, which refuses a command line over 1900 bytes by
+# name; the guest writes a started
+# marker as its first act, and a guest with no marker after 120 s is killed
+# and booted again, up to three attempts; a run whose guest never booted
+# prints XDP-GUEST-DID-NOT-BOOT and fails each of its cases with the guard's
+# log. That deadline is on the boot only: ROCKETNET_NIGHTLY_NO_TIMEOUT=1
+# lifts the 120 s limit on the guest's cases, never the boot deadline. The
 # io_uring cell is skipped, as the matrix skips it, when the kernel disables
 # io_uring.
 #
@@ -273,9 +283,35 @@ run_xdp_cell() { # server client
                 record "$1" "$2" "$case" "$run" 1 "$prefix.$case.log"
             done
         else
-            ${timeout_command[@]+"${timeout_command[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                sh -c 'for case in '"$xdp_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$prefix"'.$case.log" 2>&1; echo $? > "'"$prefix"'.$case.rc"; done' \
+            # The guest's commands live in a script file, never on vng's command
+            # line: vng puts its guest command on the guest kernel's command
+            # line, which x86 cuts at 2048 bytes, and the case list with two
+            # absolute log paths per case passed that at 13 cases from a 77-byte
+            # runner path (the guest never booted). vng gets only the file's
+            # path, relative to $PWD where it lies under it. The script's first
+            # act writes $prefix.started; scripts/vm-boot-guard refuses an
+            # over-long command line, kills and reboots a guest that has not
+            # written the marker within its boot deadline, and puts no limit on
+            # the cases once it has.
+            {
+                printf ': > %q\n' "$prefix.started"
+                printf 'for case in %s; do\n' "$xdp_cases"
+                printf '    sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s %q --run "$case" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$functional" "$prefix"
+                printf '    echo $? > %q.$case.rc\n' "$prefix"
+                printf 'done\n'
+            } > "$prefix.guest.sh"
+            guest_script=${prefix#"$PWD"/}.guest.sh
+            scripts/vm-boot-guard --marker "$prefix.started" -- \
+                ${timeout_command[@]+"${timeout_command[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                sh "$guest_script" \
                 > "$prefix.vm.log" 2>&1
+            if [ $? = 125 ]; then
+                echo "XDP-GUEST-DID-NOT-BOOT cell=$1/$2 run=$run: $(tail -n 1 "$prefix.vm.log")"
+            fi
+            if [ "$run" = 1 ]; then
+                echo "XDP-GUEST cell=$1/$2 run=1: $(grep -a -o -m 1 'guest kernel command line [0-9]* bytes' "$prefix.vm.log")"
+            fi
+            rm -f "$prefix.started" "$prefix.guest.sh"
             for case in $xdp_cases; do
                 if [ -f "$prefix.$case.rc" ]; then
                     rc=$(cat "$prefix.$case.rc")

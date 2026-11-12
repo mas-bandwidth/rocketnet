@@ -18,6 +18,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_address.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_replay.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -189,3 +190,73 @@ static void test_standard_session_accept_payload_without_mapping_touches_nothing
 }
 
 REGISTER_UNIT_TEST( test_standard_session_accept_payload_without_mapping_touches_nothing );
+
+// An accept marks the slot's session only when it names that slot's live
+// connection: sequence 0, a slot that is not connected, and a connection id
+// that is not the slot's (a payload of the slot's earlier client) change
+// nothing. A second accept of one sequence adds no second ack debt.
+
+static void test_standard_session_accept_payload_names_the_live_connection()
+{
+    struct rocketnet_session_server_t test;
+    rocketnet_session_server_setup_clients( &test, 2 );
+
+    uint64_t connection_ids[2] = { 0x77, 0 };
+    test.server.connection_ids = connection_ids;
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, test.mapping_index );
+    struct rocketnet_replay_protection_t accepted_before;
+    memcpy( &accepted_before, &mapping->accepted_session, sizeof( accepted_before ) );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 0 );
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x76, 7 );
+    rocketnet_server_protocol_accept_payload( &test.server, 1, 0, 7 );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( test.server.client_slots, 1 ) );
+
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 0 );
+    rocketnet_unit_check( test.server.acks->endpoints[1].ack_debt == 0 );
+    rocketnet_unit_check( memcmp( &accepted_before, &mapping->accepted_session, sizeof( accepted_before ) ) == 0 );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 7 );
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 1 );
+    rocketnet_unit_check( rocketnet_replay_already_received( &mapping->accepted_session, 7 ) );
+
+    struct rocketnet_replay_protection_t accepted_once;
+    memcpy( &accepted_once, &mapping->accepted_session, sizeof( accepted_once ) );
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 7 );
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 1 );
+    rocketnet_unit_check( memcmp( &accepted_once, &mapping->accepted_session, sizeof( accepted_once ) ) == 0 );
+
+    test.server.connection_ids = NULL;
+    rocketnet_session_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_standard_session_accept_payload_names_the_live_connection );
+
+// The per-slot accessors answer for 0 .. max_clients - 1 only: at max_clients
+// they return the empty answer, never the next array element. The arrays
+// here have one element past max_clients holding a value a slot would hold.
+
+static void test_standard_session_accessors_stop_at_max_clients()
+{
+    struct rocketnet_session_server_t test;
+    rocketnet_session_server_setup_clients( &test, 2 );
+
+    uint64_t connection_ids[3] = { 0x77, 0, 0x99 };
+    int end_reasons[3] = { ROCKETNET_DISCONNECT_REASON_NONE, ROCKETNET_DISCONNECT_REASON_NONE, ROCKETNET_DISCONNECT_REASON_TIMED_OUT };
+    test.server.connection_ids = connection_ids;
+    test.server.end_reasons = end_reasons;
+
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, 0 ) == 0x77 );
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, 2 ) == 0 );
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, -1 ) == 0 );
+    rocketnet_unit_check( rocketnet_server_protocol_end_reason( &test.server, 2 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( rocketnet_server_protocol_end_reason( &test.server, -1 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( rocketnet_server_protocol_client_rtt( &test.server, 2 ) == 0.0 );
+
+    test.server.connection_ids = NULL;
+    test.server.end_reasons = NULL;
+    rocketnet_session_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_standard_session_accessors_stop_at_max_clients );

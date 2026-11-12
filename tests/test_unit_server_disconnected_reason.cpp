@@ -485,6 +485,280 @@ static void test_server_reason_names_timeout_and_client_disconnect()
 }
 
 REGISTER_UNIT_TEST( test_server_reason_names_timeout_and_client_disconnect );
+
+// A slot's next connection inherits nothing from the connection that timed
+// out in it (proofs/tla/RNSlots.tla Connect: the new connection has not
+// ended; standard/MESSAGES.md m1.4 rule 5: it takes the next id from the
+// server-wide counter). The transport's own end reason reads NONE while the
+// slot's connection is up (rocketnet_server_transport_client_end_reason in
+// sdk/rocketnet_layers.h), as the public reason does; the client id and user
+// data are the new token's; the per-connection stats, conditions, receipts
+// and send budget read what a first connection reads at the same point of its
+// handshake. Both connections are made the same way, so each field of the
+// reused slot is compared with the same field of the first connection.
+
+struct server_reused_slot_view_t
+{
+    uint64_t packets_sent;
+    uint64_t packets_received;
+    uint64_t bytes_sent;
+    uint64_t bytes_received;
+    double rtt_ms;
+    double jitter_ms;
+    double packet_loss_percent;
+    uint64_t reliable_in_flight;
+    uint64_t send_refused;
+    double seconds_since_progress;
+    int receipts;
+    uint32_t budget_kbps;
+    int budget_enabled;
+    uint64_t budget_spent;
+};
+
+static void server_reused_slot_view( rocketnet_server_t * server, int index, server_reused_slot_view_t * view )
+{
+    rocketnet_server_client_stats_t stats;
+    rocketnet_server_client_stats( server, index, &stats );
+    rocketnet_conditions_t conditions;
+    check( rocketnet_server_client_conditions( server, index, &conditions, (int) sizeof( conditions ) ) );
+    const rn_message_connection_t * connection = &rocketnet_server_message_server( server )->object.connections[index];
+
+    memset( view, 0, sizeof( *view ) );
+    view->packets_sent = stats.packets_sent;
+    view->packets_received = stats.packets_received;
+    view->bytes_sent = stats.bytes_sent;
+    view->bytes_received = stats.bytes_received;
+    view->rtt_ms = stats.rtt_ms;
+    view->jitter_ms = stats.jitter_ms;
+    view->packet_loss_percent = stats.packet_loss_percent;
+    view->reliable_in_flight = conditions.reliable_in_flight;
+    view->send_refused = conditions.send_refused;
+    view->seconds_since_progress = conditions.seconds_since_progress;
+    view->receipts = rocketnet_server_receipts( server, index, NULL, 0 );
+    view->budget_kbps = connection->budget.kbps;
+    view->budget_enabled = connection->send_budget_enabled;
+    view->budget_spent = connection->budget.bytes_spent;
+}
+
+static void server_reused_token( const server_disconnected_identity_t * identity, uint16_t port, uint64_t client_id,
+                                 int32_t timeout_seconds, uint8_t user_byte, char * token_string )
+{
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    memset( user_data, user_byte, sizeof( user_data ) );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
+    const char * addresses[] = { address };
+    check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
+                                                     SERVER_DISCONNECTED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, user_data,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+}
+
+// Connects until the server's update has taken the connection response (the
+// slot reads connected), with no further pump: the view taken then is the
+// connection's first.
+static int server_reused_connect( const server_disconnected_identity_t * identity, rocketnet_server_t * server,
+                                  rocketnet_client_t * client, uint64_t client_id, uint8_t user_byte, int32_t timeout_seconds,
+                                  double * time )
+{
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    server_reused_token( identity, rocketnet_server_port( server ), client_id, timeout_seconds, user_byte, token );
+    check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
+
+    const int connected_before = rocketnet_server_num_connected_clients( server );
+    for ( int i = 0; i < 400 && rocketnet_server_num_connected_clients( server ) == connected_before; i++ )
+    {
+        server_disconnected_pump( server, client, time );
+    }
+    check( rocketnet_server_num_connected_clients( server ) == connected_before + 1 );
+
+    int index = -1;
+    for ( int i = 0; i < rocketnet_server_max_clients( server ); i++ )
+    {
+        if ( rocketnet_server_client_connected( server, i ) && rocketnet_server_client_id( server, i ) == client_id )
+        {
+            index = i;
+        }
+    }
+    check( index >= 0 );
+    return index;
+}
+
+static void server_reused_check_user_data( rocketnet_server_t * server, int index, uint8_t user_byte )
+{
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof( user_data ) );
+    check( rocketnet_server_client_user_data( server, index, user_data ) );
+    for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES; i++ )
+    {
+        check( user_data[i] == user_byte );
+    }
+}
+
+static void test_server_reused_slot_inherits_nothing_from_a_timeout()
+{
+    rocketnet_quiet( 1 );
+
+    server_disconnected_identity_t identity;
+    server_disconnected_identity( &identity );
+
+    double time = 1000.0;
+    server_disconnected_now = time;
+
+    rocketnet_server_t * server = server_disconnected_server_create( &identity );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
+
+    // the first connection, and the view a connection has at its start
+
+    rocketnet_client_t * first = server_disconnected_client_create();
+    const int index = server_reused_connect( &identity, server, first, 0x5E20ULL, 0xA1, 2, &time );
+    const uint64_t first_id = rocketnet_server_client_connection_id( server, index );
+    check( first_id != 0 );
+    check( rocketnet_server_disconnect_reason( server, index ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_server_transport_client_end_reason( transport, index ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    server_reused_check_user_data( server, index, 0xA1 );
+
+    server_reused_slot_view_t fresh;
+    server_reused_slot_view( server, index, &fresh );
+
+    // it lives: messages both ways, receipts, a send rate of its own
+
+    for ( int i = 0; i < 20 && rocketnet_client_state( first ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
+        server_disconnected_pump( server, first, &time );
+    }
+    check( rocketnet_client_state( first ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    const int kbps = (int) fresh.budget_kbps == 1234 ? 1235 : 1234;
+    check( rocketnet_server_set_send_kbps( server, index, kbps ) == ROCKETNET_STATUS_OK );
+    int receipts = 0;
+    for ( int i = 0; i < 40; i++ )
+    {
+        uint8_t * p = rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 8 );
+        check( p != NULL );
+        memset( p, i, 8 );
+        check( rocketnet_server_finish_message( server, 8 ) != 0 );
+
+        p = rocketnet_client_start_message( first, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
+        check( p != NULL );
+        memset( p, i, 8 );
+        check( rocketnet_client_finish_message( first, 8 ) != 0 );
+
+        server_disconnected_pump( server, first, &time );
+        while ( rocketnet_server_receive_messages( server ) != NULL )
+        {
+        }
+        while ( rocketnet_client_receive_messages( first ) != NULL )
+        {
+        }
+        receipts += rocketnet_server_receipts( server, index, NULL, 0 );
+    }
+    check( receipts > 0 );
+
+    // then goes silent with reliable messages unacknowledged: only the
+    // server runs, past the token's 2 second timeout
+
+    for ( int i = 0; i < 4; i++ )
+    {
+        uint8_t * p = rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 8 );
+        check( p != NULL );
+        memset( p, 0xEE, 8 );
+        check( rocketnet_server_finish_message( server, 8 ) != 0 );
+    }
+
+    time += 0.01;
+    server_disconnected_now = time;
+    rocketnet_server_update( server, time );
+    rocketnet_server_send_packets( server );
+
+    server_reused_slot_view_t lived;
+    server_reused_slot_view( server, index, &lived );
+    check( lived.packets_sent > fresh.packets_sent + 40 );
+    check( lived.packets_received > fresh.packets_received + 40 );
+    check( lived.bytes_sent > fresh.bytes_sent );
+    check( lived.bytes_received > fresh.bytes_received );
+    check( lived.rtt_ms > 0.0 );
+    check( lived.reliable_in_flight >= 4 );
+    check( lived.seconds_since_progress >= 0.0 );
+    check( lived.budget_kbps == (uint32_t) kbps );
+    check( lived.budget_spent > fresh.budget_spent );
+
+    for ( int i = 0; i < 100 && rocketnet_server_client_connected( server, index ); i++ )
+    {
+        time += 0.1;
+        server_disconnected_now = time;
+        rocketnet_server_update( server, time );
+        rocketnet_server_send_packets( server );
+    }
+
+    check( !rocketnet_server_client_connected( server, index ) );
+    check( rocketnet_server_disconnect_reason( server, index ) == ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
+    check( rocketnet_server_transport_client_end_reason( transport, index ) == ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
+    check( rocketnet_server_client_connection_id( server, index ) == 0 );
+    rn_test_client_stop_and_destroy( first );
+
+    // the next connection takes the same slot, made the same way
+
+    rocketnet_client_t * next = server_disconnected_client_create();
+    const int reused = server_reused_connect( &identity, server, next, 0x5E21ULL, 0xB2, 300, &time );
+    check( reused == index );
+
+    check( rocketnet_server_transport_client_end_reason( transport, reused ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_server_disconnect_reason( server, reused ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_server_client_connection_id( server, reused ) > first_id );
+    check( rocketnet_server_client_id( server, reused ) == 0x5E21ULL );
+    server_reused_check_user_data( server, reused, 0xB2 );
+
+    server_reused_slot_view_t again;
+    server_reused_slot_view( server, reused, &again );
+    check( again.packets_sent == fresh.packets_sent );
+    check( again.packets_received == fresh.packets_received );
+    check( again.bytes_sent == fresh.bytes_sent );
+    check( again.bytes_received == fresh.bytes_received );
+    check( again.rtt_ms == fresh.rtt_ms );
+    check( again.jitter_ms == fresh.jitter_ms );
+    check( again.packet_loss_percent == fresh.packet_loss_percent );
+    check( again.reliable_in_flight == fresh.reliable_in_flight );
+    check( again.send_refused == fresh.send_refused );
+    check( again.seconds_since_progress == fresh.seconds_since_progress );
+    check( again.budget_kbps == fresh.budget_kbps );
+    check( again.budget_enabled == fresh.budget_enabled );
+    check( again.budget_spent == fresh.budget_spent );
+
+    // the first connection's receipts were readable until the slot's next
+    // update; none of them is the new connection's
+
+    check( again.receipts == 0 );
+
+    // and the new connection works: one message each way
+
+    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) reused, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 );
+    check( p != NULL );
+    memset( p, 0x42, 4 );
+    check( rocketnet_server_finish_message( server, 4 ) != 0 );
+    int delivered = 0;
+    for ( int i = 0; i < 20 && delivered == 0; i++ )
+    {
+        server_disconnected_pump( server, next, &time );
+        const rocketnet_message_batch_t * batch;
+        while ( ( batch = rocketnet_client_receive_messages( next ) ) != NULL )
+        {
+            for ( int j = 0; j < batch->num_messages; j++ )
+            {
+                check( batch->bytes[j] == 4 && batch->data[j][0] == 0x42 );
+                delivered++;
+            }
+        }
+    }
+    check( delivered == 1 );
+    check( rocketnet_server_transport_client_end_reason( transport, reused ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    rn_test_client_stop_and_destroy( next );
+    rn_test_server_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_server_reused_slot_inherits_nothing_from_a_timeout );
 #endif // #if ROCKETNET_DEV
 
 // A client message object over a link that is not a client transport (the

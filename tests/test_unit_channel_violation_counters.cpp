@@ -705,3 +705,134 @@ static void test_block_first_number_underflow_sequenced()
 REGISTER_UNIT_TEST( test_block_first_number_underflow_reliable );
 REGISTER_UNIT_TEST( test_block_first_number_underflow_ordered );
 REGISTER_UNIT_TEST( test_block_first_number_underflow_sequenced );
+
+// The enabled-type table (rocketnet_message_enabled_codes, L2.1): types 0 to 4
+// travel as wire codes 0 to 4, and the receipt types 5, 6, 7 as codes 0, 2, 3.
+// The function over every mask equals that table. Then every pair: a
+// receiver enabling only type t, and one first record of wire code c (what
+// any sender's type arrives as). The record is taken when t travels as c,
+// and otherwise refused
+// as TYPE_NOT_ENABLED with the one violation that ends the connection,
+// nothing delivered. Client and server both receive through this path (the
+// message object, rocketnet_message_server.cpp, calls rn_endpoint_on_payload,
+// which calls rn_ordered_receive). Each refusal is checked
+// at both gates: the reader's (rocketnet_message.cpp check 6, limits) and,
+// with the reader's mask opened to every code, the dispatch's
+// (rocketnet_channel.cpp 7.5, the channels' own mask).
+
+static uint32_t violation_wire_code( int type )
+{
+    static const uint32_t wire[8] = { 0, 1, 2, 3, 4, 0, 2, 3 };
+    return wire[type];
+}
+
+static void test_violation_every_type_pair_is_taken_or_refused_by_its_wire_code()
+{
+    for ( uint32_t mask = 0; mask < 256; ++mask )
+    {
+        uint32_t want = 0;
+        for ( int type = 0; type < 8; ++type )
+        {
+            if ( mask & ( 1u << type ) )
+            {
+                want |= 1u << violation_wire_code( type );
+            }
+        }
+        check( rocketnet_message_enabled_codes( mask ) == want );
+    }
+
+    rocketnet_message_config_t config;
+    violation_config( &config, 8 );
+
+    for ( int enabled = 0; enabled < 8; ++enabled )
+    {
+        for ( uint32_t code = 0; code < ROCKETNET_MESSAGE_NUM_CODES; ++code )
+        {
+            const bool taken = code == violation_wire_code( enabled );
+
+            for ( int gate = 0; gate < ( taken ? 1 : 2 ); ++gate )
+            {
+                violation_node_t receiver;
+                violation_init( &receiver, &config );
+                check( rn_channels_init( &receiver.ordered.channels, receiver.region, receiver.region->num_channels, 1u << enabled ) );
+                check( rn_channels_set_payload_capacity( &receiver.ordered.channels, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+                receiver.ordered.limits.enabled_codes = gate == 0 ? rn_channels_enabled_codes( &receiver.ordered.channels ) : 0x1Fu;
+
+                // one first record of the code on channel 0: number, ring,
+                // sequencing and ordering 0, each only where the code has it
+                const uint8_t value = (uint8_t) ( 0x40 + code );
+                rocketnet_message_record_t record;
+                memset( &record, 0, sizeof( record ) );
+                record.code = (int) code;
+                record.data = &value;
+                record.bytes = 1;
+                check( rocketnet_message_record_valid( &record ) );
+
+                uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+                rocketnet_message_writer_t writer;
+                rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+                check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+                const int bytes = rocketnet_message_writer_finish( &writer );
+                check( bytes > 0 );
+
+                const int result = rn_ordered_receive( &receiver.ordered, payload, bytes );
+                if ( taken )
+                {
+                    check( result == ROCKETNET_MESSAGE_VIOLATION_NONE );
+                    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == 0 );
+                    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+                    check( rn_ordered_deliveries( &receiver.ordered ) == 1 );
+                    check( receiver.region->deliveries[0].data[0] == value );
+                    rn_ordered_end_update( &receiver.ordered );
+                }
+                else
+                {
+                    check( result != ROCKETNET_MESSAGE_VIOLATION_NONE );
+                    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == 1 );
+                    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+                    check( rn_ordered_deliveries( &receiver.ordered ) == 0 );
+                    check( rn_ordered_decide( &receiver.ordered ) == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+                }
+
+                rn_unit_arena_destroy( receiver.arena );
+            }
+        }
+    }
+
+    // the reader's gate refuses the whole payload before anything in it is
+    // dispatched: a code 2 record the receiver enables, then a code 0 record
+    // it does not, delivers nothing (the dispatch gate alone would deliver
+    // the first)
+    {
+        violation_node_t receiver;
+        violation_init( &receiver, &config );
+        check( rn_channels_init( &receiver.ordered.channels, receiver.region, receiver.region->num_channels, 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE ) );
+        check( rn_channels_set_payload_capacity( &receiver.ordered.channels, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+        receiver.ordered.limits.enabled_codes = rn_channels_enabled_codes( &receiver.ordered.channels );
+
+        const uint8_t value = 0x42;
+        rocketnet_message_record_t records[2];
+        memset( records, 0, sizeof( records ) );
+        records[0].code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        records[1].code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+        uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        rocketnet_message_writer_t writer;
+        rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+        for ( int i = 0; i < 2; ++i )
+        {
+            records[i].data = &value;
+            records[i].bytes = 1;
+            check( rocketnet_message_writer_add( &writer, &records[i] ) == 1 );
+        }
+        const int bytes = rocketnet_message_writer_finish( &writer );
+        check( bytes > 0 );
+
+        check( rn_ordered_receive( &receiver.ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED );
+        check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == 1 );
+        check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+        check( rn_ordered_deliveries( &receiver.ordered ) == 0 );
+        rn_unit_arena_destroy( receiver.arena );
+    }
+}
+
+REGISTER_UNIT_TEST( test_violation_every_type_pair_is_taken_or_refused_by_its_wire_code );

@@ -301,6 +301,77 @@ static void test_create_connect_token_refusals()
     rocketnet_quiet( 0 );
 }
 
+// rocketnet_write_production_connect_token's address list: one or two
+// addresses, one of each family; a count outside 1..2 is refused before any
+// entry is read (the third entry here would parse to an INVALID_ADDRESS), a
+// NULL entry is a counted misuse refused as INVALID_ARGUMENT, and a refusal
+// leaves the output untouched
+
+#if ROCKETNET_ASSERTS
+static int create_token_null_entry_asserts = 0;
+
+static void create_token_null_entry_assert( const char *, const char *, const char *, int )
+{
+    create_token_null_entry_asserts++;
+}
+#endif // #if ROCKETNET_ASSERTS
+
+static enum rocketnet_status_t create_token_write( const create_token_keys_t * keys, const char * const * addresses, int count )
+{
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    memset( token, 0x5A, sizeof( token ) );
+    const enum rocketnet_status_t status = rocketnet_write_production_connect_token(
+        keys->backend_secret, keys->server_public, CREATE_TOKEN_PROTOCOL, addresses, count, CREATE_TOKEN_CLIENT_ID, CREATE_TOKEN_TIMESTAMP,
+        CREATE_TOKEN_TIMESTAMP + 30, 10, NULL, token, sizeof( token ) );
+    if ( status != ROCKETNET_STATUS_OK )
+    {
+        for ( size_t i = 0; i < sizeof( token ); i++ )
+        {
+            check( token[i] == 0x5A );
+        }
+    }
+
+    return status;
+}
+
+static void test_write_production_connect_token_address_list_bounds()
+{
+    rocketnet_quiet( 1 );
+
+    create_token_keys_t keys;
+    create_token_keys( &keys );
+
+    const char * const three[] = { "203.0.113.10:40000", "[2001:db8::1]:40000", "not an address" };
+    check( create_token_write( &keys, three, 1 ) == ROCKETNET_STATUS_OK );
+    check( create_token_write( &keys, three, 2 ) == ROCKETNET_STATUS_OK );
+    check( create_token_write( &keys, three, 3 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( create_token_write( &keys, three, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( create_token_write( &keys, three, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    const char * const same_family[] = { "203.0.113.10:40000", "203.0.113.11:40000" };
+    check( create_token_write( &keys, same_family, 2 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+#if ROCKETNET_ASSERTS
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
+    create_token_null_entry_asserts = 0;
+    rocketnet_assert_function( create_token_null_entry_assert );
+#endif // #if ROCKETNET_ASSERTS
+    const char * const null_first[] = { NULL, "[2001:db8::1]:40000" };
+    const char * const null_second[] = { "203.0.113.10:40000", NULL };
+    const uint64_t misuses = rocketnet_api_misuse_count();
+    check( create_token_write( &keys, null_first, 2 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( create_token_write( &keys, null_second, 2 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuses + 2 );
+#if ROCKETNET_ASSERTS
+    rocketnet_assert_function( saved_assert );
+    check( create_token_null_entry_asserts == 2 );
+#endif // #if ROCKETNET_ASSERTS
+
+    rocketnet_quiet( 0 );
+}
+
+REGISTER_UNIT_TEST( test_write_production_connect_token_address_list_bounds );
+
 // the published development keys: a production build refuses them, by the
 // rule server start applies; a development build mints with them (the
 // development token is this call over the published backend key)

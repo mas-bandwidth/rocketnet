@@ -751,11 +751,34 @@ jobs:
                     if [ $((n % xdp_guests)) = "$guest" ]; then guest_cases="$guest_cases $case"; fi
                     n=$((n + 1))
                   done
+                  # the guest's commands go in a script file, never on vng's
+                  # command line: vng carries its guest command on the guest
+                  # kernel's command line, which x86 cuts at 2048 bytes (the
+                  # nightly repeat's one guest of 13 cases from a 77-byte
+                  # runner path never booted). The script's first act writes
+                  # its started marker; scripts/vm-boot-guard refuses a
+                  # command line over 1900 bytes by name, and kills and boots
+                  # again a guest with no marker after the boot deadline,
+                  # which the nightly opt-in does not lift: it bounds the
+                  # boot, never the cases
+                  marker="$logs/$server.$client.vm$guest.started"
+                  script="$logs/$server.$client.vm$guest.sh"
+                  {
+                    printf ': > %q\n' "$marker"
+                    printf 'for case in %s; do\n' "$guest_cases"
+                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s %q --run "$case" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$functional" "$logs/$server.$client"
+                    printf '  echo $? > %q.$case.rc\n' "$logs/$server.$client"
+                    printf 'done\n'
+                  } > "$script"
+                  scripts/vm-boot-guard --marker "$marker" -- \
                   ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                    sh -c 'for case in '"$guest_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                    sh "${script#"$PWD"/}" \
                     > "$logs/$server.$client.vm$guest.log" 2>&1 &
                 done
                 wait
+                for guest in $(seq 0 $((xdp_guests - 1))); do
+                  echo "XDP-GUEST $guest: $(grep -a -o -m 1 'guest kernel command line [0-9]* bytes' "$logs/$server.$client.vm$guest.log")"
+                done
                 for case in $xdp_cases_run; do
                   [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs"/"$server.$client".vm*.log > "$logs/$server.$client.$case.log"; }
                 done
@@ -3010,6 +3033,17 @@ jobs:
 
       - name: soak argument and summary selftest
         run: bash scripts/soak-args-selftest
+
+      # scripts/vm-boot-guard on fake guests: a guest that never writes its
+      # started marker is killed at a 2 s deadline with its whole process
+      # group and booted again, three attempts, then fails by name; a guest
+      # that writes it and runs past the deadline is never cut short; on
+      # Linux, transport-cells-repeat's xdp cell under
+      # ROCKETNET_NIGHTLY_NO_TIMEOUT=1 fails a never-booting guest's run by
+      # name instead of waiting. About 50 s on Linux (2026-11-12, hetzner1).
+
+      - name: VM boot deadline selftest
+        run: bash scripts/vm-boot-guard-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
       # only place benchmarks/ is compiled by CI at all, which alone catches the
