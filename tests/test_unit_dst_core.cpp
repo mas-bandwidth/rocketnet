@@ -139,13 +139,15 @@ static void test_dst_server_kick_reaches_slot_holder()
     rocketnet_unit_check( result.passed );
 }
 
-// At the default reliable_message_timeout_ms the message layer never ends a
-// connection in seeds 1-50. At 1500 ms (an accepted value: four 375 ms
-// initial resend delays fit) seed 3 ends connections by RELIABLE_TIMED_OUT on
-// both ends, and every check still holds across them: a client that timed out
-// reconnects while the server still holds its old session's slot, so the
-// harness books each server send and receipt to the session its slot holds,
-// never to the client's newer one (CHANNELS.md, "Receipts and stats").
+// At 1500 ms (an accepted value: four 375 ms initial resend delays fit) seed
+// 3 ends connections by RELIABLE_TIMED_OUT on both ends, and every check
+// still holds across them: a client that timed out reconnects while the
+// server still holds its old session's slot, so the harness books each server
+// send and receipt to the session its slot holds, never to the client's newer
+// one (CHANNELS.md, "Receipts and stats"). The default
+// reliable_message_timeout_ms is 0 (off), so the same seed there must end no
+// session for any reason but a drawn churn: the message layer kicks no one
+// (message_kicks counts a kick of any reason) and no_unscheduled_end holds.
 
 static void test_dst_reliable_timeout_ends_connections_cleanly()
 {
@@ -162,7 +164,7 @@ static void test_dst_reliable_timeout_ends_connections_cleanly()
     options.reliable_timeout_ms = 0;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
     rocketnet_unit_check( result.passed );
-    rocketnet_unit_check( result.server_reliable_timeouts == 0 && result.client_reliable_timeouts == 0 );
+    rocketnet_unit_check( result.message_kicks == 0 );
 }
 
 // The server's maintenance sends a standalone ACK while a slot owes one, as
@@ -418,3 +420,62 @@ static void test_dst_witness_foreign_ack_fails()
 
 REGISTER_UNIT_TEST( test_dst_witness_ordered_swap_fails );
 REGISTER_UNIT_TEST( test_dst_witness_foreign_ack_fails );
+
+// The outage schedules (docs/DST.md, "Fault schedules"): a drawn subset of
+// the clients goes dark for T - 1 s and every dark session survives it, its
+// held senders pace their probes (probe_paced judged at least one held
+// second), the no-room refusal is reached and the library's counters agree
+// with the refusals the harness saw (refusals_agree); or dark for T + 1 s, and
+// both ends of a dark session end by the timeout (outage_ends counts the ends
+// judged). The OUTAGE_BRIGHT witness drops a bright client's packets too while
+// the checks still judge it as bright, so the same seed must fail
+// bright_unaffected.
+
+#define DST_OUTAGE_SEED 1
+
+static struct rocketnet_dst_options_t dst_outage_options( int schedule )
+{
+    struct rocketnet_dst_options_t options = dst_test_options( 1600 );
+    options.fault_steps = 1000;
+    options.schedule = schedule;
+    return options;
+}
+
+static void test_dst_outage_holds_dark_sessions()
+{
+    const struct rocketnet_dst_options_t options = dst_outage_options( ROCKETNET_DST_SCHEDULE_OUTAGE );
+
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( DST_OUTAGE_SEED, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.schedule_fired > 0 );
+    rocketnet_unit_check( result.seconds_judged > 0 );
+    rocketnet_unit_check( result.refused > 0 );
+    rocketnet_unit_check( result.outage_ends == 0 );
+}
+
+static void test_dst_outage_past_times_out_both_ends()
+{
+    const struct rocketnet_dst_options_t options = dst_outage_options( ROCKETNET_DST_SCHEDULE_OUTAGE_PAST );
+
+    struct rocketnet_dst_result_t result;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( DST_OUTAGE_SEED, &options, &result ) );
+    rocketnet_unit_check( result.passed );
+    rocketnet_unit_check( result.schedule_fired > 0 );
+    rocketnet_unit_check( result.outage_ends >= 2 );
+}
+
+static void test_dst_witness_outage_bright_fails()
+{
+    struct rocketnet_dst_options_t options = dst_outage_options( ROCKETNET_DST_SCHEDULE_OUTAGE );
+    options.witness = ROCKETNET_DST_WITNESS_OUTAGE_BRIGHT;
+
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( DST_OUTAGE_SEED, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "bright_unaffected" ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_dst_outage_holds_dark_sessions );
+REGISTER_UNIT_TEST( test_dst_outage_past_times_out_both_ends );
+REGISTER_UNIT_TEST( test_dst_witness_outage_bright_fails );
