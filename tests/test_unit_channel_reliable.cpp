@@ -328,7 +328,7 @@ static void test_reliable_in_window_duplicate_is_never_accepted_twice()
     record.data = &byte;
     record.bytes = 1;
 
-    const uint64_t numbers[] = { 3, 0, 5, 1 };
+    const uint32_t numbers[] = { 3, 0, 5, 1 };
     for ( int i = 0; i < 4; i++ )
     {
         uint32_t slot = RN_DESCRIPTOR_NONE;
