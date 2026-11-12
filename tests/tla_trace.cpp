@@ -465,7 +465,10 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
                 all_done = false;
             }
         }
-        const bool can_flush = all_free && walk.flushes < BANK_MAX_FLUSH;
+        // a flush before the threads have spent their demand is offered one
+        // step in eight, so most fills stage on every queue and the walk
+        // reuses each bank (the plant's condition) within its flushes
+        const bool can_flush = all_free && walk.flushes < BANK_MAX_FLUSH && ( all_done || random.below( 8 ) == 0 );
 
         const int choices = (int) can_start.size() + (int) can_finish.size() + ( can_flush ? 1 : 0 );
         if ( choices == 0 )
@@ -473,7 +476,6 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
             break;
         }
 
-        // a flush is likelier once the threads have spent their demand
         int pick = random.below( choices );
         if ( can_flush && all_done )
         {
