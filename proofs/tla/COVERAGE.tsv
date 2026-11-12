@@ -130,7 +130,7 @@ rn-channel-types-endpoint	sdk/rocketnet_endpoint.cpp	RNChannelTypes	current	-	Re
 rn-channel-types-ack	sdk/rocketnet_window_ack.cpp	RNChannelTypes	current	-	AckAny retires the reliable send of one acked packet id.
 rn-receipts-finish	sdk/rocketnet_endpoint.cpp	RNReceipts	current	-	Send issues the next receipt serial before any packet write. SweepLoss is the receipt deadline on the same file.
 rn-receipts-dispatch	sdk/rocketnet_channel.cpp	RNReceipts	current	-	OpenPacket is the far-end dispatch of a packet, marking it opened.
-rn-window-send	sdk/rocketnet_window_send.cpp	RNWindow	current	-	NumberRecord numbers a reliable record into the send window. ReceiveAck advances the oldest unacked number.
+rn-window-send	sdk/rocketnet_window_send.cpp	RNWindow	current	-	NumberRecord numbers a reliable record into the send window. WouldNumber is its count bound alone, asked by rn_window_send_would_number before the send pass starts a frame. ReceiveAck advances the oldest unacked number.
 rn-window-receive	sdk/rocketnet_window_receive.cpp	RNWindow	current	-	OpenPacket accepts one record into the receive window. EndUpdate releases a live number.
 rn-channel-transport	sdk/rocketnet_server_transport.cpp	RNChannel	current	-	The server transport update fixes the received batch before this update sends any reply. Step FixBatch.
 rn-channel-ack	sdk/rocketnet_server_protocol.cpp	RNChannel	current	-	SendAck builds the ack block of every session packet from the opened packet ids and clears the ack debt. Step SendAck.

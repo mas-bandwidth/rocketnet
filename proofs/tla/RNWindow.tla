@@ -225,13 +225,20 @@ Init ==
 \* A record takes the next number, late, under the count bound n < U' + W
 \* (6.2).  The block takes all its numbers at once, under one check of its
 \* last number (section 8).  The byte bound is RNRing's.
+\* WouldNumber is that check alone, asked before anything is spent on the
+\* record: the send pass's due test and its stall
+\* (rn_window_send_would_number, rn_window_send_stall_unless_numbered)
+\* ask exactly the test NumberRecord applies, so a pass found due always
+\* numbers a record or resends one.
+WouldNumber ==
+    IF next = BlockFirst
+      THEN BlockFirst + BlockLen - 1 < UPrime + W
+      ELSE next < UPrime + W
+
 NumberRecord ==
     /\ next <= MaxNum
-    /\ IF next = BlockFirst
-         THEN /\ BlockFirst + BlockLen - 1 < UPrime + W
-              /\ next' = BlockFirst + BlockLen
-         ELSE /\ next < UPrime + W
-              /\ next' = next + 1
+    /\ WouldNumber
+    /\ next' = IF next = BlockFirst THEN BlockFirst + BlockLen ELSE next + 1
     /\ UNCHANGED <<acked, smap, receiverVars, ghostVars, fwdVars, revVars>>
 
 \* A packet is written: a fresh id, carrying any unacked numbered records,
