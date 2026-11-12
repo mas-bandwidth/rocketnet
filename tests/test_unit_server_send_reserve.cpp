@@ -48,8 +48,10 @@ static struct
     int queue_for_all;            // the queue every address hashes to
     int room[SR_MAX_QUEUES];      // free frames per queue, as start takes them
     int starts;
-    alignas( 16 ) uint8_t pool[SR_POOL][ROCKETNET_FRAME_STRIDE];
 } sr;
+
+// the frames start hands out, outside sr so the struct carries no alignment padding (MSVC C4324)
+alignas( 16 ) static uint8_t sr_pool[SR_POOL][ROCKETNET_FRAME_STRIDE];
 
 static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
 {
@@ -61,7 +63,7 @@ static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
     }
     sr.room[queue]--;
     *id = (uint64_t) ++sr.starts;
-    return sr.pool[sr.starts - 1];
+    return sr_pool[sr.starts - 1];
 }
 
 static void sr_finish( void *, uint64_t, uint8_t *, int ) {}
