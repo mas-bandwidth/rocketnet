@@ -23,6 +23,13 @@ difference in:
                on the schedule; the bench run that set this rule compared all
                of them (see tlc.yml).
 
+A nightly-debt case (plan budget not 0; proofs/tla/NIGHTLY-DEBT.tsv) has a
+bounded FAIL/124 record, because the pinned tlacheck caps a record at 110 s.
+It is held to the completed result instead: result PASS, the exit of its
+declared result, and its NIGHTLY-DEBT.tsv generated and distinct counts;
+fingerprint, JAR and workers still come from its RUNS.tsv record. A run its
+budget_s stopped is a `budget` mismatch.
+
 Exit 0 when every planned case matches, 1 on any mismatch (each named on a
 `TLC-RERUN MISMATCH <config> <field>` line), 2 on a usage error.
 """
@@ -37,15 +44,15 @@ KINDS = {"invariant": "Invariant", "action": "Action property", "temporal": "Tem
 
 
 def read_plan(path):
-    """Plan lines: group, cardinality, shard, config."""
+    """Plan lines: group, cardinality, shard, config, budget seconds (0 for none)."""
     planned = []
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         fields = line.split()
-        if len(fields) != 4:
-            raise ValueError(f"{path}:{number}: want 'group cardinality shard config', got {line!r}")
-        planned.append((fields[0], int(fields[1]), int(fields[2]), fields[3]))
+        if len(fields) != 5:
+            raise ValueError(f"{path}:{number}: want 'group cardinality shard config budget', got {line!r}")
+        planned.append((fields[0], int(fields[1]), int(fields[2]), fields[3], fields[4]))
     if not planned:
         raise ValueError(f"{path}: the plan holds zero cases")
     return planned
@@ -95,12 +102,31 @@ def compare_case(record, fresh):
     return out
 
 
-def compare(planned, records, evidence, out=sys.stdout):
+EXITS = {"pass": "0", "invariant": "12", "action": "13", "temporal": "13"}
+
+
+def completed(record, row):
+    """What a nightly-debt case's fresh run must show: its record with the
+    bounded FAIL/124 replaced by the completed result its NIGHTLY-DEBT.tsv row
+    measured."""
+    want = dict(record)
+    want.update(result="PASS", exit=EXITS.get(record.get("expected"), "?"),
+                generated=row["generated"], distinct=row["distinct"])
+    return want
+
+
+def compare(planned, records, evidence, out=sys.stdout, nightly=None):
     """Compare each planned case; return the configs that differ."""
     failed = []
-    for group, _count, shard, config in planned:
+    nightly = nightly or {}
+    for group, _count, shard, config, budget in planned:
         problems = []
         record = records.get(config)
+        if record is not None and budget != "0":
+            if config in nightly:
+                record = completed(record, nightly[config])
+            else:
+                problems.append(("nightly-debt", f"planned with budget {budget} s but not in NIGHTLY-DEBT.tsv", ""))
         path = evidence / f"run-{group}-{shard}" / "result.json"
         fresh = None
         if record is None:
@@ -114,6 +140,8 @@ def compare(planned, records, evidence, out=sys.stdout):
             if got != config:
                 problems.append(("case", config, got))
             elif record is not None:
+                if fresh.get("interrupted"):
+                    problems.append(("budget", f"stopped at its budget of {budget} s", ""))
                 problems.extend(compare_case(record, fresh))
         if problems:
             failed.append(config)
@@ -144,13 +172,16 @@ def main(argv=None):
     parser.add_argument("--runs", type=Path, default=Path("proofs/tla/RUNS.tsv"))
     parser.add_argument("--plan", type=Path, required=True, help="plan_tlc_nightly.py --select rerun output")
     parser.add_argument("--evidence", type=Path, required=True, help="directory holding run-<group>-<shard>/")
+    parser.add_argument("--nightly-debt", type=Path, default=Path("proofs/tla/NIGHTLY-DEBT.tsv"),
+                        help="the completed counts of the nightly-debt cases (plan budget not 0)")
     args = parser.parse_args(argv)
     try:
         planned = read_plan(args.plan)
         records = read_records(args.runs)
+        nightly = read_records(args.nightly_debt) if args.nightly_debt.exists() else {}
     except (ValueError, OSError, KeyError) as error:
         parser.error(str(error))
-    failed = compare(planned, records, args.evidence)
+    failed = compare(planned, records, args.evidence, nightly=nightly)
     if failed:
         print(f"TLC-RERUN-FAILED {len(failed)} of {len(planned)} cases differ from their records: "
               + " ".join(failed))

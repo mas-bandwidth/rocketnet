@@ -32,10 +32,15 @@ echo "TLC-RERUN parallel=$parallel cases: $(cut -d' ' -f4 "$job/rerun-plan" | tr
 
 export TLC_JOB="$job"
 : > "$job/rerun-failed"
+# Plan fields: group, cardinality, shard, config, budget. A nightly-debt case
+# (budget not 0) runs under `timeout` at its budget_s: SIGTERM ends the
+# adapter, which records the run as interrupted, and the comparison names it.
 # shellcheck disable=SC2016  # the shard's own shell expands these
 xargs -P "$parallel" -L 1 bash -c '
   dir="$TLC_JOB/run-$0-$2"
-  "$TLC_NIGHTLY" --root proofs --jar "$TLC_JAR" --group "$0" --shards "$1" --shard "$2" --dir "$dir" > "$dir.log" 2>&1 \
+  limit=()
+  [ "$4" = 0 ] || limit=(timeout --kill-after=60 "$4")
+  "${limit[@]}" "$TLC_NIGHTLY" --root proofs --jar "$TLC_JAR" --group "$0" --shards "$1" --shard "$2" --dir "$dir" > "$dir.log" 2>&1 \
     || echo "$3" >> "$TLC_JOB/rerun-failed"
 ' < "$job/rerun-plan"
 
