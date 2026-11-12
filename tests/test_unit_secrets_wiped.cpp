@@ -627,7 +627,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
         const secrets_wiped_watch_t * client_watch = &secrets_wiped_watches[2];
         for ( int s = 0; s < client_watch->spans; s++ )
         {
-            memset( (uint8_t *) client_watch->block + client_watch->offsets[s], 0xC3, client_watch->bytes[s] );
+            memset( static_cast<uint8_t *>( const_cast<void *>( client_watch->block ) ) + client_watch->offsets[s], 0xC3, client_watch->bytes[s] );
         }
     }
     const int client_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[2] );
