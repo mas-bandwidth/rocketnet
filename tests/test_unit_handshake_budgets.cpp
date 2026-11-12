@@ -970,7 +970,13 @@ static void test_handshake_map_full_spends_no_work_budget()
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
+    // each refused request is also one MAPPING_TABLE_FULL (server_protocol.cpp,
+    // the capacity rung), the table's own count beside the request's reason
+
+    const uint64_t table_full_before = test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL];
     budgets_flood_spends_nothing( &test, NULL, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING, 1000.1 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     uint8_t salt[sizeof( rocketnet_test_salt )];
     memcpy( salt, rocketnet_test_salt, sizeof( salt ) );
@@ -979,6 +985,11 @@ static void test_handshake_map_full_spends_no_work_budget()
     struct rocketnet_address_t honest;
     budgets_honest_address( &honest, 0 );
     budgets_honest_challenged( &test, &honest, 0x50000 + capacity, salt, 1000.1 );
+
+    // the replacement found its own mapping: the table was full, yet it counts no MAPPING_TABLE_FULL
+
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     budgets_server_teardown( &test );
 }

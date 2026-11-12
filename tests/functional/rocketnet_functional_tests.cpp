@@ -6253,6 +6253,7 @@ void rocketnet_test_client_transport_io()
 
 #include "rocketnet_server_gso.h"
 
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/udp.h>
@@ -7117,6 +7118,31 @@ void rocketnet_test_server_gso_send_overflow()
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
+// The process's IPv4 UDP socket bound to a port, found among its descriptors:
+// a transport's own socket, for a test that must look at it from outside.
+
+static int rocketnet_test_udp_socket_bound_to( uint16_t port )
+{
+    for ( int fd = 3; fd < 4096; fd++ )
+    {
+        int type = 0;
+        socklen_t type_bytes = sizeof( type );
+        if ( getsockopt( fd, SOL_SOCKET, SO_TYPE, &type, &type_bytes ) != 0 || type != SOCK_DGRAM )
+        {
+            continue;
+        }
+        struct sockaddr_in bound;
+        socklen_t bound_bytes = sizeof( bound );
+        memset( &bound, 0, sizeof( bound ) );
+        if ( getsockname( fd, (struct sockaddr *) &bound, &bound_bytes ) == 0 && bound.sin_family == AF_INET &&
+             ntohs( bound.sin_port ) == port )
+        {
+            return fd;
+        }
+    }
+    return -1;
+}
+
 #if ROCKETNET_DEV
 void rocketnet_test_server_gso_shutdown_send_interruptions()
 {
@@ -7225,6 +7251,165 @@ void rocketnet_test_server_gso_held_receive_view()
     rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop,
                                         rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+}
+
+// RECEIVE_DROPPED_OVERFLOW (sdk/rocketnet_server_gso_linux.cpp, the drain's
+// split): the drain asks for as many GRO messages as the worker buffer has
+// room for at ROCKETNET_GSO_RECV_MAX_SEGMENTS (64) segments each, while a
+// local UDP_SEGMENT sender can coalesce 128 on a recent kernel. With the main
+// thread not claiming, one ready buffer is published and the next fills: it
+// holds one plain datagram, then 64 sends of 128 segments arrive (8192
+// segments for 8191 free slots). Every message is read, since the room never
+// falls below one message's 64 before the last; the last segment has no
+// slot and is the one RECEIVE_DROPPED_OVERFLOW. Then every staged datagram
+// surfaces: 2 plain and 8191 segments, 64 GRO batches, no other drop.
+// Needs GRO and a loopback that coalesces UDP_SEGMENT, and a kernel taking
+// 128 segments a send; without them the case says so and checks nothing.
+
+void rocketnet_test_server_gso_receive_overflow_counted()
+{
+    const int segments = 128;
+    const int segment_bytes = 200;
+    const int sends = 64;
+    rocketnet_check( segments > ROCKETNET_GSO_RECV_MAX_SEGMENTS );
+    rocketnet_check( sends * segments == ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    rocketnet_address_t bind, client_address;
+    rocketnet_check( rocketnet_address_parse( &bind, "127.0.0.1" ) );
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0 );
+    rocketnet_check( gso );
+
+    if ( !( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) || !rocketnet_test_gso_host_coalesces() )
+    {
+        printf( "test_gso_transport_receive_overflow_counted: no GRO or loopback does not coalesce UDP_SEGMENT; nothing checked\n" );
+        fflush( stdout );
+        rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+        return;
+    }
+
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address,
+                                                                                           ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
+                                                                                           ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind.port;
+
+    // the first datagram is published and left unclaimed: no buffer is free
+    // after it, so the worker's next buffer keeps everything that follows
+
+    uint8_t plain[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES];
+    memset( plain, 0xA5, sizeof( plain ) );
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, plain, sizeof( plain ) );
+
+    const double ready_deadline = rocketnet_time() + 5.0;
+    while ( !rocketnet_server_gso_test_receive_ready( gso, 0 ) && rocketnet_time() < ready_deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_gso_test_receive_ready( gso, 0 ) );
+
+    rocketnet_platform_socket_send_packet( client_socket, &server_address, plain, sizeof( plain ) );
+
+    static uint8_t super[128 * 200];
+    for ( int i = 0; i < segments * segment_bytes; i++ )
+    {
+        super[i] = (uint8_t) ( i / segment_bytes );
+    }
+
+    struct sockaddr_in to;
+    rocketnet_platform_address_to_sockaddr_in( &server_address, &to );
+
+    for ( int s = 0; s < sends; s++ )
+    {
+        struct iovec iov = { super, sizeof( super ) };
+        char control[CMSG_SPACE( sizeof( uint16_t ) )];
+        memset( control, 0, sizeof( control ) );
+
+        struct msghdr msg;
+        memset( &msg, 0, sizeof( msg ) );
+        msg.msg_name = &to;
+        msg.msg_namelen = sizeof( to );
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control;
+        msg.msg_controllen = sizeof( control );
+
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_SEGMENT;
+        cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
+        uint16_t stride = (uint16_t) segment_bytes;
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+
+        ssize_t sent = sendmsg( client_socket->handle, &msg, 0 );
+        const double send_deadline = rocketnet_time() + 5.0;
+        while ( sent < 0 && ( errno == EAGAIN || errno == EWOULDBLOCK ) && rocketnet_time() < send_deadline )
+        {
+            rocketnet_platform_sleep( 0.001 );
+            sent = sendmsg( client_socket->handle, &msg, 0 );
+        }
+        if ( s == 0 && sent < 0 && errno == EINVAL )
+        {
+            printf( "test_gso_transport_receive_overflow_counted: this kernel refuses %d segments a send; nothing checked\n", segments );
+            fflush( stdout );
+            rocketnet_platform_socket_destroy( client_socket );
+            rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+            return;
+        }
+        rocketnet_check( sent == (ssize_t) sizeof( super ) );
+    }
+
+    // the worker has read every message once the transport's socket holds
+    // none (FIONREAD is the next datagram's size, 0 when the queue is empty);
+    // a claim before then would free a buffer for the worker to publish into
+    // and take the last messages, so nothing would overflow
+
+    const int server_fd = rocketnet_test_udp_socket_bound_to( bind.port );
+    rocketnet_check( server_fd >= 0 );
+    int queued = 1;
+    const double drained_deadline = rocketnet_time() + 5.0;
+    while ( rocketnet_time() < drained_deadline )
+    {
+        rocketnet_check( ioctl( server_fd, FIONREAD, &queued ) == 0 );
+        if ( queued == 0 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( queued == 0 );
+
+    // claim everything: the ready buffer, then the full one
+
+    const uint64_t expected_received = 2 + (uint64_t) ( sends * segments - 1 );
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t surfaced = 0;
+    const double claim_deadline = rocketnet_time() + 10.0;
+    for ( ;; )
+    {
+        rocketnet_server_gso_receive_packets( gso );
+        surfaced += (uint64_t) rocketnet_server_gso_process_packets( gso )->num_packets;
+        rocketnet_server_gso_counters( gso, counters );
+        if ( surfaced >= expected_received || rocketnet_time() >= claim_deadline )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 1 );
+    rocketnet_check( surfaced == expected_received );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == expected_received );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] == (uint64_t) sends );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] == 0 );
+
+    rocketnet_platform_socket_destroy( client_socket );
+    rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 #endif // production excludes gso shutdown and held-view cases that read SEND_ERROR hooks
 
@@ -7793,6 +7978,81 @@ void rocketnet_test_server_uring_wire_dual_stack()
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
 
     rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );
+}
+
+// GRO_CMSG_FAULTS (rocketnet_uring_recvmsg_gro_stride, counted from the receive
+// CQE): the multishot recvmsg's control area holds exactly the UDP_GRO cmsg.
+// Another party in the process turns SO_TIMESTAMPNS on for the transport's
+// socket, so the kernel's timestamp cmsg no longer fits and every datagram
+// arrives with MSG_CTRUNC: each is one fault, and is still delivered whole as
+// one datagram. The socket is found among the process's descriptors by its
+// bound port (rocketnet_test_udp_socket_bound_to).
+
+void rocketnet_test_server_uring_gro_cmsg_faults_counted()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( uring );
+
+    if ( !( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_GRO ) )
+    {
+        printf( "test_io_uring_transport_gro_cmsg_faults_counted: no GRO, no control area; nothing checked\n" );
+        fflush( stdout );
+        rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+        return;
+    }
+
+    const int fd = rocketnet_test_udp_socket_bound_to( bind_address.port );
+    rocketnet_check( fd >= 0 );
+    int one = 1;
+    rocketnet_check( setsockopt( fd, SOL_SOCKET, SO_TIMESTAMPNS, &one, sizeof( one ) ) == 0 );
+
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                           ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind_address.port;
+
+    const int datagrams = 5;
+    for ( int i = 0; i < datagrams; i++ )
+    {
+        uint8_t packet[100];
+        memset( packet, i + 1, sizeof( packet ) );
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof( packet ) );
+    }
+
+    int num_seen = 0;
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 && num_seen < datagrams )
+    {
+        rocketnet_server_uring_receive_packets( uring );
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            rocketnet_check( received->packet_bytes[i] == 100 );
+            rocketnet_check( received->packet_data[i][0] == (uint8_t) ( num_seen + 1 ) );
+            num_seen++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( num_seen == datagrams );
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS] == (uint64_t) datagrams );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED] == (uint64_t) datagrams );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] == 0 );
+
+    rocketnet_platform_socket_destroy( client_socket );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
 void rocketnet_test_server_uring_send_overflow()
@@ -13632,6 +13892,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
+    { "test_gso_transport_receive_overflow_counted", rocketnet_test_server_gso_receive_overflow_counted, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
@@ -13642,6 +13903,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_wire_plain", rocketnet_test_server_uring_wire_plain, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_gro_ipv4", rocketnet_test_server_uring_wire_gro_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_gro_ipv6", rocketnet_test_server_uring_wire_gro_ipv6, rocketnet_server_uring_available },
+    { "test_io_uring_transport_gro_cmsg_faults_counted", rocketnet_test_server_uring_gro_cmsg_faults_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
