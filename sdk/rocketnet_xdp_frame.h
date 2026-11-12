@@ -308,11 +308,11 @@ static inline int rocketnet_xdp_frame_build_vlan(
 
         for ( int i = 0; i < 8; ++i )
         {
-            rocketnet_xdp_frame_write_be16( e + 22 + 2 * i, source->data.ipv6[i] );
+            rocketnet_xdp_frame_write_be16( e + 22 + 2 * (size_t) i, source->data.ipv6[i] );
         }
         for ( int i = 0; i < 8; ++i )
         {
-            rocketnet_xdp_frame_write_be16( e + 38 + 2 * i, destination->data.ipv6[i] );
+            rocketnet_xdp_frame_write_be16( e + 38 + 2 * (size_t) i, destination->data.ipv6[i] );
         }
     }
     else
