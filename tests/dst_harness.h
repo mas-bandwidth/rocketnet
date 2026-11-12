@@ -2699,7 +2699,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.acked_connection_ids = w->server_acked_connection_ids;
     w->server.end_reasons = w->server_end_reasons;
     w->server.receive_allowances = w->server_receive_allowances;
-    w->server.receive_bytes_per_second = rocketnet_server_receive_allowance_rate( 0 );
+    w->server.receive_bytes_per_second = rocketnet_server_receive_allowance_rate( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );     // on, at the client default: the DST world exercises the allowance
     w->server.defer_payload_acks = 1;
     if ( !w->server.encryption_map || !w->server.used_token_history || !w->server.client_slots ||
          !w->server.acks )

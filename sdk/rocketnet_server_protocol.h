@@ -134,12 +134,13 @@ struct rocketnet_server_receive_allowance_t
 // The allowance's rate in wire bytes per second for a configured
 // per_client_receive_kbps: ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times the rate,
 // at 125 bytes a second per kbps (the send budget's unit,
-// sdk/rocketnet_send_budget.h); 0 selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS,
-// and ROCKETNET_SEND_KBPS_UNLIMITED returns 0, which refuses nothing.
+// sdk/rocketnet_send_budget.h). 0, the default, and
+// ROCKETNET_SEND_KBPS_UNLIMITED return 0, which refuses nothing: the
+// allowance is off unless the server sets a rate.
 
 static inline double rocketnet_server_receive_allowance_rate( int per_client_receive_kbps )
 {
-    const int kbps = per_client_receive_kbps == 0 ? ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS : per_client_receive_kbps;
+    const int kbps = per_client_receive_kbps;
     if ( kbps <= 0 || kbps >= ROCKETNET_SEND_KBPS_UNLIMITED )
     {
         return 0.0;

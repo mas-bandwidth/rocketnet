@@ -851,7 +851,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
 // Revision 6 appends per_client_receive_kbps at revision 5's sizeof
 // (docs/ABI-EVOLUTION.md 2). A revision-5 caller never reaches it: its
 // default fill leaves the bytes past its size untouched, and its server takes
-// the default, 0, which resolves to ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS. A
+// the default, 0, which turns the receive allowance off. A
 // current caller's value is copied once into the resolved transport config.
 static void test_public_server_receive_allowance_revision_and_copy()
 {
@@ -860,11 +860,11 @@ static void test_public_server_receive_allowance_revision_and_copy()
 
     struct rocketnet_server_config_t defaults;
     check( rocketnet_server_default_config( &defaults ) == ROCKETNET_STATUS_OK );
-    check( defaults.per_client_receive_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( defaults.per_client_receive_kbps == 0 );
 
     struct rocketnet_server_config_t light;
     check( rocketnet_server_light_config( &light ) == ROCKETNET_STATUS_OK );
-    check( light.per_client_receive_kbps == 256 );
+    check( light.per_client_receive_kbps == 0 );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );

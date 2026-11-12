@@ -275,6 +275,7 @@ refusals is the game's decision:
    - `receive_refused_packets` and `receive_refused_bytes` (server only;
      the client reads 0) count the packets from that client the server
      dropped this connection for exceeding twice `per_client_receive_kbps`
+     (0 while the server leaves the setting off, its default)
      (standalone acks past one for each packet the server sent it, and
      keep-alives and disconnects past its control tokens, count too), and
      their wire bytes. Each dropped packet authenticated (a forged or
@@ -535,10 +536,10 @@ For client `send_kbps` and server `per_client_send_kbps`, zero selects the
 documented default. `ROCKETNET_SEND_KBPS_UNLIMITED` means no send budget on
 that connection. Negative values are refused as described by
 the config fields and `*_set_send_kbps` declarations in `sdk/rocketnet.h`.
-Server `per_client_receive_kbps` takes the same values: zero selects
-`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, `ROCKETNET_SEND_KBPS_UNLIMITED`
-turns the receive refusal off, and a negative value refuses create with
-`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
+Server `per_client_receive_kbps` is different: zero, the default, and
+`ROCKETNET_SEND_KBPS_UNLIMITED` leave the receive refusal off, a positive
+value turns it on at twice that rate, and a negative value refuses create
+with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
 
 Internal helper names in this reference describe SDK implementation paths;
 applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).

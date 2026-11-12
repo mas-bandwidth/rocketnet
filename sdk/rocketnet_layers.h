@@ -753,7 +753,7 @@ struct rocketnet_server_transport_config_t
     int handshakes_per_update;
     /** @brief The loopback hub the loopback transport serves through; NULL refuses the loopback transport. */
     struct rocketnet_loopback_hub_t * loopback_hub;
-    /** @brief The client-to-server rate each client is allowed, in kbps; the server processes at most ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times it per client. Zero selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS; ROCKETNET_SEND_KBPS_UNLIMITED turns the refusal off. */
+    /** @brief The client-to-server rate each client is allowed, in kbps; the server processes at most ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times it per client. Zero, the default, and ROCKETNET_SEND_KBPS_UNLIMITED turn the refusal off. */
     int per_client_receive_kbps;
 };
 

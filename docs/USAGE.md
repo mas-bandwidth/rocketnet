@@ -385,8 +385,10 @@ state, a server slot with no CONNECTED client, a stopped server) each returns
 `ROCKETNET_STATUS_OK` and changes nothing. That is not misuse.
 
 The server's `per_client_receive_kbps` is the client-to-server rate each
-client is allowed, in the same kbps; set it to the `send_kbps` your clients
-are configured with. The server does not learn a client's `send_kbps`: the
+client is allowed, in the same kbps. It is off by default: `0` refuses
+nothing. To turn it on, set it to the `send_kbps` your clients are
+configured with (`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, 1000, when they
+keep the default). The server does not learn a client's `send_kbps`: the
 setting is the server's own. It processes at most twice that
 (`ROCKETNET_RECEIVE_ALLOWANCE_FACTOR`) from each client, measured in wire
 bytes, with room for everything a client sends during an outage shorter
@@ -394,10 +396,9 @@ than its connection timeout to arrive at once. A packet past that is
 dropped after it authenticates, before anything else acts on it, and
 counted in that client's `rocketnet_conditions_t`
 (`receive_refused_packets`, `receive_refused_bytes`); the connection stays
-up, and the first refusal of each connection logs one warning. `0` is the
-default, `ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS` (1000), and
-`ROCKETNET_SEND_KBPS_UNLIMITED` turns the refusal off. The environment
-variable is `ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS`.
+up, and the first refusal of each connection logs one warning. `0`, the
+default, and `ROCKETNET_SEND_KBPS_UNLIMITED` leave the refusal off. The
+environment variable is `ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS`.
 
 A client's send budget counts its payload packets only. Its keep-alives
 and disconnect, and its standalone acks, are outside it, and the server
@@ -413,11 +414,11 @@ few kbps under the server's default 10 Mbps stream with heavy loss; a
 client that floods acks or keep-alives past its credits, or payload past
 twice the setting, is refused.
 
-The refusal is on by default, at twice
-`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`. A deployment whose clients send
-more than about 1000 kbps of payload (a raised client `send_kbps`) must
-raise `per_client_receive_kbps` to match, or set
-`ROCKETNET_SEND_KBPS_UNLIMITED` to turn the refusal off.
+The refusal is off unless the server sets a rate, so a server that does
+not set one behaves as before the setting existed. A server that turns it
+on sets the rate its clients send at; one whose clients raise their
+`send_kbps` raises `per_client_receive_kbps` with them, since a client
+sending past twice the setting is refused.
 
 ## Receiving messages
 

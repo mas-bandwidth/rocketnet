@@ -2482,7 +2482,6 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    RN_LIGHT_SET( per_client_receive_kbps, 256 );                                // the light client's send_kbps: its clients send at most this
     RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement

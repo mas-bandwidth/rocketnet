@@ -52,13 +52,14 @@ static void test_receive_allowance_rate_and_capacity()
 {
     // twice the setting, in bytes per second: kbps * 1000 / 8 * 2
     check( ROCKETNET_RECEIVE_ALLOWANCE_FACTOR == 2 );
-    check( rocketnet_server_receive_allowance_rate( 0 ) == 2.0 * ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS * 125.0 );
+    check( rocketnet_server_receive_allowance_rate( ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS ) == 2.0 * ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS * 125.0 );
     check( rocketnet_server_receive_allowance_rate( 256 ) == 64000.0 );
     check( rocketnet_server_receive_allowance_rate( 1 ) == 250.0 );
     check( rocketnet_server_receive_allowance_rate( ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) > 0.0 );
 
-    // the unlimited value turns the refusal off; a negative value never
+    // 0 (the default) and the unlimited value turn the refusal off; a negative value never
     // reaches here (create refuses it) and reads as off, never as a tiny rate
+    check( rocketnet_server_receive_allowance_rate( 0 ) == 0.0 );
     check( rocketnet_server_receive_allowance_rate( ROCKETNET_SEND_KBPS_UNLIMITED ) == 0.0 );
     check( rocketnet_server_receive_allowance_rate( -1 ) == 0.0 );
 
@@ -701,7 +702,7 @@ static void allowance_log_count( void * context, enum rocketnet_log_level_t leve
     }
 }
 
-static void allowance_public_create( struct allowance_public_t * pair, int per_client_receive_kbps )
+static void allowance_public_create( struct allowance_public_t * pair, int per_client_receive_kbps, bool set_rate = true )
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
@@ -723,7 +724,10 @@ static void allowance_public_create( struct allowance_public_t * pair, int per_c
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();
     config.max_clients = 2;
-    config.per_client_receive_kbps = per_client_receive_kbps;
+    if ( set_rate )
+    {
+        config.per_client_receive_kbps = per_client_receive_kbps;
+    }
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
     check( pair->server != NULL );
     check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
@@ -1169,7 +1173,7 @@ static void test_receive_allowance_unlimited_setting_is_off()
     allowance_public_create( &pair, ROCKETNET_SEND_KBPS_UNLIMITED );
     allowance_public_connect( &pair, 0, ROCKETNET_SEND_KBPS_UNLIMITED );
 
-    for ( int i = 0; i < 1000; i++ )
+    for ( int i = 0; i < 2000; i++ )
     {
         allowance_public_queue( &pair, 0, 8, 1000 );
         allowance_public_pump( &pair );
@@ -1182,6 +1186,47 @@ static void test_receive_allowance_unlimited_setting_is_off()
     allowance_public_destroy( &pair );
 }
 
+// The default is off: a server that never sets per_client_receive_kbps
+// (the default config, and the light profile) refuses nothing, even a
+// flooding client. A v1.1.7 server upgraded without setting it sees no
+// refusal. The same flood against a server that sets 256 kbps is refused
+// (the flooding test above, 6.4 Mbps against a 512 kbps allowance), so it
+// is a flood the allowance catches when a server turns it on.
+
+static uint64_t allowance_default_flood_refused( bool set_rate )
+{
+    struct allowance_public_t pair;
+    allowance_public_create( &pair, 256, set_rate );
+    allowance_public_connect( &pair, 0, ROCKETNET_SEND_KBPS_UNLIMITED );
+
+    // 8 KB queued every 10 ms for 20 s, as the flooding test
+    for ( int i = 0; i < 2000; i++ )
+    {
+        allowance_public_queue( &pair, 0, 8, 1000 );
+        allowance_public_pump( &pair );
+    }
+
+    uint64_t packets = 1, bytes = 1;
+    allowance_public_refused( &pair, 0, &packets, &bytes );
+    check( rocketnet_server_client_connected( pair.server, 0 ) );
+    allowance_public_destroy( &pair );
+    return packets;
+}
+
+static void test_receive_allowance_default_refuses_nothing()
+{
+    struct rocketnet_server_config_t defaults;
+    check( rocketnet_server_default_config( &defaults ) == ROCKETNET_STATUS_OK );
+    check( defaults.per_client_receive_kbps == 0 );
+    struct rocketnet_server_config_t light;
+    check( rocketnet_server_light_config( &light ) == ROCKETNET_STATUS_OK );
+    check( light.per_client_receive_kbps == 0 );
+
+    check( allowance_default_flood_refused( false ) == 0 );
+    check( allowance_default_flood_refused( true ) > 0 );
+}
+
+REGISTER_UNIT_TEST( test_receive_allowance_default_refuses_nothing );
 REGISTER_UNIT_TEST( test_receive_allowance_correct_client_never_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_low_setting_correct_client_never_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_flooding_client_refused_alone );

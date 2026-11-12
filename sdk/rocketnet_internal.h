@@ -546,7 +546,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    handshakes_per_update, ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE, 1, ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE, 0 )
 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_AFTER_HUB( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                             \
-    INT_FIELD(    per_client_receive_kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1, ROCKETNET_SEND_KBPS_UNLIMITED,           ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+    INT_FIELD(    per_client_receive_kbps, 0,                                       1, ROCKETNET_SEND_KBPS_UNLIMITED,           ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
 
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )

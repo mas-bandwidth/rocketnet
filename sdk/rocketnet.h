@@ -1805,9 +1805,11 @@ struct rocketnet_server_config_t
     uint64_t token_epoch_unix_seconds;
 
     /// ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS sets the client-to-server
-    /// rate each client is allowed, in kbps. Set it to the send_kbps your
-    /// clients are configured with; the server never learns a client's
-    /// own value. The server processes at most
+    /// rate each client is allowed, in kbps. Off by default (0): the server
+    /// refuses nothing until it sets a rate. To turn it on, set it to the
+    /// send_kbps your clients are configured with
+    /// (ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS when they keep the default);
+    /// the server never learns a client's own value. The server processes at most
     /// ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times this rate from each client,
     /// counted in the same wire bytes as the client's send budget, with an
     /// allowance that accrues while the client is quiet up to the
@@ -1817,17 +1819,15 @@ struct rocketnet_server_config_t
     /// their own (one ack for each send of the server's that asks for one, and
     /// keep-alive tokens at twice the client send rate), so a correct
     /// client is never refused at any setting; size it for the client's
-    /// payload. On by default: a deployment whose clients send more than
-    /// the default must raise it.
+    /// payload.
     /// Traffic over the allowance authenticates and is then dropped
     /// unprocessed (to the client, a loss) and counted in the connection's
     /// rocketnet_conditions_t receive_refused_packets and
     /// receive_refused_bytes; the connection is not ended. Only traffic
     /// that authenticates under the client's session key counts, so another
     /// sender cannot spend a client's allowance. Range is 1 ..
-    /// ROCKETNET_SEND_KBPS_UNLIMITED. The unlimited value turns the
-    /// refusal off. Zero selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS,
-    /// which is also the default. Negative values return
+    /// ROCKETNET_SEND_KBPS_UNLIMITED. Zero, the default, and the unlimited
+    /// value turn the refusal off. Negative values return
     /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
 
     int per_client_receive_kbps;
