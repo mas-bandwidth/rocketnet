@@ -3610,6 +3610,15 @@ jobs:
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
 
+      # tools/check_other_libraries.py exits 1 when a tracked file's path or
+      # text names another network library, outside the dated records it
+      # lists (RECORDS_ALLOWED): rocketnet stands on its own. Its tests hold
+      # the red controls. It reads files only, so the lint job runs it.
+      - name: Check rocketnet stands on its own
+        run: |
+          python3 tools/test_check_other_libraries.py
+          python3 tools/check_other_libraries.py
+
       # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
       # pointer-linked or index-linked list: it lexes every tracked C/C++
       # source outside sodium/ and refuses a self-pointer member, a cursor

@@ -39,6 +39,7 @@ tools/check_nightly_dispositions.py	python3 tools/test_check_nightly_disposition
 tools/check_no_owned_linked_lists.py	python3 tools/check_no_owned_linked_lists.py --self-test	python3 tools/check_no_owned_linked_lists.py --root {empty}	ci.yml	lint	Check no owned linked lists
 tools/check_no_thread_local.py	python3 tools/check_no_thread_local.py --self-test	python3 tools/check_no_thread_local.py --root {empty}	ci.yml	build-and-test	Check no thread-local storage in a production build
 tools/check_or_true.py	python3 tools/check_or_true.py --self-test	python3 tools/check_or_true.py --root {empty}	ci.yml	lint	No or-true discards a status in CI shell code
+tools/check_other_libraries.py	python3 tools/test_check_other_libraries.py	python3 tools/check_other_libraries.py --root {empty}	ci.yml	lint	Check rocketnet stands on its own
 tools/check_oss_fuzz_fp_contract.cmake	bash tools/test_check_oss_fuzz_fp_contract.sh	cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT={emptyfile} -P tools/check_oss_fuzz_fp_contract.cmake	ci.yml	lint	Self-tests of the registered checkers
 tools/check_package.py	python3 tools/test_check_package.py -v	python3 tools/check_package.py {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_platform_policy.py	python3 tools/test_check_platform_policy.py -v	python3 tools/check_platform_policy.py --root {empty}	ci.yml	lint	Self-tests of the registered checkers
