@@ -114,7 +114,7 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
         server->end_reasons[client_index] = reason;
     }
 
-    // proofs/tla/RNReceiveAllowance.tla Disconnect: the slot's allowance and its
+    // proofs/tla/RNReceiveAllowance.tla Reconnect: the slot's allowance and its
     // refused counts end with the connection; the next one starts full
 
     if ( server->receive_allowances )

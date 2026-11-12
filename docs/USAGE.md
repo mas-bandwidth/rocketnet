@@ -384,6 +384,33 @@ rate unchanged. On a connection that is not CONNECTED (a client in a handshake
 state, a server slot with no CONNECTED client, a stopped server) each returns
 `ROCKETNET_STATUS_OK` and changes nothing. That is not misuse.
 
+The server's `per_client_receive_kbps` is the client-to-server rate each
+client is allowed, in the same kbps; set it to the `send_kbps` your clients
+are configured with. The server does not learn a client's `send_kbps`: the
+setting is the server's own. It processes at most twice that
+(`ROCKETNET_RECEIVE_ALLOWANCE_FACTOR`) from each client, measured in wire
+bytes, with room for everything a client sends during an outage shorter
+than its connection timeout to arrive at once. A packet past that is
+dropped after it authenticates, before anything else acts on it, and
+counted in that client's `rocketnet_conditions_t`
+(`receive_refused_packets`, `receive_refused_bytes`); the connection stays
+up, and the first refusal of each connection logs one warning. `0` is the
+default, `ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS` (1000), and
+`ROCKETNET_SEND_KBPS_UNLIMITED` turns the refusal off. The environment
+variable is `ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS`.
+
+A client's send budget counts its payload packets only: its keep-alives
+(at most ten a second, 41 bytes, only while it sends nothing else) and its
+standalone acks (at most one per client update while it owes one, larger
+when the server's packets to it are being lost) are outside it and use the
+second share. A client that sends little while it receives a large, lossy
+stream can send more in acks than its own `send_kbps`: measured on the
+loopback transport, a client updated at 100 Hz receiving the server's
+default 10 Mbps with 10% loss sent about 680 kbps of acks, and a setting of
+64 kbps refused most of them. Size the setting for what the client sends,
+acks included; below about 8 kbps a client's keep-alives and acks alone
+can exceed it.
+
 ## Receiving messages
 
 `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages`

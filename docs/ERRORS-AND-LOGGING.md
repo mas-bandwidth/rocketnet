@@ -272,6 +272,19 @@ refusals is the game's decision:
      numbered when its first piece is planned for sending, so a large message
      counts every piece at once, sent or not. Both getters return `false`
      and write zeroes when that connection is not connected.
+   - `receive_refused_packets` and `receive_refused_bytes` (server only;
+     the client reads 0) count the packets from that client the server
+     dropped this connection for exceeding twice `per_client_receive_kbps`,
+     and their wire bytes. Each dropped packet authenticated (a forged or
+     damaged one never counts) and was dropped before the server acted on
+     it: to the client it is a lost packet. The first refusal of a
+     connection logs one `WARN` line, `server refused packets from client
+     <index>: over its receive allowance of <kbps> kbps (2 x
+     per_client_receive_kbps); counted in its conditions`. The
+     connection is never ended for it; a game that wants to drop such a
+     client reads these counts and disconnects it. The internal counters
+     are `KEEP_ALIVE_`, `PAYLOAD_`, `DISCONNECT_` and `ACK_OVER_ALLOWANCE`
+     ([standard/TRANSPORT.md](../standard/TRANSPORT.md) t10 step 14a).
    - A freed slot reads not connected after the update that frees it, and no
      new client takes it before the next update, so a game that reads each
      slot once after every update sees `false` between two connections.
@@ -520,6 +533,10 @@ For client `send_kbps` and server `per_client_send_kbps`, zero selects the
 documented default. `ROCKETNET_SEND_KBPS_UNLIMITED` means no send budget on
 that connection. Negative values are refused as described by
 the config fields and `*_set_send_kbps` declarations in `sdk/rocketnet.h`.
+Server `per_client_receive_kbps` takes the same values: zero selects
+`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`, `ROCKETNET_SEND_KBPS_UNLIMITED`
+turns the receive refusal off, and a negative value refuses create with
+`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
 
 Internal helper names in this reference describe SDK implementation paths;
 applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).
