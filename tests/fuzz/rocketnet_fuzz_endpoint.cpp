@@ -58,6 +58,8 @@
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
 
+#include "../portable_crt.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,7 +67,13 @@
 
 #include <vector>
 
-#include "../portable_crt.h"
+// A switch in the environment is on when it is set (to a value of under 64
+// bytes); through rocketnet_test_getenv, since MSVC refuses getenv (C4996).
+static bool fz_env_set( const char * name )
+{
+    char value[64];
+    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
 
 static void fz_require( bool condition, const char * property )
 {
@@ -375,12 +383,6 @@ static void fz_write_pass( fz_state_t * s, fz_side_t * side, fz_side_t * remote,
 static int fz_reliability( uint8_t v )
 {
     return (int) ( v % 8 );
-}
-
-static bool fz_env_set( const char * name )
-{
-    char value[16];
-    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
 }
 
 static fz_state_t fz_state;             // large: the in-flight packets; the seed generator reads it after a run

@@ -73,7 +73,7 @@ def evaluate(expressions):
         source = Path(directory) / "probe.cpp"
         binary = Path(directory) / "probe"
         source.write_text("\n".join(lines), encoding="utf-8")
-        result = subprocess.run([compiler, "-std=c++17", f"-I{SDK}", str(source), "-o", str(binary)],
+        result = subprocess.run([compiler, "-std=c++17", "-ffp-contract=off", f"-I{SDK}", str(source), "-o", str(binary)],
                                 capture_output=True, text=True)
         if result.returncode != 0:
             raise SystemExit(f"FAIL: the probe over {', '.join(names)} did not compile:\n{result.stderr}")

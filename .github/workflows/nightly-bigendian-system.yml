@@ -277,11 +277,11 @@ jobs:
           u=${PIPESTATUS[0]}
           echo UNIT_EXIT:$u
           [ "$u" -eq 0 ] || rc=$u
-          /usr/bin/time -f FUNC_AUTO_SEC=%e ./bin/functional 2>&1 | tee func_auto.out
+          /usr/bin/time -f FUNC_AUTO_SEC=%e bash tools/run_functional.sh s390x ./bin/functional 2>&1 | tee func_auto.out
           a=${PIPESTATUS[0]}
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional 2>&1 | tee func_port.out
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e bash tools/run_functional.sh s390x-portable ./bin/functional 2>&1 | tee func_port.out
           p=${PIPESTATUS[0]}
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p

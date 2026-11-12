@@ -185,6 +185,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          # every wire path is a tracked file before anything is compared:
+          # git log over a path that is gone prints nothing
+          python3 tools/check_wire_paths.py
+          wire_paths=$(python3 tools/check_wire_paths.py --print)
+
           # versionsort.suffix=- sorts a prerelease (v1.0.0-preview-5) below
           # its final release (v1.0.0); git's default puts it above.
           newest_tag=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname | head -n1)
@@ -200,29 +205,14 @@ jobs:
             exit 0
           fi
 
-          # WIRE-AFFECTING PATHS: the standard itself, the shared wire
-          # constants (the one file the sdk and the kernel program both
-          # read), and the protocol layer that writes and reads packets.
-          # Deliberately NOT the whole sdk: a gate that cries wolf on a
-          # transport refactor is a gate people learn to merge past, and
-          # this one exists because a real wire change once shipped
-          # unannounced in a sibling.
+          # WIRE-AFFECTING PATHS: tools/wire_paths.txt (why each kind is
+          # there, and why not the whole sdk, is at its head); this gate
+          # exists because a real wire change once shipped unannounced in a
+          # sibling. The paths hold no spaces (check_wire_paths.py: tracked
+          # files under sdk/ and standard/).
 
-          wire_log=$(git log --oneline "$newest_tag"..HEAD -- \
-            standard/TRANSPORT.md standard/MESSAGES.md \
-            sdk/rocketnet_wire.h \
-            sdk/rocketnet_protocol.h sdk/rocketnet_protocol.cpp \
-            sdk/rocketnet_connect_token.h sdk/rocketnet_connect_token.cpp \
-            sdk/rocketnet_message.cpp sdk/rocketnet_message.h \
-            sdk/rocketnet_ack.cpp sdk/rocketnet_ack.h \
-            sdk/rocketnet_client_protocol.cpp sdk/rocketnet_client_protocol.h \
-            sdk/rocketnet_server_protocol.cpp sdk/rocketnet_server_protocol.h \
-            sdk/rocketnet_channel.cpp sdk/rocketnet_channel.h \
-            sdk/rocketnet_channel_reliable.cpp sdk/rocketnet_channel_sequenced.cpp \
-            sdk/rocketnet_channel_receipts.cpp \
-            sdk/rocketnet_keys.cpp sdk/rocketnet_keys.h \
-            sdk/rocketnet_read_write.h sdk/rocketnet_layers.h \
-            sdk/rocketnet.h)
+          # shellcheck disable=SC2086
+          wire_log=$(git log --oneline "$newest_tag"..HEAD -- $wire_paths)
 
           if [ -z "$wire_log" ]; then
             echo "HEAD is $total commit(s) past $newest_tag, none of them wire-affecting."

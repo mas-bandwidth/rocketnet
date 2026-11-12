@@ -7301,6 +7301,7 @@ void rocketnet_test_server_gso_held_receive_view()
 // transport is available (rocketnet_server_uring_available).
 
 #include "rocketnet_server_uring.h"
+#include "reserved_port.h"
 
 #if ROCKETNET_DEV
 #if defined( __GNUC__ ) || defined( __clang__ )
@@ -7338,12 +7339,28 @@ void rocketnet_test_server_uring_probe()
         rocketnet_check( counters[i] == 0 );
     }
 
-    // destroy cancels the multishots and drains: a second transport binds the
-    // same port afterwards, so the sockets are gone
-
-    const uint16_t port = bind_address.port;
-
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+
+    // destroy cancels the multishots and drains: a second transport binds the
+    // same port afterwards, so the sockets are gone. The first queue binds
+    // without SO_REUSEPORT, so any socket still on the port refuses it. The
+    // port is a reserved one (reserved_port.h), not the one discovered above:
+    // between the destroy and the second bind, a case running in parallel
+    // that binds port 0 could be given a discovered port, never this one.
+
+    const uint16_t port = rocketnet_test_reserved_port( ROCKETNET_TEST_PORT_URING_PROBE );
+    rocketnet_check( port != 0 );
+
+    rocketnet_address_t first_address;
+    rocketnet_check( rocketnet_address_parse( &first_address, "127.0.0.1" ) );
+    first_address.port = port;
+
+    struct rocketnet_server_uring_t * first = rocketnet_server_uring_create( NULL, &first_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( first );
+    rocketnet_check( first_address.port == port );
+    rocketnet_check( rocketnet_server_uring_num_queues( first ) == 2 );
+
+    rn_native_backend_stop_and_destroy( first, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 
     rocketnet_address_t again_address;
     rocketnet_check( rocketnet_address_parse( &again_address, "127.0.0.1" ) );
@@ -7367,13 +7384,19 @@ void rocketnet_test_server_uring_probe()
     // The stall and resume calls are SEND_ERROR test hooks, absent from the
     // production library, so this tail is not in functional_production.
 
+    // the stalled transport binds a reserved port too: it is bound again
+    // below, after the destroy (reserved_port.h)
+
+    const uint16_t stall_port = rocketnet_test_reserved_port( ROCKETNET_TEST_PORT_URING_STALL );
+    rocketnet_check( stall_port != 0 );
+
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
+    stall_address.port = stall_port;
 
     struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
-
-    const uint16_t stall_port = stall_address.port;
+    rocketnet_check( stall_address.port == stall_port );
 
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_stop( stalled );
@@ -13837,6 +13860,23 @@ void rocketnet_functional_restore_assert_function()
     rocketnet_assert_function( rocketnet_functional_assert );
 }
 
+#if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+// the kernel command line of a virtme-ng guest names virtme (as
+// rocketnet_xdp_veth_inside_virtme reads it for the veth rows)
+static bool rocketnet_functional_inside_virtme()
+{
+    FILE * file = fopen( "/proc/cmdline", "r" );
+    if ( !file )
+    {
+        return false;
+    }
+    char line[4096];
+    const bool read = fgets( line, sizeof( line ), file ) != NULL;
+    fclose( file );
+    return read && strstr( line, "virtme" ) != NULL;
+}
+#endif // #if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
 void rocketnet_functional_prepare()
 {
     char verbose[256];
@@ -13848,7 +13888,22 @@ void rocketnet_functional_prepare()
 
     rocketnet_functional_restore_assert_function();
 
+#if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    // The production library has no rocketnet_server_socket_allow_commit
+    // (it is a development call), so the development suite's per-case opt-in
+    // before an XDP create on its veth pair has no production form, and with
+    // the barrier up every XDP row of functional_production could only fail
+    // or skip. Inside a virtme-ng guest, as root, there is no host NIC to
+    // protect (the rows attach to the guest's own veth pair), so there the
+    // production suite leaves the barrier down; everywhere else it is up,
+    // as in the development suite.
+    if ( !( geteuid() == 0 && rocketnet_functional_inside_virtme() ) )
+    {
+        rocketnet_forbid_xdp_commit();
+    }
+#else
     rocketnet_forbid_xdp_commit();
+#endif // #if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
     if ( rocketnet_functional_environment == NULL )
     {

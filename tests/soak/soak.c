@@ -111,7 +111,11 @@
     an end with no already-received refusal at the other.
     ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
-    uses as its negative control.
+    uses as its negative control. ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates
+    the endpoints with no loss and no duplication while the run records the
+    requested ones: --assert-flat must fail "link impairment not observed"
+    (the selftest's impairment leg). ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one
+    file open past the end sample: --assert-flat must fail on fds (handles).
 
     THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
     warm cycle is the first planned reconnect cycle: 30 s of the first client,
@@ -1099,6 +1103,12 @@ int main( int argc, char ** argv )
     char fault_verify_env[256];
     int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
 
+    // the impairment witness's negative control: the endpoints are created
+    // with no loss and no duplication while the run records and prints the
+    // requested ones, so --assert-flat must fail "link impairment not observed"
+    char fault_impairment_env[256];
+    const int fault_impairment = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_IMPAIRMENT", fault_impairment_env, sizeof( fault_impairment_env ) ) && fault_impairment_env[0] != '\0' && strcmp( fault_impairment_env, "0" ) != 0 ) ? 1 : 0;
+
     if ( soak_link_unread_name_set() || !soak_link_request( "SERVER", &soak_server_link ) || !soak_link_request( "CLIENT", &soak_client_link ) )
     {
         return 2;
@@ -1153,7 +1163,15 @@ int main( int argc, char ** argv )
         snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
     }
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_config, sizeof( server_config ) );
+    struct rocketnet_server_transport_config_t server_create_config = server_config;
+    if ( fault_impairment )
+    {
+        printf( "soak: impairment fault ARMED -- the endpoints get no loss and no duplication; --assert-flat must go red\n" );
+        server_create_config.simulated_loss_percent = 0;
+        server_create_config.simulated_duplicate_percent = 0;
+    }
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_create_config, sizeof( server_create_config ) );
     if ( !server )
     {
         printf( "soak: failed to create the server transport on %s\n", server_bind );
@@ -1395,7 +1413,13 @@ int main( int argc, char ** argv )
                 break;
             }
 #endif // #if defined( __linux__ )
-            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
+            struct rocketnet_client_transport_config_t client_create_config = client_config;
+            if ( fault_impairment )
+            {
+                client_create_config.simulated_loss_percent = 0;
+                client_create_config.simulated_duplicate_percent = 0;
+            }
+            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_create_config, sizeof( client_create_config ), rocketnet_time() );
 #if defined( __linux__ )
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
             {
@@ -1884,6 +1908,22 @@ int main( int argc, char ** argv )
             printf( "soak: --assert-flat FAILED: link impairment not observed: server duplicate_percent=%d and no already-received refusal at the client\n", soak_server_link.duplicate_percent );
             failures++;
         }
+    }
+
+    // the --assert-flat negative control: ROCKETNET_SOAK_FAULT_LEAK_FD=1 opens
+    // one file after the start sample and never closes it, so the end sample
+    // holds one more fd (a handle on Windows) and --assert-flat must go red
+
+    char fault_leak_env[256];
+    static FILE * soak_fault_leaked_file = NULL;
+    if ( resources_started && rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_LEAK_FD", fault_leak_env, sizeof( fault_leak_env ) ) && fault_leak_env[0] != '\0' && strcmp( fault_leak_env, "0" ) != 0 )
+    {
+#if defined( _WIN32 )
+        soak_fault_leaked_file = rocketnet_test_fopen( "NUL", "r" );
+#else
+        soak_fault_leaked_file = rocketnet_test_fopen( "/dev/null", "r" );
+#endif
+        printf( "soak: fd leak fault ARMED -- one file held open past the end sample (%s); --assert-flat must go red\n", soak_fault_leaked_file ? "opened" : "open failed" );
     }
 
     // the end sample, between clients as the post-warmup sample was: the

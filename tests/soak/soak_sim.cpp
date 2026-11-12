@@ -56,6 +56,18 @@
                                   control packet can leave application totals
                                   unchanged; the wire receive count exposes it.
                                   scripts/soak-sim-selftest runs both.
+
+    ROCKETNET_SOAK_SIM_FAULT_DELIVERY=1
+                                  the delivery floor's negative control: every
+                                  payload the server delivers is dropped before
+                                  it is verified. The run MUST fail with NO
+                                  DELIVERY: a soak that verified no payload has
+                                  soaked nothing, however clean its counters.
+                                  scripts/soak-sim-selftest runs this leg.
+
+    The delivery floor: the clients write payloads to the server (the server
+    sends none back), so a run fails unless it wrote at least one payload and
+    the server verified at least one.
 */
 
 #include "rocketnet_internal.h"
@@ -555,6 +567,13 @@ int main( int argc, char ** argv )
                 (unsigned long long) index_fault_iteration );
     }
 
+    char delivery_fault_string[256];
+    const bool delivery_fault = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_FAULT_DELIVERY", delivery_fault_string, sizeof( delivery_fault_string ) ) && delivery_fault_string[0] == '1';
+    if ( delivery_fault )
+    {
+        printf( "soak_sim: delivery fault ARMED -- the server's deliveries are dropped; the delivery floor must go red\n" );
+    }
+
     static struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof( client_counters ) );
 
@@ -578,6 +597,8 @@ int main( int argc, char ** argv )
     uint64_t connects = 0;
     uint64_t terminals = 0;
     uint64_t payloads_verified = 0;
+    uint64_t payloads_written = 0;
+    uint64_t payloads_verified_at_server = 0;
     uint64_t failures = 0;
     uint64_t hangs = 0;
     int payload_size = 1;
@@ -715,6 +736,7 @@ int main( int argc, char ** argv )
 
                 if ( bytes > 0 )
                 {
+                    payloads_written++;
                     wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
                 }
 
@@ -744,11 +766,12 @@ int main( int argc, char ** argv )
                 wire_send( simulator, &server_address, &from, response, response_bytes, time );
             }
 
-            if ( delivered_bytes > 0 )
+            if ( delivered_bytes > 0 && !delivery_fault )
             {
                 if ( verify_payload( delivered, delivered_bytes ) )
                 {
                     payloads_verified++;
+                    payloads_verified_at_server++;
                 }
                 else
                 {
@@ -936,10 +959,22 @@ int main( int argc, char ** argv )
 
     const int profile_refused = soak_profile_report( soak_elapsed, iteration );
 
+    // the delivery floor: a run that wrote no payload, or whose server
+    // verified none, has soaked nothing, however clean its other counters.
+
+    const bool no_delivery = payloads_written == 0 || payloads_verified_at_server == 0;
+    printf( "soak_sim delivery: %llu payloads written, %llu verified at the server\n",
+            (unsigned long long) payloads_written, (unsigned long long) payloads_verified_at_server );
+    if ( no_delivery )
+    {
+        printf( "NO DELIVERY: the clients wrote %llu payloads and the server verified %llu -- the soak exercised no delivery\n",
+                (unsigned long long) payloads_written, (unsigned long long) payloads_verified_at_server );
+    }
+
     // A failing run always names its simulator seed, pinned or not, so the
     // wire that failed can be replayed from the log alone.
 
-    if ( failures || hangs || terminals || profile_refused )
+    if ( failures || hangs || terminals || profile_refused || no_delivery )
     {
         printf( "soak_sim: FAILED simulator seed=%llu replay: ROCKETNET_SOAK_SIM_SEED=%llu ./bin/soak_sim\n",
                 (unsigned long long) simulator_seed, (unsigned long long) simulator_seed );
@@ -953,5 +988,5 @@ int main( int argc, char ** argv )
 
     rocketnet_term();
 
-    return ( failures || hangs || terminals || profile_refused ) ? 1 : 0;
+    return ( failures || hangs || terminals || profile_refused || no_delivery ) ? 1 : 0;
 }

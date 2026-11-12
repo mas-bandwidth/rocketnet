@@ -116,7 +116,7 @@ What is built and tested on big-endian (s390x), and what is not.
 | The embedded XDP object is big-endian (`cmake/CheckXdpObjectByteOrder.cmake`) | `ci.yml`, `big-endian` (any big-endian build with XDP) | every commit | a cross build embedding the build machine's object |
 | The XDP program compiles for `bpfeb` against the s390x kernel headers | `ci.yml`, `big-endian` | every commit | a header or macro only one byte order has |
 | `tools/bigendian/wire_check.cpp` and `test_sodium` under qemu-user | `ci.yml`, `big-endian` | every commit | the endian helpers, address parses, a same-host seal and open |
-| The standard's byte vectors, 58 cases (`tools/bigendian/run_byte_cases.sh`; it refuses fewer than 58 and 30) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
+| The standard's byte vectors, 58 cases, and 30 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
 | The XDP filter compiled as host C for s390x, 30 cases | `ci.yml`, `big-endian`, qemu-user; and `./bin/test` in the guest | every commit; nightly | a conversion in the XDP program that swaps whatever the byte order is |
 | `./bin/test`, `./bin/functional` (auto ladder, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
 | Cross-endian interoperability, three clients each way (`tools/bigendian/run_interop.sh`) | nightly guest against the x86-64 runner | nightly | a wire field in host order that has no vector |

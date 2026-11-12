@@ -44,6 +44,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #if defined( __linux__ )
 #include "rocketnet_server_gso.h"
 #include "rocketnet_server_uring.h"
+#include "reserved_port.h"
 #include <fcntl.h>
 #include <sys/stat.h>
 #endif // #if defined( __linux__ )
@@ -2615,21 +2616,15 @@ static void posix_port_log( void * context, enum rocketnet_log_level_t level, co
     }
 }
 
-static uint16_t posix_port_free()
+// a free port for an explicit bind, from below the ephemeral range
+// (reserved_port.h): a port 0 bind released before the server binds it could
+// go to a case running in parallel in the gap, and the server's refusal would
+// then be counted as the refusal under test
+static uint16_t posix_port_free( int slot )
 {
-    int s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-    posix_check( s >= 0 );
-
-    struct sockaddr_storage address;
-    const socklen_t bytes = posix_sockaddr( 0, 0, &address );
-    posix_check( bind( s, (struct sockaddr *) &address, bytes ) == 0 );
-
-    struct sockaddr_in bound;
-    socklen_t bound_bytes = sizeof( bound );
-    posix_check( getsockname( s, (struct sockaddr *) &bound, &bound_bytes ) == 0 );
-    close( s );
-
-    return ntohs( bound.sin_port );
+    const uint16_t port = rocketnet_test_reserved_port( slot );
+    posix_check( port != 0 );
+    return port;
 }
 
 static void * posix_port_server_create( int kind, uint16_t port )
@@ -2784,7 +2779,7 @@ static void posix_port_refused( int kind )
     // the server's own queues: two queues bind an explicit free port, and
     // every datagram sent to it arrives at that server
 
-    const uint16_t port = posix_port_free();
+    const uint16_t port = posix_port_free( kind == POSIX_NATIVE_GSO ? ROCKETNET_TEST_PORT_GSO_EXPLICIT : ROCKETNET_TEST_PORT_URING_EXPLICIT );
     void * server = posix_port_server_create( kind, port );
     posix_check( server != NULL );
 
@@ -2821,7 +2816,7 @@ static void posix_port_refused( int kind )
 
     // a plain socket with SO_REUSEPORT holds the port
 
-    const uint16_t held_port = posix_port_free();
+    const uint16_t held_port = posix_port_free( kind == POSIX_NATIVE_GSO ? ROCKETNET_TEST_PORT_GSO_HELD : ROCKETNET_TEST_PORT_URING_HELD );
     int holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     posix_check( holder >= 0 );
 

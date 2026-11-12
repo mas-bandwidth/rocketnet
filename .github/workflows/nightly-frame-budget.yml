@@ -62,7 +62,7 @@ jobs:
         timeout-minutes: 1
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target client_main_thread_cost --parallel
+          cmake --build build --target client_main_thread_cost --parallel 8
 
       - name: Enforce P=32 frame budget (portable)
         run: |
@@ -152,7 +152,7 @@ jobs:
 
       - name: Build client_main_thread_cost (Release)
         timeout-minutes: 2
-        run: cmake --build build --config Release --target client_main_thread_cost --parallel
+        run: cmake --build build --config Release --target client_main_thread_cost --parallel 8
 
       - name: Report P=32 frame budget (portable, report-only)
         run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --transport portable --report-only

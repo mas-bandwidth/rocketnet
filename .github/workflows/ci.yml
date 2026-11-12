@@ -78,9 +78,12 @@
 #                           exhaustive functional suite is in nightly-leaks
 #   fuzz-smoke              a bounded, deterministic replay of the committed
 #                           regression corpus over the wire-facing parsers
-#   big-endian              the suite on real big-endian bytes (s390x), the
-#                           only leg that can see an endianness break before
-#                           a customer does
+#   big-endian              the whole suite COMPILED for s390x; RUN under
+#                           qemu-user: the wire check, test_sodium and the
+#                           88 byte cases (58 standard vectors, 30 XDP filter
+#                           host cases; tools/bigendian/run_byte_cases.sh,
+#                           counts held against docs/PLATFORMS.md). The full
+#                           suite runs on s390x in nightly-bigendian-system
 #   conformance             the standard in standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
@@ -349,14 +352,14 @@ jobs:
         if: matrix.build_type == 'Debug'
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
-          cmake --build build --parallel
+          cmake --build build --parallel 8
 
       # bin/test_wide compiles the SDK again with ROCKETNET_MAX_CHANNELS=512 for
       # the cases that need a channel index of 256 or more (CMakeLists.txt).
       - name: Build the wide-channel unit suite
         timeout-minutes: 1
         if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
-        run: cmake --build build --target test_wide --parallel
+        run: cmake --build build --target test_wide --parallel 8
 
       # Each job's window is everything after its build, one leg of the row
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
@@ -408,10 +411,6 @@ jobs:
             | tee "$RUNNER_TEMP/clang-cl-floor/configure.log"
           grep -q 'Floating-point floor (clang-cl)' "$RUNNER_TEMP/clang-cl-floor/configure.log"
 
-      - name: Check every child make has a bounded -j
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
-        run: bash tools/check_make_jobs.sh
-
       # tools/check_no_thread_local.py exits 1 when a production build
       # (ROCKETNET_DEV=0) of sdk/ defines or touches thread-local storage. On
       # macOS a thread's first touch of any thread-local makes dyld allocate
@@ -423,18 +422,20 @@ jobs:
       # sections and symbols. --self-test holds the red and green controls.
       - name: Check no thread-local storage in a production build
         if: matrix.leg == 'checks'
+        # The four reads share nothing and run at once (tools/run_parallel.py):
+        # the step takes its slowest, the preprocessing, not their sum.
         run: |
           set -euo pipefail
-          python3 tools/check_no_thread_local.py --self-test
-          python3 tools/check_no_thread_local.py
+          commands=('python3 tools/check_no_thread_local.py --self-test' 'python3 tools/check_no_thread_local.py')
           if [ "${{ matrix.dev }}" = "OFF" ]; then
-            python3 tools/check_no_thread_local.py --preprocess build/compile_commands.json
             libraries=(build/librocketnet.a)
             for shared in bin/librocketnet.so bin/librocketnet.dylib; do
               if [ -f "$shared" ]; then libraries+=("$shared"); fi
             done
-            python3 tools/check_no_thread_local.py --objects "${libraries[@]}"
+            commands+=('python3 tools/check_no_thread_local.py --preprocess build/compile_commands.json')
+            commands+=("python3 tools/check_no_thread_local.py --objects ${libraries[*]}")
           fi
+          python3 tools/run_parallel.py "${commands[@]}"
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
@@ -463,7 +464,7 @@ jobs:
       - name: Sodium parity against the independent system library
         if: matrix.build_type == 'Release' && matrix.leg == 'unit' && matrix.shard != '1/2'
         run: |
-          cmake --build build --target rocketnet_sodium_oracle --parallel
+          cmake --build build --target rocketnet_sodium_oracle --parallel 8
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
       - name: Replay the fuzz corpora without libFuzzer
@@ -474,7 +475,7 @@ jobs:
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
-          cmake --build build --target $targets --parallel
+          cmake --build build --target $targets --parallel 8
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -493,15 +494,18 @@ jobs:
       # can withhold a seed must then exit 1 and print INCOMPLETE, so a
       # generator that only returned its failure would be seen to go on.
       # An empty input file stands in for a corpus, so a generator that does
-      # not exit replays it and exits 0, which this step refuses.
+      # not exit replays it and exits 0, which this step refuses. seed_harnesses
+      # is every TARGETS harness whose source has a seed generator (it reads
+      # ROCKETNET_FUZZ_SEED_DIR); tools/docs/check_fuzz_harnesses.py holds it
+      # to exactly that set.
       - name: Run the fuzz seed generators
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          seed_harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           empty="$RUNNER_TEMP/fuzz-empty-input"
           : > "$empty"
           failed=0
-          for harness in $harnesses; do
+          for harness in $seed_harnesses; do
             out="$RUNNER_TEMP/fuzz-seeds-$harness"
             rm -rf "$out" && mkdir -p "$out"
             if ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_SEED_FROM=tests/fuzz/corpus "./bin/fuzz_replay_$harness" "$empty" > "fuzz-seeds-$harness.log" 2>&1; then
@@ -587,8 +591,11 @@ jobs:
 
       # This run includes test_unit_case_memory, the row that enforces the unit
       # cases' measured RSS against their existing registry and fallback bound.
-      # io_uring is a documented host requirement on Linux (docs/LINUX.md):
-      # a full-suite run that skips an io_uring row fails here, naming it.
+      # Every whole-suite run goes through tools/run_functional.sh <variant>:
+      # its SKIPPED lines must be exactly the rows tests/functional/
+      # expected_skips.txt lists for the leg (<os>-<variant>), each with a
+      # reason, so a row that stops running here (io_uring, a documented host
+      # requirement on Linux, docs/LINUX.md, among them) fails, naming it.
       # Per commit the Linux Release row runs functional_production only; the
       # development suite runs per commit on the Linux Debug row and on the
       # macOS Release row (the one macOS functional row per commit).
@@ -604,11 +611,7 @@ jobs:
           ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
         run: |
           set -euo pipefail
-          ./bin/functional | tee functional-auto.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-auto.log; then
-            echo "io_uring functional rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+          bash tools/run_functional.sh dev --log functional-auto.log ./bin/functional
 
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
@@ -628,11 +631,7 @@ jobs:
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         run: |
           set -euo pipefail
-          ./bin/functional_production | tee functional-production-auto.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-auto.log; then
-            echo "io_uring functional_production rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+          bash tools/run_functional.sh prod --log functional-production-auto.log ./bin/functional_production
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
@@ -695,7 +694,7 @@ jobs:
         run: |
           set +e -uo pipefail
           case "$RUNNER_OS" in
-            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional; functional_production=./bin/functional_production ;;
             macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
@@ -715,6 +714,21 @@ jobs:
             xdp_root_cases="$xdp_root_cases test_xdp_transport_posix_server_create_destroy_1000 test_xdp_transport_posix_server_restart_same_port_100 test_xdp_transport_posix_destroy_under_traffic_100"
           fi
           xdp_cases_run="$xdp_cases $xdp_root_cases"
+          # The Release row builds the production library (ROCKETNET_DEV=OFF):
+          # its own suite, functional_production, runs the xdp rows it
+          # registers in the same guests (prod:<case>), so the library users
+          # link is the one tested under root on a veth pair (inside the guest
+          # the production suite leaves its XDP commit barrier down,
+          # tests/functional/rocketnet_functional_tests.cpp). xdp_dev_only
+          # names the rows only the development suite registers (the posix
+          # client-fault cases: functional_production answers "unknown functional
+          # test"); a row production stops registering fails by name (exit 2).
+          xdp_dev_only="test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable"
+          if [ "${XDP_DEV:-OFF}" = OFF ]; then
+            for case in $xdp_cases $xdp_root_cases; do
+              case " $xdp_dev_only " in *" $case "*) ;; *) xdp_cases_run="$xdp_cases_run prod:$case" ;; esac
+            done
+          fi
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
@@ -781,7 +795,9 @@ jobs:
                   {
                     printf ': > %q\n' "$marker"
                     printf 'for case in %s; do\n' "$guest_cases"
-                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s %q --run "$case" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$functional" "$logs/$server.$client"
+                    printf '  suite=%q; name=$case\n' "$functional"
+                    printf '  case "$name" in prod:*) suite=%q; name=${name#prod:} ;; esac\n' "$functional_production"
+                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s "$suite" --run "$name" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$logs/$server.$client"
                     printf '  echo $? > %q.$case.rc\n' "$logs/$server.$client"
                     printf 'done\n'
                   } > "$script"
@@ -833,7 +849,7 @@ jobs:
               card=""
               for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
               ok=1
-              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              [ "$rc" = 0 ] && grep -qx "${case#prod:}" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
               if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
                 echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
                 failed=1
@@ -911,17 +927,19 @@ jobs:
 
       # The other optimized configurations are hardened like Release: each
       # builds the shared library alone in its own directory and the same
-      # checker reads it.
+      # checker reads it. The two share nothing and build at once
+      # (tools/run_parallel.py).
       - name: Check RelWithDebInfo and MinSizeRel hardening
         if: matrix.leg == 'checks' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
+        shell: bash
         run: |
+          set -euo pipefail
+          commands=()
           for config in RelWithDebInfo MinSizeRel; do
             dir="build-harden-$config"
-            cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF \
-              -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/$dir/bin" -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/$dir/bin"
-            cmake --build "$dir" --target rocketnet_shared --parallel 4
-            python3 tools/check_hardening.py "$dir/bin/librocketnet.so"
+            commands+=("cmake -S . -B '$dir' -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF -DCMAKE_LIBRARY_OUTPUT_DIRECTORY='$PWD/$dir/bin' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY='$PWD/$dir/bin'; cmake --build '$dir' --target rocketnet_shared --parallel 4; python3 tools/check_hardening.py '$dir/bin/librocketnet.so'")
           done
+          python3 tools/run_parallel.py "${commands[@]}"
 
       - name: Check every driver row has transport matrix cells
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -956,8 +974,10 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
-      # the 1.x C ABI (exports, public struct sizes and field offsets) against
-      # its recorded baseline, tools/abi_v1.txt; one small C compile
+      # the 1.x C ABI against its recorded baseline, tools/abi_v1.txt (from
+      # v1.1.0): exports, prototypes, callback typedefs, struct sizes, field
+      # offsets, sizes and types, enumerator values and macro values; one
+      # small C compile. test_check_abi.py plants each kind of change
       - name: Check the 1.x ABI baseline
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
@@ -1015,7 +1035,7 @@ jobs:
         if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
-          cmake --build build-history --target test_lifecycle --parallel
+          cmake --build build-history --target test_lifecycle --parallel 8
           ./build-history/bin/test_lifecycle
           if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256; then
             echo "undersized history was accepted"
@@ -1034,7 +1054,7 @@ jobs:
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
           cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
-          cmake --build build-no-xdp --target rocketnet rocketnet_shared test functional --parallel
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test functional --parallel 8
           python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
           # every case this build compiles in place of the XDP transport's
           # (#if !ROCKETNET_XDP), listed by the binary itself
@@ -1073,7 +1093,7 @@ jobs:
             -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_TESTS=OFF \
             "-DCMAKE_IGNORE_PATH=/usr/include;/usr/lib/x86_64-linux-gnu;/usr/lib/aarch64-linux-gnu;/usr/lib" \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin"
-          cmake --build build-no-server-libs --target rocketnet rocketnet_shared --parallel
+          cmake --build build-no-server-libs --target rocketnet rocketnet_shared --parallel 8
           python3 tools/check_xdp_compiled_out.py --absent build-no-server-libs/bin/librocketnet.so build-no-server-libs/librocketnet.a
           if readelf -d build-no-server-libs/bin/librocketnet.so | grep -E 'NEEDED.*lib(uring|bpf|xdp)'; then
             echo "client library links a server library (liburing, libbpf or libxdp)"
@@ -1124,11 +1144,20 @@ jobs:
         if: ${{ matrix.leg == 'checks' && (success() || steps.memory_echo.outcome == 'failure') }}
         run: python3 tools/check_memory.py ./bin/transport_memory
 
+      # The message matrix's receive oracle (tests/matrix_receive.h) held to
+      # its named faults without a socket: duplicate, never-sent,
+      # out-of-order, not-increasing, lost, and the 3/7 cross-mode order
+      # (held before the sent report, named after it, no fault for a sender
+      # that drove one mode). The --matrix pair itself needs a bench.
+      - name: The matrix oracle's self-test
+        if: matrix.leg == 'checks'
+        run: ./bin/server --matrix --seed 7 --self-test-result "$RUNNER_TEMP/matrix-server-self-test.tsv"
+
+      # The contract and the extension's build share nothing and run at once
+      # (tools/run_parallel.py).
       - name: "Functional: native driver contract and external backend"
         if: matrix.leg == 'checks'
-        run: |
-          ./bin/test_transport
-          python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+        run: python3 tools/run_parallel.py ./bin/test_transport 'python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}'
 
       - name: Enforce combined unit and functional timing
         env:
@@ -1228,7 +1257,7 @@ jobs:
           CXX: g++
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
-          cmake --build build --target test dst --parallel
+          cmake --build build --target test dst --parallel 8
 
       - name: Run unit tests (Release, ROCKETNET_DEV=ON)
         run: ./bin/test
@@ -1401,7 +1430,7 @@ jobs:
 
       - name: Build
         timeout-minutes: 6
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 8
 
       - name: Start combined unit and functional timing (development legs)
         if: matrix.leg != 'b'
@@ -1424,7 +1453,7 @@ jobs:
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
-          cmake --build build --config Release --target $targets --parallel
+          cmake --build build --config Release --target $targets --parallel 8
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -1531,7 +1560,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./bin/Release/functional.exe
+          bash tools/run_functional.sh dev ./bin/Release/functional.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
@@ -1603,7 +1632,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./bin/Release/functional_production.exe
+          bash tools/run_functional.sh prod ./bin/Release/functional_production.exe
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.leg == 'b'
@@ -1860,7 +1889,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           set -euo pipefail
-          cmake --build build --config Release --parallel
+          cmake --build build --config Release --parallel 8
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory. Compiling the tool and its
@@ -1950,7 +1979,7 @@ jobs:
 
       - name: Build the unit suite (Windows)
         timeout-minutes: 5
-        run: cmake --build build --config Release --target test --parallel
+        run: cmake --build build --config Release --target test --parallel 8
 
       - name: Start combined unit and functional timing
         shell: bash
@@ -2164,12 +2193,12 @@ jobs:
       - name: Build the sanitized unit suite
         timeout-minutes: 4
         if: startsWith(matrix.leg, 'unit suite')
-        run: cmake --build build --target test --parallel
+        run: cmake --build build --target test --parallel 8
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         timeout-minutes: 6
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel 8
 
       - name: Start combined unit and functional timing (unit rows)
         if: startsWith(matrix.leg, 'unit suite')
@@ -2319,7 +2348,7 @@ jobs:
 
       - name: Build the instrumented library
         timeout-minutes: 1
-        run: cmake --build build-fuzz --target rocketnet --parallel
+        run: cmake --build build-fuzz --target rocketnet --parallel 8
 
       # THE GATE: each committed input, once, in order, through its target's
       # replay driver. A replay driver given files runs exactly them and exits
@@ -2334,7 +2363,7 @@ jobs:
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
-          cmake --build build-fuzz --target $targets --parallel
+          cmake --build build-fuzz --target $targets --parallel 8
 
       - name: Replay every committed fuzz corpus
         env:
@@ -2435,16 +2464,17 @@ jobs:
 
       - name: Build the instrumented library
         timeout-minutes: 1
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
       - name: Build every fuzzer with NDEBUG
         timeout-minutes: 2
         run: |
-          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
-                   rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session \
-                   rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink \
-                   rocketnet_fuzz_endpoint; do
+          # the replay step below replays exactly this list; the XDP filter
+          # harness links the filter as host C and is built after the loop
+          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          echo "NDEBUG_HARNESSES=$harnesses" >> "$GITHUB_ENV"
+          for src in $harnesses; do
+            if [ "$src" = rocketnet_fuzz_xdp_filter ]; then continue; fi
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -2470,21 +2500,19 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          ./bin/rocketnet_fuzz_ndebug tests/fuzz/corpus/*
-          ./bin/rocketnet_fuzz_connect_token_ndebug tests/fuzz/corpus_connect_token/*
-          ./bin/rocketnet_fuzz_receive_structured_ndebug tests/fuzz/corpus_receive_structured/*
-          ./bin/rocketnet_fuzz_message_ndebug tests/fuzz/corpus_message/*
-          ./bin/rocketnet_fuzz_token_private_ndebug tests/fuzz/corpus_token_private/*
-          ./bin/rocketnet_fuzz_round_trip_ndebug tests/fuzz/corpus_round_trip/*
-          ./bin/rocketnet_fuzz_config_ndebug tests/fuzz/corpus_config/*
-          ./bin/rocketnet_fuzz_server_transport_ndebug tests/fuzz/corpus_server_transport/*
-          ./bin/rocketnet_fuzz_client_transport_ndebug tests/fuzz/corpus_client_transport/*
-          ./bin/rocketnet_fuzz_session_ndebug tests/fuzz/corpus_session/*
-          ./bin/rocketnet_fuzz_xdp_frame_ndebug tests/fuzz/corpus_xdp_frame/*
-          ./bin/rocketnet_fuzz_uring_recvmsg_ndebug tests/fuzz/corpus_uring_recvmsg/*
-          ./bin/rocketnet_fuzz_gateway_netlink_ndebug tests/fuzz/corpus_gateway_netlink/*
-          ./bin/rocketnet_fuzz_endpoint_ndebug tests/fuzz/corpus_endpoint/*
-          ./bin/rocketnet_fuzz_xdp_filter_ndebug tests/fuzz/corpus_xdp_filter/*
+          # every harness the build step built, each against its own corpus;
+          # one failing replay never hides the rest (each is named, then the
+          # step fails)
+          failed=0
+          for harness in $NDEBUG_HARNESSES; do
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
+            if ! "./bin/${harness}_ndebug" "$corpus"/* > "fuzz-ndebug-$harness.log" 2>&1; then
+              echo "NDEBUG replay failed: $harness"
+              tail -n 30 "fuzz-ndebug-$harness.log"
+              failed=1
+            fi
+          done
+          exit $failed
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the
@@ -2667,7 +2695,7 @@ jobs:
 
       - name: Build the library and the suite for s390x
         timeout-minutes: 5
-        run: cmake --build build --target rocketnet test test_sodium --parallel
+        run: cmake --build build --target rocketnet test test_sodium --parallel 8
 
       # The real XDP program for bpfeb, against the s390x kernel headers, the
       # way a big-endian build embeds it: a header or macro that only one byte
@@ -2875,7 +2903,7 @@ jobs:
       - name: Build the soak and the lifecycle harness
         timeout-minutes: 1
         if: matrix.leg == 'loopback soak'
-        run: cmake --build build --target soak test_lifecycle --parallel
+        run: cmake --build build --target soak test_lifecycle --parallel 8
 
       - name: Start combined unit and functional timing
         if: matrix.leg == 'loopback soak'
@@ -2998,7 +3026,7 @@ jobs:
 
       - name: Build the suite
         timeout-minutes: 2
-        run: cmake --build build --target test --parallel
+        run: cmake --build build --target test --parallel 8
 
       - name: Start combined unit and functional timing
         run: *start_unit_functional_timing
@@ -3018,7 +3046,7 @@ jobs:
 
       - name: Vendor parity against the pinned backend
         run: |
-          cmake --build build --target rocketnet_sodium_oracle --parallel
+          cmake --build build --target rocketnet_sodium_oracle --parallel 8
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"
 
       - name: Enforce combined unit and functional timing
@@ -3175,7 +3203,7 @@ jobs:
         timeout-minutes: 2
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target soak_sim soak --parallel
+          cmake --build build --target soak_sim soak --parallel 8
 
       # soak_sim's instruments, each driven against its own negative control
       # (#99). The audit legs corrupt the simulator's index on purpose and
@@ -3259,7 +3287,12 @@ jobs:
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
 
+      # the whole commit graph without trees or blobs past HEAD: the gate
+      # refuses a baseline whose recorded commit is not an ancestor of HEAD
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+          filter: tree:0
 
       - name: Check the fleet's build dependencies are present
         run: |
@@ -3357,7 +3390,7 @@ jobs:
             -DCMAKE_C_FLAGS="-I$tc/include" \
             -DCMAKE_CXX_FLAGS="-I$tc/include" \
             -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
-          cmake --build build --target instruction_count --parallel
+          cmake --build build --target instruction_count --parallel 8
 
       - name: Run the cachegrind instruction gate with the pinned valgrind
         run: |
@@ -3397,6 +3430,18 @@ jobs:
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
       - name: Every main commit gets its own concurrency group
         run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
+      # release-check.yml's unreleased-wire-changes job runs git log over
+      # tools/wire_paths.txt; a path that is gone would leave the gate silently.
+      # --self-test plants a gone, an untracked, a doubled and a spaced path.
+      - name: Every wire path is a tracked file
+        run: |
+          python3 tools/check_wire_paths.py --self-test
+          python3 tools/check_wire_paths.py
+
+      - name: Every LeakSanitizer suppression names a live function
+        run: |
+          python3 tools/check_lsan_supp.py --self-test
+          python3 tools/check_lsan_supp.py
 
       # Every job a push or pull request runs is bounded to two minutes
       # (timeout-minutes: 2, or ${{ inputs.full && N || 2 }} in this file), so
@@ -3420,13 +3465,6 @@ jobs:
         run: sh tools/format/test_check_format.sh
       - name: Every source is formatted
         run: sh tools/format/check_format.sh
-
-      # tools/bigendian/run_byte_cases.sh (the big-endian job's byte cases)
-      # against a fixture tree and a fake unit binary: a failing or
-      # unregistered case is red, and so are zero cases named and a count
-      # under the committed floor.
-      - name: Test the big-endian byte-case runner
-        run: bash tools/bigendian/test_run_byte_cases.sh
 
       # tools/check_or_true.py: no `|| true` / `|| :` discards a status in
       # workflows, .github/scripts, scripts/ or tools/**/*.sh outside
@@ -3490,7 +3528,6 @@ jobs:
           python3 tools/test_check_examples.py -v
           python3 tools/test_check_fuzz_oracle.py -v
           python3 tools/test_check_header_exports.py -v
-          bash tools/test_check_make_jobs.sh
           bash tools/test_check_memlock.sh
           python3 tools/test_check_memory.py -v
           bash tools/test_check_oss_fuzz_fp_contract.sh
@@ -3750,6 +3787,61 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # tools/check_make_jobs.py: every make -j, cmake --build --parallel
+      # and cmake --build -j in every tracked Makefile, workflow, shell,
+      # Python and Go file names its job count (a bare one is unbounded under
+      # the Makefile generator: exit 137 on the benches). --self-test plants
+      # each spelling, an empty tree and a failed git listing.
+      - name: Every parallel build names its job count
+        run: |
+          python3 tools/check_make_jobs.py --self-test
+          python3 tools/check_make_jobs.py
+
+      # tools/run_parallel.py runs a checks step's independent commands at
+      # once: its self-test plants a red command, a red pipe stage, no
+      # command, and two commands that only pass when run together.
+      - name: Test the parallel step runner
+        run: python3 tools/run_parallel.py --self-test
+
+      # tools/replay_ci_steps.py runs a job's steps on a bench as the runner
+      # would, before a dispatch; its self-test holds the if:, env, shell,
+      # anchor and red-step rules to a fixture workflow.
+      - name: Test the CI step replay
+        run: python3 tools/replay_ci_steps.py --self-test
+
+      # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
+      # diagnostic pragma in sdk/ is listed with a reason in
+      # tools/suppressions_reviewed.txt, and every listed one still exists. A
+      # suppression hides a finding before the static gates' baselines see
+      # it; static.yml's tidy gate runs the same check first.
+      - name: Every in-source suppression in the library is reviewed
+        run: |
+          python3 tools/check_suppressions.py --self-test
+          python3 tools/check_suppressions.py
+
+      # tools/bigendian/run_byte_cases.sh refuses an empty list, a
+      # registration its pattern cannot read and a count other than the one
+      # docs/PLATFORMS.md states; its self-test plants each of those, an
+      # unbuilt case and a failing case on a fake binary
+      - name: Test and count the big-endian byte cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/bigendian/test_run_byte_cases.sh
+          bash tools/bigendian/run_byte_cases.sh --count
+
+      # Every whole functional-suite run goes through tools/run_functional.sh,
+      # which holds its SKIPPED lines to tests/functional/expected_skips.txt
+      # both ways; --lint checks the list (a reason per predicate, names that
+      # exist, every leg run, no unwrapped whole-suite run in a workflow)
+      - name: Functional skips are held to the reviewed list
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_skips.py --self-test
+          bash tools/test_run_functional.sh
+          python3 tools/check_skips.py --lint
 
       - name: Test the mutation runner's generator and process cleanup
         run: |
