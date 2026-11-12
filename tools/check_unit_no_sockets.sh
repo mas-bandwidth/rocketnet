@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # The unit suite opens no socket (the owner's rule: unit tests use no sockets,
 # no network and no outside services). Runs the unit binary under
-# strace --seccomp-bpf -f -e trace=socket,execve and exits nonzero, naming the first opener
-# (the case that ran it, read from the worker's execve, and the socket call),
-# when any process of the suite calls socket(). execve is traced only to name
-# the case. A failing suite fails the check too, and the suite's own output
+# strace --seccomp-bpf -f -e trace=%network,execve and exits nonzero, naming the first caller
+# (the case that ran it, read from the worker's execve, and the call),
+# when any process of the suite makes any network system call: socket,
+# socketpair, bind, listen, accept, connect, send/recv in every form,
+# shutdown, the socket options and names (strace's %network class). Tracing
+# socket() alone passed a socketpair() exchanging a datagram (VERIFY-3 W8).
+# execve is traced only to name the case. A failing suite fails the check too, and the suite's own output
 # prints, so on Linux CI this run is the plain unit run as well.
 #
 # usage: tools/check_unit_no_sockets.sh [binary]   (default ./bin/test)
@@ -29,7 +32,7 @@ suite=0
 # Filter in the kernel: ordinary -e filtering still stops at every unrelated
 # syscall under ptrace. That multiplied the 1000-client Debug case's cost
 # under CI load. -f retains fork/exec tracing, including child socket openers.
-strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
+strace --seccomp-bpf -f -qq -s 256 -e trace=%network,execve -o "$trace" "$binary" || suite=$?
 
 if [ ! -s "$trace" ]; then
     echo "check_unit_no_sockets: strace wrote no trace for $binary"
@@ -48,7 +51,7 @@ awk '
         cases[$1] = ( n > 1 ) ? name : "(the suite runner)"
         next
     }
-    $2 ~ /^socket\(/ {
+    $2 ~ /^[a-z_0-9]+\(/ && $2 !~ /^execve\(/ {
         count++
         if ( count == 1 ) {
             call = $0
@@ -59,10 +62,10 @@ awk '
     }
     END {
         if ( count > 0 ) {
-            printf "FAIL check_unit_no_sockets: %d socket() call(s); first opener %s\n", count, first
+            printf "FAIL check_unit_no_sockets: %d network call(s); first caller %s\n", count, first
             exit 1
         }
-        print "ok check_unit_no_sockets: no socket() call in the unit suite"
+        print "ok check_unit_no_sockets: no network system call in the unit suite"
     }
 ' "$trace" || exit 1
 
