@@ -95,9 +95,10 @@ struct tla_random_t
     }
 };
 
-// writes MODULE <name> with the constants, definitions and trace, and its cfg
+// writes MODULE <name> with the constants, definitions and trace, and its cfg;
+// properties, when not NULL, names the temporal properties the cfg checks too
 inline bool tla_write_trace( const char * dir, const std::string & name, const char * extends, const std::string & definitions,
-                             const std::string & constants, const std::vector<tla_record_t> & records )
+                             const std::string & constants, const std::vector<tla_record_t> & records, const char * properties = NULL )
 {
     const std::string module_path = std::string( dir ) + "/" + name + ".tla";
     const std::string cfg_path = std::string( dir ) + "/" + name + ".cfg";
@@ -131,6 +132,10 @@ inline bool tla_write_trace( const char * dir, const std::string & name, const c
 
     fprintf( cfg, "\\* written by tests/tla_trace.cpp: the trace must be a behaviour of the spec\n" );
     fprintf( cfg, "SPECIFICATION TraceSpec\n\nCONSTANTS\n%s    TraceLog <- Log\n\nINVARIANT TraceConsistent\n", constants.c_str() );
+    if ( properties )
+    {
+        fprintf( cfg, "\nPROPERTIES %s\n", properties );
+    }
     fclose( cfg );
 
     printf( "TRACE %s records=%d\n", module_path.c_str(), (int) records.size() );

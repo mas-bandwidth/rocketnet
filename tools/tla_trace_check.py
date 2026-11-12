@@ -32,6 +32,14 @@ LAYERS = {
         "plant": "MCTraceBankPlantSeed",
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
         "fired": re.compile(r"^STALE-TURNS ([0-9]+)$", re.M),
+        "quiet": True,
+    },
+    "gather": {
+        "clean": "MCTraceGatherSeed",
+        "plant": "MCTraceGatherPlantSeed",
+        "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
+        "fired": re.compile(r"^GATHER-REORDERABLE ([0-9]+)$", re.M),
+        "quiet": False,
     },
 }
 
@@ -71,9 +79,11 @@ def check_seed(args, layer, seed):
     fired = layer["fired"].search(plant.stdout)
     if not fired or int(fired.group(1)) == 0:
         return seed, log, "the plant never fired"
-    quiet = layer["fired"].search(clean.stdout)
-    if not quiet or int(quiet.group(1)) != 0:
-        return seed, log, "the clean code met the plant's condition"
+    if layer["quiet"]:
+        # the plant's condition is the planted code's own act: the clean code never meets it
+        quiet = layer["fired"].search(clean.stdout)
+        if not quiet or int(quiet.group(1)) != 0:
+            return seed, log, "the clean code met the plant's condition"
 
     group = f"trace{args.layer}"
     rows = HEADER
