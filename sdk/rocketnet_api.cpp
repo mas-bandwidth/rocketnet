@@ -451,6 +451,17 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     }
 
+    if ( !rn_copy_config_string( transport->bind_ipv4_address, sizeof( transport->bind_ipv4_address ), config->bind_ipv4_address, "", "server", "bind_ipv4_address" ) ||
+         !rn_copy_config_string( transport->bind_ipv6_address, sizeof( transport->bind_ipv6_address ), config->bind_ipv6_address, "", "server", "bind_ipv6_address" ) )
+    {
+        if ( failure )
+        {
+            *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
+
+        return false;
+    }
+
     // the served addresses come from create's arguments (rn_server_addresses)
 
     transport->public_address[0] = '\0';
@@ -770,6 +781,8 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, server_secret_key ),
     ROCKETNET_SERVER_CONFIG_BYTES_4,
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv4_address ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv6_address ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 

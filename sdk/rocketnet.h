@@ -1593,8 +1593,8 @@ struct rocketnet_server_config_t
     /// refuses a value above 32. A frame leaves on the lane its destination's
     /// address and port hash to. One lane (zero or 1) binds the port
     /// exclusively, as before. More than one lane needs a specific local
-    /// address and a nonzero port: create refuses a wildcard address (0.0.0.0
-    /// or ::) or port 0. The lane sockets share the port (SO_REUSEADDR), so
+    /// address, set in bind_ipv4_address or bind_ipv6_address: start refuses
+    /// the wildcard (0.0.0.0 or ::). The lane sockets share the port (SO_REUSEADDR), so
     /// while the lanes run, a process of any account on the machine can bind
     /// that address and port too. Windows does not document which socket then
     /// receives; measured, the lanes keep every datagram. That is the trade
@@ -1794,6 +1794,40 @@ struct rocketnet_server_config_t
     /// Default is 0.
 
     uint64_t token_epoch_unix_seconds;
+
+    /// ROCKETNET_SERVER_BIND_IPV4_ADDRESS is the local IPv4 address the
+    /// server binds, as "a.b.c.d" with no port: an address of one of this
+    /// machine's interfaces. The ipv4_address passed to rocketnet_server_create
+    /// is the address clients connect to, the one connect tokens name; this is
+    /// the address the server binds. Behind NAT they differ: an EC2
+    /// instance's public address reaches it at its private address, which is
+    /// the one to bind. The server binds it on the served port, so a datagram
+    /// to any other address of the machine does not reach the server. NULL or
+    /// "", the default, binds the IPv4 wildcard (0.0.0.0) on the served port,
+    /// which receives on every address.
+    ///
+    /// rocketnet_server_start refuses with ROCKETNET_STATUS_INVALID_ADDRESS,
+    /// one log line each, an address that does not parse, is not IPv4,
+    /// carries a port (":0" too), or is multicast or the broadcast address; a bind address for a family the
+    /// server does not serve; and any bind address on a server that serves
+    /// both families, whose one dual-stack socket binds the IPv6 wildcard:
+    /// to bind a specific address, serve one family. The rio transport with
+    /// more than one lane requires it (num_xdp_queues). The xdp transport
+    /// binds no socket and does not read it: it serves the interface that
+    /// holds the served address.
+
+    const char * bind_ipv4_address;
+
+    /// ROCKETNET_SERVER_BIND_IPV6_ADDRESS is the local IPv6 address the
+    /// server binds, as "2001:db8::5" or "[2001:db8::5]" with no port. As
+    /// bind_ipv4_address, for the ipv6_address passed to create: NULL or "",
+    /// the default, binds the IPv6 wildcard ([::]) on the served port, and
+    /// start refuses the same cases, with an IPv6 multicast address
+    /// (ff00::/8), an IPv4-mapped address (::ffff:a.b.c.d: set
+    /// bind_ipv4_address instead) and a link-local address (fe80::/10, whose
+    /// bind needs an interface scope the field cannot carry) among them.
+
+    const char * bind_ipv6_address;
 };
 
 /// Messages
