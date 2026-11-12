@@ -387,7 +387,48 @@ void test_rocketnet_test_server_address_match_near_misses_refused()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
+// The server's timeout cap: the token asks for ROCKETNET_TEST_TIMEOUT (10)
+// seconds; a cap of 0 means no cap, a cap below the token's request lowers
+// it (1 gives 1), a cap at or above it leaves it. The accepted request's
+// half-open mapping holds the result.
+
+void test_rocketnet_test_server_address_match_timeout_cap()
+{
+    const int32_t caps[4] = { 0, 1, ROCKETNET_TEST_TIMEOUT, ROCKETNET_TEST_TIMEOUT + 1 };
+    const int32_t want[4] = { ROCKETNET_TEST_TIMEOUT, 1, ROCKETNET_TEST_TIMEOUT, ROCKETNET_TEST_TIMEOUT };
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+
+    for ( int i = 0; i < 4; ++i )
+    {
+        struct rocketnet_server_address_match_server_t test;
+        rocketnet_server_address_match_server_setup( &test );
+        test.server.max_timeout_seconds = caps[i];
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+
+        // a valid cookie for this address, so the request opens a mapping
+        const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+        uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+        rocketnet_unit_check( rocketnet_generate_cookie_mac( cookie_mac, &test.client_address, rocketnet_test_salt, cookie_expire,
+                                                             test.server.cookie_key ) );
+        uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+        rocketnet_write_uint64( &cookie, cookie_expire );
+        memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+
+        rocketnet_server_address_match_refused( &test, request, false );
+
+        const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+        rocketnet_unit_check( index >= 0 );
+        const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
+        rocketnet_unit_check( mapping->control->timeout_seconds == want[i] );
+
+        rocketnet_server_address_match_server_teardown( &test );
+    }
+}
+
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_timeout_cap );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_near_misses_refused );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped_arrival );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );
