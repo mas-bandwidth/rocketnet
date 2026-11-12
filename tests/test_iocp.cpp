@@ -1670,7 +1670,8 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     CHECK( reused >= 0 && ids[(size_t) reused] != first_id );
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &empty );
-    CHECK( empty.free_count == 0 );
+    // the other lanes keep every operation free: one destination fills one lane
+    CHECK( empty.free_count == ( rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS ) - 1 ) * rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( empty.free_pops - before.free_pops == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
 #endif // #if ROCKETNET_DEV
     rocketnet_server_iocp_finish_packet( transport, first_id, frames[(size_t) reused], FAULT_BYTES );
@@ -1683,7 +1684,7 @@ static void test_iocp_finish_refuses_unissued_packet_id()
     iocp_flush( transport );
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_queue_stats( transport, &after );
-    CHECK( after.free_count == rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    CHECK( after.free_count == rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS ) * rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.free_pushes - before.free_pushes == (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.queue_probes - before.queue_probes <= 4 * (uint64_t) rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     CHECK( after.live_run_refs == 0 );
@@ -2707,12 +2708,16 @@ static void test_windows_transports_sized_by_max_clients()
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_large );
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
-    CHECK( rocketnet_server_iocp_send_queue_size( 4 ) == 1024 &&
-           rocketnet_server_iocp_send_queue_size( large_clients ) == rocketnet_server_send_staging_packets( large_clients ) );
+    // the send lanes, sized by rate: the 512-client sizing floor is four
+    // lanes of 4096, and a lane never stages more than 4096
+    CHECK( rocketnet_server_iocp_send_lanes( 4 ) == 4 && rocketnet_server_iocp_send_queue_size( 4 ) == ROCKETNET_IOCP_LANE_PACKETS );
+    CHECK( rocketnet_server_iocp_send_queue_size( large_clients ) <= ROCKETNET_IOCP_LANE_PACKETS &&
+           rocketnet_server_iocp_send_lanes( large_clients ) * rocketnet_server_iocp_send_queue_size( large_clients ) >=
+               ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( large_clients ) );
     CHECK( rocketnet_server_rio_receives( large_clients ) == 2 * rocketnet_server_send_staging_packets( large_clients ) );
     if ( large_clients == 1000 )
     {
-        CHECK( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
+        CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
         CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
     }
 
@@ -2729,8 +2734,8 @@ static void test_windows_transports_sized_by_max_clients()
         const int64_t held = live_bytes.load() - before;
         rocketnet_server_iocp_test_queue_stats_t stats;
         rocketnet_server_iocp_test_queue_stats( transport, &stats );
-        CHECK( stats.free_count == rocketnet_server_iocp_send_queue_size( max_clients ) );
-        CHECK( rocketnet_server_iocp_send_room( transport ) == rocketnet_server_iocp_send_queue_size( max_clients ) );
+        CHECK( stats.free_count == rocketnet_server_iocp_send_lanes( max_clients ) * rocketnet_server_iocp_send_queue_size( max_clients ) );
+        CHECK( rocketnet_server_iocp_send_room( transport ) == rocketnet_server_iocp_send_lanes( max_clients ) * rocketnet_server_iocp_send_queue_size( max_clients ) );
         printf( "test_windows_transports_sized_by_max_clients iocp max_clients=%d held=%lld plan=%llu\n", max_clients, (long long) held,
                 (unsigned long long) rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
         CHECK( held > 0 && (uint64_t) held <= rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );

@@ -197,7 +197,7 @@ bounded per receive call by the read budget below.
 | gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
 | io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
-| iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
+| iocp | up to 4096 per send lane, one lane per 128 clients from 4 to 16 lanes; 8 x 4096 at 1000 clients (`rocketnet_server_iocp_send_lanes`, `rocketnet_server_iocp_send_queue_size`) | 16000 across the completion workers, one update's receive budget (`rocketnet_server_iocp_receive_queue_size`) |
 | rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
 <a id="current-staging-and-drain-limitations"></a>
@@ -295,9 +295,13 @@ the create log line names each feature as yes or no.
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
-  and by RIO: IOCP runs one completion worker plus one send worker and RIO one
-  I/O worker, so a client's datagrams are not reordered by several workers
-  dequeuing one completion port.
+  and by RIO. IOCP sends in lanes: each lane has its own operations, free
+  queue, three staging banks and TX worker, and a client stages in the one
+  lane its address hashes to (`rocketnet_iocp_lane_index`, FNV-1a over the
+  fields `rocketnet_address_equal` compares), so its datagrams leave in the
+  order they were started. Lanes are the server's send queues for the
+  protocol reserve (`send_queues`, `send_queue_of`, `send_room_queue`).
+  Modelled in `proofs/tla/RNIocpSendLanes.tla`. RIO runs one I/O worker.
 
 Start/finish/abort may run on concurrent fill threads, with one producer per
 frame. Join them before update, receive, flush, stop or destroy. Flush is called
