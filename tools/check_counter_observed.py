@@ -79,7 +79,6 @@ OWED = {
     "ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED": (ALL, "the transport's copy of the xdp queues' frame drops; only the dispatch is tested"),
     "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW": (("linux",), "GRO segments past the staging's room"),
     "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
-    "ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS": (("linux",), "a truncated or malformed UDP_GRO control; checked only == 0"),
     "ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_IOCP_COMPLETION_BATCHES": (("windows",), "a completion-port dequeue that returned entries"),
     "ROCKETNET_IOCP_RECEIVE_TOO_SHORT": (("windows",), "a datagram below the wire minimum; only subtracted from RECEIVE_DROPPED"),
