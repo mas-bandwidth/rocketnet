@@ -414,6 +414,11 @@ Live == ~TimedOut /\ ~silenced /\ \E r \in Records : ~acked[r]
 \* The connection has ended, by either clock.
 Ended == TimedOut \/ silenced
 
+\* The transport's silence timeout is due: the update begins with SilenceAt
+\* ticks in which nothing was heard.  Nothing but a packet heard in this
+\* update (Ack, Sample, KeepAlive) or the end (SilenceEnd) may happen.
+SilenceDue == TrackQuiet /\ quiet >= SilenceAt
+
 \* U, the oldest unacknowledged number: the records are numbered s, c, s2.
 U == IF ~acked["s"] THEN "s" ELSE IF ~acked["c"] THEN "c" ELSE "s2"
 
@@ -664,11 +669,6 @@ EndWrites ==
 \* Anything acknowledged, or any other packet that arrives, is the other
 \* side heard: the transport's last receive time moves (quiet).
 Heard == quiet' = 0
-
-\* The transport's silence timeout is due: the update begins with SilenceAt
-\* ticks in which nothing was heard.  Nothing but a packet heard in this
-\* update (Ack, Sample, KeepAlive) or the end (SilenceEnd) may happen.
-SilenceDue == TrackQuiet /\ quiet >= SilenceAt
 
 \* Any packet from the other side that acknowledges nothing here (a
 \* keep-alive, a packet of another layer): heard, nothing else.
