@@ -1481,30 +1481,58 @@ static struct rocketnet_platform_socket_t * posix_seam_socket_with_queue( const 
 
     uint8_t data[POSIX_SEAM_BYTES];
 
-    for ( int i = 0; i < POSIX_SEAM_PACKETS; i++ )
+    // every datagram queued before the receive under test runs, in order:
+    // counted in datagrams (SO_NUMRCVPKT), since a byte count can reach the
+    // total while the last datagram is still in flight. Loopback is not
+    // lossless on macOS: a datagram the loopback input queue drops under load
+    // from other processes never arrives, and waiting longer cannot bring it
+    // (the scheduled Nightly CI of 2026-11-12 waited out its 2 s here on a
+    // loaded runner; that run did not record the count it reached, which
+    // this loop now prints). So a queue that is short at 2 s is drained and built
+    // again, at most three times, each attempt printing what it reached. A
+    // count above the total (a straggler from an earlier attempt) fails by
+    // name: the order the receive checks would no longer hold.
+
+    bool full = false;
+    for ( int attempt = 1; attempt <= 3 && !full; attempt++ )
     {
-        memset( data, i, sizeof( data ) );
-        rocketnet_platform_socket_send_packet( socket, &address, data, (int) sizeof( data ) );
-    }
-
-    // every datagram queued before the receive under test runs: counted in
-    // datagrams (SO_NUMRCVPKT), since a byte count can reach the total while
-    // the last datagram is still in flight
-
-    const double start = rocketnet_platform_time();
-
-    for ( ;; )
-    {
-        int queued = 0;
-        socklen_t queued_bytes = sizeof( queued );
-        posix_hard_killed_require( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
-        if ( queued >= POSIX_SEAM_PACKETS )
+        for ( int i = 0; i < POSIX_SEAM_PACKETS; i++ )
         {
-            break;
+            memset( data, i, sizeof( data ) );
+            rocketnet_platform_socket_send_packet( socket, &address, data, (int) sizeof( data ) );
         }
-        posix_hard_killed_require( rocketnet_platform_time() - start < 2.0 );
-        rocketnet_platform_sleep( 0.001 );
+
+        const double start = rocketnet_platform_time();
+        int queued = 0;
+        for ( ;; )
+        {
+            socklen_t queued_bytes = sizeof( queued );
+            posix_hard_killed_require( getsockopt( socket->handle, SOL_SOCKET, SO_NUMRCVPKT, &queued, &queued_bytes ) == 0 );
+            posix_hard_killed_require( queued <= POSIX_SEAM_PACKETS );
+            if ( queued == POSIX_SEAM_PACKETS )
+            {
+                full = true;
+                break;
+            }
+            if ( rocketnet_platform_time() - start >= 2.0 )
+            {
+                break;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+
+        if ( !full )
+        {
+            printf( "posix_seam_socket_with_queue pump=%s: attempt %d queued %d of %d datagrams in 2 s; draining and sending again\n", pump, attempt,
+                    queued, POSIX_SEAM_PACKETS );
+            uint8_t drain[POSIX_SEAM_STRIDE];
+            while ( recv( socket->handle, drain, sizeof( drain ), 0 ) >= 0 )
+            {
+            }
+        }
     }
+
+    posix_hard_killed_require( full );
 
     return socket;
 }
