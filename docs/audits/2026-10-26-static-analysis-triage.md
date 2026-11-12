@@ -247,6 +247,28 @@ before); where one file and message held dispositions with different reasons,
 each reason was matched to the site it describes. The baselines were
 rewritten by `run_tidy.py --generate` and match that pairing exactly.
 
+## Integration of v1.1.3 (2026-11-11)
+
+The site keys met two branches that were gated under the old keys. Each
+finding was read at its site.
+
+- `rocketnet_server_uring_linux.cpp` `concurrency-mt-unsafe`: the baselined
+  `strerror( -cqe->res )` call of the segmentation-refusal branch moved into
+  `const char * reason = strerror( -cqe->res );` when v1.1.2 kept a refusal
+  with its destination. Same call, same finding; re-keyed `5d56cbb6ae9f0432`
+  to `80cb3832685da01c`, count unchanged.
+- `rocketnet_message_server.cpp` `bugprone-implicit-widening-of-multiplication-result`
+  (three): the send pass's writer-list indexes `2 * count`, `2 * k` and
+  `2 * kept`. Bounded by twice the connection count, but the widening is now
+  explicit in the source (`2 * (size_t) count`), so nothing is added.
+- `rocketnet_message_server.cpp` `dangerousTypeCast` `fa3f3a1286ff4b88`: the
+  writer list carved from the message object's block, like the object's other
+  arrays. Dispositioned.
+- `rocketnet_endpoint.cpp` `clang-analyzer-core.NullDereference`
+  `4fe04bc85048f5fe`: the analyzer assumes the region's `send_descriptors`
+  carve is NULL; it is a fixed offset of the region's block and the loop
+  reaches it only with a live unreliable head. Dispositioned.
+
 ## Build and unit gates
 
 Strict warnings and warnings-as-errors are enabled by default. Four complete

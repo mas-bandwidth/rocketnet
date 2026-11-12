@@ -1769,8 +1769,8 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 
         if ( rn_message_connection_write( object, i ) )
         {
-            writers[2 * count] = i;
-            writers[2 * count + 1] = previous < 0 ? -1 : ( previous + 1 ) % num_connections;
+            writers[2 * (size_t) count] = i;
+            writers[2 * (size_t) count + 1] = previous < 0 ? -1 : ( previous + 1 ) % num_connections;
             count++;
         }
 
@@ -1783,8 +1783,8 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         int kept = 0;
         for ( int k = 0; k < count; k++ )
         {
-            const int i = writers[2 * k];
-            const int cursor = writers[2 * k + 1] < 0 ? ( previous + 1 ) % num_connections : writers[2 * k + 1];
+            const int i = writers[2 * (size_t) k];
+            const int cursor = writers[2 * (size_t) k + 1] < 0 ? ( previous + 1 ) % num_connections : writers[2 * (size_t) k + 1];
             RN_SEND_PASS_COST( slot_visits );
             if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED ||
                  ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 ) )
@@ -1800,8 +1800,8 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 
             if ( rn_message_connection_write( object, i ) )
             {
-                writers[2 * kept + 1] = writers[2 * k + 1];
-                writers[2 * kept] = i;
+                writers[2 * (size_t) kept + 1] = writers[2 * (size_t) k + 1];
+                writers[2 * (size_t) kept] = i;
                 kept++;
             }
 
