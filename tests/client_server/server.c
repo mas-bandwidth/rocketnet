@@ -1611,6 +1611,15 @@ int main( int argc, char ** argv )
             windows += clients[i].windows;
         }
 
+        // a matrix that closed no window checked nothing: it is a failure,
+        // never a PASS with zero work
+        if ( windows == 0 )
+        {
+            printf( "server matrix: no client completed a window; nothing was checked\n" );
+            results_line( "no-windows", "%d", 1 );
+            g_failures++;
+        }
+
         printf( "server matrix windows %llu failures %llu verdict %s\n", (unsigned long long) windows, (unsigned long long) g_failures,
                 g_failures ? "FAIL" : "PASS" );
         results_line( "verdict", "%s", g_failures ? "FAIL" : "PASS" );
