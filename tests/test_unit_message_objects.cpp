@@ -5764,6 +5764,84 @@ static void test_message_packed_build_dropped_over_budget_at_seal()
 }
 
 REGISTER_UNIT_TEST( test_message_packed_build_dropped_over_budget_at_seal );
+
+// A received view is released once (RNMessageViews Release): releasing the
+// same pointer again is a counted misuse and holds nothing back, whether the
+// first release was the application's or the batch's. Four messages reach
+// the server in one update; two are taken one at a time and the first is
+// released twice; then the third is held by hand, a batch takes the fourth,
+// the next batch call releases it, and releasing it by hand is a misuse
+// while the third is still held.
+static void test_message_release_of_a_released_view_is_misuse()
+{
+    mo_pair_t pair;
+    mo_pair_setup( &pair, 1 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        mo_step( &pair );
+    }
+
+    uint8_t message[100];
+    for ( int m = 0; m < 4; m++ )
+    {
+        mo_fill( message, (uint32_t) ( 120 + m ), sizeof( message ) );
+        check( rocketnet_message_client_send( pair.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) != 0 );
+    }
+    rocketnet_message_client_send_packets( pair.clients[0] );
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+    const uint8_t * views[2] = { NULL, NULL };
+    for ( int m = 0; m < 2; m++ )
+    {
+        int client_index = -1;
+        int channel = -1;
+        int bytes = 0;
+        check( rocketnet_message_server_receive( pair.server, &client_index, &channel, &views[m], &bytes ) == 1 );
+        check( client_index == 0 && bytes == (int) sizeof( message ) );
+    }
+    check( slot->hot->held == 2 );
+
+    const uint64_t misuses = rocketnet_api_misuse_count();
+    rocketnet_message_server_release( pair.server, views[0] );
+    check( rocketnet_api_misuse_count() == misuses );
+    check( slot->hot->held == 1 );
+    rocketnet_message_server_release( pair.server, views[0] );                   // again
+    check( rocketnet_api_misuse_count() == misuses + 1 );
+    check( slot->hot->held == 1 );
+    rocketnet_message_server_release( pair.server, views[1] );
+    check( rocketnet_api_misuse_count() == misuses + 1 );
+    check( slot->hot->held == 0 );
+
+    // the third held by hand, a batch takes the fourth; the next batch call
+    // releases the batch's view, and a release of it by hand is misuse
+
+    int client_index = -1;
+    int channel = -1;
+    int bytes = 0;
+    const uint8_t * third = NULL;
+    check( rocketnet_message_server_receive( pair.server, &client_index, &channel, &third, &bytes ) == 1 );
+    check( slot->hot->held == 1 );
+    static rocketnet_message_batch_t batch;
+    check( rocketnet_message_server_receive_messages( pair.server, &batch ) == 1 );
+    const uint8_t * batched = batch.data[0];
+    check( slot->hot->held == 2 );
+    check( rocketnet_message_server_receive_messages( pair.server, &batch ) == 0 );   // releases the batch's view
+    check( slot->hot->held == 1 );
+    rocketnet_message_server_release( pair.server, batched );
+    check( rocketnet_api_misuse_count() == misuses + 2 );
+    check( slot->hot->held == 1 );
+    rocketnet_message_server_release( pair.server, third );
+    check( rocketnet_api_misuse_count() == misuses + 2 );
+    check( slot->hot->held == 0 );
+
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+    mo_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_message_release_of_a_released_view_is_misuse );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
