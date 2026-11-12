@@ -10329,6 +10329,106 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
     rocketnet_xdp_max_size_both_ways( true, "test_xdp_transport_max_size_both_ways_ipv6" );
 }
 
+// NATIVE ATTACH ONLY: a device whose driver has no native XDP (a dummy
+// device here) refuses the xdp transport by name; generic (skb) mode is
+// never used. A pin on xdp refuses the create; "auto" logs the refusal and
+// falls to the next transport. Root in a guest, as the veth cases.
+
+#define ROCKETNET_XDP_DUMMY_DEVICE "rnxdpdum0"
+
+static void rocketnet_xdp_dummy_teardown()
+{
+    if ( system( "ip link del " ROCKETNET_XDP_DUMMY_DEVICE " 2>/dev/null" ) != 0 )
+    {
+        // already gone
+    }
+
+    rocketnet_server_socket_forbid_commit();
+}
+
+// the transport create on address with the log captured at warn level;
+// returns the server, NULL when refused
+static struct rocketnet_server_transport_t * rocketnet_xdp_link_create( const char * transport, const char * address )
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 4;
+    config.num_xdp_queues = 1;
+    config.num_os_cpus = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+
+    rocketnet_test_captured_log[0] = '\0';
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( rocketnet_test_capture_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, address, &config );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "transport \"%s\" on %s: %s\n%s", transport, address,
+                      server ? rocketnet_server_transport_io_name( server ) : "refused", rocketnet_test_captured_log );
+
+    return server;
+}
+
+static void rocketnet_xdp_mount_bpffs()
+{
+    struct statfs bpffs;
+    if ( statfs( "/sys/fs/bpf", &bpffs ) != 0 || (uint64_t) bpffs.f_type != (uint64_t) 0xcafe4a11 )
+    {
+        rocketnet_xdp_veth_run( "mount -t bpf bpf /sys/fs/bpf" );
+    }
+}
+
+void rocketnet_test_xdp_no_native_attach_refused()
+{
+    atexit( rocketnet_xdp_dummy_teardown );
+    rocketnet_xdp_mount_bpffs();
+
+    if ( system( "ip link del " ROCKETNET_XDP_DUMMY_DEVICE " 2>/dev/null" ) != 0 )
+    {
+        // nothing left from an earlier run
+    }
+
+    rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_DUMMY_DEVICE " type dummy" );
+    rocketnet_xdp_veth_run( "ip addr add 10.77.9.1/24 dev " ROCKETNET_XDP_DUMMY_DEVICE );
+    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_DUMMY_DEVICE " up" );
+    rocketnet_xdp_veth_run( "echo 2 > /sys/class/net/" ROCKETNET_XDP_DUMMY_DEVICE "/napi_defer_hard_irqs" );
+    rocketnet_xdp_veth_run( "echo 200000 > /sys/class/net/" ROCKETNET_XDP_DUMMY_DEVICE "/gro_flush_timeout" );
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+
+    // the pin: refused, by name
+
+    struct rocketnet_server_transport_t * pinned = rocketnet_xdp_link_create( "xdp", "10.77.9.1:40412" );
+    const bool pinned_named = strstr( rocketnet_test_captured_log, "could not attach in native mode to " ROCKETNET_XDP_DUMMY_DEVICE ) != NULL;
+    if ( pinned )
+    {
+        rn_native_server_transport_stop_and_destroy( pinned );
+    }
+    rocketnet_check( pinned == NULL );
+    rocketnet_check( pinned_named );
+
+    // auto: the refusal is logged and the next transport is granted
+
+    struct rocketnet_server_transport_t * automatic = rocketnet_xdp_link_create( "auto", "10.77.9.1:40412" );
+    const bool auto_named = strstr( rocketnet_test_captured_log, "could not attach in native mode to " ROCKETNET_XDP_DUMMY_DEVICE ) != NULL &&
+                            strstr( rocketnet_test_captured_log, "server transport xdp refused. trying the next candidate" ) != NULL;
+    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0;
+    if ( automatic )
+    {
+        rn_native_server_transport_stop_and_destroy( automatic );
+    }
+    rocketnet_check( auto_fell );
+    rocketnet_check( auto_named );
+
+    rocketnet_xdp_dummy_teardown();
+}
+
 // the three hard-killed kinds on the xdp server cell. They live in the static
 // table, not the generated hard-killed count, so a host where the veth gate
 // is false omits them and an explicit --run prints the runs_here refusal.
@@ -13540,6 +13640,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_gateway_change_while_serving", rocketnet_test_xdp_gateway_change_while_serving, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_over_mtu_frame_refused_ipv4", rocketnet_test_xdp_over_mtu_refused_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_no_native_attach_refused", rocketnet_test_xdp_no_native_attach_refused, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
