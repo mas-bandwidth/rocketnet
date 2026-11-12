@@ -25,6 +25,7 @@
 #define SODIUM_AMALGAM_H
 
 /* Private RocketNet namespace; do not combine with a system sodium header. */
+#define _crypto_aead_chacha20poly1305_ietf_pick_best_implementation rocketnet_sodium__crypto_aead_chacha20poly1305_ietf_pick_best_implementation
 #define _crypto_box_seal_nonce rocketnet_sodium__crypto_box_seal_nonce
 #define _crypto_generichash_blake2b_pick_best_implementation rocketnet_sodium__crypto_generichash_blake2b_pick_best_implementation
 #define _crypto_onetimeauth_poly1305_pick_best_implementation rocketnet_sodium__crypto_onetimeauth_poly1305_pick_best_implementation
@@ -84,13 +85,16 @@
 #define crypto_aead_chacha20poly1305_encrypt rocketnet_sodium_crypto_aead_chacha20poly1305_encrypt
 #define crypto_aead_chacha20poly1305_encrypt_detached rocketnet_sodium_crypto_aead_chacha20poly1305_encrypt_detached
 #define crypto_aead_chacha20poly1305_ietf_abytes rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_abytes
+#define crypto_aead_chacha20poly1305_ietf_composed_implementation rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_composed_implementation
 #define crypto_aead_chacha20poly1305_ietf_decrypt rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_decrypt
 #define crypto_aead_chacha20poly1305_ietf_decrypt_detached rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_decrypt_detached
 #define crypto_aead_chacha20poly1305_ietf_encrypt rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_encrypt
 #define crypto_aead_chacha20poly1305_ietf_encrypt_detached rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_encrypt_detached
+#define crypto_aead_chacha20poly1305_ietf_implementation rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_implementation
 #define crypto_aead_chacha20poly1305_ietf_keybytes rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_keybytes
 #define crypto_aead_chacha20poly1305_ietf_keygen rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_keygen
 #define crypto_aead_chacha20poly1305_ietf_messagebytes_max rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_messagebytes_max
+#define crypto_aead_chacha20poly1305_ietf_neon_fused_implementation rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_neon_fused_implementation
 #define crypto_aead_chacha20poly1305_ietf_npubbytes rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_npubbytes
 #define crypto_aead_chacha20poly1305_ietf_nsecbytes rocketnet_sodium_crypto_aead_chacha20poly1305_ietf_nsecbytes
 #define crypto_aead_chacha20poly1305_keybytes rocketnet_sodium_crypto_aead_chacha20poly1305_keybytes
@@ -238,6 +242,7 @@
 #define crypto_onetimeauth_poly1305_init rocketnet_sodium_crypto_onetimeauth_poly1305_init
 #define crypto_onetimeauth_poly1305_keybytes rocketnet_sodium_crypto_onetimeauth_poly1305_keybytes
 #define crypto_onetimeauth_poly1305_keygen rocketnet_sodium_crypto_onetimeauth_poly1305_keygen
+#define crypto_onetimeauth_poly1305_mul64_implementation rocketnet_sodium_crypto_onetimeauth_poly1305_mul64_implementation
 #define crypto_onetimeauth_poly1305_sse2 rocketnet_sodium_crypto_onetimeauth_poly1305_sse2
 #define crypto_onetimeauth_poly1305_sse2_final rocketnet_sodium_crypto_onetimeauth_poly1305_sse2_final
 #define crypto_onetimeauth_poly1305_sse2_implementation rocketnet_sodium_crypto_onetimeauth_poly1305_sse2_implementation
@@ -358,6 +363,7 @@
 #define crypto_stream_chacha20_keybytes rocketnet_sodium_crypto_stream_chacha20_keybytes
 #define crypto_stream_chacha20_keygen rocketnet_sodium_crypto_stream_chacha20_keygen
 #define crypto_stream_chacha20_messagebytes_max rocketnet_sodium_crypto_stream_chacha20_messagebytes_max
+#define crypto_stream_chacha20_neon_implementation rocketnet_sodium_crypto_stream_chacha20_neon_implementation
 #define crypto_stream_chacha20_noncebytes rocketnet_sodium_crypto_stream_chacha20_noncebytes
 #define crypto_stream_chacha20_ref_implementation rocketnet_sodium_crypto_stream_chacha20_ref_implementation
 #define crypto_stream_chacha20_xor rocketnet_sodium_crypto_stream_chacha20_xor
@@ -552,6 +558,9 @@
 #define sodium_randombytes rocketnet_sodium_sodium_randombytes
 #define sodium_randombytes_sysrandom rocketnet_sodium_sodium_randombytes_sysrandom
 #define sodium_runtime rocketnet_sodium_sodium_runtime
+#define sodium_runtime_aead_chacha20poly1305_ietf_implementation rocketnet_sodium_sodium_runtime_aead_chacha20poly1305_ietf_implementation
+#define sodium_runtime_chacha20_implementation rocketnet_sodium_sodium_runtime_chacha20_implementation
+#define sodium_runtime_forced_portable rocketnet_sodium_sodium_runtime_forced_portable
 #define sodium_runtime_has_aesni rocketnet_sodium_sodium_runtime_has_aesni
 #define sodium_runtime_has_avx rocketnet_sodium_sodium_runtime_has_avx
 #define sodium_runtime_has_avx2 rocketnet_sodium_sodium_runtime_has_avx2
@@ -563,6 +572,7 @@
 #define sodium_runtime_has_sse3 rocketnet_sodium_sodium_runtime_has_sse3
 #define sodium_runtime_has_sse41 rocketnet_sodium_sodium_runtime_has_sse41
 #define sodium_runtime_has_ssse3 rocketnet_sodium_sodium_runtime_has_ssse3
+#define sodium_runtime_poly1305_implementation rocketnet_sodium_sodium_runtime_poly1305_implementation
 #define sodium_set_misuse_handler rocketnet_sodium_sodium_set_misuse_handler
 #define sodium_stackzero rocketnet_sodium_sodium_stackzero
 #define sodium_stream_chacha20 rocketnet_sodium_sodium_stream_chacha20
@@ -3341,5 +3351,88 @@ int crypto_sign_final_verify(crypto_sign_state *state, const unsigned char *sig,
 int _crypto_generichash_blake2b_pick_best_implementation(void);
 int _crypto_scalarmult_curve25519_pick_best_implementation(void);
 int _crypto_stream_salsa20_pick_best_implementation(void);
+
+/* ===== rocketnet sodium/local/dispatch.h.in ===== */
+/* RocketNet's additions to the pair's runtime dispatch (sodium/README.md,
+ * "AEAD dispatch and AArch64"). Appended to the generated header by
+ * tools/generate_sodium.py; written for this bundle, from RFC 8439. */
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The ChaCha20-Poly1305 IETF AEAD as one implementation, beside the ChaCha20
+ * and Poly1305 primitive structs. "composed" is the pinned construction
+ * (ChaCha20, then Poly1305 over the ciphertext, through the two primitive
+ * pointers); an implementation may instead run both in one pass. The two
+ * functions have the public detached signatures and the same results.
+ *
+ * decrypt_detached: m is defined only when the call returns 0. When it
+ * returns -1 every byte of m[0, clen) is zero. An implementation may write
+ * plaintext into m before the tag is checked (the AArch64 one pass does), so
+ * m must be memory no other thread and no application code reads until the
+ * call returns 0. */
+typedef struct crypto_aead_chacha20poly1305_ietf_implementation {
+    const char *name;
+    int (*encrypt_detached)(unsigned char *c, unsigned char *mac,
+                            unsigned long long *maclen_p,
+                            const unsigned char *m, unsigned long long mlen,
+                            const unsigned char *ad, unsigned long long adlen,
+                            const unsigned char *nsec,
+                            const unsigned char *npub, const unsigned char *k);
+    int (*decrypt_detached)(unsigned char *m, unsigned char *nsec,
+                            const unsigned char *c, unsigned long long clen,
+                            const unsigned char *mac,
+                            const unsigned char *ad, unsigned long long adlen,
+                            const unsigned char *npub, const unsigned char *k);
+} crypto_aead_chacha20poly1305_ietf_implementation;
+
+extern struct crypto_aead_chacha20poly1305_ietf_implementation
+    crypto_aead_chacha20poly1305_ietf_composed_implementation;
+
+/* AArch64 little endian with 128-bit integers (GCC and Clang): ChaCha20 with
+ * Advanced SIMD, Poly1305 with 64-bit limbs, and the AEAD in one pass. MSVC
+ * on ARM64 keeps the portable code. */
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN) && \
+    defined(HAVE_TI_MODE)
+# define SODIUM_ROCKETNET_ARM64 1
+extern struct crypto_stream_chacha20_implementation
+    crypto_stream_chacha20_neon_implementation;
+extern struct crypto_onetimeauth_poly1305_implementation
+    crypto_onetimeauth_poly1305_mul64_implementation;
+extern struct crypto_aead_chacha20poly1305_ietf_implementation
+    crypto_aead_chacha20poly1305_ietf_neon_fused_implementation;
+#endif
+
+int _crypto_aead_chacha20poly1305_ietf_pick_best_implementation(void);
+
+/* Forced fallback: nonzero when the ChaCha20, Poly1305 and AEAD picks keep
+ * the portable code, because the build defines ROCKETNET_SODIUM_PORTABLE to
+ * a nonzero value or the environment has ROCKETNET_SODIUM_PORTABLE set when
+ * sodium_init runs. */
+int sodium_runtime_forced_portable(void);
+
+/* Secret tracking (sodium/ARM64-CONSTANT-TIME.md): a build with
+ * ROCKETNET_SODIUM_SECRET_TRACKING nonzero runs under valgrind memcheck with
+ * the secrets marked undefined, and SODIUM_DECLASSIFY marks a public result
+ * computed from them (the tag comparison's 0/-1) defined. Every other build
+ * compiles it to nothing. */
+#if defined(ROCKETNET_SODIUM_SECRET_TRACKING) && ROCKETNET_SODIUM_SECRET_TRACKING
+# include <valgrind/memcheck.h>
+# define SODIUM_DECLASSIFY(p, n) ((void) VALGRIND_MAKE_MEM_DEFINED((p), (n)))
+#else
+# define SODIUM_DECLASSIFY(p, n) ((void) 0)
+#endif
+
+/* The selection report: the implementation each pick chose.
+ * ChaCha20: "ref", "ssse3", "avx2", "neon". Poly1305: "donna", "sse2",
+ * "mul64". The AEAD: "composed", "neon-fused". */
+const char *sodium_runtime_chacha20_implementation(void);
+const char *sodium_runtime_poly1305_implementation(void);
+const char *sodium_runtime_aead_chacha20poly1305_ietf_implementation(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SODIUM_AMALGAM_H */

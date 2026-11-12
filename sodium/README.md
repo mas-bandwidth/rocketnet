@@ -100,9 +100,58 @@ XCR0 therefore stayed 0 on GCC and Clang, and AVX2 was compiled in but never
 chosen. One generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`)
 lets that same XGETBV run when `HAVE_CPUID` is defined (GCC or Clang on x86;
 `sodium.h`). MSVC keeps its `_xgetbv` path, and an MSVC build without
-`/arch:AVX2` compiles no AVX2 code, as before. arm64 has no x86 detection and
-is unchanged. `bin/test_sodium_dispatch` checks the picks against the CPU and
-that every implementation agrees with the reference.
+`/arch:AVX2` compiles no AVX2 code, as before. `bin/test_sodium_dispatch`
+checks the picks against the CPU and that every implementation agrees with
+the reference.
+
+## AEAD dispatch and AArch64
+
+Three in-repo inputs, written for this bundle from RFC 8439 and pinned by
+SHA-256 under `local_sha256` in `manifest.json`, join the generated pair
+(`LOCAL_HEADER` and `LOCAL_SOURCES` in `tools/generate_sodium.py`):
+
+- `local/dispatch.h.in`, appended to `sodium.h`: the ChaCha20-Poly1305 IETF
+  AEAD as one implementation struct beside the ChaCha20 and Poly1305 ones
+  (`crypto_aead_chacha20poly1305_ietf_implementation`: a name and the two
+  public detached functions), the forced fallback and the selection report.
+- `local/arm64.c.in`: on AArch64 little endian with 128-bit integers (GCC
+  and Clang), ChaCha20 with Advanced SIMD (`neon`: four blocks per vector
+  set, eight in flight past 256 bytes, a scalar block for a tail of 64 bytes
+  or less), Poly1305 with 64-bit limbs (`mul64`), and the AEAD in one pass
+  (`neon-fused`: each four-block ChaCha20 step absorbs up to 16 Poly1305
+  blocks on the integer multiplier between its double rounds).
+- `local/dispatch.c.in`: the `composed` AEAD (the pinned IETF bodies, which
+  `DISPATCH_ADAPTATIONS` renames static, ChaCha20 then Poly1305 through the
+  primitive pointers), the AEAD pick, the public detached functions that call
+  through the pick, the forced fallback and the report.
+
+`DISPATCH_ADAPTATIONS` also sets `has_neon` on AArch64 (Advanced SIMD is in
+the base architecture; the baseline set it on 32-bit ARM only), and puts the
+forced fallback and then the AArch64 choice at the head of the ChaCha20 and
+Poly1305 picks; the x86 order after them is unchanged. `sodium_init` runs the
+AEAD pick after the ChaCha20 one. An x86 one pass (a fused AVX2 step) would
+be one more struct and one more line in the AEAD pick.
+
+Selection report: `sodium_runtime_chacha20_implementation()` (`ref`,
+`ssse3`, `avx2`, `neon`), `sodium_runtime_poly1305_implementation()`
+(`donna`, `sse2`, `mul64`) and
+`sodium_runtime_aead_chacha20poly1305_ietf_implementation()` (`composed`,
+`neon-fused`). `rocketnet_init` logs the three at info level ("crypto is
+chacha20poly1305 neon-fused, chacha20 neon, poly1305 mul64").
+
+Forced fallback: the ChaCha20, Poly1305 and AEAD picks keep `ref`, `donna`
+and `composed` when the build defines `ROCKETNET_SODIUM_PORTABLE` nonzero, or
+when the environment has `ROCKETNET_SODIUM_PORTABLE` set as `sodium_init`
+runs (`rocketnet_init` runs it). BLAKE2b's pick is not affected.
+
+Open's output: the one pass writes plaintext before it checks the tag and
+zeroes all of it when the check fails, so the output of
+`crypto_aead_chacha20poly1305_ietf_decrypt` is defined only on success, as
+`local/dispatch.h.in` states; every SDK caller opens into memory private to
+it until the call returns (`ARM64-CONSTANT-TIME.md`, "Where a failed open
+writes"). The constant-time review of the AArch64 code is
+`ARM64-CONSTANT-TIME.md`. The wire format is unchanged: every implementation
+produces the same bytes, which `bin/test_sodium_dispatch` checks.
 
 ## MemorySanitizer
 
