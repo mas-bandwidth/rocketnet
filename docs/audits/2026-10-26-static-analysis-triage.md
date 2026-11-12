@@ -233,6 +233,20 @@ entry disappeared without a source change, and the two repaired driver NULL
 contract entries disappeared. The XDP item is recorded as a stale-baseline
 removal, not misrepresented as a source fix.
 
+## Keys name the site (2026-11-11)
+
+A key was the file, check, message without numbers, and an ordinal among
+identical messages: a count, not a site. Fixing a dispositioned cast and adding
+a new one elsewhere in the same file kept every key, and the new cast passed
+unreviewed (shown on amd-2 in `rocketnet_server_socket_linux.cpp`). The key
+now also carries the text of the flagged source line, whitespace collapsed, so
+moved lines keep their keys and a finding on another line is a new finding.
+Every baseline and disposition line was re-keyed to its site with no change
+in count (295 clang-tidy and 32 cppcheck baselined, the dispositions as
+before); where one file and message held dispositions with different reasons,
+each reason was matched to the site it describes. The baselines were
+rewritten by `run_tidy.py --generate` and match that pairing exactly.
+
 ## Build and unit gates
 
 Strict warnings and warnings-as-errors are enabled by default. Four complete

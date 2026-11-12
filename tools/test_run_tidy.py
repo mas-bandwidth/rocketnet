@@ -65,6 +65,22 @@ class RunTidyGateTest(unittest.TestCase):
         without = run_tidy.cppcheck_arguments(entry(["-DROCKETNET_XDP=1"]))
         self.assertFalse(any(arg.startswith("-DIORING_RECV_MULTISHOT") for arg in without), without)
 
+    def test_a_finding_at_another_site_is_a_new_finding(self):
+        # fixing a reviewed cast and adding one elsewhere in the same file
+        # keeps the count of identical messages; it must not keep the keys
+        cast = "Potentially invalid type conversion in old-style C cast, clarify/fix with C++ cast"
+
+        def findings(lines):
+            stderr = "".join("%s:%d:9: warning: %s [dangerousTypeCast]\n" % (URING, line, cast) for line in lines)
+            raw, errors = self.cppcheck_file(stderr, ["-DROCKETNET_IO_URING=1"])
+            self.assertEqual(errors, [])
+            return set(run_tidy.finding_lines("cppcheck", raw))
+
+        reviewed = findings([420, 439])
+        self.assertEqual(len(reviewed), 2)
+        self.assertEqual(findings([439, 420]), reviewed)
+        self.assertNotEqual(findings([420, 550]), reviewed)
+
 
 if __name__ == "__main__":
     unittest.main()
