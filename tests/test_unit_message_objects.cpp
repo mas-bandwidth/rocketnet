@@ -5635,6 +5635,54 @@ static void test_message_reliable_finished_short_delivers_the_finished_length()
 }
 
 REGISTER_UNIT_TEST( test_message_reliable_finished_short_delivers_the_finished_length );
+
+// An unreliable delivery is on channel 0 (code 0 carries no channel field;
+// sdk/rocketnet.h), whatever channel the send named and whatever the
+// delivery entry it reuses last held: sequenced messages on channel 3 are
+// delivered there, then unreliable messages sent naming channel 3 arrive on
+// channel 0, in each direction.
+static void test_message_unreliable_delivery_is_on_channel_zero()
+{
+    for ( int side = 0; side < 2; side++ )
+    {
+        mo_pair_t pair;
+        mo_pair_setup( &pair, 1 );
+        for ( int i = 0; i < 3; i++ )
+        {
+            mo_step( &pair );
+        }
+
+        const int reliabilities[2] = { ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE };
+        for ( int r = 0; r < 2; r++ )
+        {
+            uint8_t message[64];
+            for ( int m = 0; m < 3; m++ )
+            {
+                mo_fill( message, (uint32_t) ( 90 + r * 3 + m ), sizeof( message ) );
+                check( ( side == 0 ? rocketnet_message_server_send( pair.server, 0, 3, reliabilities[r], message, (int) sizeof( message ) )
+                                   : rocketnet_message_client_send( pair.clients[0], 3, reliabilities[r], message, (int) sizeof( message ) ) ) != 0 );
+            }
+
+            std::vector<mo_received_t> server_got;
+            std::vector<mo_received_t> client_got;
+            for ( int i = 0; i < 3; i++ )
+            {
+                mo_step( &pair, &server_got, &client_got );
+            }
+            const std::vector<mo_received_t> & got = side == 0 ? client_got : server_got;
+            check( got.size() == 3 );
+            for ( size_t g = 0; g < got.size(); g++ )
+            {
+                uint32_t id = 0;
+                check( got[g].channel == ( r == 0 ? 3 : 0 ) );
+                check( mo_verify( got[g].bytes, &id ) && id == (uint32_t) ( 90 + r * 3 + (int) g ) );
+            }
+        }
+        mo_pair_teardown( &pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_message_unreliable_delivery_is_on_channel_zero );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
