@@ -97,8 +97,11 @@ jobs:
             echo "LOAD cell=$cell $line"
             case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
             case "$line" in *"server_transport_io=$want "*) ;; *) echo "LOAD cell=$cell wrong server transport (want $want)"; return 1 ;; esac
-            fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\1/")
-            ts=$(echo "$line" | sed -E "s/.*threads_start=([0-9]+).*/\1/"); te=$(echo "$line" | sed -E "s/.*threads_end=([0-9]+).*/\1/")
+            # each field must be present: sed -n ... p prints nothing for an
+            # absent field, and an empty value fails rather than comparing equal
+            fs=$(echo "$line" | sed -nE "s/.* fds_start=([0-9]+)( .*|$)/\1/p"); fe=$(echo "$line" | sed -nE "s/.* fds_end=([0-9]+)( .*|$)/\1/p")
+            ts=$(echo "$line" | sed -nE "s/.* threads_start=([0-9]+)( .*|$)/\1/p"); te=$(echo "$line" | sed -nE "s/.* threads_end=([0-9]+)( .*|$)/\1/p")
+            [ -n "$fs" ] && [ -n "$fe" ] && [ -n "$ts" ] && [ -n "$te" ] || { echo "LOAD cell=$cell FAIL the line lacks fds_start, fds_end, threads_start or threads_end"; return 1; }
             [ "$fs" = "$fe" ] && [ "$ts" = "$te" ] || { echo "LOAD cell=$cell fd or thread growth"; return 1; }
           }
           run_cell() {
@@ -116,7 +119,10 @@ jobs:
           if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
             run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
           else
-            echo "LOAD cell=io_uring [SKIPPED this kernel disables io_uring]"
+            # a fleet runner with io_uring disabled has lost a cell: a failure,
+            # as scripts/soak-per-transport counts it, never a green skip
+            echo "LOAD cell=io_uring FAIL this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled)"
+            exit 1
           fi
           vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
           if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
