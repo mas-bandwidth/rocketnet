@@ -5,8 +5,9 @@
     CBMC proof of the byte readers and writers and rocketnet_copy_string.
 
     The readers and writers are the inline leaves in sdk/rocketnet_read_write.h.
-    rocketnet_copy_string is the leaf in sdk/rocketnet.cpp; its body is
-    copied here because that file is C++. dest_size 0
+    rocketnet_copy_string is the leaf in sdk/rocketnet.cpp; the Makefile
+    cuts its definition out of that C++ file verbatim and this file
+    includes it, so the proof is of the sdk's text. dest_size 0
     returns 0 and writes nothing, which is the underflow the size check
     closes (a size of 0 used to make dest_size - 1 wrap).
 
@@ -19,6 +20,7 @@
     Unwinding: 9. copy_string and the checks run at most 8 iterations.
 */
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -42,28 +44,18 @@ int nondet_int( void );
 unsigned nondet_unsigned( void );
 #endif // #ifndef __CPROVER__
 
-/* sdk/rocketnet.cpp, rocketnet_copy_string. */
+/* sdk/rocketnet.cpp, rocketnet_copy_string, cut out verbatim by the Makefile
+   (copy_string.gen.c). Its NULL checks call rocketnet_api_null_guard
+   (sdk/rocketnet_internal.h), modelled here as a release build has it: a
+   NULL returns false. The misuse count and the debug assert are not part of
+   this proof. */
 
-size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size )
+static bool rocketnet_api_null_guard( const void * p )
 {
-    if ( !dest || !source || dest_size == 0 )
-    {
-        return 0;
-    }
-    memset( dest, 0, dest_size );
-
-    size_t i = 0;
-    for ( ; i < dest_size - 1; i++ )
-    {
-        if ( source[i] == '\0' )
-        {
-            break;
-        }
-        dest[i] = source[i];
-    }
-
-    return i;
+    return p != NULL;
 }
+
+#include "copy_string.gen.c"
 
 #define LOG   8
 #define SLACK 8
