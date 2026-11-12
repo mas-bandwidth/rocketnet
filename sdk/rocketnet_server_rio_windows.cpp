@@ -1260,8 +1260,6 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
-        // a held port names its cause (ADDRESS_IN_USE), as the probe does
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         goto failed;
     }
     address_bytes = sizeof( address );

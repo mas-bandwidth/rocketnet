@@ -1630,7 +1630,8 @@ jobs:
           ROCKETNET_SERVER_TRANSPORT: rio
           ROCKETNET_TEST_RIO_LANES: "4"
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          set +e -uo pipefail
           cases="test_rio_transport_server_probe test_rio_transport_server_wire_ipv4 test_rio_transport_server_wire_ipv6 test_rio_transport_server_send_full test_rio_transport_lanes_through_the_server"
           logs=$(mktemp -d "$RUNNER_TEMP/rio-lanes.XXXXXX")
           for plant in 0 1; do

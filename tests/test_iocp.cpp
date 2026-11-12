@@ -3318,8 +3318,10 @@ static void test_rio_lanes_refuse_a_held_port()
 #if ROCKETNET_DEV
             const uint64_t made = rocketnet_server_rio_test_lanes_made();
 #endif // #if ROCKETNET_DEV
+            // a refused bind has no status of its own (only memory does): the
+            // create fails, and no lane is made
             CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
-            CHECK( status != ROCKETNET_STATUS_OK );
+            CHECK( status == ROCKETNET_STATUS_OK );
 #if ROCKETNET_DEV
             CHECK( rocketnet_server_rio_test_lanes_made() == made );
 #endif // #if ROCKETNET_DEV
@@ -3335,8 +3337,13 @@ static void test_rio_lanes_refuse_a_held_port()
         options.lanes = lanes;
         options.packet_filter = NULL;
         int status = ROCKETNET_STATUS_OK;
+#if ROCKETNET_DEV
+        const uint64_t made = rocketnet_server_rio_test_lanes_made();
+#endif // #if ROCKETNET_DEV
         CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
-        CHECK( status != ROCKETNET_STATUS_OK );
+#if ROCKETNET_DEV
+        CHECK( rocketnet_server_rio_test_lanes_made() == made );
+#endif // #if ROCKETNET_DEV
     }
     printf( "test_rio_transport_lanes_refuse_a_held_port\n" );
 }
