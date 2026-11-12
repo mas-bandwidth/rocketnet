@@ -1406,9 +1406,7 @@ jobs:
       - name: Start combined unit and functional timing (development legs)
         if: matrix.leg != 'b'
         shell: bash
-        run: |
-          set -euo pipefail
-          *start_unit_functional_timing
+        run: *start_unit_functional_timing
 
       # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
       # built from only the header and the prebuilt static library (seconds)
@@ -1580,9 +1578,7 @@ jobs:
       - name: Start combined unit and functional timing (production leg)
         if: matrix.leg == 'b'
         shell: bash
-        run: |
-          set -euo pipefail
-          *start_unit_functional_timing
+        run: *start_unit_functional_timing
 
       - name: Check the library is callable from C and C++ through rocketnet.h
         if: matrix.leg == 'b'
@@ -1729,9 +1725,7 @@ jobs:
         shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/Release/{1}', runner.os, matrix.leg) }}
-        run: |
-          set -euo pipefail
-          *enforce_unit_functional_timing
+        run: *enforce_unit_functional_timing
 
       - if: always()
         uses: ./.github/actions/ccache-stats
@@ -1960,9 +1954,7 @@ jobs:
 
       - name: Start combined unit and functional timing
         shell: bash
-        run: |
-          set -euo pipefail
-          *start_unit_functional_timing
+        run: *start_unit_functional_timing
 
       - name: The shards partition the unit suite
         if: matrix.shard == 0
@@ -1982,9 +1974,7 @@ jobs:
         shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.shard) }}
-        run: |
-          set -euo pipefail
-          *enforce_unit_functional_timing
+        run: *enforce_unit_functional_timing
 
       - if: always()
         uses: ./.github/actions/ccache-stats

@@ -109,6 +109,19 @@ def release(api, repo, version, ref, dry_run=False, resume=False, out=sys.stdout
     return 0
 
 
+def gates_as_of(gates, version, out):
+    """The gates in force for version, each made in force for any version, so a
+    dry run can judge an earlier commit by a later release's gates."""
+    rg.version_key(version)
+    chosen = [g for g in gates if g.in_force(version)]
+    if not chosen:
+        raise rg.GatesError(f"no gate is in force for {version}: nothing would be judged")
+    for g in chosen:
+        g.since = "v0.0.0"
+    print(f"GATES AS OF {version}: judging with the {len(chosen)} gates in force for {version}", file=out)
+    return chosen
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("version")
@@ -117,13 +130,20 @@ def main(argv):
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--repo", default=rg.REPOSITORY)
     parser.add_argument("--wait-minutes", type=int, default=WAIT_MINUTES)
+    parser.add_argument("--gates-as-of", metavar="VERSION",
+                        help="dry run only: judge the commit by the gates in force for VERSION (e.g. what an "
+                             "earlier release would have met under today's gates)")
     args = parser.parse_args(argv[1:])
     if not re.match(r"^[0-9a-fA-F]{7,40}$", args.commit):
         print(f"commit {args.commit!r}: give a commit id, not a branch or tag name")
         return 2
+    if args.gates_as_of and not args.dry_run:
+        print("--gates-as-of judges by another version's gates: it is for --dry-run only")
+        return 2
     try:
+        gates = gates_as_of(rg.load_gates(), args.gates_as_of, sys.stdout) if args.gates_as_of else None
         api = rg.Api(rg.token_from_environment())
-        return release(api, args.repo, args.version, args.commit, args.dry_run, args.resume,
+        return release(api, args.repo, args.version, args.commit, args.dry_run, args.resume, gates=gates,
                        now=datetime.datetime.now(datetime.timezone.utc), wait_minutes=args.wait_minutes)
     except (rg.ApiError, rg.GatesError) as error:
         print(f"ERROR: {error}")

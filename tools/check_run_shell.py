@@ -35,6 +35,11 @@ is also refused for `local|export|declare|readonly|typeset x=$(...)`: the
 builtin's status replaces the command's, so -e never sees the failure. Split
 the declaration from the assignment.
 
+A run line that is only `*name` is refused: inside a block scalar (`run: |`)
+a YAML alias is literal text, so the shell runs a command named `*name`
+(exit 127). The alias must be the whole value: `run: *name` (2026-11-12: five
+ci.yml timing steps were turned into this form and every Windows row failed).
+
 Scanned: .github/workflows/*.yml|yaml and the run steps of
 .github/actions/**/action.yml|yaml (a composite action's step must name its
 shell). Zero workflow files, or zero run steps, is an error.
@@ -204,6 +209,20 @@ def mask_lines(text):
     return [(n, line) for n, line in enumerate(text.splitlines(), 1) if MASK.search(line)]
 
 
+ALIAS_LINE = re.compile(r"^\s*\*[A-Za-z_][A-Za-z0-9_-]*\s*$")
+
+
+def alias_lines(text):
+    """Lines of a run script that are only `*name`: an alias written inside a
+    block scalar, which YAML keeps as literal text."""
+    return [(n, line) for n, line in enumerate(text.splitlines(), 1) if ALIAS_LINE.match(line)]
+
+
+def alias_problems(label, script):
+    return [f"{label}: run line {n}: `{line.strip()}` is a YAML alias inside a block scalar: literal text the "
+            f"shell runs as a command (exit 127); write `run: {line.strip()}`" for n, line in alias_lines(script)]
+
+
 def check_workflow(path, rel, problems):
     data = workflow_jobs.parse(path.read_text(encoding="utf-8"), rel)
     steps = 0
@@ -219,6 +238,7 @@ def check_workflow(path, rel, problems):
             label = f"{rel}: {job_id}: {step.get('name') or step.get('id') or f'step {index + 1}'}"
             script = str(step.get("run") or "")
             shell = step.get("shell") or job_shell
+            problems.extend(alias_problems(label, script))
             for os_name in sorted(oses):
                 reason = judge(shell, script, os_name)
                 if reason:
@@ -242,6 +262,7 @@ def check_action(path, rel, problems):
         label = f"{rel}: {step.get('name') or f'step {index + 1}'}"
         shell = step.get("shell")
         script = str(step.get("run") or "")
+        problems.extend(alias_problems(label, script))
         if not shell:
             problems.append(f"{label}: a composite action's run step names no shell")
             continue
@@ -366,6 +387,15 @@ def self_test():
         ("cmd two commands", {".github/workflows/a.yml": GOOD.replace("      - shell: python\n        run: print(1)\n",
                                                                        "      - shell: cmd\n        run: |\n          a\n          b\n")},
          1, "cmd runs 2 commands"),
+        ("alias inside a block scalar", {".github/workflows/a.yml": GOOD.replace(
+            "      - run: make\n",
+            "      - run: &timing |\n          set -euo pipefail\n          make\n"
+            "      - shell: bash\n        run: |\n          set -euo pipefail\n          *timing\n")},
+         1, "`*timing` is a YAML alias inside a block scalar"),
+        ("alias as the whole value", {".github/workflows/a.yml": GOOD.replace(
+            "      - run: make\n",
+            "      - run: &timing |\n          set -euo pipefail\n          make\n      - run: *timing\n")},
+         0, "0 refused"),
     ]
     import contextlib
     import io
