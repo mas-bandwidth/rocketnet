@@ -3122,6 +3122,59 @@ static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_serve
     rocketnet_debug( "replay commit: %s failed (%s)", call, strerror( errno ) );
 }
 
+// the commit's calls into the kernel map for rocketnet_xdp_replay_apply: a
+// delete batch and single delete of the forgets (a missing key is not a
+// failure), an update batch and single update of the marks (BPF_ANY makes
+// a repeat harmless)
+
+static bool rocketnet_server_socket_replay_delete_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    struct bpf_map_batch_opts opts;
+    memset( &opts, 0, sizeof( opts ) );
+    opts.sz = sizeof( opts );
+    __u32 count = *batch_count;
+    const bool deleted = bpf_map_delete_batch( server_socket->replay_map_fd, &server_socket->replay_marks->forgets[first], &count, &opts ) == 0;
+    *batch_count = count;
+    return deleted;
+}
+
+static bool rocketnet_server_socket_replay_delete_single( void * context, uint32_t index )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    if ( bpf_map_delete_elem( server_socket->replay_map_fd, &server_socket->replay_marks->forgets[index] ) != 0 && errno != ENOENT )
+    {
+        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
+        return false;
+    }
+    return true;
+}
+
+static bool rocketnet_server_socket_replay_update_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    struct bpf_map_batch_opts opts;
+    memset( &opts, 0, sizeof( opts ) );
+    opts.sz = sizeof( opts );
+    opts.elem_flags = BPF_ANY;
+    __u32 count = *batch_count;
+    const bool updated = bpf_map_update_batch( server_socket->replay_map_fd, &server_socket->replay_marks->mark_keys[first],
+                                               &server_socket->replay_marks->mark_values[first], &count, &opts ) == 0;
+    *batch_count = count;
+    return updated;
+}
+
+static bool rocketnet_server_socket_replay_update_single( void * context, uint32_t index )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    if ( bpf_map_update_elem( server_socket->replay_map_fd, &server_socket->replay_marks->mark_keys[index], &server_socket->replay_marks->mark_values[index], BPF_ANY ) != 0 )
+    {
+        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
+        return false;
+    }
+    return true;
+}
+
 void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
@@ -3136,58 +3189,24 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
     // reconnect's refused zero mark is retried rather than lost.
 
+    // a batch the kernel stops (at a missing key, or a refusal) goes on past
+    // the entry it stopped at, which takes one single call so its outcome is
+    // known; a kernel without the batch command is walked one call an entry
+    // (rocketnet_xdp_replay_apply). An applied mark supersedes a refused
+    // forget of the same key (RetryNeverDeletesNewerMark).
+
     bool * forget_failed = server_socket->replay_forget_failed;
     memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
-
-    if ( marks->forget_count > 0 )
-    {
-        struct bpf_map_batch_opts opts;
-        memset( &opts, 0, sizeof( opts ) );
-        opts.sz = sizeof( opts );
-        __u32 count = marks->forget_count;
-        const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
-
-        for ( uint32_t i = 0; i < marks->forget_count; i++ )
-        {
-            // a missing key is not a failure; a refused batch (an older kernel,
-            // a missing key, or any other error) is walked one syscall at a
-            // time so each forget's outcome is known
-
-            forget_failed[i] = false;
-            if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-            {
-                forget_failed[i] = true;
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-            }
-        }
-    }
+    rocketnet_xdp_replay_apply( marks->forget_count, rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single, server_socket,
+                                forget_failed );
 
     bool * mark_applied = server_socket->replay_mark_applied;
     memset( mark_applied, 0, marks->capacity * sizeof( bool ) );
-
-    if ( marks->mark_count > 0 )
+    rocketnet_xdp_replay_apply( marks->mark_count, rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single, server_socket,
+                                mark_applied );
+    for ( uint32_t i = 0; i < marks->mark_count; i++ )
     {
-        struct bpf_map_batch_opts opts;
-        memset( &opts, 0, sizeof( opts ) );
-        opts.sz = sizeof( opts );
-        opts.elem_flags = BPF_ANY;
-        __u32 count = marks->mark_count;
-        const bool batch_updated = bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) == 0;
-
-        for ( uint32_t i = 0; i < marks->mark_count; i++ )
-        {
-            // a refused batch (an older kernel, or any other error) is walked
-            // one syscall at a time, so each mark's outcome is known: an
-            // applied mark supersedes a refused forget of the same key
-            // (RetryNeverDeletesNewerMark); BPF_ANY makes a repeat harmless
-
-            mark_applied[i] = true;
-            if ( !batch_updated && bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
-            {
-                mark_applied[i] = false;
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
-            }
-        }
+        mark_applied[i] = !mark_applied[i];
     }
 
     // a full buffer's refusals land in the commit failure count; a refused

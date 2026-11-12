@@ -361,4 +361,56 @@ static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_
 }
 #endif // #if ROCKETNET_DEV
 
+// A commit's apply of count entries to the kernel map, by batch calls with a
+// single call only where a batch stopped. batch applies the *batch_count
+// entries from first and answers true when it applied them all; refused, it
+// answers false with *batch_count the entries it applied before the one it
+// stopped at (the kernel's generic batch, which stops at a missing key or
+// the first refusal). The entry it stopped at takes one single call, which
+// answers false when that entry failed, and the batch goes on past it. A
+// refused batch that reports no entry stopped at (count unchanged: a kernel
+// without the batch command) is walked one single call an entry. refused[i]
+// is set for each entry whose single call failed and cleared for the rest.
+// Returns the calls made, at most two for each entry a batch stopped at,
+// plus one.
+
+typedef bool rocketnet_xdp_replay_batch_t( void * context, uint32_t first, uint32_t * batch_count );
+typedef bool rocketnet_xdp_replay_single_t( void * context, uint32_t index );
+
+static inline uint32_t rocketnet_xdp_replay_apply( uint32_t count, rocketnet_xdp_replay_batch_t * batch, rocketnet_xdp_replay_single_t * single,
+                                                   void * context, bool * refused )
+{
+    memset( refused, 0, count * sizeof( bool ) );
+
+    uint32_t calls = 0;
+    uint32_t done = 0;
+    while ( done < count )
+    {
+        const uint32_t left = count - done;
+        uint32_t applied = left;
+        calls++;
+        if ( batch( context, done, &applied ) )
+        {
+            break;
+        }
+
+        if ( applied >= left )
+        {
+            for ( uint32_t i = done; i < count; i++ )
+            {
+                calls++;
+                refused[i] = !single( context, i );
+            }
+            break;
+        }
+
+        done += applied;
+        calls++;
+        refused[done] = !single( context, done );
+        done++;
+    }
+
+    return calls;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H
