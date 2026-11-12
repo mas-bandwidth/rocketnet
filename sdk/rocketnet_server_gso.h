@@ -210,13 +210,14 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 #define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
 #define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // packets not sent: refused for their destination (never resent), or a full socket's tail left after shutdown's bounded retries
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment the prefilter (or, with no packet filter, the size pass) refused as too short or too large
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // segments of one GRO receive past the staging's room: more than ROCKETNET_GSO_RECV_MAX_SEGMENTS
 #define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
 #define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          11
+#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_PREFILTER     11       // segment the worker's prefilter refused for a reason other than size (sdk/rocketnet_receive_prefilter.h)
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          12
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
@@ -225,8 +226,23 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 // num_queues <= 0 selects the default. max_clients is the server's configured
 // client count, which sizes the receive view and each socket's receive
 // buffer request. flags is the DISABLE set above, zero for production.
+// packet_filter is the server's ROCKETNET_FILTER_VALUE_BYTES filter value,
+// copied: each queue worker runs the server's stateless prefilter on every
+// segment before banking it. NULL drives the transport directly (raw
+// datagrams): the worker then applies the size pass alone.
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL );
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL,
+                                                             const uint8_t * packet_filter = NULL );
+
+// the datagrams the queue workers dropped before banking, by reason
+// (ROCKETNET_RECEIVE_NUM_DROPS values in rocketnet_receive_drop_t order),
+// cumulative. Main thread.
+void rocketnet_server_gso_receive_drop_totals( struct rocketnet_server_gso_t * gso, uint64_t * values );
+
+// the queue count (fixed after create), and one queue's producer room. Main
+// thread for the room.
+int rocketnet_server_gso_send_queues( struct rocketnet_server_gso_t * gso );
+int rocketnet_server_gso_send_room_queue( struct rocketnet_server_gso_t * gso, int queue );
 
 void rocketnet_server_gso_stop( struct rocketnet_server_gso_t * gso );
 bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );
@@ -319,6 +335,9 @@ bool rocketnet_server_gso_test_send_queues();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+// The worker's prefilter before banking: a datagram main would refuse on its
+// stateless rungs takes no slot and is counted by reason.
+bool rocketnet_server_gso_test_drain_prefilter();
 
 #if defined( __linux__ )
 struct mmsghdr;

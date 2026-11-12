@@ -47,6 +47,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_frame.h"
+#include "rocketnet_receive_prefilter.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -118,6 +119,7 @@ struct rocketnet_server_gso_recv_buffer_t
     uint64_t dropped_too_large;     // the part of dropped_size above the receive ceiling or truncated
     uint64_t dropped_overflow;
     uint64_t dropped_source;
+    uint64_t dropped_prefilter;     // refused by the prefilter for a reason other than size
     uint64_t gro_batches;
     uint64_t gro_cmsg_faults;                   // a GRO cmsg this worker refused
     uint64_t receive_errors;
@@ -228,6 +230,13 @@ struct rocketnet_server_gso_queue_t
     // Idle EAGAIN calls still count without publishing an empty ready buffer.
     std::atomic<uint64_t> receive_syscalls{ 0 };
 
+    uint8_t padding_3b[4096];
+
+    // the datagrams this queue's worker dropped before banking, by reason
+    // (sdk/rocketnet_receive_prefilter.h): the worker is the one writer, main
+    // sums every queue's in rocketnet_server_gso_receive_drop_totals
+    struct rocketnet_receive_drop_tally_t receive_tally;
+
     uint8_t padding_3[4096];
 
     // worker-only recvmmsg scratch: the kernel fills these, the worker
@@ -258,6 +267,13 @@ struct rocketnet_server_gso_t
     std::atomic<int> features{ 0 };
     bool ipv6;
 
+    // the server's packet filter value, copied at create, read by every
+    // worker's prefilter; has_filter is false when the transport is driven
+    // directly (raw datagrams, no protocol), and then the worker applies the
+    // size pass alone
+    bool has_filter = false;
+    uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = {};
+
     struct rocketnet_server_gso_queue_t * queues;
 
     // shutdown has begun (rocketnet_server_gso_begin_shutdown, or stop): each
@@ -273,6 +289,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_too_large;
     uint64_t counter_receive_dropped_overflow;
     uint64_t counter_receive_dropped_source;
+    uint64_t counter_receive_dropped_prefilter;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
 
@@ -967,6 +984,55 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
     return published;
 }
 
+// the worker's screen of one datagram before it takes a bank slot: the
+// server's stateless prefilter (sdk/rocketnet_receive_prefilter.h) when the
+// transport has the packet filter, so garbage never evicts a player's
+// packet and is counted exactly as main's ladder would count it; without
+// it, the size pass every transport makes, below the smallest packet a
+// server reads or above the receive ceiling
+static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct rocketnet_server_gso_t * gso, const uint8_t * packet_data, int packet_bytes )
+{
+    if ( gso->has_filter )
+    {
+        return rocketnet_receive_prefilter( packet_data, packet_bytes, gso->packet_filter );
+    }
+    if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+    {
+        return ROCKETNET_RECEIVE_DROP_TOO_SHORT;
+    }
+    if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        return ROCKETNET_RECEIVE_DROP_TOO_LARGE;
+    }
+    return ROCKETNET_RECEIVE_ACCEPT;
+}
+
+// one dropped datagram, counted by reason in the queue's tally (the server's
+// counters) and in the transport's own counters: size reasons in
+// RECEIVE_DROPPED_SIZE, a full bank in RECEIVE_DROPPED_OVERFLOW, the rest in
+// RECEIVE_DROPPED_PREFILTER
+static void rocketnet_server_gso_count_drop( struct rocketnet_server_gso_queue_t * queue, struct rocketnet_server_gso_recv_buffer_t * buffer,
+                                             enum rocketnet_receive_drop_t drop )
+{
+    rocketnet_receive_drop_tally_count( &queue->receive_tally, drop );
+    switch ( drop )
+    {
+        case ROCKETNET_RECEIVE_DROP_TOO_SHORT:
+            buffer->dropped_size++;
+            break;
+        case ROCKETNET_RECEIVE_DROP_TOO_LARGE:
+            buffer->dropped_size++;
+            buffer->dropped_too_large++;
+            break;
+        case ROCKETNET_RECEIVE_DROP_BANK_FULL:
+            buffer->dropped_overflow++;
+            break;
+        default:
+            buffer->dropped_prefilter++;
+            break;
+    }
+}
+
 // One drain of the socket into the worker's buffer. Every message recvmmsg
 // returns spends one read of a budget of ROCKETNET_GSO_RECV_QUEUE_SIZE,
 // accepted or dropped, and so does an interrupted call: the drain ends when
@@ -1077,8 +1143,7 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
 
             if ( queue->messages[i].msg_hdr.msg_flags & MSG_TRUNC )
             {
-                buffer->dropped_size++;
-                buffer->dropped_too_large++;
+                rocketnet_server_gso_count_drop( queue, buffer, ROCKETNET_RECEIVE_DROP_TOO_LARGE );
                 continue;
             }
 
@@ -1087,7 +1152,7 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
 
             if ( message_bytes == 0 )
             {
-                buffer->dropped_size++;
+                rocketnet_server_gso_count_drop( queue, buffer, ROCKETNET_RECEIVE_DROP_TOO_SHORT );
                 continue;
             }
 
@@ -1122,30 +1187,28 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
                 const int remaining = message_bytes - offset;
                 const int this_segment = remaining < segment_bytes ? remaining : segment_bytes;
 
-                // the same cheap pass every transport makes before staging:
-                // below the smallest packet a server reads, or above the
-                // receive ceiling, never reaches the protocol
+                // the prefilter before banking, once per GRO segment: a
+                // datagram main would refuse on its stateless rungs never
+                // takes a slot (rocketnet_server_gso_screen)
 
-                if ( this_segment < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || this_segment > ROCKETNET_RECEIVE_CEILING )
+                const uint8_t * segment_data = queue->scratch[i] + offset;
+                const enum rocketnet_receive_drop_t drop = rocketnet_server_gso_screen( queue->gso, segment_data, this_segment );
+                if ( drop != ROCKETNET_RECEIVE_ACCEPT )
                 {
-                    buffer->dropped_size++;
-                    if ( this_segment > ROCKETNET_RECEIVE_CEILING )
-                    {
-                        buffer->dropped_too_large++;
-                    }
+                    rocketnet_server_gso_count_drop( queue, buffer, drop );
                     continue;
                 }
 
                 if ( buffer->num_packets >= ROCKETNET_GSO_RECV_QUEUE_SIZE )
                 {
-                    buffer->dropped_overflow++;
+                    rocketnet_server_gso_count_drop( queue, buffer, ROCKETNET_RECEIVE_DROP_BANK_FULL );
                     continue;
                 }
 
                 const uint32_t index = buffer->num_packets;
                 buffer->from[index] = from;
                 buffer->packet_bytes[index] = this_segment;
-                memcpy( buffer->packet_data[index], queue->scratch[i] + offset, (size_t) this_segment );
+                memcpy( buffer->packet_data[index], segment_data, (size_t) this_segment );
                 buffer->num_packets++;
             }
         }
@@ -1282,7 +1345,8 @@ static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
     rocketnet_server_gso_destroy( gso );
 }
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status )
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status,
+                                                             const uint8_t * packet_filter )
 {
 #if ROCKETNET_DEV
     flags |= rocketnet_server_gso_test_create_flags.load();
@@ -1334,6 +1398,11 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->context = context;
     gso->num_queues = num_queues;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    if ( packet_filter )
+    {
+        gso->has_filter = true;
+        memcpy( gso->packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    }
 
     gso->max_clients = max_clients;
     gso->queues = (struct rocketnet_server_gso_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_gso_queue_t ) * (size_t) num_queues );
@@ -1352,6 +1421,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     for ( int i = 0; i < num_queues; i++ )
     {
         new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
+        rocketnet_receive_drop_tally_reset( &gso->queues[i].receive_tally );
         gso->queues[i].stopped.store( true, std::memory_order_relaxed );
         gso->queues[i].fd = -1;
         gso->queues[i].wake_fd = -1;
@@ -1641,19 +1711,48 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_PREFILTER] = gso->counter_receive_dropped_prefilter;
 }
 
-// the builtin transport's receive_drops hook: the size pass's drops
-// (rocketnet_server_gso_worker), split at the receive ceiling; main thread,
-// as the fold into these totals is (rocketnet_server_gso_receive_from_queue)
+// the driver's receive_drop_totals: every queue worker's tally summed, by
+// reason, cumulative for the transport's life. Main thread.
 
-void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large )
+void rocketnet_server_gso_receive_drop_totals( struct rocketnet_server_gso_t * gso, uint64_t * values )
 {
     rocketnet_assert( gso );
-    rocketnet_assert( too_short );
-    rocketnet_assert( too_large );
-    *too_large = gso->counter_receive_dropped_too_large;
-    *too_short = gso->counter_receive_dropped_size - gso->counter_receive_dropped_too_large;
+    rocketnet_assert( values );
+    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
+    for ( int i = 0; gso->queues && i < gso->num_queues; i++ )
+    {
+        rocketnet_receive_drop_tally_sum( &gso->queues[i].receive_tally, 1, values );
+    }
+    values[ROCKETNET_RECEIVE_ACCEPT] = 0;
+}
+
+// the driver's send queue operations: the queue count, fixed after create,
+// and one queue's producer room. Main thread for the room.
+
+int rocketnet_server_gso_send_queues( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    return gso->num_queues;
+}
+
+int rocketnet_server_gso_send_room_queue( struct rocketnet_server_gso_t * gso, int queue )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue >= 0 && queue < gso->num_queues );
+    if ( gso->stopping || queue < 0 || queue >= gso->num_queues )
+    {
+        return 0;
+    }
+    const struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[queue].send;
+    if ( lane->producer < 0 )
+    {
+        return 0;
+    }
+    const int used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
+    return used < 0 || used >= ROCKETNET_GSO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_GSO_SEND_QUEUE_SIZE - used;
 }
 
 // ---------------------------------------------------------------------------
@@ -2237,6 +2336,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         gso->counter_receive_dropped_too_large += buffer->dropped_too_large;
         gso->counter_receive_dropped_overflow += buffer->dropped_overflow;
         gso->counter_receive_dropped_source += buffer->dropped_source;
+        gso->counter_receive_dropped_prefilter += buffer->dropped_prefilter;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
         buffer->receive_errors = 0;
@@ -2244,6 +2344,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         buffer->dropped_too_large = 0;
         buffer->dropped_overflow = 0;
         buffer->dropped_source = 0;
+        buffer->dropped_prefilter = 0;
         buffer->gro_batches = 0;
         buffer->gro_cmsg_faults = 0;
     }
@@ -2347,6 +2448,7 @@ static bool rocketnet_server_gso_test_init_queue( struct rocketnet_server_gso_t 
 {
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[index];
     new ( queue ) rocketnet_server_gso_queue_t();
+    rocketnet_receive_drop_tally_reset( &queue->receive_tally );
     queue->fd = -1;
     queue->wake_fd = -1;
     queue->index = index;
@@ -2708,6 +2810,137 @@ bool rocketnet_server_gso_test_drain_budget()
             buffer->packet_bytes[2] == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && buffer->packet_data[2][0] == (uint8_t) 'v';
 
     // no worker ran, so stop is complete once both stopped flags are set
+
+    gso->test_receive = NULL;
+    gso->test_receive_user = NULL;
+    rocketnet_server_gso_stop( gso );
+    queue->stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_test_destroy( gso );
+
+    return valid;
+}
+
+// The worker's prefilter before banking, on the fixture with the receive
+// seam: each datagram the source answers is the one the test wrote. With the
+// packet filter set, a keep-alive under the right filter value is banked; one
+// under another value, a type only a server sends and a one-byte datagram
+// are each dropped before a slot, counted by reason in the queue's tally and
+// in the transport's own counters, and the driver's totals read the tally.
+struct rocketnet_server_gso_test_datagram_t
+{
+    const uint8_t * data;
+    int bytes;
+    int remaining;
+};
+
+static int rocketnet_server_gso_test_datagram_receive( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user )
+{
+    struct rocketnet_server_gso_test_datagram_t * datagram = (struct rocketnet_server_gso_test_datagram_t *) user;
+    if ( datagram->remaining <= 0 )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+
+    const int count = datagram->remaining < vlen ? datagram->remaining : vlen;
+    for ( int i = 0; i < count; i++ )
+    {
+        struct msghdr * header = &queue->messages[i].msg_hdr;
+        header->msg_controllen = 0;
+        header->msg_flags = 0;
+        memset( &queue->names[i], 0, sizeof( queue->names[i] ) );
+        struct sockaddr_in * in4 = (struct sockaddr_in *) &queue->names[i];
+        in4->sin_family = AF_INET;
+        in4->sin_port = htons( 40000 );
+        in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        memcpy( queue->scratch[i], datagram->data, (size_t) datagram->bytes );
+        queue->messages[i].msg_len = (unsigned int) datagram->bytes;
+    }
+
+    datagram->remaining -= count;
+    return count;
+}
+
+bool rocketnet_server_gso_test_drain_prefilter()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+    {
+        return false;
+    }
+
+    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0x5A, 0x17, 0xC3, 0x08 };
+    const uint8_t other[ROCKETNET_FILTER_VALUE_BYTES] = { 0x5A, 0x17, 0xC3, 0x09 };
+    gso->has_filter = true;
+    memcpy( gso->packet_filter, filter, sizeof( filter ) );
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    gso->test_receive = rocketnet_server_gso_test_datagram_receive;
+
+    uint8_t keep_alive[ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES];
+    memset( keep_alive, 'k', sizeof( keep_alive ) );
+    uint8_t * p = keep_alive;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, filter );
+
+    uint8_t wrong_value[ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES];
+    memset( wrong_value, 'k', sizeof( wrong_value ) );
+    p = wrong_value;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, other );
+
+    uint8_t denied[ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES];
+    memset( denied, 'd', sizeof( denied ) );
+    p = denied;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_DENIED_PACKET, filter );
+
+    const uint8_t one_byte[1] = { 0 };
+
+    bool valid = true;
+    bool full = false;
+
+    struct rocketnet_server_gso_test_datagram_t datagram = { keep_alive, (int) sizeof( keep_alive ), 1 };
+    gso->test_receive_user = &datagram;
+    rocketnet_server_gso_drain( queue, &full );
+    valid = valid && buffer->num_packets == 1 && buffer->packet_bytes[0] == (int) sizeof( keep_alive ) &&
+            memcmp( buffer->packet_data[0], keep_alive, sizeof( keep_alive ) ) == 0;
+
+    datagram = { wrong_value, (int) sizeof( wrong_value ), 2 };
+    rocketnet_server_gso_drain( queue, &full );
+    datagram = { denied, (int) sizeof( denied ), 1 };
+    rocketnet_server_gso_drain( queue, &full );
+    datagram = { one_byte, 1, 1 };
+    rocketnet_server_gso_drain( queue, &full );
+
+    valid = valid && buffer->num_packets == 1 && buffer->dropped_prefilter == 3 && buffer->dropped_size == 1;
+
+    uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
+    rocketnet_server_gso_receive_drop_totals( gso, totals );
+    for ( int drop = 0; drop < ROCKETNET_RECEIVE_NUM_DROPS; drop++ )
+    {
+        uint64_t expect = 0;
+        if ( drop == ROCKETNET_RECEIVE_DROP_WRONG_VALUE )
+        {
+            expect = 2;
+        }
+        else if ( drop == ROCKETNET_RECEIVE_DROP_WRONG_DIRECTION || drop == ROCKETNET_RECEIVE_DROP_TOO_SHORT )
+        {
+            expect = 1;
+        }
+        valid = valid && totals[drop] == expect;
+    }
+
+    // the transport's own counters fold the buffer once main claims it
+
+    valid = valid && rocketnet_server_gso_publish_receive( queue );
+    rocketnet_server_gso_receive_packets( gso );
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == 1 &&
+            counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_PREFILTER] == 3 &&
+            counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] == 1;
+
+    // no worker ran, so stop is complete once the queue's stopped flag is set
 
     gso->test_receive = NULL;
     gso->test_receive_user = NULL;

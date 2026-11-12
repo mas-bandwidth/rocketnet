@@ -183,6 +183,15 @@ static void test_server_gso_drain_room()
 
 REGISTER_UNIT_TEST( test_server_gso_drain_room );
 
+// the worker's prefilter before banking (sdk/rocketnet_receive_prefilter.h):
+// garbage takes no slot and each drop is counted by reason
+static void test_server_gso_drain_prefilter()
+{
+    check( rocketnet_server_gso_test_drain_prefilter() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_drain_prefilter );
+
 static void test_server_gso_receive_backoff()
 {
     check( rocketnet_server_gso_test_receive_backoff() );
