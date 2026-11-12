@@ -32,6 +32,15 @@ do                                                                              
 
 int main()
 {
+    // the server here binds port zero, which the xdp rung refuses: a server
+    // pin in the suite's environment (ROCKETNET_SERVER_TRANSPORT=xdp) is not
+    // this program's to honour
+#if defined( _WIN32 )
+    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
+#else
+    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+#endif // #if defined( _WIN32 )
+
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
 
