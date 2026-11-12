@@ -201,11 +201,13 @@ if [ "$hostile" = "1" ]; then
         --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null &'" < /dev/null > "$out/ssh-hostile.txt" 2>&1 &
 fi
 
-# every role ends by itself after its last cut (end_at + 3 quiet periods)
+# every role ends by itself after its last cut (end_at + 3 quiet periods);
+# looked for by process name: a command-line pattern matches the remote shell
+# running pgrep, which carries the same words
 deadline=$(( end_at + 60 ))
 while :; do
-    running=$(on_shell "$server_host" "pgrep -f '$tool server' | wc -l")
-    running=$(( running + $(on_shell "$client_host" "pgrep -f '$client_tool (clients|hostile)' | wc -l") ))
+    running=$(on_shell "$server_host" "pgrep -x harden_load | wc -l")
+    running=$(( running + $(on_shell "$client_host" "pgrep -x harden_load | wc -l") ))
     [ "$running" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
         echo "harden-pair: roles still running 60 s past the end; stopping them" >&2
