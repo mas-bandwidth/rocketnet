@@ -141,6 +141,13 @@ struct rocketnet_server_gso_recv_buffer_t
 // pointer) and proofs/tla/RNGsoHandoff.tla with proofs/tla/RNBankFifoLayout.tla
 // (the hand-off, per queue).
 
+// the gather's bucket count for a bank (rocketnet_send_gather_scratch_bytes):
+// the least power of two at least twice the slots, from buckets up
+static constexpr int rocketnet_server_gso_gather_buckets( int buckets )
+{
+    return buckets >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE ? buckets : rocketnet_server_gso_gather_buckets( 2 * buckets );
+}
+
 struct rocketnet_server_gso_send_lane_t
 {
     uint8_t padding_0[4096];
@@ -201,9 +208,9 @@ struct rocketnet_server_gso_send_lane_t
     // grouped by destination, each destination's in staged order. The flush
     // walks positions in order, so a destination's packets sit together and
     // segment even when other destinations were staged between them.
-    // gather_memory holds the gather's scratch: buckets (a power of two at
-    // least twice the slots) plus two ints per slot, four ints per slot in all
-    int gather_memory[4 * ROCKETNET_GSO_SEND_QUEUE_SIZE];
+    // gather_memory holds the gather's scratch: buckets (the least power of
+    // two at least twice the slots) plus two ints per slot
+    int gather_memory[rocketnet_server_gso_gather_buckets( 1 ) + 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE];
     struct rocketnet_send_gather_scratch_t gather = {};
     int order[ROCKETNET_GSO_SEND_QUEUE_SIZE];
     struct rocketnet_send_gather_run_t runs[ROCKETNET_GSO_SEND_QUEUE_SIZE];

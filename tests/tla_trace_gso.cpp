@@ -22,10 +22,12 @@
 // small: the io_uring walk's banks of three slots, where the slot count is an
 // argument. Every other constant is the code's.
 //
-// The plant (ROCKETNET_GSO_SEND_SLOT_PLANT, the tla_trace_plant build) replaces
-// finish and abort with copies whose slot is divided out of the pointer's
-// offset before any test (RNGsoQueueBankLayout SlotRule "divide"): a pointer a
-// byte early lands on the slot before, so its trace must fail TraceConsistent.
+// The plant (ROCKETNET_GSO_SEND_SLOT_PLANT, set by ROCKETNET_TLA_PLANT in the
+// tla_trace_plant build) replaces finish and abort with copies whose slot is
+// divided out of the pointer's offset before any test (RNGsoQueueBankLayout
+// SlotRule "divide"): a pointer a byte early lands on the slot before, so its
+// trace must fail TraceConsistent. PLANT-FIRED counts the finishes and aborts
+// that wrote a slot not their own; the clean build's is 0.
 
 #include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_internal.h"
@@ -40,6 +42,10 @@
 
 #undef ROCKETNET_GSO_SEND_QUEUE_SIZE
 #define ROCKETNET_GSO_SEND_QUEUE_SIZE 3
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_GSO_SEND_SLOT_PLANT 1
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
 void rocketnet_server_gso_finish_packet_unplanted( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data, int packet_bytes );
@@ -717,7 +723,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     printf( "WALK records=%d loads=%d claims=%d reloads=%d refused=%d finishes=%d aborts=%d flushes=%d turns=%d kept=%d returns=%d\n",
             (int) records.size(), walk.steps_load, walk.steps_claim, walk.steps_reload, walk.steps_refused, walk.steps_finish,
             walk.steps_abort, walk.steps_flush, walk.steps_turn, walk.steps_kept, walk.steps_return );
-    printf( "FOREIGN-WRITES %d\n", walk.foreign_writes );
+    printf( "PLANT-FIRED %d\n", walk.foreign_writes );
 
     char constants[1024];
     snprintf( constants, sizeof( constants ),

@@ -1119,11 +1119,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # enter. The IOCP and RIO fault seams are ROCKETNET_DEV code.
         # rocketnet_config.cpp is the one body of rocketnet_config_parse_int_value.
         # ROCKETNET_CONFIG_PARSE_ONLY compiles only that parser out of the file.
-        # rocketnet_protocol.cpp is the one body of rocketnet_prefilter_check,
-        # which the worker receive prefilter (rocketnet_receive_prefilter.h) calls;
-        # rocketnet_ack.cpp holds the ack block builder that file links to.
         add_executable(test_iocp tests/test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp sdk/rocketnet_server_rio_windows.cpp
-            sdk/rocketnet.cpp sdk/rocketnet_config.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp sdk/rocketnet_protocol.cpp sdk/rocketnet_ack.cpp ${ROCKETNET_SODIUM_SOURCE})
+            sdk/rocketnet.cpp sdk/rocketnet_config.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp ${ROCKETNET_SODIUM_SOURCE})
         target_compile_definitions(test_iocp PRIVATE ROCKETNET_CONFIG_PARSE_ONLY
             $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
@@ -1332,17 +1329,18 @@ if(ROCKETNET_BUILD_TOOLS)
     rocketnet_use_sodium(dst)
     target_compile_features(dst PRIVATE cxx_std_11)
     # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
-    # of a layer's code writes its trace for TLC. tla_trace_plant compiles the
-    # layer's code again with its plant define, in place of the library's (the
-    # gso layer compiles the transport's source into tests/tla_trace_gso.cpp in
-    # both binaries; its plant define swaps finish and abort there).
+    # of a layer's code writes its trace for TLC. Each layer is one file,
+    # tests/tla_trace_<layer>.cpp, that registers itself; both binaries take
+    # every such file. tla_trace_plant compiles them with ROCKETNET_TLA_PLANT,
+    # and each layer's file then includes its own code with its plant, in
+    # place of the library's.
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
     target_link_libraries(tla_trace PRIVATE rocketnet_dev)
     rocketnet_use_sodium(tla_trace)
     target_compile_features(tla_trace PRIVATE cxx_std_11)
-    add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS} sdk/rocketnet_uring_send_queue.cpp sdk/rocketnet_send_gather.cpp)
-    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_URING_SEND_QUEUE_PLANT=1 ROCKETNET_SEND_GATHER_PLANT=1 ROCKETNET_GSO_SEND_SLOT_PLANT=1)
+    add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
+    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_TLA_PLANT=1)
     target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
     rocketnet_use_sodium(tla_trace_plant)
     target_compile_features(tla_trace_plant PRIVATE cxx_std_11)

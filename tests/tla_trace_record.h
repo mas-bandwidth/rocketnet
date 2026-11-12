@@ -12,8 +12,8 @@
 // shared by every layer's walk: TLA+ values as text, one record of a
 // model's variables, the walk's seeded generator, and the writer of the
 // trace module and its cfg. A layer's walk is a function
-// int walk( uint64_t seed, int steps, const char * out ) in its own file,
-// listed in tests/tla_trace.cpp's layer table.
+// int walk( uint64_t seed, int steps, const char * out ) in its own file
+// tests/tla_trace_<layer>.cpp, registered with TLA_TRACE_LAYER below.
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -144,32 +144,47 @@ inline bool tla_write_trace( const char * dir, const std::string & name, const c
 
 // the layer table: each layer's file registers its walk at namespace scope
 // with TLA_TRACE_LAYER( name, walk ); tests/tla_trace.cpp runs the one
-// --layer names. Every tests/tla_trace_*.cpp is compiled into tla_trace and
-// tla_trace_plant (CMakeLists.txt).
+// --layer names, and --list prints them. Every tests/tla_trace_*.cpp is
+// compiled into tla_trace and tla_trace_plant (CMakeLists.txt). The table is
+// a fixed array: registration past TLA_TRACE_MAX_LAYERS is refused and
+// tla_trace then refuses to run, so a layer is never silently left out.
+
+#define TLA_TRACE_MAX_LAYERS 64
+
+typedef int ( *tla_trace_walk_t )( uint64_t seed, int steps, const char * out );
 
 struct tla_trace_layer_t
 {
     const char * name;
-    int ( *walk )( uint64_t seed, int steps, const char * out );
-    tla_trace_layer_t * next;
+    tla_trace_walk_t walk;
 };
 
-inline tla_trace_layer_t *& tla_trace_layers()
+struct tla_trace_table_t
 {
-    static tla_trace_layer_t * head = NULL;
-    return head;
+    tla_trace_layer_t layer[TLA_TRACE_MAX_LAYERS];
+    int count;
+    int refused;
+};
+
+inline tla_trace_table_t & tla_trace_layers()
+{
+    static tla_trace_table_t table = {};
+    return table;
 }
 
 struct tla_trace_registrar_t
 {
-    tla_trace_layer_t entry;
-
-    tla_trace_registrar_t( const char * name, int ( *walk )( uint64_t, int, const char * ) )
+    tla_trace_registrar_t( const char * name, tla_trace_walk_t walk )
     {
-        entry.name = name;
-        entry.walk = walk;
-        entry.next = tla_trace_layers();
-        tla_trace_layers() = &entry;
+        tla_trace_table_t & table = tla_trace_layers();
+        if ( table.count >= TLA_TRACE_MAX_LAYERS )
+        {
+            table.refused++;
+            return;
+        }
+        table.layer[table.count].name = name;
+        table.layer[table.count].walk = walk;
+        table.count++;
     }
 };
 

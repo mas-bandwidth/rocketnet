@@ -1237,7 +1237,7 @@ jobs:
         uses: ./.github/actions/ccache-stats
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
-  # walks a layer's code at fixed seeds and the pinned tlacheck checks every
+  # walks every layer's code at fixed seeds and the pinned tlacheck checks every
   # trace is a behaviour of the layer's spec, and that the plant build's
   # trace of the same walk is not. tlc.yml runs a rolling range nightly.
   tla-trace:
@@ -1283,13 +1283,14 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
-            --layer bank --seeds 1-4 --jobs 4 --dir "$TRACE_JOB/bank"
-          python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
-            --layer gso --seeds 1-4 --jobs 4 --dir "$TRACE_JOB/gso"
+            --layer all --seeds 1-4 --jobs 8 --dir "$TRACE_JOB/work"
 
       - name: Remove the trace work
         if: always() && env.TRACE_JOB != ''
-        run: rm -rf -- "$TRACE_JOB"
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "$TRACE_JOB"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a

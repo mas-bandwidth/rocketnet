@@ -15,6 +15,11 @@
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_send_gather.h"
 
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_SEND_GATHER_PLANT 1
+#include "../sdk/rocketnet_send_gather.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -134,7 +139,7 @@ static int trace_gather( uint64_t seed, int steps, const char * out )
 
     // the plant reverses a destination's packets after its second: only a
     // case with three or more to one destination can show it
-    printf( "GATHER-REORDERABLE %d\n", reorderable );
+    printf( "PLANT-FIRED %d\n", reorderable );
 
     std::string hash = "MCHash(d) == CASE ";
     for ( int d = 0; d < GATHER_DESTS; d++ )
