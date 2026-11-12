@@ -11,7 +11,7 @@
 
 #include "test_unit_registry.h"
 
-#include "tests/echo_payload.h"
+#include "echo_payload.h"
 
 #include <stdint.h>
 #include <string.h>
