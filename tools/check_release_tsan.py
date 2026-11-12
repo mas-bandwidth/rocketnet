@@ -34,7 +34,14 @@ ApiError = rg.ApiError
 
 def check(api, repository, sha, version, out=sys.stdout, gates=None, now=None):
     """0 when every gate in force for version is green for sha, else 1."""
+    gates = gates if gates is not None else rg.load_gates()
     ok, _, _ = rg.judge_release(api, repository, version, sha, out, "tag", gates, now)
+    if ok:
+        # zero inputs is an error: no gate in force for the version judges nothing
+        judged = [g for g in gates if g.in_force(version) and any(e in g.events for e in ("push", "nightly"))]
+        if not judged:
+            print(f"FAIL  0 release gates in force for {version} on push or nightly: nothing was judged", file=out)
+            ok = False
     if not ok:
         print(f"::error::Release gates are not green for {version} at {sha}; see the FAIL lines above "
               f"(tools/release_gates.txt, docs/RELEASING.md).", file=out)

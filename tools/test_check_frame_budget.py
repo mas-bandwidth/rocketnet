@@ -161,6 +161,20 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("load=unavailable", report_win)
         self.assertIn("verdict=PASS", report_win)
 
+    def test_zero_runs_fails_and_is_never_a_pass(self) -> None:
+        # zero inputs is an error: no run collected must fail, even with --report-only
+        for report_only in (False, True):
+            code, report = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="portable",
+                runs=0,
+                report_only=report_only,
+                load_fn=lambda: (1.0, 16),
+                run_fn=lambda binary, transport: (0, make_stdout(45.0), ""),
+            )
+            self.assertEqual(code, 1, msg=report)
+            self.assertIn("verdict=FAIL (no runs collected)", report)
+
     def test_run_benchmark_with_load_checks_delegates_to_evaluate_gate(self) -> None:
         outputs = [make_stdout(45.0), make_stdout(55.0), make_stdout(50.0)]
         calls = []

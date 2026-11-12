@@ -18,6 +18,9 @@ def check(full, shards, out=sys.stdout):
     """full: the unsharded case list; shards: one case list per shard."""
     errors = []
     seen = {}
+    if not full:
+        # zero inputs is an error: a suite that lists no case partitions nothing
+        errors.append("the unsharded list has 0 cases: nothing was checked")
     for index, names in enumerate(shards):
         print(f"shard {index}/{len(shards)}: {len(names)} cases", file=out)
         if not names:
@@ -57,11 +60,12 @@ def self_test():
         ("a case in no shard", [["test_a"], ["test_b"]], 1, "test_c: in no shard"),
         ("an unknown case", [["test_a", "test_c"], ["test_b", "test_x"]], 1, "test_x: in a shard but not"),
         ("an empty shard", [full, []], 1, "shard 1/2 has no case"),
+        ("zero cases", [[]], 1, "the unsharded list has 0 cases"),
     ]
     failed = 0
     for label, shards, want_rc, want_text in cases:
         out = io.StringIO()
-        rc = check(full, shards, out)
+        rc = check([] if label == "zero cases" else full, shards, out)
         if rc != want_rc or want_text not in out.getvalue():
             print(f"self-test FAIL {label}: rc {rc}\n{out.getvalue()}")
             failed = 1

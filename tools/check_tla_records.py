@@ -344,6 +344,11 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
             return 1
         runs = list(runs_reader)
 
+    if not cases or not runs:
+        # zero inputs is an error: header-only ledgers match each other and prove nothing
+        print(f"{len(cases)} cases in {cases_path}, {len(runs)} rows in {runs_path}: nothing was checked", file=out)
+        return 1
+
     plan = {}
     for case in cases:
         cfg = case["config"]

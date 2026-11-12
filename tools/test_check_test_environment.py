@@ -112,6 +112,11 @@ class ShapeTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             checker.check_shape(["TestWindowRing", "", checker.PASSED_LINE, ""], "suite")
 
+    def test_zero_names_fails_naming_the_count(self):
+        for lines in (["", checker.PASSED_LINE, ""], ["", "", checker.PASSED_LINE, ""]):
+            with self.assertRaisesRegex(SystemExit, "0 test names printed"):
+                checker.check_shape(lines, "suite")
+
     def test_missing_passed_line_fails(self):
         with self.assertRaises(SystemExit):
             checker.check_shape(["test_a"], "suite")

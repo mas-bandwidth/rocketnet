@@ -186,5 +186,20 @@ class WindowsTest(unittest.TestCase):
         self.assertEqual(guarded["GUARD_CF"], INFO)
 
 
+class ZeroInputTest(unittest.TestCase):
+    """Zero inputs is an error: no library, or an empty file, is never a pass."""
+
+    def test_empty_directory_and_empty_file_fail(self):
+        import contextlib
+        import io
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stderr(io.StringIO()), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(check_hardening.main(["check_hardening.py", directory]), 1)
+            empty = Path(directory) / "librocketnet.so"
+            empty.write_bytes(b"")
+            self.assertEqual(check_hardening.main(["check_hardening.py", str(empty)]), 1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

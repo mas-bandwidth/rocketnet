@@ -124,6 +124,14 @@ class RunStaticGateTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("incomplete", out)
 
+    def test_zero_translation_units_fails(self):
+        # zero inputs is an error: no parser unit analyzed is never a pass
+        run_static.parser_files = lambda: []
+        code, out = self.gate("", 0, "--report", str(self.report))
+        self.assertEqual(code, 1, out)
+        self.assertIn("0 parser translation units", out)
+        self.assertFalse(self.report.exists(), out)
+
     def test_missing_translation_unit_fails(self):
         self.write_db([])
         code, out = self.gate("", 0, "--report", str(self.report))

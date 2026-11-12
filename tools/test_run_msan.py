@@ -155,9 +155,18 @@ class RunMsanGateTest(unittest.TestCase):
         )
 
     def test_clean_run_passes(self):
-        code, output = self.run_gate("", 0, None)
+        code, output = self.run_gate("test_random_bytes\n*** ALL TESTS PASSED ***\n", 0, None)
         self.assertEqual(code, 0, output)
-        self.assertIn("MSan: clean", output)
+        self.assertIn("MSan: clean (1 test cases)", output)
+
+    def test_zero_cases_run_fails(self):
+        # zero inputs is an error: a suite that ran no case is never clean,
+        # and known findings do not make an empty run pass either
+        for top in (None, KNOWN_TOP):
+            for stdout in ("", "*** ALL TESTS PASSED ***\n"):
+                code, output = self.run_gate(stdout, 0, top)
+                self.assertEqual(code, 1, output)
+                self.assertIn("MSan: 0 test cases ran", output)
 
     # P3-12: a known entry names an in-tree frame, never a top frame alone
 
@@ -177,7 +186,7 @@ class RunMsanGateTest(unittest.TestCase):
         self.assertIn("name no in-tree frame", output)
 
     def test_finding_keyed_by_its_in_tree_caller_passes(self):
-        stdout = "*** ALL TESTS PASSED ***\n"
+        stdout = "test_random_bytes\n*** ALL TESTS PASSED ***\n"
         code, output = self.run_gate(
             stdout, 0, [LIBC_TOP, CALLER_A, "main tools/fixture.cpp:1:1"],
             known_entries=(KEY_A,),

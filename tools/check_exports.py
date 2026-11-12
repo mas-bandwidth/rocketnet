@@ -56,6 +56,10 @@ def header_declared_names(header_path):
 
 def source_check(header_path, tests_path):
     declared = header_declared_names(header_path)
+    if not declared:
+        # zero inputs is an error: an empty header matches an empty table and proves nothing
+        print(f"Source exports: 0 declared in {header_path}; nothing was checked", file=sys.stderr)
+        return 1
     tests = Path(tests_path).read_text()
     match = re.search(r"rocketnet_test_exports\[\]\s*=\s*\{(.*?)\};", tests, flags=re.S)
     table = re.findall(r'"([^"]+)"', match.group(1)) if match else []

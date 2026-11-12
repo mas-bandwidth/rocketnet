@@ -205,6 +205,14 @@ def load_compile_db():
     return by_file
 
 
+def sdk_sources():
+    """Every sdk/*.cpp under ROOT, compile command or not."""
+    sdk = os.path.join(ROOT, "sdk")
+    if not os.path.isdir(sdk):
+        return []
+    return sorted(name for name in os.listdir(sdk) if name.endswith(".cpp"))
+
+
 def sdk_files(by_file):
     files = []
     sdk = os.path.join(ROOT, "sdk")
@@ -514,7 +522,21 @@ def main():
     parser.add_argument("--tidy-baseline", default=TIDY_BASELINE)
     parser.add_argument("--cppcheck-baseline", default=CPPCHECK_BASELINE)
     parser.add_argument("--dispositions", default=DISPOSITIONS)
+    parser.add_argument("--root", metavar="DIR",
+                        help="the tree to analyze (default: this repository); 0 sdk/*.cpp is an error")
     args = parser.parse_args()
+    if args.root:
+        global ROOT, BUILD, COMPILE_DB, TIDY_DB_DIR
+        ROOT = os.path.abspath(args.root)
+        BUILD = os.path.join(ROOT, "build")
+        COMPILE_DB = os.path.join(BUILD, "compile_commands.json")
+        TIDY_DB_DIR = os.path.join(BUILD, "tidy")
+
+    # zero inputs is an error: with no sdk translation unit both analyzers
+    # run over nothing, and an empty baseline would read as clean
+    if not sdk_sources():
+        print("tidy gate FAILED: 0 sdk/*.cpp under %s: nothing was analyzed" % ROOT)
+        return 1
 
     dispositions, disposition_errors = read_dispositions(args.dispositions)
     if disposition_errors:
@@ -551,6 +573,9 @@ def main():
         return 1
     by_file = load_compile_db()
     files = sdk_files(by_file)
+    if not files:
+        print("tidy gate FAILED: 0 sdk/*.cpp have a compile command in %s: nothing was analyzed" % relpath(COMPILE_DB))
+        return 1
     db_dir = write_tidy_db(by_file, files)
 
     # one pool of args.jobs for both tools, so the runner never sees more than

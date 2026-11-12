@@ -104,6 +104,17 @@ def main():
     parser.add_argument("--baseline", default=str(BASELINE))
     parser.add_argument("--record", metavar="OUT", help="write the measured lines to OUT instead of checking")
     args = parser.parse_args()
+    # zero inputs is an error: a header with no public struct, an empty export
+    # list or an empty baseline would otherwise compare nothing and pass
+    counts = {"structs in %s" % args.header: len(public_structs(Path(args.header).read_text())),
+              "exports in %s" % args.exports: len(read_exports(args.exports))}
+    if not args.record:
+        counts["baseline lines in %s" % args.baseline] = len(read_baseline(args.baseline))
+    empty = ["check_abi: 0 %s: nothing was checked" % what for what, count in counts.items() if count == 0]
+    if empty:
+        for line in empty:
+            print(line, file=sys.stderr)
+        return 1
     current = measured_lines(args.header, args.exports, os.environ.get("CC", "cc"))
     if args.record:
         Path(args.record).write_text("# The 1.x C ABI: exports, and each public struct's size and its fields'\n"

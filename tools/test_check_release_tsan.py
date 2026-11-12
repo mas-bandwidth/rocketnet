@@ -84,6 +84,14 @@ class CheckReleaseTsan(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("want 'v1.1.9'", text)
 
+    def test_zero_gates_in_force_fails(self):
+        # zero inputs is an error: a list with no gate in force for the tag judges nothing
+        for gates in ([], [g for g in check_release_tsan.rg.load_gates() if g.kind == "tag"]):
+            out = io.StringIO()
+            code = check_release_tsan.check(green_release(FakeApi()), REPO, SHA, VERSION, out, gates=gates, now=NOW)
+            self.assertEqual(code, 1, out.getvalue())
+            self.assertIn("0 release gates in force", out.getvalue())
+
     def test_main_refuses_an_incomplete_environment(self):
         saved = dict(os.environ)
         try:

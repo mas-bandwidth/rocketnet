@@ -150,6 +150,16 @@ def violations(name, text):
     return found
 
 
+def held_jobs(paths):
+    """How many per-commit jobs the paths hold that the budget applies to."""
+    count = 0
+    for path in paths:
+        blocks = top_blocks(Path(path).read_text(encoding="utf-8").splitlines())
+        if per_commit(blocks):
+            count += sum(1 for _, _, props in jobs(blocks) if not exempt(props))
+    return count
+
+
 def check(paths):
     found = []
     for path in paths:
@@ -228,9 +238,15 @@ def self_test():
         if not check([bad]):
             print("self-test FAILED: a file on disk with an unbounded job was accepted")
             failed = 1
+        # zero inputs: a workflow file with no per-commit job checks nothing and is red
+        empty = Path(d) / "empty.yml"
+        empty.write_text("", encoding="utf-8")
+        if main(["check_ci_budget.py", str(empty)]) != 1:
+            print("self-test FAILED: zero per-commit jobs was accepted")
+            failed = 1
     if failed:
         return 1
-    print(f"check_ci_budget self-test: {len(BAD) + 2} cases pass")
+    print(f"check_ci_budget self-test: {len(BAD) + 3} cases pass")
     return 0
 
 
@@ -238,6 +254,10 @@ def main(argv):
     if argv[1:] == ["--self-test"]:
         return self_test()
     paths = [Path(p) for p in argv[1:]] or sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+    held = held_jobs(paths)
+    if held == 0:
+        print(f"check_ci_budget: 0 per-commit jobs in {len(paths)} workflow files: nothing was checked")
+        return 1
     found = check(paths)
     for name, job, reason in found:
         print(f"{name}: job {job} {reason}")
@@ -245,7 +265,8 @@ def main(argv):
         print(f"check_ci_budget: a per-commit job must finish within {BUDGET_MINUTES} minutes "
               "(Glenn 2026-10-31); move what does not fit to the nightly tier (nightly-ci.yml)")
         return 1
-    print(f"check_ci_budget: every per-commit job is bounded to {BUDGET_MINUTES} minutes ({len(paths)} workflow files)")
+    print(f"check_ci_budget: every per-commit job is bounded to {BUDGET_MINUTES} minutes "
+          f"({held} jobs in {len(paths)} workflow files)")
     return 0
 
 

@@ -5,6 +5,7 @@ Each case edits a copy of sdk/rocketnet.h or tools/exports.txt in a
 temporary directory and compiles it with $CC (default cc)."""
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -53,6 +54,17 @@ class CheckAbiTest(unittest.TestCase):
         self.exports.write_text(self.exports.read_text() + "rocketnet_new_function\n")
         self.assertEqual(self.problems(),
                          ["NOT RECORDED: export rocketnet_new_function (a 1.x addition is added to abi_v1.txt)"])
+
+    def test_zero_inputs_is_an_error(self):
+        empty = Path(self.tmp.name) / "empty.txt"
+        empty.write_text("")
+        script = str(Path(__file__).resolve().parent / "check_abi.py")
+        run = subprocess.run([sys.executable, script, "--header", str(empty), "--exports", str(empty),
+                              "--baseline", str(empty)], capture_output=True, text=True)
+        self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("check_abi: 0 structs in", run.stderr)
+        self.assertIn("check_abi: 0 exports in", run.stderr)
+        self.assertIn("check_abi: 0 baseline lines in", run.stderr)
 
 
 if __name__ == "__main__":

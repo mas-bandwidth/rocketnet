@@ -134,6 +134,17 @@ root = root.rstrip("/") + "/"
 
 failed = []
 saw_fail = False
+# zero inputs is an error: a run that printed no test name ran no case, and
+# "clean" over nothing would be a pass; the registry prints each case's name
+ran = 0
+if os.path.exists(log_path):
+    ran = sum(1 for line in open(log_path, errors="replace") if re.match(r"^test_[a-z0-9_]+\s*$", line))
+
+def require_cases():
+    if ran == 0:
+        print("MSan: 0 test cases ran (no test name in the suite's output): nothing was checked")
+        sys.exit(1)
+
 if os.path.exists(log_path):
     for line in open(log_path, errors="replace"):
         m = re.match(r"^check failed: (test_[a-z0-9_]+ (?:signal \d+|exceeded .+|exit \d+|wait failed))\s*$", line)
@@ -268,7 +279,8 @@ if not warnings:
         if os.path.exists(log_path):
             sys.stdout.write(open(log_path, errors="replace").read())
         sys.exit(1)
-    print("MSan: clean")
+    require_cases()
+    print("MSan: clean (%d test cases)" % ran)
     sys.exit(0)
 
 seen = {}
@@ -303,6 +315,7 @@ for name, detail in failed:
 if unmatched or failed or status_failed:
     sys.exit(1)
 
+require_cases()
 print("MSan: findings listed in %s (all known)" % known_file)
 sys.exit(0)
 PY

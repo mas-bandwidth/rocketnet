@@ -223,6 +223,13 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("Required outcomes match (5 rows)", text)
 
+    def test_zero_cases_or_rows_rejected(self):
+        # zero inputs is an error: header-only ledgers never pass
+        for cases, runs in (([], []), ([case_row()], []), ([], [run_row()])):
+            code, text = self.run_fixture(cases, runs)
+            self.assertEqual(code, 1, text)
+            self.assertIn("nothing was checked", text)
+
     def test_pass_row_with_wrong_exit_for_invariant_rejected(self):
         cases = [case_row("MCInv.cfg", "MCInv.tla", "invariant", "NoLeak")]
         runs = [run_row("MCInv.cfg", "MCInv.tla", "invariant", "NoLeak", "0", "PASS")]

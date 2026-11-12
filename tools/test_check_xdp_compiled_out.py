@@ -65,6 +65,14 @@ class CheckXdpCompiledOutTest(unittest.TestCase):
         problems = check.absent_problems(*check.classify(COMPILED_OUT + ["                 U bpf_map_update_elem"], NEEDED_OUT))
         self.assertEqual(problems, ["libbpf/libxdp referenced: bpf_map_update_elem"])
 
+    def test_zero_symbols_fails(self):
+        # zero inputs is an error: an empty nm listing would otherwise pass --absent
+        self.assertEqual(check.absent_problems(*check.classify([], [])), [])
+        for lines in ([], ["rocketnet_driver_builtin.cpp.o:", ""]):
+            self.assertEqual(check.zero_problems(lines),
+                             ["0 symbols read from the archive and shared library: nothing was checked"])
+        self.assertEqual(check.zero_problems(COMPILED_OUT), [])
+
 
 if __name__ == "__main__":
     unittest.main()

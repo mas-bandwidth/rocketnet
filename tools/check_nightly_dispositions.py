@@ -198,6 +198,8 @@ def scheduled_workflows(root):
     returned with an empty list (the caller reports it)."""
     directory = os.path.join(root, ".github", "workflows")
     found = []
+    if not os.path.isdir(directory):
+        return found    # zero workflows: the caller refuses it
     for name in sorted(os.listdir(directory)):
         if not name.endswith((".yml", ".yaml")) or name == WATCH_FILE:
             continue

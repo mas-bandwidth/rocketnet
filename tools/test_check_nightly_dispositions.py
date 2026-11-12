@@ -279,6 +279,13 @@ class Selection(WatchCase):
         code, out = self.watch(FakeApi())
         self.assertExit(2, code, out, "NO-WORKFLOWS")
 
+    def test_no_workflows_directory_is_an_error(self):
+        self.workflows({})
+        os.rmdir(os.path.join(self.root, ".github", "workflows"))
+        for listing in ((), ("--list",)):
+            code, out = self.watch(FakeApi(), *listing)
+            self.assertExit(2, code, out, "NO-WORKFLOWS")
+
     def test_schedule_without_readable_cron_is_red(self):
         self.workflows({"odd.yml": "on:\n  schedule: [{cron: '0 4 * * *'}]\n"})
         code, out = self.watch(FakeApi())

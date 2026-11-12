@@ -284,6 +284,9 @@ def exec_functional_names():
 def check_shape(lines, label, once=False):
     # every line a test name, then a blank line, the passed line and a blank line;
     # with once, each name on one line only (the unit registry prints each case once)
+    if lines[-3:] == ["", PASSED_LINE, ""] and not any(line.strip() for line in lines[:-3]):
+        # zero inputs is an error: a run that printed no test name ran nothing
+        sys.exit("%s: 0 test names printed before %r: nothing was checked" % (label, PASSED_LINE))
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         sys.exit("%s: the run does not end with a blank line, %r and a blank line" % (label, PASSED_LINE))
     bad = [line for line in lines[:-3] if not TEST_NAME_RE.fullmatch(line)]
