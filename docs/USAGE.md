@@ -181,6 +181,9 @@ and owns the connected client. It omits startup and shutdown; the
 ```c
 #include "rocketnet.h"
 
+/* the application's own */
+void process_message( int channel, enum rocketnet_reliability_t reliability, const uint8_t * data, int bytes );
+
 void client_frame( struct rocketnet_client_t * client, double time )
 {
     /* 1. pump the transport and take in what arrived */
@@ -408,6 +411,10 @@ more than one batch.
 
 ```c
 #include "rocketnet.h"
+
+/* the application's own */
+void process_message( int client_index, int channel, enum rocketnet_reliability_t reliability,
+                      const uint8_t * data, int bytes );
 
 void server_frame( struct rocketnet_server_t * server, int client_index, int channel, double time )
 {
