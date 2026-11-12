@@ -1564,7 +1564,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     iocp->num_workers = num_workers;
     iocp->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     iocp->segment_refused.seed = (uint32_t) rocketnet_random_uint64();
-    iocp->owner_epoch =rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
+    iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
     iocp->receive_queue_size = layout.receive_queue_size;
 
