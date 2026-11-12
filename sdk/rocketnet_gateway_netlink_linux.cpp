@@ -218,9 +218,10 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
 {
     // every next hop of a multipath default route (RTA_MULTIPATH: rtnexthop
     // records, each followed by its own attributes), for either family. The
-    // first hop whose interface is this one and whose RTA_GATEWAY is the
-    // family's address size is the route. A short or oversized record is
-    // malformed. No hop on this interface is not this interface's route.
+    // first hop whose interface is this one and that carries an RTA_GATEWAY
+    // is the route; a gateway that is not the family's address size is
+    // malformed, as on a single-path route, and so is a short or oversized
+    // record. No hop on this interface is not this interface's route.
 
     const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
 
@@ -251,8 +252,13 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
         }
 
-        if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL && attributes.bytes[RTA_GATEWAY] == address_bytes )
+        if ( next_hop.rtnh_ifindex == want_interface && attributes.value[RTA_GATEWAY] != NULL )
         {
+            if ( attributes.bytes[RTA_GATEWAY] != address_bytes )
+            {
+                return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
+            }
+
             *interface_index = next_hop.rtnh_ifindex;
             *gateway = attributes.value[RTA_GATEWAY];
             *gateway_bytes = attributes.bytes[RTA_GATEWAY];

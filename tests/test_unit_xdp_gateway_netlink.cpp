@@ -446,11 +446,13 @@ static void test_xdp_transport_gateway_netlink_only_the_main_unicast_default_rou
 }
 
 // a multipath default route: two next hops, each an rtnexthop plus an
-// RTA_GATEWAY of the family's address size
+// RTA_GATEWAY of the family's address size, or of gateway_bytes when it is
+// not zero
 
-static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
+static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway,
+                                     size_t gateway_bytes = 0 )
 {
-    const size_t address_bytes = family == AF_INET ? 4 : 16;
+    const size_t address_bytes = gateway_bytes != 0 ? gateway_bytes : ( family == AF_INET ? 4 : 16 );
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
     struct rtmsg message;
     memset( &message, 0, sizeof( message ) );
@@ -545,6 +547,14 @@ static void test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses()
         uint8_t gateway[16];
         int error = -1;
         check( parse_route( datagram, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+
+        // a multipath hop on this interface with the wrong size refuses the
+        // same way, never read as no route
+
+        netlink_datagram_t multipath;
+        netlink_multipath_route( &multipath, family, server_interface, gateway_ipv6, other_interface, gateway_ipv6, family == AF_INET ? 16 : 4 );
+        netlink_done( &multipath );
+        check( parse_route( multipath, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
     }
 }
 
