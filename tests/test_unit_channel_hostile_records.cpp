@@ -132,10 +132,10 @@ static void test_hostile_block_shape_at_each_bound()
     const int bad_block = ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK;
     rocketnet_message_record_t record;
 
-    // W = 8 and max_message_bytes = 8F: the window and the size allow the same count
+    // W = 64 and max_message_bytes = 64F: the window and the size allow the same count
     {
         hostile_t h;
-        hostile_create( &h, 8, 8 * F, 16 * F );
+        hostile_create( &h, 64, 64 * F, 128 * F );
 
         hostile_chunk( &record, code, 0, 0, 1, 0, F );                  // a block of one fragment
         hostile_expect_refused( &h, &record, bad_block );
@@ -143,10 +143,10 @@ static void test_hostile_block_shape_at_each_bound()
         hostile_chunk( &record, code, 0, 0, 2, 0, F );
         hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
 
-        hostile_chunk( &record, code, 0, 0, 8, 0, F );                  // count == W == the size's count
+        hostile_chunk( &record, code, 0, 0, 64, 0, F );                 // count == W == the size's count
         hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
 
-        hostile_chunk( &record, code, 0, 0, 9, 0, F );
+        hostile_chunk( &record, code, 0, 0, 65, 0, F );
         hostile_expect_refused( &h, &record, bad_block );
 
         hostile_chunk( &record, code, 0, 2, 2, 2 * HOSTILE_UNITS, F );  // index == count
@@ -167,10 +167,10 @@ static void test_hostile_block_shape_at_each_bound()
         rn_unit_arena_destroy( h.arena );
     }
 
-    // max_message_bytes = 4F below W = 8: four fragments, not five
+    // max_message_bytes = 4F below W = 64: four fragments, not five
     {
         hostile_t h;
-        hostile_create( &h, 8, 4 * F, 16 * F );
+        hostile_create( &h, 64, 4 * F, 16 * F );
 
         hostile_chunk( &record, code, 0, 0, 4, 0, F );
         hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
@@ -184,7 +184,7 @@ static void test_hostile_block_shape_at_each_bound()
     // max_message_bytes = 4F + 1: the fragment count rounds up to five, not six
     {
         hostile_t h;
-        hostile_create( &h, 8, 4 * F + 1, 16 * F );
+        hostile_create( &h, 64, 4 * F + 1, 16 * F );
 
         hostile_chunk( &record, code, 0, 0, 5, 0, F );
         hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
@@ -234,7 +234,7 @@ static void test_hostile_block_span_ends_at_the_ring_end()
     const int F = (int) HOSTILE_F;
 
     hostile_t h;
-    hostile_create( &h, 8, 4 * F, 8 * F );
+    hostile_create( &h, 64, 4 * F, 8 * F );
 
     hostile_span_edges( &h, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED );
     hostile_span_edges( &h, ROCKETNET_MESSAGE_CODE_RELIABLE );
@@ -253,7 +253,7 @@ static void test_hostile_block_span_ends_at_the_ring_end()
 static void test_hostile_record_fields_at_their_bounds()
 {
     hostile_t h;
-    hostile_create( &h, 8, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
     rocketnet_message_record_t record;
 
     hostile_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, 0 );
@@ -303,7 +303,7 @@ static void hostile_expect_stale( hostile_t * h, const rocketnet_message_record_
 static void test_hostile_sequenced_gaps_at_half_range()
 {
     hostile_t h;
-    hostile_create( &h, 8, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
     const int sequenced = ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED;
     const int stale = ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE;
     const int superseded = ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED;
@@ -383,7 +383,7 @@ static void test_hostile_sequenced_gaps_at_half_range()
 static void test_hostile_chunk_past_a_complete_held_block()
 {
     hostile_t h;
-    hostile_create( &h, 8, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
 
     rocketnet_message_record_t chunk[2];
     rn_delivery_t out;
