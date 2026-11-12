@@ -29,7 +29,10 @@
     any mapping left behind by a cycle exceeds. Counts below the warm count
     pass. Under ASan, private bytes include sanitizer quarantine and shadow
     metadata, so they remain diagnostic; the allocator callbacks still enforce
-    the same flat allowance on SDK-owned live bytes. The unsanitized runs
+    the same flat allowance on SDK-owned live bytes. The same holds under
+    Application Verifier (verifier.dll loaded), whose page heap and
+    stack-trace bookkeeping grow private bytes on their own
+    (windows_private_bytes_diagnostic). The unsanitized, unverified runs
     retain the private-byte check, including mappings outside the allocator.
     The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
@@ -111,6 +114,7 @@ struct windows_resource_counts_t
     int64_t library_allocated_bytes;
     int64_t private_bytes;
     bool asan;
+    bool verifier;
     int heap_count;
     HANDLE heap_handles[256];
     int64_t heap_used_bytes[256];
@@ -259,6 +263,7 @@ static windows_resource_counts_t windows_read_counts()
                                          : windows_library_allocated_bytes.load( std::memory_order_relaxed );
     counts.private_bytes = -1;
     counts.asan = GetModuleHandleA( "clang_rt.asan_dynamic-x86_64.dll" ) != NULL;
+    counts.verifier = GetModuleHandleA( "verifier.dll" ) != NULL;
     counts.heap_count = 0;
 
     // the handle count first: the thread walk opens and closes one handle
@@ -314,6 +319,20 @@ static int64_t windows_private_allowance_bytes()
     return (int64_t) WINDOWS_LIFECYCLE_CYCLES * windows_page_bytes();
 }
 
+// Whether the process's private bytes count another heap's bookkeeping beside
+// the library's: ASan's quarantine and shadow, or Application Verifier's page
+// heap and stack-trace database (verifier.dll is loaded into every process it
+// verifies). Under the verifier (2026-11-11, captain, DEV=OFF Debug, Basics
+// layers) every lifecycle case held handles, threads, the case heap's bytes,
+// the allocator's bytes and the SDK identity ledger flat while private bytes
+// rose 2.7 to 6.0 MB over 1000 cycles, with no Leak or Handles stop. There the
+// private bytes are printed and not judged; the library's own bytes, the
+// handles and the ledger are judged as in every other build.
+static bool windows_private_bytes_diagnostic( const windows_resource_counts_t * counts )
+{
+    return counts->asan || counts->verifier;
+}
+
 static bool windows_counts_flat( const windows_resource_counts_t * before, const windows_resource_counts_t * after, double seconds )
 {
     if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 ||
@@ -326,13 +345,14 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     // workers, which come and go on their own; the library's threads are
     // checked exactly by the SDK identity ledger, so threads are reported here
     // and not compared
-    if ( before->asan != after->asan )
+    if ( before->asan != after->asan || before->verifier != after->verifier )
     {
         return false;
     }
 
     const int64_t allowance = windows_memory_allowance_bytes( seconds );
-    const bool memory_flat = before->asan || after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
+    const bool memory_flat = windows_private_bytes_diagnostic( before ) ||
+                             after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
     return after->heap_bytes <= before->heap_bytes + allowance &&
            after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat;
 }
@@ -367,7 +387,7 @@ static windows_resource_counts_t windows_stable_counts()
         rocketnet_platform_sleep( 0.001 );
 
         const windows_resource_counts_t current = windows_read_counts();
-        if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes && current.asan == previous.asan && current.library_allocated_bytes == previous.library_allocated_bytes )
+        if ( current.handles == previous.handles && current.threads == previous.threads && current.heap_bytes == previous.heap_bytes && current.private_bytes == previous.private_bytes && current.asan == previous.asan && current.verifier == previous.verifier && current.library_allocated_bytes == previous.library_allocated_bytes )
         {
             return current;
         }
@@ -392,7 +412,16 @@ void rocketnet_test_windows_lifecycle_memory_accounting()
     const windows_resource_counts_t after = windows_settled_counts( &before, 1.0 );
     windows_lifecycle_check( windows_counts_flat( &before, &after, 1.0 ) );
 
-    if ( !before.asan )
+    // the private bytes half of the oracle exists only where it is judged
+    // (windows_private_bytes_diagnostic): under ASan or the verifier a
+    // mapping outside the allocator is printed, never failed
+
+    if ( windows_private_bytes_diagnostic( &before ) )
+    {
+        printf( "windows lifecycle memory accounting: private bytes diagnostic (%s), mapping check not run\n",
+                before.asan ? "ASan" : "Application Verifier" );
+    }
+    else
     {
         const SIZE_T bytes = (SIZE_T) windows_private_allowance_bytes() + (SIZE_T) windows_page_bytes();
         void * mapping = VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
@@ -641,6 +670,11 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
     if ( before->asan )
     {
         printf( ", private_bytes %lld -> %lld (ASan quarantine/shadow diagnostic)",
+                (long long) before->private_bytes, (long long) after->private_bytes );
+    }
+    else if ( before->verifier )
+    {
+        printf( ", private_bytes %lld -> %lld (Application Verifier page heap diagnostic)",
                 (long long) before->private_bytes, (long long) after->private_bytes );
     }
     else
