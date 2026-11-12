@@ -510,11 +510,19 @@ static const char * verdict_name( int verdict )
 // Run one frame. counter < 0: no counter moves. Otherwise exactly that
 // counter goes up by one and every other counter stays where it was.
 
+static bool run_bytes( filter_t * filter, const char * label, const frame_t & frame, int want_verdict, int want_counter );
+
 static bool run_frame( filter_t * filter, const char * label, const spec_t & spec, int want_verdict, int want_counter )
 {
     frame_t frame;
     build_frame( &frame, spec );
+    return run_bytes( filter, label, frame, want_verdict, want_counter );
+}
 
+// the same for frame bytes built or changed by the caller
+
+static bool run_bytes( filter_t * filter, const char * label, const frame_t & frame, int want_verdict, int want_counter )
+{
     uint64_t before[NUM_COUNTER_SLOTS];
     read_counters( filter, before );
 
@@ -984,6 +992,139 @@ static bool ipv6_same_drops_as_ipv4( filter_t * filter )
         request.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
         snprintf( label, sizeof( label ), "%s connection request at its exact size", name );
         ok &= run_frame( filter, label, request, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    }
+
+    return ok;
+}
+
+// What the AF_XDP frame reader (rocketnet_xdp_frame_parse) refuses before
+// the UDP header the filter never redirects: a destination MAC starting
+// ff:ff, and an IP version that is not its ethertype's. Each passes to the
+// kernel uncounted. The first three frames are the reproducers
+// rocketnet_fuzz_xdp_filter found against v1.1.7 (the harness input after its
+// 7-byte header, run with the harness's configuration: 203.0.113.10 and
+// 2001:db8::a, port 40000, filter value b7 59 01 00, epoch 0); each is run as
+// found, then repaired in the one byte, when it must redirect. The rows after
+// them are this file's frames with the same faults; a multicast MAC, which
+// the reader takes, is redirected.
+
+static const uint8_t repro_ipv4_version_6[] = {
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x65, 0x00,
+    0x00, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc6, 0x33, 0x64, 0x0a, 0xcb, 0x00,
+    0x71, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x29, 0x00, 0x00, 0x06, 0x00, 0xb7, 0x59, 0x01, 0x00,
+    0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd, 0xea, 0xf7, 0x04, 0x11,
+    0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0
+};
+
+static const uint8_t repro_ipv6_version_4[] = {
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86, 0xdd, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x2a, 0x11, 0x40, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x2a, 0x00, 0x00, 0x05, 0x00,
+    0xb7, 0x59, 0x01, 0x00, 0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd,
+    0xea, 0xf7, 0x04, 0x11, 0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0, 0xad
+};
+
+static const uint8_t repro_broadcast_mac[] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x45, 0x00,
+    0x00, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc6, 0x33, 0x64, 0x0a, 0xcb, 0x00,
+    0x71, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x29, 0x00, 0x00, 0x06, 0x00, 0xb7, 0x59, 0x01, 0x00,
+    0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd, 0xea, 0xf7, 0x04, 0x11,
+    0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0
+};
+
+static bool reader_refusals_pass_to_the_kernel( filter_t * filter )
+{
+    bool ok = true;
+    char label[96];
+
+    // the harness's configuration
+
+    struct rocketnet_server_xdp_config_t config;
+    memset( &config, 0, sizeof( config ) );
+    const uint8_t fuzz_ipv4[4] = { 203, 0, 113, 10 };
+    const uint8_t fuzz_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0a };
+    const uint8_t fuzz_port[2] = { 0x9c, 0x40 };
+    const uint8_t fuzz_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( &config.public_address, fuzz_ipv4, 4 );
+    memcpy( config.public_address_ipv6, fuzz_ipv6, 16 );
+    memcpy( &config.public_port, fuzz_port, 2 );
+    memcpy( config.packet_filter, fuzz_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    const __u32 key = 0;
+    if ( bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) != 0 )
+    {
+        printf( "  FAIL could not write the config map: %s\n", strerror( errno ) );
+        return false;
+    }
+
+    const struct
+    {
+        const char * name;
+        const uint8_t * bytes;
+        int size;
+        int repair_index;
+        uint8_t repair_value;
+    } repros[] = {
+        { "reproducer: ipv4 ethertype, version 6", repro_ipv4_version_6, (int) sizeof( repro_ipv4_version_6 ), 14, 0x45 },
+        { "reproducer: ipv6 ethertype, version 4", repro_ipv6_version_4, (int) sizeof( repro_ipv6_version_4 ), 14, 0x60 },
+        { "reproducer: broadcast destination mac", repro_broadcast_mac, (int) sizeof( repro_broadcast_mac ), 0, 0x02 },
+    };
+
+    for ( int i = 0; i < (int) ( sizeof( repros ) / sizeof( repros[0] ) ); i++ )
+    {
+        frame_t frame;
+        memset( &frame, 0, sizeof( frame ) );
+        memcpy( frame.data, repros[i].bytes, (size_t) repros[i].size );
+        frame.size = repros[i].size;
+        ok &= run_bytes( filter, repros[i].name, frame, XDP_PASS, NO_COUNTER );
+
+        frame.data[repros[i].repair_index] = repros[i].repair_value;
+        snprintf( label, sizeof( label ), "%s, repaired", repros[i].name );
+        ok &= run_bytes( filter, label, frame, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+    }
+
+    // this file's frames, both families
+
+    ok &= write_config( filter, server_ipv4, server_ipv6 );
+    for ( int family = 0; family < 2; family++ )
+    {
+        const bool ipv6 = family == 1;
+        const char * name = ipv6 ? "ipv6" : "ipv4";
+        const int own_version = ipv6 ? 6 : 4;
+
+        frame_t good;
+        build_frame( &good, spec_default( ipv6 ) );
+        snprintf( label, sizeof( label ), "%s well-formed", name );
+        ok &= run_bytes( filter, label, good, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+
+        for ( int version = 0; version < 16; version++ )
+        {
+            if ( version == own_version )
+            {
+                continue;
+            }
+            frame_t frame = good;
+            frame.data[ROCKETNET_ETHERNET_HEADER_BYTES] = (uint8_t) ( ( version << 4 ) | ( frame.data[ROCKETNET_ETHERNET_HEADER_BYTES] & 0x0f ) );
+            snprintf( label, sizeof( label ), "%s ethertype, version %d", name, version );
+            ok &= run_bytes( filter, label, frame, XDP_PASS, NO_COUNTER );
+        }
+
+        frame_t broadcast = good;
+        memset( broadcast.data, 0xff, 6 );
+        snprintf( label, sizeof( label ), "%s broadcast destination mac", name );
+        ok &= run_bytes( filter, label, broadcast, XDP_PASS, NO_COUNTER );
+
+        frame_t prefix = good;
+        prefix.data[0] = 0xff;
+        prefix.data[1] = 0xff;
+        snprintf( label, sizeof( label ), "%s destination mac starting ff:ff", name );
+        ok &= run_bytes( filter, label, prefix, XDP_PASS, NO_COUNTER );
+
+        frame_t multicast = good;
+        const uint8_t multicast_mac[6] = { 0x01, 0x00, 0x5e, 0x00, 0x00, 0x01 };
+        memcpy( multicast.data, multicast_mac, 6 );
+        snprintf( label, sizeof( label ), "%s multicast destination mac", name );
+        ok &= run_bytes( filter, label, multicast, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     }
 
     return ok;
@@ -2175,6 +2316,7 @@ static const case_t cases[] = {
     { "ipv6_too_large_drops", ipv6_too_large_drops },
     { "ipv6_icmpv6_passes", ipv6_icmpv6_passes },
     { "ipv6_same_drops_as_ipv4", ipv6_same_drops_as_ipv4 },
+    { "reader_refusals_pass_to_the_kernel", reader_refusals_pass_to_the_kernel },
     { "config_layout_matches_header", config_layout_matches_header },
     { "replay_drops_behind_the_window", replay_drops_behind_the_window },
     { "replay_never_writes_the_map", replay_never_writes_the_map },

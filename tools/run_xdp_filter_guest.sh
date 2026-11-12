@@ -3,9 +3,9 @@
 # Licensed under the GNU Affero General Public License v3.0
 #
 # Runs ./bin/test_xdp_filter -v against the built server_xdp.o inside a
-# virtme-ng (vng) guest of the host's matching kernel, requiring all 18
+# virtme-ng (vng) guest of the host's matching kernel, requiring all 19
 # registered BPF_PROG_TEST_RUN and guest-only XDP cases to print "ok" with
-# zero skips and the exact final line "test_xdp_filter: 18 cases passed".
+# zero skips and the exact final line "test_xdp_filter: 19 cases passed".
 #
 #   bash tools/run_xdp_filter_guest.sh [options]
 #
@@ -58,6 +58,7 @@ REQUIRED_CASES=(
     "ipv6_too_large_drops"
     "ipv6_icmpv6_passes"
     "ipv6_same_drops_as_ipv4"
+    "reader_refusals_pass_to_the_kernel"
     "config_layout_matches_header"
     "replay_drops_behind_the_window"
     "replay_never_writes_the_map"
@@ -67,7 +68,7 @@ REQUIRED_CASES=(
     "xsk_bind_falls_back_to_copy"
 )
 EXPECTED_CASE_COUNT=${#REQUIRED_CASES[@]}
-EXPECTED_SUMMARY="test_xdp_filter: 18 cases passed"
+EXPECTED_SUMMARY="test_xdp_filter: 19 cases passed"
 
 usage()
 {

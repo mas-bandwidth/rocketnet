@@ -2111,6 +2111,147 @@ static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
 }
 
 REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
+
+// What the AF_XDP frame reader (rocketnet_xdp_frame_parse) refuses before the
+// UDP header, the filter never redirects: a destination MAC starting ff:ff,
+// and an IP version that is not its ethertype's. Each passes to the kernel
+// uncounted. The first three frames are the reproducers
+// rocketnet_fuzz_xdp_filter found against v1.1.7 (the harness input after its
+// 7-byte header: a well-formed envelope to 203.0.113.10:40000 or
+// [2001:db8::a]:40000, the test filter value, epoch 0, queue 15 with a
+// socket); each is run as found, then repaired in the one field, when it
+// must redirect and parse.
+
+static const uint8_t xdp_host_repro_ipv4_version_6[] = {
+    0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x65, 0x00,
+    0x00, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc6, 0x33, 0x64, 0x0a, 0xcb, 0x00,
+    0x71, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x29, 0x00, 0x00, 0x06, 0x00, 0xb7, 0x59, 0x01, 0x00,
+    0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd, 0xea, 0xf7, 0x04, 0x11,
+    0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0
+};
+
+static const uint8_t xdp_host_repro_ipv6_version_4[] = {
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x86, 0xdd, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x2a, 0x11, 0x40, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x2a, 0x00, 0x00, 0x05, 0x00,
+    0xb7, 0x59, 0x01, 0x00, 0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd,
+    0xea, 0xf7, 0x04, 0x11, 0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0, 0xad
+};
+
+static const uint8_t xdp_host_repro_broadcast_mac[] = {
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf1, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x45, 0x00,
+    0x00, 0x3d, 0x00, 0x00, 0x00, 0x00, 0x40, 0x11, 0x00, 0x00, 0xc6, 0x33, 0x64, 0x0a, 0xcb, 0x00,
+    0x71, 0x0a, 0xc3, 0x50, 0x9c, 0x40, 0x00, 0x29, 0x00, 0x00, 0x06, 0x00, 0xb7, 0x59, 0x01, 0x00,
+    0x4e, 0x5b, 0x68, 0x75, 0x82, 0x8f, 0x9c, 0xa9, 0xb6, 0xc3, 0xd0, 0xdd, 0xea, 0xf7, 0x04, 0x11,
+    0x1e, 0x2b, 0x38, 0x45, 0x52, 0x5f, 0x6c, 0x79, 0x86, 0x93, 0xa0
+};
+
+// one frame against a configuration: the filter's verdict, every counter
+// still zero unless it redirected, and the reader's answer on the same bytes
+
+static void xdp_host_reader_agrees( const std::vector<uint8_t> & bytes, const struct rocketnet_server_xdp_config_t & config, uint32_t queue, bool want_redirect )
+{
+    rocketnet_xdp_host_reset();
+    rocketnet_xdp_host_set_config( &config );
+    rocketnet_xdp_host_set_socket_slot( queue, 1 );
+
+    const int verdict = rocketnet_xdp_host_run( bytes.data(), (int) bytes.size(), queue );
+    rocketnet_unit_check( verdict == ( want_redirect ? XDP_HOST_REDIRECT : XDP_HOST_PASS ) );
+    rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == ( want_redirect ? 1 : 0 ) );
+    for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
+    {
+        rocketnet_unit_check( rocketnet_xdp_host_counter( i ) == ( want_redirect && i == ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED ? 1u : 0u ) );
+    }
+
+    rocketnet_address_t from;
+    const uint8_t * payload = NULL;
+    int payload_bytes = 0;
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( bytes.data(), bytes.size(), &from, &payload, &payload_bytes ) == want_redirect );
+}
+
+static void test_xdp_filter_host_reader_refusals_pass_to_the_kernel()
+{
+    // the reproducers, with the harness's configuration
+
+    struct rocketnet_server_xdp_config_t fuzz_config;
+    memset( &fuzz_config, 0, sizeof( fuzz_config ) );
+    const uint8_t fuzz_ipv4[4] = { 203, 0, 113, 10 };
+    const uint8_t fuzz_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0a };
+    const uint8_t fuzz_port[2] = { 0x9c, 0x40 };
+    memcpy( &fuzz_config.public_address, fuzz_ipv4, 4 );
+    memcpy( fuzz_config.public_address_ipv6, fuzz_ipv6, 16 );
+    memcpy( &fuzz_config.public_port, fuzz_port, 2 );
+    memcpy( fuzz_config.packet_filter, xdp_host_filter_value, 4 );
+
+    const struct
+    {
+        const uint8_t * bytes;
+        size_t size;
+        int repair_index;
+        uint8_t repair_value;
+    } repros[] = {
+        { xdp_host_repro_ipv4_version_6, sizeof( xdp_host_repro_ipv4_version_6 ), 14, 0x45 },
+        { xdp_host_repro_ipv6_version_4, sizeof( xdp_host_repro_ipv6_version_4 ), 14, 0x60 },
+        { xdp_host_repro_broadcast_mac, sizeof( xdp_host_repro_broadcast_mac ), 0, 0x02 },
+    };
+
+    for ( size_t i = 0; i < sizeof( repros ) / sizeof( repros[0] ); i++ )
+    {
+        std::vector<uint8_t> bytes( repros[i].bytes, repros[i].bytes + repros[i].size );
+        xdp_host_reader_agrees( bytes, fuzz_config, 15, false );
+        bytes[(size_t) repros[i].repair_index] = repros[i].repair_value;
+        xdp_host_reader_agrees( bytes, fuzz_config, 15, true );
+    }
+
+    // the same refusals on this file's frames, both families: every version
+    // nibble but the family's own, and the destination MACs the reader
+    // refuses; a multicast MAC the reader takes is redirected
+
+    struct rocketnet_server_xdp_config_t config;
+    memset( &config, 0, sizeof( config ) );
+    memcpy( &config.public_address, xdp_host_server_ipv4, 4 );
+    memcpy( config.public_address_ipv6, xdp_host_server_ipv6, 16 );
+    const uint8_t port[2] = { (uint8_t) ( xdp_host_server_port >> 8 ), (uint8_t) ( xdp_host_server_port & 0xff ) };
+    memcpy( &config.public_port, port, 2 );
+    memcpy( config.packet_filter, xdp_host_filter_value, 4 );
+
+    const int families[2] = { 4, 6 };
+    for ( int f = 0; f < 2; f++ )
+    {
+        xdp_host_frame_t frame;
+        frame.family = families[f];
+        const std::vector<uint8_t> good = xdp_host_frame_bytes( frame );
+        xdp_host_reader_agrees( good, config, 0, true );
+
+        for ( int version = 0; version < 16; version++ )
+        {
+            if ( version == families[f] )
+            {
+                continue;
+            }
+            std::vector<uint8_t> bytes = good;
+            bytes[14] = (uint8_t) ( ( version << 4 ) | ( bytes[14] & 0x0f ) );
+            xdp_host_reader_agrees( bytes, config, 0, false );
+        }
+
+        std::vector<uint8_t> broadcast = good;
+        memset( broadcast.data(), 0xff, 6 );
+        xdp_host_reader_agrees( broadcast, config, 0, false );
+
+        std::vector<uint8_t> prefix = good;
+        prefix[0] = 0xff;
+        prefix[1] = 0xff;
+        xdp_host_reader_agrees( prefix, config, 0, false );
+
+        std::vector<uint8_t> multicast = good;
+        const uint8_t multicast_mac[6] = { 0x01, 0x00, 0x5e, 0x00, 0x00, 0x01 };
+        memcpy( multicast.data(), multicast_mac, 6 );
+        xdp_host_reader_agrees( multicast, config, 0, true );
+    }
+}
+
+REGISTER_UNIT_TEST( test_xdp_filter_host_reader_refusals_pass_to_the_kernel );
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #if defined( ROCKETNET_XDP ) && ROCKETNET_XDP

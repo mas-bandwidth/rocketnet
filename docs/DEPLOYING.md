@@ -197,8 +197,8 @@ Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
 transport matrix, and `.github/workflows/nightly-soak.yml` runs
 `bash tools/run_xdp_filter_guest.sh` inside a four-CPU virtme-ng guest on the
-built `server_xdp.o` and `test_xdp_filter`, requiring all 18 `BPF_PROG_TEST_RUN`
-and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 18 cases passed`;
+built `server_xdp.o` and `test_xdp_filter`, requiring all 19 `BPF_PROG_TEST_RUN`
+and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 19 cases passed`;
 see `ROOTGATE.md`). No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
 supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.

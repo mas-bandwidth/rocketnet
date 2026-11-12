@@ -11,8 +11,8 @@ embedded `server_xdp.o` and `test_xdp_filter` and runs
 `bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest`
 inside a four-CPU `virtme-ng` (`vng`) guest of the runner's matching kernel
 (`$HOME/vm-kernels/vmlinuz-$(uname -r)` with `irqaffinity=0 isolcpus=1-3 nohz_full=1-3`).
-Qualification requires all 18 registered cases to print `ok` with zero skips and
-the exact final line `test_xdp_filter: 18 cases passed`:
+Qualification requires all 19 registered cases to print `ok` with zero skips and
+the exact final line `test_xdp_filter: 19 cases passed`:
 
 - `ipv4_rocketnet_packet_redirects`
 - `ipv6_rocketnet_packet_redirects`
@@ -25,6 +25,7 @@ the exact final line `test_xdp_filter: 18 cases passed`:
 - `ipv6_too_large_drops`
 - `ipv6_icmpv6_passes`
 - `ipv6_same_drops_as_ipv4`
+- `reader_refusals_pass_to_the_kernel`
 - `config_layout_matches_header`
 - `replay_drops_behind_the_window`
 - `replay_never_writes_the_map`
@@ -37,7 +38,7 @@ the exact final line `test_xdp_filter: 18 cases passed`:
 (`vng`, `$HOME/vm-kernels/vmlinuz-$(uname -r)`, `/dev/kvm`, binary, or BPF
 object) is absent, when any case skips or fails, when fewer or extra cases run,
 when a named case is missing, when the exit status is non-zero, when the exact
-`test_xdp_filter: 18 cases passed` summary line is absent (even if the binary
+`test_xdp_filter: 19 cases passed` summary line is absent (even if the binary
 returns 0 after skips), or when any leftover interface, namespace, XDP program,
 BPF pin, or process remains. It writes `head.txt`, `kernel.txt`,
 `object.sha256`, `command.txt`, `guest.log`, `verifier.txt`, `cases.txt`,

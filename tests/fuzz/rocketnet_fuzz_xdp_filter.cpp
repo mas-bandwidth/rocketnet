@@ -262,21 +262,10 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // userspace prefilter rungs (else the filter spends a ring slot on a frame
     // userspace throws away)
 
-    // known difference, reported separately (HUNT-FUZZ.md): the frame reader
-    // refuses a broadcast destination MAC, the filter never reads the MAC.
-    // FZ_XDP_STRICT_MAC=1 keeps it in the oracle.
+    // every frame, the broadcast destination MAC and the IP version nibble
+    // included: the filter passes both to the kernel since v1.2.0
 
-    static const int strict_mac = getenv( "FZ_XDP_STRICT_MAC" ) != NULL;
-    const bool broadcast = frame_bytes >= 2 && fz_frame[0] == 0xff && fz_frame[1] == 0xff;
-
-    // known difference F1: the filter never reads the IPv4 or IPv6 version nibble.
-    // FZ_XDP_STRICT_VERSION=1 keeps it in the oracle.
-
-    static const int strict_version = getenv( "FZ_XDP_STRICT_VERSION" ) != NULL;
-    const bool ipv4_bad_version = frame_bytes > 14 && fz_frame[12] == 0x08 && fz_frame[13] == 0x00 && ( fz_frame[14] >> 4 ) != 4;
-    const bool ipv6_bad_version = frame_bytes > 14 && fz_frame[12] == 0x86 && fz_frame[13] == 0xdd && ( fz_frame[14] >> 4 ) != 6;
-
-    if ( verdict == FZ_XDP_REDIRECT && ( strict_mac || !broadcast ) && ( strict_version || ( !ipv4_bad_version && !ipv6_bad_version ) ) )
+    if ( verdict == FZ_XDP_REDIRECT )
     {
         uint8_t * copy = (uint8_t *) malloc( (size_t) frame_bytes );
         memcpy( copy, fz_frame, (size_t) frame_bytes );

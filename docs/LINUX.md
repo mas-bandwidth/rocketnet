@@ -549,7 +549,7 @@ library embeds. The teardown case creates a two-queue veth and sets
 uses one queue and `num_os_cpus=1`, so its worker targets CPU 1. The filter
 guest therefore boots four CPUs and isolates 1-3 to satisfy both cases. With
 those boot-tier settings, a provisioned
-XDP data plane, and no clang on `PATH`, all 18 cases print `ok`, including
+XDP data plane, and no clang on `PATH`, all 19 cases print `ok`, including
 `xdp_on_link_reply_reaches_the_client` and
 `xdp_create_fails_part_way_tears_down`. The explicit object path makes the
 command work when the checkout's build directory differs from the absolute

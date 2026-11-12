@@ -11,7 +11,11 @@
     never drift apart. Survivors redirect into the AF_XDP socket for their
     queue; traffic for any other port passes untouched. Frames shorter than
     the IP header (runt IPv4 < 20 bytes or runt IPv6 < 40 bytes) drop
-    before port inspection because they cannot name a port.
+    before port inspection because they cannot name a port. A frame the
+    AF_XDP frame reader refuses before the UDP header (a destination MAC
+    starting ff:ff, or an IP version that is not its ethertype's) is never
+    ours: it passes to the kernel stack uncounted, before the fragment,
+    option and port checks.
 
     Both address families take the same checks in the same order: IPv4, and
     IPv6 with UDP directly after the fixed header. RocketNet assumes a
@@ -465,6 +469,15 @@ int server_xdp_filter( struct xdp_md * ctx )
 
     if ( (__u8 *) eth + sizeof( struct ethhdr ) <= data_end )
     {
+        // the AF_XDP frame reader (rocketnet_xdp_frame_parse) refuses a
+        // destination MAC starting ff:ff (broadcast); such a frame is never
+        // ours, so it goes to the kernel stack (ARP above all)
+
+        if ( eth->h_dest[0] == 0xff && eth->h_dest[1] == 0xff )
+        {
+            return XDP_PASS;
+        }
+
         if ( eth->h_proto == __constant_htons( ETH_P_IP ) ) // IPV4
         {
             struct iphdr * ip = (struct iphdr *) ( data + sizeof( struct ethhdr ) );
@@ -473,6 +486,13 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv4 header" );
                 return XDP_DROP;
+            }
+
+            // not version 4: the reader refuses it, and so does the kernel stack
+
+            if ( ip->version != 4 )
+            {
+                return XDP_PASS;
             }
 
             // a fragment (more-fragments set or a nonzero offset): only the
@@ -554,6 +574,13 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv6 header" );
                 return XDP_DROP;
+            }
+
+            // not version 6: the same
+
+            if ( ip6->version != 6 )
+            {
+                return XDP_PASS;
             }
 
             if ( ip6->nexthdr == IPPROTO_UDP ) // UDP directly after the fixed header only
