@@ -6875,8 +6875,101 @@ void rocketnet_test_server_gso_wire_dual_stack()
 #if ROCKETNET_DEV
 #include "rocketnet_client_gso.h"
 
+// the kernel's UDP totals (/proc/net/snmp "Udp:" and /proc/net/snmp6
+// "Udp6..."): InDatagrams, NoPorts, InErrors, OutDatagrams, RcvbufErrors,
+// SndbufErrors, InCsumErrors. Machine-wide, so a delta over a case counts other
+// processes too; a zero delta in the error columns rules the kernel out.
+
+#define GSO_EXCHANGE_UDP_FIELDS 7
+
+static void gso_exchange_udp_snmp( bool ipv6, uint64_t values[GSO_EXCHANGE_UDP_FIELDS] )
+{
+    static const char * const names4[GSO_EXCHANGE_UDP_FIELDS] = { "InDatagrams", "NoPorts", "InErrors", "OutDatagrams", "RcvbufErrors", "SndbufErrors", "InCsumErrors" };
+    static const char * const names6[GSO_EXCHANGE_UDP_FIELDS] = { "Udp6InDatagrams", "Udp6NoPorts", "Udp6InErrors", "Udp6OutDatagrams", "Udp6RcvbufErrors", "Udp6SndbufErrors", "Udp6InCsumErrors" };
+    for ( int i = 0; i < GSO_EXCHANGE_UDP_FIELDS; i++ )
+    {
+        values[i] = 0;
+    }
+
+    FILE * file = fopen( ipv6 ? "/proc/net/snmp6" : "/proc/net/snmp", "r" );
+    if ( !file )
+    {
+        return;
+    }
+
+    char header[1024] = { 0 };
+    char line[1024];
+    while ( fgets( line, sizeof( line ), file ) )
+    {
+        if ( ipv6 )
+        {
+            char name[128];
+            unsigned long long value;
+            if ( sscanf( line, "%127s %llu", name, &value ) == 2 )
+            {
+                for ( int i = 0; i < GSO_EXCHANGE_UDP_FIELDS; i++ )
+                {
+                    if ( strcmp( name, names6[i] ) == 0 )
+                    {
+                        values[i] = value;
+                    }
+                }
+            }
+            continue;
+        }
+        if ( strncmp( line, "Udp: ", 5 ) != 0 )
+        {
+            continue;
+        }
+        if ( header[0] == 0 )
+        {
+            snprintf( header, sizeof( header ), "%s", line );
+            continue;
+        }
+        // the second "Udp:" line holds the values, in the header's order
+        char * hsave = NULL;
+        char * vsave = NULL;
+        char * h = strtok_r( header + 5, " \n", &hsave );
+        char * v = strtok_r( line + 5, " \n", &vsave );
+        while ( h && v )
+        {
+            for ( int i = 0; i < GSO_EXCHANGE_UDP_FIELDS; i++ )
+            {
+                if ( strcmp( h, names4[i] ) == 0 )
+                {
+                    values[i] = strtoull( v, NULL, 10 );
+                }
+            }
+            h = strtok_r( NULL, " \n", &hsave );
+            v = strtok_r( NULL, " \n", &vsave );
+        }
+        break;
+    }
+    fclose( file );
+}
+
+static void gso_exchange_print_counters( const char * side, const struct rocketnet_counters_t * counters )
+{
+    if ( !counters )
+    {
+        printf( "gso_client_wire_exchange %s counters: none\n", side );
+        return;
+    }
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        if ( counters->values[i] != 0 )
+        {
+            printf( "gso_client_wire_exchange %s counter %s=%llu\n", side, rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+        }
+    }
+}
+
 static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
 {
+    const bool exchange_ipv6 = server_host[0] == '[';
+    uint64_t udp_before[GSO_EXCHANGE_UDP_FIELDS];
+    gso_exchange_udp_snmp( exchange_ipv6, udp_before );
+
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
     rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
@@ -7042,6 +7135,39 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     printf( "gso_client_wire_exchange segment=%d server=%s: server received %d of %d, client received %d of %d (sent %d, %d) in %.3f s\n",
             segment ? 1 : 0, server_transport, server_received, TOTAL, client_received, TOTAL, client_sent, server_sent,
             rocketnet_platform_time() - start );
+    {
+        uint64_t udp_after[GSO_EXCHANGE_UDP_FIELDS];
+        gso_exchange_udp_snmp( exchange_ipv6, udp_after );
+        printf( "gso_client_wire_exchange kernel udp%s delta (machine-wide): in %llu noports %llu inerrors %llu out %llu rcvbuferrors %llu sndbuferrors %llu incsumerrors %llu; "
+                "gso segment messages %llu, gro batches %llu\n",
+                exchange_ipv6 ? "6" : "", (unsigned long long) ( udp_after[0] - udp_before[0] ), (unsigned long long) ( udp_after[1] - udp_before[1] ),
+                (unsigned long long) ( udp_after[2] - udp_before[2] ), (unsigned long long) ( udp_after[3] - udp_before[3] ),
+                (unsigned long long) ( udp_after[4] - udp_before[4] ), (unsigned long long) ( udp_after[5] - udp_before[5] ),
+                (unsigned long long) ( udp_after[6] - udp_before[6] ),
+                (unsigned long long) ( rocketnet_client_gso_test_segment_messages_sent.load() - segment_messages_before ),
+                (unsigned long long) ( rocketnet_client_gso_test_gro_batches.load() - gro_batches_before ) );
+        if ( server_received != TOTAL || client_received != TOTAL )
+        {
+            for ( int t = 0; t < TOTAL; t++ )
+            {
+                if ( !server_seen[t] )
+                {
+                    printf( "gso_client_wire_exchange first tag missing at the server: %d\n", t );
+                    break;
+                }
+            }
+            for ( int t = 0; t < TOTAL; t++ )
+            {
+                if ( !client_seen[t] )
+                {
+                    printf( "gso_client_wire_exchange first tag missing at the client: %d\n", t );
+                    break;
+                }
+            }
+            gso_exchange_print_counters( "server", rocketnet_server_transport_counters( server ) );
+            gso_exchange_print_counters( "client", rocketnet_client_transport_counters( client ) );
+        }
+    }
     rocketnet_check( server_received == TOTAL );
     rocketnet_check( client_received == TOTAL );
 
