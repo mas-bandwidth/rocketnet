@@ -422,7 +422,8 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     // code's own, and the record after it is still checked.
     int hold[FP_ACTORS] = {};
 
-    // and sometimes the walk stages that interleaving outright: filler a
+    // and the walk stages that interleaving outright, every time until it has
+    // happened once and then one time in two: filler a
     // has loaded the epoch (stale), the main thread runs until it has left
     // one operation (stage 1), another filler b makes one whole call on a's
     // client (stage 2), then a goes on (stage 3). The stage only picks which
@@ -525,7 +526,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 {
                     hold[a] = 8 + random.below( 16 );
                 }
-                if ( stage == 0 && a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 2 ) == 0 )
+                if ( stage == 0 && a > 0 && walk->fpc[a - 1] == FP_BEGUN && ( fired == 0 || random.below( 2 ) == 0 ) )
                 {
                     // stage the stale claim: the main thread first, then
                     // another filler that is between calls
