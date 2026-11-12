@@ -816,7 +816,12 @@ UDP for both address families: IPv4 byte-identical to the canonical builder
 (ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
-or later) is not used.
+or later) is not used. On receive, neither the kernel program nor the frame
+parse verifies the IPv4 header checksum or the UDP checksum, which the host
+stack does for every other transport; an IPv6 datagram with a zero UDP
+checksum is taken too. The sealed contents need none; a corrupted source
+address or port is treated as a spoofed one (RN-1 appendix C, "Kernel
+prefilter and XDP").
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target

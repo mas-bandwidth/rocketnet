@@ -4093,6 +4093,17 @@ fragment header), drops it and counts it in
 replay check. An IPv6 extension-header frame it does not drop it hands to the
 host stack and counts in `XDP_KERNEL_PASSED_IPV6_EXTENSION`.
 
+A kernel path takes a datagram before the host stack, so it does not have
+the stack's checksum checks: the IPv4 header checksum and the UDP checksum
+of a datagram it takes are not verified, and an IPv6 datagram with a zero
+UDP checksum, which the stack refuses, is taken. The packet's contents need
+no checksum, since a changed byte fails its authentication
+([t9 Packet protection](#t9)) or the prefilter. What a corrupted header can
+change is the source address and port, which a reply and the replay key are
+taken from: a reply to a handshake goes to that address, as it would to a
+spoofed one, and the protocol's defences against spoofed sources apply to it
+unchanged.
+
 ### Check placement
 
 Every check this standard specifies is defined by what it rejects and in what
