@@ -3538,19 +3538,31 @@ jobs:
           persist-credentials: false
 
       # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
+      # Each check below runs and reports whatever an earlier one did: GitHub
+      # skips the rest of a job after a red step unless a step says otherwise,
+      # and on 85 main commits one red format step hid 17 checks (VERIFY-3
+      # A-11). This check holds every step of this job to that.
+      - name: Every lint check runs on its own verdict
+        if: ${{ !cancelled() }}
+        run: python3 tools/check_independent_steps.py --self-test && python3 tools/check_independent_steps.py
+
       - name: Every runs-on selects the fleet
+        if: ${{ !cancelled() }}
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
       - name: Every main commit gets its own concurrency group
+        if: ${{ !cancelled() }}
         run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
       # release-check.yml's unreleased-wire-changes job runs git log over
       # tools/wire_paths.txt; a path that is gone would leave the gate silently.
       # --self-test plants a gone, an untracked, a doubled and a spaced path.
       - name: Every wire path is a tracked file
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_wire_paths.py --self-test
           python3 tools/check_wire_paths.py
 
       - name: Every LeakSanitizer suppression names a live function
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_lsan_supp.py --self-test
           python3 tools/check_lsan_supp.py
@@ -3560,6 +3572,7 @@ jobs:
       # a per-commit job that overruns fails instead of slowing the gate.
       # --self-test plants unbounded, over-budget and nightly-only jobs.
       - name: Every per-commit job is bounded to two minutes
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_ci_budget.py --self-test
           python3 tools/check_ci_budget.py
@@ -3569,13 +3582,16 @@ jobs:
       # check_format.sh); one unformatted file fails the job, `make format-check`
       # runs the same check locally
       - name: Check clang-format 18 is present
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           if ! command -v clang-format-18 >/dev/null 2>&1; then echo "TOOL-MISSING clang-format-18 (missing) on $RUNNER_NAME"; exit 1; fi
           clang-format-18 --version
       - name: Test the format checker
+        if: ${{ !cancelled() }}
         run: sh tools/format/test_check_format.sh
       - name: Every source is formatted
+        if: ${{ !cancelled() }}
         run: sh tools/format/check_format.sh
 
       # tools/check_or_true.py: no `|| true` / `|| :` discards a status in
@@ -3583,6 +3599,7 @@ jobs:
       # tools/or_true_allowlist.txt (file, exact line, reason; a stale entry
       # is red). --self-test plants each spelling and the empty tree.
       - name: No or-true discards a status in CI shell code
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_or_true.py --self-test
           python3 tools/check_or_true.py
@@ -3592,6 +3609,7 @@ jobs:
       # tools/continue_on_error_allowlist.txt (empty). --self-test plants a
       # step, a job, a composite action and the empty tree.
       - name: No continue-on-error hides a result
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_continue_on_error.py --self-test
           python3 tools/check_continue_on_error.py
@@ -3602,6 +3620,7 @@ jobs:
       # after each), and no `local|export x=$(...)` masks a status.
       # --self-test plants each shell, a mask and the empty tree.
       - name: Every run step stops on its first failure
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_run_shell.py --self-test
           python3 tools/check_run_shell.py
@@ -3611,6 +3630,7 @@ jobs:
       # (registered workflows against main, through the API) is not run
       # here; --self-test covers both modes on fixtures.
       - name: Every scheduled workflow is in the nightly watch's list
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_scheduled_watched.py --self-test
           python3 tools/check_scheduled_watched.py
@@ -3620,6 +3640,7 @@ jobs:
       # or sits in a report-only job, or is in
       # tools/printed_values_allowlist.txt with a reason.
       - name: Every printed trace or hash is compared
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_printed_compared.py --self-test
           python3 tools/check_printed_compared.py
@@ -3631,6 +3652,7 @@ jobs:
       # into its own log, and a red one is named with its whole log. An empty
       # list is red.
       - name: Self-tests of the registered checkers
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           list="$RUNNER_TEMP/checker-selftests.txt"
@@ -3692,6 +3714,7 @@ jobs:
       # red. --self-test plants an unregistered checker, an unwired
       # self-test, a passing, unrunnable and crashing zero-input command.
       - name: Every checker is registered, its self-test runs, zero inputs are red
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_checkers.py --self-test
           python3 tools/check_checkers.py
@@ -3702,6 +3725,7 @@ jobs:
       # the cross-references and the normative language. Pending sections are
       # listed, not failed. One compile; well under ten seconds.
       - name: Verify the RocketNet standard against the implementation
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/conformance/test_check_rn_standard.py
           python3 tools/conformance/check_rn_standard.py
@@ -3710,6 +3734,7 @@ jobs:
       # the section, code function and test that witness it, or is marked
       # tier none. Its own unit tests run first, then the ledger itself.
       - name: Verify the witness ledger against the standard and the tests
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/conformance/test_check_witnesses.py
           python3 tools/conformance/check_witnesses.py
@@ -3719,6 +3744,7 @@ jobs:
       # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
       # hold the red controls. It reads files only, so the lint job runs it.
       - name: Check client/server words
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
@@ -3728,6 +3754,7 @@ jobs:
       # lists (RECORDS_ALLOWED): rocketnet stands on its own. Its tests hold
       # the red controls. It reads files only, so the lint job runs it.
       - name: Check rocketnet stands on its own
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/test_check_other_libraries.py
           python3 tools/check_other_libraries.py
@@ -3740,6 +3767,7 @@ jobs:
       # as rows of the "External ABI traversal sites" table of
       # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
       - name: Check no owned linked lists
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_no_owned_linked_lists.py --self-test
           python3 tools/check_no_owned_linked_lists.py
@@ -3754,6 +3782,7 @@ jobs:
       # and wrong on big-endian, where only a big-endian run sees it.
       # --self-test holds the red and green controls.
       - name: Check byte order in the library
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_byte_order.py --self-test
           python3 tools/check_byte_order.py
@@ -3763,6 +3792,7 @@ jobs:
       # that step's own command. The plants themselves run nightly (planted-violations.yml);
       # this is the table's consistency only, no plant is run.
       - name: Every check has a planted violation in the table
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/planted_violations.py --self-test
           python3 tools/planted_violations.py --check-table
@@ -3783,9 +3813,11 @@ jobs:
       # line (the release-version suite's own count line) must name a positive
       # count. Seconds of wall time; the per-commit tier keeps it.
       - name: Test nightly execution policy
+        if: ${{ !cancelled() }}
         run: python3 tools/test_nightly_timeout.py -v
 
       - name: Test the frame-budget checker's verdicts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3793,6 +3825,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the server-calls checker's verdicts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3800,6 +3833,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the split-load checker's receipts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3811,11 +3845,13 @@ jobs:
       # (review 5 O7: 68 of 104 could be deleted with every test green).
       # About 6 s at 4 jobs.
       - name: Every split-load refusal is tested
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_refusal_mutants.py --self-test
           python3 tools/check_refusal_mutants.py -j 4 tools/check_split_load.py tools/test_check_split_load.py
 
       - name: Test the test-environment checker's inventory
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3823,6 +3859,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the 1000-client load profiler's provenance
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3830,6 +3867,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the release-version block and workflow
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3837,6 +3875,7 @@ jobs:
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
       - name: Test the release nightly-gates check
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_release_tsan.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3847,6 +3886,7 @@ jobs:
       # out, hung, startup failure, all skipped, a 503) must each be red and
       # a clean night green, against a fake API.
       - name: Test the nightly watch's verdicts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_nightly_dispositions.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3858,6 +3898,7 @@ jobs:
       # against the workflows: every workflow and job it names exists, and
       # every per-commit workflow has a gate row.
       - name: Test the release and landing tools; check the release gates list
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           for suite in tools/test_release.py tools/test_land.py; do
@@ -3872,11 +3913,13 @@ jobs:
       # the per-commit job names the workflows produce: a new or renamed
       # per-commit job, or a stale required name, is red here.
       - name: The main ruleset requires exactly the per-commit jobs
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_branch_protection.py --self-test
           python3 tools/check_branch_protection.py
 
       - name: Test the nightly TLA+ case planner
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_plan_tlc_nightly.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3884,6 +3927,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the TLA+ re-run comparer
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_compare_tlc_rerun.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3892,6 +3936,7 @@ jobs:
           bash -n tools/tlc_rerun.sh
 
       - name: Test and check the TLA+ run records
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_tla_records.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3900,6 +3945,7 @@ jobs:
           python3 tools/check_tla_records.py
 
       - name: Test and check the fuzz regression corpus
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_fuzz_regressions.py --selftest
           python3 tools/check_fuzz_regressions.py
@@ -3909,11 +3955,13 @@ jobs:
       # re-recorded capture left 119 seeds under old names from 2026-10-22
       # with no check to say so).
       - name: Test and check the pcapng fuzz seeds
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/pcapng_fuzz_seeds.py --selftest
           python3 tools/pcapng_fuzz_seeds.py --check
 
       - name: Test the unit-case coverage checker's verdicts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_unit_case_coverage.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3921,6 +3969,7 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the header-guard checker's verdicts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3974,6 +4023,7 @@ jobs:
       # the Makefile generator: exit 137 on the benches). --self-test plants
       # each spelling, an empty tree and a failed git listing.
       - name: Every parallel build names its job count
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_make_jobs.py --self-test
           python3 tools/check_make_jobs.py
@@ -3982,12 +4032,14 @@ jobs:
       # once: its self-test plants a red command, a red pipe stage, no
       # command, and two commands that only pass when run together.
       - name: Test the parallel step runner
+        if: ${{ !cancelled() }}
         run: python3 tools/run_parallel.py --self-test
 
       # tools/replay_ci_steps.py runs a job's steps on a bench as the runner
       # would, before a dispatch; its self-test holds the if:, env, shell,
       # anchor and red-step rules to a fixture workflow.
       - name: Test the CI step replay
+        if: ${{ !cancelled() }}
         run: python3 tools/replay_ci_steps.py --self-test
 
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
@@ -3996,6 +4048,7 @@ jobs:
       # suppression hides a finding before the static gates' baselines see
       # it; static.yml's tidy gate runs the same check first.
       - name: Every in-source suppression in the library is reviewed
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_suppressions.py --self-test
           python3 tools/check_suppressions.py
@@ -4005,6 +4058,7 @@ jobs:
       # docs/PLATFORMS.md states; its self-test plants each of those, an
       # unbuilt case and a failing case on a fake binary
       - name: Test and count the big-endian byte cases
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4016,6 +4070,7 @@ jobs:
       # both ways; --lint checks the list (a reason per predicate, names that
       # exist, every leg run, no unwrapped whole-suite run in a workflow)
       - name: Functional skips are held to the reviewed list
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4024,6 +4079,7 @@ jobs:
           python3 tools/check_skips.py --lint
 
       - name: Test the mutation runner's generator and process cleanup; check the survivor baseline
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -4039,6 +4095,7 @@ jobs:
       # (nightly.yml): a failure no longer stops the run, so the summary must
       # name every failed case and the run must still exit 1.
       - name: Test the suite runner's keep-going mode
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
