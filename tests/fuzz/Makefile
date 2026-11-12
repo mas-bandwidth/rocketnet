@@ -46,10 +46,30 @@ TARGETS = rocketnet_fuzz \
           rocketnet_fuzz_session \
           rocketnet_fuzz_xdp_frame \
           rocketnet_fuzz_uring_recvmsg \
-          rocketnet_fuzz_gateway_netlink
+          rocketnet_fuzz_gateway_netlink \
+          rocketnet_fuzz_endpoint
 SOURCES = $(addsuffix .cpp,$(TARGETS))
 
-all: $(TARGETS)
+# The XDP filter program (sdk/xdp/server_xdp.c) as host C, through the unit
+# suite's shim (tests/xdp_host/), instrumented like the library. GNU C on a
+# non-Windows host only; on Darwin the target is not built.
+XDP_HOST_OBJ = $(BUILD)/xdp_host_fuzz.o
+ifeq ($(UNAME_S),Darwin)
+XDP_TARGETS =
+else
+XDP_TARGETS = rocketnet_fuzz_xdp_filter
+endif
+
+all: $(TARGETS) $(XDP_TARGETS)
+
+$(XDP_HOST_OBJ): ../xdp_host/server_xdp_host.c ../../sdk/xdp/server_xdp.c
+	$(subst clang++,clang,$(CXX)) -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ \
+	    -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+	    -I../xdp_host -I../../sdk "-DROCKETNET_XDP_FILTER_SOURCE=\"$(abspath ../../sdk/xdp/server_xdp.c)\"" \
+	    -c ../xdp_host/server_xdp_host.c -o $@
+
+rocketnet_fuzz_xdp_filter: rocketnet_fuzz_xdp_filter.cpp $(XDP_HOST_OBJ) $(LIB)
+	$(CXX) $(FLAGS) -I.. $(SANITIZE) $< $(XDP_HOST_OBJ) $(LIB) $(LINKS) -o $@
 
 # the pair targets compile the server transport and the loopback driver into
 # themselves through rocketnet_fuzz_pair.h, so they rebuild when it changes.
@@ -62,6 +82,6 @@ compile: $(SOURCES)
 	$(CXX) $(FLAGS) -fsyntax-only $(SOURCES)
 
 clean:
-	rm -f $(TARGETS)
+	rm -f $(TARGETS) $(XDP_TARGETS) $(XDP_HOST_OBJ)
 
 .PHONY: all compile clean
