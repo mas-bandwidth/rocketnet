@@ -393,10 +393,10 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
     rocketnet_assert( rocketnet_aead_buffers_in_place_or_apart( sealed, (size_t) ( packet_bytes - header_bytes ), out_data, (size_t) plaintext_bytes ) );
 #if ROCKETNET_DEV && defined( ROCKETNET_BUNDLED_SODIUM )
     // the bundled pair writes no plaintext unless the tag checks (its
-    // dispatch.h.in): poisoned first, a refused open must leave only poison
-    // or the composed AEAD's zeros. Apart only: in place the output is the
-    // ciphertext. Not with a system libsodium, whose version this does not
-    // pin.
+    // dispatch.h.in): poisoned first, a refused open must leave every byte
+    // poison under neon-fused and zero under the composed AEAD, by the pick
+    // the pair reports. Apart only: in place the output is the ciphertext.
+    // Not with a system libsodium, whose version this does not pin.
     const bool dev_apart = out_data != sealed;
     if ( dev_apart )
     {
@@ -413,14 +413,15 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
 #if defined( ROCKETNET_BUNDLED_SODIUM )
         if ( dev_apart )
         {
+            const uint8_t refused_byte = strcmp( sodium_runtime_aead_chacha20poly1305_ietf_implementation(), "composed" ) == 0 ? 0 : ROCKETNET_OPEN_POISON_BYTE;
             for ( int i = 0; i < plaintext_bytes; i++ )
             {
-                rocketnet_assert( out_data[i] == ROCKETNET_OPEN_POISON_BYTE || out_data[i] == 0 );
+                rocketnet_assert( out_data[i] == refused_byte );
             }
         }
-#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )                          \
-        // no caller reads a refused open's output (rocketnet_protocol.h): one \
-        // that did would carry the poison
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+
+        /* No caller reads a refused open's output (rocketnet_protocol.h); one that did would carry the poison. */
         memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
 #endif // #if ROCKETNET_DEV
         return -1;
