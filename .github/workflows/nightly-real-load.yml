@@ -1,3 +1,9 @@
+# MOVED TO MAIN (2026-11-12): this branch copy never reached main, and a cron on
+# a branch never fires, so its schedule (and any temporary push trigger) is
+# removed here. The working version, against today's tree, is the file of the
+# same path on branch fixa/branches (fix-verify-a item 7), which carries the
+# cron once it is on main. This copy is kept for its history only.
+#
 # The nightly real load: 1000 real clients against one real server, once per
 # server transport, over the LAN. Each cell is one run of scripts/lan-proof
 # (docs/LAN-PROOF.md): the server alone on its machine pinned to the cell's
@@ -40,8 +46,6 @@
 name: nightly-real-load
 
 on:
-  schedule:
-    - cron: "0 3 * * *"
   workflow_dispatch:
   # A change to this file runs it once on its own pull request, since
   # workflow_dispatch reaches a workflow only once it is on the default branch.
