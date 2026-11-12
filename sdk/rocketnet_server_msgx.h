@@ -147,4 +147,13 @@ bool rocketnet_server_msgx_mark( struct rocketnet_server_msgx_t * msgx, const st
 bool rocketnet_server_msgx_forget( struct rocketnet_server_msgx_t * msgx, const struct rocketnet_address_t * address );
 void rocketnet_server_msgx_commit( struct rocketnet_server_msgx_t * msgx );
 
+#if ROCKETNET_DEV
+// development library only. fail_sends makes the next count send calls
+// (sendmsg_x on a client socket or sendto on the shared one, any worker)
+// answer -1 with error without reaching the kernel. sockets_open is the
+// table's open client sockets (main thread).
+void rocketnet_server_msgx_test_fail_sends( struct rocketnet_server_msgx_t * msgx, int count, int error );
+int rocketnet_server_msgx_test_sockets_open( struct rocketnet_server_msgx_t * msgx );
+#endif // #if ROCKETNET_DEV
+
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_MSGX_H
