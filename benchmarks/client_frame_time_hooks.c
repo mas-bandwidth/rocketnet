@@ -221,13 +221,25 @@ void cft_patch( const char * name, const void * hook, void * real )
         {
             if ( IMAGE_SNAP_BY_ORDINAL( names->u1.Ordinal ) )
             {
-                continue;
+                // ws2_32's import library binds some calls (sendto among
+                // them) by ordinal: match those by the address the name
+                // resolves to in the same module
+                const HMODULE module = GetModuleHandleA( (const char *) ( base + import->Name ) );
+                const FARPROC resolved = module ? GetProcAddress( module, name ) : NULL;
+                ULONG_PTR resolved_bits = 0;
+                memcpy( &resolved_bits, &resolved, sizeof( resolved_bits ) );
+                if ( resolved_bits == 0 || (ULONG_PTR) entries->u1.Function != resolved_bits )
+                {
+                    continue;
+                }
             }
-
-            const IMAGE_IMPORT_BY_NAME * by_name = (const IMAGE_IMPORT_BY_NAME *) ( base + names->u1.AddressOfData );
-            if ( strcmp( (const char *) by_name->Name, name ) != 0 )
+            else
             {
-                continue;
+                const IMAGE_IMPORT_BY_NAME * by_name = (const IMAGE_IMPORT_BY_NAME *) ( base + names->u1.AddressOfData );
+                if ( strcmp( (const char *) by_name->Name, name ) != 0 )
+                {
+                    continue;
+                }
             }
 
             DWORD protection = 0;
