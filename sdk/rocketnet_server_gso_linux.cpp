@@ -2439,6 +2439,11 @@ bool rocketnet_server_gso_test_worker_handoff()
     valid = valid && taken == 1 && !final;
     rocketnet_server_gso_return_send( gso, taken );
 
+    // both returned banks are free again, oldest first, and nothing is ready
+
+    valid = valid && gso->send_handoff.ready_count == 0 && gso->send_handoff.free_count == ROCKETNET_GSO_TX_BANKS - 1 &&
+            gso->send_handoff.free_index[gso->send_handoff.free_head] == 0;
+
     // Stop hands the worker the final producer after the ready FIFO; until
     // both workers have exited the transport does not report stopped, so
     // destroy would free nothing.
