@@ -74,10 +74,6 @@ NAME_LIST_PREFIX = "tests/source_audit_"
 # as a test comes to observe the counter there: the list only shrinks.
 ALL = ("linux", "macos", "windows")
 OWED = {
-    "ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING": (ALL, "a response after its mapping is gone; checked only == 0"),
-    "ROCKETNET_COUNTER_MAPPING_TABLE_FULL": (ALL, "a request refused with the mapping table full; checked only == 0"),
-    "ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED": (ALL, "the transport's copy of the xdp queues' frame drops; only the dispatch is tested"),
-    "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW": (("linux",), "GRO segments past the staging's room"),
     "ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_IOCP_COMPLETION_BATCHES": (("windows",), "a completion-port dequeue that returned entries"),
