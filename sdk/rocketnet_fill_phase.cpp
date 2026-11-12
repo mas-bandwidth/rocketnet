@@ -135,16 +135,17 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
         const uint64_t word = fill_phase->claims[i].load();
         if ( rn_fill_phase_word_in( word ) )
         {
-            RN_FILL_PHASE_TRACE( "MainLook", i, word, true );
             fill_phase->main_calls.fetch_sub( 1 );
             rn_fill_phase_count( fill_phase->overlap_counter );
+            RN_FILL_PHASE_TRACE( "MainLook", i, word, true );
             rocketnet_error( "server main-thread operation refused: a fill call for client %d is running", i );
             rocketnet_assert( false && "a main-thread operation inside a fill call" );
             return false;
         }
+        RN_FILL_PHASE_TRACE( "MainLook", i, word, false );
     }
 
-    RN_FILL_PHASE_TRACE( "MainLook", -1, 0, false );
+    RN_FILL_PHASE_TRACE( "MainIn", -1, 0, false );
     rocketnet_fill_phase_main_depth = 1;
     return true;
 }
@@ -162,8 +163,8 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
 
     const uint32_t epoch = fill_phase->epoch.load( std::memory_order_relaxed ) + 1;
     fill_phase->epoch.store( epoch == 0 ? 1 : epoch );
-    RN_FILL_PHASE_TRACE( "MainLeave", -1, epoch, false );
     fill_phase->main_calls.fetch_sub( 1 );
+    RN_FILL_PHASE_TRACE( "MainLeave", -1, epoch, false );
 }
 
 // RNFillPhase FillClaim, FillLook
@@ -189,6 +190,7 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     const bool claims = client_index >= 0 && client_index < fill_phase->num_clients;
     const uint32_t me = rocketnet_fill_phase_thread_token();
     const uint32_t epoch = fill_phase->epoch.load();
+    RN_FILL_PHASE_TRACE( "FillBegin", client_index, epoch, false );
     uint64_t claimed = 0;
 
     if ( claims )
@@ -199,10 +201,17 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         {
             const uint32_t holder = rn_fill_phase_word_thread( seen );
             const bool other = holder != 0 && holder != me;
-            if ( other && ( rn_fill_phase_word_in( seen ) || (int32_t) ( rn_fill_phase_word_epoch( seen ) - epoch ) >= 0 ) )
+#if defined( ROCKETNET_FILL_PHASE_PLANT )
+            // the trace check's plant (tests/tla_trace_fill_phase.cpp): only the
+            // caller's own epoch refuses, so a stale call claims over a newer one
+            const bool taken = rn_fill_phase_word_epoch( seen ) == epoch;
+#else  // #if defined( ROCKETNET_FILL_PHASE_PLANT )
+            const bool taken = (int32_t) ( rn_fill_phase_word_epoch( seen ) - epoch ) >= 0;
+#endif // #if defined( ROCKETNET_FILL_PHASE_PLANT )
+            if ( other && ( rn_fill_phase_word_in( seen ) || taken ) )
             {
-                RN_FILL_PHASE_TRACE( "FillClaim", client_index, seen, true );
                 rn_fill_phase_count( fill_phase->two_fillers_counter );
+                RN_FILL_PHASE_TRACE( "FillClaim", client_index, seen, true );
                 rocketnet_error( "server fill call refused: client %d is filled by another thread in this fill phase", client_index );
                 rocketnet_assert( false && "two fillers on one client in one fill phase" );
                 return false;
@@ -228,8 +237,8 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         {
             fill_phase->claims[client_index].store( claimed & ~ROCKETNET_FILL_PHASE_IN );
         }
-        RN_FILL_PHASE_TRACE( "FillLook", client_index, claimed, true );
         rn_fill_phase_count( fill_phase->overlap_counter );
+        RN_FILL_PHASE_TRACE( "FillLook", client_index, claimed, true );
         rocketnet_error( "server fill call refused: a main-thread operation is running" );
         rocketnet_assert( false && "a fill call inside a main-thread operation" );
         return false;

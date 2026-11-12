@@ -147,8 +147,11 @@ struct rocketnet_fill_phase_fill_scope_t
 };
 
 #if ROCKETNET_DEV
-// the trace check's recorder (tests/tla_trace_fill_phase.cpp): called at each
-// step the model names, on the thread taking it; NULL (the default): nothing
+// the trace check's recorder (tests/tla_trace_fill_phase.cpp): called at the
+// end of each step proofs/tla/RNFillPhase.tla names, after all of that step's
+// shared effects (a refusal's count included), on the thread taking it, so a
+// recorder that parks the thread there sees the state the model's step
+// leaves; NULL (the default): nothing
 typedef void rocketnet_fill_phase_trace_function_t( void * context, const char * action, int client_index, uint64_t word, bool refused );
 void rocketnet_fill_phase_set_trace( rocketnet_fill_phase_trace_function_t * function, void * context );
 #endif // #if ROCKETNET_DEV
