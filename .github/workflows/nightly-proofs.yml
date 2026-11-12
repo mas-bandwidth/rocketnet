@@ -43,6 +43,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # the lists equal proofs/cbmc/NIGHTLY-TARGETS, or no matrix (VERIFY-6 A21)
+          bash proofs/cbmc/check_nightly_targets.sh --self-test
+          bash proofs/cbmc/check_nightly_targets.sh
           json() { python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))'; }
           readers="$(make -s -C proofs/cbmc print-nightly-readers | json)"
           partitions="$(make -s -C proofs/cbmc print-replay-near-partitions | json)"

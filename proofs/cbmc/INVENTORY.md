@@ -35,7 +35,7 @@ after the recorded run.
 
 | Target / harness | Checker and source binding | Property and assumptions | Bound and unwind | Reachability / negative control | Exact-head status |
 | --- | --- | --- | --- | --- | --- |
-| `replay-near-4096` / `harness_replay_near_partition_completeness`, `harness_replay_near_nw_*`, `harness_replay_near_wrap_*` | CBMC 6.6.0 + CaDiCaL 2.1.3; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. Partitioned across 13 disjoint/exhaustive clear-loop-shape and selected-word relation cases (`0..12`). `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Full delta 1..4095 across the 13 disjoint/exhaustive partitions; 64 window words; global unwind 65 covers 64-word initialization and every production range-clear path. | `harness_replay_near_partition_completeness` proves pairwise disjointness, joint exhaustiveness, and witness membership (`0 of 429 failed`). All 13 concrete intended-failure controls fail solely on `replay path reachability negative control` (`1 of 431 failed`). | **HOLD** in `full-bounds-partition-results.md`: completeness (`0 of 429 failed`) and partitions 0..4 (`nw_empty_clear` and all four `nw_single_partial_*`, `0 of 431 failed` each) plus their 5 negative controls passed at full `REPLAY_DELTA_BOUND=4096, --unwind 65`; partition 5 (`nw_multi_first_word`) timed out (`HOLD`, exit 124). |
+| `replay-near-4096` / `harness_replay_near_partition_completeness`, `harness_replay_near_nw_*`, `harness_replay_near_wrap_*` | CBMC 6.6.0 + CaDiCaL 2.1.3; includes current `sdk/rocketnet_replay.cpp` | For symbolic `sequence > highest_opened`, delta below the deployed 4096-bit history, and an arbitrary selected word, the production advance clears exactly the skipped ring bits, sets the received bit, and advances the high mark. Partitioned across 13 disjoint/exhaustive clear-loop-shape and selected-word relation cases (`0..12`). `highest_opened < UINT64_MAX` prevents only arithmetic wrap outside this operation's contract. | Full delta 1..4095 across the 13 disjoint/exhaustive partitions; 64 window words; global unwind 65 covers 64-word initialization and every production range-clear path. | `harness_replay_near_partition_completeness` proves pairwise disjointness, joint exhaustiveness, and witness membership (`0 of 429 failed`). All 13 concrete intended-failure controls fail solely on `replay path reachability negative control` (`1 of 431 failed`). | **PASS** nightly: run 43162404799 (2026-11-12, at ee94e6fbf), completeness and all 13 partitions green, each job's control failing as it must. Earlier, `full-bounds-partition-results.md` recorded partition 5 (`nw_multi_first_word`) timing out at CBMC_REPLAY_TIMEOUT=600 (`HOLD`, exit 124). |
 | `replay-delta-1-3` / `harness_replay_near` | CBMC 6.6.0; includes current `sdk/rocketnet_replay.cpp` | Quick per-commit reduced-bound instance of `harness_replay_near` admitting deltas 1..3. | Reduced delta 1..3 (`REPLAY_DELTA_BOUND=4`); 64 words; unwind 65. | Covered by `nw_empty_clear` and `nw_single_partial_*` concrete reachability controls. | **PASS** at `d5dd954f` (`0 of 431 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`). |
 | `replay-far` / `harness_replay_far` | CBMC 6.6.0; includes current `sdk/rocketnet_replay.cpp` | For delta at least 4096, the production advance clears every word, sets only the received bit, and advances the high mark. The high mark is restricted only enough to make the subtraction defined. | Full far range; 64 words; unwind 65. | All 64 result words are asserted. | **PASS** at `d5dd954f` (`0 of 431 failed`, `VERIFICATION SUCCESSFUL` in `full-bounds-partition-results.md`). |
 | `reconstruct` | CBMC 6.6.0; includes current `sdk/rocketnet_protocol.cpp` and `sdk/rocketnet_message.h` | `rocketnet_reconstruct_near` and `rocketnet_reconstruct_sequence` (32-bit) and `rocketnet_message_u24_delta` (the 24-bit message number `rn_window_receive_accept` reconstructs) keep the wire low bits, select the documented nearest candidate, and round-trip an in-window value. | One arithmetic step; unwind 1. | `reconstruct-reachability` must fail only its named control (`1 of 609 failed`). A tie rule turned around in `rocketnet_reconstruct_near` or `rocketnet_message_u24_delta` fails the round-trip assertions. | **PASS** at `59752f6` on hulk: `0 of 608 failed`; reachability `1 of 609 failed` only on the intended assertion, wrapper EXPECTED FAILURE. Current and historical evidence: [reconstruct-results.md](reconstruct-results.md). |
@@ -62,13 +62,21 @@ after the recorded run.
   ESBMC 8.5.0); both workflows compare the installed `--version` output
   against it and fail with TOOL-MISSING on a mismatch. No container digest
   is pinned, so a run receipt still hashes the actual host binaries.
-- HOLD: `replay-near-4096` remains HOLD at the full bound (partition
-  `nw_multi_first_word` timed out at CBMC_REPLAY_TIMEOUT=600, a third of the
-  Makefile's 1800 s; see `full-bounds-partition-results.md`). Each partition
-  is its own target (`replay-near-4096-<partition>`) and its own job in
-  nightly-proofs.yml, with its unwind derived from ROCKETNET_HISTORY_PACKETS,
-  so the partition that holds is red alone; it is not a per-commit gate until
-  that HOLD clears.
+- `replay-near-4096` is proved at the full bound, nightly: Nightly proofs run
+  43162404799 (2026-11-12, at ee94e6fbf) passed all 13 partitions and the
+  completeness check, 14 jobs, each partition with its reachability control
+  failing as it must. The earlier HOLD (partition `nw_multi_first_word` timed
+  out at CBMC_REPLAY_TIMEOUT=600; `full-bounds-partition-results.md`) is
+  history. Each partition is its own target (`replay-near-4096-<partition>`)
+  and its own job in nightly-proofs.yml, with its unwind derived from
+  ROCKETNET_HISTORY_PACKETS, so a partition that fails is red alone; it is
+  nightly, not a per-commit gate, for its run time.
+- The nightly's reader and partition lists must equal `NIGHTLY-TARGETS`
+  (`check_nightly_targets.sh`, run by the nightly's plan job and by ci.yml's
+  lint job): a reader that drops out of the `*/proof.mk` wildcard is red.
+- `harness_replay_near_nonwrapping` (proof_replay_advance.c) is run only by the
+  hand script `run_replay_paths_lifo.sh`, for its `--paths lifo` measurement;
+  the 13 partitions supersede it as evidence.
 
 ## Soundness rules
 

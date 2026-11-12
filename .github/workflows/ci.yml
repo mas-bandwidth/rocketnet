@@ -3498,6 +3498,10 @@ jobs:
 
       # Every pull request: the citation scan covers sdk/ and tests/, so a
       # rename there must fail here, not in the daily tlc.yml (VERIFY-6 A4/A5).
+      - name: The nightly proof targets are the committed list
+        if: ${{ !cancelled() }}
+        run: bash proofs/cbmc/check_nightly_targets.sh --self-test && bash proofs/cbmc/check_nightly_targets.sh
+
       - name: Model coverage rows and citations are true
         if: ${{ !cancelled() }}
         run: python3 tools/test_check_tla_coverage.py && python3 tools/check_tla_coverage.py --all --actions-strict
