@@ -20,10 +20,10 @@ harden_row()
             server_shape=(--base 1 --burst 0 --burst-clients 0 --reliable-every 0 --big-every 0)
             ;;
         bar)
-            # the bar: every client bursts every frame, MTU-size messages only:
-            # (1 + 16) messages x 1000 clients x 60 Hz = 1.02M pps of 1200 B
-            # (the nearest whole count to 1.04M); burst clients default to all
-            server_shape=(--base 1 --burst 16 --burst-clients "${burst_clients:-1000000}" --sizes 1200 --reliable-every 0 --big-every 0)
+            # the bar, 1.04M pps of 1200 B at 1000 clients: MTU-size messages only,
+            # 17 a client a frame and 18 on a rotating third (333 of 1000):
+            # (667 x 17 + 333 x 18) x 60 Hz = 1,039,980 messages a second
+            server_shape=(--base 17 --burst 18 --burst-clients "${burst_clients:-333}" --sizes 1200 --reliable-every 0 --big-every 0)
             ;;
         space)
             # the space shape at the transport's per-frame cap: burst clients
