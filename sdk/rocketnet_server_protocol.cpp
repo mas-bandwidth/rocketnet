@@ -74,6 +74,42 @@ double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_proto
     return (double) server->acks->endpoints[client_index].rtt / 1000.0;
 }
 
+// the receive allowance (rocketnet_server_protocol.h,
+// proofs/tla/RNReceiveAllowance.tla Receive): refills it to the packet's time
+// and spends or refuses
+
+bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, double capacity,
+                                              double time, int packet_bytes )
+{
+    rocketnet_assert( allowance );
+    rocketnet_assert( packet_bytes > 0 );
+
+    // proofs/tla/RNReceiveAllowance.tla Refill: only time past the last refill
+    // adds, and never past the capacity. A time at or before it adds nothing
+    // and leaves the refill time, so no interval is credited twice.
+
+    if ( time > allowance->time )
+    {
+        const double refilled = allowance->bytes + ( time - allowance->time ) * bytes_per_second;
+        allowance->bytes = refilled < capacity ? refilled : capacity;
+        allowance->time = time;
+    }
+
+    // proofs/tla/RNReceiveAllowance.tla Receive: a packet the allowance holds
+    // spends its bytes; one it does not hold is refused and spends nothing
+
+    if ( (double) packet_bytes <= allowance->bytes )
+    {
+        allowance->bytes -= (double) packet_bytes;
+        return true;
+    }
+
+    allowance->refused_packets++;
+    allowance->refused_bytes += (uint64_t) packet_bytes;
+
+    return false;
+}
+
 static void rocketnet_server_connection_id_assigned( struct rocketnet_server_protocol_t * server, int client_index )
 {
     if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
@@ -1193,6 +1229,15 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     rocketnet_server_connection_id_assigned( server, client_index );
 
+    // proofs/tla/RNReceiveAllowance.tla Connect: the slot's allowance starts
+    // full; its refused counts are zero from the slot's last reset
+
+    if ( server->receive_allowances )
+    {
+        server->receive_allowances[client_index].bytes = rocketnet_server_receive_allowance_capacity( server->receive_bytes_per_second, mapping->control->timeout_seconds );
+        server->receive_allowances[client_index].time = current_time;
+    }
+
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
@@ -1299,6 +1344,7 @@ struct rocketnet_sealed_type_counters_t
     int not_connected;
     int bad_ack_block;
     int wrong_opened_size;
+    int over_allowance;
 };
 
 // the established types count the same reasons; the handshake response counts fewer, so its row is spelled out
@@ -1306,7 +1352,7 @@ struct rocketnet_sealed_type_counters_t
     { ROCKETNET_COUNTER_##type##_RECEIVED, ROCKETNET_COUNTER_##type##_WRONG_SIZE, ROCKETNET_COUNTER_##type##_NO_MAPPING, \
       ROCKETNET_COUNTER_##type##_ZERO_SEQUENCE, ROCKETNET_COUNTER_##type##_ALREADY_RECEIVED, \
       ROCKETNET_COUNTER_##type##_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_##type##_NOT_CONNECTED, ROCKETNET_COUNTER_##type##_BAD_ACK_BLOCK, \
-      ROCKETNET_COUNTER_##type##_WRONG_OPENED_SIZE }
+      ROCKETNET_COUNTER_##type##_WRONG_OPENED_SIZE, ROCKETNET_COUNTER_##type##_OVER_ALLOWANCE }
 
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                           const struct rocketnet_address_t * from,
@@ -1360,7 +1406,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     static const struct rocketnet_sealed_type_counters_t table[5] = {
         { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
-          ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO, -1, -1, -1 },
+          ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO, -1, -1, -1, -1 },
         ROCKETNET_SEALED_TYPE_COUNTERS( KEEP_ALIVE ),
         ROCKETNET_SEALED_TYPE_COUNTERS( PAYLOAD ),
         ROCKETNET_SEALED_TYPE_COUNTERS( DISCONNECT ),
@@ -1526,6 +1572,34 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     rocketnet_replay_advance( replay, sequence );
 
     int client_index = mapping->control->client_index;
+
+    // the receive allowance (rocketnet_server_config_t per_client_receive_kbps,
+    // proofs/tla/RNReceiveAllowance.tla Receive): the packet authenticated, so
+    // it is this client's own and only this client's allowance pays for it.
+    // One the allowance cannot pay is dropped here, before anything acts on
+    // it: no ack block applied, no round-trip sample, no ack owed, no idle
+    // clock refreshed, no keep-alive, payload or disconnect taken. To the
+    // client it is a lost packet. Its sequence stays marked in the replay
+    // window above, as an accepted packet's is, so a copy of it cannot be
+    // replayed in once the allowance refills; the client's resends carry new
+    // sequences. The open is the cost the server still pays for it.
+
+    if ( server->receive_allowances && server->receive_bytes_per_second > 0.0 )
+    {
+        struct rocketnet_server_receive_allowance_t * allowance = &server->receive_allowances[client_index];
+        const double capacity = rocketnet_server_receive_allowance_capacity( server->receive_bytes_per_second, mapping->control->timeout_seconds );
+        if ( !rocketnet_server_receive_allowance_take( allowance, server->receive_bytes_per_second, capacity, current_time, packet_bytes ) )
+        {
+            if ( allowance->refused_packets == 1 )
+            {
+                rocketnet_warn( "server refused packets from client %d: over its receive allowance of %.0f kbps (%d x per_client_receive_kbps); counted in its conditions",
+                                client_index, server->receive_bytes_per_second / 125.0, ROCKETNET_RECEIVE_ALLOWANCE_FACTOR );
+            }
+            rocketnet_spam( "server ignored sealed packet. over the client's receive allowance" );
+            counters[type_counters->over_allowance]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+    }
 
     // the ack block at the front of the opened data: the empty block on its
     // wire fields, every other block on the reconstructed 64-bit largest

@@ -89,6 +89,67 @@ static inline int rocketnet_server_cookie_reply_source_words( int max_clients )
     return (int) ( bits / 64 );
 }
 
+// The receive allowance of one client slot (rocketnet_server_config_t
+// per_client_receive_kbps; proofs/tla/RNReceiveAllowance.tla). A token bucket
+// in wire bytes: it refills at the protocol's receive_bytes_per_second
+// (ROCKETNET_RECEIVE_ALLOWANCE_FACTOR x per_client_receive_kbps x 125) from
+// the server time passed to each call, up to that rate times the
+// connection's timeout in seconds, and starts full when the slot is
+// assigned. A session packet that authenticated is processed only when the
+// allowance holds its wire bytes, which it then spends; otherwise it is
+// dropped and counted here, and spends nothing. A time at or before the last
+// refill adds nothing and leaves the refill time where it was, so a clock
+// that steps back never credits the same interval twice. 32 bytes a slot,
+// zeroed when the slot's connection ends.
+
+struct rocketnet_server_receive_allowance_t
+{
+    double bytes;                                           // allowance left, 0 .. capacity
+    double time;                                            // the server time of the last refill
+    uint64_t refused_packets;                               // authenticated packets dropped over the allowance, this connection
+    uint64_t refused_bytes;                                 // their wire bytes
+};
+
+// The allowance's rate in wire bytes per second for a configured
+// per_client_receive_kbps: ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times the rate,
+// at 125 bytes a second per kbps (the send budget's unit,
+// sdk/rocketnet_send_budget.h); 0 selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS,
+// and ROCKETNET_SEND_KBPS_UNLIMITED returns 0, which refuses nothing.
+
+static inline double rocketnet_server_receive_allowance_rate( int per_client_receive_kbps )
+{
+    const int kbps = per_client_receive_kbps == 0 ? ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS : per_client_receive_kbps;
+    if ( kbps <= 0 || kbps >= ROCKETNET_SEND_KBPS_UNLIMITED )
+    {
+        return 0.0;
+    }
+    return (double) ROCKETNET_RECEIVE_ALLOWANCE_FACTOR * (double) kbps * 125.0;
+}
+
+// The capacity of a connection's allowance: its rate times its timeout in
+// seconds (1 .. max_timeout_seconds), so everything a client sent during an
+// outage shorter than its timeout fits when it arrives at once, plus one
+// maximum packet, the least depth of the client's own send bucket
+// (ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES in sdk/rocketnet_send_budget.h),
+// so a maximum packet fits at every setting and the client's full bucket fits
+// on top of its delayed traffic. A client whose budget is the setting sends at
+// most its depth plus the setting times any interval; delivered up to the
+// timeout late, that is at most the depth plus the setting times the interval
+// and the timeout, which this capacity and twice the setting always hold
+// (proofs/tla/RNReceiveAllowance.tla UnderRateNeverRefused).
+
+static inline double rocketnet_server_receive_allowance_capacity( double bytes_per_second, int timeout_seconds )
+{
+    return bytes_per_second * (double) ( timeout_seconds > 0 ? timeout_seconds : 1 ) + (double) ROCKETNET_SEND_BUDGET;
+}
+
+// Refills the allowance to time, then spends packet_bytes when it holds them.
+// Returns true when the packet is to be processed; false counts the packet in
+// refused_packets and refused_bytes and spends nothing.
+
+bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, double capacity,
+                                              double time, int packet_bytes );
+
 struct rocketnet_server_protocol_t
 {
     uint64_t protocol_id;
@@ -148,6 +209,13 @@ struct rocketnet_server_protocol_t
     // the integrity limit) and cleared to NONE when the slot is next
     // assigned. NULL, as connection_ids, in a protocol built without it.
     int * end_reasons;
+    // the receive allowance, one per client slot (struct
+    // rocketnet_server_receive_allowance_t above), and its rate in wire bytes
+    // per second; a rate of 0 (per_client_receive_kbps unlimited) refuses
+    // nothing. NULL, as end_reasons, in a protocol built without it, which
+    // then refuses nothing either.
+    struct rocketnet_server_receive_allowance_t * receive_allowances;
+    double receive_bytes_per_second;
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
     int defer_payload_acks;

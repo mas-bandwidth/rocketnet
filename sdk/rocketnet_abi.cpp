@@ -11,7 +11,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONF
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3, "server public config revisions must grow" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4, "server public config revisions must grow" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5, "server public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_5 == sizeof( struct rocketnet_server_config_t ), "server public config revision 5 must be the whole struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6, "server public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( offsetof( struct rocketnet_server_config_t, per_client_receive_kbps ) >= ROCKETNET_SERVER_CONFIG_BYTES_5, "a field added in revision 6 starts at or past revision 5's sizeof (docs/ABI-EVOLUTION.md 2, rule 2)" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_6 == sizeof( struct rocketnet_server_config_t ), "server public config revision 6 must be the whole struct" );
 
 #include <sodium.h>
 #include <inttypes.h>
@@ -26,7 +28,9 @@ static_assert( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocke
 static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, "server transport config revisions must grow" );
 static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, "server transport config revisions must grow" );
 static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, "server transport config revisions must grow" );
-static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 5 size" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5 < ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, "server transport config revisions must grow" );
+static_assert( offsetof( struct rocketnet_server_transport_config_t, per_client_receive_kbps ) >= ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, "a field added in revision 6 starts at or past revision 5's sizeof" );
+static_assert( ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 == sizeof( struct rocketnet_server_transport_config_t ), "server transport config revision 6 size" );
 static_assert( ROCKETNET_MESSAGE_CONFIG_BYTES_2 == sizeof( struct rocketnet_message_config_t ), "message config revision 2 size" );
 
 static const size_t rocketnet_client_transport_config_known_bytes[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };

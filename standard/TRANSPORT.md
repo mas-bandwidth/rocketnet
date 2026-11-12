@@ -3758,6 +3758,10 @@ The registry of counters, in index order, is:
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
+| `KEEP_ALIVE_OVER_ALLOWANCE` | `refusal` | `KEEP_ALIVE_RECEIVED` |
+| `PAYLOAD_OVER_ALLOWANCE` | `refusal` | `PAYLOAD_RECEIVED` |
+| `DISCONNECT_OVER_ALLOWANCE` | `refusal` | `DISCONNECT_RECEIVED` |
+| `ACK_OVER_ALLOWANCE` | `refusal` | `ACK_RECEIVED` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3870,7 +3874,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
-a1 00 00 00
+a1 00 00 00 f8 c4 d7 e5 00 29 00 59 dd d3 03 00
+30 00 4f ea 13 aa 00 37 00 c4 d0 9c fa 00 6f 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

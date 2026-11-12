@@ -407,6 +407,9 @@ typedef struct rocketnet_dst_world_t
     uint64_t server_connection_ids[ROCKETNET_DST_MAX_CLIENTS];
     uint64_t server_acked_connection_ids[ROCKETNET_DST_MAX_CLIENTS * ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     int server_end_reasons[ROCKETNET_DST_MAX_CLIENTS];
+    // each slot's receive allowance at the default rate, as a created server
+    // holds it: a correct client that it refuses is an unexplained refusal
+    struct rocketnet_server_receive_allowance_t server_receive_allowances[ROCKETNET_DST_MAX_CLIENTS];
     rocketnet_dst_endpoint_t server_endpoint;
     struct rocketnet_message_server_t * message_server;
     struct rocketnet_message_config_t message_config;
@@ -1970,6 +1973,8 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->server.connection_ids = w->server_connection_ids;
     w->server.acked_connection_ids = w->server_acked_connection_ids;
     w->server.end_reasons = w->server_end_reasons;
+    w->server.receive_allowances = w->server_receive_allowances;
+    w->server.receive_bytes_per_second = rocketnet_server_receive_allowance_rate( 0 );
     w->server.defer_payload_acks = 1;
     if ( !w->server.encryption_map || !w->server.used_token_history || !w->server.client_slots ||
          !w->server.acks )

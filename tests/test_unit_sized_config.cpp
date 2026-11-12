@@ -32,6 +32,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -530,6 +531,8 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1025, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 1025, false );
+    SIZED_CONFIG_SERVER_CREATE( c.per_client_receive_kbps = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.per_client_receive_kbps = INT_MIN, false );
 
     // a transport list that does not parse: refused
 
@@ -789,7 +792,8 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 &&
+           ROCKETNET_SERVER_CONFIG_BYTES_6 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );
@@ -841,6 +845,78 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         uint32_t kbps = 0;
         check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
         check( transport.handshakes_per_update == budgets[i] );
+    }
+}
+
+// Revision 6 appends per_client_receive_kbps at revision 5's sizeof
+// (docs/ABI-EVOLUTION.md 2). A revision-5 caller never reaches it: its
+// default fill leaves the bytes past its size untouched, and its server takes
+// the default, 0, which resolves to ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS. A
+// current caller's value is copied once into the resolved transport config.
+static void test_public_server_receive_allowance_revision_and_copy()
+{
+    check( offsetof( struct rocketnet_server_config_t, per_client_receive_kbps ) >= ROCKETNET_SERVER_CONFIG_BYTES_5 );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_6 == sizeof( struct rocketnet_server_config_t ) );
+
+    struct rocketnet_server_config_t defaults;
+    check( rocketnet_server_default_config( &defaults ) == ROCKETNET_STATUS_OK );
+    check( defaults.per_client_receive_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+
+    struct rocketnet_server_config_t light;
+    check( rocketnet_server_light_config( &light ) == ROCKETNET_STATUS_OK );
+    check( light.per_client_receive_kbps == 256 );
+
+    struct rocketnet_server_config_t old_caller;
+    memset( &old_caller, 0xCD, sizeof( old_caller ) );
+    old_caller.config_bytes = ROCKETNET_SERVER_CONFIG_BYTES_5;
+    check( rocketnet_server_default_config_internal( &old_caller ) == ROCKETNET_STATUS_OK );
+    const uint8_t * old_bytes = (const uint8_t *) &old_caller;
+    for ( size_t i = ROCKETNET_SERVER_CONFIG_BYTES_5; i < sizeof( old_caller ); i++ )
+    {
+        check( old_bytes[i] == 0xCD );
+    }
+
+    {
+        struct rocketnet_server_transport_config_t transport;
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+        struct rocketnet_server_config_t read = old_caller;
+        read.config_bytes = sizeof( read );
+        read.per_client_receive_kbps = 0;           // what the library reads past a revision-5 prefix: the default
+        check( rocketnet_server_config_resolve( &read, false, &transport, &message, &kbps ) );
+        check( transport.per_client_receive_kbps == 0 );
+    }
+
+    old_caller.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( old_caller.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    old_caller.max_clients = 4;
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_server_t * old_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &old_caller, &status );
+    check( old_server != NULL && status == ROCKETNET_STATUS_OK );
+    rn_test_server_stop_and_destroy( old_server );
+
+    const int values[] = { 0, 1, 1000, 256, 123456, ROCKETNET_SEND_KBPS_UNLIMITED - 1, ROCKETNET_SEND_KBPS_UNLIMITED };
+    for ( int i = 0; i < COUNT( values ); i++ )
+    {
+        struct rocketnet_server_config_t config;
+        check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+        config.per_client_receive_kbps = values[i];
+        struct rocketnet_server_transport_config_t transport;
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+        check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+        check( transport.per_client_receive_kbps == values[i] );
+    }
+
+    // a negative rate is out of the field's range: create refuses it
+    {
+        struct rocketnet_server_config_t config;
+        sized_config_dev_server_config( &config );
+        config.max_clients = 4;
+        config.per_client_receive_kbps = -1;
+        status = ROCKETNET_TEST_STATUS_UNSET;
+        check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 }
 
@@ -1146,3 +1222,4 @@ REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
 REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );
+REGISTER_UNIT_TEST( test_public_server_receive_allowance_revision_and_copy );

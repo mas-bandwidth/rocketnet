@@ -36,6 +36,7 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, server_secret_key ) + ROCKETNET_SERVER_SECRET_KEY_BYTES, sizeof( void * ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, per_client_receive_kbps ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -752,6 +753,8 @@ struct rocketnet_server_transport_config_t
     int handshakes_per_update;
     /** @brief The loopback hub the loopback transport serves through; NULL refuses the loopback transport. */
     struct rocketnet_loopback_hub_t * loopback_hub;
+    /** @brief The client-to-server rate each client is allowed, in kbps; the server processes at most ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times it per client. Zero selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS; ROCKETNET_SEND_KBPS_UNLIMITED turns the refusal off. */
+    int per_client_receive_kbps;
 };
 
 // a NULL config is a counted no-op
@@ -1918,6 +1921,12 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
 // or not connected (rocketnet_conditions_t)
 double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index );
 double rocketnet_client_transport_heard_age( const struct rocketnet_client_transport_t * client_transport );
+
+// the authenticated packets and their wire bytes the slot's current connection
+// sent over its receive allowance (rocketnet_conditions_t
+// receive_refused_packets and receive_refused_bytes); false, both 0, when the
+// slot holds no connected client
+bool rocketnet_server_transport_receive_refused( const struct rocketnet_server_transport_t * server_transport, int client_index, uint64_t * packets, uint64_t * bytes );
 
 // the message layer's half of rocketnet_conditions_t; false when not connected
 bool rocketnet_message_server_conditions( const struct rocketnet_message_server_t * server, int client_index, struct rocketnet_conditions_t * conditions );
