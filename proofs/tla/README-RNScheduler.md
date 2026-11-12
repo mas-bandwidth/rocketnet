@@ -6,10 +6,9 @@ in which the packet builder takes queued items into packets. The code is
 scheduler functions names the action it implements. The model was written
 before the code.
 
-`proofs/tla/MCRNScheduler.tla` and `proofs/tla/MCRNScheduler.cfg` are the small instance.
-The three `proofs/tla/MCRNSchedulerBroken*.cfg` files are the reversed witnesses. The
-cases are rows of `proofs/tla/CASES.tsv` (group `rnscheduler`) with measured records
-in `proofs/tla/RUNS.tsv`.
+`proofs/tla/MCRNScheduler.tla` holds the instances and the `proofs/tla/MCRNScheduler*.cfg`
+files are the cases, rows of `proofs/tla/CASES.tsv` (group `rnscheduler`) with
+measured records in `proofs/tla/RUNS.tsv`.
 
 ## The rule
 
@@ -87,24 +86,43 @@ Properties:
 Fairness: weak fairness on `Queue`, `Write`, `Tick` and every `Ack(i)`.
 Losses are bounded by `MaxLoss` and not fair.
 
-## The instance
+## Priorities in v1.1.x: the levels are reserved
 
-Two channels. Channel 0 queues a LOW item and then an IMMEDIATE item (the
-boost case); channel 1 queues one HIGH item. Unreliable items are IMMEDIATE,
-so the class order is checked against the most urgent priority. A window of
-2 numbers, a budget of 1 item per update, one unreliable item arriving with
-every update, and 3 transport losses, allowing both channel 0 items to await
-retransmission together after the earlier one was already resent once
-(resend FIFO order 2, 1).
+Every reliable message is MEDIUM: `rn_channels_send` and the endpoint's two
+routes set `descriptor->priority = ROCKETNET_PRIORITY_MEDIUM`, and the public
+API (`sdk/rocketnet.h`) takes no priority. Only CONFIG
+(`rn_ordered_announce_config`) is IMMEDIATE, and it is pushed to the head of
+channel 0. So on the code's paths the levels decide one thing: CONFIG before
+MEDIUM, and CONFIG is already its channel's head. HIGH, LOW, and IMMEDIATE
+outside CONFIG are reserved: the builder supports them, no caller sets them.
+
+## The instances
+
+- `MCMsgs`, the code's (`MCRNScheduler.cfg` and the witnesses on it):
+  CONFIG (IMMEDIATE) at the head of channel 0, one MEDIUM message on channel 0
+  and one on channel 1; MEDIUM unreliable items one per update, a window of 2,
+  a budget of 1 item per update and 3 transport losses (channel 0's two items
+  can await retransmission together after the earlier one was resent, resend
+  FIFO order 2, 1).
+- `MCMsgsReserved`, the builder's contract at the reserved levels
+  (`MCRNSchedulerReservedLevels.cfg`, `MCRNSchedulerBrokenPerMessagePriority.cfg`):
+  channel 0 queues a LOW item and then an IMMEDIATE item (the boost case),
+  channel 1 one HIGH item; IMMEDIATE unreliable items, otherwise as `MCMsgs`.
+  The boost there has no caller in v1.1.x.
+
+`ChannelFIFO = FALSE` on the code's instance passes
+`FirstWriteInOrderPerChannel`: all MEDIUM items behind a CONFIG head leave
+per-message priority nothing to reorder, so that witness lives on the reserved
+instance.
 
 ## Reversed witnesses
 
 | Case | Constant flipped | Expected failure | Counterexample, checked by hand |
 |---|---|---|---|
-| `MCRNSchedulerBrokenPerMessagePriority.cfg` | `ChannelFIFO = FALSE`: every queued item offered at its own level | invariant `FirstWriteInOrderPerChannel` | 4 states: channel 0 queues LOW (ordering 0) and IMMEDIATE (ordering 1); the first write takes ordering 1. The code offers only channel 0's head, at the boosted level, so it writes ordering 0 first (`test_rnscheduler_witness_replays`, `test_channel_fifo_kept_per_channel`). |
+| `MCRNSchedulerBrokenPerMessagePriority.cfg` | `ChannelFIFO = FALSE`: every queued item offered at its own level | invariant `FirstWriteInOrderPerChannel` | 4 states: channel 0 queues LOW (ordering 0) and IMMEDIATE (ordering 1); the first write takes ordering 1. The code offers only channel 0's head, at the boosted level, so it writes ordering 0 first (`test_rnscheduler_witness_replays`, `test_channel_fifo_kept_per_channel`). Reserved levels (`MCMsgsReserved`): no v1.1.x caller can set LOW or IMMEDIATE on a message. |
 | `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | `UnreliableLast = FALSE`: the unreliable class offered first | temporal `NoStarvation` | a lasso: all three reliable items queued, then every update writes its one arriving unreliable item and ticks, forever. The code takes classes in the budget's order, so the three reliable items go in the first three updates and the unreliable class gets the budget only after (`test_rnscheduler_witness_replays`, `test_budget_class_order_still_rules`). `ClassOrderBeforePriority` is the safety face of the same flaw and is left out of this case, so the failure checked is the liveness one. |
 | `MCRNSchedulerBrokenRtxPerMessage.cfg` | `ChannelFIFO = FALSE`: retransmits offered independently | invariant `RtxHeadBoost` | after both channel 0 items are lost, the second lost item appears as another candidate at its own priority instead of boosting the first lost item. |
-| `MCRNSchedulerBrokenRtxById.cfg` | `RtxSendOrder = FALSE`: a retransmit group's head is its lowest id | invariant `RtxHeadBoost` | 11 states: on channel 0, items 1 (LOW) and 2 (IMMEDIATE) queued and first-written (`resendQ` 1, 2), item 1 lost and resent (`resendQ` 2, 1), then item 1 and item 2 lost (3 losses); this case's head is item 1. The code's resend FIFO is then 2, 1 (each send pushes to the tail), `rn_ordered_walk` hands the builder 2 then 1, and `rn_builder_plan`'s stable grouping makes 2 the channel's rtx head at the boosted level IMMEDIATE. Unreachable with 2 losses. |
+| `MCRNSchedulerBrokenRtxById.cfg` | `RtxSendOrder = FALSE`: a retransmit group's head is its lowest id | invariant `RtxHeadBoost` | 11 states: on channel 0, items 1 (CONFIG, IMMEDIATE) and 2 (MEDIUM) queued and first-written (`resendQ` 1, 2), item 1 lost and resent (`resendQ` 2, 1), then item 1 and item 2 lost (3 losses); this case's head is item 1. The code's resend FIFO is then 2, 1 (each send pushes to the tail), `rn_ordered_walk` hands the builder 2 then 1, and `rn_builder_plan`'s stable grouping makes 2 the channel's rtx head at the boosted level IMMEDIATE. Unreachable with 2 losses. |
 
 ## Action-to-function map
 

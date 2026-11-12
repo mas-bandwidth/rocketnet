@@ -299,10 +299,11 @@ static void test_budget_class_order_still_rules()
     rn_unit_arena_destroy( arena );
 }
 
-// the two reversed witnesses of proofs/tla/RNScheduler.tla, replayed against the
-// code on MCRNScheduler's instance: channel 0 queues LOW then IMMEDIATE,
-// channel 1 queues HIGH, IMMEDIATE unreliable items arrive one per update, and
-// the budget is one record per update.
+// two reversed witnesses of proofs/tla/RNScheduler.tla, replayed against the
+// builder on the reserved-level instance (MCMsgsReserved; no v1.1.x caller sets
+// these levels): channel 0 queues LOW then IMMEDIATE, channel 1 queues HIGH,
+// IMMEDIATE unreliable items arrive one per update, and the budget is one
+// record per update.
 //
 // BrokenPerMessagePriority's trace first-writes channel 0's IMMEDIATE record
 // (ordering 1) ahead of its LOW one (ordering 0). The code writes ordering 0

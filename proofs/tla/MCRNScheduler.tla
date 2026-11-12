@@ -1,27 +1,23 @@
 --------------------------- MODULE MCRNScheduler ---------------------------
 (***************************************************************************)
-(* The small instance that checks RNScheduler.  Every run is this module   *)
-(* with MCRNScheduler.cfg, or that file with one constant flipped as       *)
-(* README-RNScheduler.md lists.                                            *)
+(* The small instances that check RNScheduler.  README-RNScheduler.md      *)
+(* lists every case.                                                       *)
 (*                                                                         *)
-(* Two channels.  Channel 0 queues a LOW item and then an IMMEDIATE item   *)
-(* (the boost case: the IMMEDIATE item must not be first-written ahead of  *)
-(* the LOW one); channel 1 queues one HIGH item.  Unreliable items are     *)
-(* IMMEDIATE, so the class order is checked against the most urgent        *)
-(* priority.  A window of 2 numbers, a budget of 1 item per update, one    *)
-(* unreliable item arriving with every update and 3 transport losses, so  *)
-(* both same-channel items can await retransmit together after the earlier *)
-(* one was already resent once (resend FIFO order 2, 1). The reversed      *)
-(* witnesses:                                                             *)
-(*   MCRNSchedulerBrokenPerMessagePriority.cfg    ChannelFIFO              *)
-(*                                     FirstWriteInOrderPerChannel         *)
-(*   MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg  UnreliableLast       *)
-(*                                     NoStarvation                        *)
-(*   MCRNSchedulerBrokenRtxPerMessage.cfg ChannelFIFO  RtxHeadBoost       *)
-(*   MCRNSchedulerBrokenRtxById.cfg       RtxSendOrder RtxHeadBoost       *)
+(* MCMsgs is the code's instance (MCRNScheduler.cfg and the witnesses on   *)
+(* it): CONFIG, IMMEDIATE, at the head of channel 0, then one MEDIUM       *)
+(* message on channel 0 and one on channel 1.  Every v1.1.x reliable       *)
+(* message is MEDIUM; only CONFIG is IMMEDIATE.                            *)
+(*                                                                         *)
+(* MCMsgsReserved is the builder's contract at the reserved levels, which  *)
+(* no v1.1.x caller sets (MCRNSchedulerReservedLevels.cfg and              *)
+(* MCRNSchedulerBrokenPerMessagePriority.cfg): channel 0 queues a LOW      *)
+(* item and then an IMMEDIATE item (the boost case), channel 1 one HIGH    *)
+(* item.                                                                   *)
 (***************************************************************************)
 EXTENDS RNScheduler
 
-MCMsgs == << [ch |-> 0, lv |-> 3], [ch |-> 0, lv |-> 0], [ch |-> 1, lv |-> 1] >>
+MCMsgs == << [ch |-> 0, lv |-> 0], [ch |-> 0, lv |-> 2], [ch |-> 1, lv |-> 2] >>
+
+MCMsgsReserved == << [ch |-> 0, lv |-> 3], [ch |-> 0, lv |-> 0], [ch |-> 1, lv |-> 1] >>
 
 =============================================================================
