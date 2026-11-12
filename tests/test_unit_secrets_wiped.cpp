@@ -1293,6 +1293,7 @@ static void test_client_slots_release_of_free_slot_is_refused()
     rocketnet_client_slots_release( slots, first );
     const bool second_release_refused = rocketnet_client_slots_num_connected( slots ) == 0 && rocketnet_client_slots_num_free( slots ) == 4;
     rocketnet_assert_function( NULL );
+    rocketnet_client_slots_publish( slots );        // the server update's end
 
     int indices[4];
     for ( int i = 0; i < 4; ++i )

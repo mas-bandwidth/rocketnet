@@ -4505,16 +4505,17 @@ static void test_server_connection_id_tracks_each_connection()
 }
 REGISTER_UNIT_TEST( test_server_connection_id_tracks_each_connection );
 
-// The case rocketnet_server_client_connected cannot see: one server update
-// ends the connection in a slot and admits another into it. The slot reads
-// connected before and after; the connection id changes.
+// One server update ends the connection in a slot while another client's
+// response asks for it. The slot is not given to the new client in the update
+// that freed it: after that update the slot reads free with the old
+// connection's reason, and the next update gives it to the new client under a
+// new connection id. A full server does not deny the new client for it.
 //
 // One slot. B takes its challenge while the slot is free and holds its
 // response; A then connects into the slot. A's disconnect and B's response
-// reach the server together, A's first, so one update frees the slot and
-// gives it to B.
+// reach the server together, A's first.
 
-static void test_server_connection_id_changes_on_reconnect_within_one_update()
+static void test_server_slot_freed_in_an_update_reports_its_end_before_reuse()
 {
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 2 );
@@ -4560,24 +4561,33 @@ static void test_server_connection_id_changes_on_reconnect_within_one_update()
 
     check( rocketnet_server_client_connected( server, 0 ) != 0 );
     rocketnet_server_update( server, world.time );
-    check( rocketnet_server_client_connected( server, 0 ) != 0 );
-    check( rocketnet_server_client_id( server, 0 ) == 0x5202 );
-    const uint64_t id_b = rocketnet_server_client_connection_id( server, 0 );
-    check( id_b != 0 );
-    check( id_b != id_a );
+
+    // A's end is what the game reads after this update, with its reason
+
+    check( rocketnet_server_client_connected( server, 0 ) == 0 );
+    check( rocketnet_server_client_connection_id( server, 0 ) == 0 );
+    check( rocketnet_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
+
+    // B is held, not denied: its next response takes the slot
 
     rocketnet_server_send_packets( server );
     world.time += 0.01;
     for ( int i = 0; i < 400 && rocketnet_client_state( client_b ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
+        check( rocketnet_client_state( client_b ) > ROCKETNET_CLIENT_STATE_DISCONNECTED );
         lifecycle_pump( &world );
     }
     check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_CONNECTED );
-    check( rocketnet_server_client_connection_id( server, 0 ) == id_b );
+    check( rocketnet_client_index( client_b ) == 0 );
+    check( rocketnet_server_client_id( server, 0 ) == 0x5202 );
+    const uint64_t id_b = rocketnet_server_client_connection_id( server, 0 );
+    check( id_b != 0 );
+    check( id_b != id_a );
+    check( rocketnet_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     lifecycle_world_destroy( &world );
 }
-REGISTER_UNIT_TEST( test_server_connection_id_changes_on_reconnect_within_one_update );
+REGISTER_UNIT_TEST( test_server_slot_freed_in_an_update_reports_its_end_before_reuse );
 #endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV

@@ -98,6 +98,10 @@ not name. In particular, the per-commit `big-endian` leg in `ci.yml`
 cross-compiles the library and suite for s390x and runs the wire and sodium
 checks under qemu-user; the socket-crossing suite runs on s390x only in the
 nightly full-system guest. The nightly row is how that suite is claimed.
+A big-endian Linux build with clang, libbpf and libxdp compiles the xdp
+transport in, its kernel program built for the target's byte order (`bpfeb`),
+but no row claims the xdp transport on big-endian: the cross leg never loads
+the program and the nightly guest builds without it.
 
 A row's memory bounds follow the same split as its suites: the unit suite
 reports memory, printing each case's peak resident set against its bound

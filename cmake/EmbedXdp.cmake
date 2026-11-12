@@ -5,7 +5,8 @@
 # compiler, no make and no temporary directory.
 #
 # Inputs: SOURCE_DIR, OUTPUT_DIR, XXD, CLANG (a clang with the BPF target, or
-# empty) and MULTIARCH (the host triple whose /usr/include/<triple> holds
+# empty), BPF_TARGET (bpfel or bpfeb: the target's byte order, so a
+# cross build compiles for the kernel that loads the object) and MULTIARCH (the host triple whose /usr/include/<triple> holds
 # asm/types.h), and optionally HISTORY_PACKETS: the library's
 # ROCKETNET_HISTORY_PACKETS, which sets the kernel replay window, and
 # MAX_CLIENTS: the library's ROCKETNET_MAX_CLIENTS, which sizes the kernel
@@ -31,6 +32,9 @@ file(REMOVE "${xdp_object}")
 if(NOT CLANG)
     message(FATAL_ERROR "server_xdp.o: EmbedXdp.cmake needs CLANG, a clang with the BPF target")
 endif()
+if(NOT BPF_TARGET MATCHES "^bpf(el|eb)$")
+    message(FATAL_ERROR "server_xdp.o: EmbedXdp.cmake needs BPF_TARGET, bpfel or bpfeb for the target's byte order (got '${BPF_TARGET}')")
+endif()
 # Clang may report a vendor component that the distribution's UAPI
 # include directory omits (x86_64-pc-linux-gnu vs x86_64-linux-gnu).
 if(NOT EXISTS "/usr/include/${MULTIARCH}/asm/types.h")
@@ -46,7 +50,7 @@ endif()
 execute_process(COMMAND "${CLANG}" ${xdp_defines} -ffreestanding -O2 -g
         "-I/usr/include/${MULTIARCH}" -Isdk
         -fdebug-compilation-dir=. "-ffile-prefix-map=${SOURCE_DIR}=." "-ffile-prefix-map=${OUTPUT_DIR}=."
-        -target bpf -c sdk/xdp/server_xdp.c -o "${xdp_object}"
+        -target "${BPF_TARGET}" -c sdk/xdp/server_xdp.c -o "${xdp_object}"
     WORKING_DIRECTORY "${SOURCE_DIR}" RESULT_VARIABLE clang_result)
 if(NOT clang_result EQUAL 0)
     message(FATAL_ERROR "server_xdp.o: the BPF compile failed (${clang_result})")
@@ -56,7 +60,7 @@ endif()
 set(xdp_limits_probe "${OUTPUT_DIR}/server_xdp_limits.c")
 file(WRITE "${xdp_limits_probe}" "#include \"rocketnet_xdp_limits.h\"\nrocketnet_server_xdp_limits ROCKETNET_MAX_CLIENTS ROCKETNET_HISTORY_PACKETS\n")
 execute_process(COMMAND "${CLANG}" ${xdp_defines} -ffreestanding
-        "-I/usr/include/${MULTIARCH}" -Isdk -target bpf -E -P "${xdp_limits_probe}"
+        "-I/usr/include/${MULTIARCH}" -Isdk -target "${BPF_TARGET}" -E -P "${xdp_limits_probe}"
     WORKING_DIRECTORY "${SOURCE_DIR}" OUTPUT_VARIABLE xdp_limits RESULT_VARIABLE probe_result)
 file(REMOVE "${xdp_limits_probe}")
 if(NOT probe_result EQUAL 0 OR NOT xdp_limits MATCHES "rocketnet_server_xdp_limits ([0-9]+) ([0-9]+)")

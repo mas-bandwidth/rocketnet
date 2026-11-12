@@ -531,6 +531,7 @@ static void test_staged_idle_maintenance_preflight()
     // an address at -1 or reserving a staged frame.
 
     rocketnet_client_slots_release( server->protocol.client_slots, 0 );
+    rocketnet_client_slots_publish( server->protocol.client_slots );     // the update's end
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
     CHECK( rocketnet_client_slots_assign( server->protocol.client_slots, 9, -1, 9, user_data ) == 0 );

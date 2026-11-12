@@ -52,6 +52,7 @@ static size_t rocketnet_client_slot_index_header_bytes()
     X( num_buckets, int num_buckets ) /* the free list: a stack of unused client indices, popped on connect */ /* and pushed on disconnect, so finding a free slot is constant time in */ /* the number of client slots and never a search (standard/RATIONALE.md, */ /* "Lookup complexity": "a free slot is found from a free list, not a */ /* search") */                                                                    \
     X( free_stack, int * free_stack ) /* max_clients, unused indices */               \
     X( free_stack_count, int free_stack_count ) /* hot: walked by find */                                                         \
+    X( free_stack_held, int free_stack_held ) /* released since the last publish: free_stack[count..count+held), not yet poppable */ \
     X( client_id, uint64_t * client_id )                                              \
     X( connected, uint8_t * connected ) /* cold: same index */                                                            \
     X( mapping_index, int * mapping_index )                                           \
@@ -378,7 +379,11 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
         return -1;
     }
 
+    // the held entries sit just above the top: the last of them moves down
+    // into the popped entry, so they stay contiguous (a no-op when none is held)
+
     --slots->free_stack_count;
+    slots->free_stack[slots->free_stack_count] = slots->free_stack[slots->free_stack_count + slots->free_stack_held];
 
     slots->connected[client_index] = 1;
     slots->confirmed[client_index] = 0;
@@ -537,7 +542,8 @@ static void rocketnet_client_slots_erase_index( struct rocketnet_client_slots_t 
 
 // proofs/tla/RNClientSlotsLayout.tla ReleaseHandle: only the exact tenure (the
 // slot connected under this client id and generation) is released, and its
-// index is pushed at free_stack[free_stack_count++].
+// index is held at free_stack[free_stack_count + free_stack_held++] until the
+// next rocketnet_client_slots_publish.
 static bool rocketnet_client_slots_release_exact( struct rocketnet_client_slots_t * slots,
                                                   uint64_t client_id,
                                                   int client_index,
@@ -569,9 +575,11 @@ static bool rocketnet_client_slots_release_exact( struct rocketnet_client_slots_
     slots->mapping_index[client_index] = -1;
     sodium_memzero( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
 
-    // this remains a dense free stack, not linked ownership state. A release pushes exactly one numeric slot and the next assign pops it immediately.
+    // this remains a dense free stack, not linked ownership state. A release
+    // holds exactly one numeric slot above the top; publish makes it poppable,
+    // so no assign takes a slot in the server update that freed it.
 
-    slots->free_stack[slots->free_stack_count++] = client_index;
+    slots->free_stack[slots->free_stack_count + slots->free_stack_held++] = client_index;
     slots->num_connected--;
 
     rocketnet_debug( "server released client slot %d", client_index );
@@ -686,6 +694,22 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     }
 }
 
+// proofs/tla/RNClientSlotsLayout.tla Publish: the held entries join the
+// poppable ones in O(1); they already sit just above the top.
+
+void rocketnet_client_slots_publish( struct rocketnet_client_slots_t * slots )
+{
+    rocketnet_assert( slots );
+    slots->free_stack_count += slots->free_stack_held;
+    slots->free_stack_held = 0;
+}
+
+int rocketnet_client_slots_num_held( const struct rocketnet_client_slots_t * slots )
+{
+    rocketnet_assert( slots );
+    return slots->free_stack_held;
+}
+
 #if ROCKETNET_DEV
 bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
@@ -725,11 +749,16 @@ bool rocketnet_client_slots_reset_witness_for_test()
     rocketnet_client_slots_confirm( slots, index );
     rocketnet_client_slots_release( slots, index );
 
+    // held until published: nothing can take it, then it is back on the stack
+
     const int * entries = rocketnet_client_slot_index_entries( slots );
-    bool clean = slots->num_connected == 0 && slots->free_stack_count == 1 && slots->free_stack[0] == 0 &&
-                 entries[0] == -1 && entries[1] == -1 && slots->slot_generation[0] == 1 &&
-                 slots->client_id[0] == 0 && slots->connected[0] == 0 && slots->mapping_index[0] == -1 &&
-                 slots->confirmed[0] == 0 && memcmp( slots->hash_key, key, sizeof( key ) ) == 0;
+    bool clean = slots->free_stack_count == 0 && slots->free_stack_held == 1 &&
+                 rocketnet_client_slots_assign( slots, 3, 66, 2, user ) == -1;
+    rocketnet_client_slots_publish( slots );
+    clean = clean && slots->num_connected == 0 && slots->free_stack_count == 1 && slots->free_stack_held == 0 && slots->free_stack[0] == 0 &&
+            entries[0] == -1 && entries[1] == -1 && slots->slot_generation[0] == 1 &&
+            slots->client_id[0] == 0 && slots->connected[0] == 0 && slots->mapping_index[0] == -1 &&
+            slots->confirmed[0] == 0 && memcmp( slots->hash_key, key, sizeof( key ) ) == 0;
     for ( int i = 0; clean && i < ROCKETNET_USER_DATA_BYTES; i++ )
     {
         clean = slots->user_data[i] == 0;
@@ -746,6 +775,7 @@ bool rocketnet_client_slots_reset_witness_for_test()
     if ( clean )
     {
         rocketnet_client_slots_release( slots, 0 );
+        rocketnet_client_slots_publish( slots );
     }
     if ( clean )
     {

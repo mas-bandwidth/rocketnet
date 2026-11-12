@@ -253,10 +253,11 @@ refusals is the game's decision:
      numbered when its first piece is planned for sending, so a large message
      counts every piece at once, sent or not. Both getters return `false`
      and write zeroes when that connection is not connected.
-   - A slot can lose its client and take the next one inside one server
-     update, so the getter never returns `false` between them. Keep the
-     saved count per connection, keyed by
-     `rocketnet_server_client_connection_id`, not per slot.
+   - A freed slot reads not connected after the update that frees it, and no
+     new client takes it before the next update, so a game that reads each
+     slot once after every update sees `false` between two connections.
+     A game that reads less often keeps its count per connection, keyed by
+     `rocketnet_server_client_connection_id`.
    - This server drops a client it has been unable to send to for 5 s: its
      starts to that client are being refused and nothing it sent has been
      acknowledged for 5 s.
@@ -269,7 +270,7 @@ void drop_unreachable_clients( struct rocketnet_server_t * server, uint64_t * co
 {
     for ( int i = 0; i < max_clients; i++ )
     {
-        /* a slot reused inside one update keeps answering true: start over when its connection changes */
+        /* keyed by connection, so it holds however often it is called: start over when the connection changes */
         const uint64_t connection = rocketnet_server_client_connection_id( server, i );
         if ( connection != connection_seen[i] )
         {

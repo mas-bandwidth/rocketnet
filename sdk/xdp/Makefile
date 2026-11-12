@@ -2,6 +2,9 @@
 # the same object with the same flags in cmake/EmbedXdp.cmake and embeds it;
 # a server host needs neither this Makefile nor clang.
 MULTIARCH := $(shell $(CC) -dumpmachine | sed 's/-pc-/-/;s/-unknown-/-/')
+# bpfel or bpfeb: the byte order of $(CC)'s target, as cmake/EmbedXdp.cmake
+# takes it from CMAKE_C_BYTE_ORDER, never clang's own host.
+BPF_TARGET := $(shell printf '__BYTE_ORDER__\n' | $(CC) -E -P - | sed 's/^1234$$/bpfel/;s/^4321$$/bpfeb/')
 # ROCKETNET_HISTORY_PACKETS sets the kernel replay window and
 # ROCKETNET_MAX_CLIENTS sizes the replay map: pass the library build's values
 # when they are not the defaults (make ROCKETNET_MAX_CLIENTS=10000). Unset, the
@@ -11,4 +14,4 @@ XDP_LIMITS := $(if $(ROCKETNET_HISTORY_PACKETS),-DROCKETNET_HISTORY_PACKETS=$(RO
 # path-mapping flags, so the object is byte-identical to the embedded one.
 ROOT := $(abspath $(CURDIR)/../..)
 server_xdp.o: server_xdp.c ../rocketnet.h ../rocketnet_wire.h ../rocketnet_xdp_limits.h ../rocketnet_history.h
-	cd $(ROOT) && clang -D__linux__ -D__BPF__ $(XDP_LIMITS) -ffreestanding -O2 -g -I/usr/include/$(MULTIARCH) -Isdk -fdebug-compilation-dir=. -ffile-prefix-map=$(ROOT)=. -ffile-prefix-map=$(CURDIR)=. -target bpf -c sdk/xdp/server_xdp.c -o $(CURDIR)/server_xdp.o
+	cd $(ROOT) && clang -D__linux__ -D__BPF__ $(XDP_LIMITS) -ffreestanding -O2 -g -I/usr/include/$(MULTIARCH) -Isdk -fdebug-compilation-dir=. -ffile-prefix-map=$(ROOT)=. -ffile-prefix-map=$(CURDIR)=. -target $(BPF_TARGET) -c sdk/xdp/server_xdp.c -o $(CURDIR)/server_xdp.o

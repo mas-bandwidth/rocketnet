@@ -100,6 +100,11 @@ static struct server_replay_marks_client_t server_replay_marks_add_client( struc
     client.mapping = rocketnet_encryption_map_add( fixture->map, address, ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE );
     rocketnet_unit_check( client.mapping >= 0 );
 
+    // the client arrives in a later update than any release before it: that
+    // update's end has published the freed slots
+
+    rocketnet_client_slots_publish( fixture->slots );
+
     const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( fixture->map, client.mapping );
     client.slot = rocketnet_client_slots_assign( fixture->slots, client_id, client.mapping,
                                                  owner_generation, user_data );
@@ -379,6 +384,7 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof( user_data ) );
+    rocketnet_client_slots_publish( fixture.slots );   // stronger than the server: no walk between
     const int slot = rocketnet_client_slots_assign( fixture.slots, 200, -1, 200, user_data );
     rocketnet_unit_check( slot == client.slot );
 

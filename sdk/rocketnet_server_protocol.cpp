@@ -1178,7 +1178,19 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         rocketnet_encryption_map_owner_generation( server->encryption_map, mapping_index );
     int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index,
                                                       mapping_generation, mapping->user_data );
-    rocketnet_assert( client_index != -1 );     // num_free was checked above
+
+    // every free slot was freed in this update and is held until its end is
+    // reported (rocketnet_client_slots_publish): not denied, so the client's
+    // next response takes a slot from the next update on
+
+    if ( client_index == -1 )
+    {
+        rocketnet_assert( rocketnet_client_slots_num_held( server->client_slots ) > 0 );     // num_free was checked above
+        rocketnet_debug( "server ignored connection response. the only free slots were freed this update" );
+        counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
     rocketnet_server_connection_id_assigned( server, client_index );
 
     mapping->control->client_index = client_index;
@@ -1255,12 +1267,13 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
 
-    // the reason is NONE: the integrity limit is neither the client's
-    // goodbye nor a timeout
+    // the reason is PROTOCOL_VIOLATION, as the client's end reads it
+    // (rocketnet_message_client.cpp): the integrity limit is neither the
+    // client's goodbye nor a timeout
 
     if ( client_index != -1 )
     {
-        rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_NONE );
+        rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
         counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     }
     else
@@ -1890,6 +1903,15 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT]++;
         }
     }
+
+    // proofs/tla/RNClientSlotsLayout.tla Publish and proofs/tla/RNSlots.tla
+    // EveryEndSeen: the slots freed since the last update
+    // (this receive batch, this sweep, kicks between updates) become
+    // assignable only now, after the batch, so the update that ended a
+    // connection reports the end and its reason before the slot is reused
+    // (rocketnet_server_disconnect_reason).
+
+    rocketnet_client_slots_publish( server->client_slots );
 }
 
 void rocketnet_server_protocol_note_missing_mapping( struct rocketnet_server_protocol_t * server )

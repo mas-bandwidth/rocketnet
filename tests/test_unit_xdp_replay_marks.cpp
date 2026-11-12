@@ -471,6 +471,7 @@ static void test_xdp_transport_replay_marks_released_sessions_coalesce_forgets()
         const struct rocketnet_address_t address = replay_marks_ipv4( session < 3 ? 50000 : 50001 );
         const int mapping = rocketnet_encryption_map_add( map, &address, 1005.0 );
         rocketnet_unit_check( mapping >= 0 );
+        rocketnet_client_slots_publish( slots );        // the last session's update has ended
         const int slot = rocketnet_client_slots_assign( slots, (uint64_t) ( 100 + session ), mapping,
                                                         rocketnet_encryption_map_owner_generation( map, mapping ), user_data );
         rocketnet_unit_check( slot >= 0 );
@@ -554,6 +555,7 @@ static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_m
     const int new_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( new_mapping >= 0 );
 
+    rocketnet_client_slots_publish( slots );        // the update that freed the old slot has ended
     const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping,
                                                         rocketnet_encryption_map_owner_generation( map, new_mapping ), user_data );
     rocketnet_unit_check( new_slot >= 0 );
@@ -673,6 +675,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     // a new session from A, in another slot, before the held delete lands;
     // the kernel refuses the delete again in the commit of its first update
 
+    rocketnet_client_slots_publish( slots );        // the update that freed old_slot_a has ended
     const int other_slot = rocketnet_client_slots_assign( slots, 300, -1, 300, user_data );
     rocketnet_unit_check( other_slot >= 0 );
 
@@ -715,6 +718,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
     const int new_mapping_b = rocketnet_encryption_map_add( map, &b, 1005.0 );
     rocketnet_unit_check( new_mapping_b >= 0 );
 
+    rocketnet_client_slots_publish( slots );        // stronger than the server: no walk between
     const int new_slot_b = rocketnet_client_slots_assign( slots, 500, new_mapping_b,
                                                           rocketnet_encryption_map_owner_generation( map, new_mapping_b ), user_data );
     rocketnet_unit_check( new_slot_b == old_slot_b );
@@ -794,6 +798,7 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     const int new_mapping = rocketnet_encryption_map_add( map, &a, 1005.0 );
     rocketnet_unit_check( new_mapping >= 0 );
 
+    rocketnet_client_slots_publish( slots );        // stronger than the server: no walk between
     const int new_slot = rocketnet_client_slots_assign( slots, 200, new_mapping,
                                                         rocketnet_encryption_map_owner_generation( map, new_mapping ), user_data );
     rocketnet_unit_check( new_slot == old_slot );

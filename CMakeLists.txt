@@ -298,7 +298,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     elseif(NOT TARGET RocketNet::Bpf OR NOT TARGET RocketNet::Xdp)
         message(STATUS "XDP off: libbpf or AF_XDP headers/library were not found, so XDP is compiled out of this build")
         set(ROCKETNET_XDP OFF)
+    elseif(NOT CMAKE_C_BYTE_ORDER MATCHES "^(LITTLE|BIG)_ENDIAN$")
+        message(STATUS "XDP off: the target's byte order is not known, so the BPF program cannot be compiled for it and XDP is compiled out of this build")
+        set(ROCKETNET_XDP OFF)
     endif()
+endif()
+# The BPF program is compiled for the target's byte order (bpfel or bpfeb),
+# never the build host's: the kernel that loads it runs on the target.
+set(ROCKETNET_BPF_TARGET "")
+if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
+    set(ROCKETNET_BPF_TARGET bpfel)
+elseif(CMAKE_C_BYTE_ORDER STREQUAL "BIG_ENDIAN")
+    set(ROCKETNET_BPF_TARGET bpfeb)
 endif()
 # One value for every target in the tree: the library, the unit suite, the
 # functional suite and the tools agree on whether the XDP transport exists.
@@ -309,13 +320,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     execute_process(COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
         OUTPUT_VARIABLE ROCKETNET_MULTIARCH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
-        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_MULTIARCH}\n${ROCKETNET_HISTORY_PACKETS}\n${ROCKETNET_MAX_CLIENTS}\n")
+        CONTENT "${ROCKETNET_BPF_CLANG}\n${ROCKETNET_BPF_TARGET}\n${ROCKETNET_MULTIARCH}\n${ROCKETNET_HISTORY_PACKETS}\n${ROCKETNET_MAX_CLIENTS}\n")
     add_custom_command(OUTPUT "${ROCKETNET_XDP_HEADER}"
         COMMAND "${CMAKE_COMMAND}"
             "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
             "-DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/generated"
             "-DXXD=${ROCKETNET_XXD}"
             "-DCLANG=${ROCKETNET_BPF_CLANG}"
+            "-DBPF_TARGET=${ROCKETNET_BPF_TARGET}"
             "-DMULTIARCH=${ROCKETNET_MULTIARCH}"
             "-DHISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}"
             "-DMAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}"

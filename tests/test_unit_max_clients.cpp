@@ -322,6 +322,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
     const uint64_t replacement = UINT64_C( 0xF0000010A5A5A5A5 );
     check( rocketnet_client_slots_test_hash_index( slots, replacement ) == wanted );
+    rocketnet_client_slots_publish( slots );        // the server update's end
     check( rocketnet_client_slots_assign( slots, replacement, 99, replacement, user_data ) == middle );
     check( rocketnet_client_slots_handle( slots, middle, &handles[middle] ) );
     check( handles[middle].client_id == replacement );
@@ -469,6 +470,7 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     }
 
     check( rocketnet_client_slots_num_free( slots ) == released_count );
+    rocketnet_client_slots_publish( slots );        // the server update's end
 
     int untouched = 0;
     for ( int i = 0; i < capacity; ++i )
@@ -640,6 +642,7 @@ static void test_client_slots_refusals()
     check( rocketnet_client_slots_assign( slots, 100, 0, 7, user_data ) == 0 );
     check( rocketnet_client_slots_assign( slots, 150, 1, 5, user_data ) == 1 );
     rocketnet_client_slots_release( slots, 1 );
+    rocketnet_client_slots_publish( slots );        // the server update's end: slot 1 is the next pop
 
     rocketnet_assert_function( slots_quiet_assert );
 
