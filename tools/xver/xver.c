@@ -566,6 +566,12 @@ static int run_server( const char * address, int max_clients )
     memcpy( config.backend_public_key, backend_key, sizeof( backend_key ) );
     config.max_clients = max_clients;
     config.per_client_send_kbps = XV_KBPS;
+#if defined( ROCKETNET_RECEIVE_ALLOWANCE_FACTOR )
+    // The clients send at XV_KBPS, past the default receive allowance's
+    // 1000 kbps: a server whose clients send more than the default must
+    // raise per_client_receive_kbps (the trees from v1.2 have the field).
+    config.per_client_receive_kbps = XV_KBPS;
+#endif // #if defined( ROCKETNET_RECEIVE_ALLOWANCE_FACTOR )
     g_max_message_bytes = config.max_message_bytes;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;

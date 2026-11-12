@@ -66,6 +66,7 @@ static void usage( void )
         "  --label L               the bench label written on every result line\n"
         "  --seed X                the run seed, printed at start\n"
         "  --send-kbps K           the per-client send budget\n"
+        "  --receive-kbps K        per_client_receive_kbps (0: the library default, 1000; a load that sends more per client sets it)\n"
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
         "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
@@ -1249,6 +1250,7 @@ int main( int argc, char ** argv )
     int update_hz_given = 0;
     uint32_t seed = 0;
     uint32_t send_kbps = 500;
+    int receive_kbps = 0;
 
     for ( int i = 1; i < argc; i++ )
     {
@@ -1277,6 +1279,10 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--send-kbps" ) == 0 && i + 1 < argc )
         {
             send_kbps = (uint32_t) strtoul( argv[++i], NULL, 10 );
+        }
+        else if ( strcmp( a, "--receive-kbps" ) == 0 && i + 1 < argc )
+        {
+            receive_kbps = (int) strtol( argv[++i], NULL, 10 );
         }
         else if ( strcmp( a, "--max-clients" ) == 0 && i + 1 < argc )
         {
@@ -1378,6 +1384,7 @@ int main( int argc, char ** argv )
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
+    config.per_client_receive_kbps = receive_kbps;
     config.num_xdp_queues = num_xdp_queues;
     config.simulated_latency_ms = simulator[0];
     config.simulated_jitter_ms = simulator[1];

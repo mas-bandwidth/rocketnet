@@ -788,7 +788,7 @@ int main( int argc, char ** argv )
     s_cfg.max_clients = num_clients;
     s_cfg.transport = c_cfg.transport = transport_name;
     s_cfg.loopback_hub = c_cfg.loopback_hub = hub;
-    s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000;
+    s_cfg.per_client_send_kbps = c_cfg.send_kbps = s_cfg.per_client_receive_kbps = 100000;
     s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = 2;
     s_cfg.reliable_messages_in_flight = c_cfg.reliable_messages_in_flight = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;
