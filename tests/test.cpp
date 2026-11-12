@@ -368,6 +368,11 @@ int main( int argc, char ** argv )
 
     if ( argc == 2 && argv[1][0] != '-' )
     {
+        // the same no-dialog and debug-CRT routing suite_main sets, so a heap
+        // overrun reported at its free fails this path too
+#if defined( _WIN32 )
+        suite_no_dialogs();
+#endif // #if defined( _WIN32 )
         const char * resolved = rocketnet_channels_test_resolve( argv[1] );
         result = suite_run_case( rocketnet_unit_worker, resolved ? resolved : argv[1] );
     }
