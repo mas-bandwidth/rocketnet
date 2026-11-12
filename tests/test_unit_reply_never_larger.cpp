@@ -429,6 +429,73 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
     }
 }
 
+// A full server denies each response it is sent, and every denial is sealed
+// under its own handshake sequence (standard/TRANSPORT.md: a sequence number
+// is never reused under one key): the second denial of a retransmitted
+// response carries the next sequence, and each opens under the client's
+// handshake key at the sequence it names.
+
+static void reply_open_denial( const struct rocketnet_client_protocol_t * client, const uint8_t * denial, int denial_bytes,
+                               uint64_t sequence )
+{
+    uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+    uint8_t opened[64];
+    rocketnet_unit_check( rocketnet_open_sealed_packet( opened, session_nonce, (int) sizeof( opened ), denial, denial_bytes,
+                                                        ROCKETNET_CONNECTION_DENIED_PACKET, sequence,
+                                                        ROCKETNET_TEST_PROTOCOL_ID, client->connection_salt,
+                                                        NULL, client->keys.handshake_server_to_client ) == 0 );
+}
+
+static uint64_t reply_denial_sequence( const uint8_t * denial )
+{
+    const uint8_t * p = denial + ROCKETNET_PREFILTER_BYTES;
+    return rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 1 );
+}
+
+static void test_reply_denials_never_reuse_a_sequence()
+{
+    struct reply_server_t test;
+    reply_server_setup( &test );
+
+    struct rocketnet_client_protocol_t client;
+    struct rocketnet_counters_t client_counters;
+    uint8_t client_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    const int client_response_bytes = reply_client_to_response( &test, &client, &client_counters, 0xE300ULL, client_response );
+    rocketnet_unit_check( client_response_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0, sizeof( user_data ) );
+    for ( int i = 0; i < 4; i++ )
+    {
+        rocketnet_unit_check( rocketnet_client_slots_assign( test.server.client_slots, 0xF400 + (uint64_t) i, -1,
+                                                             0xF400 + (uint64_t) i, user_data ) == i );
+    }
+
+    uint8_t first[ROCKETNET_RECEIVE_CEILING];
+    int first_bytes = 0;
+    rocketnet_unit_check( reply_process_at( &test, &test.client_address, client_response, client_response_bytes,
+                                            first, &first_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+    rocketnet_unit_check( first_bytes == ROCKETNET_CONNECTION_DENIED_WIRE_BYTES );
+
+    uint8_t second[ROCKETNET_RECEIVE_CEILING];
+    int second_bytes = 0;
+    rocketnet_unit_check( reply_process_at( &test, &test.client_address, client_response, client_response_bytes,
+                                            second, &second_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
+    rocketnet_unit_check( second_bytes == ROCKETNET_CONNECTION_DENIED_WIRE_BYTES );
+
+    const uint64_t first_sequence = reply_denial_sequence( first );
+    const uint64_t second_sequence = reply_denial_sequence( second );
+    rocketnet_unit_check( second_sequence == first_sequence + 1 );
+    rocketnet_unit_check( memcmp( first, second, (size_t) first_bytes ) != 0 );
+    reply_open_denial( &client, first, first_bytes, first_sequence );
+    reply_open_denial( &client, second, second_bytes, second_sequence );
+
+    rocketnet_counters_assert_conserved( &client_counters );
+    reply_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_reply_denials_never_reuse_a_sequence );
+
 // ---------------------------------------------------------------------------
 // Hostile provokers: truncate, extend, change the type byte, and send fixed
 // seed random bytes at every length. No answer may outgrow its provoker.
