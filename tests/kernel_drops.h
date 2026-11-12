@@ -25,17 +25,19 @@
 //   ... send, receive for up to ROCKETNET_LOSS_GATE_WAIT seconds ...
 //   check( rocketnet_loss_gate_resend( &gate, missing ) );   // then send the missing ones again
 //
-// The counters are machine-wide: another process's drops raise them too, so
-// on a loaded machine the gate can admit a resend the case's own datagrams did
-// not need. The printed line names the counter delta every time.
-//
+// Linux: the per-socket "drops" column of /proc/self/net/udp and udp6, summed
+// over the sockets this process holds (/proc/self/fd): only the case's own
+// sockets count. A machine-wide counter does not do here: on a loaded Linux
+// bench (vision, 2026-11-12) Udp InErrors rose by 309 and by 11171 during one
+// case, which would admit a resend for a loss the library made.
 // macOS: net.inet.udp.stats udps_fullsock ("dropped due to full socket
-// buffers"). Measured on the studio, 2026-11-12: a 2000-datagram burst to a
+// buffers"), the only drop count macOS keeps, and it is machine-wide: another
+// process's drops raise it too, so on a loaded Mac the gate can admit a resend
+// the case's own datagrams did not need. The printed line names the delta
+// every time. Measured on the studio, 2026-11-12: a 2000-datagram burst to a
 // 127.0.0.1 socket lost 1149, 1947 and 1987 datagrams at three receive buffer
-// sizes, and the counter rose by exactly 1149, 1947 and 1987.
-// Linux: Udp InErrors (/proc/net/snmp) and Udp6InErrors (/proc/net/snmp6),
-// which include RcvbufErrors, plus the per-CPU backlog drops of
-// /proc/net/softnet_stat (the loopback device's input queue).
+// sizes, and the counter rose by exactly 1149, 1947 and 1987; idle, it did not
+// move between reads.
 // Windows: no counter is read; the gate never admits a resend there.
 
 #include <stdint.h>
@@ -55,9 +57,52 @@
 #define ROCKETNET_LOSS_GATE_WAIT 2.0        // seconds a case waits for what it sent before it asks the gate
 #define ROCKETNET_LOSS_GATE_RESENDS 3       // resends a case may make before it fails
 
+
 #if defined( __linux__ )
 
-static inline uint64_t rocketnet_kernel_drops_snmp( const char * path, const char * prefix, const char * name )
+#include <dirent.h>
+#include <unistd.h>
+
+#define ROCKETNET_KERNEL_DROPS_MAX_SOCKETS 4096
+
+// the inodes of this process's open sockets, from /proc/self/fd
+
+static inline int rocketnet_kernel_drops_own_sockets( unsigned long * inodes, int capacity )
+{
+    DIR * dir = opendir( "/proc/self/fd" );
+    if ( !dir )
+    {
+        return 0;
+    }
+
+    int count = 0;
+    struct dirent * entry;
+    while ( ( entry = readdir( dir ) ) != NULL && count < capacity )
+    {
+        char path[300];
+        char target[64];
+        snprintf( path, sizeof( path ), "/proc/self/fd/%s", entry->d_name );
+        const ssize_t bytes = readlink( path, target, sizeof( target ) - 1 );
+        if ( bytes <= 0 )
+        {
+            continue;
+        }
+        target[bytes] = '\0';
+        unsigned long inode = 0;
+        if ( sscanf( target, "socket:[%lu]", &inode ) == 1 )
+        {
+            inodes[count++] = inode;
+        }
+    }
+
+    closedir( dir );
+    return count;
+}
+
+// the "drops" column of /proc/self/net/udp or udp6, summed over the rows whose
+// socket this process holds
+
+static inline uint64_t rocketnet_kernel_drops_table( const char * path, const unsigned long * inodes, int num_inodes )
 {
     FILE * file = fopen( path, "r" );
     if ( !file )
@@ -66,73 +111,22 @@ static inline uint64_t rocketnet_kernel_drops_snmp( const char * path, const cha
     }
 
     uint64_t result = 0;
-    char header[2048] = { 0 };
-    char line[2048];
-    const size_t prefix_bytes = strlen( prefix );
+    char line[512];
     while ( fgets( line, sizeof( line ), file ) )
     {
-        if ( prefix_bytes == 0 )
+        unsigned long inode = 0;
+        unsigned long long drops = 0;
+        if ( sscanf( line, " %*s %*s %*s %*s %*s %*s %*s %*s %*s %lu %*s %*s %llu", &inode, &drops ) != 2 )
         {
-            // /proc/net/snmp6: one "name value" pair per line
-            char field[128];
-            unsigned long long value;
-            if ( sscanf( line, "%127s %llu", field, &value ) == 2 && strcmp( field, name ) == 0 )
+            continue;
+        }
+        for ( int i = 0; i < num_inodes; i++ )
+        {
+            if ( inodes[i] == inode )
             {
-                result = value;
+                result += drops;
                 break;
             }
-            continue;
-        }
-
-        if ( strncmp( line, prefix, prefix_bytes ) != 0 )
-        {
-            continue;
-        }
-
-        if ( header[0] == 0 )
-        {
-            snprintf( header, sizeof( header ), "%s", line );
-            continue;
-        }
-
-        // the second line of the prefix holds the values, in the header's order
-        char * header_save = NULL;
-        char * value_save = NULL;
-        char * h = strtok_r( header + prefix_bytes, " \n", &header_save );
-        char * v = strtok_r( line + prefix_bytes, " \n", &value_save );
-        while ( h && v )
-        {
-            if ( strcmp( h, name ) == 0 )
-            {
-                result = strtoull( v, NULL, 10 );
-            }
-            h = strtok_r( NULL, " \n", &header_save );
-            v = strtok_r( NULL, " \n", &value_save );
-        }
-        break;
-    }
-
-    fclose( file );
-    return result;
-}
-
-static inline uint64_t rocketnet_kernel_drops_backlog()
-{
-    FILE * file = fopen( "/proc/net/softnet_stat", "r" );
-    if ( !file )
-    {
-        return 0;
-    }
-
-    uint64_t result = 0;
-    char line[1024];
-    while ( fgets( line, sizeof( line ), file ) )
-    {
-        unsigned int processed = 0;
-        unsigned int dropped = 0;
-        if ( sscanf( line, "%x %x", &processed, &dropped ) == 2 )
-        {
-            result += dropped;
         }
     }
 
@@ -142,7 +136,7 @@ static inline uint64_t rocketnet_kernel_drops_backlog()
 
 #endif // #if defined( __linux__ )
 
-// the kernel's machine-wide count of UDP datagrams it dropped on receive
+// the kernel's count of UDP datagrams it dropped on receive (per platform above)
 
 static inline uint64_t rocketnet_kernel_udp_receive_drops()
 {
@@ -156,8 +150,9 @@ static inline uint64_t rocketnet_kernel_udp_receive_drops()
     }
     return (uint64_t) stats.udps_fullsock;
 #elif defined( __linux__ )
-    return rocketnet_kernel_drops_snmp( "/proc/net/snmp", "Udp: ", "InErrors" ) + rocketnet_kernel_drops_snmp( "/proc/net/snmp6", "", "Udp6InErrors" ) +
-           rocketnet_kernel_drops_backlog();
+    static unsigned long inodes[ROCKETNET_KERNEL_DROPS_MAX_SOCKETS];
+    const int num_inodes = rocketnet_kernel_drops_own_sockets( inodes, ROCKETNET_KERNEL_DROPS_MAX_SOCKETS );
+    return rocketnet_kernel_drops_table( "/proc/self/net/udp", inodes, num_inodes ) + rocketnet_kernel_drops_table( "/proc/self/net/udp6", inodes, num_inodes );
 #else
     return 0;
 #endif
