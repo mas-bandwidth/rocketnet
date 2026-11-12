@@ -58,6 +58,52 @@ BASELINE_ADAPTATIONS = {
          '                             : "%edx");\n# else\n#  define SODIUM_RUNTIME_NO_XCR0_READ 1\n# endif\n        if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {\n'),
     ],
 }
+# Dispatch adaptations (sodium/README.md, "AEAD dispatch and AArch64"). Not
+# warning fixes: each changes which implementation runs, never what one
+# computes. The code they select is the in-repo input LOCAL_SOURCES.
+DISPATCH_ADAPTATIONS = {
+    'sodium.c': [
+        # Advanced SIMD is part of the AArch64 base architecture; the baseline
+        # sets the flag only on 32-bit ARM.
+        ('#ifndef __arm__\n    cpu_features->has_neon = 0;\n    return -1;\n#else\n',
+         '#if defined(__aarch64__)\n    cpu_features->has_neon = 1;\n    return 0;\n'
+         '#elif !defined(__arm__)\n    cpu_features->has_neon = 0;\n    return -1;\n#else\n'),
+        # The forced fallback, then AArch64 first; the x86 order is unchanged.
+        ('    implementation = &crypto_stream_chacha20_ref_implementation;\n'
+         '#if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \\\n',
+         '    implementation = &crypto_stream_chacha20_ref_implementation;\n'
+         '    if (sodium_runtime_forced_portable()) {\n        return 0;\n    }\n'
+         '#if defined(SODIUM_ROCKETNET_ARM64)\n    if (sodium_runtime_has_neon()) {\n'
+         '        implementation = &crypto_stream_chacha20_neon_implementation;\n        return 0;\n    }\n#endif\n'
+         '#if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \\\n'),
+        ('    implementation = &crypto_onetimeauth_poly1305_donna_implementation;\n'
+         '#if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)\n',
+         '    implementation = &crypto_onetimeauth_poly1305_donna_implementation;\n'
+         '    if (sodium_runtime_forced_portable()) {\n        return 0;\n    }\n'
+         '#if defined(SODIUM_ROCKETNET_ARM64)\n    if (sodium_runtime_has_neon()) {\n'
+         '        implementation = &crypto_onetimeauth_poly1305_mul64_implementation;\n        return 0;\n    }\n#endif\n'
+         '#if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)\n'),
+        # The tag comparison's 0/-1 is the public outcome: a secret-tracking
+        # build (sodium/ARM64-CONSTANT-TIME.md) marks it defined, so the
+        # branches on it are not reported; every other build is unchanged.
+        ('crypto_verify_16(const unsigned char *x, const unsigned char *y)\n{\n'
+         '    return crypto_verify_n(x, y, crypto_verify_16_BYTES);\n}\n',
+         'crypto_verify_16(const unsigned char *x, const unsigned char *y)\n{\n'
+         '    int ret = crypto_verify_n(x, y, crypto_verify_16_BYTES);\n\n'
+         '    SODIUM_DECLASSIFY(&ret, sizeof ret);\n\n    return ret;\n}\n'),
+        # The pinned IETF bodies become the "composed" AEAD implementation;
+        # the public functions dispatch (sodium/local/dispatch.c.in).
+        ('int\ncrypto_aead_chacha20poly1305_ietf_encrypt_detached(unsigned char *c,\n',
+         'static int\n_ietf_encrypt_detached_composed(unsigned char *c,\n'),
+        ('int\ncrypto_aead_chacha20poly1305_ietf_decrypt_detached(unsigned char *m,\n',
+         'static int\n_ietf_decrypt_detached_composed(unsigned char *m,\n'),
+    ],
+}
+# In-repo inputs, written for this bundle and pinned by SHA-256 in
+# sodium/manifest.json: the header part joins the generated header, the
+# sources follow every upstream source, in this order.
+LOCAL_HEADER = 'local/dispatch.h.in'
+LOCAL_SOURCES = ['local/mul64.h.in', 'local/arm64.c.in', 'local/dispatch.c.in']
 # MemorySanitizer adaptations (sodium/README.md, "MemorySanitizer"). Two
 # baseline writes reach memory through calls MSan cannot see: the raw
 # syscall(SYS_getrandom) fill and libc's explicit_bzero wipe (the build's
@@ -395,6 +441,12 @@ def main():
         baseline[name] = adapt(baseline[name], replacements, name)
     for name, replacements in SANITIZER_ADAPTATIONS.items():
         baseline[name] = adapt(baseline[name], replacements, name)
+    for name, replacements in DISPATCH_ADAPTATIONS.items():
+        baseline[name] = adapt(baseline[name], replacements, name)
+    local = {name: checked(ROOT / 'sodium' / name, manifest['local_sha256'][name]).decode('utf-8')
+             for name in [LOCAL_HEADER, *LOCAL_SOURCES]}
+    if sorted(manifest['local_sha256']) != sorted([LOCAL_HEADER, *LOCAL_SOURCES]):
+        raise SystemExit("sodium/manifest.json local_sha256 names differ from the generator's local inputs")
     for name, rules in BASELINE_CONVERSIONS.items():
         baseline[name] = convert(baseline[name], rules, name)
     baseline_guards = set(re.findall(r'^#ifndef (\w+)', baseline['sodium.h'], re.M))
@@ -461,11 +513,13 @@ int _crypto_generichash_blake2b_pick_best_implementation(void);
 int _crypto_scalarmult_curve25519_pick_best_implementation(void);
 int _crypto_stream_salsa20_pick_best_implementation(void);
 '''
+    extension_header += local[LOCAL_HEADER]
     header = baseline['sodium.h'].replace('#endif /* SODIUM_AMALGAM_H */',
                                        extension_header + '\n#endif /* SODIUM_AMALGAM_H */')
     anchor = '    _crypto_stream_chacha20_pick_best_implementation();'
     assert baseline['sodium.c'].count(anchor) == 1
     source = baseline['sodium.c'].replace(anchor, anchor + '''
+    _crypto_aead_chacha20poly1305_ietf_pick_best_implementation();
     _crypto_generichash_blake2b_pick_best_implementation();
     _crypto_scalarmult_curve25519_pick_best_implementation();
     _crypto_stream_salsa20_pick_best_implementation();''')
@@ -495,6 +549,8 @@ int _crypto_stream_salsa20_pick_best_implementation(void);
         macros = set(DEFINE.findall(files[path])) | set(names) | local_macros
         source += '\n' + ''.join(f'#undef {name}\n' for name in sorted(macros))
         source += ''.join(f'#pragma pop_macro("{name}")\n' for name in reversed(disabled))
+    for name in LOCAL_SOURCES:
+        source += push + local[name] + pop
 
     # Namespace both public and internal symbols so a static consumer may
     # link its own libsodium. Constants and function-like macros stay as

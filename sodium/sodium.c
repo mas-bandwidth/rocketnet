@@ -980,7 +980,11 @@ crypto_verify_n(const unsigned char *x_, const unsigned char *y_,
 int
 crypto_verify_16(const unsigned char *x, const unsigned char *y)
 {
-    return crypto_verify_n(x, y, crypto_verify_16_BYTES);
+    int ret = crypto_verify_n(x, y, crypto_verify_16_BYTES);
+
+    SODIUM_DECLASSIFY(&ret, sizeof ret);
+
+    return ret;
 }
 
 int
@@ -1052,7 +1056,10 @@ static CPUFeatures _cpu_features;
 static int
 _sodium_runtime_arm_cpu_features(CPUFeatures * const cpu_features)
 {
-#ifndef __arm__
+#if defined(__aarch64__)
+    cpu_features->has_neon = 1;
+    return 0;
+#elif !defined(__arm__)
     cpu_features->has_neon = 0;
     return -1;
 #else
@@ -2030,6 +2037,7 @@ sodium_init(void)
     _sodium_alloc_init();
     _crypto_onetimeauth_poly1305_pick_best_implementation();
     _crypto_stream_chacha20_pick_best_implementation();
+    _crypto_aead_chacha20poly1305_ietf_pick_best_implementation();
     _crypto_generichash_blake2b_pick_best_implementation();
     _crypto_scalarmult_curve25519_pick_best_implementation();
     _crypto_stream_salsa20_pick_best_implementation();
@@ -4200,6 +4208,15 @@ int
 _crypto_stream_chacha20_pick_best_implementation(void)
 {
     implementation = &crypto_stream_chacha20_ref_implementation;
+    if (sodium_runtime_forced_portable()) {
+        return 0;
+    }
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (sodium_runtime_has_neon()) {
+        implementation = &crypto_stream_chacha20_neon_implementation;
+        return 0;
+    }
+#endif
 #if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
     defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
     if (sodium_runtime_has_avx2()) {
@@ -5978,6 +5995,15 @@ int
 _crypto_onetimeauth_poly1305_pick_best_implementation(void)
 {
     implementation = &crypto_onetimeauth_poly1305_donna_implementation;
+    if (sodium_runtime_forced_portable()) {
+        return 0;
+    }
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (sodium_runtime_has_neon()) {
+        implementation = &crypto_onetimeauth_poly1305_mul64_implementation;
+        return 0;
+    }
+#endif
 #if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)
     if (sodium_runtime_has_sse2()) {
         #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
@@ -6083,8 +6109,8 @@ crypto_aead_chacha20poly1305_encrypt(unsigned char *c,
     return ret;
 }
 
-int
-crypto_aead_chacha20poly1305_ietf_encrypt_detached(unsigned char *c,
+static int
+_ietf_encrypt_detached_composed(unsigned char *c,
                                                    unsigned char *mac,
                                                    unsigned long long *maclen_p,
                                                    const unsigned char *m,
@@ -6239,8 +6265,8 @@ crypto_aead_chacha20poly1305_decrypt(unsigned char *m,
     return ret;
 }
 
-int
-crypto_aead_chacha20poly1305_ietf_decrypt_detached(unsigned char *m,
+static int
+_ietf_decrypt_detached_composed(unsigned char *m,
                                                    unsigned char *nsec,
                                                    const unsigned char *c,
                                                    unsigned long long clen,
@@ -34260,3 +34286,1107 @@ crypto_stream_xsalsa20_keygen(unsigned char k[crypto_stream_xsalsa20_KEYBYTES])
 #pragma GCC pop_options
 #endif
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#endif
+
+/* ===== rocketnet sodium/local/mul64.h.in ===== */
+/* Poly1305 (RFC 8439 2.5) with 64-bit limbs: the block step and the final
+ * reduction, shared by the mul64 Poly1305 and the one-pass AEAD in
+ * local/arm64.c.in, which follows it in the generated source. Kept apart, with
+ * no vector code, so proofs/cbmc/proof_poly1305_mul64.c includes this file
+ * itself. The including file supplies uint128_t, load64_le and store64_le. */
+
+#if defined(SODIUM_ROCKETNET_ARM64)
+
+/* h = (h + m + hibit * 2^128) * r mod 2^130 - 5, partly reduced.
+ * In: h2 <= 4. The sum's top limb is at most 4 + 1 + 1 = 6.
+ * r1 has its low two bits clear, so h1 * r1 * 2^128 = h1 * (r1 / 4) * 2^130
+ * = 5 * (r1 / 4) * h1 = s1 * h1 (mod p), and likewise h2 * r1 * 2^192 =
+ * s1 * h2 * 2^64. Out: h2 <= 4, so h < 2^130 + 2^128 < 2p.
+ * The bounds are proved for every input by proofs/cbmc/proof_poly1305_mul64.c. */
+#define RN_POLY_STEP(h0, h1, h2, r0, r1, s1, m, hibit)                               \
+    do {                                                                             \
+        uint128_t      t_;                                                           \
+        uint128_t      d0_;                                                          \
+        uint128_t      d1_;                                                          \
+        uint64_t       d2_;                                                          \
+        uint64_t       c_;                                                           \
+                                                                                     \
+        t_ = (uint128_t) (h0) + load64_le(m);                                        \
+        h0 = (uint64_t) t_;                                                          \
+        t_ = (uint128_t) (h1) + load64_le((m) + 8) + (uint64_t) (t_ >> 64);          \
+        h1 = (uint64_t) t_;                                                          \
+        h2 += (uint64_t) (t_ >> 64) + (hibit);                                       \
+        d0_ = (uint128_t) (h0) * (r0) + (uint128_t) (h1) * (s1);                     \
+        d1_ = (uint128_t) (h0) * (r1) + (uint128_t) (h1) * (r0) +                    \
+              (uint128_t) ((h2) * (s1));                                             \
+        d2_ = (h2) * (r0);                                                           \
+        h0 = (uint64_t) d0_;                                                         \
+        d1_ += (uint64_t) (d0_ >> 64);                                               \
+        h1 = (uint64_t) d1_;                                                         \
+        d2_ += (uint64_t) (d1_ >> 64);                                               \
+        /* fold bits 130 and up: c * 2^130 = 5c (mod p) */                           \
+        h2 = d2_ & 3;                                                                \
+        c_ = (d2_ & ~(uint64_t) 3) + (d2_ >> 2);                                     \
+        t_ = (uint128_t) (h0) + c_;                                                  \
+        h0 = (uint64_t) t_;                                                          \
+        t_ = (uint128_t) (h1) + (uint64_t) (t_ >> 64);                               \
+        h1 = (uint64_t) t_;                                                          \
+        h2 += (uint64_t) (t_ >> 64);                                                 \
+    } while (0)
+
+/* Final reduction and tag: h < 2p, so p is subtracted once when h >= p by
+ * computing g = h + 5 and keeping g when it reaches 2^130 (a mask, no
+ * branch); then the pad is added mod 2^128. */
+static void
+rn_mul64_finish(uint64_t h0, uint64_t h1, uint64_t h2, uint64_t pad0,
+                uint64_t pad1, unsigned char out[16])
+{
+    uint128_t      t;
+    uint64_t       g0;
+    uint64_t       g1;
+    uint64_t       g2;
+    uint64_t       mask;
+
+    t = (uint128_t) h0 + 5;
+    g0 = (uint64_t) t;
+    t = (uint128_t) h1 + (uint64_t) (t >> 64);
+    g1 = (uint64_t) t;
+    g2 = h2 + (uint64_t) (t >> 64);
+    mask = (uint64_t) 0 - (g2 >> 2);
+    h0 = (h0 & ~mask) | (g0 & mask);
+    h1 = (h1 & ~mask) | (g1 & mask);
+    t = (uint128_t) h0 + pad0;
+    h0 = (uint64_t) t;
+    h1 = h1 + pad1 + (uint64_t) (t >> 64);
+    store64_le(out, h0);
+    store64_le(out + 8, h1);
+}
+
+#endif /* SODIUM_ROCKETNET_ARM64 */
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#endif
+
+/* ===== rocketnet sodium/local/arm64.c.in ===== */
+/* ChaCha20, Poly1305 and the ChaCha20-Poly1305 IETF AEAD for AArch64
+ * (sodium/README.md, "AEAD dispatch and AArch64"), written for this bundle
+ * from RFC 8439 sections 2.1 to 2.8. Appended to the generated source by
+ * tools/generate_sodium.py.
+ *
+ * Constant time (sodium/ARM64-CONSTANT-TIME.md): no branch and no memory
+ * index depends on the key, the keystream, the message, the associated data
+ * or the tag. Branches and indexes depend only on lengths and the public
+ * block counter, and the one branch on the tag comparison is the result the
+ * caller is told. */
+
+#if defined(SODIUM_ROCKETNET_ARM64)
+
+#include <arm_neon.h>
+
+/* ---------- ChaCha20 (RFC 8439 2.1-2.4), four blocks per vector set ---------- */
+
+static inline uint32x4_t
+rn_neon_rotl16(uint32x4_t x)
+{
+    return vreinterpretq_u32_u16(vrev32q_u16(vreinterpretq_u16_u32(x)));
+}
+
+static inline uint32x4_t
+rn_neon_rotl12(uint32x4_t x)
+{
+    return vsriq_n_u32(vshlq_n_u32(x, 12), x, 20);
+}
+
+static inline uint32x4_t
+rn_neon_rotl7(uint32x4_t x)
+{
+    return vsriq_n_u32(vshlq_n_u32(x, 7), x, 25);
+}
+
+/* rotate each 32-bit lane left by 8 as a byte permutation */
+static const uint8_t rn_neon_rotl8_index[16] = {
+    3, 0, 1, 2, 7, 4, 5, 6, 11, 8, 9, 10, 15, 12, 13, 14
+};
+
+static inline uint32x4_t
+rn_neon_rotl8(uint32x4_t x, uint8x16_t index)
+{
+    return vreinterpretq_u32_u8(vqtbl1q_u8(vreinterpretq_u8_u32(x), index));
+}
+
+/* The 16-word input: constants, key, then words 12..15. Words 12 and 13 form
+ * a 64-bit block counter (the original layout), or word 12 is the 32-bit
+ * counter and 13..15 the nonce (IETF). The portable code carries a word-12
+ * overflow into word 13 in both layouts, and so does this code, so the output
+ * is the same bytes in every case. */
+typedef struct rn_chacha_state {
+    uint32_t w[16];
+} rn_chacha_state;
+
+#define RN_QR4(a, b, c, d)                       \
+    do {                                         \
+        a = vaddq_u32(a, b);                     \
+        d = rn_neon_rotl16(veorq_u32(d, a));     \
+        c = vaddq_u32(c, d);                     \
+        b = rn_neon_rotl12(veorq_u32(b, c));     \
+        a = vaddq_u32(a, b);                     \
+        d = rn_neon_rotl8(veorq_u32(d, a), r8);  \
+        c = vaddq_u32(c, d);                     \
+        b = rn_neon_rotl7(veorq_u32(b, c));      \
+    } while (0)
+
+/* Lane b of words 4g..4g+3 is bytes 16g..16g+15 of block b: transpose each
+ * group of four words and write the first len (<= 256) bytes of keystream
+ * XOR input. in may be NULL: keystream only. */
+static inline void
+rn_neon_out4(const uint32x4_t x[16], unsigned char *out,
+             const unsigned char *in, size_t len)
+{
+    int g;
+    int blk;
+
+    for (g = 0; g < 4; g++) {
+        const uint32x4_t wa = x[4 * g + 0];
+        const uint32x4_t wb = x[4 * g + 1];
+        const uint32x4_t wc = x[4 * g + 2];
+        const uint32x4_t wd = x[4 * g + 3];
+        const uint32x4_t t0 = vtrn1q_u32(wa, wb);
+        const uint32x4_t t1 = vtrn2q_u32(wa, wb);
+        const uint32x4_t t2 = vtrn1q_u32(wc, wd);
+        const uint32x4_t t3 = vtrn2q_u32(wc, wd);
+        uint32x4_t row[4];
+
+        row[0] = vreinterpretq_u32_u64(vtrn1q_u64(vreinterpretq_u64_u32(t0), vreinterpretq_u64_u32(t2)));
+        row[1] = vreinterpretq_u32_u64(vtrn1q_u64(vreinterpretq_u64_u32(t1), vreinterpretq_u64_u32(t3)));
+        row[2] = vreinterpretq_u32_u64(vtrn2q_u64(vreinterpretq_u64_u32(t0), vreinterpretq_u64_u32(t2)));
+        row[3] = vreinterpretq_u32_u64(vtrn2q_u64(vreinterpretq_u64_u32(t1), vreinterpretq_u64_u32(t3)));
+        for (blk = 0; blk < 4; blk++) {
+            const uint8x16_t ks = vreinterpretq_u8_u32(row[blk]);
+            const size_t off = (size_t) (64 * blk + 16 * g);
+
+            if (off + 16 <= len) {
+                if (in != NULL) {
+                    vst1q_u8(out + off, veorq_u8(ks, vld1q_u8(in + off)));
+                } else {
+                    vst1q_u8(out + off, ks);
+                }
+            } else if (off < len) {
+                /* the one partial 16-byte chunk; the length is public */
+                unsigned char tmp[16];
+                size_t        i;
+
+                vst1q_u8(tmp, ks);
+                for (i = 0; i < len - off; i++) {
+                    out[off + i] = (unsigned char) (tmp[i] ^ (in != NULL ? in[off + i] : 0));
+                }
+                sodium_memzero(tmp, sizeof tmp);
+            }
+        }
+    }
+}
+
+/* the input words as vectors, lane i holding block ctr + i's */
+static inline void
+rn_neon_input4(const rn_chacha_state *st, uint64_t ctr, uint32x4_t in_v[16])
+{
+    uint32_t c12[4];
+    uint32_t c13[4];
+    int      i;
+
+    for (i = 0; i < 4; i++) {
+        const uint64_t c = ctr + (uint64_t) i;
+
+        c12[i] = (uint32_t) c;
+        c13[i] = (uint32_t) (c >> 32);
+    }
+    for (i = 0; i < 16; i++) {
+        in_v[i] = vdupq_n_u32(st->w[i]);
+    }
+    in_v[12] = vld1q_u32(c12);
+    in_v[13] = vld1q_u32(c13);
+}
+
+/* four consecutive blocks from ctr: the first len (<= 256) bytes */
+static void
+rn_neon_blocks4(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
+                const unsigned char *in, size_t len)
+{
+    const uint8x16_t r8 = vld1q_u8(rn_neon_rotl8_index);
+    uint32x4_t       in_v[16];
+    uint32x4_t       x[16];
+    int              i;
+
+    rn_neon_input4(st, ctr, in_v);
+    {
+        uint32x4_t x0 = in_v[0], x1 = in_v[1], x2 = in_v[2], x3 = in_v[3];
+        uint32x4_t x4 = in_v[4], x5 = in_v[5], x6 = in_v[6], x7 = in_v[7];
+        uint32x4_t x8 = in_v[8], x9 = in_v[9], x10 = in_v[10], x11 = in_v[11];
+        uint32x4_t x12 = in_v[12], x13 = in_v[13], x14 = in_v[14], x15 = in_v[15];
+        int        round;
+
+        for (round = 0; round < 10; round++) {
+            RN_QR4(x0, x4, x8, x12);
+            RN_QR4(x1, x5, x9, x13);
+            RN_QR4(x2, x6, x10, x14);
+            RN_QR4(x3, x7, x11, x15);
+            RN_QR4(x0, x5, x10, x15);
+            RN_QR4(x1, x6, x11, x12);
+            RN_QR4(x2, x7, x8, x13);
+            RN_QR4(x3, x4, x9, x14);
+        }
+        x[0] = x0; x[1] = x1; x[2] = x2; x[3] = x3;
+        x[4] = x4; x[5] = x5; x[6] = x6; x[7] = x7;
+        x[8] = x8; x[9] = x9; x[10] = x10; x[11] = x11;
+        x[12] = x12; x[13] = x13; x[14] = x14; x[15] = x15;
+    }
+    for (i = 0; i < 16; i++) {
+        x[i] = vaddq_u32(x[i], in_v[i]);
+    }
+    rn_neon_out4(x, out, in, len);
+}
+
+/* Eight consecutive blocks from ctr as two interleaved sets of four, so a
+ * core with more than two vector pipes has independent work while one set
+ * waits on a rotate: the first len (<= 512, > 256) bytes. */
+static void
+rn_neon_blocks8(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
+                const unsigned char *in, size_t len)
+{
+    const uint8x16_t r8 = vld1q_u8(rn_neon_rotl8_index);
+    uint32x4_t       a_in[16];
+    uint32x4_t       b_in[16];
+    uint32x4_t       x[16];
+    uint32x4_t       y[16];
+    int              i;
+
+    rn_neon_input4(st, ctr, a_in);
+    rn_neon_input4(st, ctr + 4, b_in);
+    {
+        uint32x4_t x0 = a_in[0], x1 = a_in[1], x2 = a_in[2], x3 = a_in[3];
+        uint32x4_t x4 = a_in[4], x5 = a_in[5], x6 = a_in[6], x7 = a_in[7];
+        uint32x4_t x8 = a_in[8], x9 = a_in[9], x10 = a_in[10], x11 = a_in[11];
+        uint32x4_t x12 = a_in[12], x13 = a_in[13], x14 = a_in[14], x15 = a_in[15];
+        uint32x4_t y0 = b_in[0], y1 = b_in[1], y2 = b_in[2], y3 = b_in[3];
+        uint32x4_t y4 = b_in[4], y5 = b_in[5], y6 = b_in[6], y7 = b_in[7];
+        uint32x4_t y8 = b_in[8], y9 = b_in[9], y10 = b_in[10], y11 = b_in[11];
+        uint32x4_t y12 = b_in[12], y13 = b_in[13], y14 = b_in[14], y15 = b_in[15];
+        int        round;
+
+        for (round = 0; round < 10; round++) {
+            RN_QR4(x0, x4, x8, x12);
+            RN_QR4(y0, y4, y8, y12);
+            RN_QR4(x1, x5, x9, x13);
+            RN_QR4(y1, y5, y9, y13);
+            RN_QR4(x2, x6, x10, x14);
+            RN_QR4(y2, y6, y10, y14);
+            RN_QR4(x3, x7, x11, x15);
+            RN_QR4(y3, y7, y11, y15);
+            RN_QR4(x0, x5, x10, x15);
+            RN_QR4(y0, y5, y10, y15);
+            RN_QR4(x1, x6, x11, x12);
+            RN_QR4(y1, y6, y11, y12);
+            RN_QR4(x2, x7, x8, x13);
+            RN_QR4(y2, y7, y8, y13);
+            RN_QR4(x3, x4, x9, x14);
+            RN_QR4(y3, y4, y9, y14);
+        }
+        x[0] = x0; x[1] = x1; x[2] = x2; x[3] = x3;
+        x[4] = x4; x[5] = x5; x[6] = x6; x[7] = x7;
+        x[8] = x8; x[9] = x9; x[10] = x10; x[11] = x11;
+        x[12] = x12; x[13] = x13; x[14] = x14; x[15] = x15;
+        y[0] = y0; y[1] = y1; y[2] = y2; y[3] = y3;
+        y[4] = y4; y[5] = y5; y[6] = y6; y[7] = y7;
+        y[8] = y8; y[9] = y9; y[10] = y10; y[11] = y11;
+        y[12] = y12; y[13] = y13; y[14] = y14; y[15] = y15;
+    }
+    for (i = 0; i < 16; i++) {
+        x[i] = vaddq_u32(x[i], a_in[i]);
+        y[i] = vaddq_u32(y[i], b_in[i]);
+    }
+    rn_neon_out4(x, out, in, 256);
+    rn_neon_out4(y, out + 256, in != NULL ? in + 256 : NULL, len - 256);
+}
+
+/* One block in general-purpose registers. One block in vector rows is a
+ * single dependency chain and measured slower, so a tail of at most 64 bytes
+ * takes this. */
+#define RN_ROTL32(v, n) (((v) << (n)) | ((v) >> (32 - (n))))
+#define RN_QR1(a, b, c, d)        \
+    do {                          \
+        a += b;                   \
+        d ^= a;                   \
+        d = RN_ROTL32(d, 16);     \
+        c += d;                   \
+        b ^= c;                   \
+        b = RN_ROTL32(b, 12);     \
+        a += b;                   \
+        d ^= a;                   \
+        d = RN_ROTL32(d, 8);      \
+        c += d;                   \
+        b ^= c;                   \
+        b = RN_ROTL32(b, 7);      \
+    } while (0)
+
+static void
+rn_neon_block1(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
+               const unsigned char *m, size_t len)
+{
+    uint32_t in[16];
+    uint32_t x[16];
+    size_t   i;
+    int      w;
+
+    memcpy(in, st->w, sizeof in);
+    in[12] = (uint32_t) ctr;
+    in[13] = (uint32_t) (ctr >> 32);
+    {
+        uint32_t x0 = in[0], x1 = in[1], x2 = in[2], x3 = in[3];
+        uint32_t x4 = in[4], x5 = in[5], x6 = in[6], x7 = in[7];
+        uint32_t x8 = in[8], x9 = in[9], x10 = in[10], x11 = in[11];
+        uint32_t x12 = in[12], x13 = in[13], x14 = in[14], x15 = in[15];
+        int      round;
+
+        for (round = 0; round < 10; round++) {
+            RN_QR1(x0, x4, x8, x12);
+            RN_QR1(x1, x5, x9, x13);
+            RN_QR1(x2, x6, x10, x14);
+            RN_QR1(x3, x7, x11, x15);
+            RN_QR1(x0, x5, x10, x15);
+            RN_QR1(x1, x6, x11, x12);
+            RN_QR1(x2, x7, x8, x13);
+            RN_QR1(x3, x4, x9, x14);
+        }
+        x[0] = x0; x[1] = x1; x[2] = x2; x[3] = x3;
+        x[4] = x4; x[5] = x5; x[6] = x6; x[7] = x7;
+        x[8] = x8; x[9] = x9; x[10] = x10; x[11] = x11;
+        x[12] = x12; x[13] = x13; x[14] = x14; x[15] = x15;
+    }
+    for (w = 0; w < 16; w++) {
+        x[w] += in[w];
+    }
+    /* whole words, then the last partial word byte by byte */
+    for (i = 0; i + 4 <= len; i += 4) {
+        store32_le(out + i, x[i / 4] ^ (m != NULL ? load32_le(m + i) : 0));
+    }
+    for (; i < len; i++) {
+        out[i] = (unsigned char) ((unsigned char) (x[i / 4] >> (8 * (i % 4))) ^
+                                  (m != NULL ? m[i] : 0));
+    }
+    sodium_memzero(in, sizeof in);
+    sodium_memzero(x, sizeof x);
+}
+
+/* XOR len bytes of keystream into c (m may be NULL: keystream only), the
+ * 64-bit counter in words 12 and 13 starting at ctr */
+static void
+rn_neon_xor(const rn_chacha_state *st, uint64_t ctr, unsigned char *c,
+            const unsigned char *m, unsigned long long len)
+{
+    while (len > 256) {
+        const size_t n = len < 512 ? (size_t) len : 512;
+
+        rn_neon_blocks8(st, ctr, c, m, n);
+        ctr += 8;
+        len -= n;
+        c += n;
+        if (m != NULL) {
+            m += n;
+        }
+    }
+    if (len > 64) {
+        rn_neon_blocks4(st, ctr, c, m, (size_t) len);
+    } else if (len > 0) {
+        rn_neon_block1(st, ctr, c, m, (size_t) len);
+    }
+}
+
+static void
+rn_neon_setup(rn_chacha_state *st, const unsigned char *k)
+{
+    int i;
+
+    st->w[0] = 0x61707865U;
+    st->w[1] = 0x3320646eU;
+    st->w[2] = 0x79622d32U;
+    st->w[3] = 0x6b206574U;
+    for (i = 0; i < 8; i++) {
+        st->w[4 + i] = load32_le(k + 4 * i);
+    }
+}
+
+static int
+rn_neon_stream(unsigned char *c, unsigned long long clen,
+               const unsigned char *n, const unsigned char *k)
+{
+    rn_chacha_state st;
+
+    if (clen == 0U) {
+        return 0;
+    }
+    rn_neon_setup(&st, k);
+    st.w[12] = 0;
+    st.w[13] = 0;
+    st.w[14] = load32_le(n);
+    st.w[15] = load32_le(n + 4);
+    rn_neon_xor(&st, 0, c, NULL, clen);
+    sodium_memzero(&st, sizeof st);
+
+    return 0;
+}
+
+static int
+rn_neon_stream_ietf_ext(unsigned char *c, unsigned long long clen,
+                        const unsigned char *n, const unsigned char *k)
+{
+    rn_chacha_state st;
+
+    if (clen == 0U) {
+        return 0;
+    }
+    rn_neon_setup(&st, k);
+    st.w[13] = load32_le(n);
+    st.w[14] = load32_le(n + 4);
+    st.w[15] = load32_le(n + 8);
+    rn_neon_xor(&st, (uint64_t) st.w[13] << 32, c, NULL, clen);
+    sodium_memzero(&st, sizeof st);
+
+    return 0;
+}
+
+static int
+rn_neon_stream_xor_ic(unsigned char *c, const unsigned char *m,
+                      unsigned long long mlen, const unsigned char *n,
+                      uint64_t ic, const unsigned char *k)
+{
+    rn_chacha_state st;
+
+    if (mlen == 0U) {
+        return 0;
+    }
+    rn_neon_setup(&st, k);
+    st.w[14] = load32_le(n);
+    st.w[15] = load32_le(n + 4);
+    rn_neon_xor(&st, ic, c, m, mlen);
+    sodium_memzero(&st, sizeof st);
+
+    return 0;
+}
+
+static int
+rn_neon_stream_ietf_ext_xor_ic(unsigned char *c, const unsigned char *m,
+                               unsigned long long mlen, const unsigned char *n,
+                               uint32_t ic, const unsigned char *k)
+{
+    rn_chacha_state st;
+    uint32_t        n0;
+
+    if (mlen == 0U) {
+        return 0;
+    }
+    rn_neon_setup(&st, k);
+    n0 = load32_le(n);
+    st.w[14] = load32_le(n + 4);
+    st.w[15] = load32_le(n + 8);
+    /* word 13 is the first nonce word; a word-12 overflow carries into it,
+     * as in the portable code (the public functions refuse such lengths) */
+    rn_neon_xor(&st, ((uint64_t) n0 << 32) | ic, c, m, mlen);
+    sodium_memzero(&st, sizeof st);
+
+    return 0;
+}
+
+struct crypto_stream_chacha20_implementation
+    crypto_stream_chacha20_neon_implementation = {
+        SODIUM_C99(.stream =) rn_neon_stream,
+        SODIUM_C99(.stream_ietf_ext =) rn_neon_stream_ietf_ext,
+        SODIUM_C99(.stream_xor_ic =) rn_neon_stream_xor_ic,
+        SODIUM_C99(.stream_ietf_ext_xor_ic =) rn_neon_stream_ietf_ext_xor_ic
+    };
+
+/* ---------- Poly1305 (RFC 8439 2.5), radix 2^64 ---------- */
+
+typedef struct rn_mul64_state {
+    uint64_t      r0, r1, s1;
+    uint64_t      h0, h1, h2;
+    uint64_t      pad0, pad1;
+    uint64_t      leftover;
+    unsigned char buffer[16];
+} rn_mul64_state;
+
+static void
+rn_mul64_blocks(rn_mul64_state *st, const unsigned char *m, size_t blocks,
+                uint64_t hibit)
+{
+    const uint64_t r0 = st->r0;
+    const uint64_t r1 = st->r1;
+    const uint64_t s1 = st->s1;
+    uint64_t       h0 = st->h0;
+    uint64_t       h1 = st->h1;
+    uint64_t       h2 = st->h2;
+
+    while (blocks > 0U) {
+        RN_POLY_STEP(h0, h1, h2, r0, r1, s1, m, hibit);
+        m += 16;
+        blocks--;
+    }
+    st->h0 = h0;
+    st->h1 = h1;
+    st->h2 = h2;
+}
+
+static int
+rn_mul64_init(crypto_onetimeauth_poly1305_state *state,
+              const unsigned char *key)
+{
+    rn_mul64_state *st = (rn_mul64_state *) (void *) state;
+
+    COMPILER_ASSERT(sizeof(rn_mul64_state) <= sizeof(crypto_onetimeauth_poly1305_state));
+    st->r0 = load64_le(key) & 0x0FFFFFFC0FFFFFFFULL;
+    st->r1 = load64_le(key + 8) & 0x0FFFFFFC0FFFFFFCULL;
+    st->s1 = st->r1 + (st->r1 >> 2);
+    st->h0 = 0;
+    st->h1 = 0;
+    st->h2 = 0;
+    st->pad0 = load64_le(key + 16);
+    st->pad1 = load64_le(key + 24);
+    st->leftover = 0;
+
+    return 0;
+}
+
+static int
+rn_mul64_update(crypto_onetimeauth_poly1305_state *state,
+                const unsigned char *in, unsigned long long inlen)
+{
+    rn_mul64_state *st = (rn_mul64_state *) (void *) state;
+
+    if (st->leftover != 0U) {
+        unsigned long long want = 16U - st->leftover;
+
+        if (want > inlen) {
+            want = inlen;
+        }
+        memcpy(st->buffer + st->leftover, in, (size_t) want);
+        in += want;
+        inlen -= want;
+        st->leftover += want;
+        if (st->leftover < 16U) {
+            return 0;
+        }
+        rn_mul64_blocks(st, st->buffer, 1, 1);
+        st->leftover = 0;
+    }
+    if (inlen >= 16U) {
+        const unsigned long long whole = inlen & ~(unsigned long long) 15U;
+
+        rn_mul64_blocks(st, in, (size_t) (whole / 16U), 1);
+        in += whole;
+        inlen -= whole;
+    }
+    if (inlen > 0U) {
+        memcpy(st->buffer, in, (size_t) inlen);
+        st->leftover = inlen;
+    }
+    return 0;
+}
+
+static int
+rn_mul64_final(crypto_onetimeauth_poly1305_state *state, unsigned char *out)
+{
+    rn_mul64_state *st = (rn_mul64_state *) (void *) state;
+
+    if (st->leftover != 0U) {
+        st->buffer[st->leftover] = 1;
+        memset(st->buffer + st->leftover + 1, 0, (size_t) (15U - st->leftover));
+        rn_mul64_blocks(st, st->buffer, 1, 0);
+    }
+    rn_mul64_finish(st->h0, st->h1, st->h2, st->pad0, st->pad1, out);
+    sodium_memzero(st, sizeof *st);
+
+    return 0;
+}
+
+static int
+rn_mul64_onetimeauth(unsigned char *out, const unsigned char *in,
+                     unsigned long long inlen, const unsigned char *k)
+{
+    crypto_onetimeauth_poly1305_state state;
+
+    rn_mul64_init(&state, k);
+    rn_mul64_update(&state, in, inlen);
+    rn_mul64_final(&state, out);
+
+    return 0;
+}
+
+static int
+rn_mul64_verify(const unsigned char *h, const unsigned char *in,
+                unsigned long long inlen, const unsigned char *k)
+{
+    unsigned char correct[16];
+    int           ret;
+
+    rn_mul64_onetimeauth(correct, in, inlen, k);
+    ret = crypto_verify_16(h, correct);
+    sodium_memzero(correct, sizeof correct);
+
+    return ret;
+}
+
+struct crypto_onetimeauth_poly1305_implementation
+    crypto_onetimeauth_poly1305_mul64_implementation = {
+        SODIUM_C99(.onetimeauth =) rn_mul64_onetimeauth,
+        SODIUM_C99(.onetimeauth_verify =) rn_mul64_verify,
+        SODIUM_C99(.onetimeauth_init =) rn_mul64_init,
+        SODIUM_C99(.onetimeauth_update =) rn_mul64_update,
+        SODIUM_C99(.onetimeauth_final =) rn_mul64_final
+    };
+
+/* ---------- ChaCha20-Poly1305 IETF (RFC 8439 2.8) in one pass ----------
+ *
+ * The composed AEAD runs ChaCha20 over the message, then Poly1305 over the
+ * ciphertext. Here each 256-byte ChaCha20 step (four blocks on the vector
+ * pipes) also absorbs up to 16 Poly1305 blocks (the integer multiplier), two
+ * per double round, so the two run side by side. Same construction, same
+ * bytes: the key from block 0, the message from block 1, the MAC over
+ * ad | pad | c | pad | len(ad) | len(c), every Poly1305 block 16 bytes with
+ * the high bit set. */
+
+typedef struct rn_fused_poly {
+    uint64_t r0, r1, s1, h0, h1, h2;
+} rn_fused_poly;
+
+/* four blocks from ctr XOR in into out (len <= 256), absorbing pblocks
+ * Poly1305 blocks at pm meanwhile; every pm byte is read before out is
+ * written, so pm may equal in and out may equal in */
+static void
+rn_fused_step(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
+              const unsigned char *in, size_t len, rn_fused_poly *p,
+              const unsigned char *pm, size_t pblocks)
+{
+    const uint8x16_t r8 = vld1q_u8(rn_neon_rotl8_index);
+    const uint64_t   r0 = p->r0;
+    const uint64_t   r1 = p->r1;
+    const uint64_t   s1 = p->s1;
+    uint64_t         h0 = p->h0;
+    uint64_t         h1 = p->h1;
+    uint64_t         h2 = p->h2;
+    size_t           pdone = 0;
+    uint32x4_t       in_v[16];
+    uint32x4_t       x[16];
+    int              i;
+
+    rn_neon_input4(st, ctr, in_v);
+    {
+        uint32x4_t x0 = in_v[0], x1 = in_v[1], x2 = in_v[2], x3 = in_v[3];
+        uint32x4_t x4 = in_v[4], x5 = in_v[5], x6 = in_v[6], x7 = in_v[7];
+        uint32x4_t x8 = in_v[8], x9 = in_v[9], x10 = in_v[10], x11 = in_v[11];
+        uint32x4_t x12 = in_v[12], x13 = in_v[13], x14 = in_v[14], x15 = in_v[15];
+        int        round;
+
+        for (round = 0; round < 10; round++) {
+            RN_QR4(x0, x4, x8, x12);
+            RN_QR4(x1, x5, x9, x13);
+            if (pdone < pblocks) {
+                RN_POLY_STEP(h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1);
+                pdone++;
+            }
+            RN_QR4(x2, x6, x10, x14);
+            RN_QR4(x3, x7, x11, x15);
+            RN_QR4(x0, x5, x10, x15);
+            RN_QR4(x1, x6, x11, x12);
+            if (pdone < pblocks) {
+                RN_POLY_STEP(h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1);
+                pdone++;
+            }
+            RN_QR4(x2, x7, x8, x13);
+            RN_QR4(x3, x4, x9, x14);
+        }
+        x[0] = x0; x[1] = x1; x[2] = x2; x[3] = x3;
+        x[4] = x4; x[5] = x5; x[6] = x6; x[7] = x7;
+        x[8] = x8; x[9] = x9; x[10] = x10; x[11] = x11;
+        x[12] = x12; x[13] = x13; x[14] = x14; x[15] = x15;
+    }
+    while (pdone < pblocks) {
+        RN_POLY_STEP(h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1);
+        pdone++;
+    }
+    p->h0 = h0;
+    p->h1 = h1;
+    p->h2 = h2;
+    for (i = 0; i < 16; i++) {
+        x[i] = vaddq_u32(x[i], in_v[i]);
+    }
+    rn_neon_out4(x, out, in, len);
+}
+
+static void
+rn_fused_absorb(rn_fused_poly *p, const unsigned char *m, size_t blocks)
+{
+    const uint64_t r0 = p->r0;
+    const uint64_t r1 = p->r1;
+    const uint64_t s1 = p->s1;
+    uint64_t       h0 = p->h0;
+    uint64_t       h1 = p->h1;
+    uint64_t       h2 = p->h2;
+    size_t         i;
+
+    for (i = 0; i < blocks; i++) {
+        RN_POLY_STEP(h0, h1, h2, r0, r1, s1, m + 16 * i, 1);
+    }
+    p->h0 = h0;
+    p->h1 = h1;
+    p->h2 = h2;
+}
+
+/* n bytes as AEAD data: whole blocks, then the tail zero-padded to 16 */
+static void
+rn_fused_absorb_padded(rn_fused_poly *p, const unsigned char *m, size_t n)
+{
+    rn_fused_absorb(p, m, n / 16U);
+    if (n % 16U != 0U) {
+        unsigned char block[16];
+
+        memset(block, 0, sizeof block);
+        memcpy(block, m + (n & ~(size_t) 15U), n % 16U);
+        rn_fused_absorb(p, block, 1);
+        sodium_memzero(block, sizeof block);
+    }
+}
+
+static void
+rn_fused_poly_init(rn_fused_poly *p, uint64_t pad[2], const unsigned char key[32])
+{
+    p->r0 = load64_le(key) & 0x0FFFFFFC0FFFFFFFULL;
+    p->r1 = load64_le(key + 8) & 0x0FFFFFFC0FFFFFFCULL;
+    p->s1 = p->r1 + (p->r1 >> 2);
+    p->h0 = 0;
+    p->h1 = 0;
+    p->h2 = 0;
+    pad[0] = load64_le(key + 16);
+    pad[1] = load64_le(key + 24);
+}
+
+static void
+rn_fused_finish(rn_fused_poly *p, const uint64_t pad[2],
+                unsigned long long adlen, unsigned long long mlen,
+                unsigned char out[16])
+{
+    unsigned char lens[16];
+
+    store64_le(lens, (uint64_t) adlen);
+    store64_le(lens + 8, (uint64_t) mlen);
+    rn_fused_absorb(p, lens, 1);
+    rn_mul64_finish(p->h0, p->h1, p->h2, pad[0], pad[1], out);
+}
+
+static void
+rn_fused_setup(rn_chacha_state *st, uint64_t *ctr0, const unsigned char *npub,
+               const unsigned char *k)
+{
+    rn_neon_setup(st, k);
+    st->w[14] = load32_le(npub + 4);
+    st->w[15] = load32_le(npub + 8);
+    *ctr0 = (uint64_t) load32_le(npub) << 32;
+}
+
+static int
+rn_fused_encrypt_detached(unsigned char *c, unsigned char *mac,
+                          unsigned long long *maclen_p,
+                          const unsigned char *m, unsigned long long mlen,
+                          const unsigned char *ad, unsigned long long adlen,
+                          const unsigned char *nsec,
+                          const unsigned char *npub, const unsigned char *k)
+{
+    rn_chacha_state st;
+    rn_fused_poly   p;
+    uint64_t        pad[2];
+    uint64_t        ctr0;
+    uint64_t        ctr;
+    unsigned char   ks[256];
+    size_t          first;
+    size_t          absorbed;
+    size_t          off;
+    size_t          i;
+    const size_t    len = (size_t) mlen;
+
+    (void) nsec;
+    rn_fused_setup(&st, &ctr0, npub, k);
+
+    /* blocks 0..3 in one step: block 0 is the Poly1305 key, blocks 1..3
+     * cover message bytes 0..191 */
+    first = len < 192U ? len : 192U;
+    rn_neon_blocks4(&st, ctr0, ks, NULL, 64U + first);
+    rn_fused_poly_init(&p, pad, ks);
+    for (i = 0; i < first; i++) {
+        c[i] = (unsigned char) (ks[64 + i] ^ m[i]);
+    }
+    sodium_memzero(ks, sizeof ks);
+    rn_fused_absorb_padded(&p, ad, (size_t) adlen);
+
+    /* c[0, absorbed) is in the MAC; each step absorbs what the step before it
+     * wrote, so the MAC trails the cipher by one step */
+    absorbed = 0;
+    off = first;
+    ctr = ctr0 + 4U;
+    while (off < len) {
+        const size_t n = len - off < 256U ? len - off : 256U;
+
+        rn_fused_step(&st, ctr, c + off, m + off, n, &p, c + absorbed,
+                      (off - absorbed) / 16U);
+        absorbed = off;
+        off += n;
+        ctr += 4U;
+    }
+    rn_fused_absorb_padded(&p, c + absorbed, len - absorbed);
+    rn_fused_finish(&p, pad, adlen, mlen, mac);
+    sodium_memzero(&p, sizeof p);
+    sodium_memzero(pad, sizeof pad);
+    sodium_memzero(&st, sizeof st);
+
+    if (maclen_p != NULL) {
+        *maclen_p = crypto_aead_chacha20poly1305_ietf_ABYTES;
+    }
+    return 0;
+}
+
+/* The plaintext is written before the tag is checked, and every byte of it
+ * is zeroed when the check fails: m is defined only when this returns 0
+ * (sodium/local/dispatch.h.in). Each step reads the ciphertext it absorbs
+ * and decrypts before it writes m, so m may equal c. */
+static int
+rn_fused_decrypt_detached(unsigned char *m, unsigned char *nsec,
+                          const unsigned char *c, unsigned long long clen,
+                          const unsigned char *mac,
+                          const unsigned char *ad, unsigned long long adlen,
+                          const unsigned char *npub, const unsigned char *k)
+{
+    rn_chacha_state st;
+    rn_fused_poly   p;
+    uint64_t        pad[2];
+    uint64_t        ctr0;
+    unsigned char   computed[16];
+    const size_t    len = (size_t) clen;
+    int             ret;
+
+    (void) nsec;
+    rn_fused_setup(&st, &ctr0, npub, k);
+    if (m == NULL) {
+        /* verify only: the key block, then the MAC over the ciphertext */
+        unsigned char ks[64];
+
+        rn_neon_block1(&st, ctr0, ks, NULL, 64U);
+        rn_fused_poly_init(&p, pad, ks);
+        sodium_memzero(ks, sizeof ks);
+        rn_fused_absorb_padded(&p, ad, (size_t) adlen);
+        rn_fused_absorb_padded(&p, c, len);
+    } else {
+        unsigned char ks[256];
+        const size_t  first = len < 192U ? len : 192U;
+        size_t        off;
+        size_t        i;
+        uint64_t      ctr;
+
+        rn_neon_blocks4(&st, ctr0, ks, NULL, 64U + first);
+        rn_fused_poly_init(&p, pad, ks);
+        rn_fused_absorb_padded(&p, ad, (size_t) adlen);
+        if (first == len) {
+            rn_fused_absorb_padded(&p, c, first);
+        } else {
+            rn_fused_absorb(&p, c, first / 16U);
+        }
+        for (i = 0; i < first; i++) {
+            m[i] = (unsigned char) (ks[64 + i] ^ c[i]);
+        }
+        sodium_memzero(ks, sizeof ks);
+
+        off = first;
+        ctr = ctr0 + 4U;
+        while (off < len) {
+            const size_t  n = len - off < 256U ? len - off : 256U;
+            const int     last_partial = off + n == len && n % 16U != 0U;
+            unsigned char tail[16];
+
+            memset(tail, 0, sizeof tail);
+            if (last_partial) {
+                /* read before the step overwrites it when m equals c */
+                memcpy(tail, c + off + (n & ~(size_t) 15U), n % 16U);
+            }
+            rn_fused_step(&st, ctr, m + off, c + off, n, &p, c + off, n / 16U);
+            if (last_partial) {
+                rn_fused_absorb(&p, tail, 1);
+                sodium_memzero(tail, sizeof tail);
+            }
+            off += n;
+            ctr += 4U;
+        }
+    }
+    rn_fused_finish(&p, pad, adlen, clen, computed);
+    sodium_memzero(&p, sizeof p);
+    sodium_memzero(pad, sizeof pad);
+    sodium_memzero(&st, sizeof st);
+    ret = crypto_verify_16(computed, mac);
+    sodium_memzero(computed, sizeof computed);
+    if (m == NULL) {
+        return ret;
+    }
+    if (ret != 0) {
+        memset(m, 0, len);
+        return -1;
+    }
+    ACQUIRE_FENCE;
+
+    return 0;
+}
+
+struct crypto_aead_chacha20poly1305_ietf_implementation
+    crypto_aead_chacha20poly1305_ietf_neon_fused_implementation = {
+        SODIUM_C99(.name =) "neon-fused",
+        SODIUM_C99(.encrypt_detached =) rn_fused_encrypt_detached,
+        SODIUM_C99(.decrypt_detached =) rn_fused_decrypt_detached
+    };
+
+#undef RN_QR4
+#undef RN_QR1
+#undef RN_ROTL32
+#undef RN_POLY_STEP
+
+#endif /* SODIUM_ROCKETNET_ARM64 */
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC push_options
+#endif
+
+/* ===== rocketnet sodium/local/dispatch.c.in ===== */
+/* The AEAD dispatch, the forced fallback and the selection report
+ * (sodium/README.md, "AEAD dispatch and AArch64"). Appended to the generated
+ * source by tools/generate_sodium.py, after every implementation, so it
+ * reads the pick pointers of the ChaCha20 and Poly1305 sections. */
+
+struct crypto_aead_chacha20poly1305_ietf_implementation
+    crypto_aead_chacha20poly1305_ietf_composed_implementation = {
+        SODIUM_C99(.name =) "composed",
+        SODIUM_C99(.encrypt_detached =) _ietf_encrypt_detached_composed,
+        SODIUM_C99(.decrypt_detached =) _ietf_decrypt_detached_composed
+    };
+
+static const crypto_aead_chacha20poly1305_ietf_implementation *implementation__aead =
+    &crypto_aead_chacha20poly1305_ietf_composed_implementation;
+
+int
+sodium_runtime_forced_portable(void)
+{
+#if defined(ROCKETNET_SODIUM_PORTABLE) && ROCKETNET_SODIUM_PORTABLE
+    return 1;
+#elif defined(_MSC_VER)
+    size_t bytes = 0;
+
+    return getenv_s(&bytes, NULL, 0, "ROCKETNET_SODIUM_PORTABLE") == 0 && bytes > 0;
+#else
+    return getenv("ROCKETNET_SODIUM_PORTABLE") != NULL;
+#endif
+}
+
+int
+_crypto_aead_chacha20poly1305_ietf_pick_best_implementation(void)
+{
+    implementation__aead = &crypto_aead_chacha20poly1305_ietf_composed_implementation;
+    if (sodium_runtime_forced_portable()) {
+        return 0;
+    }
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (sodium_runtime_has_neon()) {
+        implementation__aead = &crypto_aead_chacha20poly1305_ietf_neon_fused_implementation;
+        return 0;
+    }
+#endif
+    return 0;
+}
+
+int
+crypto_aead_chacha20poly1305_ietf_encrypt_detached(unsigned char *c,
+                                                   unsigned char *mac,
+                                                   unsigned long long *maclen_p,
+                                                   const unsigned char *m,
+                                                   unsigned long long mlen,
+                                                   const unsigned char *ad,
+                                                   unsigned long long adlen,
+                                                   const unsigned char *nsec,
+                                                   const unsigned char *npub,
+                                                   const unsigned char *k)
+{
+    return implementation__aead->encrypt_detached(c, mac, maclen_p, m, mlen,
+                                                  ad, adlen, nsec, npub, k);
+}
+
+int
+crypto_aead_chacha20poly1305_ietf_decrypt_detached(unsigned char *m,
+                                                   unsigned char *nsec,
+                                                   const unsigned char *c,
+                                                   unsigned long long clen,
+                                                   const unsigned char *mac,
+                                                   const unsigned char *ad,
+                                                   unsigned long long adlen,
+                                                   const unsigned char *npub,
+                                                   const unsigned char *k)
+{
+    return implementation__aead->decrypt_detached(m, nsec, c, clen, mac,
+                                                  ad, adlen, npub, k);
+}
+
+const char *
+sodium_runtime_chacha20_implementation(void)
+{
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (implementation__cc20 == &crypto_stream_chacha20_neon_implementation) {
+        return "neon";
+    }
+#endif
+#if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
+    defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
+    if (implementation__cc20 == &crypto_stream_chacha20_dolbeau_avx2_implementation) {
+        return "avx2";
+    }
+#endif
+#if defined(HAVE_EMMINTRIN_H) && defined(HAVE_TMMINTRIN_H)
+    if (implementation__cc20 == &crypto_stream_chacha20_dolbeau_ssse3_implementation) {
+        return "ssse3";
+    }
+#endif
+    return "ref";
+}
+
+const char *
+sodium_runtime_poly1305_implementation(void)
+{
+#if defined(SODIUM_ROCKETNET_ARM64)
+    if (implementation__poly == &crypto_onetimeauth_poly1305_mul64_implementation) {
+        return "mul64";
+    }
+#endif
+#if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)
+    if (implementation__poly == &crypto_onetimeauth_poly1305_sse2_implementation) {
+        return "sse2";
+    }
+#endif
+    return "donna";
+}
+
+const char *
+sodium_runtime_aead_chacha20poly1305_ietf_implementation(void)
+{
+    return implementation__aead->name;
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC pop_options
+#endif
