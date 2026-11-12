@@ -936,22 +936,6 @@ inline bool suite_take_shard_option( int * argc, char ** argv, int * index, int 
     return true;
 }
 
-inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int), int shard_index = 0, int shards = 0 )
-{
-    const int n = count ? count() : 0;
-    for ( int i = 0; i < n; i++ )
-    {
-        if ( shards > 0 && suite_shard_of( name_at( i ), shards ) != shard_index )
-        {
-            continue;
-        }
-        printf( "%s\n", name_at( i ) );
-    }
-    fflush( stdout );
-
-    return 0;
-}
-
 // Calls emit( line ) for each line of output, without its line ending.
 
 template <typename F> inline void suite_for_each_line( const std::string & output, F emit )
@@ -1208,7 +1192,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
 // Keeps the collected cases of shard index of shards (suite_shard_of), in
 // suite order, and prints how many of the collected cases that is.
 
-inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards )
+inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards, bool report = true )
 {
     if ( shards == 0 )
     {
@@ -1231,8 +1215,46 @@ inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<sui
     }
     pending.resize( kept );
     results.resize( kept );
-    printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+    if ( report )
+    {
+        printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+        fflush( stdout );
+    }
+}
+
+// --list [--shard i/n]: the names a run with the same environment and shard
+// would start, chosen by the run's own code (suite_collect, then
+// suite_keep_shard), never by a second reading of the registry: the nightly
+// tier's cases are listed only under ROCKETNET_TEST_NIGHTLY=1, an exec row is
+// listed with the registered cases, and a case a shard run drops is missing
+// from that shard's list too (tools/check_test_shards.py,
+// tools/check_unit_case_coverage.py).
+
+inline int suite_list_cases( int ( *count )(), const char * ( *name_at )(int), const suite_exec * execs, int nexecs,
+                             int ( *group_of )( const char * name ), const char * exe_suffix, int shard_index, int shards )
+{
+    const std::string self = suite_executable_path();
+    if ( self.empty() )
+    {
+        printf( "check failed: could not resolve this executable\n" );
+        return 1;
+    }
+
+    std::vector<suite_case> pending;
+    std::vector<suite_result> results;
+    if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), exe_suffix ) )
+    {
+        return 1;
+    }
+    suite_keep_shard( pending, results, shard_index, shards, false );
+
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        printf( "%s\n", pending[i].name.c_str() );
+    }
     fflush( stdout );
+
+    return 0;
 }
 
 // Rows a suite omitted because their runs_here predicate is false on this
@@ -1480,7 +1502,7 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, "", shard_index, shards );
     }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
@@ -1932,7 +1954,7 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, ".exe", shard_index, shards );
     }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )

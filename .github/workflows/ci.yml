@@ -510,13 +510,18 @@ jobs:
           done
           exit $failed
 
-      # The cases this configuration compiles, for the unit-case-coverage job
+      # The cases this configuration runs, for the unit-case-coverage job
       # (tools/check_unit_case_coverage.py): every registered case must run in
       # at least one CI configuration. Nightly tier only, where every
-      # configuration runs.
+      # configuration runs. `--list` names what a run in the same environment
+      # starts (suite_list_cases), so the list and the run below both take
+      # ROCKETNET_TEST_NIGHTLY from the tier: the nightly tier's unit cases
+      # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
         if: inputs.full && matrix.leg == 'unit'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
@@ -530,6 +535,8 @@ jobs:
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
@@ -538,6 +545,8 @@ jobs:
       # as in the plain run.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
         if: runner.os == 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           bash tools/test_check_unit_no_sockets.sh
           bash tools/check_unit_no_sockets.sh ./bin/test
@@ -1397,6 +1406,8 @@ jobs:
       - name: Save the registered unit cases
         if: matrix.leg != 'c'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && matrix.leg == 'a' && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
 
       - name: Upload the registered unit cases
@@ -1412,6 +1423,8 @@ jobs:
       - name: Run tests
         if: matrix.leg == 'a'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
@@ -2063,6 +2076,8 @@ jobs:
       - name: Save the registered unit cases
         if: inputs.full && matrix.shard == '0/2'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
@@ -2078,6 +2093,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test --shard ${{ matrix.shard }}
 
       # the same locked-memory check as build-and-test; this leg does not
@@ -2855,6 +2871,8 @@ jobs:
 
       - name: Save the registered unit cases
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"
 
       - name: Upload the registered unit cases
@@ -2865,6 +2883,8 @@ jobs:
           if-no-files-found: error
 
       - name: Run tests (auto ladder) against the pinned sodium
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
 
       - name: Vendor parity against the pinned backend
