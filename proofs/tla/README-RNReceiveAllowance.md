@@ -63,4 +63,31 @@ connection stays up).
 
 ## Reading the counterexamples against the code
 
-Filled in from the bench run; see the run notes below.
+Run on amd-3, 2026-11-11, pinned tlacheck 0c97d595 and the pinned JAR, one
+110 s shard per case, two workers. The control passes with 5,199,712 distinct
+states in 43 s; each witness exits 12 on its declared invariant. Each trace was
+read by hand against the C:
+
+- **BrokenNoRefill** (`UnderRateNeverRefused`, 411,384 distinct). The correct
+  client sends its bucket and then one byte a tick; the allowance starts at 6
+  and is never refilled, so at tick 5 its sixth byte arrives over an empty
+  allowance and is refused. In the C the refill is the `time > allowance->time`
+  block of `rocketnet_server_receive_allowance_take`; with it removed the unit
+  tests `at_the_rate_never_refused`, `burst_after_silence_not_refused` and the
+  public `correct_client_never_refused` go red.
+- **BrokenSmallCap** (`UnderRateNeverRefused`, 1,331 distinct). The client
+  sends 1 byte at tick 0 and 2 at tick 1, both delivered at tick 1; a cap of
+  one tick (2) holds the first and refuses the second. The C capacity is
+  `rocketnet_server_receive_allowance_capacity`, the rate times the timeout
+  plus `ROCKETNET_SEND_BUDGET`; cut to one second, the public
+  `correct_client_never_refused` (its T-1 outage and server stall) goes red.
+- **BrokenShared** (`Isolated`, 5 distinct). One flood byte spends the shared
+  allowance and the correct client's allowance is no longer what its own
+  packets made it. The C indexes `receive_allowances[client_index]`; indexed
+  at 0, `refused_packet_does_nothing` goes red.
+- **BrokenTimeBack** (`NoMint`, 107,189 distinct). The flooder drains, the
+  time argument steps back from 1 to 0 and the refill credits the distance,
+  then the clock moves on to 2 and credits 0 to 2 again: 11 bytes accepted
+  against a bound of 6 + 2 x 2. The C adds only when `time > allowance->time`
+  and leaves the refill time otherwise; refilling on a step back turns
+  `time_back_and_jump_mint_nothing` red.
