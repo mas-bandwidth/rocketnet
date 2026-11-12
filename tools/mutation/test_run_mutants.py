@@ -4,7 +4,7 @@
 A fake ./bin/test stands in for the suite runner: it starts a job in a process
 group of its own (POSIX_SPAWN_SETPGROUP, as tests/suite_runner.h does) and
 sleeps far past the deadline. Real processes, bounded waits, a few seconds in
-all; macOS and Linux.
+all; macOS and Linux (skipped, named and counted, elsewhere).
 
 And the run's own judgement: a run that judged nothing fails. An empty
 selection and a run whose every mutant did not compile each fail with the
@@ -70,6 +70,11 @@ def wait_for(predicate, seconds):
     return predicate()
 
 
+# The cleanup controls drive POSIX process groups (posix_spawn with setpgroup,
+# killpg, SIGHUP), which Windows has not; run_mutants.py runs on Linux and macOS
+# only. On Windows the class is skipped with that reason, so a run there names
+# and counts the four (OK (skipped=4)) instead of erroring.
+@unittest.skipUnless(os.name == "posix", "POSIX process groups (posix_spawn setpgroup, killpg, SIGHUP): run_mutants.py runs on Linux and macOS only")
 class ProcessCleanupTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
