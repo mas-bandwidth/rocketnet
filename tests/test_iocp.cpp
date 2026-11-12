@@ -813,11 +813,18 @@ static void test_receive_ready_banks_fifo()
     printf( "test_iocp_transport_receive_ready_banks_fifo\n" );
 }
 
-static void test_receive_boundaries()
+// A zero-length datagram and one past the receive ceiling are each dropped
+// and counted once, the first too short and the second too large, on the
+// per-datagram receive path (URO disabled) and on the URO path where the
+// host offers it; the good datagram behind them arrives.
+
+static void test_receive_boundaries( int flags )
 {
     rocketnet_address_t bind = address( "127.0.0.1:0" );
-    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
     CHECK( transport );
+    const bool uro = ( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_URO ) != 0;
+    CHECK( !uro || ( flags & ROCKETNET_IOCP_DISABLE_URO ) == 0 );
 
     SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     CHECK( client != INVALID_SOCKET );
@@ -856,11 +863,108 @@ static void test_receive_boundaries()
     }
 
     CHECK( received == 1 && counters[ROCKETNET_IOCP_RECEIVE_DROPPED] == 2 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] == 1 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE] == 1 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_COMPLETED] == 1 );
+    CHECK( counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED] == 0 );
+    CHECK( counters[ROCKETNET_IOCP_SEND_COMPLETED] == 0 && counters[ROCKETNET_IOCP_SEND_FAILED] == 0 );
     CHECK( rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER );
     wait_stopped( transport ); // Cancellation with idle, outstanding receives too.
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
     closesocket( client );
-    printf( "test_iocp_transport_receive_boundaries\n" );
+    printf( "test_iocp_transport_receive_boundaries uro=%d\n", uro ? 1 : 0 );
+}
+
+// Each dequeue of the I/O worker that returns completions counts one batch;
+// a dequeue that times out with none counts nothing. With every receive
+// posted and nothing sent, one datagram at a time is one completion, so one
+// datagram, received before the next is sent, is exactly one batch. Run on
+// the per-datagram path and on the URO path where the host offers it.
+
+static void test_completion_batches_counted( int flags )
+{
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
+    CHECK( transport );
+    const bool uro = ( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_URO ) != 0;
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    wait_until( "IOCP receives posted", [&]()
+                { return rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER; } );
+
+    uint64_t before[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( transport, before );
+    CHECK( before[ROCKETNET_IOCP_COMPLETION_BATCHES] == 0 );
+
+    for ( int i = 0; i < 3; ++i )
+    {
+        char data[4] = { 'b', 'a', 't', (char) ( '0' + i ) };
+        CHECK( sendto( client, data, 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+
+        int received = 0;
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( received == 0 && rocketnet_platform_time() < deadline )
+        {
+            rocketnet_server_iocp_receive_packets( transport );
+
+            rocketnet_server_socket_process_packets_t * batch = rocketnet_server_iocp_process_packets( transport );
+            for ( int j = 0; j < batch->num_packets; ++j )
+            {
+                CHECK( batch->packet_bytes[j] == 4 && memcmp( batch->packet_data[j], data, 4 ) == 0 );
+                ++received;
+            }
+            if ( received == 0 )
+            {
+                rocketnet_platform_sleep( 0.001 );
+            }
+        }
+        CHECK( received == 1 );
+
+        // the batch is counted before its completion is published, so the
+        // count is final once the datagram is seen
+        uint64_t now[ROCKETNET_IOCP_NUM_COUNTERS];
+        rocketnet_server_iocp_counters( transport, now );
+        CHECK( now[ROCKETNET_IOCP_COMPLETION_BATCHES] == (uint64_t) ( i + 1 ) );
+        CHECK( now[ROCKETNET_IOCP_RECEIVE_COMPLETED] == (uint64_t) ( i + 1 ) );
+    }
+
+    uint64_t after[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( transport, after );
+    for ( int c = 0; c < ROCKETNET_IOCP_NUM_COUNTERS; ++c )
+    {
+        if ( c == ROCKETNET_IOCP_COMPLETION_BATCHES || c == ROCKETNET_IOCP_RECEIVE_COMPLETED )
+        {
+            CHECK( after[c] - before[c] == 3 );
+        }
+        else
+        {
+            CHECK( after[c] == before[c] );
+        }
+    }
+
+    wait_stopped( transport );
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    closesocket( client );
+    printf( "test_iocp_transport_completion_batches_counted uro=%d\n", uro ? 1 : 0 );
+}
+
+static void test_receive_boundaries_both_paths()
+{
+    test_receive_boundaries( 0 );
+    test_receive_boundaries( ROCKETNET_IOCP_DISABLE_URO );
+}
+
+static void test_completion_batches_both_paths()
+{
+    test_completion_batches_counted( 0 );
+    test_completion_batches_counted( ROCKETNET_IOCP_DISABLE_URO );
 }
 
 // A receive posted while an oversized datagram already waits in the socket:
@@ -2843,6 +2947,160 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     printf( "test_windows_create_refused_for_commit_is_out_of_memory\n" );
 }
 
+// Datagrams outside the wire's size bounds are dropped and counted once each:
+// zero bytes and one byte under the minimum are too short, one byte past the
+// receive ceiling (inside the slice) is too large, and one byte past the
+// slice completes with WSAEMSGSIZE and is too large too. Every one also counts
+// one size drop; the good datagram behind them arrives and nothing fails.
+
+static void test_rio_receive_size_drops_counted()
+{
+    CHECK( rocketnet_server_rio_available() );
+    static_assert( ROCKETNET_RECEIVE_CEILING + 1 < ROCKETNET_RIO_RECEIVE_SLICE_BYTES, "a too-large datagram inside the slice exists" );
+
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open( &bind );
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    uint64_t before[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, before );
+
+    static char data[ROCKETNET_RIO_RECEIVE_SLICE_BYTES + 1] = {};
+    const int sizes[] = { 0, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, ROCKETNET_RECEIVE_CEILING + 1, ROCKETNET_RIO_RECEIVE_SLICE_BYTES + 1 };
+    for ( int size : sizes )
+    {
+        CHECK( sendto( client, data, size, 0, (sockaddr *) &to, sizeof( to ) ) == size );
+    }
+    uint8_t good[FAULT_BYTES];
+    const int round = ++fault_round & 0xFF;
+    fault_mark( good, round, 0 );
+    CHECK( sendto( client, (const char *) good, FAULT_BYTES, 0, (sockaddr *) &to, sizeof( to ) ) == FAULT_BYTES );
+
+    int received = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_rio_process_packets( rio );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            CHECK( fault_index( batch->packet_data[i], batch->packet_bytes[i], round ) == 0 );
+            ++received;
+        }
+
+        if ( received == 1 && rio_counter( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE ) - before[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] == 4 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    uint64_t after[ROCKETNET_RIO_NUM_COUNTERS];
+    rocketnet_server_rio_counters( rio, after );
+    printf( "RIO size drops: received=%d short=%llu large=%llu size=%llu failed=%llu\n", received,
+            (unsigned long long) ( after[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT] - before[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT] ),
+            (unsigned long long) ( after[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE] - before[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE] ),
+            (unsigned long long) ( after[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] - before[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] ),
+            (unsigned long long) ( after[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED] - before[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED] ) );
+    CHECK( received == 1 );
+    CHECK( after[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT] - before[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT] == 2 );
+    CHECK( after[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE] - before[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE] == 2 );
+    CHECK( after[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] - before[ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE] == 4 );
+
+    // and nothing else moved but the one datagram received
+    for ( int c = 0; c < ROCKETNET_RIO_NUM_COUNTERS; ++c )
+    {
+        uint64_t moved = 0;
+        if ( c == ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT || c == ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE )
+        {
+            moved = 2;
+        }
+        else if ( c == ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE )
+        {
+            moved = 4;
+        }
+        else if ( c == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
+        {
+            moved = 1;
+        }
+        else if ( c == ROCKETNET_RIO_COUNTER_COMMITS )
+        {
+            continue; // receive re-posts may commit; not a size count
+        }
+        CHECK( after[c] - before[c] == moved );
+    }
+
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    closesocket( client );
+    printf( "test_rio_transport_receive_size_drops_counted\n" );
+}
+
+// A flush hands the fill phase only when the next phase is idle; otherwise it
+// keeps the fill phase open and counts one wait. With the worker held, two
+// flushes hand two phases and wait nothing; the third finds the next phase
+// still handed and counts exactly one wait, handing nothing. Released, every
+// staged send goes out.
+
+static void test_rio_send_waits_counted()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open( &bind );
+    rocketnet_address_t client_address;
+    rocketnet_platform_socket_t * client = fault_client( &client_address );
+    rocketnet_server_rio_test_hold_send( rio, true );
+
+    const uint64_t waits = rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS );
+    const uint64_t sent = rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT );
+    const uint64_t failed = rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
+    int rounds[3];
+
+    for ( int phase = 0; phase < 2; ++phase )
+    {
+        rounds[phase] = ++fault_round & 0xFF;
+        rio_stage( rio, &client_address, rounds[phase], 10 );
+        wait_until( "RIO phase handed", [&]()
+                    {
+            rocketnet_server_rio_send_packets(rio);
+            return rocketnet_server_rio_test_handed_phases(rio) == phase + 1; } );
+        CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS ) == waits );
+    }
+
+    // a flush that loses the mutex try returns without counting, so flush
+    // until the wait is counted, then stop at once
+
+    rounds[2] = ++fault_round & 0xFF;
+    rio_stage( rio, &client_address, rounds[2], 10 );
+    wait_until( "RIO flush waits", [&]()
+                {
+        rocketnet_server_rio_send_packets(rio);
+        return rio_counter(rio, ROCKETNET_RIO_COUNTER_SEND_WAITS) != waits; } );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_WAITS ) == waits + 1 );
+    CHECK( rocketnet_server_rio_test_handed_phases( rio ) == 2 );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT ) == sent );
+
+    rocketnet_server_rio_test_hold_send( rio, false );
+    rio_flush( rio );
+    for ( int phase = 0; phase < 3; ++phase )
+    {
+        CHECK( fault_client_receive( client, rounds[phase], 10 ) == 10 );
+    }
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT ) - sent == 30 );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED ) == failed );
+
+    rio_finish( rio, client );
+    printf( "test_rio_transport_send_waits_counted\n" );
+}
+
 struct fault_case_t
 {
     const char * name;
@@ -2851,6 +3109,10 @@ struct fault_case_t
 
 static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
+    { "test_iocp_transport_receive_boundaries", test_receive_boundaries_both_paths },
+    { "test_iocp_transport_completion_batches_counted", test_completion_batches_both_paths },
+    { "test_rio_transport_receive_size_drops_counted", test_rio_receive_size_drops_counted },
+    { "test_rio_transport_send_waits_counted", test_rio_send_waits_counted },
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
     { "test_rio_transport_socket_sets_dont_fragment", test_rio_transport_socket_sets_dont_fragment },
     { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
@@ -2893,7 +3155,6 @@ int main( int argc, char ** argv )
         test_datagrams_and_producers();
         test_receive_publication_never_waits();
         test_receive_ready_banks_fifo();
-        test_receive_boundaries();
         for ( const fault_case_t & c : fault_cases )
         {
             c.run();

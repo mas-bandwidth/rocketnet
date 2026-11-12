@@ -1322,6 +1322,19 @@ static void test_server_stop_disconnects_every_client()
     rn_test_server_wait_stopped( world.server );
     check( rocketnet_server_num_connected_clients( world.server ) == 0 );
 
+    // a stopped server's slots are valid indexes that read empty: a disconnect
+    // or a reason asked of one is no misuse, changes nothing and reads NONE
+
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_server_disconnect_client( world.server, i );
+        check( rocketnet_server_disconnect_reason( world.server, i ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    }
+    rocketnet_server_disconnect_all_clients( world.server );
+    check( rocketnet_api_misuse_count() == misuse_before );
+    check( rocketnet_server_num_connected_clients( world.server ) == 0 );
+
     // the redundant disconnect packets reach every client before any timeout
 
     for ( int step = 0; step < 20; step++ )

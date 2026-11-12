@@ -138,6 +138,8 @@ struct gso_segment_socket_t
     uint16_t plain_ports[8];
     int plain_ports_n;
     uint16_t segment_port;
+    int plain_fail;                         // nonzero: the next plain sendmmsg calls answer -1 with plain_errno
+    int plain_errno;
 };
 
 static int gso_segment_stride( const struct msghdr * header )
@@ -181,6 +183,13 @@ static int gso_segment_send( struct mmsghdr * messages, unsigned int count, void
         socket->refuse_segment--;
         socket->refusals++;
         errno = EINVAL;
+        return -1;
+    }
+
+    if ( count > 0 && gso_segment_stride( &messages[0].msg_hdr ) == 0 && socket->plain_fail > 0 )
+    {
+        socket->plain_fail--;
+        errno = socket->plain_errno;
         return -1;
     }
 
@@ -338,6 +347,70 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 }
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
+
+// a refused segmented run is resent plain, and that plain send fails too. a
+// full socket stops the resend at the first unsent packet with nothing
+// dropped; a hard error drops that one packet, counts it, and the rest of the
+// run still leaves.
+static void test_server_gso_plain_resend_failures()
+{
+    const int full_errors[2] = { EAGAIN, ENOBUFS };
+    for ( int e = 0; e < 2; e++ )
+    {
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+        check( gso );
+        rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+        struct gso_segment_socket_t socket;
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 1;
+        socket.plain_fail = 1;
+        socket.plain_errno = full_errors[e];
+        rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+        gso_segment_stage( gso, 44000, 2 );
+        check( !rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.refusals == 1 );
+        check( socket.plain_fail == 0 );
+        check( socket.plain_packets == 0 );
+
+        uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+        rocketnet_server_gso_counters( gso, counters );
+        check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 2 );
+        check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 0 );
+        check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+
+        rocketnet_server_gso_test_close( gso );
+    }
+
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.refuse_segment = 1;
+    socket.plain_fail = 1;
+    socket.plain_errno = EHOSTUNREACH;
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    gso_segment_stage( gso, 44001, 2 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.refusals == 1 );
+    check( socket.plain_fail == 0 );
+    check( socket.plain_packets == 1 );
+    check( socket.plain_ports[0] == 44001 );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 3 );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 1 );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 1 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_plain_resend_failures );
 
 // a new destination refuses a segmented run every round, interleaved with
 // accepted segmented runs to another destination: the first refusal warns,
