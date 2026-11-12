@@ -2018,6 +2018,11 @@ REGISTER_UNIT_TEST( test_client_one_update_sends_more_than_sixteen_packets );
 // rn_message_object_start, and rn_message_object_next).
 // ---------------------------------------------------------------------------
 
+// rq_run checks the server's default of at least 6 channels, so a build below
+// 8 channels, which skips the case, compiles it empty: MSVC proves that check
+// fails there and flags the code after it unreachable (C4702)
+#if ROCKETNET_MAX_CHANNELS >= 8
+
 #define RQ_CLIENTS 2
 #define RQ_ROUNDS 3
 #define RQ_TYPES 8
@@ -2248,6 +2253,11 @@ static void test_message_receive_one_queue_every_type_every_channel()
     rq_check_log( &run, &run.at_server, true );
     rq_check_log( &run, &run.at_client, false );
 }
+#else  // #if ROCKETNET_MAX_CHANNELS >= 8
+static void test_message_receive_one_queue_every_type_every_channel()
+{
+}
+#endif // #if ROCKETNET_MAX_CHANNELS >= 8
 REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
 UNIT_TEST_SKIPPED_UNLESS( test_message_receive_one_queue_every_type_every_channel, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
