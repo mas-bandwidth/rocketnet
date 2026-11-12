@@ -264,6 +264,9 @@ jobs:
     name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a DISCARDED night annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host below half its cores in load at start and end; otherwise LOW_TICK DISCARDED'
     strategy:
       fail-fast: false
       matrix:
@@ -286,6 +289,7 @@ jobs:
           echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
           if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
             echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_start at start, not below $cores cores / 2; nothing measured"
             exit 1
           fi
           set +e
@@ -296,6 +300,7 @@ jobs:
           echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
           if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
             echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_end at the end, not below $cores cores / 2; the case (exit $result) is not kept"
             exit 1
           fi
           exit "$result"

@@ -46,7 +46,27 @@ and the jobs of the newest completed one. It is red on:
               one try each until one is answered. The failure is counted, the
               listing continues, and the watch exits 1: an unreadable API is
               never a pass.
+  NO-MEASUREMENT
+              a job that may decline to measure (below) declined again
+              tonight and none of its last MEASURE_NIGHTS (7) scheduled runs
+              measured.
   BAD-ROW     a disposition row that does not parse (exit 2).
+
+A job that may end without its measurement (a load gate that voids or
+discards, a report-only leg) declares it in its job env:
+`ROCKETNET_MAY_NOT_MEASURE: <why>`, and on such a night prints
+`::warning title=UNMEASURED::<why tonight>`, which GitHub keeps as a check-run
+annotation. The watch derives the list from the files and, for each such job,
+prints
+  MEASURED <workflow> :: <job>: measured k of the last n scheduled nights ...
+and when tonight carries the annotation:
+  UNMEASURED  never counted green, and not red by itself (the summary heading
+              says UNMEASURED and the run carries a warning), or
+  NO-MEASUREMENT (red) when k is 0 over a full window of 7.
+A night measured means the job concluded success or failure without the
+annotation. Seven: low-tick load measured 3 of its last 10 nights; on a host
+that is merely busy seven unmeasured nights in a row is about 0.7^7 = 8% of
+weeks, and a host never quiet enough goes red within the week.
 
 A run still going and younger than its next firing plus GRACE is reported as
 RUNNING and the newest completed run stands for the workflow (that run itself
@@ -92,6 +112,14 @@ GRACE = datetime.timedelta(hours=3)
 # fix to land and short enough that a forgotten row surfaces before it hides a
 # second cause behind the same job name.
 ROW_MAX_AGE_DAYS = 14
+# A job that may decline to measure (job env ROCKETNET_MAY_NOT_MEASURE: <why>; it then emits a
+# `::warning title=UNMEASURED::<why tonight>` annotation) goes red when none of its last
+# MEASURE_NIGHTS scheduled runs measured. Seven nights is one week: low-tick load measured on 3 of
+# its last 10 nights (2026-11-12), so on a merely busy host seven unmeasured nights in a row come
+# about 0.7^7 = 8% of weeks, while a host that is never quiet enough goes red within one week.
+MEASURE_NIGHTS = 7
+UNMEASURED_TITLE = "UNMEASURED"
+MAY_NOT_MEASURE = "ROCKETNET_MAY_NOT_MEASURE"
 # A transient GitHub failure (5xx, a rate limit, a dropped connection) is tried four
 # times, 5 + 10 + 20 s apart; a wait GitHub names (Retry-After, X-RateLimit-Reset) is
 # honoured up to MAX_WAIT. The job's 15-minute deadline bounds the rest.
@@ -252,6 +280,23 @@ def git_since(root, name):
     return parse_time(out)
 
 
+def may_not_measure(root, name):
+    """[(display-name regex, why)] for the jobs of one workflow that declare, in their job env,
+    ROCKETNET_MAY_NOT_MEASURE: <why> (a job that can end without its measurement: a load gate,
+    a report-only leg, a skipped cell). Derived from the file, never hand-listed here."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import workflow_jobs  # noqa: E402 -- the repository's own workflow reader
+    flow = workflow_jobs.Workflow(os.path.join(root, ".github", "workflows", name))
+    found = []
+    for job in flow.jobs:
+        body = (flow.data.get("jobs") or {}).get(job.id) or {}
+        env = body.get("env") if isinstance(body, dict) else None
+        why = env.get(MAY_NOT_MEASURE) if isinstance(env, dict) else None
+        if why:
+            found.append((job.pattern(), str(why)))
+    return found
+
+
 def parse_time(text):
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
@@ -270,6 +315,22 @@ def http_fetch(url):
     request.add_header("X-GitHub-Api-Version", "2022-11-28")
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)
+
+
+def replay_fetch(file):
+    """A fetch that answers from a recorded API: a JSON object mapping each request path
+    (/repos/<repo>/...) to its response body; a path it lacks answers HTTP 404 (for a run
+    list: no runs). Used by the planted-violations rows (tools/nightly_replay.py writes one);
+    the nightly run never passes --replay."""
+    with open(file, encoding="utf-8") as f:
+        recorded = json.load(f)
+
+    def fetch(url):
+        path = urllib.parse.urlparse(url).path
+        if path not in recorded:
+            raise urllib.error.HTTPError(url, 404, "Not Found (not in the replay)", {}, None)
+        return recorded[path]
+    return fetch
 
 
 def _header(error, name):
@@ -432,9 +493,11 @@ class Watch:
         self.out = out
         self.where = dispositions_name
         self.count = {"NEW-RED": 0, "NO-VERDICT": 0, "STALE": 0, "API-ERROR": 0,
-                      "OWNED": 0, "GREEN": 0, "RUNNING": 0, "PENDING": 0}
+                      "OWNED": 0, "GREEN": 0, "RUNNING": 0, "PENDING": 0,
+                      "UNMEASURED": 0, "NO-MEASUREMENT": 0}
         self.evaluated = set()
         self.scheduled = set()
+        self.jobs_cache = {}
 
     def say(self, text):
         print(text, file=self.out)
@@ -478,7 +541,7 @@ class Watch:
         self.count["OWNED"] += 1
         self.say(f"OWNED {workflow} :: {job_name} ({what}) by {row['owner']} since {row['date']}: {row['cause']}")
 
-    def watch(self, workflow, crons, since):
+    def watch(self, workflow, crons, since, gated=None):
         self.scheduled.add(workflow)
         start = self.flagged()
         if not crons:
@@ -556,10 +619,19 @@ class Watch:
             self.no_verdict(workflow, f"(run {verdict['id']})", f"every one of its {len(jobs)} jobs was skipped")
             return
 
+        self.jobs_cache[verdict["id"]] = jobs
         earlier = None
         for job in jobs:
             conclusion = job.get("conclusion")
             name = job["name"]
+            reason = next((why for regex, why in (gated or []) if re.fullmatch(regex, name)), None)
+            if reason is not None and conclusion != "skipped":
+                try:
+                    if self.gated(workflow, job, completed, reason):
+                        continue
+                except ApiError as error:
+                    self.api_error(error)
+                    continue
             if conclusion == "success":
                 continue
             if conclusion == "skipped":
@@ -573,7 +645,7 @@ class Watch:
                     earlier = []
                     for run in completed[1:]:
                         try:
-                            earlier.append((run, self.api.run_jobs(self.repo, run["id"])))
+                            earlier.append((run, self.jobs_of(run["id"])))
                         except ApiError as error:
                             self.api_error(error)
                 good = next((run["head_sha"] for run, run_jobs in earlier
@@ -608,7 +680,55 @@ class Watch:
             self.count["GREEN"] += 1
 
     def flagged(self):
-        return sum(self.count[k] for k in ("NEW-RED", "NO-VERDICT", "STALE", "OWNED", "API-ERROR"))
+        return sum(self.count[k] for k in ("NEW-RED", "NO-VERDICT", "STALE", "OWNED", "API-ERROR",
+                                           "UNMEASURED", "NO-MEASUREMENT"))
+
+    # ------------------------------------------------ jobs that may decline to measure
+
+    def jobs_of(self, run_id):
+        if run_id not in self.jobs_cache:
+            self.jobs_cache[run_id] = self.api.run_jobs(self.repo, run_id)
+        return self.jobs_cache[run_id]
+
+    def unmeasured_note(self, job):
+        """The job's UNMEASURED annotation message, or None when it has none."""
+        notes = self.api.get(f"/repos/{self.repo}/check-runs/{job['id']}/annotations", {"per_page": 100})
+        for note in notes if isinstance(notes, list) else []:
+            if note.get("title") == UNMEASURED_TITLE:
+                return str(note.get("message", "")).strip() or "(no message)"
+        return None
+
+    def measured(self, job):
+        """True when the job concluded with a verdict and declared no UNMEASURED."""
+        if job.get("conclusion") not in ("success", "failure"):
+            return False
+        return self.unmeasured_note(job) is None
+
+    def gated(self, workflow, job, completed, reason):
+        """A job that declares ROCKETNET_MAY_NOT_MEASURE: print how many of its last MEASURE_NIGHTS
+        scheduled runs measured. Returns True when tonight it declined to measure (an UNMEASURED
+        outcome, never green; NO-MEASUREMENT, red, when none of the last MEASURE_NIGHTS measured)."""
+        name = job["name"]
+        tonight = self.unmeasured_note(job)
+        nights = completed[:MEASURE_NIGHTS]
+        measured = 0
+        for index, run in enumerate(nights):
+            if index == 0:
+                ok = tonight is None and job.get("conclusion") in ("success", "failure")
+            else:
+                same = [j for j in self.jobs_of(run["id"]) if j["name"] == name]
+                ok = bool(same) and self.measured(same[0])
+            measured += 1 if ok else 0
+        history = f"measured {measured} of the last {len(nights)} scheduled nights (window {MEASURE_NIGHTS})"
+        self.say(f"MEASURED {workflow} :: {name}: {history}; may not measure because: {reason}")
+        if tonight is None:
+            return False
+        if measured == 0 and len(nights) >= MEASURE_NIGHTS:
+            self.red("NO-MEASUREMENT", f"{workflow} :: {name}: no measurement in {MEASURE_NIGHTS} nights; "
+                     f"tonight: {tonight}")
+        else:
+            self.red("UNMEASURED", f"{workflow} :: {name}: {tonight}; {history}")
+        return True
 
     def finish_rows(self):
         for row in self.rows:
@@ -631,7 +751,11 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     parser.add_argument("--root", default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     parser.add_argument("--dispositions", default=None)
     parser.add_argument("--list", action="store_true", help="print the scheduled workflows the watch reads")
+    parser.add_argument("--replay", default=None,
+                        help="answer from a recorded API (tools/nightly_replay.py) instead of GitHub")
     args = parser.parse_args(argv)
+    if args.replay and fetch is None:
+        fetch = replay_fetch(args.replay)
 
     workflows = scheduled_workflows(args.root)
     if not workflows:
@@ -653,16 +777,24 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     repo = os.environ.get("GITHUB_REPOSITORY", "mas-bandwidth/rocketnet")
     watch = Watch(api, repo, rows, now, out, DISPOSITIONS)
     for name, crons in workflows:
-        watch.watch(name, crons, since(name))
+        try:
+            gated = may_not_measure(args.root, name)
+        except Exception as error:  # noqa: BLE001 -- a workflow the reader cannot read is red, never skipped
+            watch.no_verdict(name, "(file)", f"cannot read its jobs for {MAY_NOT_MEASURE}: {error}")
+            gated = []
+        watch.watch(name, crons, since(name), gated)
     watch.finish_rows()
 
     c = watch.count
-    failures = c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"]
+    failures = c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"] + c["NO-MEASUREMENT"]
     print(f"nightly watch: {len(workflows)} scheduled workflows, {c['GREEN']} green, {c['OWNED']} owned, "
           f"{c['RUNNING']} running, {c['PENDING']} pending; NEW-RED {c['NEW-RED']}, "
-          f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}", file=out)
-    print(f"nightly watch: {'RED' if failures else 'green'}: {failures} unowned, no-verdict, stale or api-error",
-          file=out)
+          f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}, "
+          f"UNMEASURED {c['UNMEASURED']}, NO-MEASUREMENT {c['NO-MEASUREMENT']}", file=out)
+    # an unmeasured night is its own outcome: never reported as green, red only after MEASURE_NIGHTS
+    status = "RED" if failures else ("UNMEASURED" if c["UNMEASURED"] else "green")
+    print(f"nightly watch: {status}: {failures} unowned, no-verdict, stale, api-error "
+          f"or no-measurement; {c['UNMEASURED']} unmeasured tonight (not green, not yet red)", file=out)
     if c["API-ERROR"]:
         print(f"nightly watch: RED: could not read run state for {c['API-ERROR']} request(s); "
               "what those requests cover has no verdict tonight", file=out)

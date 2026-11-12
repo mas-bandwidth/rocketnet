@@ -113,6 +113,12 @@ def evaluate_gate(
                 f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
                 f"runs=- gate={gate_us:g} verdict=VOID"
             )
+            # the nightly watch reads this annotation: a void is its own outcome, never green
+            # (tools/check_nightly_dispositions.py, UNMEASURED)
+            lines_out.append(
+                f"::warning title=UNMEASURED::frame budget VOID: host load {cur_load:.2f} over "
+                f"{cur_cores / 4.0:g} ({cur_cores} cores / 4) before run {idx + 1}; nothing measured"
+            )
             return (0 if report_only else 3), "\n".join(lines_out)
 
         if run_errors is not None and idx < len(run_errors) and run_errors[idx] is not None:

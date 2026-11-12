@@ -77,6 +77,9 @@ jobs:
     # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a VOID here exits 0 and annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'report-only on a shared fleet Mac: a host load over cores/4 voids the run (VOID, exit 0)'
     strategy:
       fail-fast: false
       matrix:

@@ -148,6 +148,9 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("VOID load=4.25 cores=16", report_ro)
         self.assertIn("verdict=VOID", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # a report-only void exits 0, so it names itself to the nightly watch
+        self.assertIn("::warning title=UNMEASURED::frame budget VOID: host load 4.25 over 4 (16 cores / 4) "
+                      "before run 1; nothing measured", report_ro)
 
         # Windows (load1=None) prints load=unavailable and does not void:
         code_win, report_win = cfb.evaluate_gate(
