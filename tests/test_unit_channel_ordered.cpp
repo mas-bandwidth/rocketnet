@@ -102,6 +102,13 @@ struct delivered_t
     const uint8_t * view;           // where the application was handed the bytes
 };
 
+// the channels a node keeps sent and received ids for: every channel the
+// build has, and never fewer than the four these cases name, so the file
+// compiles at ROCKETNET_MAX_CHANNELS 1, where a case that sends on a channel
+// the build does not have fails at its send
+
+#define ORDERED_NODE_CHANNELS ( ROCKETNET_MAX_CHANNELS < 4 ? 4 : ROCKETNET_MAX_CHANNELS )
+
 struct node_t
 {
     rocketnet_counters_t counters;
@@ -114,8 +121,8 @@ struct node_t
     std::set<uint64_t> opened;                  // replay suppression: a packet id opens once
     std::vector<uint64_t> pending_acks;         // opened since the last ack went out
     std::vector<delivered_t> delivered;         // every delivery, in order
-    std::vector<uint64_t> sent[ROCKETNET_MAX_CHANNELS];
-    std::vector<uint64_t> got[ROCKETNET_MAX_CHANNELS];
+    std::vector<uint64_t> sent[ORDERED_NODE_CHANNELS];
+    std::vector<uint64_t> got[ORDERED_NODE_CHANNELS];
     int packets_written;
     int violations;
 };
@@ -555,7 +562,7 @@ static void sim_tick( sim_t * sim, node_t * nodes[2], double dt )
 
 static bool everything_delivered( node_t * sender, node_t * receiver )
 {
-    for ( int c = 0; c < ROCKETNET_MAX_CHANNELS; c++ )
+    for ( int c = 0; c < ORDERED_NODE_CHANNELS; c++ )
     {
         if ( receiver->got[c].size() != sender->sent[c].size() )
         {
@@ -570,7 +577,7 @@ static bool everything_delivered( node_t * sender, node_t * receiver )
 
 static void check_ordered_exactly_once( node_t * sender, node_t * receiver, bool full )
 {
-    for ( int c = 0; c < ROCKETNET_MAX_CHANNELS; c++ )
+    for ( int c = 0; c < ORDERED_NODE_CHANNELS; c++ )
     {
         const std::vector<uint64_t> & sent = sender->sent[c];
         const std::vector<uint64_t> & got = receiver->got[c];
