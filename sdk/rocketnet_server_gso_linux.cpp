@@ -39,6 +39,7 @@
 // degradation resends the remainder plain and drops nothing.
 
 #include "rocketnet_server_gso.h"
+#include "rocketnet_buffer_handoff.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
@@ -199,13 +200,9 @@ struct rocketnet_server_gso_t
     // next update wakes the worker to send the rest
     std::atomic<bool> send_full{ false };
     int send_producer = 0; // game fill threads joined before main publishes
-    // proofs/tla/RNBankFifoLayout.tla Init: this literal is right for three banks only.
-    int send_free[ROCKETNET_GSO_TX_BANKS] = { 1, 2, 0 };
-    int send_free_head = 0;
-    int send_free_count = ROCKETNET_GSO_TX_BANKS - 1;
-    int send_ready[ROCKETNET_GSO_TX_BANKS] = {};
-    int send_ready_head = 0;
-    int send_ready_count = 0;
+    // the free and ready queues (sdk/rocketnet_buffer_handoff.h), under send_mutex.
+    // proofs/tla/RNBankFifoLayout.tla Init: banks 1 and 2 free, bank 0 the producer.
+    rocketnet_buffer_handoff_t<ROCKETNET_GSO_TX_BANKS> send_handoff = rocketnet_buffer_handoff_started<ROCKETNET_GSO_TX_BANKS>( 0 );
     struct rocketnet_server_gso_send_buffer_t send_banks[ROCKETNET_GSO_TX_BANKS];
 
     // TX worker-only scratch: sendmmsg headers, gather iovecs (up to a
@@ -300,7 +297,7 @@ bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
     }
     rocketnet_platform_mutex_acquire( &gso->send_mutex );
 
-    const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
+    const bool idle = gso->send_handoff.ready_count == 0 && gso->send_handoff.free_count == ROCKETNET_GSO_TX_BANKS - 1;
     rocketnet_platform_mutex_release( &gso->send_mutex );
 
     return idle;
@@ -347,18 +344,18 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
     {
         return false;
     }
-    if ( gso->send_free_count == 0 )
+
+    // main holds the producer, so at most ROCKETNET_GSO_TX_BANKS - 1 banks are
+    // ready and only an empty free FIFO refuses
+
+    const int next = rocketnet_buffer_handoff_publish( &gso->send_handoff, gso->send_producer, ROCKETNET_GSO_TX_BANKS - 1 );
+    if ( next < 0 )
     {
         rocketnet_platform_mutex_release( &gso->send_mutex );
         return false;
     }
 
-    const int old = gso->send_producer;
-    gso->send_producer = gso->send_free[gso->send_free_head];
-    gso->send_free_head = ( gso->send_free_head + 1 ) % ROCKETNET_GSO_TX_BANKS;
-    --gso->send_free_count;
-    gso->send_ready[( gso->send_ready_head + gso->send_ready_count ) % ROCKETNET_GSO_TX_BANKS] = old;
-    ++gso->send_ready_count;
+    gso->send_producer = next;
     rocketnet_platform_mutex_release( &gso->send_mutex );
 
     // Returned banks were reset by their previous owner before publication.
@@ -381,16 +378,10 @@ static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * 
 {
     *final = false;
 
-    int index = -1;
     rocketnet_platform_mutex_acquire( &gso->send_mutex );
 
-    if ( gso->send_ready_count > 0 )
-    {
-        index = gso->send_ready[gso->send_ready_head];
-        gso->send_ready_head = ( gso->send_ready_head + 1 ) % ROCKETNET_GSO_TX_BANKS;
-        --gso->send_ready_count;
-    }
-    else if ( gso->send_quit.load( std::memory_order_acquire ) )
+    int index = rocketnet_buffer_handoff_take( &gso->send_handoff );
+    if ( index < 0 && gso->send_quit.load( std::memory_order_acquire ) )
     {
         index = gso->send_producer;
         gso->send_producer = -1;
@@ -409,8 +400,7 @@ static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int 
 {
     gso->send_banks[index].num_packets.store( 0, std::memory_order_relaxed );
     rocketnet_platform_mutex_acquire( &gso->send_mutex );
-    gso->send_free[( gso->send_free_head + gso->send_free_count ) % ROCKETNET_GSO_TX_BANKS] = index;
-    ++gso->send_free_count;
+    rocketnet_buffer_handoff_release( &gso->send_handoff, index );
     rocketnet_platform_mutex_release( &gso->send_mutex );
 }
 
@@ -1556,7 +1546,7 @@ bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
     {
         return false;
     }
-    const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
+    const bool idle = gso->send_handoff.ready_count == 0 && gso->send_handoff.free_count == ROCKETNET_GSO_TX_BANKS - 1;
     rocketnet_platform_mutex_release( &gso->send_mutex );
 
     return idle;
@@ -2396,10 +2386,10 @@ bool rocketnet_server_gso_test_worker_handoff()
     rocketnet_server_gso_send_packets( gso );
     valid = valid && rocketnet_server_gso_test_stage( gso, 40000 );
     rocketnet_server_gso_send_packets( gso );
-    valid = valid && gso->send_producer == 2 && gso->send_ready_count == 2 && gso->send_free_count == 0;
+    valid = valid && gso->send_producer == 2 && gso->send_handoff.ready_count == 2 && gso->send_handoff.free_count == 0;
     valid = valid && rocketnet_server_gso_test_stage( gso, 40000 );
     rocketnet_server_gso_send_packets( gso );
-    valid = valid && gso->send_producer == 2 && gso->send_ready_count == 2;
+    valid = valid && gso->send_producer == 2 && gso->send_handoff.ready_count == 2;
 
     // The worker takes the published banks oldest first and returns each
     // only after its (here already finished) sends.
@@ -3079,7 +3069,7 @@ bool rocketnet_server_gso_test_send_shutdown_full()
     rocketnet_server_gso_send_packets( gso );
     valid = valid && rocketnet_server_gso_test_stage( gso, 40001 );
     rocketnet_server_gso_send_packets( gso );
-    valid = valid && gso->send_ready_count == 2;
+    valid = valid && gso->send_handoff.ready_count == 2;
 
     struct rocketnet_server_gso_test_shutdown_full_t full;
     memset( &full, 0, sizeof( full ) );
@@ -3203,7 +3193,7 @@ static bool rocketnet_server_gso_test_bounded_retry( int refusals, uint64_t expe
     rocketnet_server_gso_abort_packet( gso, packet_id, packet );
 
     rocketnet_server_gso_send_packets( gso );
-    valid = valid && gso->send_ready_count == 1;
+    valid = valid && gso->send_handoff.ready_count == 1;
 
     struct rocketnet_server_gso_test_bounded_retry_t retry;
     memset( &retry, 0, sizeof( retry ) );
