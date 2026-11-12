@@ -162,8 +162,18 @@ static uint8_t * production_rio_start( void * p, const rocketnet_address_t * to,
 static void production_rio_finish( void * p, uint64_t id, uint8_t * frame, int bytes ) { rocketnet_server_rio_finish_packet( (rocketnet_server_rio_t *) p, id, frame, bytes ); }
 static void production_rio_send( void * p ) { rocketnet_server_rio_send_packets( (rocketnet_server_rio_t *) p ); }
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     PRODUCTION_CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 

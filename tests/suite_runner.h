@@ -1513,16 +1513,12 @@ inline int suite_main( int argc, char ** argv,
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
-        }
-        for ( int i = 3; i < argc; i++ )
-        {
-            if ( argv[i][0] == '-' )
-            {
-                return suite_usage( argv );
-            }
         }
 
         // under a suite run the parent already captures this process, so
@@ -1542,12 +1538,13 @@ inline int suite_main( int argc, char ** argv,
         return suite_run_case( worker, argv[2] );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();
@@ -1965,26 +1962,23 @@ inline int suite_main( int argc, char ** argv,
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
-        }
-        for ( int i = 3; i < argc; i++ )
-        {
-            if ( argv[i][0] == '-' )
-            {
-                return suite_usage( argv );
-            }
         }
         return suite_run_case( worker, argv[2] );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();
