@@ -220,6 +220,13 @@ struct rocketnet_server_msgx_t
     uint64_t packets_received;
     uint64_t receive_calls;
     uint64_t receive_refused;
+
+#if ROCKETNET_DEV
+    // rocketnet_server_msgx_test_fail_sends: the next count send calls
+    // (sendmsg_x or sendto, any worker) answer -1 with error
+    std::atomic<int> test_fail_sends{ 0 };
+    std::atomic<int> test_fail_send_error{ 0 };
+#endif // #if ROCKETNET_DEV
 };
 
 // ---------------------------------------------------------------------------
@@ -586,6 +593,21 @@ void rocketnet_server_msgx_send_packets( struct rocketnet_server_msgx_t * msgx )
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: every producer empty and
 // every worker holding no bank
+#if ROCKETNET_DEV
+void rocketnet_server_msgx_test_fail_sends( struct rocketnet_server_msgx_t * msgx, int count, int error )
+{
+    rocketnet_assert( msgx );
+    msgx->test_fail_send_error.store( error, std::memory_order_relaxed );
+    msgx->test_fail_sends.store( count > 0 ? count : 0, std::memory_order_release );
+}
+
+int rocketnet_server_msgx_test_sockets_open( struct rocketnet_server_msgx_t * msgx )
+{
+    rocketnet_assert( msgx );
+    return msgx->table->num_open;
+}
+#endif // #if ROCKETNET_DEV
+
 bool rocketnet_server_msgx_send_idle( struct rocketnet_server_msgx_t * msgx )
 {
     rocketnet_assert( msgx );
@@ -672,6 +694,25 @@ static int rocketnet_server_msgx_sort( struct rocketnet_server_msgx_worker_t * w
     return count;
 }
 
+// the send seam: true when this call is to answer -1 with errno set
+static bool rocketnet_server_msgx_test_send_fails( struct rocketnet_server_msgx_t * msgx )
+{
+#if ROCKETNET_DEV
+    int pending = msgx->test_fail_sends.load( std::memory_order_acquire );
+    while ( pending > 0 )
+    {
+        if ( msgx->test_fail_sends.compare_exchange_weak( pending, pending - 1, std::memory_order_acq_rel ) )
+        {
+            errno = msgx->test_fail_send_error.load( std::memory_order_relaxed );
+            return true;
+        }
+    }
+#else
+    (void) msgx;
+#endif // #if ROCKETNET_DEV
+    return false;
+}
+
 static bool rocketnet_server_msgx_send_full_error( int error )
 {
     return error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS;
@@ -694,7 +735,7 @@ static bool rocketnet_server_msgx_send_shared( struct rocketnet_server_msgx_t * 
         return true;
     }
     worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
-    const ssize_t result = sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0,
+    const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0,
                                    (const struct sockaddr *) &sockaddr, socklen );
     if ( result >= 0 )
     {
@@ -769,7 +810,7 @@ static bool rocketnet_server_msgx_send_bank( struct rocketnet_server_msgx_t * ms
         for ( ;; )
         {
             worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
-            const ssize_t result = msgx->sendmsg_x( fd, worker->messages, (u_int) run, 0 );
+            const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : msgx->sendmsg_x( fd, worker->messages, (u_int) run, 0 );
             if ( result == run )
             {
                 worker->sent_connected.fetch_add( (uint64_t) run, std::memory_order_relaxed );

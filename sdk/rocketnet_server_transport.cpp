@@ -3381,19 +3381,27 @@ const char * rocketnet_server_transport_io_name( struct rocketnet_server_transpo
 #if ROCKETNET_DEV
 
 // the development seam the ICMP-error functional cases read the live pump
-// and the socket through (TRANSPORTS.md, ICMP errors): the portable and msgx
-// transports' instance is the portable_server_t, which owns the socket; read
-// as the socket itself, the pump was whatever bytes the owner held there
+// and the socket through (TRANSPORTS.md, ICMP errors): the portable
+// transport's instance is the portable_server_t, which owns the socket; read
+// as the socket itself, the pump was whatever bytes the owner held there.
+// On macOS the msgx server owns its sockets (sdk/rocketnet_server_msgx.h) and
+// has no one platform socket; elsewhere its row is the portable server.
 
 struct rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport );
 
 struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_for_testing( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
-    if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE || server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
+    if ( server_transport->transport == ROCKETNET_TRANSPORT_PORTABLE )
     {
         return rocketnet_portable_server_test_socket( server_transport->io.instance );
     }
+#if !( defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
+    if ( server_transport->transport == ROCKETNET_TRANSPORT_MSGX )
+    {
+        return rocketnet_portable_server_test_socket( server_transport->io.instance );
+    }
+#endif // #if !( defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
     return NULL;
 }
 

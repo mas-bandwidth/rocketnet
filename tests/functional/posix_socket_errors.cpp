@@ -51,6 +51,10 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #include <sys/stat.h>
 #endif // #if defined( __linux__ )
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#include "rocketnet_server_msgx.h"
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 // darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
 // platform layer defines for itself; the option number is the RFC 3542 one
 #if defined( __APPLE__ ) && !defined( IPV6_DONTFRAG )
@@ -178,6 +182,7 @@ static void posix_force_gso_plain( int on )
 #define POSIX_NATIVE_NONE   0
 #define POSIX_NATIVE_GSO    1
 #define POSIX_NATIVE_URING  2
+#define POSIX_NATIVE_MSGX   3   // macOS: the msgx server owns a shared socket and one per client
 
 static int posix_native_kind( const char * server_transport_io )
 {
@@ -189,6 +194,11 @@ static int posix_native_kind( const char * server_transport_io )
     if ( strcmp( server_transport_io, "io_uring" ) == 0 )
     {
         return POSIX_NATIVE_URING;
+    }
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    if ( strcmp( server_transport_io, "msgx" ) == 0 )
+    {
+        return POSIX_NATIVE_MSGX;
     }
 #else
     (void) server_transport_io;
@@ -620,6 +630,14 @@ static void posix_expect_count( const uint8_t * data, int bytes, struct posix_ex
         return;
     }
 #endif // #if defined( __linux__ )
+    if ( bytes == 0 && posix_weather_native == POSIX_NATIVE_MSGX )
+    {
+        // the msgx receive worker runs the prefilter on every datagram it
+        // reads, a zero-length one included: too short, counted
+        expect->too_short++;
+        return;
+    }
+
     if ( bytes > 0 )
     {
         posix_classify( data, bytes, expect );
@@ -1083,7 +1101,7 @@ void rocketnet_test_posix_server_receive_weather()
     {
         posix_weather_cell( ipv6, 1, "portable", "portable", "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-        posix_weather_cell( ipv6, 1, "msgx", "portable", posix_msgx_pump(), "portable" );
+        posix_weather_cell( ipv6, 1, "msgx", "portable", NULL, "portable" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if defined( __linux__ )
         // gso, then gso forced to its plain tiers (no UDP_SEGMENT, no
@@ -1390,7 +1408,12 @@ void rocketnet_test_posix_platform_send_seam()
 static void posix_server_sends_drained( struct posix_pair_t * pair )
 {
     const char * name = rocketnet_server_transport_io_name( pair->server );
-    if ( strcmp( name, "portable" ) != 0 && strcmp( name, "msgx" ) != 0 )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    const bool portable_instance = strcmp( name, "portable" ) == 0;
+#else
+    const bool portable_instance = strcmp( name, "portable" ) == 0 || strcmp( name, "msgx" ) == 0;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    if ( !portable_instance )
     {
         return;
     }
@@ -2005,6 +2028,202 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+// the msgx server owns its sockets (a shared one and one connected socket per
+// client), so its send seam is the transport's own: each injected errno meets
+// the next send calls on the TX workers. A full socket (ENOBUFS, EAGAIN)
+// keeps the bank and sends it whole once the socket takes it; ECONNREFUSED
+// sends the run again once; ENOTCONN reports the client's socket dead and
+// sends the run on the shared socket; any other errno drops the run counted
+// in SEND_FAILED. Every case ends with the connection up and traffic flowing.
+
+static uint64_t posix_msgx_counter( struct posix_pair_t * pair, int index )
+{
+    uint64_t counters[ROCKETNET_SERVER_MSGX_NUM_COUNTERS];
+    rocketnet_server_msgx_counters( (struct rocketnet_server_msgx_t *) pair->transport, counters );
+    return counters[index];
+}
+
+static void posix_msgx_wait_send_idle( struct posix_pair_t * pair )
+{
+    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) pair->transport;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_msgx_send_idle( msgx ) && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_transport_send_packets( pair->server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_send_idle( msgx ) );
+}
+
+static void posix_msgx_stage_tagged( struct posix_pair_t * pair )
+{
+    for ( int i = 0; i < 8; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
+        posix_check( frame != NULL );
+        memset( frame + context.payload_index, 0xdd, 16 );
+        frame[context.payload_index + 1] = (uint8_t) i;
+        posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
+    }
+}
+
+// the client's tagged payloads within the time limit: returns how many of
+// the eight arrived, each at most once
+static int posix_msgx_tagged_arrivals( struct posix_pair_t * pair, double seconds )
+{
+    bool seen[8] = {};
+    int arrived = 0;
+    const double deadline = rocketnet_platform_time() + seconds;
+    while ( arrived < 8 && rocketnet_platform_time() < deadline )
+    {
+        posix_pair_update( pair );
+        const int num_payloads = rocketnet_client_transport_num_payloads( pair->client );
+        for ( int k = 0; k < num_payloads; k++ )
+        {
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_client_transport_payload( pair->client, k, &payload_bytes );
+            if ( payload_bytes != 16 || payload[0] != 0xdd )
+            {
+                continue;
+            }
+            const int index = payload[1];
+            posix_check( index < 8 && !seen[index] );
+            for ( int j = 2; j < 16; j++ )
+            {
+                posix_check( payload[j] == 0xdd );
+            }
+            seen[index] = true;
+            arrived++;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    return arrived;
+}
+
+static void posix_msgx_send_seam_cell( int ipv6 )
+{
+    struct posix_pair_t pair;
+    posix_pair_create( &pair, ipv6, "msgx", "portable", NULL, "portable" );
+    posix_check( pair.native == POSIX_NATIVE_MSGX );
+
+    // the replay walk opened the client's connected socket
+    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) pair.transport;
+    const double open_deadline = rocketnet_platform_time() + 5.0;
+    while ( rocketnet_server_msgx_test_sockets_open( msgx ) != 1 && rocketnet_platform_time() < open_deadline )
+    {
+        posix_pair_update( &pair );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_test_sockets_open( msgx ) == 1 );
+
+    struct posix_msgx_seam_t
+    {
+        int error;
+        int count;
+        bool delivered;
+        int counter;            // the counter the errno moves, or -1
+    };
+
+    const struct posix_msgx_seam_t seams[] = {
+        { ENOBUFS, 3, true, -1 },
+        { EAGAIN, 3, true, -1 },
+        { ECONNREFUSED, 1, true, ROCKETNET_SERVER_MSGX_COUNTER_SEND_REFUSED },
+        { EHOSTUNREACH, 1000, false, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED },
+        { ENOTCONN, 1, true, ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_DEAD },
+    };
+
+    for ( size_t s = 0; s < sizeof( seams ) / sizeof( seams[0] ); s++ )
+    {
+        const struct posix_msgx_seam_t * seam = &seams[s];
+
+        posix_pair_update( &pair );
+        posix_msgx_wait_send_idle( &pair );
+
+        const uint64_t dropped_before = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED );
+        const uint64_t counter_before = seam->counter >= 0 ? posix_msgx_counter( &pair, seam->counter ) : 0;
+        const uint64_t failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+
+        rocketnet_server_msgx_test_fail_sends( msgx, seam->count, seam->error );
+        posix_msgx_stage_tagged( &pair );
+        rocketnet_server_transport_send_packets( pair.server );
+
+        int arrived = 0;
+        if ( seam->delivered )
+        {
+            arrived = posix_msgx_tagged_arrivals( &pair, 5.0 );
+        }
+        posix_msgx_wait_send_idle( &pair );
+        rocketnet_server_msgx_test_fail_sends( msgx, 0, 0 );
+        if ( !seam->delivered )
+        {
+            arrived = posix_msgx_tagged_arrivals( &pair, 0.05 );
+        }
+
+        const uint64_t dropped = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED ) - dropped_before;
+        const uint64_t moved = seam->counter >= 0 ? posix_msgx_counter( &pair, seam->counter ) - counter_before : 0;
+        const uint64_t failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
+
+        printf( "  msgx send seam ipv%d errno=%d (%s) x%d: arrived %d/8, dropped %llu, counter +%llu, SEND_FAILED +%llu\n", ipv6 ? 6 : 4,
+                seam->error, strerror( seam->error ), seam->count, arrived, (unsigned long long) dropped, (unsigned long long) moved,
+                (unsigned long long) failed );
+        fflush( stdout );
+
+        posix_check( failed == dropped );
+        if ( seam->delivered )
+        {
+            posix_check( arrived == 8 );
+            posix_check( dropped == 0 );
+        }
+        else
+        {
+            posix_check( arrived == 0 );
+            posix_check( dropped == 8 );
+        }
+        if ( seam->counter >= 0 )
+        {
+            posix_check( moved >= 1 );
+        }
+
+        // the next update's traffic goes whole
+        posix_msgx_stage_tagged( &pair );
+        rocketnet_server_transport_send_packets( pair.server );
+        posix_check( posix_msgx_tagged_arrivals( &pair, 5.0 ) == 8 );
+        posix_pair_check_connected( &pair );
+    }
+
+    // the dead socket was retired: the client is served on the shared socket
+    // until its cooldown ends, then its socket opens again
+    posix_check( posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_DEAD ) >= 1 );
+
+    // a socket that stays full through stop: the worker retries a bounded
+    // number of times after shutdown begins, then drops the tail counted,
+    // and the server stops with the refusal still armed
+
+    posix_pair_update( &pair );
+    posix_msgx_wait_send_idle( &pair );
+    const uint64_t dropped_before = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED );
+    const uint64_t failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
+    rocketnet_server_msgx_test_fail_sends( msgx, 1000000, ENOBUFS );
+    posix_msgx_stage_tagged( &pair );
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stop( pair.server );
+    rn_native_server_transport_wait_stopped( pair.server );
+    const uint64_t dropped = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED ) - dropped_before;
+    const uint64_t failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
+    printf( "  msgx stop ipv%d errno=ENOBUFS: dropped %llu, SEND_FAILED +%llu, stopped with the refusal armed\n", ipv6 ? 6 : 4,
+            (unsigned long long) dropped, (unsigned long long) failed );
+    fflush( stdout );
+    posix_check( rocketnet_server_msgx_send_idle( msgx ) );
+    posix_check( dropped == 8 );
+    posix_check( failed == dropped );
+    rocketnet_server_msgx_test_fail_sends( msgx, 0, 0 );
+
+    posix_pair_destroy( &pair );
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 void rocketnet_test_posix_transport_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
@@ -2012,7 +2231,7 @@ void rocketnet_test_posix_transport_send_seam()
         posix_transport_send_seam_cell( ipv6, "portable", "portable" );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
         test_msgx_send_replay_refusals_counted_apart( ipv6 );
-        posix_transport_send_seam_cell( ipv6, "msgx", "msgx" );
+        posix_msgx_send_seam_cell( ipv6 );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         test_mmsg_full_socket_logs_its_errno( ipv6 );
