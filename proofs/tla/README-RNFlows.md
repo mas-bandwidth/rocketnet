@@ -150,3 +150,34 @@ connection at the next decision. `MCRNFlows.cfg` falls from 629876 distinct
 states to 402316: the states where a slot was ended in the middle of the
 application phase are no longer reachable. The measured-cases table above is
 the revision 1.0 record.
+
+## Revision 1.1.2: the refusal inside the send
+
+Revision 1.1's `SendNeverEnds` (`phase = "application" => owner' = owner`)
+was checked against a model whose only application-phase step that changed
+`owner` was `Kick`, never enabled outside the witness (a probe
+`\A s : ~ENABLED Kick(s)` passed on `MCRNFlows.cfg`, 402,316 distinct).
+The standalone `Kick` is removed. `Send(id)` now chooses the set of
+subscribers whose memory refuses the copy (`full \in SUBSET Receivers(i)`):
+those slots get no copy and their connections go on. Under the reversed
+witness `Broken = {"sendkick"}` a refused slot's connection is ended inside
+the same send (`owner' = 0`, its queue cleared), as v1.0's send path did.
+The property is unchanged; it now reads a send in which refusals happen.
+
+| Property | Fails when | Witness |
+|---|---|---|
+| `SendNeverEnds` | a flow send ends the connection of a subscriber whose memory refused the copy | `MCRNFlowsBrokenSendKick.cfg` |
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
+|---|---|---:|---:|---:|
+| `MCRNFlows.cfg` (refusals reachable in every send) | pass | 0 | 585668 | 11.5 |
+| `MCRNFlowsBrokenSendAfterUnsubscribe.cfg` | `DeliveredOnlyToSubscribers` | 12 | 84 | 1.0 |
+| `MCRNFlowsBrokenSendKick.cfg` | `SendNeverEnds` | 13 | 183 | 1.0 |
+
+SendKick's trace (7 states): `Create`, `BeginUpdate`,
+`Connect` (`owner = <<1, 0>>`), `Observe` back to the application phase,
+`Subscribe` of slot 1, then a `Send` whose refused slot 1 is ended (`owner` to
+`<<0, 0>>`). The flow API is planned code (docs/FLOWS.md), not yet in `sdk/`,
+so there is no code line to check the trace against; the refusal it plans is
+`rn_region_send_alloc`'s, which ends nothing (`sdk/rocketnet_allocator.cpp:901`
+to 905).

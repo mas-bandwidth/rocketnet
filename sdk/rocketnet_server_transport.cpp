@@ -828,7 +828,7 @@ static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_t
 // free slots on a buffered transport, the transport's own send room on a
 // staged one, so a full staging stops the fair send pass where the next
 // unserved client waits.
-// proofs/tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
+// proofs/tla/RNServerSendFair.tla FirstVisit and LaterVisit: the shared cap each visit tests, charged per frame start, kept on abort.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )

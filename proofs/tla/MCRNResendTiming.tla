@@ -34,11 +34,7 @@
 (* RetryPlanned; its reversed witness                                      *)
 (* MCRNResendTimingBrokenRefusedOffWire.cfg puts a refused resend back     *)
 (* among the never-sent numbers and must fail it.                          *)
-(* MCRNResendTimingFilterSparse.cfg is the RTT filter on a sparse sender   *)
-(* (the previous message acked before the record's first send, nothing in *)
-(* flight since) and MCRNResendTimingBrokenSilenceOnGap.cfg its reversed  *)
-(* witness, any 1 s gap between acks a silence: it must fail               *)
-(* RefuseOnlyAfterOwedSilence.                                             *)
+(* The RTT filter (m9.2) is modelled in RNRttFilter.                      *)
 (***************************************************************************)
 EXTENDS RNResendTiming
 =============================================================================
