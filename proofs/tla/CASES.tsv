@@ -93,6 +93,9 @@ MCRNOpenAddressBrokenNoWrapTest.cfg	MCRNOpenAddress.tla	invariant	Findable	check
 MCRNOpenAddressClearLast.cfg	MCRNOpenAddress.tla	pass	-	check	rnopenaddress	required	-
 MCRNOpenAddressBrokenClearLastFull.cfg	MCRNOpenAddress.tla	invariant	EraseEnds	check	rnopenaddress	required	-
 MCRNOpenAddressTwiceCapacity.cfg	MCRNOpenAddress.tla	pass	-	check	rnopenaddress	required	-
+MCRNOpenAddressHeldCount.cfg	MCRNOpenAddress.tla	pass	-	check	rnopenaddress	required	-
+MCRNOpenAddressBrokenHeldCountInsert.cfg	MCRNOpenAddress.tla	invariant	CountExact	check	rnopenaddress	required	-
+MCRNOpenAddressBrokenHeldCountErase.cfg	MCRNOpenAddress.tla	invariant	CountExact	check	rnopenaddress	required	-
 MCRNWindow.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowSafety.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowBrokenBlockUPrime.cfg	MCRNWindow.tla	invariant	NoSlotCollision	check	rnwindow	required	-
