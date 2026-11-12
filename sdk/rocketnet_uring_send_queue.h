@@ -18,7 +18,7 @@
 // each queue that staged turns its producer over to its next bank, reset
 // before any fill sees it. The handoff of a turned bank to the queue's
 // worker, and the rule that a bank is reused only after every completion of
-// its sends, are layer L1 (proofs/tla/RNUringQueueSend.tla).
+// its sends, are layer L1 (the model RNUringQueueSend).
 //
 // Portable and pure: no ring, no socket, no thread. The slot count is a
 // runtime argument so the trace harness runs it at the model's size; the
