@@ -124,7 +124,11 @@
 #                          replayed reality -- the IRQ matcher's case set,
 #                          and the R3/R7 enforcement functions end to end
 #                          in both modes over stubs replaying captured
-#                          xdp-tools 1.6.2 output (no root, no arguments;
+#                          xdp-tools 1.6.2 output, and the whole script's
+#                          verify over a stub /proc and /sys tree with
+#                          every condition met, then each one unmet alone
+#                          (ROCKETNET_PROVISION_STUB_ROOT, a verify-only
+#                          seam every other mode refuses) (no root, no arguments;
 #                          touches only a private temp dir it creates and
 #                          removes; CI runs it); also invocable bare as
 #                          `rocketnet-provision selftest`
@@ -171,6 +175,36 @@ esac
 
 if [ "$MODE" != "selftest" ]; then
     unset R8_RELEASE R8_RUNTIME R8_CONFIG R8_PROC_CONFIG
+fi
+
+# THE STUB ROOT, for the selftest's whole-script cases: with
+# ROCKETNET_PROVISION_STUB_ROOT set, verify reads every /proc and /sys file
+# of the main flow under that directory instead, takes the caller's euid
+# from <root>/stub-euid and the kernel release from
+# <root>/proc/sys/kernel/osrelease, and says so on its first line. It is a
+# verify-only seam: every other mode refuses it, so it can never steer a
+# write, and a verify under it is a verdict about the stub, never about
+# this machine. The selftest sets it for its child runs only.
+
+FS=""
+CALLER_EUID=""
+if [ -n "${ROCKETNET_PROVISION_STUB_ROOT:-}" ]; then
+    case "$MODE" in
+        verify) ;;
+        selftest) unset ROCKETNET_PROVISION_STUB_ROOT ;;
+        *) echo "ROCKETNET_PROVISION_STUB_ROOT is set: only verify reads a stub root; $MODE refuses it (it would act on this machine from a stub's readings)" >&2; exit 2 ;;
+    esac
+fi
+if [ -n "${ROCKETNET_PROVISION_STUB_ROOT:-}" ]; then
+    FS="$ROCKETNET_PROVISION_STUB_ROOT"
+    CALLER_EUID="$(cat "$FS/stub-euid" 2>/dev/null || echo unreadable)"
+    R8_RELEASE="$(cat "$FS/proc/sys/kernel/osrelease" 2>/dev/null || echo unreadable)"
+    R8_RUNTIME="$FS/proc/sys/kernel/sched_rt_runtime_us"
+    R8_CONFIG="$FS/boot/config-$R8_RELEASE"
+    R8_PROC_CONFIG="$FS/proc/config.gz"
+    echo "rocketnet-provision: STUB ROOT $FS: every /proc and /sys read below is the stub's, not this machine's"
+else
+    CALLER_EUID="$(id -u)"
 fi
 
 if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
@@ -1067,6 +1101,121 @@ STUB
         echo "selftest FAIL: second full-flow PROPAGATION: $FULL2_UNMET_LINES UNMET lines printed but the summary counted differently"; PASS=0
     fi
 
+    # --- THE WHOLE SCRIPT ON A STUB ROOT, every condition met and then each
+    # one unmet alone (VERIFY-3 W14): the two runs above can only show that
+    # SOME condition stays unmet on the CI host, so a verify that stopped
+    # failing an unpinned irq, smt on, busy-poll unset, a non-root caller or
+    # a bad command line still passed them. Here verify reads /proc and /sys
+    # from a tree this case builds (ROCKETNET_PROVISION_STUB_ROOT), R3 and R7
+    # from the stubs, and must pass the provisioned tree and fail each
+    # broken one with exactly the UNMET lines it names ---
+
+    stub_root_met()  # $1 root: a machine provisioned for stubiface2 with 2 queues
+    {
+        rm -rf "$1"
+        mkdir -p "$1/proc/sys/kernel" "$1/proc/irq/119" "$1/proc/irq/120" "$1/proc/irq/121" "$1/proc/irq/122" \
+                 "$1/sys/devices/system/cpu/smt" "$1/sys/class/net/stubiface2"
+        echo 0 > "$1/stub-euid"
+        echo "BOOT_IMAGE=/vmlinuz root=/dev/sda1 irqaffinity=0 isolcpus=1-3 nohz_full=1-3 nosmt" > "$1/proc/cmdline"
+        echo "1-3" > "$1/sys/devices/system/cpu/isolated"
+        echo 0x1003 > "$1/sys/class/net/stubiface2/flags"
+        {
+            echo "            CPU0       CPU1       CPU2       CPU3"
+            echo " 119:         10          0          0          0  IR-PCI-MSIX-0000:01:00.0    0-edge      stubiface2"
+            echo " 120:          0        900          0          0  IR-PCI-MSIX-0000:01:00.0    1-edge      stubiface2-TxRx-0"
+            echo " 121:          0          0        800          0  IR-PCI-MSIX-0000:01:00.0    2-edge      stubiface2-TxRx-1"
+            echo " 130:          0          0          0          5  IR-PCI-MSIX-0000:02:00.0    1-edge      stubiface20-TxRx-0"
+        } > "$1/proc/interrupts"
+        echo 3 > "$1/proc/irq/119/smp_affinity_list"
+        echo 1 > "$1/proc/irq/120/smp_affinity_list"
+        echo 2 > "$1/proc/irq/121/smp_affinity_list"
+        echo 2 > "$1/sys/class/net/stubiface2/napi_defer_hard_irqs"
+        echo 200000 > "$1/sys/class/net/stubiface2/gro_flush_timeout"
+        echo off > "$1/sys/devices/system/cpu/smt/control"
+        echo 6.8.0-147-generic > "$1/proc/sys/kernel/osrelease"
+        echo -1 > "$1/proc/sys/kernel/sched_rt_runtime_us"
+        echo clean > "$STUB_STATE_DIR/state.stubiface2"
+        echo 2 > "$STUB_STATE_DIR/combined.stubiface2"
+    }
+
+    run_stub_root()  # $1 root  $2 queues  -> rc of a whole-script verify of stubiface2
+    {
+        ROCKETNET_PROVISION_STUB_ROOT="$1" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" \
+            bash "$SELF" stubiface2 "$2" verify 2>&1
+    }
+
+    SR="$STUB_DIR/root"
+
+    # the irq at 119 is the misc vector (named exactly stubiface2): it is an
+    # irq of the interface, so it must be pinned too -- the met tree pins
+    # it to an isolated cpu, cpu 3
+    stub_root_met "$SR"
+    OUT="$(run_stub_root "$SR" 2)"
+    expect_case "stub root: every condition met" $? 0 "$OUT" "verify passed: machine is provisioned" 0
+    for MET_LINE in "STUB ROOT" "carries irqaffinity=0 (B1)" "isolated cpu set is 1-3 (B2)" "stubiface2 present and up (R2)" \
+                    "irq 120 pinned to isolated cpu 1 (R4)" "napi_defer_hard_irqs already 2 (R5)" \
+                    "gro_flush_timeout already 200000 (R5)" "smt already off (R6)" "already -1 (R8)"; do
+        expect_case "stub root met: $MET_LINE" 0 0 "$OUT" "$MET_LINE" 0
+    done
+
+    # one case per condition: $1 name  $2 queues  $3 want UNMET lines
+    # $4 required text  $5 the edit (a shell command run on the met tree)
+    stub_root_case()
+    {
+        stub_root_met "$SR"
+        eval "$5"
+        OUT="$(run_stub_root "$SR" "$2")"
+        expect_case "stub root: $1" $? 1 "$OUT" "$4" "$3" "verify passed"
+        expect_case "stub root: $1 (summary counts it)" 0 0 "$OUT" "verify FAILED: $3 unmet condition(s)"
+    }
+
+    stub_root_case "R1 caller not root" 2 1 "not root (R1)" \
+        'echo 1000 > "$SR/stub-euid"'
+    stub_root_case "B1 irqaffinity is not 0" 2 1 "lacks irqaffinity=0" \
+        'echo "irqaffinity=1 isolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 xisolcpus is not isolcpus" 2 1 "lacks isolcpus=<range> (B1)" \
+        'echo "irqaffinity=0 xisolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B1 nohz_full without a value" 2 1 "lacks nohz_full=<range> (B1)" \
+        'echo "irqaffinity=0 isolcpus=1-3 nohz_full= nosmt" > "$SR/proc/cmdline"'
+    stub_root_case "B2 no isolated cpus" 2 2 "no isolated cpus (B2)" \
+        ': > "$SR/sys/devices/system/cpu/isolated"'
+    stub_root_case "R2 interface down" 2 1 "is not up (R2)" \
+        'echo 0x1002 > "$SR/sys/class/net/stubiface2/flags"'
+    stub_root_case "R2 interface absent" 2 1 "does not exist (R2)" \
+        'rm -rf "$SR/sys/class/net/stubiface2"'
+    stub_root_case "R3 slot occupied" 2 1 "an XDP program is attached to stubiface2 (R3)" \
+        'echo foreign > "$STUB_STATE_DIR/state.stubiface2"'
+    stub_root_case "R7 queue count" 2 1 "combined queue count is 4, want 2 (R7)" \
+        'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R4 irq on a range" 2 1 "irq 121 affinity is '1-3', want a single isolated cpu (R4)" \
+        'echo 1-3 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 irq unpinned (housekeeping cpu)" 2 1 "irq 120 is pinned to cpu 0, which is not in the isolated set" \
+        'echo 0 > "$SR/proc/irq/120/smp_affinity_list"'
+    stub_root_case "R4 two irqs on one cpu" 2 1 "two IRQs pinned to cpu 1 (R4)" \
+        'echo 1 > "$SR/proc/irq/121/smp_affinity_list"'
+    stub_root_case "R4 interrupt table unreadable" 2 1 "/proc/interrupts is unreadable (R4)" \
+        'rm -f "$SR/proc/interrupts"'
+    stub_root_case "R4 more irqs than isolated cpus" 2 1 "4 IRQs on stubiface2 but only 3 isolated cpus (R4)" \
+        'echo " 122:  0  0  0  0  IR-PCI-MSIX-0000:01:00.0  3-edge  stubiface2-TxRx-2" >> "$SR/proc/interrupts"; echo 1 > "$SR/proc/irq/122/smp_affinity_list"'
+    stub_root_case "R4 fewer isolated cpus than queues" 4 1 "only 3 isolated cpus for 4 queues" \
+        'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R5 napi_defer_hard_irqs unset" 2 1 "napi_defer_hard_irqs is 0, want 2 (R5)" \
+        'echo 0 > "$SR/sys/class/net/stubiface2/napi_defer_hard_irqs"'
+    stub_root_case "R5 gro_flush_timeout unset" 2 1 "gro_flush_timeout is 0, want 200000 (R5)" \
+        'echo 0 > "$SR/sys/class/net/stubiface2/gro_flush_timeout"'
+    stub_root_case "R6 smt on" 2 1 "smt is 'on', want off (R6)" \
+        'echo on > "$SR/sys/devices/system/cpu/smt/control"'
+    stub_root_case "R8 real-time throttle on" 2 1 "kernel.sched_rt_runtime_us is 950000, want -1 (R8)" \
+        'echo 950000 > "$SR/proc/sys/kernel/sched_rt_runtime_us"'
+
+    # the seam is verify's alone: provision and repin under a stub root
+    # refuse before reading or writing anything
+    stub_root_met "$SR"
+    OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 provision 2>&1 )"
+    expect_case "stub root refused by provision" $? 2 "$OUT" "only verify reads a stub root"
+    OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 repin 2>&1 )"
+    expect_case "stub root refused by repin" $? 2 "$OUT" "only verify reads a stub root"
+
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---
 
@@ -1282,7 +1431,7 @@ fi
 
 # R1. root (needed to perform, and to read some of what verify reads)
 
-if [ "$(id -u)" != "0" ]; then
+if [ "$CALLER_EUID" != "0" ]; then
     if [ $VERIFY -eq 1 ]; then
         fail "not root (R1): the XDP data plane requires euid 0"
     else
@@ -1296,7 +1445,7 @@ fi
 # 0, and the range parameters must carry a value -- matching the library
 # pre-flight's B1 check exactly
 
-CMDLINE="$(cat /proc/cmdline 2>/dev/null)"
+CMDLINE="$(cat "$FS/proc/cmdline" 2>/dev/null)"
 
 B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
 
@@ -1321,7 +1470,7 @@ done
 
 # B2. isolated cpu set
 
-ISOLATED="$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
+ISOLATED="$(cat "$FS/sys/devices/system/cpu/isolated" 2>/dev/null)"
 if [ -n "$ISOLATED" ]; then
     say "isolated cpu set is $ISOLATED (B2)"
 else
@@ -1352,8 +1501,8 @@ fi
 
 # R2. interface exists and is up
 
-if [ -d "/sys/class/net/$INTERFACE" ]; then
-    FLAGS="$(cat /sys/class/net/$INTERFACE/flags 2>/dev/null || echo 0)"
+if [ -d "$FS/sys/class/net/$INTERFACE" ]; then
+    FLAGS="$(cat "$FS/sys/class/net/$INTERFACE/flags" 2>/dev/null || echo 0)"
     if [ $(( FLAGS & 1 )) -eq 1 ]; then
         say "interface $INTERFACE present and up (R2)"
     else
@@ -1517,14 +1666,14 @@ r7_enforce
 # rocketnet_server_socket_interrupt_line_matches_interface is the C form.
 
 INTERRUPTS_READABLE=0
-if [ ! -r /proc/interrupts ]; then
+if [ ! -r "$FS/proc/interrupts" ]; then
     # silence must never verify: an unreadable interrupt table is unmet,
     # exactly as the pre-flight refuses it
-    fail "/proc/interrupts is unreadable (R4): irq pinning can be neither performed nor verified"
+    fail "$FS/proc/interrupts is unreadable (R4): irq pinning can be neither performed nor verified"
     IRQS=""
 else
     INTERRUPTS_READABLE=1
-    IRQS="$(irq_lines_for_interface "$INTERFACE" < /proc/interrupts)"
+    IRQS="$(irq_lines_for_interface "$INTERFACE" < "$FS/proc/interrupts")"
 fi
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
@@ -1545,7 +1694,7 @@ else
     SEEN_CPUS=()
     for IRQ in $IRQS; do
         CPU="${ISOLATED_CPUS[$INDEX]}"
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
+        CURRENT="$(cat "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null)"
         if [ $VERIFY -eq 1 ]; then
             # ONE logic path (ruled on the #110 gate, round five): every
             # branch classifies the CURRENT affinity and every single-cpu
@@ -1574,7 +1723,7 @@ else
             say "irq $IRQ already pinned to cpu $CPU (R4)"
         else
             say "pinning irq $IRQ to cpu $CPU (R4)"
-            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
+            echo "$CPU" > "$FS/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (R4)"
         fi
         INDEX=$(( INDEX + 1 ))
     done
@@ -1582,8 +1731,8 @@ fi
 
 # R5. busy-poll pair
 
-NAPI_DEFER="/sys/class/net/$INTERFACE/napi_defer_hard_irqs"
-GRO_FLUSH="/sys/class/net/$INTERFACE/gro_flush_timeout"
+NAPI_DEFER="$FS/sys/class/net/$INTERFACE/napi_defer_hard_irqs"
+GRO_FLUSH="$FS/sys/class/net/$INTERFACE/gro_flush_timeout"
 
 if [ -f "$NAPI_DEFER" ]; then
     if [ "$(cat $NAPI_DEFER)" = "2" ]; then
@@ -1613,7 +1762,7 @@ fi
 
 # R6. smt off (belt-and-braces under B1's nosmt)
 
-SMT_CONTROL=/sys/devices/system/cpu/smt/control
+SMT_CONTROL="$FS"/sys/devices/system/cpu/smt/control
 if [ -f "$SMT_CONTROL" ]; then
     SMT="$(cat $SMT_CONTROL)"
     case "$SMT" in
