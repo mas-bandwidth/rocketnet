@@ -343,6 +343,12 @@ jobs:
       - name: Build
         run: make
 
+      # --assert-flat's own negative controls before the soaks lean on it:
+      # an impaired clean run passes, an impairment not applied fails "link
+      # impairment not observed", a leaked file fails on fds (60 s each)
+      - name: --assert-flat selftest (clean, impairment not applied, leaked file)
+        run: bash scripts/soak-args-selftest --flat
+
       - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and library bytes)
         shell: bash
         run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
