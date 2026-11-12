@@ -194,6 +194,18 @@ static inline void rocketnet_xdp_frame_write_be16( uint8_t * out, uint16_t value
     out[1] = (uint8_t) ( value & 0xFF );
 }
 
+// A built frame of frame_bytes fits a link of this MTU: its IP packet, the
+// frame less the ethernet header, is at most mtu bytes. An mtu of 0 is
+// unknown and fits every frame. The kernel's AF_XDP transmit does not check
+// the MTU: in copy mode it hands the frame to the device, which drops it
+// uncounted by the server (veth) or puts it on the wire, so the server
+// refuses it before the TX ring and counts it.
+
+static inline int rocketnet_xdp_frame_fits_mtu( int frame_bytes, int mtu )
+{
+    return mtu <= 0 || frame_bytes - ROCKETNET_ETHERNET_HEADER_BYTES <= mtu;
+}
+
 // BUILD: writes ethernet + IP + UDP in front of a payload already at the
 // family's header offset. Returns the frame length, or 0 for a refusal.
 
