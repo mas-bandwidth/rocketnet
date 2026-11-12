@@ -265,6 +265,22 @@ def verdict(mutant, changed, not_judged):
     return "report"
 
 
+def exit_code(counts, verdicts, chosen, rule):
+    """The campaign's verdict: (exit, line). 1 when a survivor fails the rule,
+    and 1 when no mutant was judged: an empty slice, every mutant
+    did_not_compile or not_run (a time budget that ran out first) is a night
+    that tested nothing, not a pass. 0 otherwise."""
+    if verdicts["fail"]:
+        return 1, f"risk-class survivors failing the rule ({rule}): {verdicts['fail']}"
+    judged = counts["detected"] + counts["timed_out"] + counts["survived"]
+    if judged == 0:
+        return 1, (f"MUTATION-NONE-JUDGED: {chosen} mutants chosen, 0 judged "
+                   f"(did_not_compile {counts['did_not_compile']}, not_run {counts['not_run']}); "
+                   "a campaign that judged nothing is not a pass")
+    return 0, (f"no survivor fails the rule ({rule}); judged {judged} of {chosen}, reported {verdicts['report']}, "
+               f"not judged here {verdicts['not_judged_here']}")
+
+
 def summary_markdown(info, chosen):
     """The job summary: rule, slice, counts, every survivor by verdict, the files left out."""
     lines = [f"## linux / mutation: {info['slice']}", "",
@@ -711,7 +727,26 @@ def self_test():
             "sdk/a_tests.cpp", "sdk/rocketnet_test_seams.h", "sdk/rocketnet_test_vectors.h"]:
         print(f"self-test FAILED: test code split kept {kept}, left out {sorted(gone)}")
         return 1
+    # the process exit is exit_code's (main returns it as is): a failing
+    # survivor is 1, a campaign that judged nothing is 1, a judged clean one 0
+    def tally(**given):
+        return {s: given.get(s, 0) for s in ("detected", "timed_out", "survived", "did_not_compile", "not_run")}
+    clean = {"fail": 0, "report": 0, "not_judged_here": 0}
+    exits = [
+        ("a failing survivor", tally(detected=3, survived=1), dict(clean, fail=1), 4, 1, "risk-class survivors failing"),
+        ("every mutant did_not_compile", tally(did_not_compile=5), clean, 5, 1, "MUTATION-NONE-JUDGED"),
+        ("the time budget ran out first", tally(not_run=2), clean, 2, 1, "MUTATION-NONE-JUDGED"),
+        ("an empty slice", tally(), clean, 0, 1, "MUTATION-NONE-JUDGED: 0 mutants chosen"),
+        ("every mutant detected", tally(detected=4, timed_out=1), clean, 5, 0, "judged 5 of 5"),
+        ("a reported survivor only", tally(detected=2, survived=1), dict(clean, report=1), 3, 0, "reported 1"),
+    ]
+    for name, counts, verdicts, chosen, want, text in exits:
+        code, line = exit_code(counts, verdicts, chosen, "rule")
+        if code != want or text not in line:
+            print(f"self-test FAILED: exit for {name}: {code} ({line}), want {want} with {text!r}")
+            return 1
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
+          f"{len(exits)} exit verdicts (a campaign that judged nothing exits 1), "
           "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers, "
           "test code is left out, "
           "--platform linux leaves out Windows sources and their headers and sets AF_XDP apart, "
@@ -911,12 +946,9 @@ def main():
                 print(f"{title}: {m['file']}:{m['line']} {m['class']}-class {m['operator']} "
                       f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
     print(f"\nsummary: {json.dumps(summary)}\nresults: {out}")
-    if verdicts["fail"]:
-        print(f"risk-class survivors failing the rule ({rule}): {verdicts['fail']}", flush=True)
-        return 1
-    print(f"no survivor fails the rule ({rule}); reported {verdicts['report']}, "
-          f"not judged here {verdicts['not_judged_here']}", flush=True)
-    return 0
+    code, line = exit_code(counts, verdicts, len(chosen), rule)
+    print(line, flush=True)
+    return code
 
 
 if __name__ == "__main__":
