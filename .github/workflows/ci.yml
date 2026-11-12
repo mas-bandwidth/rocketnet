@@ -1572,7 +1572,7 @@ jobs:
           ROCKETNET_TEST_NIGHTLY: '1'
         run: |
           set -euo pipefail
-          cmake --build build --config Debug --target test --parallel
+          cmake --build build --config Debug --target test --parallel 8
           ./bin/Debug/test.exe
 
       # Leg (c): a Windows test child that fails exits at once and never waits
