@@ -2105,6 +2105,18 @@ a row marked server or client applies only at that end.
     increment the integrity-failure count.
 14. For the session types, a receiver MUST mark the sequence received and
     then advance the most recent sequence.
+14a. A server that sets a per-client receive rate MUST keep, for each
+    connected slot, a byte allowance refilled at twice that rate from the
+    receive time, capped at the rate times the connection's timeout in
+    seconds plus one maximum packet (`ROCKETNET_SEND_BUDGET` wire bytes), and
+    full when the slot is assigned; only time past the last refill adds. A
+    session packet whose wire bytes the allowance does not hold MUST be
+    dropped here, after the open and the mark of step 14 and before
+    anything else acts on it: no ack block applied, no receive-time
+    refresh, no type-specific processing. It spends nothing and is the
+    type's `OVER_ALLOWANCE`. It does not end the connection. A packet that
+    did not open is never counted against an allowance. The sequence stays
+    marked, so a copy cannot be replayed in once the allowance refills.
 15. For session types, a receiver MUST read and validate the ack block at
     the front of the opened data as [t15 Acknowledgement](#t15) specifies. A
     malformed block is `BAD_ACK_BLOCK`; the type data behind it is not
@@ -2138,6 +2150,7 @@ a row marked server or client applies only at that end.
 | 10 | replay already received | before decryption | `ALREADY_RECEIVED` |
 | 12 | server slot gate | before decryption | `NOT_CONNECTED` |
 | 13 | sealed open and expected handshake plaintext size | decryption | `DID_NOT_OPEN` |
+| 14a | server per-client receive allowance | after the sequence mark, before the ack block | the type's `OVER_ALLOWANCE` |
 | 15 | session ack block | after decryption | `BAD_ACK_BLOCK` |
 | 16 | session opened size less the ack block | after decryption | `WRONG_OPENED_SIZE` |
 | 17 | client keep-alive index and slot count | after decryption, before ack application | `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE` |

@@ -870,3 +870,8 @@ MCRNXdpSendDrainBrokenNoRelease.cfg	MCRNXdpSendDrain.tla	temporal	StopFinishes	c
 MCRNXdpSendDrainBrokenNoReset.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenNoRing.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenShortBound.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
+MCRNReceiveAllowance.cfg	MCRNReceiveAllowance.tla	pass	-	check	rnreceiveallowance	required	-
+MCRNReceiveAllowanceBrokenNoRefill.cfg	MCRNReceiveAllowance.tla	invariant	UnderRateNeverRefused	check	rnreceiveallowance	required	-
+MCRNReceiveAllowanceBrokenSmallCap.cfg	MCRNReceiveAllowance.tla	invariant	UnderRateNeverRefused	check	rnreceiveallowance	required	-
+MCRNReceiveAllowanceBrokenShared.cfg	MCRNReceiveAllowance.tla	invariant	Isolated	check	rnreceiveallowance	required	-
+MCRNReceiveAllowanceBrokenTimeBack.cfg	MCRNReceiveAllowance.tla	invariant	NoMint	check	rnreceiveallowance	required	-

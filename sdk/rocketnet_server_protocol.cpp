@@ -75,7 +75,7 @@ double rocketnet_server_protocol_client_rtt( const struct rocketnet_server_proto
 }
 
 // the receive allowance (rocketnet_server_protocol.h,
-// proofs/tla/RNReceiveAllowance.tla Receive): refills it to the packet's time
+// proofs/tla/RNReceiveAllowance.tla Take): refills it to the packet's time
 // and spends or refuses
 
 bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, double capacity,
@@ -84,7 +84,7 @@ bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_al
     rocketnet_assert( allowance );
     rocketnet_assert( packet_bytes > 0 );
 
-    // proofs/tla/RNReceiveAllowance.tla Refill: only time past the last refill
+    // proofs/tla/RNReceiveAllowance.tla Refilled: only time past the last refill
     // adds, and never past the capacity. A time at or before it adds nothing
     // and leaves the refill time, so no interval is credited twice.
 
@@ -95,7 +95,7 @@ bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_al
         allowance->time = time;
     }
 
-    // proofs/tla/RNReceiveAllowance.tla Receive: a packet the allowance holds
+    // proofs/tla/RNReceiveAllowance.tla Take: a packet the allowance holds
     // spends its bytes; one it does not hold is refused and spends nothing
 
     if ( (double) packet_bytes <= allowance->bytes )
@@ -1229,7 +1229,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 
     rocketnet_server_connection_id_assigned( server, client_index );
 
-    // proofs/tla/RNReceiveAllowance.tla Connect: the slot's allowance starts
+    // proofs/tla/RNReceiveAllowance.tla Reconnect: the slot's allowance starts
     // full; its refused counts are zero from the slot's last reset
 
     if ( server->receive_allowances )
@@ -1574,7 +1574,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     int client_index = mapping->control->client_index;
 
     // the receive allowance (rocketnet_server_config_t per_client_receive_kbps,
-    // proofs/tla/RNReceiveAllowance.tla Receive): the packet authenticated, so
+    // proofs/tla/RNReceiveAllowance.tla Take): the packet authenticated, so
     // it is this client's own and only this client's allowance pays for it.
     // One the allowance cannot pay is dropped here, before anything acts on
     // it: no ack block applied, no round-trip sample, no ack owed, no idle

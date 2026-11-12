@@ -211,8 +211,8 @@
 
 /// The server processes at most this many times a client's allowed
 /// client-to-server rate (rocketnet_server_config_t per_client_receive_kbps).
-/// A client within its own send budget sends at most that rate plus its
-/// keep-alives and acknowledgements, so a correct client is never refused.
+/// The second share is for what a client sends outside its send budget:
+/// keep-alives, and acknowledgements of what the server sends it.
 
 #define ROCKETNET_RECEIVE_ALLOWANCE_FACTOR                 2
 
@@ -1799,7 +1799,9 @@ struct rocketnet_server_config_t
     /// counted in the same wire bytes as the client's send budget, with an
     /// allowance that accrues while the client is quiet up to the
     /// connection's timeout in seconds, so traffic held up by an outage
-    /// shorter than the timeout is processed when it arrives. A packet over
+    /// shorter than the timeout is processed when it arrives. Size it for
+    /// everything the client sends, its acks included (docs/USAGE.md). A
+    /// packet over
     /// the allowance authenticates and is then dropped unprocessed (to the
     /// client it is a lost packet) and counted in the connection's
     /// rocketnet_conditions_t receive_refused_packets and
