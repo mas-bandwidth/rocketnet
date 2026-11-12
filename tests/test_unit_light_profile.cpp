@@ -126,7 +126,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // removed field). The two fill-phase counters and the two bind addresses
 // add 512 bytes to the server (actual=1469505023, measured on aws-win-5)
 // and nothing to the client.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456447 )
+// The IOCP send lanes (sdk/rocketnet_server_iocp.h: 8 lanes of 4096
+// operations at 1000 clients, each lane its own pool) then move the server
+// by 23782776, measured on aws-win-iocp-1 (MSVC, x64, DEV=ON, Release). The
+// client did not move.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1492239223 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
