@@ -3309,6 +3309,7 @@ jobs:
           python3 tools/check_wire_paths.py
 
       - name: Every LeakSanitizer suppression names a live function
+        if: ${{ !cancelled() }}
         run: |
           python3 tools/check_lsan_supp.py --self-test
           python3 tools/check_lsan_supp.py
