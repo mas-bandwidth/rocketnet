@@ -2967,6 +2967,15 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
     return bound;
 }
 
+#if ROCKETNET_DEV
+static std::atomic<uint64_t> rocketnet_rio_lanes_made{ 0 };
+
+uint64_t rocketnet_server_rio_test_lanes_made()
+{
+    return rocketnet_rio_lanes_made.load( std::memory_order_relaxed );
+}
+#endif // #if ROCKETNET_DEV
+
 static void rocketnet_rio_free( rocketnet_server_rio_t * rio )
 {
     void * context = rio->context;
@@ -3078,6 +3087,9 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
             return NULL;
         }
         rio->num_lanes = i + 1;
+#if ROCKETNET_DEV
+        rocketnet_rio_lanes_made.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
     }
 
     rio->lane_slots = rio->lanes[0]->send_frames;
