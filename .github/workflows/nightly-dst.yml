@@ -95,6 +95,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, ROCKETNET_DEV=ON, GCC)
+        id: build
         timeout-minutes: 7
         env:
           CC: gcc
@@ -102,6 +103,7 @@ jobs:
         run: make ROCKETNET_DEV=ON
 
       - name: The test_dst_ unit cases
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
@@ -125,11 +127,13 @@ jobs:
           done
 
       - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/test$DST_EXE"
 
       - name: Seeds 1-50 print the reference trace
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 | tr -d '\r' | tee dst-reference.log
@@ -142,6 +146,7 @@ jobs:
           fi
 
       - name: Seeds 1-2050 pass every check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           start=$(date +%s)
@@ -153,6 +158,7 @@ jobs:
           if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule clock-back | tr -d '\r' | tee dst-schedule-clock-back.log
@@ -165,6 +171,7 @@ jobs:
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-gap | tr -d '\r' | tee dst-schedule-seq-gap.log
@@ -177,6 +184,7 @@ jobs:
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-31 | tr -d '\r' | tee dst-schedule-seq-wrap-31.log
@@ -189,6 +197,7 @@ jobs:
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-32 | tr -d '\r' | tee dst-schedule-seq-wrap-32.log
@@ -201,6 +210,7 @@ jobs:
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule burst | tr -d '\r' | tee dst-schedule-burst.log
@@ -213,6 +223,7 @@ jobs:
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule dup-storm | tr -d '\r' | tee dst-schedule-dup-storm.log
@@ -225,6 +236,7 @@ jobs:
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage | tr -d '\r' | tee dst-schedule-outage.log
@@ -237,6 +249,7 @@ jobs:
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage-past | tr -d '\r' | tee dst-schedule-outage-past.log
@@ -249,6 +262,7 @@ jobs:
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule send-fail | tr -d '\r' | tee dst-schedule-send-fail.log
@@ -263,6 +277,7 @@ jobs:
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
       - name: Outage scenarios seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --outage all --seeds 1-50 | tr -d '\r' | tee dst-outage.log
@@ -270,6 +285,7 @@ jobs:
           if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           length=$DST_SWEEP_LENGTH
@@ -302,6 +318,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, ROCKETNET_DEV=ON, Clang)
+        id: build
         timeout-minutes: 11
         env:
           CC: clang
@@ -309,6 +326,7 @@ jobs:
         run: make ROCKETNET_DEV=ON
 
       - name: The test_dst_ unit cases
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           for c in test_dst_same_seed_same_trace test_dst_seeds_differ test_dst_substreams_independent \
@@ -332,11 +350,13 @@ jobs:
           done
 
       - name: Run the unit suite (Release, ROCKETNET_DEV=ON)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/test$DST_EXE"
 
       - name: Seeds 1-50 print the reference trace
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 | tr -d '\r' | tee dst-reference.log
@@ -349,6 +369,7 @@ jobs:
           fi
 
       - name: Seeds 1-2050 pass every check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           start=$(date +%s)
@@ -360,6 +381,7 @@ jobs:
           if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule clock-back | tr -d '\r' | tee dst-schedule-clock-back.log
@@ -372,6 +394,7 @@ jobs:
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-gap | tr -d '\r' | tee dst-schedule-seq-gap.log
@@ -384,6 +407,7 @@ jobs:
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-31 | tr -d '\r' | tee dst-schedule-seq-wrap-31.log
@@ -396,6 +420,7 @@ jobs:
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-32 | tr -d '\r' | tee dst-schedule-seq-wrap-32.log
@@ -408,6 +433,7 @@ jobs:
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule burst | tr -d '\r' | tee dst-schedule-burst.log
@@ -420,6 +446,7 @@ jobs:
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule dup-storm | tr -d '\r' | tee dst-schedule-dup-storm.log
@@ -432,6 +459,7 @@ jobs:
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage | tr -d '\r' | tee dst-schedule-outage.log
@@ -444,6 +472,7 @@ jobs:
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage-past | tr -d '\r' | tee dst-schedule-outage-past.log
@@ -456,6 +485,7 @@ jobs:
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule send-fail | tr -d '\r' | tee dst-schedule-send-fail.log
@@ -470,6 +500,7 @@ jobs:
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
       - name: Outage scenarios seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           "$DST_BIN/dst$DST_EXE" --outage all --seeds 1-50 | tr -d '\r' | tee dst-outage.log
@@ -477,6 +508,7 @@ jobs:
           if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           length=$DST_SWEEP_LENGTH
@@ -544,10 +576,12 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Release)
+        id: build
         timeout-minutes: 5
         run: cmake --build build --config Release --target dst test --parallel 8
 
       - name: The test_dst_ unit cases
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -572,6 +606,7 @@ jobs:
           done
 
       - name: Seeds 1-50 print the reference trace
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -585,6 +620,7 @@ jobs:
           fi
 
       - name: Seeds 1-2050 pass every check
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -597,6 +633,7 @@ jobs:
           if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -610,6 +647,7 @@ jobs:
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -623,6 +661,7 @@ jobs:
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -636,6 +675,7 @@ jobs:
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -649,6 +689,7 @@ jobs:
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -662,6 +703,7 @@ jobs:
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -675,6 +717,7 @@ jobs:
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -688,6 +731,7 @@ jobs:
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -701,6 +745,7 @@ jobs:
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -716,6 +761,7 @@ jobs:
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
       - name: Outage scenarios seeds 1-50
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -724,6 +770,7 @@ jobs:
           if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
