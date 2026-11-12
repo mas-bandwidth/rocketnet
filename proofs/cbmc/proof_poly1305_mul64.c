@@ -135,7 +135,7 @@ void harness_finish( void )
 // fold takes (D >> 130) * p off D. So h' + p * Q = S * r with
 // Q = h1 * (r1 / 4) + h2 * (r1 / 4) * 2^64 + (D >> 130), computed here in
 // 256-bit words of its own: an equality of products, no division.
-typedef unsigned __CPROVER_bitvector[ 256 ] u256;
+typedef unsigned __CPROVER_bitvector[256] u256;
 
 void harness_congruence( void )
 {
