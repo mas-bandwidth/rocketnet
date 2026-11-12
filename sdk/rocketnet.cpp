@@ -822,6 +822,15 @@ void rocketnet_crypto_release()
     }
 }
 
+#if ROCKETNET_DEV
+// a unit seam: every acquire has its release (test_unit_secrets_wiped.cpp)
+int rocketnet_dev_crypto_holders()
+{
+    std::lock_guard<std::mutex> lock( rocketnet_crypto_mutex );
+    return rocketnet_crypto_holders;
+}
+#endif // #if ROCKETNET_DEV
+
 // proofs/tla/RNCryptoSource.tla Term: the bundled sodium keeps /dev/urandom
 // open on macOS, so term closes it once no draw is in flight; holders that
 // arrive meanwhile wait for the close. A system libsodium may be shared with

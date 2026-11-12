@@ -715,6 +715,13 @@ enum
 };
 
 extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage );
+
+// the token writers hand each secret staging to this hook after its wipe
+// (sdk/rocketnet_connect_token.cpp), and the holder count of the crypto
+// source is read here (sdk/rocketnet.cpp): unit seams, null and unread in
+// every other use
+extern void ( *rocketnet_token_writer_wipe_hook )( const void * staging, int bytes );
+int rocketnet_dev_crypto_holders( void );
 #endif // #if ROCKETNET_DEV
 
 // held across the draws of every caller that may run before rocketnet_init
