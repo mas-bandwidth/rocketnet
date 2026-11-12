@@ -69,9 +69,11 @@
 #   linux / mutation        tools/mutation/run_mutants.py over every mutant
 #                           of the six core table and ring files and the SDK
 #                           files changed in the last 91 days, one slice of
-#                           90 a night (about 95 minutes), so the whole list
-#                           every 90 nights. A risk-class survivor in the
-#                           slice fails the job. One mutant is one rebuild
+#                           90 a night (about 60 minutes), so the whole list
+#                           every 90 nights, less test code and Windows sources. A
+#                           risk-class survivor on a line changed since the
+#                           last release fails the job; every other survivor
+#                           is reported. One mutant is one rebuild
 #                           and one unit-suite run, which does not fit the
 #                           per-commit two minutes.
 
@@ -83,7 +85,7 @@ on:
   workflow_dispatch:
     inputs:
       mutation_full:
-        description: "linux / mutation: run the whole mutant list instead of the day's slice (about 130 hours with 4 workers: past the job's 120-hour limit, so raise mutation_workers)"
+        description: "linux / mutation: the campaign with its original rule: the whole mutant list of every file but test code, every risk-class survivor fails, instead of the day's slice judged on lines changed since the last release (41047 mutants, about 99 hours with 4 workers, inside the job's 120-hour limit)"
         type: boolean
         default: false
       mutation_workers:
@@ -894,22 +896,40 @@ jobs:
   # limit; it never finished on any release. So each night runs one slice:
   # tools/mutation/run_mutants.py --slice K/90, the mutants whose slice key
   # (a hash of file, line text, column, operator and replacement, never the
-  # line number) is K modulo 90, with K the UTC day number modulo 90. Over
-  # every SDK source at 555eb5963 (59080 mutants) a slice holds 575 to 756,
-  # mean 656: 83 to 110 minutes, mean 95, at the measured rate, plus the four
-  # workers' first build; the 90 slices cover the whole list every
-  # 90 nights, and the 91-day window keeps a changed file in the list for
-  # all 90 of them. 90 is also the repository's artifact retention in days,
-  # so the slice records of one whole cycle are always there to audit. The
-  # rule is unchanged: the script exits 1 when a risk-class mutant of the
-  # slice survives ./bin/test. workflow_dispatch with mutation_full runs the
-  # whole list for a deliberate long run (raise mutation_workers to fit the
-  # 120-hour limit). --self-test does not build; this step is the campaign,
+  # line number) is K modulo 90, with K the UTC day number modulo 90.
+  #
+  # The nightly judges what a Linux runner can judge and fails only on what
+  # someone can act on that night (CI owner's ruling, 2026-11-12):
+  # --platform linux leaves out the sources the Linux build does not compile
+  # (the WINDOWS and APPLE lists of cmake/RocketnetSources.cmake: iocp and rio
+  # today, and headers only they include) and lists AF_XDP files apart as
+  # not judged here (mutated, but Linux reaches them only in a guest and
+  # ./bin/test runs none); both lists are printed. --changed-since fails the
+  # job only for a risk-class survivor on a line new or modified since the
+  # release before HEAD (git describe of HEAD^, then git diff TAG HEAD):
+  # code just written without a test that notices it. Every other survivor is
+  # reported with file:line and mutation in the job summary and the artifact,
+  # counted, and never fails. io_uring and GSO stay judged. Test code under
+  # sdk/ (the EXCLUDED list of cmake/RocketnetSources.cmake, rocketnet_tests.cpp
+  # today, and the sdk/rocketnet_test_*.h headers) is left out of every run,
+  # mutation_full too, and printed: mutating it measures nothing.
+  #
+  # Over every SDK source at 45eb05364 less test code and the Windows sources
+  # (37617 mutants) a slice holds 357 to 494, mean 418: 52 to 72 minutes, mean 61,
+  # at the measured rate, plus the four workers' first build; the 90 slices
+  # cover the whole list every 90 nights, and the 91-day window keeps a
+  # changed file in the list for all 90 of them. 90 is also the repository's
+  # artifact retention in days, so the slice records of one whole cycle are
+  # always there to audit. workflow_dispatch with mutation_full runs the
+  # campaign with its original rule: every file but test code (41047 mutants),
+  # every risk-class survivor fails, about 99 hours with 4 workers. --self-test
+  # does not build; this step is the campaign,
   # which is why it is not on the per-commit gate. The tool is exec'd so a
   # cancelled step's signal reaches it; it then kills every test process it
   # started before it exits. The slice record (build/mutation/slice.txt) is
-  # written before the campaign starts and uploaded with results.json
-  # whatever the outcome, as mutation-slice-<job>-<run>-<attempt>.
+  # written before the campaign starts and uploaded with results.json and
+  # summary.md whatever the outcome, as mutation-slice-<job>-<run>-<attempt>;
+  # summary.md also goes to the job summary.
 
   mutation:
     name: linux / mutation
@@ -929,7 +949,7 @@ jobs:
           ref: ${{ matrix.ref }}
           fetch-depth: 0
 
-      - name: Mutation campaign, the day's slice of the full count, risk-class survivors fail
+      - name: Mutation campaign, the day's slice; risk-class survivors on lines changed since the last release fail
         shell: bash
         env:
           MUTATION_FULL: ${{ inputs.mutation_full && '1' || '0' }}
@@ -943,9 +963,16 @@ jobs:
           if [[ "$MUTATION_FULL" == 1 ]]; then
             slice_args=()
             slice="full (workflow_dispatch mutation_full: every slice, 0..$((slices - 1)) of $slices)"
+            rule="the original rule: every file but test code, every risk-class survivor fails"
+            rule_args=()
           else
             slice_args=(--slice "$((day % slices))/$slices")
             slice="$((day % slices))/$slices"
+            # the release before HEAD (HEAD^, so the night a release is
+            # tagged judges the lines that release added)
+            since="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^)"
+            rule="risk-class survivors on lines new or modified since $since fail; every other survivor is reported"
+            rule_args=(--platform linux --changed-since "$since")
           fi
           core=(
             sdk/rocketnet_token_tables.cpp
@@ -989,12 +1016,24 @@ jobs:
             echo "head=$(git rev-parse HEAD)"
             echo "workers=$MUTATION_WORKERS"
             echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            echo "rule=$rule"
             echo "files=${files[*]}"
           } > build/mutation/slice.txt
           echo "MUTATION-SLICE $slice of the full list (day $day, UTC $(date -u +%Y-%m-%d)); the $slices slices cover every mutant every $slices nights"
+          echo "MUTATION-RULE $rule"
           printf 'mutation files:\n'
           printf '  %s\n' "${files[@]}"
-          exec python3 tools/mutation/run_mutants.py --max-mutants 0 ${slice_args[@]+"${slice_args[@]}"} --workers "$MUTATION_WORKERS" --out build/mutation/results.json --files "${files[@]}"
+          exec python3 tools/mutation/run_mutants.py --max-mutants 0 ${slice_args[@]+"${slice_args[@]}"} ${rule_args[@]+"${rule_args[@]}"} --workers "$MUTATION_WORKERS" --out build/mutation/results.json --summary-md build/mutation/summary.md --files "${files[@]}"
+
+      - name: Survivors to the job summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f build/mutation/summary.md ]]; then
+            cat build/mutation/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "linux / mutation: no summary (the campaign stopped before its verdicts; see the step log)" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Keep the slice record and the results
         if: always()
@@ -1004,4 +1043,5 @@ jobs:
           path: |
             build/mutation/slice.txt
             build/mutation/results.json
+            build/mutation/summary.md
           if-no-files-found: ignore

@@ -25,6 +25,16 @@ added above) is K modulo N. Slices 0 .. N-1 together are every mutant, so N
 runs, one per slice, cover the whole list with the same exit rule. The nightly
 runs the day's slice (.github/workflows/nightly.yml, docs/TESTING.md).
 
+--platform linux leaves out the files a Linux build does not compile (the
+WINDOWS and APPLE lists of cmake/RocketnetSources.cmake and the headers only
+they include; whole files, not #if regions) and sets AF_XDP files apart: they
+are mutated, but Linux reaches them only in a guest and ./bin/test runs none,
+so their survivors are listed as not judged here, never failing. Both lists
+are printed. --changed-since REF narrows the failure rule: a risk-class
+survivor fails only on a line new or modified in git diff REF HEAD; every
+other survivor is reported (results.json, --summary-md) and never fails.
+Without these two flags the campaign is the original one.
+
 Python 3 standard library only. Example:
 
   python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
@@ -117,6 +127,167 @@ def parse_slice(text):
     if not sep or not index.isdigit() or not count.isdigit() or int(count) < 1 or int(index) >= int(count):
         raise ValueError(f"--slice wants K/N with 0 <= K < N, not {text!r}")
     return int(index), int(count)
+
+
+INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<](?:[^">]*/)?([^">/]+)[">]', re.MULTILINE)
+HEADER_SUFFIXES = (".h", ".hh", ".hpp", ".hxx", ".inc")
+
+
+def cmake_list(text, name):
+    """The entries of set(name ...) in a CMake file, or [] when it is absent or empty."""
+    m = re.search(r"set\(\s*" + re.escape(name) + r"(?=[\s)])([^)]*)\)", text)
+    return m.group(1).split() if m else []
+
+
+def xdp_whole_file(text):
+    """True when everything but comments and #includes sits inside one #if
+    ROCKETNET_XDP block that ends the file (an #else stub inside it counts)."""
+    text = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group().count("\n"), text, flags=re.S)
+    lines = [re.sub(r"//.*", "", line).strip() for line in text.splitlines()]
+    depth = 0
+    for i, s in enumerate(lines):
+        if depth == 0:
+            if re.match(r"#\s*if\s+ROCKETNET_XDP$", s):
+                depth = 1
+            elif s and not re.match(r"#\s*include\b", s):
+                return False
+            continue
+        if re.match(r"#\s*if", s):
+            depth += 1
+        elif re.match(r"#\s*endif\b", s):
+            depth -= 1
+            if depth == 0:
+                return not any(lines[i + 1:])
+    return False
+
+
+TEST_HEADER_RE = re.compile(r"^sdk/rocketnet_test_[^/]*\.(h|hh|hpp|hxx|inc)$")
+
+
+def without_test_code(files, cmake_text):
+    """Leave out test code under sdk/ on every platform: (kept, excluded {file: why}).
+
+    Test code is the ROCKETNET_SDK_SOURCES_EXCLUDED list of
+    cmake/RocketnetSources.cmake (sources compiled into the test binary only)
+    and the sdk/rocketnet_test_*.h headers (test vectors and the test seam).
+    A mutant in it changes what a test checks, not what the library does."""
+    tests = set(cmake_list(cmake_text, "ROCKETNET_SDK_SOURCES_EXCLUDED"))
+    kept, out = [], {}
+    for f in files:
+        if f in tests:
+            out[f] = "ROCKETNET_SDK_SOURCES_EXCLUDED in cmake/RocketnetSources.cmake (the test binary only)"
+        elif TEST_HEADER_RE.match(f):
+            out[f] = "an sdk/rocketnet_test_* header (test vectors or test seam)"
+        else:
+            kept.append(f)
+    return kept, out
+
+
+def linux_judgement(files, cmake_text, texts):
+    """Split the files for a Linux runner: (kept, excluded, not_judged).
+
+    excluded {file: why}: sources the Linux build does not compile, so a Linux
+    ./bin/test cannot kill their mutants: the WINDOWS and APPLE lists of
+    cmake/RocketnetSources.cmake, and headers that only those sources include
+    (texts {path: text} are the files searched for includes). Files are the unit
+    here, not #if regions: a Windows source's ROCKETNET_DEV regions that a
+    Linux dev build does compile are left out with the rest of the file.
+
+    not_judged {file: why}: AF_XDP code, which Linux reaches only inside a
+    guest and ./bin/test runs no guest: a file named for xdp, sdk/xdp/, or a
+    file whose code is all inside one #if ROCKETNET_XDP. Its mutants run; a survivor
+    is listed apart as not judged here, never a failure and never a pass.
+
+    kept: every file not excluded, AF_XDP ones too, in the order given
+    (io_uring and GSO are judged: Linux runs them)."""
+    foreign = set(cmake_list(cmake_text, "ROCKETNET_SDK_SOURCES_WINDOWS"))
+    foreign |= set(cmake_list(cmake_text, "ROCKETNET_SDK_SOURCES_APPLE"))
+    excluded = {f: "a Windows or Apple source in cmake/RocketnetSources.cmake" for f in foreign}
+    includers = {}
+    for path, text in texts.items():
+        for name in INCLUDE_RE.findall(text):
+            includers.setdefault(name, set()).add(path)
+    grew = True
+    while grew:
+        grew = False
+        for path in texts:
+            base = os.path.basename(path)
+            users = includers.get(base, set()) - {path}
+            if path not in excluded and path.endswith(HEADER_SUFFIXES) and users and users <= set(excluded):
+                excluded[path] = "a header included only by " + ", ".join(sorted(users))
+                grew = True
+    kept, out, not_judged = [], {}, {}
+    for f in files:
+        base = os.path.basename(f)
+        if f in excluded:
+            out[f] = excluded[f]
+            continue
+        if "xdp" in base.lower() or f.startswith("sdk/xdp/"):
+            not_judged[f] = "AF_XDP code by name: Linux reaches it only in a guest"
+        elif xdp_whole_file(texts.get(f, "")):
+            not_judged[f] = "the whole file is #if ROCKETNET_XDP: Linux reaches it only in a guest"
+        kept.append(f)
+    return kept, out, not_judged
+
+
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def changed_lines(diff_text):
+    """{path: set of new-side line numbers} added or modified in a git diff -U0."""
+    changed, path = {}, None
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            name = line[4:].strip()
+            path = name[2:] if name.startswith("b/") else None
+            continue
+        m = HUNK_RE.match(line)
+        if m and path:
+            start, count = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+            changed.setdefault(path, set()).update(range(start, start + count))
+    return changed
+
+
+def verdict(mutant, changed, not_judged):
+    """For a survived mutant: 'fail', 'report' or 'not_judged_here'; None otherwise.
+
+    changed None is the campaign's original rule: every risk-class survivor
+    fails. With changed {path: lines}, only a risk-class survivor on a line
+    new or modified since the reference fails; every other survivor reports."""
+    if mutant.get("status") != "survived":
+        return None
+    if mutant["file"] in not_judged:
+        return "not_judged_here"
+    if not risk_survivors([mutant]):
+        return "report"
+    if changed is None or mutant["line"] in changed.get(mutant["file"], ()):
+        return "fail"
+    return "report"
+
+
+def summary_markdown(info, chosen):
+    """The job summary: rule, slice, counts, every survivor by verdict, the files left out."""
+    lines = [f"## linux / mutation: {info['slice']}", "",
+             f"Rule: {info['rule']}", "",
+             f"Mutants: {info['generated']} generated, {info['in_slice']} in the slice, {len(chosen)} run; "
+             + ", ".join(f"{k} {v}" for k, v in info["counts"].items()), ""]
+    titles = (("fail", "Failing: risk-class survivors on lines changed since " + str(info.get("changed_since"))
+               if info.get("changed_since") else "Failing: risk-class survivors"),
+              ("report", "Reported, not failing: survivors on unchanged lines (and rocketnet_assert survivors)"),
+              ("not_judged_here", "Not judged here: survivors in AF_XDP code (Linux reaches it only in a guest; ./bin/test runs none)"))
+    for key, title in titles:
+        rows = [m for m in chosen if m.get("verdict") == key]
+        lines.append(f"### {title}: {len(rows)}")
+        for m in rows:
+            lines.append(f"- `{m['file']}:{m['line']}` {m['operator']} `{m['original'].strip()}` -> `{m['mutated'].strip()}`")
+        lines.append("")
+    for key, title in (("excluded", "Excluded: test code, and on Linux what the Linux build does not compile"),
+                       ("not_judged", "Not judged here: AF_XDP files (mutated, survivors listed above)")):
+        lines.append(f"### {title}: {len(info.get(key) or {})}")
+        for f, why in sorted((info.get(key) or {}).items()):
+            lines.append(f"- `{f}`: {why}")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def code_mask(text):
@@ -480,8 +651,71 @@ def self_test():
     if parse_slice("89/90") != (89, 90):
         print("self-test FAILED: --slice 89/90 was not read as (89, 90)")
         return 1
+    # --platform linux: Windows and Apple sources and the headers only they
+    # include are left out; AF_XDP files stay but are not judged; the rest stay
+    cmake = ("set(ROCKETNET_SDK_SOURCES_LINUX\n    sdk/a_uring_linux.cpp)\n"
+             "set(ROCKETNET_SDK_SOURCES_APPLE)\n"
+             "set(ROCKETNET_SDK_SOURCES_WINDOWS\n    sdk/a_iocp_windows.cpp\n    sdk/a_rio_windows.cpp)\n")
+    texts = {
+        "sdk/a_iocp_windows.cpp": '#include "a_iocp.h"\n',
+        "sdk/a_rio_windows.cpp": '#include "a_rio_layout.h"\n#include "a_iocp.h"\n',
+        "sdk/a_rio_layout.h": "int x;\n",
+        "sdk/a_iocp.h": "int y;\n",
+        "sdk/a_common.cpp": '#include "a_iocp.h"\n',
+        "sdk/a_uring_linux.cpp": "#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX\n#endif\n",
+        "sdk/a_socket_linux.cpp": "#include <new>\n/*\n  c\n*/\n#if ROCKETNET_XDP\n#if X\n#endif\nint z;\n#else\nint d;\n#endif // x\n",
+        "sdk/a_api.cpp": "int q;\n#if ROCKETNET_XDP\nint z;\n#endif\n",
+        "sdk/a_api_tail.cpp": "#if ROCKETNET_XDP\nint z;\n#endif\nint q;\n",
+        "sdk/a_xdp_frame.h": "int w;\n",
+        "sdk/xdp/prog.c": "int v;\n",
+    }
+    kept, excluded, not_judged = linux_judgement(sorted(texts), cmake, texts)
+    if (sorted(excluded) != ["sdk/a_iocp_windows.cpp", "sdk/a_rio_layout.h", "sdk/a_rio_windows.cpp"]
+            or sorted(not_judged) != ["sdk/a_socket_linux.cpp", "sdk/a_xdp_frame.h", "sdk/xdp/prog.c"]
+            or kept != ["sdk/a_api.cpp", "sdk/a_api_tail.cpp", "sdk/a_common.cpp", "sdk/a_iocp.h", "sdk/a_socket_linux.cpp",
+                        "sdk/a_uring_linux.cpp", "sdk/a_xdp_frame.h", "sdk/xdp/prog.c"]):
+        print(f"self-test FAILED: --platform linux kept {kept}, excluded {sorted(excluded)}, "
+              f"not judged {sorted(not_judged)}")
+        return 1
+    # the pass/fail rule on changed lines: a survivor on an unchanged line
+    # reports, the same survivor with its line touched fails, a survivor in
+    # AF_XDP code is not judged, the original rule fails every risk survivor
+    diff = ("diff --git a/plant.cpp b/plant.cpp\n--- a/plant.cpp\n+++ b/plant.cpp\n"
+            "@@ -3 +3 @@\n-        a = a + 2;\n+        a = a + 1;\n@@ -9,0 +10,2 @@\n+x\n+y\n"
+            "diff --git a/gone.cpp b/gone.cpp\n--- a/gone.cpp\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n")
+    lines = changed_lines(diff)
+    if lines != {"plant.cpp": {3, 10, 11}}:
+        print(f"self-test FAILED: changed lines read as {lines}")
+        return 1
+    on2 = dict(next(m for m in first if m["line"] == 2), status="survived")
+    on3 = dict(next(m for m in first if m["line"] == 3), status="survived")
+    if verdict(on2, lines, {}) != "report" or verdict(on3, lines, {}) != "fail":
+        print("self-test FAILED: an unchanged line's survivor did not report or a changed line's did not fail")
+        return 1
+    if verdict(on2, None, {}) != "fail" or verdict(dict(on2, status="detected"), lines, {}) is not None:
+        print("self-test FAILED: the original rule did not fail a risk survivor, or a detected mutant had a verdict")
+        return 1
+    if verdict(on3, lines, {"plant.cpp": "xdp"}) != "not_judged_here":
+        print("self-test FAILED: a survivor in an AF_XDP file was judged")
+        return 1
+    guard = dict(guards[0], status="survived")
+    if verdict(guard, lines, {}) != "report" or verdict(guard, None, {}) != "report":
+        print("self-test FAILED: a rocketnet_assert survivor was not reported")
+        return 1
+    # test code is left out on every platform: the cmake EXCLUDED list and the
+    # sdk/rocketnet_test_* headers; a library file is kept
+    test_cmake = cmake + "set(ROCKETNET_SDK_SOURCES_EXCLUDED\n    sdk/a_tests.cpp)\n"
+    kept, gone = without_test_code(["sdk/a_tests.cpp", "sdk/rocketnet_test_seams.h", "sdk/rocketnet_test_vectors.h",
+                                    "sdk/a_common.cpp", "sdk/rocketnet_testing_off.cpp"], test_cmake)
+    if kept != ["sdk/a_common.cpp", "sdk/rocketnet_testing_off.cpp"] or sorted(gone) != [
+            "sdk/a_tests.cpp", "sdk/rocketnet_test_seams.h", "sdk/rocketnet_test_vectors.h"]:
+        print(f"self-test FAILED: test code split kept {kept}, left out {sorted(gone)}")
+        return 1
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
-          "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers")
+          "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers, "
+          "test code is left out, "
+          "--platform linux leaves out Windows sources and their headers and sets AF_XDP apart, "
+          "--changed-since fails only survivors on changed lines")
     return 0
 
 
@@ -508,6 +742,15 @@ def main():
     p.add_argument("--cmake-arg", action="append", default=[], help="extra cmake configure argument")
     p.add_argument("--work-dir", default=str(ROOT / "build" / "mutation"), help="per-worker trees live here")
     p.add_argument("--out", default="", help="JSON results file (default <work-dir>/results.json)")
+    p.add_argument("--platform", choices=("linux",), default=None,
+                   help="linux: leave out the files the Linux build does not compile (Windows and Apple sources and "
+                        "the headers only they include) and list AF_XDP files' survivors as not judged here. "
+                        "Default: every file given, the original campaign")
+    p.add_argument("--changed-since", default="",
+                   help="REF: a risk-class survivor fails only on a line new or modified in git diff REF HEAD; "
+                        "every other survivor is reported (results, --summary-md) and never fails. "
+                        "Default: the original rule, every risk-class survivor fails")
+    p.add_argument("--summary-md", default="", help="write a Markdown summary of the verdicts here")
     args = p.parse_args()
     if args.self_test:
         return self_test()
@@ -516,6 +759,38 @@ def main():
     except ValueError as error:
         p.error(str(error))
     started = time.monotonic()
+
+    cmake_text = (ROOT / "cmake" / "RocketnetSources.cmake").read_text()
+    args.files, excluded = without_test_code(args.files, cmake_text)
+    for f, why in sorted(excluded.items()):
+        print(f"excluded (test code, mutating it measures nothing): {f}: {why}", flush=True)
+    excluded = {f: "test code: " + why for f, why in excluded.items()}
+    not_judged = {}
+    if args.platform == "linux":
+        texts = {}
+        for pattern in ("sdk/*", "sdk/*/*", "tests/*", "tests/*/*"):
+            for path in ROOT.glob(pattern):
+                if path.is_file() and path.suffix in (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc"):
+                    texts[path.relative_to(ROOT).as_posix()] = path.read_text(errors="replace")
+        args.files, foreign, not_judged = linux_judgement(args.files, cmake_text, texts)
+        excluded.update(foreign)
+        excluded_linux = foreign
+        for f, why in sorted(excluded_linux.items()):
+            print(f"excluded (the Linux build does not compile it): {f}: {why}", flush=True)
+        for f, why in sorted(not_judged.items()):
+            print(f"not judged here (mutated, survivors listed apart, never failing): {f}: {why}", flush=True)
+    changed = None
+    if args.changed_since:
+        diff = subprocess.run(["git", "-C", str(ROOT), "diff", "-U0", "--no-color", "--no-renames", "--no-ext-diff",
+                               args.changed_since, "HEAD", "--", *args.files], capture_output=True, text=True)
+        if diff.returncode != 0:
+            sys.exit(f"git diff {args.changed_since} HEAD failed: {diff.stderr.strip()}")
+        changed = changed_lines(diff.stdout)
+        print(f"rule: a risk-class survivor fails only on a line changed since {args.changed_since} "
+              f"({sum(len(v) for v in changed.values())} new or modified lines in {len(changed)} files); "
+              "every other survivor is reported", flush=True)
+    else:
+        print("rule: every risk-class survivor fails (the original campaign rule)", flush=True)
 
     mutants = []
     for rel in args.files:
@@ -601,23 +876,46 @@ def main():
     score = (counts["detected"] + counts["timed_out"]) / judged if judged else 0.0
     wall = time.monotonic() - started
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    for m in chosen:
+        v = verdict(m, changed, not_judged)
+        if v:
+            m["verdict"] = v
+    verdicts = {v: sum(m.get("verdict") == v for m in chosen) for v in ("fail", "report", "not_judged_here")}
     summary = dict(counts, total=len(chosen), generated=generated, in_slice=len(mutants), score=round(score, 4),
-                   wall_seconds=round(wall, 1), baseline_test_seconds=round(baseline, 2), timeout_seconds=round(timeout, 2))
+                   wall_seconds=round(wall, 1), baseline_test_seconds=round(baseline, 2), timeout_seconds=round(timeout, 2),
+                   survivors_failing=verdicts["fail"], survivors_reported=verdicts["report"],
+                   survivors_not_judged_here=verdicts["not_judged_here"])
+    rule = (f"a risk-class survivor fails only on a line new or modified since {args.changed_since}; every other "
+            "survivor is reported" if changed is not None else "every risk-class survivor fails (the original rule)")
     out = Path(args.out) if args.out else Path(args.work_dir) / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"head": head, "files": args.files, "seed": args.seed, "workers": args.workers,
                                "slice": {"index": slice_of[0], "count": slice_of[1]} if slice_of else None,
+                               "platform": args.platform, "rule": rule, "changed_since": args.changed_since or None,
+                               "excluded_files": excluded, "not_judged_files": not_judged,
                                "summary": summary, "mutants": chosen}, indent=2) + "\n")
+    if args.summary_md:
+        info = {"slice": f"slice {slice_of[0]}/{slice_of[1]}" if slice_of else "the whole list", "rule": rule,
+                "generated": generated, "in_slice": len(mutants), "counts": counts,
+                "changed_since": args.changed_since or None, "excluded": excluded, "not_judged": not_judged}
+        Path(args.summary_md).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.summary_md).write_text(summary_markdown(info, chosen) + "\n")
 
     print(f"\n{'status':<15} {'file:line':<45} {'operator':<22} original -> mutated")
     for m in chosen:
         print(f"{m['status']:<15} {m['file'] + ':' + str(m['line']):<45} {m['operator']:<22} "
               f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
+    for key, title in (("report", "REPORTED (not failing)"), ("not_judged_here", "NOT JUDGED HERE (AF_XDP)"), ("fail", "FAILING")):
+        for m in chosen:
+            if m.get("verdict") == key:
+                print(f"{title}: {m['file']}:{m['line']} {m['class']}-class {m['operator']} "
+                      f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
     print(f"\nsummary: {json.dumps(summary)}\nresults: {out}")
-    survivors = risk_survivors(chosen)
-    if survivors:
-        print(f"risk-class survivors: {len(survivors)}", flush=True)
+    if verdicts["fail"]:
+        print(f"risk-class survivors failing the rule ({rule}): {verdicts['fail']}", flush=True)
         return 1
+    print(f"no survivor fails the rule ({rule}); reported {verdicts['report']}, "
+          f"not judged here {verdicts['not_judged_here']}", flush=True)
     return 0
 
 
