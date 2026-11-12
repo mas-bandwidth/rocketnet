@@ -147,13 +147,9 @@ struct portable_server_t
     int rx_producer = 0; // RX worker only
     int rx_consumer = -1; // main only, retained until completely consumed
     int rx_cursor = 0; // main only
-    // proofs/tla/RNBankFifoLayout.tla Init: the same three-bank literal as the TX free queue.
-    int rx_free_index[PORTABLE_RX_BANKS] = { 1, 2, 0 };
-    int rx_free_head = 0;
-    int rx_free_count = PORTABLE_RX_BANKS - 1;
-    int rx_ready_index[PORTABLE_RX_BANKS] = {};
-    int rx_ready_head = 0;
-    int rx_ready_count = 0;
+    // the free and ready queues, under rx_mutex.
+    // proofs/tla/RNBankFifoLayout.tla Init: the same start as the TX handoff.
+    rocketnet_buffer_handoff_t<PORTABLE_RX_BANKS> rx_handoff = rocketnet_buffer_handoff_started<PORTABLE_RX_BANKS>( 0 );
     int rx_capacity = 0;
     uint8_t * rx_storage = NULL; // the three banks' arrays, one allocation
     portable_rx_bank_t rx_bank[PORTABLE_RX_BANKS];
@@ -519,20 +515,19 @@ static bool portable_rx_publish( portable_server_t * server )
         return true;
     }
 
+    // the worker always holds the producer, so at most PORTABLE_RX_BANKS - 1
+    // banks are ready and only an empty free queue refuses
+
     rocketnet_platform_mutex_acquire( &server->rx_mutex );
 
-    if ( server->rx_free_count == 0 )
+    const int next = rocketnet_buffer_handoff_publish( &server->rx_handoff, server->rx_producer, PORTABLE_RX_BANKS - 1 );
+    if ( next < 0 )
     {
         rocketnet_platform_mutex_release( &server->rx_mutex );
         return false;
     }
 
-    const int old = server->rx_producer;
-    server->rx_producer = server->rx_free_index[server->rx_free_head];
-    server->rx_free_head = ( server->rx_free_head + 1 ) % PORTABLE_RX_BANKS;
-    server->rx_free_count--;
-    server->rx_ready_index[( server->rx_ready_head + server->rx_ready_count ) % PORTABLE_RX_BANKS] = old;
-    server->rx_ready_count++;
+    server->rx_producer = next;
     rocketnet_platform_mutex_release( &server->rx_mutex );
     server->rx_bank[server->rx_producer].count = 0; // RNPortableRx WReset
 
@@ -566,21 +561,14 @@ static bool portable_rx_acquire( portable_server_t * server )
         return false;
     }
 
-    const bool freed = server->rx_consumer >= 0 && server->rx_free_count == 0;
+    const bool freed = server->rx_consumer >= 0 && server->rx_handoff.free_count == 0;
 
     if ( server->rx_consumer >= 0 )
     {
-        server->rx_free_index[( server->rx_free_head + server->rx_free_count ) % PORTABLE_RX_BANKS] = server->rx_consumer;
-        server->rx_free_count++;
-        server->rx_consumer = -1;
+        rocketnet_buffer_handoff_release( &server->rx_handoff, server->rx_consumer );
     }
 
-    if ( server->rx_ready_count > 0 )
-    {
-        server->rx_consumer = server->rx_ready_index[server->rx_ready_head];
-        server->rx_ready_head = ( server->rx_ready_head + 1 ) % PORTABLE_RX_BANKS;
-        server->rx_ready_count--;
-    }
+    server->rx_consumer = rocketnet_buffer_handoff_take( &server->rx_handoff );
 
     rocketnet_platform_mutex_release( &server->rx_mutex );
     server->rx_cursor = 0;
@@ -1579,7 +1567,7 @@ bool rocketnet_portable_rx_test_handoff()
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 4 ) == 2 &&
              from[0].port == 101 && from[1].port == 102 && server->rx_consumer == 0 && server->rx_cursor == 3;
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 0 &&
-             server->rx_consumer == 0 && server->rx_cursor == 3 && server->rx_ready_count == 1;
+             server->rx_consumer == 0 && server->rx_cursor == 3 && server->rx_handoff.ready_count == 1;
 
     server->force_rx_acquire_busy = false;
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 2 ) == 2 &&
@@ -1635,30 +1623,30 @@ bool rocketnet_portable_rx_test_worker_steps()
     }
 
     // bank 0 is main's partly copied consumer, bank 1 is ready, bank 2 is
-    // the worker's full producer and nothing is free.
+    // the worker's full producer and nothing is free: two publishes and a take.
 
-    server->rx_consumer = 0;
+    server->rx_producer = rocketnet_buffer_handoff_publish( &server->rx_handoff, server->rx_producer, PORTABLE_RX_BANKS - 1 );
+    server->rx_producer = rocketnet_buffer_handoff_publish( &server->rx_handoff, server->rx_producer, PORTABLE_RX_BANKS - 1 );
+    server->rx_consumer = rocketnet_buffer_handoff_take( &server->rx_handoff );
     server->rx_cursor = 0;
+
     server->rx_bank[0].count = 1;
     server->rx_bank[0].from[0].port = 10;
     server->rx_bank[0].bytes[0] = 4;
-
-    server->rx_ready_index[0] = 1;
-    server->rx_ready_head = 0;
-    server->rx_ready_count = 1;
 
     server->rx_bank[1].count = 1;
     server->rx_bank[1].from[0].port = 11;
     server->rx_bank[1].bytes[0] = 4;
 
-    server->rx_producer = 2;
     server->rx_bank[2].count = 1;
     server->rx_bank[2].from[0].port = 12;
     server->rx_bank[2].bytes[0] = 4;
-    server->rx_free_count = 0;
 
-    bool valid = portable_rx_step( server ) == PORTABLE_RX_WAIT_FULL &&
-                 server->rx_producer == 2 && server->rx_bank[2].count == 1 && server->rx_bank[2].from[0].port == 12;
+    bool valid = server->rx_consumer == 0 && server->rx_handoff.ready_count == 1 &&
+                 server->rx_producer == 2 && server->rx_handoff.free_count == 0;
+
+    valid &= portable_rx_step( server ) == PORTABLE_RX_WAIT_FULL &&
+             server->rx_producer == 2 && server->rx_bank[2].count == 1 && server->rx_bank[2].from[0].port == 12;
 
     // a pending wake would end the full wait at once; there is none yet
 
@@ -1674,7 +1662,7 @@ bool rocketnet_portable_rx_test_worker_steps()
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 2 ) == 2 && from[0].port == 10 && from[1].port == 11;
     valid &= rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 1 ) == 0 &&
-             server->rx_consumer == -1 && server->rx_free_count == 2;
+             server->rx_consumer == -1 && server->rx_handoff.free_count == 2;
 
     // a bank returned to a non-empty free FIFO needs no wake
 
@@ -1682,7 +1670,7 @@ bool rocketnet_portable_rx_test_worker_steps()
 
     // the held producer is published now, and main receives it
 
-    valid &= portable_rx_publish( server ) && server->rx_ready_count == 1 && server->rx_bank[server->rx_producer].count == 0;
+    valid &= portable_rx_publish( server ) && server->rx_handoff.ready_count == 1 && server->rx_bank[server->rx_producer].count == 0;
     valid &= portable_receive( server, from, &data[0][0], 8, bytes, 2 ) == 1 && from[0].port == 12;
 
     // stop: quit, then the wake. Both waits end and the next pass exits.

@@ -27,8 +27,8 @@
 // The same structure runs both directions of the client transport: send
 // (producer: the game thread filling payload rings; consumer: the I/O thread
 // sending them) and receive (producer: the I/O thread reading datagrams;
-// consumer: update processing them). The portable server's TX banks
-// (sdk/rocketnet_driver_builtin.cpp) run on it too.
+// consumer: update processing them). The portable server's TX and RX
+// banks (sdk/rocketnet_driver_builtin.cpp) run on it too.
 
 template <int NumBuffers> struct rocketnet_buffer_handoff_t
 {
