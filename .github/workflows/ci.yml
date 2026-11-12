@@ -1907,7 +1907,9 @@ jobs:
 
       - name: Run the unit suite (Windows, shard ${{ matrix.shard }} of 2)
         shell: bash
-        run: ./bin/Release/test.exe --shard ${{ matrix.shard }}/2
+        # --enforce-rss: a case over its memory bound fails here; a plain run
+        # only prints it, and per commit no other Windows job enforces it
+        run: ./bin/Release/test.exe --enforce-rss --shard ${{ matrix.shard }}/2
 
       - name: Enforce combined unit and functional timing
         shell: bash
