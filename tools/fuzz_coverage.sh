@@ -37,8 +37,18 @@
 # compile the server transport and the loopback driver into themselves, and
 # their counts merge into the same functions by name and hash.
 #
-# A local dev tool, not a CI gate. The fuzz_replay_* binaries land in bin/ at
-# the repository root, as every CMake build here does.
+#   FUZZ_COV_CORPORA a directory of campaign corpora to replay as well, one
+#                    subdirectory per corpus named corpus-<os>-<target>-<ref>
+#                    (fuzz-nightly.yml's legs upload them under those names)
+#   FUZZ_COV_FLOORS  the floors table the run is held to (default
+#                    tools/fuzz_coverage_floors.tsv; empty skips the check,
+#                    for a local run with other settings)
+#
+# The run ends by holding every target, and the union, to its floor of sdk
+# lines on this OS (tools/check_fuzz_coverage.py); a target under its floor,
+# or with no number, fails it. fuzz-nightly.yml's coverage jobs run it so. The
+# fuzz_replay_* binaries land in bin/ at the repository root, as every CMake
+# build here does.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -84,29 +94,29 @@ seeds_for()
     esac
 }
 
-if [ "$#" -gt 0 ]; then
-    TARGETS=("$@")
-else
-    TARGETS=()
-    for src in tests/fuzz/rocketnet_fuzz*.cpp; do
-        t="$(basename "$src" .cpp)"
-        grep -q "$t" CMakeLists.txt && TARGETS+=("$t")
-    done
-fi
-
 # ROCKETNET_FUZZ_COVERAGE_BUILD lets the pair harnesses call the profile
 # runtime (they zero the counters after their one-time setup); no other build
 # references it
 COVFLAGS="-fprofile-instr-generate -fcoverage-mapping -DROCKETNET_FUZZ_COVERAGE_BUILD=1"
 # continuous mode (%c) on Linux needs the counters relocated at run time;
 # without it the runtime cannot map them and writes an empty profile
+#
+# XDP is on where it exists (Linux): the netlink reply parsers the
+# gateway_netlink harness drives are compiled only under ROCKETNET_XDP, so a
+# build with it off turns that harness into a no-op and reports 0 lines for it
+XDP=OFF
 if [ "$(uname -s)" = "Linux" ]; then
     COVFLAGS="$COVFLAGS -mllvm -runtime-counter-relocation"
+    XDP=ON
 fi
 # a build directory configured with other flags would build without the
 # define or the relocation flag and report wrong numbers; refuse it
 if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q '^CMAKE_CXX_FLAGS:.*-DROCKETNET_FUZZ_COVERAGE_BUILD=1' "$BUILD/CMakeCache.txt"; then
     echo "fuzz_coverage: $BUILD was configured without the current coverage flags; delete it and rerun" >&2
+    exit 1
+fi
+if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -q "^ROCKETNET_XDP:BOOL=$XDP\$" "$BUILD/CMakeCache.txt"; then
+    echo "fuzz_coverage: $BUILD was configured with ROCKETNET_XDP other than $XDP; delete it and rerun" >&2
     exit 1
 fi
 if [ ! -f "$BUILD/CMakeCache.txt" ]; then
@@ -117,8 +127,27 @@ if [ ! -f "$BUILD/CMakeCache.txt" ]; then
     echo "configuring $BUILD with coverage instrumentation"
     $SLOT cmake -S . -B "$BUILD" ${GENERATOR[@]+"${GENERATOR[@]}"} -DCMAKE_BUILD_TYPE=Debug \
         -DROCKETNET_BUILD_TESTS=ON -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=ON \
-        -DROCKETNET_XDP=OFF -DROCKETNET_HARDEN=OFF \
+        -DROCKETNET_XDP="$XDP" -DROCKETNET_HARDEN=OFF \
         -DCMAKE_C_FLAGS="$COVFLAGS" -DCMAKE_CXX_FLAGS="$COVFLAGS" >"$OUT/configure.log" 2>&1
+fi
+
+# the default targets are the harnesses this configured build has a
+# fuzz_replay_ driver for (CMake lists each target's directory), so a
+# Linux-only driver (the XDP filter's) is not asked of a macOS build
+EVERY=()
+if [ "$#" -gt 0 ]; then
+    TARGETS=("$@")
+else
+    EVERY=(--all)
+    TARGETS=()
+    for src in tests/fuzz/rocketnet_fuzz*.cpp; do
+        t="$(basename "$src" .cpp)"
+        grep -q "/fuzz_replay_$t\.dir\$" "$BUILD/CMakeFiles/TargetDirectories.txt" && TARGETS+=("$t")
+    done
+    if [ "${#TARGETS[@]}" -eq 0 ]; then
+        echo "fuzz_coverage: $BUILD has no fuzz_replay_ targets" >&2
+        exit 1
+    fi
 fi
 
 echo "building ${TARGETS[*]}"
@@ -133,6 +162,22 @@ for t in "${TARGETS[@]}"; do
     if [ -d "$seeds" ] && [ -n "$(ls -A "$seeds")" ]; then
         echo "running $t over $seeds"
         LLVM_PROFILE_FILE="$OUT/raw/$t-corpus-%p%c.profraw" $SLOT "$bin" "$seeds"/* >/dev/null 2>&1
+    fi
+    if [ -n "${FUZZ_COV_CORPORA:-}" ]; then
+        # the campaign corpora: directories named corpus-<os>-<target>-<ref>
+        # (a target name has no '-', so rocketnet_fuzz does not take
+        # rocketnet_fuzz_message's); xargs splits a large corpus over several
+        # runs, each its own %p profile
+        campaign=0
+        for dir in "$FUZZ_COV_CORPORA"/corpus-*-"$t"-*; do
+            [ -d "$dir" ] || continue
+            n="$(find "$dir" -type f | wc -l | tr -d ' ')"
+            campaign=$((campaign + n))
+            [ "$n" -gt 0 ] || continue
+            find "$dir" -type f -print0 | LLVM_PROFILE_FILE="$OUT/raw/$t-campaign-%p%c.profraw" xargs -0 $SLOT "$bin" >/dev/null 2>&1 \
+                || { echo "fuzz_coverage: $t failed replaying the campaign corpus in $dir" >&2; exit 1; }
+        done
+        echo "replayed $t over $campaign campaign inputs from $FUZZ_COV_CORPORA"
     fi
     if [ "$ITERS" -gt 0 ]; then
         echo "running $t over $ITERS random inputs"
@@ -194,10 +239,26 @@ fi
 
 echo
 echo "=== per target, every sdk file ==="
+: > "$OUT/per_target.tsv"
 for t in "${TARGETS[@]}" all; do
-    printf "%-36s %s\n" "$t" "$(report "$OUT/$t.profdata" "$ROOT/sdk")"
+    # a failed report leaves the value empty, which the floor check refuses
+    # by the target's name (FUZZ-COV-MISSING)
+    v="$(report "$OUT/$t.profdata" "$ROOT/sdk")" || v=""
+    printf "%-36s %s\n" "$t" "$v"
+    printf "%s\t%s\n" "$t" "$v" >> "$OUT/per_target.tsv"
 done
 
 $LLVM_COV report "$PRIMARY" "${OBJECTS[@]}" -instr-profile="$OUT/all.profdata" "$ROOT/sdk" > "$OUT/all_vs_sdk.report.txt" 2>/dev/null || true
 echo
 echo "(profiles and the full report in $OUT)"
+
+# every target must reach its floor of sdk lines on this OS
+# (tools/fuzz_coverage_floors.tsv): a harness compiled to a no-op, a corpus
+# that stopped replaying, or a report llvm-cov could not make lands under it
+# or prints no number, and either fails the run. FUZZ_COV_FLOORS= (empty)
+# skips the check for a local run with other settings.
+FLOORS="${FUZZ_COV_FLOORS-tools/fuzz_coverage_floors.tsv}"
+if [ -n "$FLOORS" ]; then
+    echo
+    python3 tools/check_fuzz_coverage.py --floors "$FLOORS" --os "$(uname -s)" ${EVERY[@]+"${EVERY[@]}"} "$OUT/per_target.tsv"
+fi
