@@ -132,13 +132,17 @@ witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
 
 | Case | Spec and terrain | Expected |
 |---|---|---|
-| `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract resend delay; constraints `MCOneTimeout` and `MCOneWay` | pass |
+| `MCRNEndpoint.cfg` | `Spec`, N = 3, capacity 1, `"arbitrary"` in-order loss both ways, failed sends, ack silence, timeouts at any time, abstract resend delay; constraints `MCOneTimeout` and `MCOneWay`; `MCSafetyView` | pass |
 | `MCRNEndpointLive.cfg` | `LiveSpec`, N = 2, capacity 1, `"first"` loss both ways, `RtoAboveRtt` | pass |
 | `MCRNEndpointBrokenConfigUnreliable.cfg` | as Live with `ConfigReliable = FALSE`, capacity 2 | temporal `ConfigVerifiedDespiteFirstLoss` |
 | `MCRNEndpointBrokenConfigNotCompared.cfg` | as the safety case with `ConfigCompared = FALSE`, capacity 2, no constraints | invariant `MismatchErrorsBothEnds` |
-| `MCRNEndpointTwoWay.cfg` | `Spec`, N = 2, capacity 1, both ends sending, the safety terrain; constraint `MCOneTimeout` only (bench) | pass |
-| `MCRNEndpointPartial.cfg` | the safety case with `WriteAll = FALSE` (bench) | pass |
+| `MCRNEndpointTwoWay.cfg` | `Spec`, N = 2, capacity 1, both ends sending, the safety terrain; constraint `MCOneTimeout` only; `MCSafetyView` | pass |
+| `MCRNEndpointPartial.cfg` | the safety case with `WriteAll = FALSE`; `MCSafetyView` | pass |
 | `MCRNEndpointBrokenOrderIgnored.cfg` | the Partial case with `OrderChecked = FALSE` | invariant `OrderedInOrder` |
+| `MCRNEndpointTimeoutOff.cfg` | the safety case with the reliable timeout off, `Clocked`, T = 3; every safety invariant, `NoEndBeforeSilenceT`, `SilenceEndsAtT`; `MCSafetyView` | pass |
+| `MCRNEndpointBrokenConfigWaitOnTimeout.cfg` | as TimeoutOff with `ConfigWaitOnTimeout` | invariant `NoEndBeforeSilenceT` |
+| `MCRNEndpointBrokenSilenceEarly.cfg` | as TimeoutOff with `SilenceEndEarly` | invariant `NoEndBeforeSilenceT` |
+| `MCRNEndpointBrokenOptedInInsideT.cfg` | as TimeoutOff with the timeout configured, `ReliableT` = 2 < T = 3 | invariant `EndsNeedSilenceT` |
 
 ### What makes the controls finish, and what each reduction gives up
 
@@ -179,6 +183,21 @@ witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
   is where the ordering rule is checked.
 - Liveness stays at N = 2: at N = 3 and capacity 1 it completes (86,113
   distinct states, no violation) but in 188 s, over the budget.
+- `MCSafetyView` (the four passing safety cases, revision 1.1.2): TLC
+  identifies states that differ only in the links' send counters and
+  delivery pulses. This is exact, not a reduction of coverage: under
+  `"arbitrary"` loss Link reads `sent` only to compute `sent'` and in
+  `LostAtSend(NextCount)`, which is `FALSE` for `"arbitrary"` whatever the
+  count, and reads `pulse` only to compute `pulse'` (it exists so fairness
+  can tell a Deliver from a Drop; `Spec` has no fairness). No RNEndpoint
+  action and no invariant reads either, so two states equal in the view
+  have the same enabled steps, the same successors in the view and the same
+  verdict on every invariant. Under any other pattern the view is every
+  variable. `RNChannel`'s `SafetyView` is the same quotient. It takes the
+  two-way case from 5,082,866 distinct states to 255,524, and the partial
+  case from 3,326,097 to 170,452, with every constant and invariant as
+  before; the counts the bullets above quote (736909 for the one-way case)
+  are without it.
 
 ### Measured records
 
