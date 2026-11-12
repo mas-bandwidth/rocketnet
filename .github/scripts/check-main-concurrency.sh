@@ -70,13 +70,17 @@ if [ "${1:-}" = "--self-test" ]; then
   printf 'name: x\non:\n  schedule:\n    - cron: "30 5 * * *"\n  workflow_dispatch:\nconcurrency:\n  group: nightly-${{ github.ref }}\n  cancel-in-progress: true\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/good-nightly.yml"
   printf 'name: x\non:\n  push:\n    branches: [main]\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/good-none.yml"
   check "$d/good-sep.yml" "$d/good-nightly.yml" "$d/good-none.yml" >/dev/null || { echo "self-test: a separating, nightly or no-concurrency workflow was refused"; check "$d/good-sep.yml" "$d/good-nightly.yml" "$d/good-none.yml"; exit 1; }
+  # run from a directory with no .github/workflows: nothing to check is a failure, never a pass
+  self=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+  mkdir "$d/empty"
+  if (cd "$d/empty" && sh "$self" >/dev/null); then echo "self-test: no workflows was accepted"; exit 1; fi
   echo "check-main-concurrency self-test: ok"
   exit 0
 fi
 
 if [ $# -eq 0 ]; then
   set -- $(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null)
-  [ $# -gt 0 ] || { echo "check-main-concurrency: no workflows"; exit 0; }
+  [ $# -gt 0 ] || { echo "check-main-concurrency: no workflows found under .github/workflows: nothing was checked"; exit 1; }
 fi
 if check "$@"; then echo "check-main-concurrency: every per-commit concurrency group separates main commits ($# workflow files)"; exit 0; fi
 echo "check-main-concurrency: a main commit's pending run would be replaced, not queued"
