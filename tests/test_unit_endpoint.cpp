@@ -1747,6 +1747,144 @@ static void test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring()
     rn_arena_destroy( arena );
 }
 
+// A slot reused after a busy connection (rn_endpoint_reset; proofs/tla/RNEndpoint.tla
+// Reset): the endpoint is left with reliable and receipt messages in flight, a
+// large message part written, a queued unreliable ring and an in-place start
+// pending, then reset. Every send-side field the reset owns equals a fresh
+// slot's, and the same sends after it write the same packets, byte for byte,
+// with the same receipts.
+
+static void ep_reuse_sends( rn_endpoint_t * endpoint, uint8_t fill )
+{
+    uint8_t data[3000];
+    memset( data, fill, sizeof( data ) );
+    check( rn_endpoint_send( endpoint, data, 300, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 );
+    check( rn_endpoint_send( endpoint, data, 3000, ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_PRIORITY_MEDIUM, 1, 0 ) != 0 );
+    check( rn_endpoint_send( endpoint, data, 120, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 );
+    check( rn_endpoint_send( endpoint, data, 200, ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 1, 0 ) != 0 );
+}
+
+// The packets one update writes from now, as their lengths and a hash of
+// their bytes; packet ids from first_id. Returns the packets written.
+static int ep_reuse_write( rn_endpoint_t * endpoint, double now, uint64_t first_id, int * lengths, uint64_t * hashes, int capacity )
+{
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( endpoint );
+    rn_endpoint_begin_flush( endpoint );
+    int count = 0;
+    while ( count < capacity && rn_endpoint_next_packet_bytes( endpoint, now ) > 0 )
+    {
+        const int bytes = rn_endpoint_write_packet( endpoint, frame, sizeof( frame ), first_id + (uint64_t) count, now );
+        if ( bytes <= 0 )
+        {
+            break;
+        }
+        lengths[count] = bytes;
+        hashes[count] = 0;
+        ep_hash( &hashes[count], frame, (size_t) bytes );
+        rn_endpoint_packet_sent( endpoint, first_id + (uint64_t) count, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
+        count++;
+    }
+    return count;
+}
+
+static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters_busy = {};
+    rocketnet_counters_t counters_fresh = {};
+    rn_arena_t * arena_busy = rn_arena_create( NULL, &config, 1, &counters_busy );
+    rn_arena_t * arena_fresh = rn_arena_create( NULL, &config, 1, &counters_fresh );
+    check( arena_busy != NULL && arena_fresh != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t busy;
+    rn_endpoint_t fresh;
+    rn_endpoint_init( &busy, rn_arena_region( arena_busy, 0 ), &endpoint_config );
+    rn_endpoint_init( &fresh, rn_arena_region( arena_fresh, 0 ), &endpoint_config );
+
+    // the busy connection: two updates sent and never acked, more queued
+    // behind them, and an in-place start left pending
+
+    rn_endpoint_reset( &busy, 1000.0 );
+    int lengths[8];
+    uint64_t hashes[8];
+    ep_reuse_sends( &busy, 0x31 );
+    check( ep_reuse_write( &busy, 1000.0, 1, lengths, hashes, 1 ) == 1 );
+    ep_reuse_sends( &busy, 0x32 );
+    check( ep_reuse_write( &busy, 1000.1, 2, lengths, hashes, 8 ) > 0 );
+    ep_reuse_sends( &busy, 0x33 );
+    ep_send_unreliable( &busy, 0, 64, 0x34 );
+    ep_send_unreliable( &busy, 1, 64, 0x35 );
+    rn_endpoint_in_place_begin( &busy, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 100, 3 );
+    check( busy.unreliable_ring_used > 0 && busy.pending_bytes != 0 && busy.serial != 0 );
+
+    // the slot reused, beside a fresh one
+
+    rn_endpoint_reset( &busy, 2000.0 );
+    rn_endpoint_reset( &fresh, 2000.0 );
+
+    check( busy.send_budget_enabled == fresh.send_budget_enabled );
+    check( busy.send_error == fresh.send_error && busy.send_refused == fresh.send_refused );
+    check( busy.config_wait_start == fresh.config_wait_start && busy.config_error == fresh.config_error );
+    check( busy.serial == fresh.serial );
+    check( busy.pending_type == fresh.pending_type && busy.pending_descriptor == fresh.pending_descriptor );
+    check( busy.pending_bytes == fresh.pending_bytes && busy.pending_in_place == fresh.pending_in_place );
+    check( busy.pending_channel == fresh.pending_channel && busy.pending_header == fresh.pending_header );
+    check( busy.in_place_serial == fresh.in_place_serial && busy.in_place_receipt == fresh.in_place_receipt );
+    check( busy.in_place_admitted == fresh.in_place_admitted );
+    check( busy.unreliable_head == fresh.unreliable_head && busy.unreliable_ring_head == fresh.unreliable_ring_head );
+    check( busy.unreliable_ring_used == fresh.unreliable_ring_used && busy.unreliable_count == fresh.unreliable_count );
+    check( busy.write_phase == fresh.write_phase && busy.written == fresh.written );
+    check( busy.packet_kind == fresh.packet_kind && busy.packet_written == fresh.packet_written );
+    check( busy.large_bytes == fresh.large_bytes && busy.large_admitted == fresh.large_admitted );
+    check( busy.large_descriptor == fresh.large_descriptor );
+    check( busy.packet_records == fresh.packet_records && busy.receipt_count == fresh.receipt_count );
+    check( memcmp( busy.receipt_serials, fresh.receipt_serials, sizeof( busy.receipt_serials ) ) == 0 );
+
+    // the same sends after it: the same packets and the same receipts
+
+    for ( int update = 0; update < 3; update++ )
+    {
+        const double now = 2000.0 + 0.1 * update;
+        ep_reuse_sends( &busy, (uint8_t) ( 0x40 + update ) );
+        ep_reuse_sends( &fresh, (uint8_t) ( 0x40 + update ) );
+
+        int busy_lengths[8];
+        int fresh_lengths[8];
+        uint64_t busy_hashes[8];
+        uint64_t fresh_hashes[8];
+        const int busy_count = ep_reuse_write( &busy, now, 100 + 10 * (uint64_t) update, busy_lengths, busy_hashes, 8 );
+        const int fresh_count = ep_reuse_write( &fresh, now, 100 + 10 * (uint64_t) update, fresh_lengths, fresh_hashes, 8 );
+        check( busy_count > 0 && busy_count == fresh_count );
+        for ( int p = 0; p < busy_count && p < fresh_count; p++ )
+        {
+            check( busy_lengths[p] == fresh_lengths[p] );
+            check( busy_hashes[p] == fresh_hashes[p] );
+        }
+
+        rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update, now + 0.05 );
+        rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update, now + 0.05 );
+        rocketnet_message_receipt_t busy_receipts[16];
+        rocketnet_message_receipt_t fresh_receipts[16];
+        const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
+        const int fresh_taken = rn_endpoint_take_receipts( &fresh, fresh_receipts, 16 );
+        check( busy_taken == fresh_taken );
+        for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
+        {
+            check( busy_receipts[r].serial == fresh_receipts[r].serial && busy_receipts[r].status == fresh_receipts[r].status );
+        }
+    }
+
+    rn_arena_destroy( arena_busy );
+    rn_arena_destroy( arena_fresh );
+}
+
 // ---------------------------------------------------------------------------
 // the reliable timeout off by default (standard/MESSAGES.md m9.3, 10.3): a
 // heard connection whose reliable stream never progresses never ends, and
@@ -1911,6 +2049,7 @@ REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticke
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_message );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
+REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
