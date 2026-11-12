@@ -110,10 +110,11 @@ def api_base():
 
 
 class ApiError(Exception):
-    def __init__(self, url, why="failed"):
+    def __init__(self, url, why="failed", status=None):
         super().__init__(f"{url}: {why}")
         self.url = url
         self.why = why
+        self.status = status
 
 
 # ---------------------------------------------------------------- cron
@@ -338,7 +339,8 @@ class Api:
                 answer = self.fetch(url)
             except Exception as error:  # noqa: BLE001 -- every failure is classified and reported
                 if not transient(error):
-                    raise ApiError(url, f"{describe(error)}, not retried") from error
+                    raise ApiError(url, f"{describe(error)}, not retried",
+                                   status=getattr(error, "code", None)) from error
                 if attempt + 1 < tries:
                     asked = retry_after(error, self.clock())
                     wait = BACKOFF[attempt] if asked is None else min(max(asked, BACKOFF[attempt]), MAX_WAIT)
@@ -352,8 +354,16 @@ class Api:
         raise AssertionError("unreachable")
 
     def scheduled_runs(self, repo, workflow, count):
-        data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
-                        {"event": "schedule", "branch": "main", "per_page": count})
+        try:
+            data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
+                            {"event": "schedule", "branch": "main", "per_page": count})
+        except ApiError as error:
+            # GitHub knows no workflow at that path until the file has been on the default
+            # branch (or run somewhere): it has no runs, and the watch's NO-RUN / PENDING
+            # rule, from the file's age on main, gives the verdict
+            if error.status == 404:
+                return []
+            raise
         return data.get("workflow_runs", [])
 
     def run_jobs(self, repo, run_id):

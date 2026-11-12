@@ -332,10 +332,24 @@ class ApiErrors(WatchCase):
         self.assertEqual([], self.sleeps)
 
     def test_404_is_not_retried(self):
-        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(404)]})
+        jobs_path = f"/repos/{REPO}/actions/runs/101/jobs"
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={jobs_path: [http_error(404)]})
         code, out = self.watch(api)
         self.assertExit(1, code, out, "HTTP 404, not retried", "API-ERROR 1")
+        self.assertEqual(1, api.calls.count(jobs_path))
         self.assertEqual([], self.sleeps)
+
+    def test_a_workflow_github_does_not_know_yet_is_pending_when_new(self):
+        # planted-violations.yml on the night it lands: GitHub answers 404 for its runs
+        self.since = {"nightly.yml": NOW - datetime.timedelta(hours=2)}
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(404)]})
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "PENDING nightly.yml", "API-ERROR 0")
+
+    def test_a_workflow_github_does_not_know_is_no_run_when_old(self):
+        api = FakeApi(GREEN_RUNS, GREEN_JOBS, errors={NIGHTLY_RUNS_PATH: [http_error(404)]})
+        code, out = self.watch(api)
+        self.assertExit(1, code, out, "NO-VERDICT nightly.yml :: (run) NO-RUN", "API-ERROR 0")
 
     def test_connection_refused_and_bad_json_are_retried(self):
         errors = [ConnectionRefusedError(111, "Connection refused"), ValueError("Expecting value")]
@@ -359,7 +373,7 @@ class ApiErrors(WatchCase):
 
         def fetch(url):
             seen.append(url)
-            raise http_error(404)
+            raise http_error(500)
         code, out = self.watch(fetch)
         self.assertExit(1, code, out, "GET https://ghe.invalid/api/v3/repos/")
         self.assertTrue(all(u.startswith("https://ghe.invalid/api/v3/") for u in seen), seen)
