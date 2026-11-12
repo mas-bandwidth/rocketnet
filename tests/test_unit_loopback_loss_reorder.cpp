@@ -515,7 +515,9 @@ static void test_loopback_transport_payload_batch_full_is_counted()
 
 REGISTER_UNIT_TEST( test_loopback_transport_payload_batch_full_is_counted );
 
-static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
+// Run at the default reliable timeout (0: probe pacing and the round-trip
+// filter on) and opted in at 120000 (the v1.0 resend rule).
+static void loopback_transport_reliable_ordered_survives_loss_and_reorder_leg( int reliable_timeout_ms )
 {
     struct loopback_pattern_t pattern = { 7, 4, 0 };
     struct loopback_transport_pair_t pair;
@@ -535,7 +537,7 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     message_config.message_resend_delay_initial_ms = 100;
     message_config.message_resend_delay_min_ms = 20;
     message_config.message_resend_delay_max_ms = 400;
-    message_config.reliable_message_timeout_ms = 120000;
+    message_config.reliable_message_timeout_ms = reliable_timeout_ms;
 
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, pair.server );
@@ -638,7 +640,18 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     rn_message_object_destroy( server );
 }
 
+static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
+{
+    loopback_transport_reliable_ordered_survives_loss_and_reorder_leg( 0 );
+}
+
+static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder_opted_in()
+{
+    loopback_transport_reliable_ordered_survives_loss_and_reorder_leg( 120000 );
+}
+
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
+REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder_opted_in );
 #endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV

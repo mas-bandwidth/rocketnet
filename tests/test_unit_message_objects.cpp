@@ -462,6 +462,13 @@ static rn_message_link_t mo_link( mo_endpoint_t * e )
 // objects on the pair
 // ---------------------------------------------------------------------------
 
+// The reliable timeout mo_config gives: 0, the shipped default (no reliable
+// timeout; probe pacing and the round-trip filter on), so every case states
+// its property under the shipped rule; test_message_objects_cases_opted_in
+// reruns the cases at 120000, the opted-in rule (every due number resent, as
+// in v1.0).
+static int g_mo_reliable_timeout_ms = 0;
+
 static void mo_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
@@ -477,7 +484,7 @@ static void mo_config( rocketnet_message_config_t * config )
     config->message_resend_delay_initial_ms = 100;
     config->message_resend_delay_min_ms = 20;
     config->message_resend_delay_max_ms = 400;
-    config->reliable_message_timeout_ms = 120000;
+    config->reliable_message_timeout_ms = g_mo_reliable_timeout_ms;
 }
 
 // the clock every case starts at: never 0.0, so a time field left at zero
@@ -5434,4 +5441,39 @@ static void test_message_object_destroy_before_stop_finishes_the_shutdown()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_message_object_destroy_before_stop_finishes_the_shutdown );
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
+// The cases above whose outcome rests on reliable resends and
+// acknowledgements, rerun with mo_config opted in at 120000 (no probe pacing,
+// no round-trip filter: the v1.0 resend rule), in one process. The
+// registered cases run every mo_config case at the default.
+static void test_message_objects_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_message_full_drain_delivers_every_message_once_in_order,
+        test_ordered_and_unreliable_end_to_end_in_memory,
+        test_server_kicks_exhausted_client_others_unaffected,
+        test_client_disconnects_itself_on_exhaustion,
+        test_slot_reuse_starts_clean,
+        test_lazy_slot_reset_nothing_crosses_reuse,
+        test_acks_only_from_transport_acked_packets,
+        test_unreliable_past_limit_promotes_counted_and_not_wedged,
+        test_unreliable_over_a_lossy_link_arrives_intact_at_most_once,
+        test_send_room_query_says_no_exactly_when_a_start_is_refused,
+        test_pending_start_cancelled_by_slot_reset,
+        test_slot_bound_this_update_keeps_its_first_payload,
+        test_previous_connection_payload_dropped_after_reconnect,
+        test_previous_connection_ack_dropped_after_reconnect,
+        test_region_reset_keeps_payload_bytes,
+    };
+    g_mo_reliable_timeout_ms = 120000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_mo_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_message_objects_cases_opted_in );
 #endif // #if ROCKETNET_DEV

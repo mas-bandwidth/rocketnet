@@ -413,6 +413,12 @@ static rn_message_link_t mc_link( mc_endpoint_t * e )
 // objects on the pair
 // ---------------------------------------------------------------------------
 
+// The reliable timeout mc_config gives: 0, the shipped default (no reliable
+// timeout; probe pacing and the round-trip filter on);
+// test_message_config_cases_opted_in reruns the cases at 120000, the
+// opted-in rule (every due number resent, as in v1.0).
+static int g_mc_reliable_timeout_ms = 0;
+
 static void mc_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
@@ -428,7 +434,7 @@ static void mc_config( rocketnet_message_config_t * config )
     config->message_resend_delay_initial_ms = 100;
     config->message_resend_delay_min_ms = 20;
     config->message_resend_delay_max_ms = 400;
-    config->reliable_message_timeout_ms = 120000;
+    config->reliable_message_timeout_ms = g_mc_reliable_timeout_ms;
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1329,4 +1335,30 @@ REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate
 REGISTER_UNIT_TEST( test_message_config_send_store_one_mib_accepted );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_minimal_send_store_carries_maximal_message );
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
+// The cases above that take mc_config's timeout, rerun opted in at 120000
+// (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
+// process. The registered cases run them at the default;
+// test_message_config_never_received_is_reliable_timeout sets its own.
+static void test_message_config_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_message_config_mismatch_ends_both_connections,
+        test_message_config_equal_connects_and_verifies,
+        test_message_config_first_loss_still_verifies,
+        test_message_config_sent_map_holds_a_window_burst,
+        test_message_config_send_store_one_mib_accepted,
+        test_message_config_minimal_send_store_carries_maximal_message,
+    };
+    g_mc_reliable_timeout_ms = 120000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_mc_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_message_config_cases_opted_in );
 #endif // #if ROCKETNET_DEV
