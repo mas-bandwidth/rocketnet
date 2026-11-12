@@ -1451,10 +1451,13 @@ jobs:
           }
           failed=0
           for config in Release Debug; do
-            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation; do
+            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation test_no_dialogs_heap_overrun; do
               read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
               stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
-              if [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+              if [ "$config/$case" = Debug/test_no_dialogs_heap_overrun ] && ! grep -q "the debug CRT reported an error" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+                echo "FAIL $config $case: the debug heap report did not end the case red"
+                failed=1
+              elif [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
                 echo "FAIL $config $case: the assertion report did not reach stderr"
                 failed=1
               elif [ "$state" = exited ] && [ "$code" != 0 ]; then

@@ -66,3 +66,44 @@ static void test_suite_finish_fails_when_no_case_ran()
 }
 
 REGISTER_UNIT_TEST( test_suite_finish_fails_when_no_case_ran );
+
+// A case passes only by returning. While it runs, the exit guard is armed for
+// the process that started it, so an exit( 0 ) inside the case fails it; a
+// child the case forks (another pid) and the time after the case returned are
+// not guarded. The guard's state is read inside and after a case here; the
+// exit itself is planted by hand (FIX-VERIFY-D: --run, the suite, shards).
+
+static bool suite_guard_seen_running;
+static long suite_guard_seen_pid;
+
+static int suite_guard_probe_worker( const char * name )
+{
+    const suite_case_guard_state & state = suite_case_guard();
+    suite_guard_seen_running = state.running && state.name != NULL && std::strcmp( state.name, name ) == 0;
+    suite_guard_seen_pid = state.pid;
+    return 7;
+}
+
+static void test_suite_case_exit_guard_is_armed_only_while_the_case_runs()
+{
+    const suite_case_guard_state before = suite_case_guard();
+    suite_guard_seen_running = false;
+    suite_guard_seen_pid = 0;
+
+    check( suite_run_case( suite_guard_probe_worker, "probe" ) == 7 );
+    check( suite_guard_seen_running );
+    check( suite_guard_seen_pid == suite_process_id() );
+    check( suite_case_guard().registered );
+    check( !suite_case_guard().running );
+
+    suite_case_guard_state armed = { "probe", 4242, true, true };
+    check( suite_case_exit_fails( armed, 4242 ) );
+    check( !suite_case_exit_fails( armed, 4243 ) );
+    armed.running = false;
+    check( !suite_case_exit_fails( armed, 4242 ) );
+
+    // this case itself runs under the guard: put its state back
+    suite_case_guard() = before;
+}
+
+REGISTER_UNIT_TEST( test_suite_case_exit_guard_is_armed_only_while_the_case_runs );

@@ -333,6 +333,76 @@ inline uint64_t suite_page_bytes()
 #endif // #if defined( _WIN32 )
 }
 
+// A case passes only when its function returns 0. A case that ends the
+// process itself never returns: exit( 0 ) ahead of its checks would otherwise
+// leave with status 0 and pass in every entry (--run, the suite's children,
+// shards). While a case runs, an atexit handler stands guard: if the process
+// that started the case leaves through exit() before the case returned, the
+// handler prints why and ends the process with status 1. A failed check's
+// exit( 1 ) still ends with 1; abort and signals never run atexit handlers.
+// A child the case forks keeps its own exit status (the pid is compared).
+
+struct suite_case_guard_state
+{
+    const char * name;
+    long pid;
+    bool running;
+    bool registered;
+};
+
+inline suite_case_guard_state & suite_case_guard()
+{
+    static suite_case_guard_state state = { NULL, 0, false, false };
+    return state;
+}
+
+inline long suite_process_id()
+{
+#if defined( _WIN32 )
+    return (long) GetCurrentProcessId();
+#else
+    return (long) getpid();
+#endif // #if defined( _WIN32 )
+}
+
+// true when an exit() now, from process pid, must fail the case: a case is
+// running and this is the process that started it
+inline bool suite_case_exit_fails( const suite_case_guard_state & state, long pid )
+{
+    return state.running && state.pid == pid;
+}
+
+inline void suite_case_exit_guard()
+{
+    const suite_case_guard_state & state = suite_case_guard();
+    if ( suite_case_exit_fails( state, suite_process_id() ) )
+    {
+        printf( "check failed: %s left through exit() before it returned; a case ends only by returning\n", state.name );
+        fflush( stdout );
+        _exit( 1 );
+    }
+}
+
+inline int suite_run_case( int ( *worker )( const char * ), const char * name )
+{
+    suite_case_guard_state & state = suite_case_guard();
+    if ( !state.registered )
+    {
+        if ( atexit( suite_case_exit_guard ) != 0 )
+        {
+            printf( "check failed: %s: could not register the exit guard\n", name );
+            return 1;
+        }
+        state.registered = true;
+    }
+    state.name = name;
+    state.pid = suite_process_id();
+    state.running = true;
+    const int rc = worker( name );
+    state.running = false;
+    return rc;
+}
+
 // The bound for one case: none in a sanitizer build without the environment
 // override, else the bound the case declares, else the bound its process
 // reported from its plan (plan_mb, -1 for none), else the suite-wide one.
@@ -1328,7 +1398,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
     {
-        return worker( name );
+        return suite_run_case( worker, name );
     }
 
     const pid_t pid = fork();
@@ -1336,7 +1406,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     {
         close( pipefd[0] );
         close( pipefd[1] );
-        return worker( name );
+        return suite_run_case( worker, name );
     }
 
     if ( pid == 0 )
@@ -1351,7 +1421,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
-        const int rc = worker( name );
+        const int rc = suite_run_case( worker, name );
         fflush( stdout );
         fflush( stderr );
         _exit( rc );
@@ -1440,14 +1510,14 @@ inline int suite_main( int argc, char ** argv,
         if ( suite_env_is_set( "ROCKETNET_TEST_SUITE_CAPTURE" ) )
         {
             unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
-            return worker( argv[2] );
+            return suite_run_case( worker, argv[2] );
         }
 
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
         {
             return suite_run_names_only( worker, argv[2] );
         }
-        return worker( argv[2] );
+        return suite_run_case( worker, argv[2] );
     }
 
     for ( int i = 1; i < argc; i++ )
@@ -1779,6 +1849,33 @@ inline void suite_drain( HANDLE pipe, std::string & output )
 // the suite spawns; each child sets all of it again in its own CRT.
 // tests/windows_no_dialogs.cpp and ci.yml's Windows leg (c) prove it.
 
+#if defined( _MSC_VER ) && defined( _DEBUG )
+
+// The debug CRT reports what it detects (a heap block overrun at its free, a
+// bad pointer, a CRT assert) and, with the reports routed to stderr so no
+// dialog blocks CI, carries on: the case then exits 0 over a printed "HEAP
+// CORRUPTION DETECTED". Any error or assert report ends the process red: the
+// text goes to stderr first, then the process leaves with status 3. Warnings
+// (the leak dump) stay reports.
+
+inline int __cdecl suite_crt_report_fails( int report_type, char * message, int * return_value )
+{
+    if ( report_type == _CRT_ERROR || report_type == _CRT_ASSERT )
+    {
+        fprintf( stderr, "check failed: the debug CRT reported an error: %s\n", message ? message : "(no text)" );
+        fflush( stderr );
+        fflush( stdout );
+        _exit( 3 );
+    }
+    if ( return_value )
+    {
+        *return_value = 0;
+    }
+    return FALSE;
+}
+
+#endif // #if defined( _MSC_VER ) && defined( _DEBUG )
+
 inline void suite_no_dialogs()
 {
     SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX );
@@ -1792,6 +1889,7 @@ inline void suite_no_dialogs()
     _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDERR );
     _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
     _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDERR );
+    _CrtSetReportHook2( _CRT_RPTHOOK_INSTALL, suite_crt_report_fails );
 #endif // #if defined( _DEBUG )
 #endif // #if defined( _MSC_VER )
 }
@@ -1856,7 +1954,7 @@ inline int suite_main( int argc, char ** argv,
                 return suite_usage( argv );
             }
         }
-        return worker( argv[2] );
+        return suite_run_case( worker, argv[2] );
     }
 
     for ( int i = 1; i < argc; i++ )
