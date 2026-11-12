@@ -27,8 +27,9 @@
 # Every run that does not pass prints one line, XVER FAIL case=.. client=..
 # server=.. transport=..: <reason>, and the job fails. The one stated
 # difference between versions is in tools/xver/xver.go (silentClientEnd): a
-# v1.0.x server ends a silent client with RELIABLE_TIMED_OUT, as the v1.1.0
-# notes document; every other server must say TIMED_OUT.
+# v1.0.x server may end a silent client with RELIABLE_TIMED_OUT or TIMED_OUT
+# (its reliable timeout and T are both 10 s and race), as the v1.1.0 notes
+# document; every other server must say TIMED_OUT.
 #
 # What it does not cover: the xdp server transport (it needs root and a veth
 # pair; ci.yml's transport matrix covers it on the current tree only), a

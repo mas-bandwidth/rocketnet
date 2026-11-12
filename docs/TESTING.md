@@ -122,11 +122,13 @@ reasons are exactly the case's list. Each run that does not pass prints
 fails. `go test xver.go xver_test.go` in `tools/xver` checks the grading.
 
 One difference between versions is expected, and stated in
-`silentClientEnd` in `xver.go`: a v1.0.x server ends a client that went
-silent with `RELIABLE_TIMED_OUT`, not `TIMED_OUT`, because its default
-reliable-message timeout equals the connect token's timeout (documented in
-the v1.1.0 release notes). Only v1.0.x servers get that expectation; every
-other server must say `TIMED_OUT`.
+`silentClientEnd` in `xver.go`: a v1.0.x server may end a client that went
+silent with `RELIABLE_TIMED_OUT` as well as `TIMED_OUT`, because its default
+reliable-message timeout equals the connect token's timeout and the two
+clocks race (documented in the v1.1.0 release notes; on 2026-11-11, 21 of 24
+such ends named `RELIABLE_TIMED_OUT`, the other 3 on the io_uring server).
+Only v1.0.x servers get that expectation; every other server must say
+`TIMED_OUT`.
 
 Per commit, the main build compiles `xver.c` against the current tree, so a
 public API change that breaks it fails at once.

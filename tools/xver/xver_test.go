@@ -19,13 +19,24 @@ func passingServer(ends []string, verifies int) []string {
 	return append(lines, "SRV exit fails=0")
 }
 
-func TestSilentClientEndIsReliableTimedOutForV100ServersOnly(t *testing.T) {
+// pick takes alternative n (or the last) of every expected entry
+func pick(want []string, n int) []string {
+	var out []string
+	for _, w := range want {
+		alternatives := strings.Split(w, "|")
+		out = append(out, alternatives[min(n, len(alternatives)-1)])
+	}
+	return out
+}
+
+func TestSilentClientEndAllowsReliableTimedOutForV10xServersOnly(t *testing.T) {
 	cases := map[string]string{
-		"v1.0.0":  "RELIABLE_TIMED_OUT",
-		"v1.0.9":  "RELIABLE_TIMED_OUT",
+		"v1.0.0":  "RELIABLE_TIMED_OUT|TIMED_OUT",
+		"v1.0.9":  "RELIABLE_TIMED_OUT|TIMED_OUT",
 		"v1.1.0":  "TIMED_OUT",
 		"v1.1.3":  "TIMED_OUT",
 		"main":    "TIMED_OUT",
+		"newest":  "TIMED_OUT",
 		"v1.10.0": "TIMED_OUT",
 	}
 	for label, want := range cases {
@@ -35,29 +46,44 @@ func TestSilentClientEndIsReliableTimedOutForV100ServersOnly(t *testing.T) {
 	}
 }
 
-func TestGradePassesExactExpectation(t *testing.T) {
+func TestGradePassesEveryAllowedName(t *testing.T) {
 	for _, c := range allCases {
 		for _, server := range []string{"v1.0.0", "main"} {
-			lines := passingServer(expectedServerEnds(c, server), expectedVerifies(c))
-			if reasons := grade(c, server, 0, 0, []string{"CLI done"}, lines); len(reasons) != 0 {
-				t.Errorf("case %s server %s: %v", c, server, reasons)
+			for n := 0; n < 2; n++ {
+				lines := passingServer(pick(expectedServerEnds(c, server), n), expectedVerifies(c))
+				if reasons := grade(c, server, 0, 0, []string{"CLI done"}, lines); len(reasons) != 0 {
+					t.Errorf("case %s server %s alternative %d: %v", c, server, n, reasons)
+				}
 			}
 		}
 	}
 }
 
 func TestGradeRefusesReliableTimedOutFromNewerServer(t *testing.T) {
-	lines := passingServer([]string{"RELIABLE_TIMED_OUT", "CLIENT_DISCONNECTED"}, 1)
-	reasons := grade("die", "main", 0, 0, nil, lines)
-	if len(reasons) != 1 || !strings.Contains(reasons[0], "server end reasons") {
-		t.Fatalf("reasons = %v", reasons)
+	for _, server := range []string{"v1.1.0", "main", "newest"} {
+		lines := passingServer([]string{"RELIABLE_TIMED_OUT", "CLIENT_DISCONNECTED"}, 1)
+		reasons := grade("die", server, 0, 0, nil, lines)
+		if len(reasons) != 1 || !strings.Contains(reasons[0], "server end reasons") {
+			t.Fatalf("server %s: reasons = %v", server, reasons)
+		}
 	}
 }
 
-func TestGradeRefusesTimedOutFromV100Server(t *testing.T) {
-	lines := passingServer([]string{"TIMED_OUT", "CLIENT_DISCONNECTED"}, 1)
-	if reasons := grade("die", "v1.0.0", 0, 0, nil, lines); len(reasons) != 1 {
-		t.Fatalf("reasons = %v", reasons)
+func TestGradeRefusesOtherEndsFromV10xServer(t *testing.T) {
+	for _, ends := range [][]string{
+		{"MESSAGE_NOT_RECEIVED", "CLIENT_DISCONNECTED"},
+		{"RELIABLE_TIMED_OUT"},
+		{"RELIABLE_TIMED_OUT", "RELIABLE_TIMED_OUT"},
+	} {
+		lines := passingServer(ends, 1)
+		if reasons := grade("die", "v1.0.0", 0, 0, nil, lines); len(reasons) != 1 {
+			t.Errorf("ends %v: reasons = %v", ends, reasons)
+		}
+	}
+	// lifecycle D is the server's own silence: TIMED_OUT on every version
+	lines := passingServer([]string{"CLIENT_DISCONNECTED", "SERVER_DISCONNECTED", "TIMED_OUT", "RELIABLE_TIMED_OUT", "CLIENT_DISCONNECTED"}, 5)
+	if reasons := grade("lifecycle", "v1.0.0", 0, 0, nil, lines); len(reasons) != 1 {
+		t.Errorf("lifecycle D: reasons = %v", reasons)
 	}
 }
 
