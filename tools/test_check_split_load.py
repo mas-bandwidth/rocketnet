@@ -610,6 +610,66 @@ class SplitProofTests(unittest.TestCase):
         return validate(server, shards, RUN, 2, 60, 1000.0, server_transport="portable",
                         client_transport="portable", allocation_manifest=allocation(server, shards), load="proof")
 
+    def smoke_manifest(self, server, shards):
+        manifest = allocation(server, shards)
+        manifest["server"]["allocation_type"] = "same_host_smoke"
+        for index, entry in enumerate(manifest["shards"]):
+            entry["allocation_type"] = "same_host_smoke"
+            entry["host_id"] = manifest["server"]["host_id"]
+            entry["allocation_id"] = f"alloc-shard-{index}"
+        return manifest
+
+    def smoke(self, server, shards, manifest, load="proof"):
+        return validate(server, shards, RUN, 2, 60, 1000.0, server_transport="portable",
+                        client_transport="portable", allocation_manifest=manifest, load=load,
+                        same_host_smoke=True)
+
+    def test_same_host_smoke_passes_only_as_a_smoke(self):
+        server, shards = proof_fixture()
+        result = self.smoke(server, shards, self.smoke_manifest(server, shards))
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertEqual(result["qualification"], "same_host_smoke")
+        self.assertTrue(proof_cell_line(result, None, True).startswith("split_smoke_cell: verdict=PASS"))
+
+    def test_same_host_smoke_manifest_refused_as_a_qualification(self):
+        server, shards = proof_fixture()
+        with self.assertRaisesRegex(ValueError, "dedicated allocation"):
+            self.check_manifest(server, shards, self.smoke_manifest(server, shards))
+
+    def check_manifest(self, server, shards, manifest):
+        return validate(server, shards, RUN, 2, 60, 1000.0, server_transport="portable",
+                        client_transport="portable", allocation_manifest=manifest, load="proof")
+
+    def test_qualification_manifest_refused_as_a_smoke(self):
+        server, shards = proof_fixture()
+        with self.assertRaisesRegex(ValueError, "not a same-host smoke"):
+            self.smoke(server, shards, allocation(server, shards))
+
+    def test_same_host_smoke_shard_on_another_host_refused(self):
+        server, shards = proof_fixture()
+        manifest = self.smoke_manifest(server, shards)
+        manifest["shards"][0]["host_id"] = "elsewhere"
+        with self.assertRaisesRegex(ValueError, "separate allocation on the server's host"):
+            self.smoke(server, shards, manifest)
+
+    def test_same_host_smoke_shard_sharing_the_server_allocation_refused(self):
+        server, shards = proof_fixture()
+        manifest = self.smoke_manifest(server, shards)
+        manifest["shards"][0]["allocation_id"] = manifest["server"]["allocation_id"]
+        with self.assertRaisesRegex(ValueError, "separate allocation on the server's host"):
+            self.smoke(server, shards, manifest)
+
+    def test_same_host_smoke_outside_the_proof_load_refused(self):
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "proof mode only"):
+            self.smoke(server, shards, self.smoke_manifest(server, shards), load="rate_1hz")
+
+    def test_same_host_smoke_still_checks_delivery(self):
+        server, shards = proof_fixture()
+        server = proof_replace(server, "split_proof:", "checksum_errors=0", "checksum_errors=1")
+        with self.assertRaises(ValueError):
+            self.smoke(server, shards, self.smoke_manifest(server, shards))
+
     def test_proof_passes(self):
         result = self.check(*proof_fixture())
         self.assertEqual(result["verdict"], "PASS")
