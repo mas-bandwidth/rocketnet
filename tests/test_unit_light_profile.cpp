@@ -173,7 +173,13 @@
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
+// A development build's server transport counts the link-simulator sends
+// it drops on a busy lock (sdk/rocketnet_server_transport.cpp,
+// link_lock_misses, a uint64_t), which crosses the transport's 64-byte
+// rounding: a development Debug build reads 3111676787, 64 above a
+// production Release build's unchanged 3111676723 (measured, gcc). The pin
+// is the higher figure less the slack, as the check is an upper bound.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628211ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 

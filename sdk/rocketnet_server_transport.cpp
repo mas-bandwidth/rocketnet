@@ -319,6 +319,7 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    uint64_t link_lock_misses;      // link sends dropped because the simulator's lock was busy
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -934,17 +935,22 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
         transport->io.operations->send_batch( transport->io.instance, &send, 1 );
         return true;
     }
+    // Only a development build has a link simulator, so a lock miss happens
+    // only there: the datagram is dropped and counted in the development count
+    // link_lock_misses, not in SEND_RING_FULL, which names a full send ring.
 #if ROCKETNET_DEV
     if ( transport->link_busy_sends_for_test > 0 )
     {
         transport->link_busy_sends_for_test--;
-        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+        rocketnet_platform_atomic_add_u64( &transport->link_lock_misses, 1 );
         return false;
     }
 #endif // #if ROCKETNET_DEV
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
-        rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
+#if ROCKETNET_DEV
+        rocketnet_platform_atomic_add_u64( &transport->link_lock_misses, 1 );
+#endif // #if ROCKETNET_DEV
         return false;
     }
 
@@ -982,11 +988,17 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 
 // The unit seam for a lock miss without a second thread: the next `sends`
 // link sends through an active simulator take the lock-miss path, counting
-// SEND_RING_FULL as a real miss does, and never touch the mutex.
+// link_lock_misses as a real miss does, and never touch the mutex.
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends )
 {
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
+}
+
+uint64_t rocketnet_server_transport_link_lock_misses_for_test( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->link_lock_misses;
 }
 
 // The unit seam for a staged transport without a staged socket: exchanges the

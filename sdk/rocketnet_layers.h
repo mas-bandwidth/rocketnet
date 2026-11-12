@@ -588,6 +588,8 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
 #if ROCKETNET_DEV
 /** @brief Makes the next `sends` link sends through an active simulator take the lock-miss path, for a unit test. */
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
+/** @brief The link sends a development build dropped because the simulator's lock was busy (no public counter: a production build has no link simulator). */
+uint64_t rocketnet_server_transport_link_lock_misses_for_test( struct rocketnet_server_transport_t * server_transport );
 struct rocketnet_server_transport_io_operations_t;
 /** @brief Exchanges the server's io operations and instance with the given pair, for a unit test with a fake staged transport. */
 void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
