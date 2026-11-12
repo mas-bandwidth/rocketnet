@@ -26,6 +26,10 @@ int sodium_dispatch_select_blake2b( const char * name );
 int sodium_dispatch_select_aead( const char * name );
 void sodium_dispatch_force_no_avx2( int no_avx2 );
 void sodium_dispatch_repick( void );
+void sodium_dispatch_count_ietf_xor( int on );
+long sodium_dispatch_ietf_xor_calls( void );
+int sodium_dispatch_fused_length_ok( unsigned long long length );
+int sodium_dispatch_misused( int open, unsigned long long length );
 
 #ifdef __cplusplus
 }

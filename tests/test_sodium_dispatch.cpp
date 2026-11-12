@@ -19,19 +19,26 @@
 // 3. Agreement: every implementation set this build contains that the CPU
 //    can run gives the same bytes as the portable reference (the composed
 //    AEAD over the ref ChaCha20 and donna Poly1305): the IETF AEAD seal and
-//    open for every length 0 to 2048 from and into unaligned buffers, and
+//    open for every length 0 to 4096 from and into unaligned buffers, and
 //    BLAKE2b (keyed and unkeyed, 32 and 64 byte outputs).
 // 4. Forgery: a forged packet (one bit of the tag, the ciphertext or the
 //    associated data changed) is refused by every implementation set at every
-//    length 0 to 2048 that is 0, 1 or 15 mod 16, with the reported length 0,
-//    every output byte zero and no byte past the output written, into a
-//    separate buffer and in place.
-// 5. Sweep: every message length 0 to 2000 with associated data and
+//    length 0 to 4096 that is 0, 1 or 15 mod 16, with the reported length 0
+//    and no plaintext written: the composed AEAD zeroes the output (and runs
+//    no ChaCha20 over the message, counted through the seam), the AArch64
+//    open leaves it as it was (read-only for the call where the platform
+//    allows, so even a write undone before return faults); nothing outside
+//    the output is written; apart, in place and detached. On 64-bit ARM
+//    Linux and macOS the AArch64 code must be built and picked, and its
+//    message bound refuses above 64 * (2^32 - 1) bytes.
+// 5. Sweep: every message length 0 to 4096 with associated data and
 //    alignments against the reference, seal and open, in place and out of
-//    place. Per commit a subset (associated data lengths 0, 1, 15, 16, 17,
-//    21, 53, 64; three alignment pairs); --sweep-full (the nightly row) every
-//    associated data length 0 to 64 and every alignment 0 to 15 of the
-//    message and of the associated data: 66,593,280 cases per set.
+//    place, with guard bytes after every output. Per commit every length to
+//    2048 at associated data lengths 0, 1, 15, 16, 17, 21, 53, 64 and three
+//    alignment pairs, then 2049 to 4096 at three and two; --sweep-full (the
+//    nightly row) every associated data length 0 to 64 and every alignment
+//    0 to 15 of the message and of the associated data: 136,345,600 cases
+//    per set.
 // 6. --diff <cases> <seed> (the nightly row): random lengths, keys, nonces,
 //    associated data, alignments and in place or not, against the
 //    reference; each case also forged and refused.
@@ -64,6 +71,13 @@
 #if defined( __aarch64__ ) && defined( __APPLE__ )
 #include <sys/sysctl.h>
 #include <sys/types.h>
+#endif
+
+#if !defined( _WIN32 )
+#include <signal.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#define SODIUM_DISPATCH_READ_ONLY_OUTPUT 1
 #endif
 
 #define CHECK( x )                                                                  \
@@ -175,6 +189,63 @@ static const char * best( const char * primitive, const cpu_t & cpu )
         return "sse41";
     }
     return cpu.ssse3 && sodium_dispatch_built( primitive, "ssse3" ) ? "ssse3" : "ref";
+}
+
+// On 64-bit ARM Linux and macOS (little endian, GCC or Clang) the AArch64
+// code must be built and, unless the forced fallback is on, picked: a build
+// that silently drops it would otherwise pass every comparison above by
+// comparing the reference with itself. Fails by name.
+
+static void require( bool ok, const char * what, const char * got )
+{
+    if ( !ok )
+    {
+        fprintf( stderr, "sodium dispatch check failed: %s (got %s)\n", what, got );
+        exit( 1 );
+    }
+}
+
+static void aarch64_is_built_and_picked( const char * chacha, const char * poly, const char * aead )
+{
+#if defined( __aarch64__ ) && ( defined( __linux__ ) || defined( __APPLE__ ) ) && !defined( __ARM_BIG_ENDIAN ) && !defined( _WIN32 )
+    require( sodium_dispatch_built( "aead", "neon-fused" ) != 0, "the neon-fused AEAD is built on this arm64 build", "not built" );
+    require( sodium_dispatch_built( "chacha20", "neon" ) != 0, "the neon ChaCha20 is built on this arm64 build", "not built" );
+    require( sodium_dispatch_built( "poly1305", "mul64" ) != 0, "the mul64 Poly1305 is built on this arm64 build", "not built" );
+    if ( !forced_portable )
+    {
+        require( strcmp( aead, "neon-fused" ) == 0, "the AEAD pick is neon-fused on this arm64 build", aead );
+        require( strcmp( chacha, "neon" ) == 0, "the ChaCha20 pick is neon on this arm64 build", chacha );
+        require( strcmp( poly, "mul64" ) == 0, "the Poly1305 pick is mul64 on this arm64 build", poly );
+    }
+#else
+    (void) chacha;
+    (void) poly;
+    (void) aead;
+#endif
+}
+
+// The AArch64 AEAD's message bound, at the boundary, with no data: the bound
+// itself through the seam, and sodium_misuse() before any byte is read or
+// written above it, seal and open (and the composed seal, for parity).
+
+static int fused_length_refused()
+{
+    const unsigned long long max = 64ull * ( ( 1ull << 32 ) - 1ull );
+    if ( sodium_dispatch_fused_length_ok( max ) < 0 )
+    {
+        return 0;
+    }
+    CHECK( sodium_dispatch_fused_length_ok( max ) == 1 );
+    CHECK( sodium_dispatch_fused_length_ok( max + 1 ) == 0 );
+    CHECK( sodium_dispatch_fused_length_ok( ~0ull ) == 0 );
+    CHECK( sodium_dispatch_select_aead( "neon-fused" ) );
+    CHECK( sodium_dispatch_misused( 0, max + 1 ) == 1 );
+    CHECK( sodium_dispatch_misused( 1, max + 1 ) == 1 );
+    CHECK( sodium_dispatch_misused( 1, ~0ull ) == 1 );
+    CHECK( sodium_dispatch_select_aead( "composed" ) );
+    CHECK( sodium_dispatch_misused( 0, max + 1 ) == 1 );
+    sodium_dispatch_repick();
+    return 1;
 }
 
 // the bundle's own selection report names what the seam reads; the seam
@@ -571,20 +642,99 @@ static int aead_agrees( const set_t & set, const uint8_t * key, const uint8_t * 
     return 1;
 }
 
+// Seal reads the associated data before it writes any output, as the
+// composed AEAD does: associated data that lies inside the ciphertext buffer
+// (at its start, and a few bytes in) gives the same packet as a separate copy.
+
+static int ad_inside_output( const set_t & set, const uint8_t * key, const uint8_t * nonce )
+{
+    if ( !select_set( set ) )
+    {
+        return 0;
+    }
+    static const int lengths[] = { 0, 1, 15, 16, 17, 63, 64, 65, 191, 192, 193, 255, 256, 257, 1200 };
+    static const int ad_lengths[] = { 1, 16, 17, 64 };
+    static const int ad_offsets[] = { 0, 5 };
+    static uint8_t want[1200 + 16];
+    static uint8_t got[1200 + 16 + 64 + 8];
+    for ( int l = 0; l < 15; l++ )
+    {
+        for ( int a = 0; a < 4; a++ )
+        {
+            for ( int o = 0; o < 2; o++ )
+            {
+                const int length = lengths[l];
+                const int ad_bytes = ad_lengths[a];
+                const uint8_t * m = input + 1;
+                const uint8_t * ad = associated + 2;
+                unsigned long long out_length = 0;
+                select_or_fail( reference_set );
+                CHECK( crypto_aead_chacha20poly1305_ietf_encrypt( want, &out_length, m, (unsigned long long) length, ad, (unsigned long long) ad_bytes, NULL, nonce, key ) == 0 );
+
+                select_or_fail( set );
+                memset( got, 0xA5, sizeof( got ) );
+                memcpy( got + ad_offsets[o], ad, (size_t) ad_bytes );
+                CHECK( crypto_aead_chacha20poly1305_ietf_encrypt( got, &out_length, m, (unsigned long long) length, got + ad_offsets[o], (unsigned long long) ad_bytes, NULL, nonce, key ) == 0 );
+                CHECK( out_length == (unsigned long long) length + 16 );
+                CHECK( memcmp( got, want, (size_t) length + 16 ) == 0 );
+            }
+        }
+    }
+    return 1;
+}
+
 // Forgery: refused, the reported length 0, and no plaintext written. The
 // output starts as a poison pattern (0xA5 apart, the ciphertext in place);
 // after the refusal the one pass has left it untouched, and the composed
-// AEAD has zeroed it as upstream does, having written nothing before its tag
-// check. Nothing past the output is written either way.
+// AEAD has zeroed it as upstream does. Nothing past the output is written
+// either way. A write that is undone before the call returns is caught too:
+// under the one pass the output is read-only for the call (any write faults,
+// by name), and the composed AEAD must not run ChaCha20 over the message at
+// all (the seam counts its IETF xor calls).
 
-static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length, const uint8_t * ad, unsigned long long ad_bytes, const uint8_t * nonce, const uint8_t * key )
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+static void forged_open_wrote( int signal_number )
 {
-    const bool untouched = strcmp( sodium_dispatch_aead(), "composed" ) != 0;
-    static uint8_t out[MAX_BYTES + 16 + 32];
-    memset( out, 0xA5, sizeof( out ) );
-    unsigned long long out_length = 12345;
-    CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( out + 8, &out_length, NULL, sealed, (unsigned long long) length + 16, ad, ad_bytes, nonce, key ) == -1 );
-    CHECK( out_length == 0 );
+    (void) signal_number;
+    static const char message[] = "sodium dispatch check failed: memory fault (a forged open writing its read-only output, or a read out of bounds)\n";
+    ssize_t written = write( 2, message, sizeof( message ) - 1 );
+    (void) written;
+    _exit( 1 );
+}
+
+static uint8_t * read_only_pages = NULL;
+static size_t read_only_bytes = 0;
+
+static uint8_t * guarded_output( size_t bytes )
+{
+    if ( read_only_pages == NULL )
+    {
+        const size_t page = (size_t) sysconf( _SC_PAGESIZE );
+        read_only_bytes = ( bytes + page - 1 ) / page * page;
+        void * p = mmap( NULL, read_only_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0 );
+        CHECK( p != MAP_FAILED );
+        read_only_pages = (uint8_t *) p;
+        struct sigaction action;
+        memset( &action, 0, sizeof( action ) );
+        action.sa_handler = forged_open_wrote;
+        CHECK( sigaction( SIGSEGV, &action, NULL ) == 0 );
+        CHECK( sigaction( SIGBUS, &action, NULL ) == 0 );
+    }
+    CHECK( bytes <= read_only_bytes );
+    return read_only_pages;
+}
+
+static void protect_output( bool read_only )
+{
+    CHECK( mprotect( read_only_pages, read_only_bytes, read_only ? PROT_READ : PROT_READ | PROT_WRITE ) == 0 );
+}
+#endif
+
+// out[0, 8) and everything past out[8 + length) still poison; the output
+// itself poison (untouched) or zero
+
+static void refused_output( const uint8_t * out, size_t out_bytes, int length, bool untouched )
+{
     for ( int i = 0; i < 8; i++ )
     {
         CHECK( out[i] == 0xA5 );
@@ -593,33 +743,101 @@ static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length,
     {
         CHECK( out[8 + i] == ( untouched ? 0xA5 : 0 ) );
     }
-    for ( size_t i = 8 + (size_t) length; i < sizeof( out ); i++ )
+    for ( size_t i = 8 + (size_t) length; i < out_bytes; i++ )
     {
         CHECK( out[i] == 0xA5 );
     }
+}
+
+static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length, const uint8_t * ad, unsigned long long ad_bytes, const uint8_t * nonce, const uint8_t * key )
+{
+    const bool untouched = strcmp( sodium_dispatch_aead(), "composed" ) != 0;
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+    const bool read_only = untouched;
+    uint8_t * out = guarded_output( MAX_BYTES + 16 + 32 );
+    uint8_t * in_place = guarded_output( MAX_BYTES + 16 + 32 );
+#else
+    const bool read_only = false;
+    static uint8_t out_buffer[MAX_BYTES + 16 + 32];
+    uint8_t * out = out_buffer;
+    uint8_t * in_place = out_buffer;
+#endif
+    const size_t out_bytes = MAX_BYTES + 16 + 32;
+    const bool counted = !untouched;
+    unsigned long long out_length = 12345;
+
+    memset( out, 0xA5, out_bytes );
+    if ( read_only )
+    {
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+        protect_output( true );
+#endif
+    }
+    if ( counted )
+    {
+        sodium_dispatch_count_ietf_xor( 1 );
+    }
+    CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( out + 8, &out_length, NULL, sealed, (unsigned long long) length + 16, ad, ad_bytes, nonce, key ) == -1 );
+    CHECK( out_length == 0 );
+    refused_output( out, out_bytes, length, untouched );
+
+    // detached, into the same poisoned output (read-only under the one pass,
+    // so it is still poison)
+    if ( !read_only )
+    {
+        memset( out, 0xA5, out_bytes );
+    }
+    CHECK( crypto_aead_chacha20poly1305_ietf_decrypt_detached( out + 8, NULL, sealed, (unsigned long long) length, sealed + length, ad, ad_bytes, nonce, key ) == -1 );
+    refused_output( out, out_bytes, length, untouched );
+    if ( counted )
+    {
+        CHECK( sodium_dispatch_ietf_xor_calls() == 0 );
+        sodium_dispatch_count_ietf_xor( 0 );
+    }
+    if ( read_only )
+    {
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+        protect_output( false );
+#endif
+    }
 
     // in place: the ciphertext buffer is the output
-    static uint8_t in_place[MAX_BYTES + 16 + 32];
-    memset( in_place, 0xA5, sizeof( in_place ) );
+    memset( in_place, 0xA5, out_bytes );
     memcpy( in_place + 3, sealed, (size_t) length + 16 );
+    if ( read_only )
+    {
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+        protect_output( true );
+#endif
+    }
+    if ( counted )
+    {
+        sodium_dispatch_count_ietf_xor( 1 );
+    }
     out_length = 12345;
     CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( in_place + 3, &out_length, NULL, in_place + 3, (unsigned long long) length + 16, ad, ad_bytes, nonce, key ) == -1 );
     CHECK( out_length == 0 );
+    if ( counted )
+    {
+        CHECK( sodium_dispatch_ietf_xor_calls() == 0 );
+        sodium_dispatch_count_ietf_xor( 0 );
+    }
+    if ( read_only )
+    {
+#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
+        protect_output( false );
+#endif
+    }
+    CHECK( in_place[0] == 0xA5 && in_place[1] == 0xA5 && in_place[2] == 0xA5 );
     for ( int i = 0; i < length; i++ )
     {
         CHECK( in_place[3 + i] == ( untouched ? sealed[i] : 0 ) );
     }
     CHECK( memcmp( in_place + 3 + length, sealed + length, 16 ) == 0 );
-    CHECK( in_place[3 + length + 16] == 0xA5 );
-
-    // detached: the same contract
-    memset( out, 0xA5, sizeof( out ) );
-    CHECK( crypto_aead_chacha20poly1305_ietf_decrypt_detached( out + 8, NULL, sealed, (unsigned long long) length, sealed + length, ad, ad_bytes, nonce, key ) == -1 );
-    for ( int i = 0; i < length; i++ )
+    for ( size_t i = 3 + (size_t) length + 16; i < out_bytes; i++ )
     {
-        CHECK( out[8 + i] == ( untouched ? 0xA5 : 0 ) );
+        CHECK( in_place[i] == 0xA5 );
     }
-    CHECK( out[8 + length] == 0xA5 );
 }
 
 static int forgery_refused( const set_t & set, const uint8_t * key, const uint8_t * nonce )
@@ -663,9 +881,20 @@ static int forgery_refused( const set_t & set, const uint8_t * key, const uint8_
             forged_open_writes_no_plaintext( sealed, length, forged_ad, ad_bytes, nonce, key );
         }
 
-        // and the untouched packet still opens
+        // and the untouched packet still opens (under the composed AEAD with
+        // one IETF xor call, so the count above can see one)
         unsigned long long plain_length = 0;
+        const bool counted = strcmp( set.aead, "composed" ) == 0;
+        if ( counted )
+        {
+            sodium_dispatch_count_ietf_xor( 1 );
+        }
         CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &plain_length, NULL, sealed, sealed_length, ad, ad_bytes, nonce, key ) == 0 );
+        if ( counted )
+        {
+            CHECK( sodium_dispatch_ietf_xor_calls() == 1 );
+            sodium_dispatch_count_ietf_xor( 0 );
+        }
         CHECK( plain_length == (unsigned long long) length && memcmp( opened, input, (size_t) length ) == 0 );
         lengths++;
     }
@@ -830,8 +1059,10 @@ static int differential( const set_t & set, long cases, uint64_t seed )
 // The ChaCha20 entry points the AEAD does not reach, against the reference:
 // the 8-byte-nonce stream, and both counters at their tops. The original
 // construction's 64-bit counter carries from word 12 into word 13 at
-// 0xFFFFFFFF and wraps at 2^64; the IETF counter is 32 bits and the public
-// function refuses to run it past 2^32, so it is taken to its last blocks.
+// 0xFFFFFFFF and wraps at 2^64: started at 0xFFFFFFFB to 0xFFFFFFFF the carry
+// falls at every block of the first four and inside the second four of the
+// eight-block step; the IETF counter is 32 bits and the public function
+// refuses to run it past 2^32, so it is taken to its last blocks.
 
 static void chacha20_case( const char * name, int length, const uint8_t * key, int ietf, uint64_t counter )
 {
@@ -882,6 +1113,9 @@ static int chacha20_entry_points( const char * name, const uint8_t * key )
         const int length = lengths[i];
         const uint64_t blocks = (uint64_t) ( length + 63 ) / 64;
         chacha20_case( name, length, key, 0, 0 );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFBull );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFCull );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFDull );
         chacha20_case( name, length, key, 0, 0xFFFFFFFEull );
         chacha20_case( name, length, key, 0, 0xFFFFFFFFull );
         chacha20_case( name, length, key, 0, 0xFFFFFFFFFFFFFFFCull );
@@ -1043,6 +1277,7 @@ int main( int argc, char ** argv )
     CHECK( strcmp( blake, best( "blake2b", cpu ) ) == 0 );
     CHECK( strcmp( aead, best( "aead", cpu ) ) == 0 );
     report_matches();
+    aarch64_is_built_and_picked( chacha, poly, aead );
 
     // 2. known answers as detected, with AVX and AVX2 forced off, and under
     // the forced fallback
@@ -1083,10 +1318,12 @@ int main( int argc, char ** argv )
     // 3. agreement and 4. forgery, every set the CPU runs
 
     int aead_sets = 0;
+    int aliased_sets = 0;
     int forged_sets = 0;
     for ( int s = 0; s < num_sets; s++ )
     {
         aead_sets += aead_agrees( all_sets[s], key, nonce );
+        aliased_sets += ad_inside_output( all_sets[s], key, nonce );
         const int lengths = forgery_refused( all_sets[s], key, nonce );
         if ( lengths > 0 )
         {
@@ -1101,6 +1338,10 @@ int main( int argc, char ** argv )
     sodium_dispatch_repick();
     CHECK( strcmp( sodium_dispatch_poly1305(), poly ) == 0 );
     CHECK( poly_edges == ( ( cpu.sse2 && sodium_dispatch_built( "poly1305", "sse2" ) ) || ( cpu.neon && sodium_dispatch_built( "poly1305", "mul64" ) ) ? 1 : 0 ) );
+
+    const int length_bounds = fused_length_refused();
+    CHECK( length_bounds == ( sodium_dispatch_built( "aead", "neon-fused" ) ? 1 : 0 ) );
+    CHECK( strcmp( sodium_dispatch_aead(), aead ) == 0 );
 
     const char * chachas[] = { "ssse3", "avx2", "neon" };
     int chacha_variants = 0;
@@ -1121,7 +1362,7 @@ int main( int argc, char ** argv )
 
     // every set the picks above say this CPU runs was compared
 
-    CHECK( aead_sets >= 1 && forged_sets == aead_sets );
+    CHECK( aead_sets >= 1 && forged_sets == aead_sets && aliased_sets == aead_sets );
     CHECK( blake_variants >= 1 );
     if ( strcmp( chacha, "avx2" ) == 0 && strcmp( poly, "sse2" ) == 0 )
     {

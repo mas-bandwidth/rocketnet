@@ -11,6 +11,7 @@
 
 #include "sodium_dispatch_seam.h"
 
+#include <setjmp.h>
 #include <string.h>
 
 int sodium_dispatch_init( void )
@@ -357,4 +358,100 @@ void sodium_dispatch_force_no_avx2( int no_avx2 )
         _cpu_features.has_avx2 = 0;
     }
     sodium_dispatch_repick();
+}
+
+// A counting ChaCha20: the current implementation with its IETF xor entry
+// (the one every AEAD that runs ChaCha20 over the message calls) counted. An
+// open that refuses must not call it: a decrypt before the tag check that is
+// undone afterwards still shows here, where the output's final bytes do not.
+
+static const crypto_stream_chacha20_implementation * counted_inner;
+static crypto_stream_chacha20_implementation counted_chacha20;
+static long counted_ietf_xor_calls;
+
+static int counted_ietf_xor( unsigned char * c, const unsigned char * m, unsigned long long mlen, const unsigned char * n, uint32_t ic, const unsigned char * k )
+{
+    counted_ietf_xor_calls++;
+    return counted_inner->stream_ietf_ext_xor_ic( c, m, mlen, n, ic, k );
+}
+
+void sodium_dispatch_count_ietf_xor( int on )
+{
+    if ( on )
+    {
+        counted_inner = implementation__cc20;
+        counted_chacha20 = *counted_inner;
+        counted_chacha20.stream_ietf_ext_xor_ic = counted_ietf_xor;
+        implementation__cc20 = &counted_chacha20;
+        counted_ietf_xor_calls = 0;
+    }
+    else if ( implementation__cc20 == &counted_chacha20 )
+    {
+        implementation__cc20 = counted_inner;
+    }
+}
+
+long sodium_dispatch_ietf_xor_calls( void )
+{
+    return counted_ietf_xor_calls;
+}
+
+// The AArch64 AEAD's message bound (rn_fused_length_ok, upstream's
+// 64 * (2^32 - 1) bytes): 1 or 0 for a length, -1 when not built.
+
+int sodium_dispatch_fused_length_ok( unsigned long long length )
+{
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    return rn_fused_length_ok( length );
+#else
+    (void) length;
+    return -1;
+#endif
+}
+
+// Whether the current AEAD calls sodium_misuse() for a length, through the
+// public detached seal (open 0) or open (open 1), with a handler that jumps
+// back here. Only for lengths the AEAD must refuse before touching any data:
+// the buffers are 16 bytes.
+
+static jmp_buf misuse_jump;
+
+static void misuse_jump_back( void )
+{
+    longjmp( misuse_jump, 1 );
+}
+
+int sodium_dispatch_misused( int open, unsigned long long length )
+{
+    static unsigned char buffer[16];
+    static unsigned char mac[16];
+    static unsigned char key[32];
+    static unsigned char nonce[12];
+    volatile int misused = 0;
+    if ( sodium_set_misuse_handler( misuse_jump_back ) != 0 )
+    {
+        return -1;
+    }
+    if ( setjmp( misuse_jump ) == 0 )
+    {
+        if ( open )
+        {
+            (void) crypto_aead_chacha20poly1305_ietf_decrypt_detached( buffer, NULL, buffer, length, mac, NULL, 0, nonce, key );
+        }
+        else
+        {
+            (void) crypto_aead_chacha20poly1305_ietf_encrypt_detached( buffer, mac, NULL, buffer, length, NULL, 0, NULL, nonce, key );
+        }
+    }
+    else
+    {
+        // sodium_misuse() holds the library lock while its handler runs
+        misused = 1;
+        (void) sodium_crit_leave();
+    }
+    if ( sodium_set_misuse_handler( NULL ) != 0 )
+    {
+        return -1;
+    }
+    return misused;
 }

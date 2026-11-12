@@ -3,6 +3,9 @@
 import argparse
 import ctypes as c
 import ctypes.util
+import os
+import platform
+import sys
 from pathlib import Path
 
 
@@ -45,13 +48,29 @@ def main():
     print('vendor:', api[0]['sodium_version_string']().decode(),
           'reference:', api[1]['sodium_version_string']().decode())
     # the vendor's selection report (sodium/README.md, "AEAD dispatch and AArch64")
-    report = []
+    picks = {}
     for name in ['aead_chacha20poly1305_ietf', 'chacha20', 'poly1305']:
         fn = getattr(libraries[0], f'rocketnet_sodium_sodium_runtime_{name}_implementation')
         fn.argtypes = []
         fn.restype = c.c_char_p
-        report.append(f'{name}={fn().decode()}')
-    print('vendor picks:', ' '.join(report))
+        picks[name] = fn().decode()
+    print('vendor picks:', ' '.join(f'{k}={v}' for k, v in picks.items()))
+    # The picks are asserted, not only printed: on 64-bit ARM Linux and macOS
+    # the AArch64 code is built and chosen, so this check runs it; elsewhere,
+    # and under the forced fallback, the composed AEAD.
+    arm64 = platform.machine().lower() in ('arm64', 'aarch64') and sys.platform in ('darwin', 'linux')
+    portable = os.environ.get('ROCKETNET_SODIUM_PORTABLE', '') not in ('', '0')
+    if arm64 and not portable:
+        want = {'aead_chacha20poly1305_ietf': {'neon-fused'}, 'chacha20': {'neon'}, 'poly1305': {'mul64'}}
+    elif portable:
+        want = {'aead_chacha20poly1305_ietf': {'composed'}, 'chacha20': {'ref'}, 'poly1305': {'donna'}}
+    else:
+        want = {'aead_chacha20poly1305_ietf': {'composed'}, 'chacha20': {'ref', 'ssse3', 'avx2'},
+                'poly1305': {'donna', 'sse2'}}
+    for name, allowed in want.items():
+        if picks[name] not in allowed:
+            raise SystemExit(f'vendor pick {name}={picks[name]}, expected one of {sorted(allowed)} '
+                             f'(machine {platform.machine()}, {sys.platform}, portable={portable})')
 
     def call(side, name, *values):
         return api[side][name](*values)
