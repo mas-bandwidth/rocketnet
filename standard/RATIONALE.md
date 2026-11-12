@@ -798,8 +798,12 @@ refused request sees no answer, and the server increments
 its send rate, so a burst larger than the budget is spread across updates rather than
 refused. One request costs one signature verify and, when it verifies, a sealed-box
 open, a keypair and a key exchange, so the default bounds one update's handshake work to
-a few milliseconds while a thousand clients joining at once still connect within a
-ten-second token timeout at a 10 Hz update. The budget is local policy, reset at the
+a few milliseconds. The game backend, which issues every connect token, is expected to
+spread their issue over time when many clients join at once, so their requests arrive
+spread out: in a measured run, a thousand clients whose requests were spread across the
+send interval all connected within about 1.6 seconds at the default budget and a 100 Hz
+update. A thousand clients sending in the same instant do not all connect inside a
+ten-second token timeout, and the budget is not sized for them. The budget is local policy, reset at the
 start of each update; an implementation may choose another value. * If the token
 identifier already appears in the used-token history bound to a different source address
 and port, ignore it. This is also the cheap refusal of a token a connected client holds,
