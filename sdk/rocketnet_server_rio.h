@@ -25,13 +25,16 @@
 //
 // With one lane the socket binds with SO_EXCLUSIVEADDRUSE, to any address and
 // port. With several, the address must be specific (create refuses 0.0.0.0
-// and :: with ROCKETNET_STATUS_INVALID_ADDRESS) and the port nonzero
-// (ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED); create binds a plain
-// probe socket there with SO_EXCLUSIVEADDRUSE, refusing if anything holds the
-// port, closes it, then binds every lane socket to that address and port with
-// SO_REUSEADDR. The trade: while the lanes run, another socket that may bind
-// the same address and port with SO_REUSEADDR shares it (tests/test_iocp.cpp
-// pins what Windows does with one). A
+// and :: with ROCKETNET_STATUS_INVALID_ADDRESS) and every lane socket binds
+// it with SO_REUSEADDR. For an explicit port create first binds a plain probe
+// socket there with SO_EXCLUSIVEADDRUSE, refusing if anything holds the port,
+// and closes it. For port 0, lane 0 binds port 0 and the others join the port
+// it was given: the guarantee that nothing else holds that port rests on
+// Windows never handing a port-0 bind a held port, as measured (and checked
+// on every run by test_rio_transport_lanes_port_zero_never_held). The trade:
+// while the lanes run, a socket of any account may bind the same address and
+// port with SO_REUSEADDR and share it; measured, the lanes keep every
+// datagram (tests/test_iocp.cpp pins it). A
 // frame is staged in the lane its destination address hashes to
 // (rocketnet_rio_lane_hash), so one client's frames leave through one lane in
 // order. Windows does not say which of several sockets sharing a port

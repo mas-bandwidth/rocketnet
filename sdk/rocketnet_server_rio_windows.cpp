@@ -25,6 +25,7 @@
 #include <atomic>
 #include <new>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 // The model: proofs/tla/RNRioWorker.tla (the I/O worker, its bank and phase
@@ -2924,7 +2925,7 @@ static bool rocketnet_rio_address_is_wildcard( const rocketnet_address_t * addre
 // Binds a plain socket to the address with SO_EXCLUSIVEADDRUSE and closes
 // it: refused when anything already holds the address and port, so lanes
 // that share the port with SO_REUSEADDR never join a socket someone else
-// bound first. The port is never 0 here (create refuses it with lanes).
+// bound first. Never called for port 0.
 static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_address, int * status )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
@@ -2981,32 +2982,43 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
                                                       ,
                                                       int * status, const rocketnet_server_rio_options_t * options )
 {
-    const int lanes = rocketnet_server_rio_lane_count( options ? options->lanes : 1 );
-    if ( !lanes )
-    {
-        rocketnet_warn( "rio transport refused: %d lanes is outside 1..%d", options->lanes, ROCKETNET_RIO_MAX_LANES );
-        return NULL;
-    }
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
     {
         return NULL;
     }
+    int requested = options ? options->lanes : 1;
+#if ROCKETNET_DEV
+    // development library only: ROCKETNET_TEST_RIO_LANES=N (2 .. 32) runs every
+    // RIO server asked for one lane on N lanes, for a whole process, so a suite
+    // whose servers come from many paths runs on lanes. A wildcard bind keeps
+    // its one lane: lanes refuse the wildcard, and that refusal has its own test.
+    if ( requested <= 1 && !rocketnet_rio_address_is_wildcard( bind_address ) )
+    {
+        char test_lanes[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_LANES", test_lanes, sizeof( test_lanes ) ) > 0 )
+        {
+            const int n = atoi( test_lanes );
+            if ( n >= 2 && n <= ROCKETNET_RIO_MAX_LANES )
+            {
+                requested = n;
+            }
+        }
+    }
+#endif // #if ROCKETNET_DEV
+    const int lanes = rocketnet_server_rio_lane_count( requested );
+    if ( !lanes )
+    {
+        rocketnet_warn( "rio transport refused: %d lanes is outside 1..%d", requested, ROCKETNET_RIO_MAX_LANES );
+        return NULL;
+    }
     // More than one lane shares the port with SO_REUSEADDR, so the lanes take
-    // a specific local address (a squatter on that exact address and port is
+    // a specific local address: a squatter on that exact address and port is
     // refused by the probe below, and one on the wildcard is less specific
-    // than the lanes) and a nonzero port (no ephemeral port resolved by a
-    // probe that closes before the lanes bind). One lane binds exclusively and
-    // takes either.
+    // than the lanes. One lane binds exclusively and takes either.
     if ( lanes > 1 && rocketnet_rio_address_is_wildcard( bind_address ) )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
         rocketnet_warn( "rio transport refused: %d lanes need a specific local address, not the wildcard", lanes );
-        return NULL;
-    }
-    if ( lanes > 1 && bind_address->port == 0 )
-    {
-        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
-        rocketnet_warn( "rio transport refused: %d lanes need a nonzero port", lanes );
         return NULL;
     }
     const uint8_t * packet_filter = options ? options->packet_filter : NULL;
@@ -3019,7 +3031,13 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_server_rio_t * rio = new ( storage ) rocketnet_server_rio_t();
     rio->context = context;
 
-    if ( lanes > 1 && !rocketnet_rio_exclusive_probe( bind_address, status ) )
+    // An explicit port is probed. Port 0 is not: lane 0 binds it with
+    // SO_REUSEADDR and Windows hands it a port no socket holds (measured over
+    // thousands of binds against held ports of every kind and another
+    // account's; test_rio_transport_lanes_port_zero_never_held checks it on
+    // every run), so there is no gap between a probe and the lanes; lane 0
+    // writes the port it was given to bind_address and the other lanes join.
+    if ( lanes > 1 && bind_address->port != 0 && !rocketnet_rio_exclusive_probe( bind_address, status ) )
     {
         rocketnet_rio_free( rio );
         return NULL;

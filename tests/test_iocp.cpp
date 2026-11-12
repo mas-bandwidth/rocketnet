@@ -3104,7 +3104,7 @@ static void test_rio_send_waits_counted()
 
 // ---- RIO lanes ----
 
-// A loopback port nothing holds right now: lanes take a nonzero port.
+// A loopback port nothing holds right now, for the explicit-port form.
 static uint16_t rio_free_port()
 {
     SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -3124,7 +3124,6 @@ static uint16_t rio_free_port()
 static rocketnet_server_rio_t * rio_open_lanes( rocketnet_address_t * bind, int lanes, const uint8_t * packet_filter )
 {
     *bind = address( "127.0.0.1:0" );
-    bind->port = rio_free_port();
     rocketnet_server_rio_options_t options;
     options.lanes = lanes;
     options.packet_filter = packet_filter;
@@ -3338,9 +3337,11 @@ static void test_rio_lanes_later_binder_receives_nothing()
     CHECK( wild_stolen == 0 );
 }
 
-// More than one lane refuses the wildcard address (either family) and port 0
-// with their named statuses; one lane takes both, as before.
-static void test_rio_lanes_refuse_wildcard_and_port_zero()
+// More than one lane refuses the wildcard address (either family) with
+// ROCKETNET_STATUS_INVALID_ADDRESS, and takes a specific address on port 0
+// (lane 0 is given the port, the others join it) or on an explicit port (the
+// probe first); one lane takes the wildcard, as before.
+static void test_rio_lanes_bind_forms()
 {
     CHECK( rocketnet_server_rio_available() );
 
@@ -3348,23 +3349,30 @@ static void test_rio_lanes_refuse_wildcard_and_port_zero()
     const char * wildcards[] = { "0.0.0.0:0", "[::]:0" };
     for ( const char * text : wildcards )
     {
-        rocketnet_address_t at = address( text );
-        at.port = port;
-        rocketnet_server_rio_options_t options;
-        options.lanes = 2;
-        options.packet_filter = NULL;
-        int status = ROCKETNET_STATUS_OK;
-        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
-        CHECK( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+        for ( const uint16_t at_port : { (uint16_t) 0, port } )
+        {
+            rocketnet_address_t at = address( text );
+            at.port = at_port;
+            rocketnet_server_rio_options_t options;
+            options.lanes = 2;
+            options.packet_filter = NULL;
+            int status = ROCKETNET_STATUS_OK;
+            CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
+            CHECK( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+        }
     }
+    for ( const uint16_t at_port : { (uint16_t) 0, port } )
     {
         rocketnet_address_t at = address( "127.0.0.1:0" );
+        at.port = at_port;
         rocketnet_server_rio_options_t options;
-        options.lanes = 2;
+        options.lanes = 3;
         options.packet_filter = NULL;
         int status = ROCKETNET_STATUS_OK;
-        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
-        CHECK( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
+        rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options );
+        CHECK( rio && rocketnet_server_rio_lanes( rio ) == 3 );
+        CHECK( at.port != 0 && ( at_port == 0 || at.port == at_port ) );
+        rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     }
     {
         rocketnet_address_t at = address( "0.0.0.0:0" );
@@ -3376,7 +3384,81 @@ static void test_rio_lanes_refuse_wildcard_and_port_zero()
         CHECK( rio && at.port != 0 );
         rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     }
-    printf( "test_rio_transport_lanes_refuse_wildcard_and_port_zero\n" );
+    printf( "test_rio_transport_lanes_bind_forms\n" );
+}
+
+// Lanes on port 0 rest on Windows never handing a port-0 bind a port another
+// socket holds (no probe guards that form). This checks it on the Windows
+// that runs the test: ports held by plain, SO_REUSEADDR and
+// SO_EXCLUSIVEADDRUSE sockets on loopback and SO_REUSEADDR sockets on the
+// wildcard, then SO_REUSEADDR port-0 binds as lane 0 makes them; none may land
+// on a held port or on each other's.
+static SOCKET rio_held_socket( int kind, ULONG ip )
+{
+    SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( s != INVALID_SOCKET );
+    BOOL enabled = TRUE;
+    if ( kind == 1 )
+    {
+        CHECK( setsockopt( s, SOL_SOCKET, SO_REUSEADDR, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+    }
+    else if ( kind == 2 )
+    {
+        CHECK( setsockopt( s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+    }
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl( ip );
+    CHECK( bind( s, (sockaddr *) &a, sizeof( a ) ) == 0 );
+    return s;
+}
+
+static uint16_t rio_socket_port( SOCKET s )
+{
+    sockaddr_in a = {};
+    int bytes = sizeof( a );
+    CHECK( getsockname( s, (sockaddr *) &a, &bytes ) == 0 );
+    return ntohs( a.sin_port );
+}
+
+static void test_rio_lanes_port_zero_never_held()
+{
+    const int per_kind = 100;
+    const int binds = 400;
+    std::vector<SOCKET> sockets;
+    std::vector<uint8_t> held( 65536, 0 );
+    const struct
+    {
+        int kind;
+        ULONG ip;
+    } holders[] = { { 0, INADDR_LOOPBACK }, { 1, INADDR_LOOPBACK }, { 2, INADDR_LOOPBACK }, { 1, INADDR_ANY } };
+    for ( const auto & h : holders )
+    {
+        for ( int i = 0; i < per_kind; ++i )
+        {
+            SOCKET s = rio_held_socket( h.kind, h.ip );
+            held[rio_socket_port( s )] = 1;
+            sockets.push_back( s );
+        }
+    }
+    int collisions = 0;
+    for ( int i = 0; i < binds; ++i )
+    {
+        SOCKET s = rio_held_socket( 1, INADDR_LOOPBACK );
+        const uint16_t port = rio_socket_port( s );
+        if ( held[port] )
+        {
+            ++collisions;
+        }
+        held[port] = 1;
+        sockets.push_back( s );
+    }
+    for ( SOCKET s : sockets )
+    {
+        closesocket( s );
+    }
+    printf( "test_rio_transport_lanes_port_zero_never_held binds=%d collisions=%d\n", binds, collisions );
+    CHECK( collisions == 0 );
 }
 
 // With a packet filter every lane worker runs the prefilter before banking:
@@ -3505,7 +3587,8 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_lanes_later_binder_receives_nothing", test_rio_lanes_later_binder_receives_nothing },
     { "test_rio_transport_lanes_prefilter_counts_drops", test_rio_lanes_prefilter_counts_drops },
     { "test_rio_transport_lanes_finish_refuses_foreign_ids", test_rio_lanes_finish_refuses_foreign_ids },
-    { "test_rio_transport_lanes_refuse_wildcard_and_port_zero", test_rio_lanes_refuse_wildcard_and_port_zero },
+    { "test_rio_transport_lanes_bind_forms", test_rio_lanes_bind_forms },
+    { "test_rio_transport_lanes_port_zero_never_held", test_rio_lanes_port_zero_never_held },
 };
 
 // With no argument every case runs; with names, only those cases run.
