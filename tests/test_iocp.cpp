@@ -2632,6 +2632,10 @@ static void test_windows_transports_sized_by_max_clients()
         CHECK( held > 0 && (uint64_t) held <= rocketnet_server_iocp_allocation_bytes( 1, max_clients ) );
         wait_stopped( transport );
         rocketnet_server_iocp_destroy( transport );
+
+        // destroy gives back every byte create took (VERIFY-4 W10: the unit
+        // tier's RIO case counts only the fixture's free)
+        CHECK( live_bytes.load() == before );
     }
 
     CHECK( rocketnet_server_rio_available() );
@@ -2649,6 +2653,7 @@ static void test_windows_transports_sized_by_max_clients()
                 (unsigned long long) plan );
         CHECK( held > 0 && (uint64_t) held <= plan );
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+        CHECK( live_bytes.load() == before );
     }
 }
 
