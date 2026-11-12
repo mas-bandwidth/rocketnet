@@ -349,7 +349,6 @@ struct rocketnet_server_socket_t
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
     rocketnet_xdp_program_t * program;
     bool attached_native;
-    bool attached_skb;
     char pin_root[160];                 // this INSTANCE's own bpffs directory, named by a random token with its identity metadata encoded: created by this create, adopted never
     bool pin_root_created;              // set only when this instance's mkdir succeeded -- destroy removes nothing it did not make
     int num_pinned;                     // the pin paths recorded BY CONSTRUCTION at mkdir (their names are deterministic) -- destroy unlinks exactly these
@@ -2141,26 +2140,22 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_info( "attaching server_xdp to network interface %s", interface_name );
 
-    int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, false );
-    if ( ret == 0 )
+    // native (driver) mode only. Generic (skb) mode runs the program after
+    // the kernel has built an skb for every frame, the slow path this
+    // transport exists to avoid, so a device whose driver cannot attach
+    // natively refuses the create by name: "auto" falls to the next
+    // transport, a pin on xdp refuses the server start
+
+    const int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, false );
+    if ( ret != 0 )
     {
-        server_socket->attached_native = true;
+        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s); generic (skb) mode is not used. use a NIC whose driver supports native XDP, or another transport", interface_name, strerror( ret < 0 ? -ret : ret ) );
+        rocketnet_server_socket_abort_create( server_socket );
+        return NULL;
     }
-    else
-    {
-        rocketnet_info( "falling back to skb mode..." );
-        ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->interface_index, true );
-        if ( ret == 0 )
-        {
-            server_socket->attached_skb = true;
-        }
-        else
-        {
-            rocketnet_error( "failed to attach server_xdp program to interface %s", interface_name );
-            rocketnet_server_socket_abort_create( server_socket );
-            return NULL;
-        }
-    }
+
+    server_socket->attached_native = true;
+    rocketnet_info( "server_xdp attached in native mode to %s", interface_name );
 
     // allow unlimited locking of memory, so all memory needed for packet buffers can be locked
 
@@ -2539,15 +2534,6 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
             if ( result != 0 )
             {
                 rocketnet_error( "could not detach server_xdp program (native) from interface %s (errno %d)", server_socket->interface_name, -result );
-            }
-        }
-
-        if ( server_socket->attached_skb )
-        {
-            const int result = rocketnet_xdp_program_detach( server_socket->program, server_socket->interface_index, true );
-            if ( result != 0 )
-            {
-                rocketnet_error( "could not detach server_xdp program (skb) from interface %s (errno %d)", server_socket->interface_name, -result );
             }
         }
 
