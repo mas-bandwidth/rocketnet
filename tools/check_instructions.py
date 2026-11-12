@@ -8,8 +8,9 @@ output file with the Python standard library, and compares against
 benchmarks/instruction_baseline.json.
 
 Exit codes:
-  0: PASS (all regions <= +2.0% over baseline; prints NOTE if < -2.0% under)
-  1: FAIL (any region > +2.0% over baseline, build_type mismatch, or runner error)
+  0: PASS (every region within 2.0% of the baseline, either side)
+  1: FAIL (any region more than 2.0% over the baseline, or more than 2.0% under
+     it: a stale-high baseline, re-pin it; build_type mismatch; runner error)
   2: NOT COMPARABLE (toolchain_id, compiler_id or valgrind_version differs from
      baseline; outputs 'not comparable: <local> vs <pinned> verdict=FAIL' and
      names the pinned toolchain to measure with)
@@ -228,7 +229,10 @@ def evaluate_instructions(
             continue
 
         delta_pct = ((ir - base_ir) / float(base_ir)) * 100.0
-        passed = delta_pct <= limit_pct
+        # two-sided: a count more than the limit under the baseline leaves the
+        # baseline stale-high, and later growth back up to it would pass
+        # unseen, so it fails until the baseline is re-pinned
+        passed = -limit_pct <= delta_pct <= limit_pct
         verdict = "PASS" if passed else "FAIL"
         if not passed:
             any_fail = True
@@ -239,8 +243,8 @@ def evaluate_instructions(
         )
         if delta_pct < -limit_pct:
             lines.append(
-                f"NOTE: region={region} is {abs(delta_pct):.2f}% under baseline "
-                f"(>{limit_pct:.2f}% improvement); consider --repin --reason <text> if intentional"
+                f"STALE BASELINE: region={region} is {abs(delta_pct):.2f}% under baseline "
+                f"(more than {limit_pct:.2f}%); re-pin with --repin --reason <text> so later growth is seen"
             )
 
     return (1 if any_fail else 0), "\n".join(lines)

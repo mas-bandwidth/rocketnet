@@ -4,7 +4,7 @@ Unit tests for tools/check_instructions.py covering DONE-WHEN (5):
 1. Parse valid and malformed cachegrind output and scenario stdout.
 2. PASS when every region is at or within +2.0% of baseline.
 3. FAIL (exit 1) when any region is more than +2.0% over baseline.
-4. Under-baseline NOTE (still PASS, exit 0) when a region is more than 2.0% under baseline.
+4. FAIL (exit 1, STALE BASELINE) when a region is more than 2.0% under baseline; PASS at 2.0% under.
 5. Toolchain mismatch (toolchain_id, compiler_id, valgrind_version, or build_type) fails naming the mismatch;
    a distro or host build reporting the same compiler_id is not comparable to a pinned baseline.
 6. Repin (--repin --reason <text>) rewrites baseline JSON with counts, toolchain metadata, commit, and reason, and refuses missing --reason or an unpinned toolchain.
@@ -132,7 +132,9 @@ class TestCheckInstructions(unittest.TestCase):
         self.assertIn("region=client_frame", report)
         self.assertIn("verdict=FAIL", report)
 
-    def test_under_baseline_prints_note_and_passes(self) -> None:
+    def test_under_baseline_fails_as_stale(self) -> None:
+        # more than 2.0% under: the baseline is stale-high (growth back up to
+        # it would pass unseen), so the gate fails until it is re-pinned
         baseline = make_baseline(client_ir=1000000, server_ir=2000000)
         measured = {
             "client_frame": {"ir": 950000, "units": 100},
@@ -146,10 +148,27 @@ class TestCheckInstructions(unittest.TestCase):
             build_type="Release",
             toolchain_id=PINNED,
         )
+        self.assertEqual(code, 1, msg=report)
+        self.assertIn("STALE BASELINE: region=client_frame", report)
+        self.assertIn("region=client_frame ir=950000", report)
+        self.assertIn("verdict=FAIL", report)
+
+    def test_at_two_percent_under_passes(self) -> None:
+        baseline = make_baseline(client_ir=1000000, server_ir=2000000)
+        measured = {
+            "client_frame": {"ir": 980000, "units": 100},
+            "server_tick": {"ir": 1960001, "units": 100},
+        }
+        code, report = ci.evaluate_instructions(
+            baseline=baseline,
+            measured=measured,
+            compiler_id="GNU-13.3.0",
+            valgrind_version="valgrind-3.26.0",
+            build_type="Release",
+            toolchain_id=PINNED,
+        )
         self.assertEqual(code, 0, msg=report)
-        self.assertIn("NOTE", report)
-        self.assertIn("region=client_frame", report)
-        self.assertIn("verdict=PASS", report)
+        self.assertNotIn("STALE", report)
         self.assertNotIn("verdict=FAIL", report)
 
     def test_toolchain_mismatch_fails_naming_mismatch(self) -> None:
