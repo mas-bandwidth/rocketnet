@@ -81,6 +81,51 @@ class RunTidyGateTest(unittest.TestCase):
         self.assertEqual(findings([439, 420]), reviewed)
         self.assertNotEqual(findings([420, 550]), reviewed)
 
+    def fake_tool(self, name, version_line):
+        path = Path(self.tmp.name) / name
+        path.write_text("#!/bin/sh\necho '%s'\n" % version_line)
+        path.chmod(0o755)
+        return str(path)
+
+    def version_problems(self, tidy_line, cppcheck_line="Cppcheck 2.19"):
+        tidy = self.fake_tool("clang-tidy-fake", tidy_line)
+        cppcheck = self.fake_tool("cppcheck-fake", cppcheck_line)
+        return run_tidy.tool_version_problems(tidy, cppcheck, run_tidy.TIDY_BASELINE,
+                                              run_tidy.CPPCHECK_BASELINE, run_tidy.DISPOSITIONS)
+
+    def test_the_pinned_tool_releases_pass(self):
+        self.assertEqual(self.version_problems("Ubuntu LLVM version 18.1.8"), [])
+
+    def test_another_clang_tidy_release_is_refused(self):
+        # a newer clang-tidy that dropped a check would pass with fewer
+        # findings, and the baseline lines it no longer reports would read
+        # as fixed
+        problems = self.version_problems("Ubuntu LLVM version 19.1.1")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("TOOL-VERSION clang-tidy"), problems)
+        self.assertIn("19.1.1", problems[0])
+
+    def test_a_clang_tidy_with_no_version_is_refused(self):
+        problems = self.version_problems("not a clang-tidy")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is unknown", problems[0])
+
+    def test_another_cppcheck_release_is_refused(self):
+        problems = self.version_problems("Ubuntu LLVM version 18.1.8", "Cppcheck 2.13.0")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("TOOL-VERSION cppcheck"), problems)
+
+    def test_the_versioned_name_wins_over_a_bare_clang_tidy(self):
+        # a runner whose PATH has a bare clang-tidy of another release must
+        # still give the gate clang-tidy-18
+        bare = self.fake_tool("clang-tidy", "LLVM version 20.0.0")
+        versioned = self.fake_tool("clang-tidy-18", "LLVM version 18.1.8")
+        os.environ.pop("CLANG_TIDY", None)
+        os.environ["PATH"] = self.tmp.name
+        self.assertEqual(run_tidy.find_tool("CLANG_TIDY", run_tidy.TIDY_NAMES), versioned)
+        os.remove(versioned)
+        self.assertEqual(run_tidy.find_tool("CLANG_TIDY", run_tidy.TIDY_NAMES), bare)
+
 
 if __name__ == "__main__":
     unittest.main()

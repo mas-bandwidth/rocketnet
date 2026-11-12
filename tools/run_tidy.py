@@ -36,11 +36,15 @@ pragma) must be listed in tools/suppressions_reviewed.txt with a reason
 (tools/check_suppressions.py, run first): a suppression the list does not
 name fails the gate, since it hides a finding before any baseline sees it.
 
-clang-tidy is found as CLANG_TIDY, clang-tidy or clang-tidy-18; cppcheck as
-CPPCHECK or cppcheck. A missing tool prints a TOOL-MISSING line and fails.
-The gate prints the cppcheck path and version it uses, and a cppcheck other
-than CPPCHECK_VERSION, the version the baseline and dispositions were written
-for, prints a TOOL-VERSION line and fails.
+clang-tidy is found as CLANG_TIDY, clang-tidy-18 or clang-tidy (in that
+order: the versioned name first, so a bare clang-tidy of another release
+earlier on PATH is not taken); cppcheck as CPPCHECK or cppcheck. A missing
+tool prints a TOOL-MISSING line and fails. The gate prints the path and
+version of both tools, and a clang-tidy whose major release is not
+TIDY_MAJOR, or a cppcheck other than CPPCHECK_VERSION, the versions the
+baselines and dispositions were written for, prints a TOOL-VERSION line and
+fails: another release runs other checks, and a check it dropped would read
+as findings fixed.
 
 Run with --generate to rewrite both baselines from the current findings.
 """
@@ -71,7 +75,10 @@ CPPCHECK_VERSION = "2.19.0"
 DISPOSITIONS = os.path.join(ROOT, "tools", "tidy_dispositions.txt")
 TRIAGE_DOC = "docs/audits/2026-10-26-static-analysis-triage.md"
 
-TIDY_NAMES = ["clang-tidy", "clang-tidy-18"]
+# The clang-tidy release the clang-tidy baseline and dispositions were
+# written for (the fleet runners' apt clang-tidy-18, LLVM 18.1.x).
+TIDY_MAJOR = "18"
+TIDY_NAMES = ["clang-tidy-18", "clang-tidy"]
 CPPCHECK_ARGS = [
     "--enable=warning,performance,portability",
     "--inline-suppr",
@@ -170,6 +177,36 @@ def cppcheck_version(cppcheck):
         return None
     version = match.group(1)
     return version if version.count(".") == 2 else version + ".0"
+
+
+def clang_tidy_version(tidy):
+    """The version clang-tidy --version prints ("LLVM version 18.1.8" -> "18.1.8"), or None."""
+    try:
+        result = subprocess.run([tidy, "--version"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"LLVM version (\d+\.\d+(?:\.\d+)?)", result.stdout + result.stderr)
+    return match.group(1) if match else None
+
+
+def tool_version_problems(tidy, cppcheck, tidy_baseline, cppcheck_baseline, dispositions):
+    """Print each tool's path and version; return a TOOL-VERSION line per tool of the wrong release."""
+    problems = []
+    tidy_version = clang_tidy_version(tidy)
+    print("clang-tidy: %s, version %s on %s" % (tidy, tidy_version or "unknown", runner_name()))
+    if tidy_version is None or tidy_version.split(".")[0] != TIDY_MAJOR:
+        problems.append("TOOL-VERSION clang-tidy at %s is %s, but %s and %s were written for clang-tidy %s: "
+                        "set CLANG_TIDY to a clang-tidy-%s (the fleet runners' /usr/bin/clang-tidy-%s)" % (
+                            tidy, tidy_version or "unknown", relpath(tidy_baseline),
+                            relpath(dispositions), TIDY_MAJOR, TIDY_MAJOR, TIDY_MAJOR))
+    version = cppcheck_version(cppcheck)
+    print("cppcheck: %s, version %s on %s" % (cppcheck, version or "unknown", runner_name()))
+    if version != CPPCHECK_VERSION:
+        problems.append("TOOL-VERSION cppcheck at %s is %s, but %s and %s were written for cppcheck %s: "
+                        "set CPPCHECK to a cppcheck %s (the fleet runners' /usr/bin/cppcheck)" % (
+                            cppcheck, version or "unknown", relpath(cppcheck_baseline),
+                            relpath(dispositions), CPPCHECK_VERSION, CPPCHECK_VERSION))
+    return problems
 
 
 def ensure_compile_db():
@@ -540,7 +577,7 @@ def main():
     cppcheck = find_tool("CPPCHECK", ["cppcheck"])
     missing = False
     if tidy is None:
-        print("TOOL-MISSING clang-tidy (clang-tidy, clang-tidy-18 or CLANG_TIDY) (missing) on %s" % runner_name())
+        print("TOOL-MISSING clang-tidy (clang-tidy-18, clang-tidy or CLANG_TIDY) (missing) on %s" % runner_name())
         missing = True
     if cppcheck is None:
         print("TOOL-MISSING cppcheck (cppcheck or CPPCHECK) (missing) on %s" % runner_name())
@@ -548,13 +585,11 @@ def main():
     if missing:
         return 1
 
-    version = cppcheck_version(cppcheck)
-    print("cppcheck: %s, version %s on %s" % (cppcheck, version or "unknown", runner_name()))
-    if version != CPPCHECK_VERSION:
-        print("TOOL-VERSION cppcheck at %s is %s, but %s and %s were written for cppcheck %s: "
-              "set CPPCHECK to a cppcheck %s (the fleet runners' /usr/bin/cppcheck)" % (
-                  cppcheck, version or "unknown", relpath(args.cppcheck_baseline),
-                  relpath(args.dispositions), CPPCHECK_VERSION, CPPCHECK_VERSION))
+    version_problems = tool_version_problems(tidy, cppcheck, args.tidy_baseline,
+                                             args.cppcheck_baseline, args.dispositions)
+    for line in version_problems:
+        print(line)
+    if version_problems:
         return 1
 
     if not ensure_compile_db():
