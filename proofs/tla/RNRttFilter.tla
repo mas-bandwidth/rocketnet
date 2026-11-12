@@ -52,7 +52,7 @@
 (* sparse sender's estimate and refuses samples no outage delayed; "none"   *)
 (* (no filter) takes the outage's samples and the estimate is poisoned.     *)
 (***************************************************************************)
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
     Probe,      \* RN_PROBE_SECONDS in ticks
