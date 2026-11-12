@@ -18,7 +18,12 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_server_protocol.h"
 #include "rocketnet_config.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_driver.h"

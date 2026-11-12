@@ -290,9 +290,20 @@ static void test_server_transport_folds_receive_drop_totals()
 {
     rocketnet_quiet( 1 );
 
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[64];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[sizeof( rocketnet_dev_server_secret_key )];
+    check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_default_config_current( &server_config );
     server_config.max_clients = 1;
+    server_config.protocol_id = 0x666f6c6464726f70ULL;
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     server_config.loopback_hub = rocketnet_test_loopback_hub();
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
