@@ -29,6 +29,7 @@ hostile_pps=200000
 frame_p99_us=12000
 warm_seconds=""
 xdp_queues=0
+quiet=1.5
 
 usage()
 {
@@ -51,6 +52,7 @@ while [ $# -gt 0 ]; do
         --frame-p99-us) frame_p99_us="$2"; shift 2 ;;
         --warm-seconds) warm_seconds="$2"; shift 2 ;;
         --xdp-queues) xdp_queues="$2"; shift 2 ;;
+        --quiet-seconds) quiet="$2"; shift 2 ;;
         *) usage ;;
     esac
 done
@@ -160,7 +162,7 @@ fi
 # then the measured run
 join_seconds=$(( clients / 100 + 5 ))
 end_at=$(( $(date +%s) + join_seconds + seconds + 3 ))
-ip netns exec "$ns_s" "$tool" server --address "$address" --transport "$transport" --max-clients "$clients" --end-at "$end_at" \
+ip netns exec "$ns_s" "$tool" server --address "$address" --transport "$transport" --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" \
     --dev "$dev_s" --warm-seconds "$warm_seconds" --sample-seconds 60 "${xdp_args[@]}" "${server_shape[@]}" > "$out/server.log" 2>&1 &
 server_pid=$!
 key=""
@@ -175,7 +177,7 @@ if [ -z "$key" ]; then
     exit 1
 fi
 
-ip netns exec "$ns_c" "$tool" clients --address "$address" --key "$key" --clients "$clients" --threads "$threads" --end-at "$end_at" \
+ip netns exec "$ns_c" "$tool" clients --address "$address" --key "$key" --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" \
     --dev "$dev_c" "${client_shape[@]}" > "$out/clients.log" 2>&1 &
 clients_pid=$!
 

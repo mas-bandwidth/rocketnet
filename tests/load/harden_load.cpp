@@ -2451,8 +2451,17 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     const int64_t receive_gap = c.arrived_in - c.library_received;
     // netem's duplicates are not counted anywhere: they are the path's
     // excess of arrivals, and must be zero unless the row duplicates
-    const bool path_ok = duplicates_expected ? path_gap <= 0 : path_gap == 0;
-    const bool ok = send_gap == 0 && receive_gap == 0 && path_ok;
+    // the judged equation is the libraries': every packet the sender's
+    // library counted sent is counted received by the receiver's library or
+    // dropped by a named counter. The kernel's UDP counts step by step are
+    // printed beside it: they count an skb, so a GSO send of N datagrams is
+    // one in them (and in qdisc drops), and a step gap there names where a
+    // library gap went
+    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped;
+    const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
+    const bool ok = duplicates_expected ? library_gap <= 0 : library_gap == 0;
+    printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s)\n", direction, c.library_sent,
+            c.library_received, named_drops, library_gap, duplicates_expected && library_gap < 0 ? ", netem duplicates" : "" );
     printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
             c.kernel_sndbuf, send_gap );
     printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
