@@ -76,19 +76,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
-          check() {
-            local tool="$1" want="$2" got
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
-            fi
-            got="$("$tool" --version 2>&1 | head -1)"
-            echo "$tool: $got (pinned $want)"
-            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
-          }
-          check cbmc "$(pin CBMC)"
-          check cadical "$(pin CADICAL)"
-          check esbmc "$(pin ESBMC)"
+          bash proofs/cbmc/check_tool_versions.sh --self-test
+          bash proofs/cbmc/check_tool_versions.sh cbmc=CBMC cadical=CADICAL esbmc=ESBMC
 
       - name: Run ${{ matrix.target }}
         run: |
@@ -124,18 +113,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
-          check() {
-            local tool="$1" want="$2" got
-            if ! command -v "$tool" >/dev/null 2>&1; then
-              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
-            fi
-            got="$("$tool" --version 2>&1 | head -1)"
-            echo "$tool: $got (pinned $want)"
-            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
-          }
-          check cbmc "$(pin CBMC)"
-          check cadical "$(pin CADICAL)"
+          bash proofs/cbmc/check_tool_versions.sh --self-test
+          bash proofs/cbmc/check_tool_versions.sh cbmc=CBMC cadical=CADICAL
 
       - name: Run ${{ matrix.target }}
         run: |
