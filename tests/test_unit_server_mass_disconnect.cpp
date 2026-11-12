@@ -595,6 +595,68 @@ static void test_server_disconnect_all_1000_real_time()
 
 REGISTER_UNIT_TEST( test_server_disconnect_all_1000_real_time );
 
+#if ROCKETNET_DEV
+bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_transport_t * server, int clients );
+
+// rocketnet_server_disconnect_all_clients for slots the transport holds
+// connected that the message layer has not yet observed (the transport took
+// them after the last update's Observe; here the unit seam seats them with no
+// handshake): the message layer has nothing to kick, so the call ends each one
+// at the transport itself, in the same call, and seals their disconnect
+// bursts (proofs/tla/RNSlots.tla PublicDisconnect). The next update observes
+// no connection on any of them.
+static void test_server_disconnect_all_ends_slots_not_yet_observed()
+{
+    mass_disconnect_env_guard_t env_guard;
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
+    rocketnet_quiet( 1 );
+
+    mass_disconnect_keys_t keys;
+    mass_disconnect_make_keys( &keys );
+    double time = 1000.0;
+    rocketnet_server_t * server = mass_disconnect_server_create( &keys, time, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE,
+                                                                 ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
+    rocketnet_server_update( server, time );
+
+    rocketnet_server_transport_t * transport = mass_disconnect_server_transport( server );
+    const int seated = 3;
+    check( rocketnet_server_transport_seat_clients_for_test( transport, seated ) );
+
+    // the window: connected at the transport, not at the message layer
+
+    check( rocketnet_server_num_connected_clients( server ) == seated );
+    for ( int i = 0; i < seated; i++ )
+    {
+        check( rocketnet_server_transport_is_client_connected( transport, i ) );
+        check( !rocketnet_server_client_connected( server, i ) );
+    }
+
+    const uint64_t seals_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+    rocketnet_server_disconnect_all_clients( server );
+
+    check( rocketnet_server_num_connected_clients( server ) == 0 );
+    check( rocketnet_server_transport_num_connected_clients( transport ) == 0 );
+    for ( int i = 0; i < seated; i++ )
+    {
+        check( !rocketnet_server_transport_is_client_connected( transport, i ) );
+    }
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) > seals_before );
+
+    time += 0.01;
+    rocketnet_server_update( server, time );
+    rocketnet_server_send_packets( server );
+    check( rocketnet_server_num_connected_clients( server ) == 0 );
+    for ( int i = 0; i < seated; i++ )
+    {
+        check( !rocketnet_server_client_connected( server, i ) );
+    }
+
+    rn_test_server_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_server_disconnect_all_ends_slots_not_yet_observed );
+#endif // #if ROCKETNET_DEV
+
 // 1000 clients call rocketnet_client_disconnect in the same update: every
 // client's redundant burst fits the server's loopback queue, sized from the
 // plan, and the server's connected count is exactly 0 within

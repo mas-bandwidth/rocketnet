@@ -22,7 +22,16 @@ extract = next(line.strip() for line in workflow.splitlines() if line.strip().st
 drift_start = workflow.index('          newest_tag=$(git ')
 select_newest = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('newest_tag=$(git '))
 drift_end = workflow.index('\n', workflow.index('echo "::warning::HEAD carries', drift_start))
-drift = 'set -euo pipefail\n' + textwrap.dedent(workflow[drift_start:drift_end])
+# The step sets wire_paths from tools/check_wire_paths.py --print before
+# newest_tag; the fixture repositories hold none of those files, so the list
+# is taken here from the real tree, the same command the step runs.
+WIRE_LINE = 'wire_paths=$(python3 tools/check_wire_paths.py --print)'
+assert WIRE_LINE in workflow[:drift_start], 'release-check.yml sets wire_paths from check_wire_paths.py --print before newest_tag'
+assert 'python3 tools/check_wire_paths.py\n' in workflow[:drift_start], 'release-check.yml runs check_wire_paths.py before the wire-change gate'
+wire_list = subprocess.run(['python3', 'tools/check_wire_paths.py', '--print'], cwd=ROOT, text=True,
+                           capture_output=True, check=True).stdout.split()
+drift = ('set -euo pipefail\n' + "wire_paths='" + ' '.join(wire_list) + "'\n"
+         + textwrap.dedent(workflow[drift_start:drift_end]))
 def fixture(full, numeric='1.0.0', dev_full='dev', dev_numeric='255.255.255'):
     # Final public API deliberately has no VERSION_PRERELEASE macro.
     lines = ['#if !ROCKETNET_DEV']
@@ -200,10 +209,13 @@ WIRE_PATHS = [
     'sdk/rocketnet.h',
 ]
 wire_gate = workflow[workflow.index('wire_log=$(git log'):workflow.index('if [ -z "$wire_log" ]')]
+assert '-- $wire_paths)' in wire_gate, 'release-check.yml wire-change gate does not log over $wire_paths'
+assert sorted(wire_list) == sorted(WIRE_PATHS), (
+    f'tools/wire_paths.txt differs from this list: missing {sorted(set(WIRE_PATHS) - set(wire_list))}, '
+    f'extra {sorted(set(wire_list) - set(WIRE_PATHS))}')
 releasing = (ROOT / 'docs/RELEASING.md').read_text()
 wire_rule = releasing[releasing.index('## The wire-change rule'):releasing.index('This is a path-based check')]
 for path in WIRE_PATHS:
-    assert path in wire_gate, f'release-check.yml wire-change gate does not watch {path}'
     assert path in wire_rule, f'docs/RELEASING.md wire-change rule does not list {path}'
 print('Wire paths: release-check.yml and RELEASING.md watch all', len(WIRE_PATHS), 'wire-defining paths')
 print('28 release version fixtures passed')

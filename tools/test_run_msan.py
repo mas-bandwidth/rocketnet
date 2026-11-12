@@ -39,16 +39,29 @@ FATAL_TEXT = (
 )
 
 
+# a libc top frame, reached from two different in-tree call sites
+LIBC_TOP = "bcmp (bin/test)"
+CALLER_A = "check_refused(int) tools/fixture.cpp:5:3"
+CALLER_B = "other_compare(int) tools/fixture.cpp:9:7"
+KEY_A = "%s | %s" % (LIBC_TOP, CALLER_A)
+
+
 def warning_text(top):
     if top is None:
         return ""
     if top == "fatal":
         return FATAL_TEXT
+    frames = top if isinstance(top, list) else [top, "main tools/fixture.cpp:1:1"]
+    stack = "".join(
+        "    #%d 0x%x in %s\n" % (i, 0x1000 * (i + 1), entry)
+        for i, entry in enumerate(frames)
+    )
     return (
         "==1==WARNING: MemorySanitizer: use-of-uninitialized-value\n"
-        "    #0 0x1000 in %s\n"
-        "    #1 0x2000 in main tools/fixture.cpp:1:1\n"
-        "SUMMARY: MemorySanitizer: use-of-uninitialized-value\n" % top
+        + stack
+        + "  Uninitialized value was created by a heap allocation\n"
+        "    #0 0x9000 in malloc\n"
+        "SUMMARY: MemorySanitizer: use-of-uninitialized-value\n"
     )
 
 
@@ -59,7 +72,7 @@ class RunMsanGateTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_gate(self, stdout, status, top):
+    def run_gate(self, stdout, status, top, known_entries=(KNOWN_TOP,)):
         binary = Path(self.tmp.name) / "fake-test"
         binary.write_text(
             FAKE_TEMPLATE
@@ -67,7 +80,9 @@ class RunMsanGateTest(unittest.TestCase):
         )
         binary.chmod(0o755)
         known = Path(self.tmp.name) / "known.txt"
-        known.write_text("# the fixture's known list\n%s\n" % KNOWN_TOP)
+        known.write_text(
+            "# the fixture's known list\n%s\n" % "\n".join(known_entries)
+        )
         env = dict(os.environ)
         env["RUN_MSAN_TEST_BIN"] = str(binary)
         env["RUN_MSAN_KNOWN_FILE"] = str(known)
@@ -140,9 +155,64 @@ class RunMsanGateTest(unittest.TestCase):
         )
 
     def test_clean_run_passes(self):
-        code, output = self.run_gate("", 0, None)
+        code, output = self.run_gate("test_random_bytes\n*** ALL TESTS PASSED ***\n", 0, None)
         self.assertEqual(code, 0, output)
-        self.assertIn("MSan: clean", output)
+        self.assertIn("MSan: clean (1 test cases)", output)
+
+    def test_zero_cases_run_fails(self):
+        # zero inputs is an error: a suite that ran no case is never clean,
+        # and known findings do not make an empty run pass either
+        for top in (None, KNOWN_TOP):
+            for stdout in ("", "*** ALL TESTS PASSED ***\n"):
+                code, output = self.run_gate(stdout, 0, top)
+                self.assertEqual(code, 1, output)
+                self.assertIn("MSan: 0 test cases ran", output)
+
+    # P3-12: a known entry names an in-tree frame, never a top frame alone
+
+    def test_top_frame_only_entry_is_refused(self):
+        # the plant: listing the libc top frame alone would pass every later
+        # uninitialised compare; the gate refuses the list itself
+        code, output = self.run_gate(
+            "", 0, [LIBC_TOP, CALLER_A], known_entries=(LIBC_TOP,)
+        )
+        self.assertEqual(code, 1, output)
+        self.assertIn("name no in-tree frame", output)
+        self.assertIn(LIBC_TOP, output)
+
+    def test_top_frame_only_entry_is_refused_on_a_clean_run(self):
+        code, output = self.run_gate("", 0, None, known_entries=(LIBC_TOP,))
+        self.assertEqual(code, 1, output)
+        self.assertIn("name no in-tree frame", output)
+
+    def test_finding_keyed_by_its_in_tree_caller_passes(self):
+        stdout = "test_random_bytes\n*** ALL TESTS PASSED ***\n"
+        code, output = self.run_gate(
+            stdout, 0, [LIBC_TOP, CALLER_A, "main tools/fixture.cpp:1:1"],
+            known_entries=(KEY_A,),
+        )
+        self.assertEqual(code, 0, output)
+        self.assertIn("(all known)", output)
+
+    def test_same_top_frame_from_another_caller_fails_naming_it(self):
+        code, output = self.run_gate(
+            "", 0, [LIBC_TOP, CALLER_B, "main tools/fixture.cpp:1:1"],
+            known_entries=(KEY_A,),
+        )
+        self.assertEqual(code, 1, output)
+        self.assertIn("findings not in", output)
+        self.assertIn("%s | %s" % (LIBC_TOP, CALLER_B), output)
+
+    def test_library_and_system_frames_are_not_in_tree(self):
+        # entries whose only location is the C++ library or an absolute path
+        for entry in (
+            "memcmp include/c++/v1/__string/x.h:3:1",
+            "memcmp /usr/include/string.h:3:1",
+            "memcmp ../outside/x.cpp:3:1",
+        ):
+            code, output = self.run_gate("", 0, None, known_entries=(entry,))
+            self.assertEqual(code, 1, entry + "\n" + output)
+            self.assertIn("name no in-tree frame", output)
 
 
 if __name__ == "__main__":

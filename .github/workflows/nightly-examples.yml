@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: nightly-examples
+  group: nightly-examples-${{ github.event_name }}
   cancel-in-progress: false
 
 permissions:
@@ -21,6 +21,10 @@ permissions:
 # self-hosted jobs to five days.
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
   examples:
@@ -36,7 +40,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -55,9 +58,11 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Check the examples against the house rules
@@ -85,7 +90,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -118,9 +122,11 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Check the examples against the house rules
@@ -130,7 +136,6 @@ jobs:
         run: python3 tools/run_examples.py --build build
 
       - name: Build universal and run the x86_64 slice under Rosetta 2
-        shell: bash
         run: |
           set -euo pipefail
           cmake -S . -B build-universal \
@@ -151,7 +156,7 @@ jobs:
           fi
           arch -x86_64 ./bin/test
           arch -x86_64 ./bin/test_lifecycle
-          arch -x86_64 ./bin/functional
+          bash tools/run_functional.sh dev arch -x86_64 ./bin/functional
           # a pin covers every create in the process, so the suite's own
           # per-pump cases run unpinned above; the pinned cells run the
           # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does
@@ -166,14 +171,19 @@ jobs:
   examples-windows:
     name: windows-2025
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Run the examples (Windows)

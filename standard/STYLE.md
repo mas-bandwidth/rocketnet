@@ -84,7 +84,6 @@ explicit anchor, or a repeated subsection id.
 | t19 | Security considerations | RN-1 |
 | t20 | Conformance | RN-1 |
 | ta | Appendix A: test vectors | RN-1 |
-| tb | Appendix B: changes from netcode 1.02 | RN-1 |
 | tc | Appendix C (informative): implementation notes | RN-1 |
 | m1 | Scope, terminology and relation to RN-1 | RN-2 |
 | m2 | Payload forms and sender size rules | RN-2 |
@@ -145,8 +144,7 @@ its rule.
 ## 7. Normative text carries no history
 
 RN-1 and RN-2 never contain: history, past rulings, corrections, "previously",
-comparisons with other protocols (Appendix B of RN-1 is the one place a
-difference from netcode 1.02 is listed, as a list of facts), source file names
+comparisons with other protocols, source file names
 or `file:line`, change identifiers, TLA+ module names, test function names, or
 names of people, machines or customers. A requirement carries at most one
 sentence of reason; the rest goes to RN-R under the same section id. The

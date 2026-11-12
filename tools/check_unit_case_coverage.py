@@ -13,7 +13,10 @@ The unit suite (bin/test) registers its cases three ways:
 A registration can sit behind a preprocessor guard, and a whole translation
 unit can be left out of a build by CMakeLists.txt, so a case can compile into
 no configuration CI builds and never run. Each CI job that runs the suite
-saves `bin/test --list` as one list file. This check reads every list file and
+saves `bin/test --list` as one list file, with the environment of its run:
+`--list` prints the cases a run in that environment starts (suite_list_cases,
+the run's own selection, nightly tier included only under
+ROCKETNET_TEST_NIGHTLY=1). This check reads every list file and
 fails on:
 
   * a registered case named in no list (it runs nowhere);

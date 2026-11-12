@@ -7,8 +7,8 @@
     (C) and the loopback functional test (C++) use one generator and one
     checker. No allocation, no syscall, no global state.
 
-    The scheme is the owner's sequence-derived pair (mas-bandwidth/reliable
-    soak.c generate_packet_data / check_packet_data) ported to messages: the
+    The scheme is a sequence-derived pair (generate and check) over
+    messages: the
     length comes from the sequence, the sequence rides in the first bytes,
     and byte i is (i + sequence) % 256. The checker recomputes the length from
     the sequence it reads, so a message with the right bytes and the wrong

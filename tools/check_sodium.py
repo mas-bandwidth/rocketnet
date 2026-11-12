@@ -6,6 +6,14 @@ import ctypes.util
 from pathlib import Path
 
 
+def load(path):
+    """Open one shared library; tools/test_check_sodium.py replaces this with a fake."""
+    try:
+        return c.CDLL(path)
+    except OSError as error:
+        raise SystemExit(f"check_sodium: cannot load {path}: nothing was compared ({error})")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('vendor', type=Path, help='test-only sodium oracle shared library')
@@ -14,7 +22,7 @@ def main():
     reference = args.reference or ctypes.util.find_library('sodium')
     if not reference:
         raise SystemExit('independent libsodium reference not found')
-    libraries = [c.CDLL(str(args.vendor.resolve())), c.CDLL(reference)]
+    libraries = [load(str(args.vendor.resolve())), load(reference)]
     prefixes = ['rocketnet_sodium_', '']
     ptr, size, ull = c.c_void_p, c.c_size_t, c.c_ulonglong
     signatures = {

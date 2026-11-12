@@ -4,6 +4,7 @@
 */
 
 #include "../tests/test_env_source.h"
+#include "../tests/check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_ack.h"
@@ -188,6 +189,7 @@ static void rocketnet_check_handler( const char * condition,
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \
@@ -5368,8 +5370,8 @@ void rocketnet_test_server_keep_alive_pacing()
 
 void rocketnet_test_client_payload_before_first_keep_alive()
 {
-    // a payload racing ahead of the first keep-alive is ignored, as
-    // netcode.io's client does: delivered, it let the application reply on
+    // a payload racing ahead of the first keep-alive is ignored
+    // (TRANSPORT.md t11.3): delivered, it let the application reply on
     // a connection that could not yet send. The keep-alive still connects
     // the client, and the payloads after it are delivered
 
@@ -5687,8 +5689,8 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
             }
             int connected_before = ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-            // before connected the client ignores the payload, as
-            // netcode.io's client does, counted wrong state
+            // before connected the client ignores the payload
+            // (TRANSPORT.md t11.3), counted wrong state
 
             const int delivered = rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
             if ( !connected_before )
@@ -5829,8 +5831,8 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
             rocketnet_client_protocol_process_packet( &client, response, stream_bytes, time, payload, sizeof( payload ), &payload_bytes );
 
             // the standalone ack, sealed from _sending connection response_
-            // and sent once. The client now ignores payloads there (as
-            // netcode.io's client), so it accrues no debt to send it for,
+            // and sent once. The client now ignores payloads there
+            // (TRANSPORT.md t11.3), so it accrues no debt to send it for,
             // but the packet stays legal, and the server's pacing must
             // survive it all the same.
 
@@ -9856,6 +9858,13 @@ void rocketnet_test_ack_debt()
     // back arm the debt, and one eliciting packet makes exactly one type 8 due ---
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
+
+    // At a threshold of 1 the two "threshold - 1" loops below run no times:
+    // the "below the threshold" state is zero eliciting packets, which the
+    // first "not due" check covers. A threshold above 1 brings the loops to
+    // life and needs its own below-threshold case: this assert says so.
+
+    static_assert( ROCKETNET_ACK_DEBT_THRESHOLD == 1, "test_ack_debt: a threshold above 1 needs a case with eliciting packets below it" );
 
     for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD - 1; i++ )
     {

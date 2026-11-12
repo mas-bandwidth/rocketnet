@@ -51,6 +51,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   bigendian-system:
     name: s390x full system
@@ -61,7 +65,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-bigendian-system-${{ matrix.ref }}
+      group: nightly-bigendian-system-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -69,7 +73,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's qemu packages are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -230,7 +233,11 @@ jobs:
             done
             [ "$ok" = 1 ] && break
             echo "GUEST-DID-NOT-BOOT attempt ${attempt}/${boot_attempts}: ${why}"
-            tail -n 40 "$WORK/serial.log" || true
+            if [ -f "$WORK/serial.log" ]; then
+              tail -n 40 "$WORK/serial.log"
+            else
+              echo "(no serial.log: qemu wrote no console)"
+            fi
             cleanup
             attempt=$((attempt + 1))
           done
@@ -270,11 +277,11 @@ jobs:
           u=${PIPESTATUS[0]}
           echo UNIT_EXIT:$u
           [ "$u" -eq 0 ] || rc=$u
-          /usr/bin/time -f FUNC_AUTO_SEC=%e ./bin/functional 2>&1 | tee func_auto.out
+          /usr/bin/time -f FUNC_AUTO_SEC=%e bash tools/run_functional.sh s390x ./bin/functional 2>&1 | tee func_auto.out
           a=${PIPESTATUS[0]}
           echo FUNC_AUTO_EXIT:$a
           [ "$a" -eq 0 ] || rc=$a
-          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e ./bin/functional 2>&1 | tee func_port.out
+          ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable /usr/bin/time -f FUNC_PORT_SEC=%e bash tools/run_functional.sh s390x-portable ./bin/functional 2>&1 | tee func_port.out
           p=${PIPESTATUS[0]}
           echo FUNC_PORT_EXIT:$p
           [ "$p" -eq 0 ] || rc=$p

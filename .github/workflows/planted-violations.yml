@@ -1,0 +1,161 @@
+# Nightly planted violations: every check is shown to go red on the violation it exists to catch.
+#
+# The owner's rule: "a check counts only when it has been shown to FAIL and shown to have RUN."
+# A checker's own self-test proves the tool; this proves the wiring. tools/planted_violations.tsv
+# holds one row per check (every job of every per-commit and scheduled workflow, and every
+# tools/checkers.txt entry once that file exists): the plant, the job's own earlier steps the
+# check needs, the step's own command (checked against the workflow's text on every run, so a
+# row cannot drift from the step it proves), and the regex the red output must match. For each
+# row tools/planted_violations.py makes a fresh scratch checkout of this commit, plants the
+# violation, runs the command, and requires a nonzero exit and the red line; the checkout is then
+# removed. One leg per runner OS runs that OS's rows.
+#
+# Each leg prints one line per row (PLANT-RED, PLANT-GREEN: the check did not catch its plant,
+# PLANT-BROKEN: the plant did not apply or the setup failed, PLANT-HUNG) and fails on any GREEN,
+# BROKEN or HUNG row, on any check in the inventory with no row (PLANT-MISSING), on any row
+# naming a workflow, job or step that does not exist or a command that is not the step's own
+# text (PLANT-STALE), and when zero rows ran. A red night is a check that does not catch what it
+# claims to: read the GREEN line, fix the check, or say why in the table. ci.yml's lint job runs
+# the same table check (--check-table, no plants) on every commit.
+#
+# Schedule: 20 12 * * * UTC, after the last nightly (nightly cross-version, 11:50 UTC). The legs
+# run builds and suites under plants, so a leg takes hours; nightly-watch.yml (13:30 UTC) reads
+# the night before's verdict when tonight's is still running.
+
+name: planted violations
+
+on:
+  schedule:
+    - cron: "20 12 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # tools/check_release_tsan.py and the nightly watch, run under their plants, read workflow runs
+  actions: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+jobs:
+  linux:
+    name: planted violations / Linux
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 7200
+    concurrency:
+      group: planted-violations-linux-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          # the release-check rows compare against the newest v* tag
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ccache
+
+      - name: Plant one violation per Linux check and require each red
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tools/planted_violations.py --self-test
+          python3 tools/planted_violations.py --os linux --jobs 4 --scratch "$RUNNER_TEMP/planted-violations" 2>&1 | tee planted-violations-linux.log
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## planted violations / Linux"
+            echo ""
+            if [ -f planted-violations-linux.log ]; then
+              echo '```'
+              grep -E '^(PLANT-|planted-violations:)' planted-violations-linux.log || echo "no verdict lines"
+              echo '```'
+            else
+              echo "The run printed nothing: no row was shown red."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  macos:
+    name: planted violations / macOS
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    concurrency:
+      group: planted-violations-macos-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/ccache
+
+      - name: Plant one violation per macOS check and require each red
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 tools/planted_violations.py --self-test
+          python3 tools/planted_violations.py --os macos --jobs 4 --scratch "$RUNNER_TEMP/planted-violations" 2>&1 | tee planted-violations-macos.log
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## planted violations / macOS"
+            echo ""
+            if [ -f planted-violations-macos.log ]; then
+              echo '```'
+              grep -E '^(PLANT-|planted-violations:)' planted-violations-macos.log || echo "no verdict lines"
+              echo '```'
+            else
+              echo "The run printed nothing: no row was shown red."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: planted violations / Windows
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    concurrency:
+      group: planted-violations-windows-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Plant one violation per Windows check and require each red
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python tools/planted_violations.py --self-test
+          python tools/planted_violations.py --os windows --jobs 2 --scratch "$RUNNER_TEMP/planted-violations" 2>&1 | tee planted-violations-windows.log
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## planted violations / Windows"
+            echo ""
+            if [ -f planted-violations-windows.log ]; then
+              echo '```'
+              grep -E '^(PLANT-|planted-violations:)' planted-violations-windows.log || echo "no verdict lines"
+              echo '```'
+            else
+              echo "The run printed nothing: no row was shown red."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

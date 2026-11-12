@@ -28,7 +28,7 @@ int main()
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
-    strcpy( server_config.transport, "external_test" );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "external_test" );
 
     auto * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
     CHECK( server && strcmp( rocketnet_server_transport_io_name( server ), "external_test" ) == 0 );
@@ -41,7 +41,7 @@ int main()
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    strcpy( client_config.transport, "external_test" );
+    snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "external_test" );
 
     auto * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_time() );
     CHECK( client && strcmp( rocketnet_client_transport_io_name( client ), "external_test" ) == 0 );

@@ -1,0 +1,191 @@
+# Nightly framework integration: rocketnet main, vendored into the framework
+# (robotgamedevelopers/framework, private) exactly the way the framework
+# vendors it, then built and run. A break in the public API, in the source
+# list the framework compiles, in the vendored path set or in behaviour a real
+# client and server depend on shows up the night it lands on main, not the
+# day the framework next re-vendors. No other workflow on main builds a
+# consumer of this size against main.
+#
+# Each leg:
+#
+#   1. tools/framework_vendor_main.sh clones the framework read-only (its push
+#      URL is "no-push"; nothing here pushes) and runs the framework's own
+#      scripts/revendor_rocketnet.sh at rocketnet main, which also checks the
+#      copy. Its last line is the verdict: framework vendor: pass|fail ...
+#   2. The framework builds the way its own CI builds it on that OS: cmake and
+#      make in game/ on Linux, scripts/build_windows.ps1 on Windows. Release.
+#   3. The framework's unit tests (dist/test).
+#   4. The framework's smoke test, scripts/smoke_test.sh (.ps1 on Windows): a
+#      real dedicated server on 127.0.0.1 and a real client that connects,
+#      syncs, heartbeats and disconnects cleanly; a listen server; a client
+#      timing out after its server is killed; singleplayer over loopback.
+#      FUNCTIONAL: real sockets, real time.
+#
+# It always vendors main, whatever ref the workflow runs from: the framework's
+# re-vendor script refuses a commit that is not on main.
+#
+# THE TOKEN (an owner decision). The framework is private and in another
+# organisation, so GITHUB_TOKEN cannot read it. FRAMEWORK_READ_TOKEN is a
+# repository secret only the owner can add: read-only contents on
+# robotgamedevelopers/framework. Until it exists every leg is red with
+# "FRAMEWORK_READ_TOKEN is not set" -- a failure that says so, never a skip.
+# The branch this came from fell back to SPACE_READ_TOKEN, the release gate's
+# token; that fallback is dropped here so a token is never used beyond the
+# purpose it was minted for. github.token reads rocketnet main for the
+# re-vendor script's own fetch.
+#
+# The toolchain: the framework's code generators build with go, which the
+# fleet's runners must already carry (checked by name; nothing is installed).
+#
+# Its last runs, from its branch: 2026-10-28 cancelled and red after 1 h 46 m;
+# 2026-10-31 dispatches red at the framework clone (Permission denied). Brought
+# to main 2026-11-12 from branch nightly/integration, where its cron never fired.
+
+name: Nightly framework integration
+
+on:
+  schedule:
+    - cron: "50 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+
+  linux:
+    name: framework on rocketnet main (Linux)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    # keyed by the event as well as the ref: a dispatch never cancels or
+    # displaces the scheduled night, and the night never cancels a dispatch
+    concurrency:
+      group: nightly-framework-linux-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
+      ROCKETNET_READ_TOKEN: ${{ github.token }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Check the fleet's build dependencies are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ make git go pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if ! pkg-config --exists libcurl >/dev/null 2>&1; then
+            echo "TOOL-MISSING libcurl (any) (pkg-config --exists failed) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Vendor rocketnet main into the framework
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/framework"
+          echo "FRAMEWORK=$RUNNER_TEMP/framework" >> "$GITHUB_ENV"
+          tools/framework_vendor_main.sh main "$RUNNER_TEMP/framework"
+
+      - name: Build the framework (Release)
+        id: build
+        run: |
+          set -euo pipefail
+          cd "$FRAMEWORK/game"
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON .
+          make -j"$(nproc)"
+
+      - name: Framework unit tests
+        run: |
+          set -euo pipefail
+          cd "$FRAMEWORK/dist"
+          ./test
+
+      - name: Framework smoke test (real server, real client, loopback)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cd "$FRAMEWORK"
+          ./scripts/smoke_test.sh
+
+  windows:
+    name: framework on rocketnet main (Windows)
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    concurrency:
+      group: nightly-framework-windows-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
+      ROCKETNET_READ_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Check the fleet's build dependencies are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake git go pwsh; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Vendor rocketnet main into the framework
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/framework"
+          echo "FRAMEWORK=$RUNNER_TEMP/framework" >> "$GITHUB_ENV"
+          tools/framework_vendor_main.sh main "$RUNNER_TEMP/framework"
+
+      # the framework's own note (its CI): vcpkg's registries cache is shared
+      # per machine by default and two jobs at once race on it, so this
+      # runner keeps its own beside its work directory
+      - name: Build the framework (Release, clang-cl)
+        id: build
+        env:
+          BUILD_JOBS: '8'
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_WORKSPACE/../vcpkg-registries"
+          mkdir -p "$cache"
+          export X_VCPKG_REGISTRIES_CACHE="$cache"
+          cd "$FRAMEWORK"
+          pwsh -NoProfile -NonInteractive -File ./scripts/build_windows.ps1 Release
+
+      - name: Framework unit tests
+        run: |
+          set -euo pipefail
+          cd "$FRAMEWORK/dist"
+          ./test.exe
+
+      - name: Framework smoke test (real server, real client, loopback)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          cd "$FRAMEWORK"
+          pwsh -NoProfile -NonInteractive -File ./scripts/smoke_test.ps1

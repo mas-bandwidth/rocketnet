@@ -27,6 +27,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   soak:
     strategy:
@@ -42,7 +46,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -61,6 +64,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
       - name: Tests
@@ -88,7 +92,6 @@ jobs:
       # expected server transport, and end with the fd and thread counts it
       # started with. A runner with no VM tier fails the xdp cell.
       - name: Many-client load (1000 clients, every Linux server cell)
-        shell: bash
         run: |
           set -euo pipefail
           ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
@@ -97,8 +100,11 @@ jobs:
             echo "LOAD cell=$cell $line"
             case "$line" in *verdict=PASS*) ;; *) echo "LOAD cell=$cell FAIL"; return 1 ;; esac
             case "$line" in *"server_transport_io=$want "*) ;; *) echo "LOAD cell=$cell wrong server transport (want $want)"; return 1 ;; esac
-            fs=$(echo "$line" | sed -E "s/.*fds_start=([0-9]+).*/\1/"); fe=$(echo "$line" | sed -E "s/.*fds_end=([0-9]+).*/\1/")
-            ts=$(echo "$line" | sed -E "s/.*threads_start=([0-9]+).*/\1/"); te=$(echo "$line" | sed -E "s/.*threads_end=([0-9]+).*/\1/")
+            # each field must be present: sed -n ... p prints nothing for an
+            # absent field, and an empty value fails rather than comparing equal
+            fs=$(echo "$line" | sed -nE "s/.* fds_start=([0-9]+)( .*|$)/\1/p"); fe=$(echo "$line" | sed -nE "s/.* fds_end=([0-9]+)( .*|$)/\1/p")
+            ts=$(echo "$line" | sed -nE "s/.* threads_start=([0-9]+)( .*|$)/\1/p"); te=$(echo "$line" | sed -nE "s/.* threads_end=([0-9]+)( .*|$)/\1/p")
+            [ -n "$fs" ] && [ -n "$fe" ] && [ -n "$ts" ] && [ -n "$te" ] || { echo "LOAD cell=$cell FAIL the line lacks fds_start, fds_end, threads_start or threads_end"; return 1; }
             [ "$fs" = "$fe" ] && [ "$ts" = "$te" ] || { echo "LOAD cell=$cell fd or thread growth"; return 1; }
           }
           run_cell() {
@@ -113,11 +119,14 @@ jobs:
           run_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1
-          if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
-            run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
-          else
-            echo "LOAD cell=io_uring [SKIPPED this kernel disables io_uring]"
-          fi
+          # a fleet runner without io_uring fails the cell by name unless tools/io_uring_absent_runners.txt lists it
+          gate=0
+          scripts/io-uring-gate "LOAD cell=io_uring" || gate=$?
+          case "$gate" in
+            0) run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            3) ;;
+            *) exit 1 ;;
+          esac
           vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
           if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
             echo "LOAD cell=xdp FAIL no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm"
@@ -204,21 +213,39 @@ jobs:
           scripts/vm-boot-guard --marker "$guest/started" -- \
             vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
-          grep '^VM-BOOT-GUARD' "$guest/vm.log" || true
-          peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" 2>/dev/null | tail -n 1) || true
+          # grep exits 1 on no match (fine) and 2 on an unreadable log (red)
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]
+          peak_kib=""
+          if [ -f "$guest/xdp.time" ]; then
+            peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" | tail -n 1)
+          fi
           echo "LOAD cell=xdp guest_peak_rss_kib=${peak_kib:-unknown} need_bytes=$need_bytes guest_memory=${guest_gib}G"
           if [ -n "${peak_kib:-}" ] && [ $((peak_kib * 1024)) -gt $(( 1000 * touched_per_client_bytes )) ]; then
             echo "LOAD cell=xdp WARN peak RSS is above the measured touched bytes; re-measure touched_per_client_bytes (docs/LOAD.md)"
           fi
-          line=$(grep '^load: connected' "$guest/xdp.out" 2>/dev/null | tail -n 1) || true
-          [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
+          line=""
+          if [ -f "$guest/xdp.out" ]; then
+            line=$(grep '^load: connected' "$guest/xdp.out" | tail -n 1) || [ $? -eq 1 ]
+          fi
+          if [ -z "$line" ]; then
+            for log in "$guest/vm.log" "$guest/xdp.err"; do
+              if [ -f "$log" ]; then tail -n 60 "$log"; else echo "($log missing)"; fi
+            done
+          fi
           xdp_status=$(cat "$guest/xdp.exit" 2>/dev/null) || xdp_status="missing"
-          [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
-          check_cell xdp xdp "$line"
+          # the guest's stderr (load's named diagnostics: counters_agree's
+          # disagreeing counters, a refused criterion) stays in $guest, which
+          # the workspace clean removes; the other cells' stderr reaches this
+          # log directly. A failing xdp cell prints it here.
+          xdp_err() {
+            echo "LOAD cell=xdp guest stderr ($guest/xdp.err), last 200 lines:"
+            tail -n 200 "$guest/xdp.err" 2>/dev/null || echo "LOAD cell=xdp no xdp.err"
+          }
+          [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; xdp_err; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
+          check_cell xdp xdp "$line" || { xdp_err; exit 1; }
 
       - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
         if: runner.os == 'Linux'
-        shell: bash
         run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
 
       # Path outages on real UDP sockets (scripts/outage-pair-real): two
@@ -230,13 +257,33 @@ jobs:
       # the client CONNECTION_TIMED_OUT before the path comes back.
       - name: Outages at T - 1 survive and at T + 2 time out (two namespaces, netem, virtme-ng guest)
         if: runner.os == 'Linux'
-        shell: bash
         run: bash scripts/outage-pair-real --vm --log-dir "$PWD/build/outage-pair-real"
+
+      # The split load harness's proof mode end to end on one host
+      # (scripts/split-smoke): one load_split server and two client shards on
+      # loopback, a same_host_smoke manifest, and the merger with
+      # --same-host-smoke --load proof. Every stream joined across roles,
+      # every delivery once, every receipt; never a qualification
+      # (docs/LOAD_SPLIT.md, "Same-host smoke").
+      - name: Split load proof, same-host smoke (server and two shards on loopback)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/split-smoke --bin ./bin/load_split --dir "$PWD/build/split-smoke" | tee split-smoke.log
+          grep -q '^split_smoke_cell: verdict=PASS' split-smoke.log
+
+      - name: Upload the split smoke logs
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: split-smoke-${{ github.run_id }}-${{ strategy.job-index }}
+          path: build/split-smoke
+          if-no-files-found: ignore
 
       - name: Artifact name for the ref
         id: refslug
         if: always() && runner.os == 'Linux'
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -253,6 +300,9 @@ jobs:
     name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a DISCARDED night annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host below half its cores in load at start and end; otherwise LOW_TICK DISCARDED'
     strategy:
       fail-fast: false
       matrix:
@@ -264,17 +314,29 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build the named low-tick load case
+        timeout-minutes: 8
         run: make -j4
 
       - name: Run the enabled low-tick load case on an idle host
-        shell: bash
         run: |
           set -euo pipefail
           cores=$(nproc)
+          idle() { awk -v observed="$1" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; }
+          # wait for an idle host (the other nightly jobs finish) rather than
+          # discarding the night: up to 120 minutes, checked each minute
+          waited=0
           load_start=$(awk '{ print $1 }' /proc/loadavg)
-          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
-          if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+          while ! idle "$load_start" && [ "$waited" -lt 120 ]; do
+            echo "LOW_TICK waiting for an idle host: load_1m=$load_start cores=$cores waited=${waited}m"
+            sleep 60
+            waited=$((waited + 1))
+            load_start=$(awk '{ print $1 }' /proc/loadavg)
+          done
+          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores waited=${waited}m"
+          if ! idle "$load_start"; then
+            echo "::error title=low-tick DISCARDED::the host was never idle enough in 120 minutes: load_1m=$load_start cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_start at start, not below $cores cores / 2; nothing measured"
             exit 1
           fi
           set +e
@@ -283,26 +345,40 @@ jobs:
           set -e
           load_end=$(awk '{ print $1 }' /proc/loadavg)
           echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
-          if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+          # a failed case is a failure whatever the load: the end-of-run
+          # discard applies only to a pass measured on a loaded host
+          if [ "$result" -ne 0 ]; then
+            echo "LOW_TICK FAIL the case exited $result (load_1m at end $load_end)"
+            exit "$result"
+          fi
+          if ! idle "$load_end"; then
+            echo "::error title=low-tick DISCARDED::a pass measured while load exceeded half the cores: load_1m=$load_end cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_end at the end, not below $cores cores / 2; the case (exit $result) is not kept"
             exit 1
           fi
-          exit "$result"
+          echo "LOW_TICK PASS measured on an idle host"
 
   # Thirty minutes per Linux server cell under impairment, with flat fds,
-  # threads and resident memory: scripts/soak-per-transport runs bin/soak
+  # threads and library bytes (resident memory is printed, not asserted: the
+  # library is not responsible for the OS heap, tests/soak/soak.c
+  # PROCESS_RESOURCES_MEMORY): scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
   # io_uring, and xdp inside a virtme-ng guest of the runner's own kernel),
   # with loss, latency, jitter and duplication at both ends of the link
   # simulator (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, written into
   # the transport configs soak creates from, and a cell fails when they leave
-  # no drops or refused duplicates), and prints one PASS or FAIL line per cell. Five
+  # no drops or refused duplicates), and prints one PASS, FAIL or UNMEASURED line per cell (UNMEASURED: the
+  # cell failed as a stall can make it, on a run its own log shows stalled). Five
   # cells of 30 minutes are about 152 minutes, past the two-minute rule as
   # every nightly is. A runner with no VM tier fails the xdp cell by name.
   soak-per-transport:
     name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a night whose only non-passing cells stalled annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host that does not stall the soak process; a cell whose main loop stalled past the send-bank bound and failed only as a stall can make it is UNMEASURED (scripts/soak-per-transport)'
     strategy:
       fail-fast: false
       matrix:
@@ -314,7 +390,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -333,17 +408,22 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
-      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
-        shell: bash
+      # --assert-flat's own negative controls before the soaks lean on it:
+      # an impaired clean run passes, an impairment not applied fails "link
+      # impairment not observed", a leaked file fails on fds (60 s each)
+      - name: --assert-flat selftest (clean, impairment not applied, leaked file)
+        run: bash scripts/soak-args-selftest --flat
+
+      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and library bytes)
         run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -370,7 +450,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -403,6 +482,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
       - name: Tests
@@ -418,7 +498,6 @@ jobs:
         run: ./bin/soak 200000
 
       - name: Per-transport impaired soaks (1800 s each, flat resources)
-        shell: bash
         run: |
           set -uo pipefail
           # the impairment at both ends of the link simulator, the names soak
@@ -476,6 +555,9 @@ jobs:
     # rio server cells add 1800 s each, about 109 minutes in all. Those measurements
     # predate removal of the nightly elapsed caps; the finite scenarios are unchanged.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -487,30 +569,41 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure (Windows)
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build (Windows)
-        run: cmake --build build --config Release --parallel
+        timeout-minutes: 4
+        run: cmake --build build --config Release --parallel 8
 
       - name: Tests (Windows)
         shell: bash
-        run: ./bin/Release/test.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test.exe
 
       - name: Simulator wire audit (Windows)
         shell: bash
-        run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
+        run: |
+          set -euo pipefail
+          ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
 
       - name: Simulator soak (Windows)
         shell: bash
-        run: ./bin/Release/soak_sim.exe 10000000
+        run: |
+          set -euo pipefail
+          ./bin/Release/soak_sim.exe 10000000
 
       - name: UDP loopback soak (Windows)
         shell: bash
-        run: ./bin/Release/soak.exe 200000
+        run: |
+          set -euo pipefail
+          ./bin/Release/soak.exe 200000
 
       - name: Portable transport soak under loss, jitter and duplication (Windows)
         shell: bash
         run: |
+          set -euo pipefail
           set -uo pipefail
           # the portable server with the portable client, impaired at both
           # ends of the link simulator under the names soak writes into the
@@ -554,13 +647,15 @@ jobs:
       # latency, jitter and duplication at both ends of the link simulator
       # (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, the values
       # scripts/soak-per-transport runs), held to flat handles, threads and
-      # private bytes by --assert-flat, which also fails a run the impairment
+      # library bytes by --assert-flat (private bytes are printed, not
+      # asserted: tests/soak/soak.c), which also fails a run the impairment
       # leaves no drops or refused duplicates in. The server transport is
       # pinned and the granted name and the applied link settings are checked
       # from the run's own lines.
-      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
+      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and library bytes)
         shell: bash
         run: |
+          set -euo pipefail
           set -uo pipefail
           seconds=1800
           want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
@@ -650,7 +745,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -669,6 +763,7 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 1
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
@@ -676,7 +771,8 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build soak_sim
-        run: cmake --build build --target soak_sim --parallel
+        timeout-minutes: 1
+        run: cmake --build build --target soak_sim --parallel 8
 
       # bounded, seed-pinned. the sim's own iteration bound is the clock, not
       # wall time, so the run tries the same inputs on a slow morning as on a
@@ -702,7 +798,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -730,7 +825,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Test the frame-budget checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -738,7 +832,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the server-calls checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -746,7 +839,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the split-load checker's receipts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -754,7 +846,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the test-environment checker's inventory
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -762,7 +853,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the 1000-client load profiler's provenance
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -770,7 +860,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the release-version block and workflow
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }

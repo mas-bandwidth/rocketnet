@@ -121,6 +121,8 @@ def retired_switch_problems(repo_root: Path, path: Path) -> list[str]:
 
 def check_sources(repo_root: Path) -> list[str]:
     problems = []
+    if not (repo_root / "sdk" / "rocketnet.h").is_file():
+        return [f"0 files: {repo_root} has no sdk/rocketnet.h, so there is no boundary to check"]
     public_header = (repo_root / "sdk" / "rocketnet.h").read_text()
     for token in FORBIDDEN_PUBLIC_HEADER_TOKENS:
         if token in public_header:

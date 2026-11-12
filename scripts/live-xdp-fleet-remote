@@ -267,7 +267,9 @@ cmd_stop_server()
         sleep 1
         waited=$(( waited + 1 ))
     done
-    systemctl stop rn-live-server 2>/dev/null || true
+    if ! systemctl stop rn-live-server 2>/dev/null && systemctl is-active --quiet rn-live-server; then
+        fail "stop server: rn-live-server is still active after systemctl stop"
+    fi
     echo "stopped: rn-live-server"
 }
 
@@ -364,9 +366,10 @@ cmd_restore()
     echo "ip link show dev $nic:"
     ip link show dev "$nic"
 
-    local provision="$BASE/$commit/scripts/rocketnet-provision"
+    # a failed sweep does not stop the teardown below; it fails restore at the end
+    local provision="$BASE/$commit/scripts/rocketnet-provision" sweep_status=0
     if [ -x "$provision" ]; then
-        "$provision" sweep || true
+        "$provision" sweep || sweep_status=$?
     fi
 
     systemctl stop rn-live-watchdog.service 2>/dev/null || true
@@ -375,7 +378,8 @@ cmd_restore()
     systemctl stop rn-live-deadman.service 2>/dev/null || true
     systemctl reset-failed rn-live-deadman.service 2>/dev/null || true
 
-    echo "restore: no program attached to $nic; watchdog stopped; dead-man cancelled"
+    [ "$sweep_status" = 0 ] || fail "restore: rocketnet-provision sweep exited $sweep_status"
+    echo "restore:no program attached to $nic; watchdog stopped; dead-man cancelled"
 }
 
 # ------------------------------------------------------------------------

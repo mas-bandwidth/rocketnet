@@ -56,13 +56,15 @@ def inputs_for(root, directory):
                 root = recovered
         except (UnicodeEncodeError, UnicodeDecodeError):
             pass
+    if not (root / "cmake/XdpSources.cmake").is_file():
+        raise RuntimeError(f"0 files: {root} has no cmake/XdpSources.cmake to list the XDP sources")
     listing = directory / "source-list.txt"
     subprocess.run(["cmake", f"-DROCKETNET_XDP_SOURCE_LIST_OUTPUT={str(listing)}",
                     "-P", str(root / "cmake/XdpSources.cmake")],
                    check=True, encoding="utf-8", env=utf8_env())
     paths = [root / name for name in listing.read_text(encoding="utf-8").splitlines()]
     if not paths:
-        raise RuntimeError("the XDP source list is empty")
+        raise RuntimeError("0 files: the XDP source list is empty")
     for path in paths:
         if not path.is_file():
             raise RuntimeError(f"XDP source list names a missing input: {path}")
@@ -311,4 +313,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RuntimeError as error:  # the named refusals (0 files, a missing input) are not crashes
+        raise SystemExit(f"check_xdp_archive: FAIL: {error}")

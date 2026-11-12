@@ -7,7 +7,7 @@ client API. Every client connects with a 768-byte connect token
 backend mints that token.
 
 This directory contains two minimal reference backend services — one in Go and
-one in C# — modeled after `yojimbo`'s matcher and Space Game's backend registry.
+one in C#.
 Each exposes two HTTP routes:
 
 ```

@@ -396,3 +396,65 @@ static void test_client_io_decrypt_other_source_stays_raw()
     client_io_decrypt_teardown( &f );
 }
 REGISTER_UNIT_TEST( test_client_io_decrypt_other_source_stays_raw );
+
+// A record's verdict covers that record only: after update consumes one the
+// I/O thread opened, a raw datagram that follows (the transport's direct path)
+// is opened by update with the session key and delivered. A copy of it is then
+// refused already received, and a refused packet leaves no received session
+// sequence behind (it is nonzero only when the packet was accepted).
+
+static void test_client_io_decrypt_raw_after_opened_is_opened_here()
+{
+    static client_io_decrypt_fixture_t f;
+    client_io_decrypt_setup( &f );
+    client_io_decrypt_publish( &f );
+
+    client_io_decrypt_push_payload( &f, 1, 0xF1, false );
+    check( rocketnet_client_io_step( &f.io, false ) == ROCKETNET_CLIENT_IO_WORKED );
+
+    rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &f.io );
+    check( buffer );
+    check( buffer->num_packets == 1 );
+    check( buffer->verdict[0] == ROCKETNET_CLIENT_IO_VERDICT_OPENED );
+
+    uint8_t payload[ROCKETNET_FRAME_SIZE];
+    int payload_bytes = 0;
+    check( client_io_decrypt_consume( &f, buffer, 0, payload, &payload_bytes ) == 1 );
+    check( payload_bytes == 1 && payload[0] == 0xF1 );
+    check( f.client.received_session_sequence == 1 );
+
+    rocketnet_client_io_return( &f.io );
+
+    uint8_t plaintext[64];
+    const int plaintext_bytes = client_io_decrypt_plaintext( plaintext, 0xF2 );
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, f.client.packet_filter, 2,
+                                                     NULL, plaintext, plaintext_bytes, client_io_decrypt_protocol_id,
+                                                     f.client.connection_salt, NULL, f.key );
+    check( bytes == ROCKETNET_PACKET_OVERHEAD_BYTES + plaintext_bytes );
+
+    uint8_t copy[ROCKETNET_RECEIVE_CEILING];
+    memcpy( copy, packet, (size_t) bytes );
+
+    const uint64_t opens_before = rocketnet_crypto_tally_get().aead_open;
+    payload_bytes = 0;
+    check( rocketnet_client_protocol_process_record( &f.client, packet, bytes, ROCKETNET_CLIENT_IO_VERDICT_RAW, 0, f.clock.now,
+                                                     payload, ROCKETNET_FRAME_SIZE, &payload_bytes ) == 1 );
+    check( rocketnet_crypto_tally_get().aead_open - opens_before == 1 );
+    check( payload_bytes == 1 && payload[0] == 0xF2 );
+    check( f.client.received_session_sequence == 2 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 2 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DID_NOT_OPEN] == 0 );
+    check( f.client.integrity_failures == 0 );
+
+    payload_bytes = 0;
+    check( rocketnet_client_protocol_process_record( &f.client, copy, bytes, ROCKETNET_CLIENT_IO_VERDICT_RAW, 0, f.clock.now,
+                                                     payload, ROCKETNET_FRAME_SIZE, &payload_bytes ) == 0 );
+    check( payload_bytes == 0 );
+    check( f.client.received_session_sequence == 0 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED] == 1 );
+    check( f.counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] == 2 );
+
+    client_io_decrypt_teardown( &f );
+}
+REGISTER_UNIT_TEST( test_client_io_decrypt_raw_after_opened_is_opened_here );

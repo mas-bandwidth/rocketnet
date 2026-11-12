@@ -965,10 +965,10 @@ static void rocketnet_platform_primitives_production_filter_environment()
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    // a fixed port: the served address is the create address, and the token
-    // writer refuses a port of 0
+    // port 0, then the bound port: a fixed port here could be held by a case
+    // running in parallel (the token writer refuses a port of 0)
 
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:48123", NULL, &server_config, &status );
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     rocketnet_check( server && status == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
@@ -979,7 +979,8 @@ static void rocketnet_platform_primitives_production_filter_environment()
     rocketnet_check( client && status == ROCKETNET_STATUS_OK );
 
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
-    snprintf( address, sizeof( address ), "127.0.0.1:48123" );     // the create address is the served address
+    rocketnet_check( rocketnet_server_port( server ) != 0 );
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
 
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_public );

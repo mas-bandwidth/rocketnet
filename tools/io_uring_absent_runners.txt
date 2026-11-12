@@ -1,0 +1,5 @@
+# Linux machines on which io_uring is absent by decision, read by scripts/io-uring-gate.
+# Anywhere else a kernel that disables io_uring fails the io_uring cells by name.
+# One line per machine, tab separated: <runner name or host name>\t<why io_uring is absent there>
+# No machine is listed: every Linux fleet runner offers io_uring (nightly-soak's soak ran its io_uring
+# cell on 2026-11-11, run 42991727059).

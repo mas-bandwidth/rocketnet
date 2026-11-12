@@ -50,7 +50,7 @@ the library you link.
 
 ## Qualification and history
 
-Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#default-ci-requirements)
+Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#the-release-gates)
 uses the release commit's required CI results as qualification evidence,
 subject to the documented check limitations. The index explains
 what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.1.7.md)

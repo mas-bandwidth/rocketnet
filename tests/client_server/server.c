@@ -4,7 +4,8 @@
 
     The out-of-the-box server: runs with the published development keys, so
     a first server needs no backend and no configuration -- run it, point a
-    client at it, connected. Echoes every payload back to its sender. Pass
+    client at it, connected. Echoes each payload back to its sender, except
+    a numbered message, which it refuses by name (tests/echo_payload.h). Pass
     the public address clients dial: ./bin/server 192.0.2.10:40000
 
     The live XDP fleet run (docs/LIVE-XDP.md): `--matrix` runs the message
@@ -25,6 +26,7 @@
 #include "rocketnet_counters.h"
 #include "tests/live_verify.h"
 #include "tests/matrix_receive.h"
+#include "tests/echo_payload.h"
 #include "tests/portable_crt.h"
 
 #include <stdio.h>
@@ -780,6 +782,10 @@ static void matrix_arrival( struct rocketnet_message_server_t * server, struct s
     else
     {
         reason = matrix_rx_accept( &g_live, s, mode, channel, data, bytes, &sequence );
+        if ( !reason )
+        {
+            reason = matrix_rx_interleave( &c->slot->rx, mode, channel, (uint32_t) sequence );
+        }
     }
 
     if ( reason )
@@ -819,57 +825,79 @@ static void matrix_receive( struct rocketnet_message_server_t * server, struct s
 // One pass of the server's own streams: each sends its next sequences until
 // the ledger holds a reliable send or the library refuses a start for want of
 // room; either is counted as paced and tried again on the next pass.
+// Modes 3 and 7 share a channel's order and go interleaved (tests/
+// matrix_receive.h): a stream that waits on its partner ends its turn, and the
+// pass runs again while one waited and anything was sent.
 static void matrix_send_pass( struct rocketnet_message_server_t * server, struct server_client_t * c, int client_index )
 {
-    for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
+    int again = 1;
+    while ( again )
     {
-        for ( int channel = 0; channel < matrix_channels( mode ); channel++ )
+        int waited = 0;
+        int sent = 0;
+        for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
         {
-            struct server_tx_stream_t * tx = &c->slot->tx[mode][channel];
-            while ( tx->next < tx->total )
+            const int partner = matrix_interleave_partner( mode );
+            for ( int channel = 0; channel < matrix_channels( mode ); channel++ )
             {
-                const uint32_t length = rocketnet_live_length( &g_live, mode, channel, tx->next );
-                const int bucket = rocketnet_live_bucket( &g_live, mode, length );
-                const int reliable = matrix_reliable_path( mode, length );
-                if ( reliable && !matrix_ledger_admits( c->outstanding, length, c->kbps ) )
+                struct server_tx_stream_t * tx = &c->slot->tx[mode][channel];
+                while ( tx->next < tx->total )
                 {
-                    tx->bucket_paced[bucket]++;
-                    c->refused++;
-                    break;
-                }
+                    if ( partner >= 0 )
+                    {
+                        const struct server_tx_stream_t * p = &c->slot->tx[partner][channel];
+                        if ( !matrix_interleave_admits( mode, tx->next, p->next, p->total, 1 ) )
+                        {
+                            waited = 1;
+                            break;
+                        }
+                    }
 
-                uint8_t * p = rocketnet_message_server_start( server, client_index, channel, mode, (int) length );
-                if ( !p )
-                {
-                    tx->bucket_paced[bucket]++;
-                    c->refused++;
-                    break;
-                }
+                    const uint32_t length = rocketnet_live_length( &g_live, mode, channel, tx->next );
+                    const int bucket = rocketnet_live_bucket( &g_live, mode, length );
+                    const int reliable = matrix_reliable_path( mode, length );
+                    if ( reliable && !matrix_ledger_admits( c->outstanding, length, c->kbps ) )
+                    {
+                        tx->bucket_paced[bucket]++;
+                        c->refused++;
+                        break;
+                    }
 
-                const int written = rocketnet_live_generate( &g_live, 1, mode, channel, c->cycle, tx->next, p, (int) length );
-                if ( written != (int) length )
-                {
-                    rocketnet_message_server_abort( server, client_index );
-                    matrix_fail( c, 1, mode, channel, tx->next, "generate-failed", (int) length );
-                    tx->next = tx->total;
-                    break;
-                }
+                    uint8_t * p = rocketnet_message_server_start( server, client_index, channel, mode, (int) length );
+                    if ( !p )
+                    {
+                        tx->bucket_paced[bucket]++;
+                        c->refused++;
+                        break;
+                    }
 
-                if ( rocketnet_message_server_finish( server, client_index, written ) == 0 )
-                {
-                    matrix_fail( c, 1, mode, channel, tx->next, "finish-failed", written );
-                    tx->next = tx->total;
-                    break;
-                }
+                    const int written = rocketnet_live_generate( &g_live, 1, mode, channel, c->cycle, tx->next, p, (int) length );
+                    if ( written != (int) length )
+                    {
+                        rocketnet_message_server_abort( server, client_index );
+                        matrix_fail( c, 1, mode, channel, tx->next, "generate-failed", (int) length );
+                        tx->next = tx->total;
+                        break;
+                    }
 
-                tx->bucket_sent[bucket]++;
-                tx->next++;
-                if ( reliable )
-                {
-                    c->outstanding += length;
+                    if ( rocketnet_message_server_finish( server, client_index, written ) == 0 )
+                    {
+                        matrix_fail( c, 1, mode, channel, tx->next, "finish-failed", written );
+                        tx->next = tx->total;
+                        break;
+                    }
+
+                    tx->bucket_sent[bucket]++;
+                    tx->next++;
+                    sent = 1;
+                    if ( reliable )
+                    {
+                        c->outstanding += length;
+                    }
                 }
             }
         }
+        again = waited && sent;
     }
 }
 
@@ -1026,6 +1054,68 @@ static void self_test_fail( void * context, int mode, int channel, int64_t seque
     ( *(int *) context )++;
 }
 
+// one ordered arrival through accept and the 3/7 interleave rule
+static const char * self_test_ordered( const struct rocketnet_live_config_t * live, struct matrix_rx_t * rx, int mode, int channel, uint32_t q )
+{
+    uint8_t message[ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES * 2];
+    int64_t sequence = -1;
+    const int n = rocketnet_live_generate( live, 0, mode, channel, 0, q, message, (int) sizeof message );
+    const char * reason = matrix_rx_accept( live, &rx->streams[mode][channel], mode, channel, message, n, &sequence );
+    return reason ? reason : matrix_rx_interleave( rx, mode, channel, (uint32_t) sequence );
+}
+
+// The 3/7 interleave without a socket: channel 6 gets 7:0 before 3:0 (held,
+// named at the sent report), channel 8 gets 3:0, 3:1 after the report (named
+// at once), channel 9 gets 3:0, 7:0, 3:1, 7:1 (in the interleave), and channel
+// 10 gets 3:0, 3:1 from a sender that drove no mode 7 (no fault).
+static int self_test_interleave( void )
+{
+    struct rocketnet_live_config_t live = g_live;
+    struct matrix_rx_t * rx = (struct matrix_rx_t *) calloc( 1, sizeof( struct matrix_rx_t ) );
+    if ( !rx )
+    {
+        return 1;
+    }
+    matrix_rx_reset( rx );
+
+    const char * held_7 = self_test_ordered( &live, rx, 7, 6, 0 );
+    const char * held_3 = self_test_ordered( &live, rx, 3, 6, 0 );
+    const char * good[4] = { self_test_ordered( &live, rx, 3, 9, 0 ), self_test_ordered( &live, rx, 7, 9, 0 ),
+                             self_test_ordered( &live, rx, 3, 9, 1 ), self_test_ordered( &live, rx, 7, 9, 1 ) };
+    const char * alone[2] = { self_test_ordered( &live, rx, 3, 10, 0 ), self_test_ordered( &live, rx, 3, 10, 1 ) };
+
+    // the sent report: (3, 6) 1, (7, 6) 1, (3, 8) 2, (7, 8) 2, (3, 9) 2, (7, 9) 2, (3, 10) 2
+    static const uint8_t streams[7][3] = { { 3, 6, 1 }, { 7, 6, 1 }, { 3, 8, 2 }, { 7, 8, 2 }, { 3, 9, 2 }, { 7, 9, 2 }, { 3, 10, 2 } };
+    uint8_t report[1 + 7 * MATRIX_SENT_RECORD];
+    report[0] = MATRIX_SENT_NIBBLE;
+    for ( int i = 0; i < 7; i++ )
+    {
+        report[1 + i * MATRIX_SENT_RECORD] = streams[i][0];
+        report[2 + i * MATRIX_SENT_RECORD] = streams[i][1];
+        matrix_put_u32( report + 3 + i * MATRIX_SENT_RECORD, streams[i][2] );
+    }
+    int report_failures = 0;
+    matrix_rx_sent_report( &live, rx, report, (int) sizeof report, self_test_fail, &report_failures );
+
+    const char * after_0 = self_test_ordered( &live, rx, 3, 8, 0 );
+    const char * after_1 = self_test_ordered( &live, rx, 3, 8, 1 );
+
+    printf( "server self-test interleave held %s %s report-failures %d good %s %s %s %s alone %s %s after %s %s\n", held_7 ? held_7 : "ok",
+            held_3 ? held_3 : "ok", report_failures, good[0] ? good[0] : "ok", good[1] ? good[1] : "ok", good[2] ? good[2] : "ok",
+            good[3] ? good[3] : "ok", alone[0] ? alone[0] : "ok", alone[1] ? alone[1] : "ok", after_0 ? after_0 : "ok",
+            after_1 ? after_1 : "ok" );
+
+    int failures = 0;
+    if ( held_7 || held_3 || report_failures != 1 || good[0] || good[1] || good[2] || good[3] || alone[0] || alone[1] || after_0 || !after_1 ||
+         strcmp( after_1, "cross-mode-order" ) != 0 )
+    {
+        failures++;
+    }
+
+    free( rx );
+    return failures;
+}
+
 // The receive rule of tests/matrix_receive.h without a socket:
 // a duplicate, a sequence past the sender's count, an out-of-order arrival,
 // a sequenced step back and an owed sequence that never came are each named.
@@ -1098,7 +1188,7 @@ static int self_test_receive( void )
     }
 
     free( rx );
-    return failures;
+    return failures + self_test_interleave();
 }
 
 // The server-side checks the card asks for without a socket: a nonzero seed
@@ -1445,6 +1535,7 @@ int main( int argc, char ** argv )
 
         int last_num_connected = 0;
         double last_counters = 0.0;
+        uint64_t echo_refused = 0;
 
         while ( !quit )
         {
@@ -1464,7 +1555,21 @@ int main( int argc, char ** argv )
             {
                 int client_index, payload_bytes;
                 uint8_t * payload = rocketnet_server_transport_payload( transport_obj, i, &client_index, &payload_bytes );
-                rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                // only what the server could have sent byte for byte goes
+                // back (tests/echo_payload.h); a numbered message is named
+                const char * refusal = rocketnet_echo_payload_refusal( payload, payload_bytes );
+                if ( refusal )
+                {
+                    if ( echo_refused < 10 )
+                    {
+                        printf( "server echo refused a %d-byte payload from client %d: %s\n", payload_bytes, client_index, refusal );
+                    }
+                    echo_refused++;
+                }
+                else
+                {
+                    rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                }
                 // the message server defers payload acks to whoever consumes the payload; the echo consumes it here
                 rocketnet_server_transport_accept_payload( transport_obj, i );
             }
@@ -1592,6 +1697,15 @@ int main( int argc, char ** argv )
         for ( int i = 0; i < max_clients; i++ )
         {
             windows += clients[i].windows;
+        }
+
+        // a matrix that closed no window checked nothing: it is a failure,
+        // never a PASS with zero work
+        if ( windows == 0 )
+        {
+            printf( "server matrix: no client completed a window; nothing was checked\n" );
+            results_line( "no-windows", "%d", 1 );
+            g_failures++;
         }
 
         printf( "server matrix windows %llu failures %llu verdict %s\n", (unsigned long long) windows, (unsigned long long) g_failures,

@@ -17,8 +17,14 @@
 // while connected, while the client is quiet, and once not connected.
 // PROTOCOL_VIOLATION and MESSAGE_MEMORY_EXHAUSTED have no path a game can
 // take, by design, and are covered in the unit suite.
+//
+// The keys, the packet filter and the connect tokens are the test's own
+// production values (tests/token_string.h), never the published development
+// ones, so the same cases run against the development library (functional) and
+// the production library a customer ships (functional_production).
 
 #include "../../examples/shutdown.h"
+#include "../token_string.h"
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 
@@ -106,6 +112,9 @@ private:
 // any nonzero id the server and its tokens share
 static const uint64_t reasons_protocol_id = 0x52454153304E5331ULL;
 
+// any filter but the published test filter, which a production library refuses
+static const uint8_t reasons_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x52, 0x45, 0x41, 0x53 };
+
 // every wait in these cases is bounded by this, well inside the suite's limit
 static const double reasons_wait_seconds = 4.0;
 
@@ -161,11 +170,20 @@ static void reasons_pair_connect( reasons_pair_t * pair, int reliable_message_ti
     memset( pair, 0, sizeof( *pair ) );
     pair->start = rocketnet_time();
 
-    const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[64];
+    reasons_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+
     struct rocketnet_server_config_t server_config;
     reasons_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
     server_config.protocol_id = reasons_protocol_id;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
+    memcpy( server_config.packet_filter, reasons_packet_filter, sizeof( server_config.packet_filter ) );
     server_config.max_clients = 2;
     server_config.transport = "portable";
     if ( reliable_message_timeout_ms > 0 )
@@ -182,16 +200,16 @@ static void reasons_pair_connect( reasons_pair_t * pair, int reliable_message_ti
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     reasons_check( rocketnet_server_ipv4_address( pair->server, server_address, sizeof( server_address ) ) );
-    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    rocketnet_server_public_key( pair->server, server_public_key );
-
+    const char * server_addresses[] = { server_address };
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( 0, reasons_now( pair ) );
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    reasons_check( rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, timeout_seconds, 1, reasons_protocol_id,
-                                                       rocketnet_functional_token_timestamp( 0, reasons_now( pair ) ), NULL, token ) == ROCKETNET_STATUS_OK );
+    reasons_check( rn_test_server_token_string( backend_secret_key, pair->server, reasons_protocol_id, server_addresses, 1, 1,
+                                                create_timestamp, create_timestamp + 30, timeout_seconds, NULL, token ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
     reasons_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "portable";
+    memcpy( client_config.packet_filter, reasons_packet_filter, sizeof( client_config.packet_filter ) );
     reasons_check( !client_config.step_driven );
 
     pair->client = rocketnet_client_create( NULL, &client_config, &status );

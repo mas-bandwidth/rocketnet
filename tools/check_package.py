@@ -318,7 +318,7 @@ def check_client_package(installed, root, command, config, native_build_options)
     run("cmake", "--build", build, "--config", config, "--parallel", "4", *native_build_options)
     env = os.environ.copy()
     env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
-    run("ctest", "--test-dir", build, "-C", config, "--output-on-failure", env=env)
+    run("ctest", "--test-dir", build, "-C", config, "--output-on-failure", "--no-tests=error", env=env)
     print("Client package: RocketNetConfig requires no liburing, libbpf or libxdp; "
           "C client consumers passed against the static and shared libraries")
 
@@ -335,6 +335,8 @@ def main():
     args = parser.parse_args()
     build = args.build.resolve()
     cache = {}
+    if not (build / "CMakeCache.txt").is_file():
+        raise SystemExit(f"check_package: {build} holds no CMakeCache.txt (0 files): not a configured build")
     for line in (build / "CMakeCache.txt").read_text().splitlines():
         if "=" in line and not line.startswith(("//", "#")):
             key, value = line.split("=", 1)
@@ -412,7 +414,7 @@ def main():
         env = os.environ.copy()
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
-        run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
+        run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", "--no-tests=error", env=env)
         check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled,
                                 expected_dev, expected_max_clients)
         if args.embedded:
@@ -427,7 +429,7 @@ def main():
             ]
             run(*command)
             run("cmake", "--build", embedded, "--config", args.config, "--parallel", "4", *native_build_options)
-            run("ctest", "--test-dir", embedded, "-C", args.config, "--output-on-failure", env=env)
+            run("ctest", "--test-dir", embedded, "-C", args.config, "--output-on-failure", "--no-tests=error", env=env)
     linkage_summary = "static/shared" if shared_enabled else "static"
     print(f"Relocated SDK: C/C++ {linkage_summary} consumers passed")
 

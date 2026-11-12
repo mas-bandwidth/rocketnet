@@ -86,92 +86,65 @@ still names the newest tag, is red until it carries the bump. The tag may follow
 in the release, but the version in `sdk/rocketnet.h` must no longer name the
 newest release once a wire change is on `main`.
 
-## Default CI requirements
+## The release gates
 
-The release commit's required CI results are its qualification evidence. Tag only a `main`
-commit whose required runs are green; the qualifying run is the green CI run on
-the tagged commit, found from the commit itself, and the release notes do not
-mention it. There is no separate per-release qualification record. The
-required runs are:
+A release is cut by one command, `tools/release.py`, and it refuses unless
+every release gate is green for exactly the release commit. The gates are the
+lines of one file, [tools/release_gates.txt](../tools/release_gates.txt): each
+names a workflow, a job (or the whole run), a kind, the first version it is in
+force for, the events it reads and its reason. The same list is read by
+`tools/release.py` before the tag, by `tools/check_release_tsan.py` on the tag
+push (Release Check's second check), by `tools/land.py` before a pull request
+merges, and by `tools/check_release_gates.py` in the lint job, which refuses a
+workflow or job the list names that does not exist and a per-commit workflow
+the list does not judge. This document does not repeat the list; read the file.
 
-- **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), the
-  per-commit tier, every job. A per-commit run finishes within two minutes of
-  the push: every per-commit job in every workflow carries a two-minute
-  `timeout-minutes`, and `tools/check_ci_budget.py` (in the lint job) refuses
-  one without it. The per-commit jobs:
-  - `build-and-test`, named `<os> / <build_type> / <leg>`: Linux (the
-    fleet's Ubuntu 26.04 runners, rows named `linux`) Debug `unit` and
-    `functional` (which carries the XDP cell in the runner kernel guest,
-    against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
-    also runs the `builds` leg's steps), `functional` and `checks`; macOS on
-    arm64 (rows named `macos`) Debug `unit`, Release `functional` (the
-    development suite) and Release `functional_production` (the production
-    library's suite);
-  - `happy path / <os>` (linux,
-    windows; the Windows row is the per-commit MSVC whole-tree build) and
-    `windows / Release / unit (<i>/2)` (the unit suite under MSVC, in two
-    shards that together run every case);
-  - `asan + ubsan (<leg>)` (`unit suite`, `functional suite`) and
-    `tsan (loopback soak)`;
-  - `fuzz smoke (libFuzzer, corpus replay)`, `big endian s390x / Debug`,
-    `instruction count gate` (restores the pinned toolchain the nightly tier
-    caches; red on a cold cache) and
-    `lint (workflows, format, standard, tool selftests)`.
-- **Nightly CI** ([.github/workflows/nightly-ci.yml](../.github/workflows/nightly-ci.yml)):
-  ci.yml with `full: true`, every job and step with no time bound, including
-  everything the per-commit tier leaves out (listed in nightly-ci.yml's
-  header). Run it on the release commit with
-  `gh workflow run nightly-ci.yml --ref main` once that commit is `main`'s
-  head, and require it green. Release Check enforces this on the tag push.
-- **msan** ([.github/workflows/msan.yml](../.github/workflows/msan.yml)) and
-  **CBMC** ([.github/workflows/cbmc.yml](../.github/workflows/cbmc.yml)),
-  nightly: `MemorySanitizer` and `cbmc (arithmetic leaf proofs)`, dispatched
-  on the release commit the same way. Release Check enforces a green `cbmc.yml`
-  run on the tag push (`msan.yml` is advisory; see below).
-- **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
-  `tsan (threaded transport) (main)` on the release commit. Run it with
-  workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
-  the release commit is `main`'s head; the leg checks out the run's head
-  commit, so its verdict is about that commit. A scheduled nightly whose head
-  is the release commit also counts. Release Check enforces this on the tag
-  push.
-- **static analysis**
-  ([.github/workflows/static.yml](../.github/workflows/static.yml)):
-  `static analysis (gcc -fanalyzer)` and
-  `static analysis (clang-tidy, cppcheck)`.
-- **TLC records** ([.github/workflows/tlc.yml](../.github/workflows/tlc.yml)):
-  `Model records are current`, a nightly workflow: run it with
-  workflow_dispatch on the release commit
-  (`gh workflow run tlc.yml --ref main`). A green run proves these, and only
-  these: the model coverage rows are true
-  (`tools/check_tla_coverage.py --all --actions-strict`); the coverage
-  checker's tests, the case planner's controls and the records checker's
-  tests pass; the TLC adapter's controls pass (they run real TLC on the
-  adapter's own control specs); every committed record in
-  [proofs/tla/RUNS.tsv](../proofs/tla/RUNS.tsv) is valid and current (the
-  pinned tlacheck finds no stale group, and `tools/check_tla_records.py`
-  refuses a record measured on other inputs, on another JAR, or not
-  bounded); every non-PASS record is a `gate=bench` case declaring timeout
-  debt with a bounded FAIL/124 record; and the TLA ledgers merge clean
-  (`tools/check_tla_ledger_merge.py`). It runs no model from CASES.tsv
-  itself: a green run has no stale group, so each model's result is the
-  record committed when it was checked. The timeout-debt cases (11 at this
-  commit) are checked only to that bounded record: their full results are
-  not part of a release, and their evidence is the weekly
-  [tlc-debt.yml](../.github/workflows/tlc-debt.yml) run. A dispatched run is
-  never replaced or cancelled by a scheduled one. Release Check enforces
-  this on the tag push.
-- **docs** ([.github/workflows/docs.yml](../.github/workflows/docs.yml)):
-  `docs (MrDocs HTML reference build)`.
-- **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
-  `version consistency` on the pull request that carries the release version
-  and on the tag push itself, and `unreleased wire changes`. On the tag push,
-  `threaded tsan run on the release commit` asks the Actions API for green runs
-  whose head is the tagged commit for `nightly.yml`
-  (`tsan (threaded transport) (<that run's ref>)`), `nightly-ci.yml`
-  (`Nightly CI`), `cbmc.yml` (`CBMC`), and `tlc.yml` (`TLC records`), and fails
-  when any of the four is missing or not `success`
-  (`tools/check_release_tsan.py`).
+The rule for every gate is the same: not-green is red. A run or job that
+concluded `cancelled` (a per-commit job past its two-minute `timeout-minutes`
+concludes `cancelled`, not `failure`), `timed_out`, `skipped` without a `skip`
+row, that is missing, queued or in progress, or that failed, refuses the
+release, by name. A job skipped by its own `if:` (the nightly-tier jobs of
+ci.yml, the tag-only jobs of release-check.yml) passes only when a `skip` row
+names it. When a workflow ran more than once on the commit, the newest
+completed run (its newest attempt) decides, and the output says so; a newer
+run that has not finished refuses, because its verdict is not in.
+
+In outline, from v1.1.8:
+
+- the per-commit tier: the push run on `main` of CI (ci.yml), static analysis,
+  docs and Release Check (roadmap when it ran), every job `success`, and
+  every name in [.github/rulesets/main.json](../.github/rulesets/main.json)
+  present;
+- the nightly tier, runs whose head is the release commit: Nightly CI
+  (nightly-ci.yml) with every job `success`; CBMC; TLC records with
+  `Model records are current`; the TLC re-run evidence (a `TLC re-run full`
+  job on the exact commit, or every `TLC re-run slice K/N` of the last N days'
+  scheduled runs on ancestors of the commit); nightly.yml's
+  `tsan (threaded transport) (<ref>)` and its three `Release functional
+  nightly tier` jobs (linux, macos, windows); msan.yml's `MemorySanitizer`;
+  and every job of nightly-soak.yml, nightly-leaks.yml,
+  nightly-macos-sanitizers.yml and nightly-channels-stress.yml;
+- on the tag push: Release Check's `threaded tsan run on the release commit`
+  (the second check) and `release gates passed on the tag` (the tag run's
+  final job, red unless the second check and the version check succeeded).
+
+A version is judged by the gates in force for it: the gates that were the
+release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly
+CI, CBMC, TLC records and the threaded TSan leg green) and the gates added on
+2026-11-12, in force from v1.1.8 (every job `success`, Nightly CI every job,
+the TLC re-run evidence, MemorySanitizer, the nightly functional tiers, soak,
+leaks, macOS sanitizers and channel stress, the tag run's final job). The tool
+prints each gate not in force for the version it judges; `--dry-run
+--gates-as-of VERSION` judges a commit by another version's gates. v1.0.0
+(9904027045) is refused by the gates in force for it: its CI push run failed
+and its Nightly CI, CBMC and TLC records runs are not green. v1.1.7
+(76edea48e) passes the gates in force for it and is refused by v1.1.8's: no
+TLC re-run, MemorySanitizer, soak, leaks, macOS sanitizers or channel stress
+run exists on that commit (it was tagged 2.5 hours after soak per transport
+went red).
+
+One policy change for the owner to confirm: MSan, called advisory until
+v1.1.7, is a release gate from v1.1.8; it stays out of the per-PR set.
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the gate covers its selected translation
@@ -181,46 +154,65 @@ override a known failure in the checks they are intended to run.
 The other `nightly*.yml` workflows, the fuzz-nightly workflow and
 [tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each timeout-debt
 case run to its declared result as its own job, with its own 96-hour deadline
-and its own evidence artifact, two cases at a time; at the case times measured
-so far, in run 41337755290 and a 213-second MCRNClientIoDecrypt run, a run in
-plan order takes about 89 hours, against 87 for its longest case alone) are
-watches, not
-release gates. The `msan` workflow (`MemorySanitizer`) is advisory: its
-job is `continue-on-error`. The release commit must also be the commit the tag
-points at, not a later merge.
+and its own evidence artifact) are watches, not release gates.
 
-A pushed tag is never moved or reused.
+## Landing on main
+
+Every per-commit job carries a two-minute `timeout-minutes`
+(`tools/check_ci_budget.py`, in the lint job, refuses one without it); a job
+past it concludes `cancelled`, which stops nothing by itself.
+`python3 tools/land.py <pr>` merges a pull request only when its head is up
+to date with `main`'s current head and every per-commit job on exactly that
+head is `success` (the `pull_request` rows of the same gates file, and every
+required name of `.github/rulesets/main.json`). A job cancelled at the
+two-minute cap on a run's first attempt is re-run once, by the tool, with a
+printed line and a pull request comment; a second cancel refuses. A job
+cancelled before the cap (superseded or by hand), a failure, a missing job or
+a stale head refuses by name. `--dry-run` prints the verdict and touches
+nothing. [branch-protection.md](branch-protection.md) holds the ruleset that
+makes the same checks required on `main` itself.
 
 ## Cutting the release
 
-1. Check out `main` and confirm the worktree is clean and up to date. Do not
-   release from a branch or a detached commit.
-2. Set the shipping version in `sdk/rocketnet.h`: `ROCKETNET_VERSION_FULL`,
-   including any prerelease suffix, and the three integer macros. Change the `project(... VERSION ...)` in `CMakeLists.txt`
-   when the integers change; configure refuses a mismatch. Leave the development branch at `dev` and
+1. Set the shipping version in `sdk/rocketnet.h`: `ROCKETNET_VERSION_FULL`,
+   including any prerelease suffix, and the three integer macros. Change the
+   `project(... VERSION ...)` in `CMakeLists.txt` when the integers change;
+   configure refuses a mismatch. Leave the development branch at `dev` and
    `255.255.255`. Check the export list and consumers for public API changes.
-3. Run `python3 tools/check_release_doc.py`. It exits 0 when this document names
-   every version site that `release-check.yml`'s `version-consistency` job reads,
-   and exits 1 naming any site this document omits.
-4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
-   platform permits it.
-5. Open the release pull request against `main` with the version change.
-   Merge it, dispatch `nightly.yml`, `nightly-ci.yml`, `cbmc.yml`, and
-   `tlc.yml` on `main`, then wait for every required run on that merged commit
-   to be green, including the dispatched `nightly.yml` threaded TSan leg,
-   `nightly-ci.yml`, `cbmc.yml`, and `tlc.yml`. Resolve the evidence limitation
-   above before treating the GCC result as a clean analyzer pass.
-6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
-   or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
-   `v1.0.0-preview-N`, whose complete label equals the shipping
-   `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
-   reuse a tag after pushing it. Verify its consistency with the header before
-   pushing it. Release Check also performs this check on the tag push, and
-   fails the tag push when `nightly.yml`'s threaded TSan leg, `nightly-ci.yml`,
-   `cbmc.yml`, or `tlc.yml` is not green on that commit.
-   Do not publish the release while that job is red; re-run it once those
-   required runs are green.
-7. Publish the GitHub release for that tag.
+   Write the release notes as `docs/RELEASE-NOTES-<version>.md` (below).
+2. Run `python3 tools/check_release_doc.py`. It exits 0 when this document
+   names every version site that `release-check.yml`'s `version-consistency`
+   job reads, and exits 1 naming any site this document omits.
+3. Land the release pull request with `python3 tools/land.py <pr>`.
+4. Dispatch the nightly tier on the merged commit once it is `main`'s head:
+   `gh workflow run nightly-ci.yml --ref main`, and the same for `nightly.yml`,
+   `cbmc.yml`, `tlc.yml` (a dispatched run is never replaced by a scheduled
+   one) and `msan.yml`. Resolve the analyzer evidence limitation above before
+   treating the GCC result as a clean analyzer pass.
+5. `python3 tools/release.py <version> <commit> --dry-run` prints every gate
+   with its run id and conclusion, and the verdict. Wait until it passes.
+6. `python3 tools/release.py <version> <commit>`. What the tool does:
+   - checks the version format, that the commit is on `main` (an ancestor of
+     `origin/main`), that the shipping `ROCKETNET_VERSION_FULL` at the commit
+     equals the version, that the notes file exists at the commit and that the
+     tag does not exist;
+   - judges every gate in force for the version (above) and refuses on any red;
+   - creates the annotated tag `vMAJOR.MINOR.PATCH[-PRERELEASE]` on the commit
+     and pushes it;
+   - waits for Release Check on the tag and requires its tag jobs to succeed
+     (`threaded tsan run on the release commit` judges every gate again,
+     `release gates passed on the tag` is red unless it and the version check
+     succeeded); on red it does not publish;
+   - publishes the GitHub release with the notes file, as latest (a
+     prerelease as a prerelease).
+
+   A pushed tag is never moved or reused. When the tag run is red, make the
+   gates green and re-run that run, then `python3 tools/release.py <version>
+   <commit> --resume` waits for it and publishes; or cut the next version.
+
+The token is `GITHUB_TOKEN` or `GH_TOKEN`, else `gh auth token` (which honours
+`GH_CONFIG_DIR`). Exit 0: released (with `--dry-run`, would release); 1:
+refused; 2: usage or API error.
 
 ## Release notes
 

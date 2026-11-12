@@ -23,7 +23,7 @@ naming `<struct>.<member>`.
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
 | | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie`, `latest_cookie`, `has_latest_cookie`, `send_latest_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
-| | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
+| | `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
 | | handshake/session sequences | wire sequence spaces | RESET | fresh sequence spaces start at one |
 | | replay windows, `integrity_failures` | receive security state | RESET | old traffic must not affect a new session |
@@ -125,7 +125,7 @@ material is overwritten in place with `sodium_memzero`:
 - Client protocol reset (`rocketnet_client_protocol_wipe_secrets`):
   `keys` (`session_client_to_server`, `session_server_to_client`, `cookie_key`),
   `token`, `client_ephemeral_secret_key` (also erased immediately after
-  challenge processing), and `session_nonce`.
+  challenge processing).
 - Client I/O open-key copy (`rocketnet_client_io_drop_keys`):
   `session_server_to_client`, `connection_salt`, and `packet_filter`. When a
   background I/O thread owns `client_io.open`, `retire_keys` publishes

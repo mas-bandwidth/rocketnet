@@ -385,7 +385,7 @@ r3_enforce()
         if [ $XDP_GRADE_RC -ne 0 ]; then
             # the second query can race a change on the NIC; its staleness
             # colors only this error text, never a grade
-            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null || true)"
+            XDP_STATUS_ERROR="$(xdp-loader status "$INTERFACE" 2>&1 >/dev/null)"
             fail "xdp-loader could not query $INTERFACE (R3): ${XDP_STATUS_ERROR:-query failed}"
         else
             # FAIL CLOSED outside the outcome set (the round-eleven law): the
@@ -501,7 +501,7 @@ r7_enforce()
         # invocation deliberately does NOT ride query_combined_stdout: it wants
         # the INVERSE stream (stderr for the signature, stdout discarded), so
         # the locale pin is repeated here rather than shared
-        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null || true)"
+        ETHTOOL_ERROR="$(LC_ALL=C ethtool -l "$INTERFACE" 2>&1 >/dev/null)"
         case "$ETHTOOL_ERROR" in
             *"not supported"*)
                 say "no channel surface on $INTERFACE (R7 passes: the transport does not support channel queries, matching the pre-flight's EOPNOTSUPP pass)"
@@ -971,7 +971,7 @@ STUB
     TOOLS_DIR="$STUB_DIR/tools"
     mkdir -p "$TOOLS_DIR"
     for TOOL in grep awk cat; do
-        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null || true
+        ln -s "$(command -v $TOOL)" "$TOOLS_DIR/$TOOL" 2>/dev/null
     done
 
     OUT="$( ( UNMET=0; VERIFY=1; INTERFACE=any0; PATH="$TOOLS_DIR"
@@ -1217,7 +1217,7 @@ if [ "$MODE" = "sweep" ]; then
         say "sweep must run as root"; exit 1
     fi
     say "CAVEAT: pids and start times are read from THIS host's /proc; with bpffs shared into containers, sweep from the namespace that owns the servers"
-    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    HOST_BOOT_ID="$(tr -d '-' < /proc/sys/kernel/random/boot_id 2>/dev/null)"
     SWEPT=0
     for PIN_ROOT in /sys/fs/bpf/rocketnet_xdp_*; do
         [ -e "$PIN_ROOT" ] || continue
@@ -1253,7 +1253,7 @@ if [ "$MODE" = "sweep" ]; then
         else
             # fields resume after the LAST ')' -- comm may contain
             # anything, including a ') ' -- matching the C recorder exactly
-            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null || true)"
+            LIVE_START="$(awk '{n=split($0,parts,")"); split(parts[n],a," "); print a[20]}' /proc/$PIN_PID/stat 2>/dev/null)"
             if [ -z "$LIVE_START" ]; then
                 # rule 5's principle: an unreadable start time is not
                 # PROVABLY stale, and we never delete what we cannot judge
@@ -1296,7 +1296,7 @@ fi
 # 0, and the range parameters must carry a value -- matching the library
 # pre-flight's B1 check exactly
 
-CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+CMDLINE="$(cat /proc/cmdline 2>/dev/null)"
 
 B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
 
@@ -1321,7 +1321,7 @@ done
 
 # B2. isolated cpu set
 
-ISOLATED="$(cat /sys/devices/system/cpu/isolated 2>/dev/null || true)"
+ISOLATED="$(cat /sys/devices/system/cpu/isolated 2>/dev/null)"
 if [ -n "$ISOLATED" ]; then
     say "isolated cpu set is $ISOLATED (B2)"
 else
@@ -1412,8 +1412,8 @@ if [ "$MODE" = "repin" ]; then
     while :; do
         SLOT="$(r3_query_and_grade "$INTERFACE" || echo unknown)"
         CARRIER="$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null || echo 0)"
-        QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < /proc/interrupts 2>/dev/null || true)"
-        VECTOR_COUNT=$(printf '%s\n' "$QUEUE_VECTORS" | grep -c . || true)
+        QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < /proc/interrupts 2>/dev/null)"
+        VECTOR_COUNT=$(printf '%s\n' "$QUEUE_VECTORS" | grep -c .)
         if [ "$SLOT" = "occupied" ] && [ "$CARRIER" = "1" ] && [ "$VECTOR_COUNT" -eq "$NUM_QUEUES" ]; then
             break
         fi
@@ -1450,7 +1450,7 @@ if [ "$MODE" = "repin" ]; then
             continue
         fi
         CPU="${ISOLATED_CPUS[$QUEUE]}"
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         if [ "$CURRENT" = "$CPU" ]; then
             say "irq $IRQ (queue $QUEUE) already pinned to cpu $CPU (repin)"
         else
@@ -1462,7 +1462,7 @@ if [ "$MODE" = "repin" ]; then
         case "$QUEUE_IRQS" in
             *" $IRQ "*) continue ;;
         esac
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         case "$WORKER_CPUS" in
             *" $CURRENT "*)
                 if [ -z "$HOUSEKEEPING" ]; then
@@ -1477,7 +1477,7 @@ if [ "$MODE" = "repin" ]; then
     while read -r IRQ QUEUE; do
         [ -n "$IRQ" ] || continue
         [ "$QUEUE" -lt "$NUM_QUEUES" ] || continue
-        READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         [ "$READ_BACK" = "${ISOLATED_CPUS[$QUEUE]}" ] || fail "irq $IRQ (queue $QUEUE) reads '$READ_BACK' after repin, want ${ISOLATED_CPUS[$QUEUE]}"
     done <<< "$QUEUE_VECTORS"
     if [ $UNMET -eq 1 ]; then
@@ -1524,13 +1524,13 @@ if [ ! -r /proc/interrupts ]; then
     IRQS=""
 else
     INTERRUPTS_READABLE=1
-    IRQS="$(irq_lines_for_interface "$INTERFACE" < /proc/interrupts || true)"
+    IRQS="$(irq_lines_for_interface "$INTERFACE" < /proc/interrupts)"
 fi
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
 fi
 
-IRQ_COUNT=$(echo "$IRQS" | grep -c . || true)
+IRQ_COUNT=$(echo "$IRQS" | grep -c .)
 
 if [ -z "$IRQS" ]; then
     [ $INTERRUPTS_READABLE -eq 1 ] && say "no /proc/interrupts line names $INTERFACE (R4): either this NIC has no per-queue vectors, or its transport's irq naming does not embed the interface name (mlx5-class) -- irq pinning cannot be performed or verified BY NAME here; pin and verify via the NIC transport's own tooling"
@@ -1545,7 +1545,7 @@ else
     SEEN_CPUS=()
     for IRQ in $IRQS; do
         CPU="${ISOLATED_CPUS[$INDEX]}"
-        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null)"
         if [ $VERIFY -eq 1 ]; then
             # ONE logic path (ruled on the #110 gate, round five): every
             # branch classifies the CURRENT affinity and every single-cpu

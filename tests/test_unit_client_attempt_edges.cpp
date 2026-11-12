@@ -426,3 +426,39 @@ static void test_client_third_round_trip_is_sampled_and_recorded()
 }
 
 REGISTER_UNIT_TEST( test_client_third_round_trip_is_sampled_and_recorded );
+
+// a disconnect before the session keys exist has nothing to seal: the burst
+// is empty, and the count and wire size say so whatever the caller's
+// variables held. At rest, and while requesting a cookie.
+
+static void test_client_disconnect_before_keys_reports_an_empty_burst()
+{
+    struct attempt_edges_client_t * c = attempt_edges_client_create();
+    uint8_t * burst = (uint8_t *) malloc( ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET );
+    check( burst != NULL );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        if ( i == 1 )
+        {
+            uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+            attempt_edges_mint_valid( token_data );
+            check( rocketnet_client_protocol_connect( &c->client, token_data, 1000.0, ROCKETNET_TEST_CREATE_TS ) );
+            check( c->client.state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+            check( c->client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+            check( c->client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        }
+
+        int burst_count = 77;
+        int burst_bytes = 77;
+        rocketnet_client_protocol_disconnect( &c->client, burst, &burst_count, &burst_bytes );
+        check( burst_count == 0 );
+        check( burst_bytes == 0 );
+        check( c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    }
+
+    free( burst );
+    attempt_edges_client_destroy( c );
+}
+
+REGISTER_UNIT_TEST( test_client_disconnect_before_keys_reports_an_empty_burst );

@@ -15,12 +15,27 @@
 # parser sweep (the smoke's own binary, run long here), the message decoder,
 # the connect token ladder and its private layouts, the stateful receive
 # path, the wire round trip, the env config overlay, the three pair
-# targets (server transport, client transport, scripted session), and the
-# XDP frame reader, the io_uring recvmsg codec and the netlink reply parsers
-# (the last two do work only on Linux, and compile to a no-op elsewhere).
+# targets (server transport, client transport, scripted session), the
+# endpoint, the XDP frame
+# reader, the io_uring recvmsg codec and the netlink reply parsers (the last
+# two do work only on Linux, and compile to a no-op elsewhere), and the XDP
+# filter program run as host C (the Linux leg only: it reads the AF_XDP
+# frame layout). The Linux asan+ubsan leg runs all of them.
 #
 # Each leg's finite fuzz campaign is max_total_time seconds (900 by default).
+# The scripted session target runs longer where its rate is measured: each
+# input runs a 300-step quiet window with both ends sending (the liveness
+# check), so it executes about 5 to 10 inputs a second per worker on the
+# Debug asan+ubsan build where the transport targets run about 200, and
+# 900 s gave it 5,000 to 8,000 inputs a night (HUNT-FUZZ F3, 2026-11-12).
+# Its Linux leg runs 9600 s (at least 50,000 inputs at the 5.6 a second a
+# six-hour campaign averaged as its inputs grew) and its NDEBUG leg 2400 s
+# (35 a second measured there). A workflow_dispatch max_total_time applies
+# to every leg.
 # Building and completing that workload have no repository wall-clock cap.
+# The build steps (configure, library, harness) each carry a step deadline
+# at five times their measured time, so a toolchain that hangs fails the
+# step instead of holding a runner; the fuzz steps carry none.
 
 name: Fuzz (nightly)
 
@@ -30,9 +45,9 @@ on:
   workflow_dispatch:
     inputs:
       max_total_time:
-        description: "Seconds to fuzz each target"
+        description: "Seconds to fuzz each target (empty: each leg's own time, 900 s, the session target longer)"
         required: false
-        default: "900"
+        default: ""
 
 permissions:
   contents: read
@@ -41,6 +56,10 @@ permissions:
 # self-hosted jobs to five days.
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
   fuzz:
@@ -70,10 +89,12 @@ jobs:
           - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
-          - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict","seconds":"9600"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_filter","source":"tests/fuzz/rocketnet_fuzz_xdp_filter.cpp","seeds":"tests/fuzz/corpus_xdp_filter","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_filter.dict","xdp_host":"1"}'
     concurrency:
-      group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -82,7 +103,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -113,6 +133,7 @@ jobs:
             fuzz-corpus-${{ fromJSON(matrix.leg).target }}-
 
       - name: Configure the instrumented library
+        timeout-minutes: 3
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
@@ -122,25 +143,22 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
-
-      - name: Check out the pinned netcode reference
-        if: contains(fromJSON(matrix.leg).target, 'differential')
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
-          git -C netcode-ref checkout --quiet 1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
+        timeout-minutes: 4
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           mkdir -p bin
           EXTRA=""
-          if [[ "${{ fromJSON(matrix.leg).target }}" == "rocketnet_fuzz_differential" ]]; then
-            cc -O2 -DNDEBUG -ffp-contract=off -c netcode-ref/netcode.c -o bin/netcode_ref.o \
-              -I netcode-ref -I sodium
-            EXTRA="-Itools/differential -Inetcode-ref -DROCKETNET_DIFFERENTIAL_NETCODE_DIR bin/netcode_ref.o"
+          # the XDP filter target links the filter as host C (tests/xdp_host/), instrumented like the library
+          if [[ "${{ fromJSON(matrix.leg).xdp_host || '' }}" == "1" ]]; then
+            clang -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ \
+              -fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
+              -Itests/xdp_host -Isdk "-DROCKETNET_XDP_FILTER_SOURCE=\"$PWD/sdk/xdp/server_xdp.c\"" \
+              -c tests/xdp_host/server_xdp_host.c -o bin/xdp_host_fuzz.o
+            EXTRA="-DROCKETNET_FUZZ_XDP_FILTER_HOST=1 bin/xdp_host_fuzz.o"
           fi
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
@@ -157,12 +175,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "corpus/${{ fromJSON(matrix.leg).target }}"
-          T="${{ github.event.inputs.max_total_time || '900' }}"
+          T="${{ github.event.inputs.max_total_time || fromJSON(matrix.leg).seconds || '900' }}"
           echo "fuzzing ${{ fromJSON(matrix.leg).target }} for ${T}s with ${{ fromJSON(matrix.leg).dict }}"
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # The two bounded mutation passes that used to run per commit live here,
       # on the nightly tier: a copy of the committed seed corpus, a fixed seed
@@ -187,8 +207,7 @@ jobs:
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
-        if: failure()
-        shell: bash
+        if: ${{ !cancelled() }}
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -205,7 +224,18 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # THE NDEBUG CAMPAIGN: the same eleven targets, but the library under them
+      # the corpus this night's campaign grew, red or green, for the Linux
+      # coverage job to replay beside the committed one (FUZZ_COV_CORPORA)
+      - name: Upload the campaign corpus
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: corpus-linux-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          retention-days: 3
+          if-no-files-found: warn
+
+  # THE NDEBUG CAMPAIGN: the same targets, but the library under them
   # is built Release (NDEBUG) as well as the harness, so rocketnet_assert is
   # compiled out (sdk/rocketnet_internal.h) and a bound that only an assert
   # holds is fuzzed the way a release build runs it. The fuzz job above
@@ -236,9 +266,11 @@ jobs:
           - rocketnet_fuzz_server_transport
           - rocketnet_fuzz_client_transport
           - rocketnet_fuzz_session
-          - rocketnet_fuzz_differential
+          - rocketnet_fuzz_session_raw
+          - rocketnet_fuzz_endpoint
+          - rocketnet_fuzz_xdp_filter
     concurrency:
-      group: fuzz-nightly-ndebug-${{ matrix.ref }}-${{ matrix.target }}
+      group: fuzz-nightly-ndebug-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.target }}
       cancel-in-progress: true
     steps:
 
@@ -247,7 +279,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -273,16 +304,19 @@ jobs:
           restore-keys: |
             fuzz-corpus-ndebug-${{ matrix.target }}-
 
+      - name: Build ${{ matrix.target }} with NDEBUG
+        timeout-minutes: 2
+        run: tools/fuzz_ndebug.sh --target "${{ matrix.target }}" --phase build
+
       - name: Fuzz ${{ matrix.target }} with NDEBUG
         run: |
           set -euo pipefail
-          T="${{ github.event.inputs.max_total_time || '900' }}"
-          tools/fuzz_ndebug.sh --target "${{ matrix.target }}" --seconds "$T"
+          T="${{ github.event.inputs.max_total_time || ( matrix.target == 'rocketnet_fuzz_session' && '2400' ) || '900' }}"
+          tools/fuzz_ndebug.sh --target "${{ matrix.target }}" --seconds "$T" --phase fuzz
 
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -320,13 +354,13 @@ jobs:
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
-          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
-          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
-      group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-macos-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -335,7 +369,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Find the LLVM clang that carries libFuzzer
-        shell: bash
         run: |
           set -euo pipefail
           LLVM_PREFIX=""
@@ -358,7 +391,6 @@ jobs:
           echo "ROCKETNET_FUZZ_CXX=$LLVM_PREFIX/bin/clang++" >> "$GITHUB_ENV"
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -379,6 +411,7 @@ jobs:
             fuzz-corpus-macos-${{ fromJSON(matrix.leg).target }}-
 
       - name: Configure the instrumented library
+        timeout-minutes: 3
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
@@ -388,9 +421,11 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        timeout-minutes: 4
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           mkdir -p bin
@@ -419,13 +454,14 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
-        if: failure()
-        shell: bash
+        if: ${{ !cancelled() }}
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -441,6 +477,17 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+      # the corpus this night's campaign grew, red or green, for the macOS
+      # coverage job to replay beside the committed one (FUZZ_COV_CORPORA)
+      - name: Upload the campaign corpus
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: corpus-macos-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          retention-days: 3
+          if-no-files-found: warn
 
   # Windows x64 on the fleet's native Windows member, the runner label ci.yml's
   # Windows rows use. The libFuzzer runtime ships with the ClangCL toolset of
@@ -464,7 +511,6 @@ jobs:
   # with a debug runtime.
   # No UndefinedBehaviorSanitizer: clang-cl links it only as the standalone
   # runtime, which cannot share a process with ASan's dynamic runtime.
-  # The netcode differential target stays on the Linux leg.
   fuzz-windows:
     name: nightly fuzz Windows (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
@@ -482,13 +528,13 @@ jobs:
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
-          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
-          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
-      group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-windows-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     defaults:
       run:
@@ -548,7 +594,10 @@ jobs:
       # the fuzzer-no-link and ASan references the Visual Studio link has no
       # runtime for, and CMake calls the compiler broken.
       - name: Configure the instrumented library
+        timeout-minutes: 3
         run: >
+          set -euo pipefail
+
           cmake -B build-fuzz -T ClangCL -A x64
           -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -556,9 +605,13 @@ jobs:
           "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           mkdir -p bin
@@ -584,7 +637,9 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}.exe" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
@@ -592,7 +647,9 @@ jobs:
         if: failure()
         env:
           REF: ${{ matrix.ref }}
-        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Upload crash reproducers
         if: failure()
@@ -606,7 +663,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # MemorySanitizer over the same thirteen-target matrix, Linux only (row 262's
+  # MemorySanitizer over the same fourteen-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
@@ -650,8 +707,11 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_filter","source":"tests/fuzz/rocketnet_fuzz_xdp_filter.cpp","seeds":"tests/fuzz/corpus_xdp_filter","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_filter.dict","xdp_host":"1"}'
     concurrency:
-      group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-msan-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -661,7 +721,6 @@ jobs:
 
       - name: Read the clang version
         id: msan-clang
-        shell: bash
         run: echo "version=$(clang++ -dumpversion)" >> "$GITHUB_OUTPUT"
 
       # a runner whose provisioning installed /opt/msan-libcxx-<version> uses
@@ -676,7 +735,7 @@ jobs:
           key: msan-libcxx-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-${{ hashFiles('tools/build_msan_libcxx.sh') }}
 
       - name: The MSan-instrumented libc++
-        shell: bash
+        timeout-minutes: 50
         run: |
           set -euo pipefail
           clang_version=${{ steps.msan-clang.outputs.version }}
@@ -689,7 +748,6 @@ jobs:
           echo "MSAN_LIBCXX=$libcxx" >> "$GITHUB_ENV"
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -721,7 +779,7 @@ jobs:
             msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-
 
       - name: Build the MSan libFuzzer engine
-        shell: bash
+        timeout-minutes: 50
         run: |
           set -euo pipefail
           if [ -f .msan-libfuzzer/libFuzzer.a ]; then
@@ -761,6 +819,7 @@ jobs:
             fuzz-corpus-msan-${{ fromJSON(matrix.leg).target }}-
 
       - name: Configure the instrumented library
+        timeout-minutes: 3
         run: >
           cmake -B build-fuzz-msan
           -DCMAKE_BUILD_TYPE=Debug
@@ -770,18 +829,29 @@ jobs:
           -DCMAKE_CXX_FLAGS="-O1 -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -nostdinc++ -isystem ${{ env.MSAN_LIBCXX }}/include/c++/v1"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel
+        timeout-minutes: 4
+        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel 8
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           mkdir -p bin
+          EXTRA=""
+          # the XDP filter target links the filter as host C (tests/xdp_host/), instrumented like the library
+          if [[ "${{ fromJSON(matrix.leg).xdp_host || '' }}" == "1" ]]; then
+            clang -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ \
+              -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
+              -Itests/xdp_host -Isdk "-DROCKETNET_XDP_FILTER_SOURCE=\"$PWD/sdk/xdp/server_xdp.c\"" \
+              -c tests/xdp_host/server_xdp_host.c -o bin/xdp_host_fuzz_msan.o
+            EXTRA="-DROCKETNET_FUZZ_XDP_FILTER_HOST=1 bin/xdp_host_fuzz_msan.o"
+          fi
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer \
             -nostdinc++ -isystem "${{ env.MSAN_LIBCXX }}/include/c++/v1" \
-            -Isodium -Isdk -Itests "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
+            -Isodium -Isdk -Itests $EXTRA "${{ fromJSON(matrix.leg).source }}" build-fuzz-msan/librocketnet_dev.a \
             .msan-libfuzzer/libFuzzer.a \
             -stdlib=libc++ -L"${{ env.MSAN_LIBCXX }}/lib" -Wl,-rpath,"${{ env.MSAN_LIBCXX }}/lib" \
             -lbpf -lxdp -luring -lpthread -lm \
@@ -798,12 +868,13 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus-msan/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -825,10 +896,16 @@ jobs:
   # with source-based coverage, runs them over each target's committed corpus
   # plus pseudo-random inputs, and appends its per-area table as Markdown to
   # the job summary through FUZZ_COV_SUMMARY (the script's default build dir is
-  # per job, so Linux and macOS do not share one).
+  # per job, so Linux and macOS do not share one). It also replays the corpora
+  # this night's legs grew (their corpus-<os>-* artifacts, FUZZ_COV_CORPORA),
+  # and ends by holding every target to its floor of sdk lines
+  # (tools/fuzz_coverage_floors.tsv), so a harness that reaches nothing turns
+  # the job red. It runs when a fuzz leg is red too: a red leg is when the
+  # coverage of the rest is still wanted.
   coverage:
     name: nightly fuzz coverage (Linux)
     needs: fuzz
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     steps:
@@ -836,11 +913,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake gcc g++ clang clang++ xxd pkg-config llvm-profdata llvm-cov; do
+          for tool in cmake gcc g++ clang clang++ xxd pkg-config llvm-profdata llvm-cov python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -854,12 +930,19 @@ jobs:
           done
           exit "$missing"
 
+      - name: Download the night's campaign corpora
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: corpus-linux-*
+          path: ${{ runner.temp }}/campaign
+
       - name: Fuzz coverage
-        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
+        run: CC=clang CXX=clang++ FUZZ_COV_CORPORA="$RUNNER_TEMP/campaign" FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
 
   coverage-macos:
     name: nightly fuzz coverage (macOS)
     needs: fuzz-macos
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     steps:
@@ -867,7 +950,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -879,5 +961,11 @@ jobs:
           done
           exit "$missing"
 
+      - name: Download the night's campaign corpora
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: corpus-macos-*
+          path: ${{ runner.temp }}/campaign
+
       - name: Fuzz coverage
-        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
+        run: CC=clang CXX=clang++ FUZZ_COV_CORPORA="$RUNNER_TEMP/campaign" FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh

@@ -91,6 +91,13 @@ class ServerCallsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no samples"):
             check.report([("a", text)], io.StringIO())
 
+    def test_zero_inputs_are_invalid(self):
+        # zero inputs is an error: no log, or a log with no call line, never passes
+        with self.assertRaisesRegex(ValueError, "no worst-case log"):
+            check.report([], io.StringIO())
+        with self.assertRaisesRegex(ValueError, "missing calls"):
+            check.report([("empty", "")], io.StringIO())
+
     def test_main_exit_codes(self):
         import tempfile
         with tempfile.TemporaryDirectory() as directory:

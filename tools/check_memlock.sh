@@ -6,7 +6,7 @@
 # every CI runner of this user on this host can run at once
 # (docs/LINUX.md sections 5 and 8, tests/suite_runner.h).
 #
-#   bash tools/check_memlock.sh [path to transport_memory]
+#   bash tools/check_memlock.sh [--root DIR] [path to transport_memory]
 #
 # The io_uring transport never raises RLIMIT_MEMLOCK, and on kernel 7.0 the
 # kernel charges every ring's locked pages to the user, across all of that
@@ -32,13 +32,29 @@
 set -u
 
 here=$(cd "$(dirname "$0")/.." && pwd)
+# --root DIR reads tests/suite_runner.h and bin/transport_memory under DIR
+# (default: this repository); the self-test points it at fixtures.
+if [ "${1:-}" = --root ]; then
+    [ $# -ge 2 ] || { echo "memlock: FAIL: --root requires a directory"; exit 1; }
+    here=$(cd "$2" && pwd) || exit 1
+    shift 2
+fi
 probe=${1:-$here/bin/transport_memory}
+
+# The per-case needs are this check's input on every host: a suite runner
+# without both of them is a failure before any platform pass.
+defines=$(grep -c -E '^#define ROCKETNET_TEST_URING_CASE_MEMLOCK_KIB(_6_8)? [0-9]+' "$here/tests/suite_runner.h" 2>/dev/null)
+if [ "${defines:-0}" != 2 ]; then
+    echo "memlock: FAIL: ${defines:-0} of 2 per-case need defines in $here/tests/suite_runner.h"
+    exit 1
+fi
 
 if [ "$(uname -s)" != Linux ]; then
     echo "memlock: not Linux, no io_uring transport: PASS"
     exit 0
 fi
-disabled=$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)
+# ROCKETNET_MEMLOCK_PROC is a test seam for the self-test's fixture /proc
+disabled=$(cat "${ROCKETNET_MEMLOCK_PROC:-/proc}/sys/kernel/io_uring_disabled" 2>/dev/null || echo 0)
 if [ "$disabled" != 0 ]; then
     echo "memlock: kernel.io_uring_disabled=$disabled, the io_uring cases do not create rings: PASS"
     exit 0
@@ -65,7 +81,7 @@ if [ -z "$case_kib" ]; then
     exit 1
 fi
 
-runners=$(pgrep -u "$(id -u)" -c -f Runner.Listener 2>/dev/null || true)
+runners=$(pgrep -u "$(id -u)" -c -f Runner.Listener 2>/dev/null)
 [ -n "$runners" ] && [ "$runners" -ge 1 ] || runners=1
 
 echo "memlock: user $(id -un), kernel $kernel, RLIMIT_MEMLOCK soft $limit KiB, hard $(ulimit -H -l) KiB"
