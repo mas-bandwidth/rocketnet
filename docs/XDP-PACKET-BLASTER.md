@@ -172,3 +172,75 @@ bounded disconnect burst and every attempt resets its token, session keys, and
 ephemeral secret. A valid qualification receipt therefore includes empty
 pre-IDs, active IDs, empty post-IDs, selected bind mode, zero skipped cases,
 server counter/recovery receipts, and an exit status of zero.
+
+## Running wide
+
+`--threads N` (1 to 32, default 1) sends from N threads, each with its own
+AF_XDP socket and UMEM on its own NIC queue, created after the thread pins
+itself. Each thread owns a slice of the clients and the whole send path for
+them: no lock, batched TX (one wakeup per 64 descriptors at most), counters
+summed at the end. `--threads 1` is the old tool: queue 0, the one-queue RSS
+rule, the same plan, result fields and exit status. `--cpus LIST` (for
+example `1-6` or `1-3,7`) names exactly one distinct CPU per thread.
+
+Replies must come back to the thread that owns the client. With N above 1 the
+tool reads the port's Toeplitz key and indirection table (ETHTOOL_GRSSH), and
+refuses unless the UDP/IPv4 hash covers both addresses and both ports
+(`ethtool -N <if> rx-flow-hash udp4 sdfn`). It then gives each client a source
+port whose reply (server address and port to client address and port) hashes
+to its owner's queue. `RESULT` carries `rx_wrong_thread`, which must be 0.
+Every `RESULT_THREAD` line shows one thread; `RESULT_RATE` shows the submitted
+rate and the Gb/s on the wire.
+
+Placement rules, measured on ixgbe (X540):
+
+- Keep the sender threads, their NIC queues and the NIC on one NUMA node.
+- The blaster's own XDP attach resets the port and rebuilds its vectors on
+  CPU 0. Pin `<if>-TxRx-k` after the attach to a CPU that is not a sender
+  thread's CPU (the SMT sibling of thread k's core works). With the queue
+  interrupts on the sender CPUs, softirq takes 85 to 95% of those CPUs.
+- On the server side, run `rocketnet-provision <if> N repin` after the
+  server's attach (DEPLOYING.md, step 4a).
+- 802.3x pause is on by default on both ends. A receiver that cannot keep up
+  pauses the link; it does not drop. Read `tx_flow_control_xoff` on both
+  ends to see which side is the slow one.
+
+### Measured (2026-11-12)
+
+The setup:
+
+- Sender: vision (64 CPUs, SMT on, NIC on node 0). Six threads on CPUs 1 to 6,
+  with `TxRx-0..5` on CPUs 33 to 38.
+- Server: hulk (32 CPUs, `isolcpus=1-15`). `tests/client_server/server`
+  echo, `--num-xdp-queues 6`, XDP workers on CPUs 1 to 6, main thread on
+  CPU 7, `--update-hz 2000`, queue vectors repinned.
+- Link: 10G direct cable, 256 clients, zero-copy on both ends.
+
+Wire Gb/s includes preamble and IFG and is read from the NIC counters. Line
+rate at 64 B payload is about 7.49 Mpps.
+
+| payload | to server | back to sender | XOFF sent by | limit |
+| --- | --- | --- | --- | --- |
+| 64 B | 152 kpps, 0.27 Gb/s (2% of line pps) | 28 kpps | both | server |
+| 1200 B | 165 kpps, 1.69 Gb/s (17%) | 157 kpps, 1.64 Gb/s | hulk only | server |
+
+The sender is not the limit; the server's main thread is. It is the only
+thread that opens and seals packets, and at 1.7 Gb/s it is busy on CPU 7 back
+to back in loops of about 85 ms, two thirds of that in chacha20 and poly1305.
+Nothing else runs on that CPU. While it is busy, the XDP workers' handoff
+fills, the workers stop draining the NIC, and the server's NIC sends pause
+frames. Turning off the fair server on the worker CPUs (0.19 Gb/s) or setting
+`kernel.sched_rt_runtime_us=-1` (0.94 Gb/s) made it worse: on kernel 7.0
+the NIC's softirq work on a worker CPU runs in `ksoftirqd`, which gets that
+CPU only through the fair server's 50 ms a second. The library's server
+transport has not been changed for throughput.
+
+With the echo loop at its default 60 Hz, the same placement gave 0.94 Gb/s
+at 1200 B. At 1412 B an unreliable message no longer fits one record and is
+promoted to a numbered message (`MESSAGE_PROMOTED_UNRELIABLE`). The test
+server echoes the client's packet payload back raw, so the client receives
+its own send numbers. Once those run a window ahead of its receive window,
+the client refuses them as `NUMBER_OUTSIDE_WINDOW` and ends with disconnect
+reason -2 (`PROTOCOL_VIOLATION`). It happens only under load, and it comes
+from the echo, not from the library. Large-payload runs therefore use 1200 B.
+A failed endpoint now prints its nonzero `MESSAGE_*` counters.

@@ -69,7 +69,7 @@ static void usage( void )
         "  --max-clients N         max_clients, set explicitly (the run uses 1000)\n"
         "  --max-packets-per-update N  the message config's packets_per_update\n"
         "  --update-hz H           update rate of the main loop\n"
-        "  --num-xdp-queues N      the transport config's num_xdp_queues (0 is the transport default)\n"
+        "  --num-xdp-queues N      the transport config's num_xdp_queues (0 is the transport default; xdp thread k pins to cpu 1 + k)\n"
         "  --duration S            stop after S seconds (default 0: run until SIGINT or a watched stdin closes)\n"
         "  --simulator L,J,P,D     the development link simulator on the server's sends: latency ms, jitter ms, loss %%, duplicate %%\n"
         "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
@@ -1246,6 +1246,7 @@ int main( int argc, char ** argv )
     double duration = 0.0;
     int num_xdp_queues = 0;
     int simulator[4] = { 0, 0, 0, 0 };
+    int update_hz_given = 0;
     uint32_t seed = 0;
     uint32_t send_kbps = 500;
 
@@ -1288,6 +1289,12 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc )
         {
             update_hz = strtod( argv[++i], NULL );
+            if ( !( update_hz >= 1.0 && update_hz <= 100000.0 ) )
+            {
+                fprintf( stderr, "server: --update-hz must be 1 to 100000\n" );
+                return 1;
+            }
+            update_hz_given = 1;
         }
         else if ( strcmp( a, "--num-xdp-queues" ) == 0 && i + 1 < argc )
         {
@@ -1344,6 +1351,9 @@ int main( int argc, char ** argv )
             return 1;
         }
     }
+
+    // the echo loop keeps its historical 60 Hz unless --update-hz is given
+    const double echo_sleep = update_hz_given ? 1.0 / update_hz : 1.0 / 60.0;
 
     if ( !address )
     {
@@ -1477,7 +1487,7 @@ int main( int argc, char ** argv )
             {
                 quit = 1;
             }
-            rocketnet_sleep( 1.0 / 60.0 );
+            rocketnet_sleep( echo_sleep );
         }
     }
     else

@@ -200,6 +200,45 @@ def main() -> int:
         wrong_queue[wrong_queue.index("--queue") + 1] = "7"
         run(wrong_queue, 2)
 
+        assert "PLAN threads=1 cpus=unpinned queues=0-0 reply_steering=one_queue" in first.stdout
+        assert "rss=externally_provisioned_one_queue" in first.stdout
+
+        largest = list(args)
+        largest[largest.index("--payload-bytes") + 1] = "1412"
+        result = run(largest, 0)
+        assert "nominal_rocketnet_bytes=1449" in result.stdout
+        over_largest = list(args)
+        over_largest[over_largest.index("--payload-bytes") + 1] = "1413"
+        run(over_largest, 2)
+
+        token_file.write_text("".join(
+            base64.b64encode(bytes(token[:40]) + bytes((i,)) + bytes(token[41:])).decode("ascii") + "\n" for i in range(4)
+        ), encoding="ascii")
+        wide = list(args)
+        wide[wide.index("--clients") + 1] = "4"
+        wide.extend(("--threads", "4", "--cpus", "1-3,7"))
+        result = run(wide, 0)
+        assert "PLAN threads=4 cpus=1-3,7 queues=0-3 reply_steering=source_port_rss_hash" in result.stdout
+        assert "rss=nic_toeplitz_read_at_execute" in result.stdout
+        assert "throughput_offers_per_enabled_direction=20" in result.stdout
+
+        def refused_wide(changes: dict[str, str], extra: tuple[str, ...], message: str) -> None:
+            candidate = list(wide)
+            for flag, value in changes.items():
+                candidate[candidate.index(flag) + 1] = value
+            candidate.extend(extra)
+            refused = run(candidate, 2)
+            assert message in refused.stderr, refused.stderr
+
+        refused_wide({"--threads": "0"}, (), "unknown or invalid argument: --threads")
+        refused_wide({"--threads": "33"}, (), "unknown or invalid argument: --threads")
+        refused_wide({"--threads": "5", "--cpus": "1-5"}, (), "plan values are absent or out of bounds")
+        refused_wide({"--cpus": "1-3"}, (), "exactly one distinct CPU per thread")
+        refused_wide({"--cpus": "1-3,3"}, (), "exactly one distinct CPU per thread")
+        refused_wide({"--cpus": "1-x"}, (), "exactly one distinct CPU per thread")
+        refused_wide({"--mode": "robustness"}, ("--server-transport-profile", "xdp"), "plan values are absent or out of bounds")
+        token_file.write_text(token_text + "\n", encoding="ascii")
+
         unconfirmed = list(args)
         unconfirmed[unconfirmed.index("I-OWN-THIS-BENCH")] = "no"
         refused = run(unconfirmed, 2)

@@ -101,11 +101,21 @@
 #                             checkable from shell, and nothing to perform.
 #
 # usage:
-#   rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]
+#   rocketnet-provision <interface> <num_queues> [verify|repin|sweep|selftest] [isolated-range]
 #
 #     provision (default): perform the runtime tier idempotently, verify the
-#                          boot tier, loud either way
+#                          boot tier, loud either way. R7 runs before R4:
+#                          a channel change rebuilds the queue vectors, so
+#                          the IRQs are counted and pinned after it
 #     verify:              check only, mutate nothing, exit 1 listing unmet
+#     repin:               R4 again, by vector name, after the server's XDP
+#                          attach: waits (ROCKETNET_REPIN_WAIT_SECONDS,
+#                          default 60) for the attach, the link and the
+#                          queue vectors, then pins <iface>-TxRx-<k> to the
+#                          k-th isolated cpu and moves every other vector of
+#                          the interface off those cpus. touches only
+#                          /proc/irq/N/smp_affinity_list, so it runs beside
+#                          a live server (rules inline at the repin block)
 #     sweep:               remove crash-leftover pin roots judged stale by
 #                          the metadata in their names (rules inline at the
 #                          sweep block); also invocable bare as
@@ -151,8 +161,8 @@ else
 fi
 
 case "$MODE" in
-    provision|verify|sweep|selftest) ;;
-    *) echo "unknown mode '$MODE' (provision, verify, sweep, or selftest; a misspelled mode must never mutate)" >&2; exit 2 ;;
+    provision|verify|repin|sweep|selftest) ;;
+    *) echo "unknown mode '$MODE' (provision, verify, repin, sweep, or selftest; a misspelled mode must never mutate)" >&2; exit 2 ;;
 esac
 
 # R8's release and file names come from the environment in the selftest only:
@@ -163,9 +173,9 @@ if [ "$MODE" != "selftest" ]; then
     unset R8_RELEASE R8_RUNTIME R8_CONFIG R8_PROC_CONFIG
 fi
 
-if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ]; then
+if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
     if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
-        echo "usage: rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
+        echo "usage: rocketnet-provision <interface> <num_queues> [verify|repin|sweep|selftest] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
         exit 2
     fi
 fi
@@ -310,6 +320,40 @@ irq_lines_for_interface()
                 search_from = start + 1
             }
             if ( matched ) { gsub( / /, "", $1 ); print $1 }
+        }'
+}
+
+# the interface's QUEUE vectors by name, "irq queue" per line: the same
+# bounded-token match as irq_lines_for_interface, followed by exactly
+# -TxRx-<digits> and nothing but trailing blanks (ixgbe "eth0-TxRx-3",
+# i40e "i40e-eth0-TxRx-3"). XDP's tx-only vectors ("eth0-tx-9"), the misc
+# vector ("eth0") and any other name are not queue vectors.
+
+queue_irq_lines_for_interface()
+{
+    ROCKETNET_IFACE="$1" awk -F: '
+        BEGIN { iface = ENVIRON["ROCKETNET_IFACE"]; iface_length = length(iface) }
+        {
+            line = $0
+            sub( /[ \t]+$/, "", line )
+            search_from = 1
+            queue = ""
+            while ( search_from <= length(line) )
+            {
+                offset = index( substr( line, search_from ), iface )
+                if ( offset == 0 )
+                    break
+                start = search_from + offset - 1
+                before = ( start == 1 ) ? " " : substr( line, start - 1, 1 )
+                rest = substr( line, start + iface_length )
+                if ( ( before == " " || before == "\t" || before == "-" ) && rest ~ /^-TxRx-[0-9]+$/ )
+                {
+                    queue = substr( rest, 7 )
+                    break
+                }
+                search_from = start + 1
+            }
+            if ( queue != "" ) { irq = $1; gsub( / /, "", irq ); print irq, queue + 0 }
         }'
 }
 
@@ -609,6 +653,34 @@ if [ "$MODE" = "selftest" ]; then
     expect_match "eth0"     " 33:  0 0 PCI-MSI 2097154-edge      eth00" "no"
     expect_match "eth0"     " 34:  0 0 PCI-MSI 2097156-edge      xeth0-TxRx-0" "no"
     expect_match "ens1f0"   " 35:  0 0 IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0" "no"
+
+    # repin's queue-vector reader, on the vector shape an ixgbe port shows
+    # with XDP attached (captured on hulk enp9s0f0 at combined 7: TxRx-0..6,
+    # XDP's tx-only tx-7..31, then the misc vector) plus the i40e prefix
+    # form and the bounded-token refusals
+
+    expect_queue_vectors()
+    {
+        RESULT="$(printf '%s\n' "$2" | queue_irq_lines_for_interface "$1" | tr '\n' ';')"
+        if [ "$RESULT" != "$3" ]; then
+            echo "selftest FAIL: queue vectors of '$1' read '$RESULT', want '$3'"; PASS=0
+        fi
+    }
+
+    XDP_VECTORS="$(printf '%s\n' \
+        " 179:  0 0 IR-PCI-MSI 4718592-edge      enp9s0f0-TxRx-0" \
+        " 185:  0 0 IR-PCI-MSI 4718598-edge      enp9s0f0-TxRx-6" \
+        " 186:  0 0 IR-PCI-MSI 4718599-edge      enp9s0f0-tx-7" \
+        " 210:  0 0 IR-PCI-MSI 4718623-edge      enp9s0f0-tx-31" \
+        " 211:  0 0 IR-PCI-MSI 4718624-edge      enp9s0f0" \
+        " 213:  0 0 IR-PCI-MSI 4720640-edge      enp9s0f1-TxRx-0")"
+    expect_queue_vectors "enp9s0f0" "$XDP_VECTORS" "179 0;185 6;"
+    expect_queue_vectors "enp9s0f1" "$XDP_VECTORS" "213 0;"
+    expect_queue_vectors "ens1f0"   " 24:  0 0 IR-PCI-MSI 524288-edge      i40e-ens1f0-TxRx-12  " "24 12;"
+    expect_queue_vectors "eth0"     " 29:  0 0 PCI-MSI 49153-edge      eth0.100-TxRx-0" ""
+    expect_queue_vectors "eth0"     " 30:  0 0 PCI-MSI 49154-edge      eth0-TxRx-" ""
+    expect_queue_vectors "eth0"     " 31:  0 0 PCI-MSI 49155-edge      eth0-TxRx-1x" ""
+    expect_queue_vectors "eth0"     " 32:  0 0 PCI-MSI 49156-edge      xeth0-TxRx-1" ""
 
     # THE OUTCOME AND ENFORCEMENT PINS (rounds eleven through thirteen):
     # every outcome of the graded functions is driven through the REAL
@@ -1292,9 +1364,139 @@ else
     [ $VERIFY -eq 0 ] && exit 1
 fi
 
+# REPIN, its own mode: R4 again after the server's XDP attach.
+#
+# WHY: an XDP attach or detach on an ixgbe-class port resets it and rebuilds
+# its queue vectors, and the new vectors take the default affinity (cpu 0
+# under B1's irqaffinity=0). Provision pins BEFORE the server starts; the
+# server's own attach then undoes that pinning after its pre-flight passed,
+# and the server runs its whole life with every queue interrupt on the
+# housekeeping core (measured on hulk: cpu 0 at 98-99% softirq, the NIC
+# pausing its sender). The library never mutates machine state, and
+# provision cannot run beside a live server (R3 would unload it), so this
+# mode does R4 alone.
+#
+# THE RULES:
+#   1. wait, bounded by ROCKETNET_REPIN_WAIT_SECONDS (default 60), until an
+#      XDP program is attached (R3's own query), the carrier is up and the
+#      interface shows exactly num_queues queue vectors; nothing is pinned
+#      before all three hold, and running out of time is UNMET
+#   2. pin by NAME, not by table order: XDP adds per-cpu tx-only vectors
+#      (ixgbe "<iface>-tx-<n>"), so order no longer pairs vectors with
+#      queues. <iface>-TxRx-<k> goes to the k-th isolated cpu, the cpu the
+#      server's xdp thread k pins itself to
+#   3. every other vector of the interface found on one of those worker
+#      cpus moves to the first online cpu outside the isolated set
+#   4. read every queue vector back; a mismatch is UNMET
+#   5. touch nothing but /proc/irq/N/smp_affinity_list
+#
+# Run it right after starting the server; ACCEPTED-UNDRIVEN by the
+# unprivileged selftest beyond its queue-vector reader (it needs root and a
+# live attach), like provision mode's summary gate.
+
+if [ "$MODE" = "repin" ]; then
+    if [ "$(id -u)" != "0" ]; then
+        say "must run as root (R1)"; exit 1
+    fi
+    UNMET=0
+    UNMET_COUNT=0
+    if [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
+        fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (repin): one queue wants one isolated core"
+        exit 1
+    fi
+    WAIT_LIMIT="${ROCKETNET_REPIN_WAIT_SECONDS:-60}"
+    case "$WAIT_LIMIT" in
+        ''|*[!0-9]*) echo "ROCKETNET_REPIN_WAIT_SECONDS must be a whole number of seconds" >&2; exit 2 ;;
+    esac
+    HALF_SECONDS=0
+    while :; do
+        SLOT="$(r3_query_and_grade "$INTERFACE" || echo unknown)"
+        CARRIER="$(cat "/sys/class/net/$INTERFACE/carrier" 2>/dev/null || echo 0)"
+        QUEUE_VECTORS="$(queue_irq_lines_for_interface "$INTERFACE" < /proc/interrupts 2>/dev/null || true)"
+        VECTOR_COUNT=$(printf '%s\n' "$QUEUE_VECTORS" | grep -c . || true)
+        if [ "$SLOT" = "occupied" ] && [ "$CARRIER" = "1" ] && [ "$VECTOR_COUNT" -eq "$NUM_QUEUES" ]; then
+            break
+        fi
+        if [ $HALF_SECONDS -ge $(( WAIT_LIMIT * 2 )) ]; then
+            fail "after ${WAIT_LIMIT}s the xdp slot is $SLOT, carrier $CARRIER, $VECTOR_COUNT of $NUM_QUEUES queue vectors (repin): nothing pinned"
+            exit 1
+        fi
+        sleep 0.5
+        HALF_SECONDS=$(( HALF_SECONDS + 1 ))
+    done
+    say "xdp attached, carrier up, $NUM_QUEUES queue vectors after about $(( HALF_SECONDS / 2 ))s (repin)"
+    WORKER_CPUS=" "
+    for (( K=0; K<NUM_QUEUES; K++ )); do
+        WORKER_CPUS="$WORKER_CPUS${ISOLATED_CPUS[$K]} "
+    done
+    HOUSEKEEPING=""
+    for CPU_DIR in /sys/devices/system/cpu/cpu[0-9]*; do
+        CPU="${CPU_DIR##*cpu}"
+        ONLINE="$(cat "$CPU_DIR/online" 2>/dev/null || echo 1)"
+        IS_ISOLATED=0
+        for CPU_CANDIDATE in "${ISOLATED_CPUS[@]}"; do
+            [ "$CPU_CANDIDATE" = "$CPU" ] && IS_ISOLATED=1
+        done
+        if [ "$ONLINE" = "1" ] && [ $IS_ISOLATED -eq 0 ] && { [ -z "$HOUSEKEEPING" ] || [ "$CPU" -lt "$HOUSEKEEPING" ]; }; then
+            HOUSEKEEPING="$CPU"
+        fi
+    done
+    QUEUE_IRQS=" "
+    while read -r IRQ QUEUE; do
+        [ -n "$IRQ" ] || continue
+        QUEUE_IRQS="$QUEUE_IRQS$IRQ "
+        if [ "$QUEUE" -ge "$NUM_QUEUES" ]; then
+            fail "irq $IRQ is queue $QUEUE, past the $NUM_QUEUES queues the server uses (repin): R7 first"
+            continue
+        fi
+        CPU="${ISOLATED_CPUS[$QUEUE]}"
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        if [ "$CURRENT" = "$CPU" ]; then
+            say "irq $IRQ (queue $QUEUE) already pinned to cpu $CPU (repin)"
+        else
+            say "pinning irq $IRQ (queue $QUEUE) to cpu $CPU, found on '$CURRENT' (repin)"
+            echo "$CPU" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $CPU (repin)"
+        fi
+    done <<< "$QUEUE_VECTORS"
+    for IRQ in $(irq_lines_for_interface "$INTERFACE" < /proc/interrupts); do
+        case "$QUEUE_IRQS" in
+            *" $IRQ "*) continue ;;
+        esac
+        CURRENT="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        case "$WORKER_CPUS" in
+            *" $CURRENT "*)
+                if [ -z "$HOUSEKEEPING" ]; then
+                    fail "irq $IRQ sits on worker cpu $CURRENT and no cpu outside the isolated set is online (repin)"
+                else
+                    say "moving irq $IRQ off worker cpu $CURRENT to cpu $HOUSEKEEPING (repin)"
+                    echo "$HOUSEKEEPING" > "/proc/irq/$IRQ/smp_affinity_list" 2>/dev/null || fail "irq $IRQ refused affinity cpu $HOUSEKEEPING (repin)"
+                fi
+                ;;
+        esac
+    done
+    while read -r IRQ QUEUE; do
+        [ -n "$IRQ" ] || continue
+        [ "$QUEUE" -lt "$NUM_QUEUES" ] || continue
+        READ_BACK="$(cat /proc/irq/$IRQ/smp_affinity_list 2>/dev/null || true)"
+        [ "$READ_BACK" = "${ISOLATED_CPUS[$QUEUE]}" ] || fail "irq $IRQ (queue $QUEUE) reads '$READ_BACK' after repin, want ${ISOLATED_CPUS[$QUEUE]}"
+    done <<< "$QUEUE_VECTORS"
+    if [ $UNMET -eq 1 ]; then
+        say "repin FAILED: $UNMET_COUNT unmet condition(s) above"
+        exit 1
+    fi
+    say "repinned: $NUM_QUEUES queue vectors on cpus${WORKER_CPUS% }"
+    exit 0
+fi
+
 # R3. exclusive xdp slot
 
 r3_enforce
+
+# R7. queue count, before R4: a channel change rebuilds the queue vectors,
+# so R4 must count and pin the vectors that exist after it (counting first
+# refused a fresh 32-channel port on its first run and passed on a second)
+
+r7_enforce
 
 
 # crash-leftover pin roots are the SWEEP mode's business, deliberately --
@@ -1430,10 +1632,6 @@ if [ -f "$SMT_CONTROL" ]; then
 else
     say "no smt control on this machine (R6 passes)"
 fi
-
-# R7. queue count
-
-r7_enforce
 
 # R8. real-time throttle
 
