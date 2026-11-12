@@ -311,11 +311,17 @@ class Expression:
                 continue
             if isinstance(left, str) and isinstance(right, str):
                 left, right = left.lower(), right.lower()
-            try:
-                left = {"==": left == right, "!=": left != right, "<": left < right,
-                        "<=": left <= right, ">": left > right, ">=": left >= right}[operator]
-            except TypeError:
+            if operator == "==":
+                left = left == right
+            elif operator == "!=":
+                left = left != right
+            elif type(left) is not type(right) or left is None:
+                # GitHub coerces mixed operands of an ordering; this reader
+                # does not, so the result is unknown rather than guessed
                 left = UNKNOWN
+            else:
+                left = {"<": left < right, "<=": left <= right,
+                        ">": left > right, ">=": left >= right}[operator]
         return left
 
     def unary(self):
