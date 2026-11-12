@@ -56,7 +56,7 @@ The layout model (MCRNUringQueueReceiveLayout.tla) checks `InOrder`, `NoTornRead
 
 - **Abstract:** 2 slots, 2 buffers, socket queue of 1, 4 arrivals, drains of up
   to 2.
-- **Layout:** 3 slots, 4 buffers, ring counters wrapping at 8, 5 receives of up to 2
+- **Layout:** 3 slots, 4 buffers, ring counters wrapping at 8, 4 receives of up to 2
   datagrams, drains of up to 2.
 - **Trace walk:** 3 slots, 4 buffers, the kernel's 65536 wrap, up to 80 receives.
 

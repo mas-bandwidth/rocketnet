@@ -60,7 +60,7 @@
 (*                (the code); "keep" leaves it set, so nothing arms again  *)
 (*                (Rearms).                                                *)
 (***************************************************************************)
-EXTENDS Integers, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS S,            \* bank slots
           B,            \* provided buffers
