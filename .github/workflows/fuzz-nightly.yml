@@ -216,7 +216,7 @@ jobs:
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
-        if: failure()
+        if: ${{ !cancelled() }}
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -232,6 +232,17 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+      # the corpus this night's campaign grew, red or green, for the Linux
+      # coverage job to replay beside the committed one (FUZZ_COV_CORPORA)
+      - name: Upload the campaign corpus
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: corpus-linux-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          retention-days: 3
+          if-no-files-found: warn
 
   # THE NDEBUG CAMPAIGN: the same targets, but the library under them
   # is built Release (NDEBUG) as well as the harness, so rocketnet_assert is
@@ -458,7 +469,7 @@ jobs:
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
-        if: failure()
+        if: ${{ !cancelled() }}
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -474,6 +485,17 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+      # the corpus this night's campaign grew, red or green, for the macOS
+      # coverage job to replay beside the committed one (FUZZ_COV_CORPORA)
+      - name: Upload the campaign corpus
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: corpus-macos-${{ fromJSON(matrix.leg).target }}-${{ steps.refslug.outputs.slug }}
+          path: corpus/${{ fromJSON(matrix.leg).target }}
+          retention-days: 3
+          if-no-files-found: warn
 
   # Windows x64 on the fleet's native Windows member, the runner label ci.yml's
   # Windows rows use. The libFuzzer runtime ships with the ClangCL toolset of
@@ -881,10 +903,16 @@ jobs:
   # with source-based coverage, runs them over each target's committed corpus
   # plus pseudo-random inputs, and appends its per-area table as Markdown to
   # the job summary through FUZZ_COV_SUMMARY (the script's default build dir is
-  # per job, so Linux and macOS do not share one).
+  # per job, so Linux and macOS do not share one). It also replays the corpora
+  # this night's legs grew (their corpus-<os>-* artifacts, FUZZ_COV_CORPORA),
+  # and ends by holding every target to its floor of sdk lines
+  # (tools/fuzz_coverage_floors.tsv), so a harness that reaches nothing turns
+  # the job red. It runs when a fuzz leg is red too: a red leg is when the
+  # coverage of the rest is still wanted.
   coverage:
     name: nightly fuzz coverage (Linux)
     needs: fuzz
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     steps:
@@ -895,7 +923,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake gcc g++ clang clang++ xxd pkg-config llvm-profdata llvm-cov; do
+          for tool in cmake gcc g++ clang clang++ xxd pkg-config llvm-profdata llvm-cov python3; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -909,12 +937,19 @@ jobs:
           done
           exit "$missing"
 
+      - name: Download the night's campaign corpora
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: corpus-linux-*
+          path: ${{ runner.temp }}/campaign
+
       - name: Fuzz coverage
-        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
+        run: CC=clang CXX=clang++ FUZZ_COV_CORPORA="$RUNNER_TEMP/campaign" FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
 
   coverage-macos:
     name: nightly fuzz coverage (macOS)
     needs: fuzz-macos
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
     steps:
@@ -933,5 +968,11 @@ jobs:
           done
           exit "$missing"
 
+      - name: Download the night's campaign corpora
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: corpus-macos-*
+          path: ${{ runner.temp }}/campaign
+
       - name: Fuzz coverage
-        run: CC=clang CXX=clang++ FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh
+        run: CC=clang CXX=clang++ FUZZ_COV_CORPORA="$RUNNER_TEMP/campaign" FUZZ_COV_SUMMARY="$GITHUB_STEP_SUMMARY" tools/fuzz_coverage.sh

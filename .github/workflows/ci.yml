@@ -3800,6 +3800,22 @@ jobs:
           python3 tools/check_msvc_crt.py --self-test
           python3 tools/check_msvc_crt.py
 
+      # tools/check_fuzz_stats.py and tools/check_fuzz_coverage.py hold
+      # fuzz-nightly.yml's legs and coverage jobs to their floor tables; their
+      # self-tests plant each refusal and check the committed tables give
+      # every harness a row, so a new harness without one fails here, per
+      # commit, not on the night.
+      - name: Test the fuzz floor checkers' verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for checker in check_fuzz_stats check_fuzz_coverage; do
+            output="$(python3 "tools/$checker.py" --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+            printf '%s\n' "$output"
+            grep -Eq "^$checker self-test: [1-9][0-9]* cases, 0 failed\$" <<<"$output"
+          done
+
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
       # Python and Go file names its job count (a bare one is unbounded under
