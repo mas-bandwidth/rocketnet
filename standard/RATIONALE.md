@@ -784,8 +784,10 @@ proportionally less below the bound; its client sends again. The factor 16 is a 
 bound, not a measured optimum. The check sits before the cookie MAC, so a refusal costs
 one hash at most, and it does not spend the handshake work budget below, so a cookie
 flood cannot starve verified requests and a spent budget does not stop cookies. The
-refusal has no counter of its own: the request is counted by its cookie's reason, as
-before, so no existing counter changes what it means. * **A
+request is counted by its cookie's reason, as before, so no existing counter changes
+what it means, and the refusal is counted once more by a counter of its own,
+`CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, outside the request family, so that a
+collision is visible by name. * **A
 server should bound the handshake work it performs in one update: at
 most 16 connection requests reaching the signature verify, per server, per update by
 default.** This check sits after the cheap rungs (the used-token lookup, the

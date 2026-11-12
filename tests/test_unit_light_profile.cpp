@@ -109,8 +109,12 @@
 // (sdk/rocketnet_client_io.h, receive_discarded_at_stop, 8 bytes), adding 64
 // to the client (its object's 64-byte rounding) and nothing to the server
 // (measured); the probe's actual= line is 15036490.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987914 )
+// The appended counter CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD grows every
+// counter block by 8 bytes, adding 64 to the server and 64 to the client
+// (their objects' 64-byte rounding) (measured); the probe's actual= lines
+// are 1469501215 and 15036554.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -179,6 +183,10 @@
 // rounding: a development Debug build reads 3111676787, 64 above a
 // production Release build's unchanged 3111676723 (measured, gcc). The pin
 // is the higher figure less the slack, as the check is an upper bound.
+// The appended counter CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD grows every
+// counter block by 8 bytes, which crosses the server transport's 64-byte
+// rounding: the development Debug build reads 3111676851 (measured, gcc);
+// the client is unchanged (its rounding holds it).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes. glibc's pthread_mutex_t is 48 bytes on aarch64
 // and 40 on x86-64, so the thread record each worker allocates
@@ -191,9 +199,9 @@
 // is 56 above 3111676723. This figure is the development Debug figure above
 // plus those 56 bytes, less the slack. It is computed, not read on a
 // Graviton.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628267ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628331ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628211ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628275ULL )
 #endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )

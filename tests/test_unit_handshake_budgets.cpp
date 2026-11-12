@@ -1530,6 +1530,59 @@ static void test_handshake_cookie_reply_limit_fresh_every_update()
 
 REGISTER_UNIT_TEST( test_handshake_cookie_reply_limit_fresh_every_update );
 
+// two sources whose bits collide: the harness's source key is all zero, so
+// the keyed hash is fixed and a second source on the first one's bit is
+// found by walking its port. In one update the first source is answered and
+// the second's request is withheld, counted by its cookie reason and by
+// CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD; in the next update the second
+// source's request is answered. A source's own second request in an update
+// is withheld and counted the same way.
+
+static void test_handshake_cookie_reply_withheld_is_counted()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int first_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &test.client_address );
+    check( first_index >= 0 );
+
+    struct rocketnet_address_t collider;
+    check( rocketnet_address_parse( &collider, "198.51.100.8:1" ) );
+    bool found = false;
+    for ( int port = 1; port <= 65535; port++ )
+    {
+        collider.port = (uint16_t) port;
+        if ( rocketnet_server_protocol_cookie_reply_source_index( &test.server, &collider ) == first_index )
+        {
+            found = true;
+            break;
+        }
+    }
+    check( found );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xF0000, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 0 );
+
+    check( budgets_send_cookieless( &test, &collider, 0xF0001, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 2 );
+
+    check( budgets_send_cookieless( &test, &test.client_address, 0xF0002, 1000.0 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 2 );
+
+    // the next update: the withheld source's next request is answered
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+    check( budgets_send_cookieless( &test, &collider, 0xF0003, 1000.1 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD] == 2 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 4 );
+
+    rocketnet_counters_assert_conserved( &test.counters );
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_cookie_reply_withheld_is_counted );
+
 // the update clears the bitmap only after an update in which a cookie reply
 // was considered (it is already clear otherwise): a word the harness marks
 // after an idle update is left as it was, and the update after a considered

@@ -664,9 +664,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
             // the cookie reply limit of this update, checked before the fresh
             // mac so a refusal costs at most the one index hash: one reply
             // per source address and port (proofs/tla/RNCookieReplyLimits.tla
-            // CookieRequest). Dropped unanswered; the request is counted once,
-            // by its cookie reason above, and the refusal has no counter of
-            // its own. The client sends again at its send rate.
+            // CookieRequest). Dropped unanswered, counted by its cookie reason
+            // above and as COOKIE_REPLY_WITHHELD; the client sends again.
 
             if ( server->cookie_reply_sources )
             {
@@ -674,6 +673,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
                 const int index = rocketnet_server_protocol_cookie_reply_source_index( server, from );
                 if ( index < 0 || ( server->cookie_reply_sources[index >> 6] & ( 1ULL << ( index & 63 ) ) ) != 0 )
                 {
+                    counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD]++;
                     return ROCKETNET_SERVER_PROCESS_IGNORED;
                 }
                 server->cookie_reply_sources[index >> 6] |= 1ULL << ( index & 63 );
