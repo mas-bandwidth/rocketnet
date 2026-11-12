@@ -7,6 +7,7 @@ No network, no clock, no git: tools/release_testkit.py's FakeApi answers.
 
 import datetime
 import io
+import itertools
 import sys
 import unittest
 from pathlib import Path
@@ -23,8 +24,9 @@ REPO = "mas-bandwidth/rocketnet"
 
 def run_release(api, version=VERSION, ref=SHA, dry_run=True, **kw):
     out = io.StringIO()
+    ticks = itertools.count(0, 60)   # a minute per look: a wait that never ends hits the deadline
     code = release.release(api, REPO, version, ref, dry_run=dry_run, out=out, now=NOW,
-                           sleep=lambda s: None, clock=kw.pop("clock", lambda: 0), **kw)
+                           sleep=lambda s: None, clock=kw.pop("clock", lambda: next(ticks)), **kw)
     return code, out.getvalue()
 
 
