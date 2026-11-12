@@ -1754,7 +1754,7 @@ struct rocketnet_server_config_t
     /// the client sends it again and a later update processes it, so a mass
     /// join or a flood of requests spreads across updates. The game backend
     /// is expected to spread connect token issue over time when many clients
-    /// join at once (docs/PRODUCTION.md, "Spread joins over time").
+    /// join at once (the production guide, "Spread joins over time").
 
     int handshakes_per_update;
 
@@ -1963,7 +1963,7 @@ struct rocketnet_connect_token_config_t
     /// positive. Default is 10. The client uses it as given; the server
     /// caps it at its max_timeout_seconds. When many clients join one server
     /// at once, spread their tokens' issue over time so each handshake ends
-    /// inside this timeout (docs/PRODUCTION.md, "Spread joins over time").
+    /// inside this timeout (the production guide, "Spread joins over time").
 
     int timeout_seconds;
 
