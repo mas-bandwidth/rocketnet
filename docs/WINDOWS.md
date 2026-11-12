@@ -231,3 +231,9 @@ How to read them:
 - The functional suite has timing bounds. On a loaded host rerun a case that
   failed on time on its own, with `functional.exe --run <case>`, before
   reading it as a defect.
+- The development Debug functional suite (`cmake --build build --config Debug
+  --parallel 4`, then `bin\Debug\functional.exe`) runs with
+  `set ROCKETNET_TEST_CASE_TIME_SCALE=2`, as the nightly Linux Debug functional
+  row does. Its `test_unit_case_memory` row runs the whole Debug unit suite in
+  one case, about 130 s on the fleet Windows host, over the 120 s case limit
+  at scale 1. Clear it afterwards with `set ROCKETNET_TEST_CASE_TIME_SCALE=`.

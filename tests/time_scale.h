@@ -52,7 +52,8 @@
 // functional runs set ROCKETNET_TEST_CASE_TIME_SCALE (30, a one-hour case
 // limit), the nightly Linux threaded TSan leg sets 4 (nightly.yml), the
 // nightly Linux Debug and LSan functional runs set 2 (ci.yml under full,
-// nightly-leaks.yml); every other run leaves it unset or empty. Unset or
+// nightly-leaks.yml), and so does the Windows development Debug functional
+// run (docs/WINDOWS.md); every other run leaves it unset or empty. Unset or
 // empty, the scale is 1.
 // Set, it is a number over 0 and at most 1000; anything else returns 0 with
 // the scale at 1, and the caller refuses to run. The suite runner's case
