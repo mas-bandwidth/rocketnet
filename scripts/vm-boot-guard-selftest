@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# Controls for scripts/vm-boot-guard on fake guests: real processes, a
+# two-second boot deadline, no VM, no network; about 20 seconds in all.
+#
+#   - a guest that never writes its marker is killed at the deadline, with
+#     every process of its group, and booted again until the attempts run out;
+#     the guard then exits 125 naming the failure
+#   - a guest that writes its marker and then runs well past the deadline is
+#     never killed, and its own exit status comes back
+#   - a guest that fails to boot once and boots the second time passes
+#   - a command that exits before writing its marker is a failed boot, retried
+#   - a TERM to the guard kills the guest's group before the guard exits
+#   - transport-cells-repeat's xdp cell, on a fake vng that never boots, with
+#     ROCKETNET_NIGHTLY_NO_TIMEOUT=1, fails every case of the run by name
+#     instead of waiting; on a fake vng that boots and runs its cases past the
+#     deadline, the cases pass
+
+set -u
+
+here=$( cd "$( dirname "$0" )" && pwd )
+guard="$here/vm-boot-guard"
+fail=0
+
+say()
+{
+    echo "vm-boot-guard-selftest: $*" >&2
+    fail=1
+}
+
+alive() { kill -0 "$1" 2> /dev/null; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# a fake guest. never: starts a grandchild, records both pids, never writes the
+# marker. boots: writes the marker, then runs for SECONDS seconds and exits
+# with STATUS. late: never boots on its first run (a count file), boots on the second.
+cat > "$tmp/guest" <<'EOF'
+#!/usr/bin/env bash
+mode=$1; marker=$2; dir=$3
+case "$mode" in
+    never)
+        sleep 1000 &
+        echo "$$ $!" >> "$dir/pids"
+        wait
+        ;;
+    boots)
+        : > "$marker"
+        sleep "$4"
+        exit "$5"
+        ;;
+    late)
+        n=$(cat "$dir/count" 2> /dev/null || echo 0)
+        echo $((n + 1)) > "$dir/count"
+        if [ "$n" = 0 ]; then sleep 1000; fi
+        : > "$marker"
+        exit 0
+        ;;
+    quits)
+        exit 7
+        ;;
+esac
+EOF
+chmod +x "$tmp/guest"
+
+# 1. never boots: three attempts, each killed at the deadline with its grandchild
+start=$SECONDS
+"$guard" --marker "$tmp/m1" --deadline 2 --attempts 3 -- "$tmp/guest" never "$tmp/m1" "$tmp" > "$tmp/out1" 2>&1
+rc=$?
+took=$((SECONDS - start))
+[ "$rc" = 125 ] || say "a guest that never booted exited $rc, not 125"
+[ "$(grep -c 'guest did not boot: no marker' "$tmp/out1")" = 3 ] || say "a guest that never booted was not killed at the deadline three times: $(cat "$tmp/out1")"
+grep -q 'VM-BOOT-GUARD guest did not boot in 3 attempts (deadline 2 s each)' "$tmp/out1" || say "the final failure was not named: $(cat "$tmp/out1")"
+[ "$(wc -l < "$tmp/pids" | tr -d ' ')" = 3 ] || say "the guest was not started three times"
+[ "$took" -lt 25 ] || say "three 2 s attempts took $took s"
+for pid in $(cat "$tmp/pids"); do
+    alive "$pid" && say "process $pid of a killed guest's group is still running"
+done
+rm -f "$tmp/pids"
+
+# 2. boots, then runs three times the deadline: never killed, its status comes back
+start=$SECONDS
+"$guard" --marker "$tmp/m2" --deadline 2 --attempts 3 -- "$tmp/guest" boots "$tmp/m2" "$tmp" 6 3 > "$tmp/out2" 2>&1
+rc=$?
+took=$((SECONDS - start))
+[ "$rc" = 3 ] || say "a booted guest's status 3 came back as $rc: $(cat "$tmp/out2")"
+[ "$took" -ge 6 ] || say "a booted guest that runs 6 s was cut short after $took s"
+grep -q 'did not boot' "$tmp/out2" && say "a booted guest was counted as a failed boot: $(cat "$tmp/out2")"
+grep -q 'attempt 1/3: guest started' "$tmp/out2" || say "the boot was not reported: $(cat "$tmp/out2")"
+
+# 2b. the same with status 0
+"$guard" --marker "$tmp/m2" --deadline 2 -- "$tmp/guest" boots "$tmp/m2" "$tmp" 3 0 > "$tmp/out2b" 2>&1 || say "a booted guest that passed exited $?"
+
+# 3. fails to boot once, boots on the retry
+"$guard" --marker "$tmp/m3" --deadline 2 --attempts 3 -- "$tmp/guest" late "$tmp/m3" "$tmp" > "$tmp/out3" 2>&1
+rc=$?
+[ "$rc" = 0 ] || say "a guest that booted on its second attempt exited $rc: $(cat "$tmp/out3")"
+[ "$(grep -c 'guest did not boot' "$tmp/out3")" = 1 ] || say "the first, failed boot was not recorded once: $(cat "$tmp/out3")"
+grep -q 'attempt 2/3: guest started' "$tmp/out3" || say "the second boot was not reported: $(cat "$tmp/out3")"
+
+# 4. exits before the marker: a failed boot, retried, then 125
+"$guard" --marker "$tmp/m4" --deadline 2 --attempts 2 -- "$tmp/guest" quits "$tmp/m4" "$tmp" > "$tmp/out4" 2>&1
+rc=$?
+[ "$rc" = 125 ] || say "a command that exited before its marker exited $rc, not 125"
+[ "$(grep -c 'exited (7) before writing the marker' "$tmp/out4")" = 2 ] || say "an early exit was not a retried failed boot: $(cat "$tmp/out4")"
+
+# 5. ROCKETNET_VM_BOOT_DEADLINE and ROCKETNET_VM_BOOT_ATTEMPTS set the defaults
+ROCKETNET_VM_BOOT_DEADLINE=1 ROCKETNET_VM_BOOT_ATTEMPTS=1 "$guard" --marker "$tmp/m5" -- "$tmp/guest" never "$tmp/m5" "$tmp" > "$tmp/out5" 2>&1
+grep -q 'did not boot in 1 attempts (deadline 1 s each)' "$tmp/out5" || say "the environment defaults were not used: $(cat "$tmp/out5")"
+for pid in $(cat "$tmp/pids"); do
+    alive "$pid" && say "process $pid of a killed guest's group is still running"
+done
+rm -f "$tmp/pids"
+
+# 6. a TERM to the guard kills the guest's group
+"$guard" --marker "$tmp/m6" --deadline 60 -- "$tmp/guest" never "$tmp/m6" "$tmp" > "$tmp/out6" 2>&1 &
+guard_pid=$!
+n=0
+while [ ! -s "$tmp/pids" ] && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+kill -TERM "$guard_pid"
+wait "$guard_pid"
+rc=$?
+[ "$rc" = 143 ] || say "a guard sent TERM exited $rc, not 143"
+for pid in $(cat "$tmp/pids" 2> /dev/null); do
+    alive "$pid" && say "process $pid outlived a guard sent TERM"
+done
+
+# 7. refusals
+"$guard" --deadline 2 -- true > /dev/null 2>&1 && say "a guard with no marker ran"
+"$guard" --marker "$tmp/m7" --deadline 0 -- true > /dev/null 2>&1 && say "a zero deadline was accepted"
+"$guard" --marker "$tmp/m7" > /dev/null 2>&1 && say "a guard with no command ran"
+
+# 8. transport-cells-repeat's xdp cell through fake guests, under the nightly opt-in
+repo=$( cd "$here/.." && pwd )
+work="$tmp/cells"
+mkdir -p "$work/scripts" "$work/bin" "$work/.github/workflows" "$work/tests/functional" "$work/fakebin"
+cp "$repo/scripts/transport-cells-repeat" "$repo/scripts/vm-boot-guard" "$work/scripts/"
+printf '#!/bin/sh\n' > "$work/scripts/vm-tier-missing"
+chmod +x "$work/scripts/vm-tier-missing"
+cat > "$work/.github/workflows/ci.yml" <<'EOF'
+jobs:
+  matrix:
+    steps:
+      - name: Transport family matrix
+        env:
+          TRANSPORT_MATRIX_LINUX: |
+            xdp portable
+        run: |
+          socket_cases="test_socket_a"
+          xdp_cases="test_xdp_a test_xdp_b"
+EOF
+printf '    { "test_xdp_a", fn, rocketnet_test_xdp_veth_runs_here },\n    { "test_xdp_b", fn, rocketnet_test_xdp_veth_runs_here },\n' > "$work/tests/functional/rocketnet_functional_tests.cpp"
+printf '#!/bin/sh\nsleep "${FAKE_CASE_SECONDS:-0}"\necho "$2"\n' > "$work/bin/functional"
+chmod +x "$work/bin/functional"
+# the fake vng: never boots, or boots and runs the guest command (the words after --)
+cat > "$work/fakebin/vng" <<'EOF'
+#!/bin/sh
+[ "${FAKE_VNG:-}" = never ] && exec sleep 1000
+while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done
+shift
+exec "$@"
+EOF
+printf '#!/bin/sh\nexec "$@"\n' > "$work/fakebin/sudo"
+chmod +x "$work/fakebin/vng" "$work/fakebin/sudo"
+if [ "$(uname -s)" = Linux ]; then
+    start=$SECONDS
+    ( cd "$work" && PATH="$work/fakebin:$PATH" FAKE_VNG=never ROCKETNET_NIGHTLY_NO_TIMEOUT=1 ROCKETNET_VM_BOOT_DEADLINE=2 \
+        scripts/transport-cells-repeat --runs 1 --out "$work/out-never" ) > "$tmp/out8" 2>&1
+    rc=$?
+    took=$((SECONDS - start))
+    [ "$rc" = 1 ] || say "transport-cells-repeat with a guest that never boots exited $rc, not 1: $(cat "$tmp/out8")"
+    [ "$took" -lt 40 ] || say "transport-cells-repeat with a guest that never boots took $took s"
+    grep -q 'XDP-GUEST-DID-NOT-BOOT cell=xdp/portable run=1' "$tmp/out8" || say "transport-cells-repeat did not name the failed boot: $(cat "$tmp/out8")"
+    grep -q 'CELL xdp/portable test_xdp_a runs=1 pass=0 fail=1' "$tmp/out8" || say "the cases of a run whose guest never booted did not fail: $(cat "$tmp/out8")"
+    first_fail=$(find "$work/out-never" -name 'xdp.portable.test_xdp_a.first-fail.log' | head -n 1)
+    grep -q 'guest did not boot in 3 attempts' "$first_fail" 2> /dev/null || say "the failing case's log does not say the guest did not boot"
+    ( cd "$work" && PATH="$work/fakebin:$PATH" FAKE_VNG=boots FAKE_CASE_SECONDS=2 ROCKETNET_NIGHTLY_NO_TIMEOUT=1 ROCKETNET_VM_BOOT_DEADLINE=2 \
+        scripts/transport-cells-repeat --runs 1 --out "$work/out-boots" ) > "$tmp/out9" 2>&1
+    rc=$?
+    [ "$rc" = 0 ] || say "transport-cells-repeat with a guest whose cases outlast the boot deadline exited $rc: $(cat "$tmp/out9")"
+    grep -q 'CELL xdp/portable test_xdp_b runs=1 pass=1 fail=0' "$tmp/out9" || say "a booted guest's cases did not pass: $(cat "$tmp/out9")"
+else
+    echo "vm-boot-guard-selftest: transport-cells-repeat's xdp cell controls run on Linux only (this host is $(uname -s))"
+fi
+
+if [ "$fail" = 0 ]; then
+    echo "ok vm-boot-guard selftest: a guest with no marker is killed at the deadline and retried, a booted guest is never cut short"
+fi
+exit "$fail"

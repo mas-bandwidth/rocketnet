@@ -20,7 +20,11 @@
 #   --vng PATH           virtme-ng binary name or path (default: vng)
 #   --memory SIZE        guest memory size passed to vng --memory (default: 4G)
 #   --cpus COUNT         guest CPU count passed to vng --cpus (default: 4; must be >= 4)
-#   --timeout SECONDS    guest wall-clock timeout in seconds (default: 180)
+#   --timeout SECONDS    guest wall-clock timeout in seconds (default: 180;
+#                        ROCKETNET_NIGHTLY_NO_TIMEOUT=1 lifts it). The boot
+#                        has its own deadline either way: scripts/vm-boot-guard
+#                        reboots a guest that has not started in 120 s, three
+#                        attempts, then fails by name
 #   --verify-log FILE    validate an existing or synthetic output log without
 #                        starting a guest or sending kernel traffic
 #   --verify-exit CODE   simulated process exit status for --verify-log (default: 0)
@@ -285,10 +289,16 @@ GUEST_STATUS="$ARTIFACT_DIR/guest.status"
 GUEST_LOG="$ARTIFACT_DIR/guest.log"
 GUEST_KERNEL="$ARTIFACT_DIR/guest-kernel.txt"
 GUEST_CLEANUP="$ARTIFACT_DIR/guest-cleanup.txt"
-rm -f "$GUEST_STATUS" "$GUEST_LOG" "$GUEST_KERNEL" "$GUEST_CLEANUP"
+GUEST_STARTED="$ARTIFACT_DIR/guest.started"
+rm -f "$GUEST_STATUS" "$GUEST_LOG" "$GUEST_KERNEL" "$GUEST_CLEANUP" "$GUEST_STARTED"
 
+# The guest's first act writes $GUEST_STARTED: scripts/vm-boot-guard kills and
+# boots again a guest that has not written it within the boot deadline (120 s,
+# three attempts), which ROCKETNET_NIGHTLY_NO_TIMEOUT=1 does not lift; once it
+# exists, only --timeout (and nothing under the nightly opt-in) bounds the run.
 cat > "$GUEST_SCRIPT" <<EOF
 #!/usr/bin/env bash
+: > "$GUEST_STARTED"
 set -u
 {
     echo "guest_uname_r=\$(uname -r)"
@@ -327,7 +337,7 @@ esac
 
 {
     printf 'vng_command:'
-    for arg in ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$VNG_BIN"; do
+    for arg in "$ROOT_DIR/scripts/vm-boot-guard" --marker "$GUEST_STARTED" -- ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$VNG_BIN"; do
         printf ' %q' "$arg"
     done
     printf ' --run %q --memory %s --cpus %s --append %q' \
@@ -345,6 +355,7 @@ trap 'rm -rf "$SHORT_DIR"' EXIT
 
 (
     cd "$SHORT_DIR" && \
+    "$ROOT_DIR/scripts/vm-boot-guard" --marker "$GUEST_STARTED" -- \
     ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} "$VNG_BIN" \
         --run "$VM_KERNEL" \
         --memory "$GUEST_MEMORY" \
@@ -375,6 +386,9 @@ fi
 host_snapshot "after" >> "$ARTIFACT_DIR/cleanup.txt"
 
 GUEST_EXIT=$(sed -nE 's/^guest_test_exit=([0-9]+)$/\1/p' "$GUEST_STATUS" 2>/dev/null | tail -n 1)
+if [ -z "$GUEST_EXIT" ] && [ "$VNG_EXIT" -eq 125 ] && grep -q '^VM-BOOT-GUARD guest did not boot' "$ARTIFACT_DIR/vng.log"; then
+    fail_qualification "$(grep '^VM-BOOT-GUARD guest did not boot' "$ARTIFACT_DIR/vng.log" | tail -n 1) (see $ARTIFACT_DIR/vng.log)"
+fi
 if [ -z "$GUEST_EXIT" ]; then
     fail_qualification "virtme-ng guest did not record a test_xdp_filter exit status (vng exit=$VNG_EXIT; see $ARTIFACT_DIR/vng.log)"
 fi

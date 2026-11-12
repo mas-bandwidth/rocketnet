@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+#
+# vm-boot-guard: a deadline on a test guest's BOOT, never on its tests.
+#
+#   scripts/vm-boot-guard --marker PATH [--deadline S] [--attempts N] -- COMMAND [ARG...]
+#
+# COMMAND boots a guest (vng, qemu) whose guest-side command writes PATH as
+# its very first action. The guard removes PATH, starts COMMAND in a process
+# group of its own with stdin closed, and waits for PATH to appear:
+#
+#   - PATH appears: the guest booted. From then on nothing is bounded: the
+#     guard waits for COMMAND however long its cases take and exits with
+#     COMMAND's status. A limit on the cases, where the caller keeps one
+#     (a `timeout` inside COMMAND), is the caller's.
+#   - PATH is absent after the deadline (default 120 s), or COMMAND exits
+#     without writing it: the guest did not boot. The guard kills COMMAND's
+#     whole process group (TERM, then KILL two seconds later), prints
+#
+#       VM-BOOT-GUARD attempt A/N: guest did not boot: <why>
+#
+#     and boots again, up to N attempts (default 3). When every attempt
+#     fails it prints
+#
+#       VM-BOOT-GUARD guest did not boot in N attempts (deadline S s each): COMMAND
+#
+#     and exits 125.
+#
+# ROCKETNET_NIGHTLY_NO_TIMEOUT does not touch this deadline: that opt-in lifts
+# limits on test cases, and a guest that never booted runs no case. A TERM,
+# INT or HUP to the guard (a cancelled CI step) kills COMMAND's group first.
+# The defaults can be changed for a whole run with ROCKETNET_VM_BOOT_DEADLINE
+# and ROCKETNET_VM_BOOT_ATTEMPTS (the self-test and the callers' fake-guest
+# tests use them); --deadline and --attempts win over both.
+#
+# scripts/vm-boot-guard-selftest holds the controls. Bash 3.2 and later.
+
+set -uo pipefail
+
+marker=""
+deadline=${ROCKETNET_VM_BOOT_DEADLINE:-120}
+attempts=${ROCKETNET_VM_BOOT_ATTEMPTS:-3}
+grace=2
+
+usage() { sed -n '3,/^# scripts\/vm-boot-guard-selftest/s/^# \{0,1\}//p' "$0"; exit "${1:-2}"; }
+refuse() { echo "vm-boot-guard: $*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --marker) [ $# -ge 2 ] || refuse "--marker needs a path"; marker=$2; shift 2 ;;
+        --deadline) [ $# -ge 2 ] || refuse "--deadline needs seconds"; deadline=$2; shift 2 ;;
+        --attempts) [ $# -ge 2 ] || refuse "--attempts needs a count"; attempts=$2; shift 2 ;;
+        -h|--help) usage 0 ;;
+        --) shift; break ;;
+        *) refuse "unknown option $1 (the command follows --)" ;;
+    esac
+done
+
+[ -n "$marker" ] || refuse "--marker is required"
+[ $# -gt 0 ] || refuse "no command after --"
+case "$deadline" in ''|*[!0-9]*|0) refuse "--deadline must be a positive whole number of seconds" ;; esac
+case "$attempts" in ''|*[!0-9]*|0) refuse "--attempts must be a positive integer" ;; esac
+
+# each background job gets a process group of its own, so the group holds
+# the vng, virtme-run, qemu and virtiofsd processes the command starts
+set -m
+
+child=""
+
+kill_group() { # pgid
+    kill -TERM -- "-$1" 2> /dev/null
+    sleep "$grace"
+    kill -KILL -- "-$1" 2> /dev/null
+    wait "$1" 2> /dev/null
+}
+
+stop() { # status
+    if [ -n "$child" ]; then kill_group "$child"; fi
+    exit "$1"
+}
+trap 'stop 143' TERM
+trap 'stop 130' INT
+trap 'stop 129' HUP
+
+attempt=1
+while [ "$attempt" -le "$attempts" ]; do
+    rm -f "$marker"
+    [ ! -e "$marker" ] || refuse "cannot remove a stale marker $marker"
+    "$@" < /dev/null &
+    child=$!
+    start=$SECONDS
+    while [ ! -e "$marker" ] && kill -0 "$child" 2> /dev/null && [ $((SECONDS - start)) -lt "$deadline" ]; do
+        sleep 1
+    done
+    if [ -e "$marker" ]; then
+        echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started (marker after about $((SECONDS - start)) s); no deadline from here" >&2
+        wait "$child"
+        rc=$?
+        child=""
+        exit "$rc"
+    fi
+    if kill -0 "$child" 2> /dev/null; then
+        why="no marker $marker after $deadline s; killed the command's process group"
+        kill_group "$child"
+    else
+        wait "$child"
+        rc=$?
+        # the marker may land in the moment between the last look and the exit
+        if [ -e "$marker" ]; then
+            child=""
+            echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started and finished" >&2
+            exit "$rc"
+        fi
+        why="the command exited ($rc) before writing the marker $marker"
+    fi
+    child=""
+    echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest did not boot: $why" >&2
+    attempt=$((attempt + 1))
+done
+
+echo "VM-BOOT-GUARD guest did not boot in $attempts attempts (deadline $deadline s each): $*" >&2
+exit 125

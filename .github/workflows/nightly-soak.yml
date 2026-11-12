@@ -195,8 +195,15 @@ jobs:
           echo "guest dmesg tail:"
           dmesg | tail -n 50
           GUEST
-          vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+          # the guest's first act writes $guest/started: scripts/vm-boot-guard
+          # kills and boots again a guest that has not written it in 120 s
+          # (three attempts) and bounds nothing once it has, so the load run
+          # itself keeps no limit
+          scripts/vm-boot-guard --marker "$guest/started" -- \
+            vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+            sh -c ': > "$1"; shift; exec "$@"' sh "$guest/started" \
             sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || true
           peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" 2>/dev/null | tail -n 1) || true
           echo "LOAD cell=xdp guest_peak_rss_kib=${peak_kib:-unknown} need_bytes=$need_bytes guest_memory=${guest_gib}G"
           if [ -n "${peak_kib:-}" ] && [ $((peak_kib * 1024)) -gt $(( 1000 * touched_per_client_bytes )) ]; then
