@@ -153,6 +153,7 @@ static int trace_iocp_admit( uint64_t seed, int steps, const char * out )
     records.push_back( iocp_admit_record( walk ) );
 
     int arrivals = 0;
+    int plant_fired = 0;
     for ( int step = 0; step < steps; ++step )
     {
         // Drain one step in five while the bank holds anything, so the
@@ -177,6 +178,8 @@ static int trace_iocp_admit( uint64_t seed, int steps, const char * out )
         if ( drop == ROCKETNET_RECEIVE_ACCEPT )
         {
             walk.bank.push_back( kind );
+            // garbage banked: only the plant's order lets it in
+            plant_fired += kind == IOCP_ADMIT_GARBAGE ? 1 : 0;
         }
         else if ( drop == ROCKETNET_RECEIVE_DROP_BANK_FULL )
         {
@@ -194,6 +197,10 @@ static int trace_iocp_admit( uint64_t seed, int steps, const char * out )
         }
         records.push_back( iocp_admit_record( walk ) );
     }
+
+    // the plant build must fire for its trace to be a witness; the clean
+    // build never does
+    printf( "PLANT-FIRED %d\n", plant_fired );
 
     char constants[512];
     snprintf( constants, sizeof( constants ),
@@ -331,6 +338,7 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
     records.push_back( iocp_lanes_record( walk ) );
 
     int64_t starts = 0;
+    int plant_fired = 0;
     bool refused = false;
     for ( int step = 0; step < steps && !refused; ++step )
     {
@@ -379,12 +387,22 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
             {
                 // only a release to the wrong lane finds it full; the walk
                 // stops, its records so far are the witness
+                plant_fired++;
                 refused = true;
                 continue;
             }
+            // the release landed in the lane of its carve, or the plant moved it
+            const int own_lane = op / IOCP_LANES_SIZE;
+            int indexes[IOCP_LANES_LANES * IOCP_LANES_SIZE];
+            const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, own_lane, indexes, IOCP_LANES_LANES * IOCP_LANES_SIZE );
+            plant_fired += count > 0 && indexes[count - 1] == op ? 0 : 1;
         }
         records.push_back( iocp_lanes_record( walk ) );
     }
+
+    // the plant build must fire for its trace to be a witness; the clean
+    // build never does
+    printf( "PLANT-FIRED %d\n", plant_fired );
 
     std::string dest_lane = "MCDestLane == (";
     for ( int d = 1; d <= IOCP_LANES_DESTS; ++d )

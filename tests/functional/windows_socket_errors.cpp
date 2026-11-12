@@ -348,16 +348,14 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
 
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
-        uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
-        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
+        // Every datagram IOCP drops is already in a public refusal counter:
+        // sizes through PREFILTER_TOO_SHORT and TOO_LARGE, the completion
+        // worker's prefilter, BANK_FULL and RECEIVE_FAILED through
+        // receive_drop_totals. Its RECEIVE_DROPPED counts the same datagrams
+        // again for its direct readers, so it adds nothing here.
 
-        // Size drops now also enter the server's public prefilter counters.
-        // Keep this aggregate one event per datagram while retaining the
-        // transport's legacy RECEIVE_DROPPED total for its direct readers.
-
-        return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
-               counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+        (void) instance;
+        return 0;
     }
 
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
