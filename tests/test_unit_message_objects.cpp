@@ -23,6 +23,13 @@
 
 #include <vector>
 
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+#include <sanitizer/msan_interface.h>
+#define MO_TEST_MSAN 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
+
 #include "test_unit_registry.h"
 #include "unit_arena.h"
 #if ROCKETNET_DEV
@@ -42,6 +49,24 @@
 #include "loopback_hub.h"
 
 #define check rocketnet_unit_check
+
+// Whether a region's memory is the same bytes as a copy taken of it earlier. A region
+// is allocated unwritten and the library writes only what it uses, so both
+// sides can hold bytes nothing wrote; the claim (nothing changed them) holds
+// for those too, but under MemorySanitizer a compare of them is a use of
+// uninitialised memory. The compare runs on copies, and only the copies are
+// unpoisoned: the live region keeps its shadow, so a library read of a byte
+// it never wrote is still reported.
+static bool mo_same_bytes( const uint8_t * a, const uint8_t * b, size_t bytes )
+{
+    std::vector<uint8_t> x( a, a + bytes );
+    std::vector<uint8_t> y( b, b + bytes );
+#if defined( MO_TEST_MSAN )
+    __msan_unpoison( x.data(), bytes );
+    __msan_unpoison( y.data(), bytes );
+#endif // #if defined( MO_TEST_MSAN )
+    return bytes == 0 || memcmp( x.data(), y.data(), bytes ) == 0;
+}
 
 // ---------------------------------------------------------------------------
 // the in-memory transport pair
@@ -1738,7 +1763,7 @@ static int mo_send_side_check_refused( const mo_send_side_t * before, const rn_m
     check( connection->send_error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     check( before->region_memory.size() == region->bytes );
-    check( memcmp( before->region_memory.data(), region->base, region->bytes ) == 0 );
+    check( mo_same_bytes( before->region_memory.data(), region->base, region->bytes ) );
     check( memcmp( before->region.data(), region, sizeof( *region ) ) == 0 );
     check( memcmp( before->hot.data(), &object->hot_connections[index], sizeof( object->hot_connections[index] ) ) == 0 );
 
@@ -3652,7 +3677,7 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     check( rn_region_send_alloc( region, 100 ) == RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
-    check( memcmp( memory_before.data(), region->base, region->bytes ) == 0 );
+    check( mo_same_bytes( memory_before.data(), region->base, region->bytes ) );
     check( memcmp( region_before.data(), region, sizeof( *region ) ) == 0 );
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
