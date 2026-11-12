@@ -35,6 +35,11 @@ survivor fails only on a line new or modified in git diff REF HEAD; every
 other survivor is reported (results.json, --summary-md) and never fails.
 Without these two flags the campaign is the original one.
 
+--new-since REF runs, besides the slice, every mutant on a line new or modified
+in git diff REF HEAD, whatever its slice: a line is mutation-tested the night it
+lands, not only on the one night in N its slice comes round. The nightly passes
+the first-parent commit of 26 hours before (one night plus grace).
+
 Python 3 standard library only. Example:
 
   python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
@@ -246,6 +251,19 @@ def changed_lines(diff_text):
             start, count = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
             changed.setdefault(path, set()).update(range(start, start + count))
     return changed
+
+
+def on_lines(mutants, lines):
+    """The mutants on the lines of {path: set of line numbers}."""
+    return [m for m in mutants if m["line"] in lines.get(m["file"], ())]
+
+
+def git_changed_lines(ref, files):
+    diff = subprocess.run(["git", "-C", str(ROOT), "diff", "-U0", "--no-color", "--no-renames", "--no-ext-diff",
+                           ref, "HEAD", "--", *files], capture_output=True, text=True)
+    if diff.returncode != 0:
+        sys.exit(f"git diff {ref} HEAD failed: {diff.stderr.strip()}")
+    return changed_lines(diff.stdout)
 
 
 def verdict(mutant, changed, not_judged):
@@ -692,6 +710,10 @@ def self_test():
     if verdict(on2, lines, {}) != "report" or verdict(on3, lines, {}) != "fail":
         print("self-test FAILED: an unchanged line's survivor did not report or a changed line's did not fail")
         return 1
+    fresh = on_lines(first, {"plant.cpp": {3}})
+    if not fresh or any(m["line"] != 3 for m in fresh) or len(fresh) != sum(m["line"] == 3 for m in first):
+        print("self-test FAILED: --new-since did not pick exactly the mutants of the new line")
+        return 1
     if verdict(on2, None, {}) != "fail" or verdict(dict(on2, status="detected"), lines, {}) is not None:
         print("self-test FAILED: the original rule did not fail a risk survivor, or a detected mutant had a verdict")
         return 1
@@ -715,7 +737,7 @@ def self_test():
           "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers, "
           "test code is left out, "
           "--platform linux leaves out Windows sources and their headers and sets AF_XDP apart, "
-          "--changed-since fails only survivors on changed lines")
+          "--changed-since fails only survivors on changed lines, --new-since picks the mutants of new lines")
     return 0
 
 
@@ -750,6 +772,9 @@ def main():
                    help="REF: a risk-class survivor fails only on a line new or modified in git diff REF HEAD; "
                         "every other survivor is reported (results, --summary-md) and never fails. "
                         "Default: the original rule, every risk-class survivor fails")
+    p.add_argument("--new-since", default="",
+                   help="REF: also run every mutant on a line new or modified in git diff REF HEAD, whatever its "
+                        "slice (the nightly: the commit of 26 hours before, so a line is tested the night it lands)")
     p.add_argument("--summary-md", default="", help="write a Markdown summary of the verdicts here")
     args = p.parse_args()
     if args.self_test:
@@ -781,11 +806,7 @@ def main():
             print(f"not judged here (mutated, survivors listed apart, never failing): {f}: {why}", flush=True)
     changed = None
     if args.changed_since:
-        diff = subprocess.run(["git", "-C", str(ROOT), "diff", "-U0", "--no-color", "--no-renames", "--no-ext-diff",
-                               args.changed_since, "HEAD", "--", *args.files], capture_output=True, text=True)
-        if diff.returncode != 0:
-            sys.exit(f"git diff {args.changed_since} HEAD failed: {diff.stderr.strip()}")
-        changed = changed_lines(diff.stdout)
+        changed = git_changed_lines(args.changed_since, args.files)
         print(f"rule: a risk-class survivor fails only on a line changed since {args.changed_since} "
               f"({sum(len(v) for v in changed.values())} new or modified lines in {len(changed)} files); "
               "every other survivor is reported", flush=True)
@@ -802,6 +823,15 @@ def main():
     if slice_of:
         mutants = [m for m in mutants if in_slice(m, *slice_of)]
         print(f"slice {slice_of[0]}/{slice_of[1]}: {len(mutants)} of {generated} generated mutants",
+              file=sys.stderr if args.list else sys.stdout, flush=True)
+    if args.new_since:
+        new_lines = git_changed_lines(args.new_since, args.files)
+        fresh = on_lines(list(by_id.values()), new_lines)
+        have = {m["id"] for m in mutants}
+        added = [m for m in fresh if m["id"] not in have]
+        mutants = sorted(mutants + added, key=lambda m: order[id(m)])
+        print(f"new since {args.new_since}: {len(fresh)} mutants on {sum(len(v) for v in new_lines.values())} new or "
+              f"modified lines run whatever their slice ({len(added)} of them outside it)",
               file=sys.stderr if args.list else sys.stdout, flush=True)
     if args.list:
         for m in mutants:

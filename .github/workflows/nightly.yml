@@ -1050,6 +1050,14 @@ jobs:
           else
             slice_args=(--slice "$((day % slices))/$slices")
             slice="$((day % slices))/$slices"
+            # a line that landed since the night before is mutated tonight,
+            # whatever its slice: the slice alone reaches a new line's
+            # mutants on about one night in 90
+            new_since="$(git rev-list -1 --first-parent --before='26 hours ago' HEAD)"
+            if [[ -n "$new_since" ]]; then
+              slice_args+=(--new-since "$new_since")
+              slice="$slice, and every mutant on a line new since $new_since"
+            fi
             # the release before HEAD (HEAD^, so the night a release is
             # tagged judges the lines that release added)
             since="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^)"
