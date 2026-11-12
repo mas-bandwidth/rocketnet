@@ -52,7 +52,7 @@ static const struct set_t sets[] = {
     { "composed", "neon", "ref" },
     { "composed", "ref", "mul64" },
     { "composed", "neon", "mul64" },
-    { "neon-fused", "ref", "ref" },
+    { "neon-fused", "neon", "mul64" }, // the production pick; the fused pass calls neither pointer
 };
 
 static const int sizes[] = { 0, 1, 15, 16, 63, 64, 65, 191, 192, 193, 200, 256, 257, 1200, 1400 };
