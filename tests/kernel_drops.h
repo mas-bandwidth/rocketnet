@@ -227,4 +227,4 @@ static inline bool rocketnet_loss_gate_resend( struct rocketnet_loss_gate_t * ga
     return true;
 }
 
-#endif // #ifndef ROCKETNET_TESTS_KERNEL_DROPS_H
+#endif // ROCKETNET_TESTS_KERNEL_DROPS_H
