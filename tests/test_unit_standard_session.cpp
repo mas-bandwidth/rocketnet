@@ -18,6 +18,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_address.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_replay.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -189,3 +190,45 @@ static void test_standard_session_accept_payload_without_mapping_touches_nothing
 }
 
 REGISTER_UNIT_TEST( test_standard_session_accept_payload_without_mapping_touches_nothing );
+
+// An accept marks the slot's session only when it names that slot's live
+// connection: sequence 0, a slot that is not connected, and a connection id
+// that is not the slot's (a payload of the slot's earlier client) change
+// nothing. A second accept of one sequence adds no second ack debt.
+
+static void test_standard_session_accept_payload_names_the_live_connection()
+{
+    struct rocketnet_session_server_t test;
+    rocketnet_session_server_setup_clients( &test, 2 );
+
+    uint64_t connection_ids[2] = { 0x77, 0 };
+    test.server.connection_ids = connection_ids;
+
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, test.mapping_index );
+    struct rocketnet_replay_protection_t accepted_before;
+    memcpy( &accepted_before, &mapping->accepted_session, sizeof( accepted_before ) );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 0 );
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x76, 7 );
+    rocketnet_server_protocol_accept_payload( &test.server, 1, 0, 7 );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( test.server.client_slots, 1 ) );
+
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 0 );
+    rocketnet_unit_check( test.server.acks->endpoints[1].ack_debt == 0 );
+    rocketnet_unit_check( memcmp( &accepted_before, &mapping->accepted_session, sizeof( accepted_before ) ) == 0 );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 7 );
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 1 );
+    rocketnet_unit_check( rocketnet_replay_already_received( &mapping->accepted_session, 7 ) );
+
+    struct rocketnet_replay_protection_t accepted_once;
+    memcpy( &accepted_once, &mapping->accepted_session, sizeof( accepted_once ) );
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0x77, 7 );
+    rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 1 );
+    rocketnet_unit_check( memcmp( &accepted_once, &mapping->accepted_session, sizeof( accepted_once ) ) == 0 );
+
+    test.server.connection_ids = NULL;
+    rocketnet_session_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_standard_session_accept_payload_names_the_live_connection );
