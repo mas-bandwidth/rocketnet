@@ -167,6 +167,28 @@ fi
 
 ulimit -n 65536
 
+# CPU placement: the CPUs this cell was given (its nova-reserve slots, or the
+# whole machine) are split, the server on the first third (at least one) and
+# the players and hostile load on the rest, so the generators never take the
+# server's CPUs. A veth charges the receiver's softirq to the sender's CPU, so
+# server-to-client delivery is paid on the server's CPUs and client-to-server
+# on the players'; the frame time on one machine is therefore an upper bound,
+# and the frame-time cells that count run on two machines.
+cpus=()
+for range in $(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status | tr ',' ' '); do
+    first=${range%-*}
+    last=${range#*-}
+    for (( cpu = first; cpu <= last; cpu++ )); do
+        cpus+=("$cpu")
+    done
+done
+server_count=$(( ${#cpus[@]} / 3 ))
+[ "$server_count" -ge 1 ] || server_count=1
+server_cpus=$(IFS=,; echo "${cpus[*]:0:$server_count}")
+client_cpus=$(IFS=,; echo "${cpus[*]:$server_count}")
+[ -n "$client_cpus" ] || client_cpus=$server_cpus
+echo "harden_cell: cpus server=$server_cpus clients=$client_cpus" | tee -a "$out/cell.txt"
+
 # the server first; its ready line carries the key the players need
 xdp_args=()
 if [ "$xdp_queues" -gt 0 ]; then
@@ -176,7 +198,7 @@ fi
 # then the measured run
 join_seconds=$(( clients / 100 + 5 ))
 end_at=$(( $(date +%s) + join_seconds + seconds + 3 ))
-ip netns exec "$ns_s" "$tool" server --address "$address" --transport "$transport" --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" \
+ip netns exec "$ns_s" taskset -c "$server_cpus" "$tool" server --address "$address" --transport "$transport" --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" \
     --dev "$dev_s" --warm-seconds "$warm_seconds" --sample-seconds 60 "${xdp_args[@]}" "${server_shape[@]}" > "$out/server.log" 2>&1 &
 server_pid=$!
 key=""
@@ -191,7 +213,7 @@ if [ -z "$key" ]; then
     exit 1
 fi
 
-ip netns exec "$ns_c" "$tool" clients --address "$address" --key "$key" --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" \
+ip netns exec "$ns_c" taskset -c "$client_cpus" "$tool" clients --address "$address" --key "$key" --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" \
     --dev "$dev_c" "${client_shape[@]}" > "$out/clients.log" 2>&1 &
 clients_pid=$!
 
@@ -199,7 +221,7 @@ hostile_pid=""
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire
     sleep "$join_seconds"
-    ip netns exec "$ns_c" "$tool" hostile --address "$address" --key "$key" --end-at "$end_at" --pps "$hostile_pps" --sockets 256 \
+    ip netns exec "$ns_c" taskset -c "$client_cpus" "$tool" hostile --address "$address" --key "$key" --end-at "$end_at" --pps "$hostile_pps" --sockets 256 \
         --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$dev_c" > "$out/hostile.log" 2>&1 &
     hostile_pid=$!
 fi
