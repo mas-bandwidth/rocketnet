@@ -18,8 +18,9 @@
 // carries every packet of a client, in order. Fill threads acquire and seal
 // directly into the lane's transport-owned cold frames. Flush try-publishes
 // one of each lane's three compact generation-tagged index banks to that
-// lane's TX worker, which alone groups the bank by destination, coalesces and
-// posts its UDP sends; only completions return frames to the lane's bounded
+// lane's TX worker, which alone cuts the bank into runs of one destination
+// (consecutive slots until the send gather lands), coalesces and posts its
+// UDP sends; only completions return frames to the lane's bounded
 // free-reference queue.
 // Receive workers dequeue completions in batches, refuse what the stateless
 // prefilter names before a datagram takes a bank slot, and publish private
