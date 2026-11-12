@@ -7039,6 +7039,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
         rocketnet_platform_sleep( 0.001 );
     }
 
+    printf( "gso_client_wire_exchange segment=%d server=%s: server received %d of %d, client received %d of %d (sent %d, %d) in %.3f s\n",
+            segment ? 1 : 0, server_transport, server_received, TOTAL, client_received, TOTAL, client_sent, server_sent,
+            rocketnet_platform_time() - start );
     rocketnet_check( server_received == TOTAL );
     rocketnet_check( client_received == TOTAL );
 
