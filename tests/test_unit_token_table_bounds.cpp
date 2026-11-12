@@ -243,6 +243,59 @@ static void test_token_claim_probes_in_an_empty_table()
 
 REGISTER_UNIT_TEST( test_token_claim_probes_in_an_empty_table );
 
+extern "C" uint64_t rocketnet_dev_token_binding_slot_steps( const struct rocketnet_used_token_history_t * history );
+
+// The bindings' expiry floor and its scan, counted (DEV). Four bindings, one
+// expiring at 1500 and three at 3000, so the floor is 1500. At 1600 the 1500
+// binding is taken by a scan. At 1700 the floor (1500) is stale and no binding
+// has expired: one scan reads all four slots, takes the oldest and raises the
+// floor to 3000. At 1800 the floor is ahead of the clock: no scan, only the
+// two retired entries dropped from the head of the order ring.
+static void test_token_binding_floor_pays_one_scan()
+{
+    const int capacity = 4;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    const uint64_t expire[4] = { 3000, 1500, 3000, 3000 };
+    for ( int i = 0; i < capacity; ++i )
+    {
+        tt_id( id, 1 + i );
+        rocketnet_used_token_history_record( history, id, &address[0], expire[i], 1000 );
+    }
+
+    tt_id( id, 5 );
+    rocketnet_used_token_history_record( history, id, &address[0], 3000, 1600 );
+    tt_id( id, 1 );
+    check( rocketnet_used_token_history_check( history, id, &address[1], 1600 ) == 0 );
+
+    rocketnet_dev_token_table_reset_operation_counts( history );
+    tt_id( id, 6 );
+    rocketnet_used_token_history_record( history, id, &address[0], 3000, 1700 );
+    check( rocketnet_dev_token_binding_slot_steps( history ) == (uint64_t) capacity );
+    tt_id( id, 1 );
+    check( rocketnet_used_token_history_check( history, id, &address[1], 1700 ) == 1 );
+    tt_id( id, 3 );
+    check( rocketnet_used_token_history_check( history, id, &address[1], 1700 ) == 0 );
+
+    rocketnet_dev_token_table_reset_operation_counts( history );
+    tt_id( id, 7 );
+    rocketnet_used_token_history_record( history, id, &address[0], 3000, 1800 );
+    check( rocketnet_dev_token_binding_slot_steps( history ) == 2 );
+    tt_id( id, 3 );
+    check( rocketnet_used_token_history_check( history, id, &address[1], 1800 ) == 1 );
+    tt_id( id, 4 );
+    check( rocketnet_used_token_history_check( history, id, &address[1], 1800 ) == 0 );
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_token_binding_floor_pays_one_scan );
+
 #endif // #if ROCKETNET_DEV
 
 // ---- an independent model of the header's rules ----------------------------
