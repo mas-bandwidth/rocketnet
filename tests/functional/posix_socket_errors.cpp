@@ -4109,10 +4109,17 @@ static void posix_xdp_weather( int ipv6 )
         rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );
         rocketnet_server_socket_send_packets( xdp );
 
+        // send_packets hands the staged frame to the xdp worker only when it
+        // takes the queue's send_mutex and finds a spare buffer; otherwise the
+        // frame stays staged and the next call hands it over. Call it again
+        // while waiting, as a server's every tick does: a frame that is
+        // never handed over still leaves SEND_FAILED at 0, and the case red
+
         const double deadline = rocketnet_platform_time() + 5.0;
         while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before && rocketnet_platform_time() < deadline )
         {
             rocketnet_platform_sleep( 0.001 );
+            rocketnet_server_socket_send_packets( xdp );
         }
 
         xdp_send_failed = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
