@@ -183,7 +183,7 @@ template <int N> struct rocketnet_xdp_buffer_exchange_t
 
     void recycle( int index )
     {
-        rocketnet_assert( index >= 0 && index < N && free_count < N );
+        rocketnet_assert( index >= 0 && index < N && free_count < N - 1 ); // the producer holds one
         free_index[( free_head + free_count ) % N] = index;
         ++free_count;
     }
@@ -3298,6 +3298,19 @@ static void rocketnet_server_socket_test_destruct( rocketnet_server_socket_t * s
     server->~rocketnet_server_socket_t();
 }
 
+#if ROCKETNET_ASSERTS
+static int rocketnet_server_socket_test_asserts;
+
+static void rocketnet_server_socket_test_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_server_socket_test_asserts++;
+}
+#endif // #if ROCKETNET_ASSERTS
+
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_buffer_exchange()
 {
@@ -3315,6 +3328,19 @@ bool rocketnet_server_socket_test_buffer_exchange()
     exchange.recycle( 0 );
     valid &= exchange.publish() && exchange.producer == 0;
     valid &= exchange.claim() == 2;
+
+#if ROCKETNET_ASSERTS
+    // the producer always holds one buffer, so the free list holds at most
+    // N - 1: a second recycle of a claimed buffer past that is caught
+    rocketnet_server_socket_test_asserts = 0;
+    rocketnet_assert_function( rocketnet_server_socket_test_count_assert );
+    exchange.recycle( 2 );
+    exchange.recycle( 1 );
+    valid &= rocketnet_server_socket_test_asserts == 0;
+    exchange.recycle( 1 );
+    valid &= rocketnet_server_socket_test_asserts == 1;
+    rocketnet_assert_function( NULL );
+#endif // #if ROCKETNET_ASSERTS
 
     void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
     void * socket_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
