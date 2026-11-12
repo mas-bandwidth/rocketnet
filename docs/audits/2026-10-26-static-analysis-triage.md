@@ -169,6 +169,19 @@ and reports the `#error`. Configure checks the macro and leaves
 `ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
 so no CMake build reaches the directive.
 
+Corrected 2026-11-11: that disposition hid a file that was never analyzed.
+cppcheck stops a configuration at `#error`, so nothing in
+`rocketnet_server_uring_linux.cpp` after line 58 was read (an out-of-bounds
+write planted there was not reported; the same write in
+`rocketnet_server_socket_linux.cpp` was). The disposition is deleted, the gate
+now counts `preprocessorErrorDirective` as a file not analyzed, and a compile
+command that defines `ROCKETNET_IO_URING=1` gives cppcheck the
+`IORING_RECV_MULTISHOT` macro configure checked. Analyzed, the file and
+`rocketnet_uring_codec.h` report eight `dangerousTypeCast` findings and
+nothing else; each was read at its site: sockaddr_storage views and sockets
+API casts, and the receive banks carved from one allocation at their types'
+sizes. They are dispositioned under this heading.
+
 ## cppcheck 2.19 on the fleet runners
 
 Added 2026-11-09. The static-analysis job runs on the fleet's Ubuntu 26.04

@@ -290,6 +290,11 @@ def cppcheck_arguments(entry):
                 out.append(arg)
                 break
         index += 1
+    # configure defines ROCKETNET_IO_URING only against a liburing that has
+    # IORING_RECV_MULTISHOT (cmake/RocketNetDependencies.cmake); cppcheck does
+    # not read the system liburing.h, so it is given the macro configure checked
+    if "-DROCKETNET_IO_URING=1" in out:
+        out.append("-DIORING_RECV_MULTISHOT=(1U<<1)")
     resolved = []
     for arg in out:
         if arg.startswith("-I") and not os.path.isabs(arg[2:]):
@@ -312,7 +317,9 @@ def run_cppcheck_file(cppcheck, entry, path):
         file_path, _line, _col, level, message, check = match.groups()
         if level not in CPPCHECK_SEVERITIES:
             continue
-        if check in ("syntaxError", "internalAstError", "cppcheckError", "unknownMacro"):
+        # an #error ends the configuration: nothing after it is analyzed
+        if check in ("syntaxError", "internalAstError", "cppcheckError", "unknownMacro",
+                     "preprocessorErrorDirective"):
             errors.append("%s: %s [%s]" % (relpath(path), message, check))
             continue
         rel = relpath(os.path.join(ROOT, file_path))
