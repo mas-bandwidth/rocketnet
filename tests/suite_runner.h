@@ -1007,9 +1007,28 @@ inline int suite_emit_captured( const std::string & output, bool show_all )
 
 // Prints the finished cases in suite order, up to the first still running.
 // A passing case prints its name (an exec case, the test names it printed); a
-// failing case prints everything it wrote and, when the runner failed it
-// (time, memory, a signal, an exit with no check line), one check line.
+// failing case prints everything it wrote and one check line naming the
+// reason: always when the runner failed it (time, memory), and for a signal
+// or an exit only when the case printed no check line itself.
 // Returns false once a failure is printed.
+
+// The runner made the call: the case ran past its time limit or its peak was
+// over its memory bound. Its reason is printed even when the case's output
+// already holds a check line, because a case that exercises the check path
+// prints one while passing: with 1500 MiB planted in
+// test_suite_finish_fails_when_no_case_ran, an --enforce-rss run failed with
+// only that case's own "check failed: no case ran" and no reason.
+inline bool suite_runner_failed( const suite_result & result )
+{
+    return result.rss_over_bound || result.detail.find( " exceeded " ) != std::string::npos;
+}
+
+// A failing case gets the runner's check line naming the reason when the
+// runner made the call, or when the case printed no check line of its own.
+inline bool suite_failure_line_needed( const suite_result & result )
+{
+    return suite_runner_failed( result ) || result.output.find( "check failed" ) == std::string::npos;
+}
 
 inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture )
 {
@@ -1019,7 +1038,7 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
         if ( result.failed )
         {
             suite_emit_captured( result.output, true );
-            if ( result.output.find( "check failed" ) == std::string::npos )
+            if ( suite_failure_line_needed( result ) )
             {
                 printf( "check failed: %s\n", result.detail.c_str() );
             }
