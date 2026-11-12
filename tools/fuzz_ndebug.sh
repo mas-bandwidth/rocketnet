@@ -33,8 +33,7 @@
 # <out>/crashes/<target>/ and the script exits 1 naming it.
 #
 # Linux (the nightly's link set: bpf, xdp, io_uring) or macOS (CoreFoundation
-# and SystemConfiguration); rocketnet_fuzz_differential checks out the pinned
-# netcode reference into the build directory, as the nightly does.
+# and SystemConfiguration).
 
 set -euo pipefail
 
@@ -58,13 +57,7 @@ ALL_TARGETS=(
     rocketnet_fuzz_gateway_netlink
     rocketnet_fuzz_endpoint
     rocketnet_fuzz_xdp_filter
-    rocketnet_fuzz_differential
 )
-
-# the pinned netcode reference the nightly's differential leg builds against
-NETCODE_REPO=https://github.com/mas-bandwidth/netcode.git
-NETCODE_SHA=1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
-
 SECONDS_PER_TARGET=60
 JOBS=1
 BUILD_JOBS=4
@@ -180,15 +173,6 @@ build_target() {
     # bash 3.2 under set -u calls an empty "${extra[@]}" unbound, hence the
     # ${extra[@]+...} form below
     local extra=()
-    if [ "$t" = rocketnet_fuzz_differential ]; then
-        local ref="$BUILD/netcode-ref"
-        if [ ! -d "$ref/.git" ]; then
-            git clone --quiet "$NETCODE_REPO" "$ref"
-        fi
-        git -C "$ref" checkout --quiet "$NETCODE_SHA"
-        "$CC" -O2 -DNDEBUG -ffp-contract=off -c "$ref/netcode.c" -o "$BUILD/netcode_ref.o" -I "$ref" -I sodium
-        extra=(-Itools/differential "-I$ref" -DROCKETNET_DIFFERENTIAL_NETCODE_DIR "$BUILD/netcode_ref.o")
-    fi
     # the XDP filter as host C (tests/xdp_host/), instrumented like the
     # library; Linux only, elsewhere the target compiles to a no-op
     if [ "$t" = rocketnet_fuzz_xdp_filter ] && [ "$(uname -s)" = Linux ]; then

@@ -124,8 +124,7 @@ Put a new test in `./bin/test` when the assertion can be reached through a
 state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
-The functional-only sibling binaries are `test_serialize` (a real clock and
-`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+The functional-only sibling binaries are `test_xdp_filter` (a kernel, root or CAP_BPF, and
 `usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_production_client_lifecycle` (DEV=0 only), `test_msgx` and `test_iocp`;
 they are functional tests, never `./bin/test`.
@@ -212,7 +211,6 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |

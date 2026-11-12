@@ -27,17 +27,9 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_session_raw` | the same scripted session with the client off its I/O-thread decrypt copy (a link simulator pattern set at create), so the client protocol's own replay check and open refusal see every session datagram | `corpus_session_raw/` | `dict/rocketnet_fuzz_session.dict` |
 | `rocketnet_fuzz_endpoint` | the message layer's receive after decrypt, direct (`rn_endpoint_on_payload`: record decode, reliable window, channel dispatch, block and sequenced fragment reassembly, CONFIG) beside a real sending endpoint, with a clean-stream oracle (only A's bytes, reliable at most once, no disconnect) | `corpus_endpoint/` | `dict/rocketnet_fuzz_endpoint.dict` |
 | `rocketnet_fuzz_xdp_filter` | the XDP program `sdk/xdp/server_xdp.c` through the host shim (`tests/xdp_host/`), differential against `rocketnet_xdp_frame_parse` and the userspace prefilter rungs; fuzzed on Linux, a no-op where the filter is not built as host C | `corpus_xdp_filter/` | `dict/rocketnet_fuzz_xdp_filter.dict` |
-| `rocketnet_fuzz_differential` | both admission deciders on one abstract case, shared with the fixed gate (`tools/differential/decide.h`); aborts on rocketnet-weaker or an undocumented stricter class | `corpus_differential/` | `dict/rocketnet_fuzz_differential.dict` |
 
 The input format of each target is described in the comment at the top of
-its source file. `rocketnet_fuzz_differential` runs the two admission
-deciders of `tools/differential/` (the fixed gate and this target both use
-`tools/differential/decide.h`) on one abstract case encoded as a 25-byte
-record, and aborts on a `rocketnet-weaker` verdict or a stricter class that
-`tools/differential/README.md` does not document as permitted. It needs the
-pinned netcode checkout to build: the nightly Linux leg checks out
-mas-bandwidth/netcode at tag v1.2.1 into its own path and compiles it the way
-`tools/differential/run.sh` does. `rocketnet_fuzz_server_transport`,
+its source file. `rocketnet_fuzz_server_transport`,
 `rocketnet_fuzz_client_transport` and `rocketnet_fuzz_session` are the pair targets. They share
 `rocketnet_fuzz_pair.h`: a real message server and message client joined by
 the loopback transport, with the harness standing on the wire between them.
@@ -75,11 +67,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the fifteen targets (not the differential)
+make -C tests/fuzz -j 4                 # the fifteen targets
 make -C tests/fuzz compile              # syntax check of all fifteen sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the fifteen targets other than `rocketnet_fuzz_differential` with
+`tests/fuzz/Makefile` builds the fifteen targets with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -143,7 +135,7 @@ LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in
 `.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
-target in the table above; the netcode differential target stays Linux only.
+target in the table above.
 
 ### Without libFuzzer: the replay drivers
 

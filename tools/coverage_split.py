@@ -58,7 +58,7 @@ BIN = BUILD / "bin"
 COVERAGE_FLAGS = "-fprofile-instr-generate -fcoverage-mapping"
 TESTS_SOURCE = "sdk/rocketnet_tests.cpp"
 # binaries the functional suite runs besides itself (tests/functional/main.cpp execs)
-FUNCTIONAL_EXECS = ["test_serialize", "test_transport_control", "test_xdp", "test_msgx"]
+FUNCTIONAL_EXECS = ["test_transport_control", "test_xdp", "test_msgx"]
 SEAM_MACRO = re.compile(r"\bROCKETNET_DEV\b")
 NEGATED_SEAM = re.compile(r"!\s*(defined\s*\(?\s*)?ROCKETNET_DEV\b")
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")

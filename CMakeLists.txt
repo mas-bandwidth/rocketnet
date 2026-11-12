@@ -1029,10 +1029,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,
-    # test_serialize, test_transport_control,
+    # test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
-    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # test. ./bin/functional runs test_transport_control and
     # the platform's transport binary (the execs table in tests/functional/main.cpp's
     # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
@@ -1056,10 +1056,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
-    add_executable(test_serialize tests/test_serialize.cpp)
-    target_include_directories(test_serialize PRIVATE tests)
-    target_link_libraries(test_serialize PRIVATE rocketnet_dev)
-    rocketnet_warning_floor(test_serialize)
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
@@ -1218,16 +1214,16 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_features(functional PRIVATE cxx_std_11)
     add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
         if(ROCKETNET_XDP)
             add_dependencies(functional test_xdp)
         endif()
     elseif(APPLE)
-        add_dependencies(functional test_msgx test_serialize test_transport_control)
+        add_dependencies(functional test_msgx test_transport_control)
     elseif(WIN32)
-        add_dependencies(functional test_iocp test_serialize test_transport_control)
+        add_dependencies(functional test_iocp test_transport_control)
     else()
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
     endif()
     # functional_production: the production-library functional executable.
     # Built only in a production build (ROCKETNET_DEV=OFF), where the

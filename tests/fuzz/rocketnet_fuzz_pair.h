@@ -1299,7 +1299,7 @@ static inline void rocketnet_fuzz_pair_dump( struct rocketnet_fuzz_pair_t * pair
 // -----------------------------------------------------------------------
 //  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
 //
-// yojimbo's gen_seed_corpus, built into the harness so the seeds are made
+// The seed corpus generator, built into the harness so the seeds are made
 // by the same pair the harness replays them on. The generator runs the real
 // handshake from the created state and a scripted session from the
 // connected one (messages both ways, a message large enough to fragment,
