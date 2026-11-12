@@ -3484,6 +3484,15 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # Every refusal of the split-load merger is one its self-test notices:
+      # each `raise ValueError(` turned into a no-op must turn the suite red
+      # (review 5 O7: 68 of 104 could be deleted with every test green).
+      # About 6 s at 4 jobs.
+      - name: Every split-load refusal is tested
+        run: |
+          python3 tools/check_refusal_mutants.py --self-test
+          python3 tools/check_refusal_mutants.py -j 4 tools/check_split_load.py tools/test_check_split_load.py
+
       - name: Test the test-environment checker's inventory
         shell: bash
         run: |
