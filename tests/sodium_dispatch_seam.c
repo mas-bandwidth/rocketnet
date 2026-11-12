@@ -434,14 +434,17 @@ int sodium_dispatch_misused( int open, unsigned long long length )
     }
     if ( setjmp( misuse_jump ) == 0 )
     {
+        // reaching the next line means the AEAD returned instead of refusing
+        int returned;
         if ( open )
         {
-            (void) crypto_aead_chacha20poly1305_ietf_decrypt_detached( buffer, NULL, buffer, length, mac, NULL, 0, nonce, key );
+            returned = crypto_aead_chacha20poly1305_ietf_decrypt_detached( buffer, NULL, buffer, length, mac, NULL, 0, nonce, key );
         }
         else
         {
-            (void) crypto_aead_chacha20poly1305_ietf_encrypt_detached( buffer, mac, NULL, buffer, length, NULL, 0, NULL, nonce, key );
+            returned = crypto_aead_chacha20poly1305_ietf_encrypt_detached( buffer, mac, NULL, buffer, length, NULL, 0, NULL, nonce, key );
         }
+        (void) returned;
     }
     else
     {
