@@ -1062,7 +1062,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     // the group, all or nothing (rocketnet_server_udp_probe_offloads).
     // failure is a tier, not an error.
 
-    int fds[ROCKETNET_GSO_MAX_QUEUES];
+    int fds[ROCKETNET_GSO_MAX_QUEUES] = {};
     for ( int i = 0; i < num_queues; i++ )
     {
         fds[i] = gso->queues[i].fd;

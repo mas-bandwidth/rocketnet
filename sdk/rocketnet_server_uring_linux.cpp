@@ -1655,7 +1655,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     // one buffer may hold a coalesced receive of several datagrams. failure
     // is a tier, not an error
 
-    int fds[ROCKETNET_URING_MAX_QUEUES];
+    int fds[ROCKETNET_URING_MAX_QUEUES] = {};
     for ( int i = 0; i < num_queues; i++ )
     {
         fds[i] = uring->queues[i].fd;
