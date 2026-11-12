@@ -23,7 +23,8 @@
     its own bound, its plan's peak plus a fixed slack (tests/plan_rss.h), and
     is held to that instead. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
-    the slowest cases and the peak resident sets after the results.
+    the job count before the cases, and the slowest cases and the peak
+    resident sets after the results.
     ROCKETNET_TEST_NIGHTLY=1 adds the nightly tier: the cases group_of marks
     with SUITE_GROUP_NIGHTLY, which a per-commit run leaves out.
 */
@@ -53,6 +54,10 @@
 #include <mach-o/dyld.h>
 #include <sys/sysctl.h>
 #endif // #if defined( __APPLE__ )
+
+#if defined( __linux__ )
+#include <sched.h>
+#endif // #if defined( __linux__ )
 
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
@@ -745,8 +750,57 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     return (int) jobs;
 }
 
-// The job count on this host for a requested count (0: none): this host's
-// cores and memory budget, and this platform's ceiling.
+// The cpus a mask holds: one bit a cpu, in 64-bit words.
+inline unsigned suite_cpus_in_mask( const uint64_t * words, size_t count )
+{
+    unsigned cpus = 0;
+    for ( size_t i = 0; i < count; i++ )
+    {
+        for ( uint64_t word = words[i]; word != 0; word &= word - 1 )
+        {
+            cpus++;
+        }
+    }
+    return cpus;
+}
+
+// The cpus this process may run on, 0 when unknown. std::thread::
+// hardware_concurrency() counts the host's online cpus, not the process's:
+// on glibc 2.43 a run held to 5 cpus (nova-reserve, taskset, a cgroup cpuset)
+// read 48 on a 48-cpu bench and ran 48 jobs on 5 cpus. Linux reads the
+// affinity mask. Windows reads the process affinity mask when the host has one
+// processor group (a mask covers one group; with more, a process may span
+// them, and the count stays the host's). macOS has no affinity mask to read
+// (thread affinity there is only a hint), so its count is the host's.
+inline unsigned suite_usable_cpus()
+{
+#if defined( __linux__ )
+    cpu_set_t set;
+    CPU_ZERO( &set );
+    if ( sched_getaffinity( 0, sizeof( set ), &set ) == 0 )
+    {
+        uint64_t words[sizeof( set ) / sizeof( uint64_t )];
+        std::memcpy( words, &set, sizeof( words ) );
+        const unsigned cpus = suite_cpus_in_mask( words, sizeof( words ) / sizeof( words[0] ) );
+        if ( cpus > 0 )
+        {
+            return cpus;
+        }
+    }
+#elif defined( _WIN32 )
+    DWORD_PTR process_mask = 0;
+    DWORD_PTR system_mask = 0;
+    if ( GetActiveProcessorGroupCount() == 1 && GetProcessAffinityMask( GetCurrentProcess(), &process_mask, &system_mask ) && process_mask != 0 )
+    {
+        const uint64_t word = (uint64_t) process_mask;
+        return suite_cpus_in_mask( &word, 1 );
+    }
+#endif // #if defined( __linux__ )
+    return std::thread::hardware_concurrency();
+}
+
+// The job count for a requested count (0: none): the cpus this process may
+// run on, this host's memory budget, and this platform's ceiling.
 inline int suite_job_count_requested( int requested )
 {
 #if defined( _WIN32 )
@@ -755,7 +809,7 @@ inline int suite_job_count_requested( int requested )
     const int ceiling = 0;
 #endif // #if defined( _WIN32 )
 
-    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+    return suite_job_count_for( suite_usable_cpus(), suite_memory_budget_bytes(), requested, ceiling );
 }
 
 inline int suite_job_count()
@@ -1593,6 +1647,10 @@ inline int suite_main( int argc, char ** argv,
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+    {
+        printf( "jobs: %d (cpus this run may use: %u)\n", jobs, suite_usable_cpus() );
+    }
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
     {
@@ -2027,6 +2085,10 @@ inline int suite_main( int argc, char ** argv,
     suite_keep_shard( pending, results, shard_index, shards );
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
+    if ( suite_env_is_set( "ROCKETNET_TEST_REPORT" ) )
+    {
+        printf( "jobs: %d (cpus this run may use: %u)\n", jobs, suite_usable_cpus() );
+    }
     double limit_s = case_limit_s;
     if ( !suite_case_limit( case_limit_s, &limit_s ) )
     {
