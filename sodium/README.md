@@ -112,11 +112,15 @@ SHA-256 under `local_sha256` in `manifest.json`, join the generated pair
   (`crypto_aead_chacha20poly1305_ietf_implementation`: a name and the two
   public detached functions), the forced fallback and the selection report.
 - `local/arm64.c.in`: on AArch64 little endian with 128-bit integers (GCC
-  and Clang), ChaCha20 with Advanced SIMD (`neon`: four blocks per vector
-  set, eight in flight past 256 bytes, a scalar block for a tail of 64 bytes
-  or less), Poly1305 with 64-bit limbs (`mul64`), and the AEAD in one pass
-  (`neon-fused`: each four-block ChaCha20 step absorbs up to 16 Poly1305
-  blocks on the integer multiplier between its double rounds).
+  and Clang, outside Windows: Windows on ARM64, MSVC or clang-cl, keeps the
+  portable code until a CI leg runs it), ChaCha20 with Advanced SIMD (`neon`:
+  four blocks per vector set, eight in flight past 256 bytes, a scalar block
+  for a tail of 64 bytes or less), Poly1305 with 64-bit limbs (`mul64`, its
+  limb step and final reduction in `local/mul64.h.in`, proved by
+  `proofs/cbmc/proof_poly1305_mul64.c`), and the AEAD (`neon-fused`: seal in
+  one pass, each four-block ChaCha20 step absorbing up to 16 Poly1305 blocks
+  on the integer multiplier between its double rounds; open checks the tag
+  first and decrypts only on success).
 - `local/dispatch.c.in`: the `composed` AEAD (the pinned IETF bodies, which
   `DISPATCH_ADAPTATIONS` renames static, ChaCha20 then Poly1305 through the
   primitive pointers), the AEAD pick, the public detached functions that call
@@ -141,14 +145,13 @@ and `composed` when the build defines `ROCKETNET_SODIUM_PORTABLE` nonzero, or
 when the environment has `ROCKETNET_SODIUM_PORTABLE` set as `sodium_init`
 runs (`rocketnet_init` runs it). BLAKE2b's pick is not affected.
 
-Open's output: the one pass writes plaintext before it checks the tag and
-zeroes all of it when the check fails, so the output of
-`crypto_aead_chacha20poly1305_ietf_decrypt` is defined only on success, as
-`local/dispatch.h.in` states; every SDK caller opens into memory private to
-it until the call returns (`ARM64-CONSTANT-TIME.md`, "Where a failed open
-writes"). The constant-time review of the AArch64 code is
-`ARM64-CONSTANT-TIME.md`. The wire format is unchanged: every implementation
-produces the same bytes, which `bin/test_sodium_dispatch` checks.
+Open's output: no implementation writes plaintext before the tag checks. A
+refused open leaves the output zeroed (`composed`, as upstream) or as it was
+(`neon-fused`); it is defined only on success (`local/dispatch.h.in`). Input
+and output are exactly in place or apart; partial overlap is unsupported.
+The constant-time review of the AArch64 code is `ARM64-CONSTANT-TIME.md`.
+The wire format is unchanged: every implementation produces the same bytes,
+which `bin/test_sodium_dispatch` checks.
 
 ## MemorySanitizer
 

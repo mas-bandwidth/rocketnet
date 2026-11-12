@@ -34488,6 +34488,7 @@ rn_neon_out4(const uint32x4_t x[16], unsigned char *out,
                 sodium_memzero(tmp, sizeof tmp);
             }
         }
+        sodium_memzero(row, sizeof row);
     }
 }
 
@@ -34549,6 +34550,8 @@ rn_neon_blocks4(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
         x[i] = vaddq_u32(x[i], in_v[i]);
     }
     rn_neon_out4(x, out, in, len);
+    sodium_memzero(in_v, sizeof in_v);
+    sodium_memzero(x, sizeof x);
 }
 
 /* Eight consecutive blocks from ctr as two interleaved sets of four, so a
@@ -34611,6 +34614,10 @@ rn_neon_blocks8(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
     }
     rn_neon_out4(x, out, in, 256);
     rn_neon_out4(y, out + 256, in != NULL ? in + 256 : NULL, len - 256);
+    sodium_memzero(a_in, sizeof a_in);
+    sodium_memzero(b_in, sizeof b_in);
+    sodium_memzero(x, sizeof x);
+    sodium_memzero(y, sizeof y);
 }
 
 /* One block in general-purpose registers. One block in vector rows is a
@@ -34948,12 +34955,13 @@ struct crypto_onetimeauth_poly1305_implementation
         SODIUM_C99(.onetimeauth_final =) rn_mul64_final
     };
 
-/* ---------- ChaCha20-Poly1305 IETF (RFC 8439 2.8) in one pass ----------
+/* ---------- ChaCha20-Poly1305 IETF (RFC 8439 2.8): seal in one pass ----------
  *
  * The composed AEAD runs ChaCha20 over the message, then Poly1305 over the
- * ciphertext. Here each 256-byte ChaCha20 step (four blocks on the vector
- * pipes) also absorbs up to 16 Poly1305 blocks (the integer multiplier), two
- * per double round, so the two run side by side. Same construction, same
+ * ciphertext. Seal here runs them side by side: each 256-byte ChaCha20 step
+ * (four blocks on the vector pipes) also absorbs up to 16 Poly1305 blocks
+ * (the integer multiplier), two per double round. Open does not: it checks
+ * the tag before it writes anything (rn_fused_decrypt_detached). Same
  * bytes: the key from block 0, the message from block 1, the MAC over
  * ad | pad | c | pad | len(ad) | len(c), every Poly1305 block 16 bytes with
  * the high bit set. */
@@ -35024,6 +35032,8 @@ rn_fused_step(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
         x[i] = vaddq_u32(x[i], in_v[i]);
     }
     rn_neon_out4(x, out, in, len);
+    sodium_memzero(in_v, sizeof in_v);
+    sodium_memzero(x, sizeof x);
 }
 
 static void
@@ -35156,10 +35166,13 @@ rn_fused_encrypt_detached(unsigned char *c, unsigned char *mac,
     return 0;
 }
 
-/* The plaintext is written before the tag is checked, and every byte of it
- * is zeroed when the check fails: m is defined only when this returns 0
- * (sodium/local/dispatch.h.in). Each step reads the ciphertext it absorbs
- * and decrypts before it writes m, so m may equal c. */
+/* Open verifies, then decrypts: the MAC over the ciphertext first (the
+ * integer multiplier alone, whole blocks straight from c), the constant-time
+ * compare, and only on success the NEON keystream from block 1 into m. m is
+ * not written at all when the check fails, and the fence keeps every read of
+ * c for the plaintext after the compare, as in the composed AEAD. The one
+ * pass is for seal only: open gives it up so that no plaintext of a forgery
+ * ever exists. m may equal c exactly, or not overlap it. */
 static int
 rn_fused_decrypt_detached(unsigned char *m, unsigned char *nsec,
                           const unsigned char *c, unsigned long long clen,
@@ -35171,76 +35184,29 @@ rn_fused_decrypt_detached(unsigned char *m, unsigned char *nsec,
     rn_fused_poly   p;
     uint64_t        pad[2];
     uint64_t        ctr0;
+    unsigned char   ks[64];
     unsigned char   computed[16];
-    const size_t    len = (size_t) clen;
     int             ret;
 
     (void) nsec;
     rn_fused_setup(&st, &ctr0, npub, k);
-    if (m == NULL) {
-        /* verify only: the key block, then the MAC over the ciphertext */
-        unsigned char ks[64];
-
-        rn_neon_block1(&st, ctr0, ks, NULL, 64U);
-        rn_fused_poly_init(&p, pad, ks);
-        sodium_memzero(ks, sizeof ks);
-        rn_fused_absorb_padded(&p, ad, (size_t) adlen);
-        rn_fused_absorb_padded(&p, c, len);
-    } else {
-        unsigned char ks[256];
-        const size_t  first = len < 192U ? len : 192U;
-        size_t        off;
-        size_t        i;
-        uint64_t      ctr;
-
-        rn_neon_blocks4(&st, ctr0, ks, NULL, 64U + first);
-        rn_fused_poly_init(&p, pad, ks);
-        rn_fused_absorb_padded(&p, ad, (size_t) adlen);
-        if (first == len) {
-            rn_fused_absorb_padded(&p, c, first);
-        } else {
-            rn_fused_absorb(&p, c, first / 16U);
-        }
-        for (i = 0; i < first; i++) {
-            m[i] = (unsigned char) (ks[64 + i] ^ c[i]);
-        }
-        sodium_memzero(ks, sizeof ks);
-
-        off = first;
-        ctr = ctr0 + 4U;
-        while (off < len) {
-            const size_t  n = len - off < 256U ? len - off : 256U;
-            const int     last_partial = off + n == len && n % 16U != 0U;
-            unsigned char tail[16];
-
-            memset(tail, 0, sizeof tail);
-            if (last_partial) {
-                /* read before the step overwrites it when m equals c */
-                memcpy(tail, c + off + (n & ~(size_t) 15U), n % 16U);
-            }
-            rn_fused_step(&st, ctr, m + off, c + off, n, &p, c + off, n / 16U);
-            if (last_partial) {
-                rn_fused_absorb(&p, tail, 1);
-                sodium_memzero(tail, sizeof tail);
-            }
-            off += n;
-            ctr += 4U;
-        }
-    }
+    rn_neon_block1(&st, ctr0, ks, NULL, 64U);
+    rn_fused_poly_init(&p, pad, ks);
+    sodium_memzero(ks, sizeof ks);
+    rn_fused_absorb_padded(&p, ad, (size_t) adlen);
+    rn_fused_absorb_padded(&p, c, (size_t) clen);
     rn_fused_finish(&p, pad, adlen, clen, computed);
     sodium_memzero(&p, sizeof p);
     sodium_memzero(pad, sizeof pad);
-    sodium_memzero(&st, sizeof st);
     ret = crypto_verify_16(computed, mac);
     sodium_memzero(computed, sizeof computed);
-    if (m == NULL) {
+    if (m == NULL || ret != 0) {
+        sodium_memzero(&st, sizeof st);
         return ret;
     }
-    if (ret != 0) {
-        memset(m, 0, len);
-        return -1;
-    }
     ACQUIRE_FENCE;
+    rn_neon_xor(&st, ctr0 + 1U, m, c, clen);
+    sodium_memzero(&st, sizeof st);
 
     return 0;
 }
