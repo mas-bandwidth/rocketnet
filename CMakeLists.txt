@@ -1379,6 +1379,14 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
+    # One client's per-frame cost on the game thread against a real server
+    # (benchmarks/client_frame_time.md). It links the library a game ships,
+    # rocketnet (configure with ROCKETNET_DEV=OFF to measure production), and
+    # its hooks file defines the mutex and wake calls the library makes, so
+    # the library's references bind to the counting versions.
+    add_executable(client_frame_time benchmarks/client_frame_time.cpp benchmarks/client_frame_time_hooks.c)
+    target_link_libraries(client_frame_time PRIVATE rocketnet Threads::Threads ${CMAKE_DL_LIBS})
+    target_compile_features(client_frame_time PRIVATE cxx_std_11)
     foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
