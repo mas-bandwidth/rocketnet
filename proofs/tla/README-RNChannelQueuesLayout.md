@@ -38,8 +38,7 @@ The window stall (`numbers == 0`) changes nothing and is the stutter. A
 channel initialization (`rn_channels_init`, with region heads reset by
 `rn_region_carve`) empties every queue at once and is left
 to `RNChannelQueues` (`Reset`). `WalkEmpty` is a defensive path: with the
-code's own callers no ready channel is ever empty (`NonEmptyIsReady` and
-TLC's reachable states agree), so it is kept for fidelity and is unreachable
+code's own callers no ready channel is ever empty (`ReadyNonEmpty`), so it is kept for fidelity and is unreachable
 in the instance.
 
 ## Invariants
@@ -52,6 +51,7 @@ in the instance.
 | `ReadyIsList` | `ready_next` from `ready_head` and `ready_prev` from `ready_tail` walk the ready list forwards and backwards |
 | `MembershipByTicket` | a member holds a nonzero ticket; a nonmember holds none and has no links |
 | `NonEmptyIsReady` | a channel with work queued takes turns |
+| `ReadyNonEmpty` | only a channel with work queued takes turns: the head of the first ready channel is a message (`rn_endpoint_ready_message`) |
 | `QueuedOwned` | a queued descriptor sits in exactly one FIFO |
 
 ## Reversed witnesses

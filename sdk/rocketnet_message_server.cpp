@@ -33,8 +33,12 @@
 // for resends and the transport encrypts the frame in place. A message
 // delivered in the update it arrives is a view into the transport's batch, and
 // an ordered message held ahead of its turn is copied into the receive ring
-// (THE COPIES (b), rn_channels_dispatch_ordered). rn_message_object_send is the
+// (THE COPIES (b), rn_channels_dispatch_ordered). rn_message_object_send is
 // one other copy: the convenience copies the caller's bytes into the record.
+// The last: while a connection's send budget holds less than one full-size
+// frame, its payload is written into a stack buffer and copied into the
+// frame, so that a payload the budget refuses takes no frame
+// (rn_message_connection_write).
 
 #include <string.h>
 
@@ -67,6 +71,7 @@ struct rn_message_object_layout_t
     uint64_t connections;           // offset of the connection array
     uint64_t slot_connection_ids;   // the slots machine's arrays (rn_slots_t), one entry per connection
     uint64_t slot_changed;
+    uint64_t send_writers;          // the send pass's writer list, two int32_t per connection (none for one connection)
     uint64_t views;                 // offset of the first connection's views; each connection's next at + view_stride
     uint64_t view_stride;
     uint64_t arena;
@@ -105,6 +110,8 @@ static bool rn_message_object_layout( const rocketnet_message_config_t * config,
     offset += rn_message_align64( sizeof( uint64_t ) * n );
     layout->slot_changed = offset;
     offset += rn_message_align64( sizeof( uint8_t ) * n );
+    layout->send_writers = offset;
+    offset += n > 1 ? rn_message_align64( sizeof( int32_t ) * 2 * n ) : 0;    // one connection: two entries on the send pass's stack
     layout->views = offset;
     layout->view_stride = rn_message_align64( deliveries );
     offset += layout->view_stride * n;
@@ -452,6 +459,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     object->owns_block = owns_block ? 1 : 0;
     object->hot_connections = (rn_message_connection_hot_t *) ( block + layout.hot_connections );
     object->connections = (rn_message_connection_t *) ( block + layout.connections );
+    object->send_writers = num_connections > 1 ? (int32_t *) ( block + layout.send_writers ) : NULL;
     rn_slots_init( &object->slots, num_connections, (uint64_t *) ( block + layout.slot_connection_ids ), block + layout.slot_changed );
 
     object->arena = rn_arena_create_in_block( block + layout.arena, layout.arena_bytes, config, num_connections, &object->counters );
@@ -1584,16 +1592,50 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
     return rn_message_object_finish( object, index, bytes );
 }
 
+#if ROCKETNET_DEV
+// Unit-library instrumentation only: the send pass's slot visits and aborted
+// frames on this thread (rn_send_pass_cost_t). No production state.
+static thread_local rn_send_pass_cost_t rn_send_pass_cost;
+void rn_send_pass_cost_reset() { memset( &rn_send_pass_cost, 0, sizeof( rn_send_pass_cost ) ); }
+rn_send_pass_cost_t rn_send_pass_cost_read() { return rn_send_pass_cost; }
+#define RN_SEND_PASS_COST( field ) ( rn_send_pass_cost.field++ )
+#else
+#define RN_SEND_PASS_COST( field ) ( (void) 0 )
+#endif // #if ROCKETNET_DEV
+
+// a started frame given up with nothing finished in it: the transport's slot
+// of this update's send capacity is not returned (an abort never gives back a
+// reservation, on any transport)
+static void rn_message_connection_abort_frame( rn_message_link_t * link, rocketnet_packet_context_t * context )
+{
+    RN_SEND_PASS_COST( frames_aborted );
+    link->abort_packet( link->transport, context );
+}
+
 static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
     // proofs/tla/RNSlots.tla Send: writes one requested record into a transport frame under the transport's packet id (RNSlots Send).
     // RNChannel WritePacket with the send budget, for one connection: the endpoint plans the frame
     // (rn_endpoint_next_packet_bytes), the object starts one frame from the transport at a time,
     // the endpoint writes it in place, and the object finishes it.
+    //
+    // proofs/tla/RNSendRotation.tla ConnWrite: a frame is started only for a
+    // payload that will be written (standard/MESSAGES.md m1.8, m9.4). Every
+    // frame start takes a slot of the update's send capacity, which every
+    // connection shares, and an abort never returns it. The window's refusal
+    // is decided before a frame (rn_endpoint_next_packet_bytes asks
+    // rn_window_send_would_number). The budget's cannot be: a payload's charge
+    // depends on its bytes, known only once it is packed. So while the
+    // connection's bucket holds less than one full-size frame
+    // (rn_endpoint_write_may_be_refused) the payload is written into a stack
+    // buffer first and a frame is started only when bytes came out: one copy
+    // of at most one payload, paid only while the bucket is short.
 
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
     const double now = object->time;
+
+    alignas( 16 ) uint8_t scratch[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     for ( ;; )
     {
@@ -1603,27 +1645,51 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
             return false;
         }
 
+        const bool write_first = rn_endpoint_write_may_be_refused( connection );
+        int payload_bytes = 0;
+        if ( write_first )
+        {
+            payload_bytes = rn_endpoint_write_packet( connection, scratch, request, 0, now );
+            if ( payload_bytes == 0 )
+            {
+                continue;                                       // refused before any frame was taken
+            }
+        }
+
         rocketnet_packet_context_t context;
         uint8_t * frame = link->start_packet( link->transport, index, request, &context );
         if ( !frame )
         {
-            rn_endpoint_packet_failed( connection, 0, now );    // no frame: nothing written
+            rn_endpoint_packet_failed( connection, 0, now );    // no frame: a packet written first is due again, its charge refunded
             continue;
         }
 
         if ( context.payload_capacity < request )
         {
             // the frame is smaller than requested: abort it and fail the send
-            link->abort_packet( link->transport, &context );
+            // (unreachable: every transport's payload capacity is
+            // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, the most a plan requests)
+            rn_message_connection_abort_frame( link, &context );
             rn_endpoint_packet_failed( connection, 0, now );
             continue;
         }
 
-        const int payload_bytes = rn_endpoint_write_packet( connection, frame + context.payload_index, context.payload_capacity, context.packet_id, now );
-        if ( payload_bytes == 0 )
+        if ( write_first )
         {
-            link->abort_packet( link->transport, &context );
-            continue;
+            memcpy( frame + context.payload_index, scratch, (size_t) payload_bytes );
+        }
+        else
+        {
+            // the bucket holds at least one full-size frame, or the connection
+            // is uncapped: the budget admits it, and the endpoint writes in place
+            payload_bytes = rn_endpoint_write_packet( connection, frame + context.payload_index, context.payload_capacity, context.packet_id, now );
+            if ( payload_bytes == 0 )
+            {
+                // only an ended connection gets here: exhausted, a channel
+                // error or a reliable message past its timeout, once
+                rn_message_connection_abort_frame( link, &context );
+                continue;
+            }
         }
 
         const int wire_bytes = link->finish_packet( link->transport, &context, payload_bytes );
@@ -1640,7 +1706,8 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
-// proofs/tla/RNSendRotation.tla BeginFlush and Visit: rounds while any connection progresses, the capacity test, the cursor at i + 1.
+// proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
+// proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     // RNOutgoingBuild BeginFlush: a pending in-place start aborted, then every
@@ -1660,41 +1727,94 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     // forever serving the low indices. A connection that finds no capacity
     // leaves its queued sends for the next update; reliability keeps them
     // due, so nothing is lost.
+    //
+    // Rounds go on while any connection wrote, one frame per connection per
+    // round, so a busy client cannot take K turns. A connection that writes
+    // nothing in a round has ended its pass until the next flush
+    // (rn_endpoint_next_packet_bytes), so only the connections that wrote in
+    // a round can write in the next: later rounds walk the writer list, in
+    // the same cyclic order, and a flush costs num_connections visits plus
+    // one per frame written, however busy one client is. The cursor is set
+    // as a walk over every connection would set it: past each connection
+    // visited, at a capacity cut to the cursor held before the cut
+    // connection's visit, and at the end past the last connected connection.
 
     const int num_connections = object->num_connections;
     const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
-    bool progress;
-    do
+    int32_t one_connection[2] = { 0, 0 };
+    int32_t * writers = object->send_writers ? object->send_writers : one_connection;
+    int count = 0;
+    int previous = -1;                                          // the connected connection visited last in the first round
+
+    for ( int offset = 0; offset < num_connections; offset++ )
     {
-        progress = false;
-
-        for ( int offset = 0; offset < num_connections; offset++ )
+        const int i = ( start + offset ) % num_connections;
+        RN_SEND_PASS_COST( slot_visits );
+        if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
         {
-            const int i = ( start + offset ) % num_connections;
-            if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED )
-            {
-                continue;
-            }
+            continue;
+        }
 
-            // the client's CONFIG waits unnumbered until the transport connects
+        // the client's CONFIG waits unnumbered until the transport connects
 
-            if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+        if ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 )
+        {
+            continue;
+        }
+        if ( object->link.send_capacity_available &&
+             object->link.send_capacity_available( object->link.transport ) <= 0 )
+        {
+            goto flush;
+        }
+
+        if ( rn_message_connection_write( object, i ) )
+        {
+            writers[2 * count] = i;
+            writers[2 * count + 1] = previous < 0 ? -1 : ( previous + 1 ) % num_connections;
+            count++;
+        }
+
+        object->send_next_connection = ( i + 1 ) % num_connections;
+        previous = i;
+    }
+
+    while ( count > 0 )
+    {
+        int kept = 0;
+        for ( int k = 0; k < count; k++ )
+        {
+            const int i = writers[2 * k];
+            const int cursor = writers[2 * k + 1] < 0 ? ( previous + 1 ) % num_connections : writers[2 * k + 1];
+            RN_SEND_PASS_COST( slot_visits );
+            if ( object->hot_connections[i].state != RN_MESSAGE_CONNECTION_CONNECTED ||
+                 ( !object->is_server && object->link.connection( object->link.transport, 0 ) == 0 ) )
             {
                 continue;
             }
             if ( object->link.send_capacity_available &&
                  object->link.send_capacity_available( object->link.transport ) <= 0 )
             {
+                object->send_next_connection = cursor;
                 goto flush;
             }
 
-            // one frame per connection per round, including when the per-client
-            // allowance is larger than one. A busy client cannot take K turns.
+            if ( rn_message_connection_write( object, i ) )
+            {
+                writers[2 * kept + 1] = writers[2 * k + 1];
+                writers[2 * kept] = i;
+                kept++;
+            }
 
-            progress |= rn_message_connection_write( object, i );
             object->send_next_connection = ( i + 1 ) % num_connections;
         }
-    } while ( progress );
+
+        count = kept;
+    }
+
+    if ( previous >= 0 )
+    {
+        object->send_next_connection = ( previous + 1 ) % num_connections;
+    }
 flush:
     object->link.send_packets( object->link.transport );
 }

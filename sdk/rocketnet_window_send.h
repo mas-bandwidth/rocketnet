@@ -45,6 +45,15 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
 uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
                                            uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start );
 
+// Whether first_write (one fragment) or first_write_block (fragments > 1)
+// would number this message now. Changes nothing: the endpoint asks before it
+// starts a frame, so a frame is never started for a message the window stalls.
+int rn_window_send_would_number( const rn_window_send_t * send, int code, uint32_t bytes, int fragments );
+
+// As would_number, and a refusal marks and counts the stall as first_write's
+// does, so a stall found before a frame is started reads as one found by it.
+int rn_window_send_stall_unless_numbered( rn_window_send_t * send, int code, uint32_t bytes, int fragments );
+
 // A sent-packet map calls this for each acknowledged number. Stale or repeat
 // acks return zero; a newly marked number returns one.
 int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number );

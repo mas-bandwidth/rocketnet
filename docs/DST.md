@@ -56,20 +56,24 @@ The same seeds and options print the same trace on Linux, macOS and Windows,
 so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
+    PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
 
-measured equal, Release, at executable source 27b56da21 (the v1.0.1 audit
-integration, stitch/v1.0.1-audit) on Linux and macOS; the Windows line is
-confirmed separately:
+measured equal, Release, at executable source 9045dc02c (the v1.1.2 send pass,
+fix/v1.1.2/no-aborted-frames) on Linux, macOS and Windows:
 
-    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
-    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=cb02374fb45015e4
+    Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
+    macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
+    Windows (x64, MSVC)    PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
 
 The trace was f5b51aa640524001 at main 010c8167, 510908e5051b7f68 at 968673ea
 and 17999bcc78a7254d at e385557a (each equal on the three OSes; seeding the
 message resend delay from the transport's measured RTT, 93eaebd06, gave the
 last); the v1.0.1 audit fixes between e385557a and 27b56da21 moved it to
-cb02374fb45015e4. A change that moves this
+cb02374fb45015e4. The v1.1.2 send pass moved it to 255b8ae11ec099cb: a client
+packet its send budget refuses is now refused before a frame is started, so
+it no longer takes a session sequence that is never sent (with the
+write-first path limited to the server the trace is cb02374fb45015e4 again).
+A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
 per-commit Release unit job reads its pin from there), from

@@ -1464,7 +1464,8 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t 
     rio->slot_bytes[index] = packet_bytes;
 }
 
-// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot aborted, free again.
+// proofs/tla/RNRioSendSlotLayout.tla Finish: the reserved slot aborted: it carries nothing
+// and the send skips it, but its reservation stays taken until the phase is handed off.
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio, uint64_t packet_id, uint8_t * frame )
 {
     (void) packet_id;

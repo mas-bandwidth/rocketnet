@@ -4,25 +4,40 @@ The server's send loop over the endpoints' write passes, against the portable
 transport's per-flush send capacity, with the loop's own arithmetic.
 [RNOutgoingBuild](README-RNOutgoingBuild.md) models one connection's build and
 `RNServerSendFair.tla` the rotation abstractly (`K` clients served per update,
-the cursor moved by `K`); this model carries the rounds, the capacity test,
-the frame starts and aborts, and the cursor arithmetic of the code, across
-several connections whose windows stall and whose budgets refuse.
+the cursor moved by `K`); this model carries the rounds and the writer list,
+the capacity test, the frame starts, and the cursor arithmetic of the code,
+across several connections whose windows stall and whose budgets refuse.
 
 ## What it guards
 
-Capacity spent on frames that carry nothing. If a connection whose window
-is stalled, or whose reliable packet the budget refuses, answers `ORDERED`
-from `rn_endpoint_next_packet_bytes`, the object starts a transport frame, the
-write finds nothing to send, and the frame is aborted. If the pass then ends
-and the loop's next round reopens it, it does the same again. The portable
-transport takes a slot of the update's capacity at each start
-(`payload_ring.num_packets`, `rocketnet_server_transport_start_packet` in
+Capacity spent on frames that carry nothing, and a pass whose cost grows with
+one client's work.
+
+The portable transport takes a slot of the update's capacity at each frame
+start (`payload_ring.num_packets`, `rocketnet_server_transport_start_packet` in
 `sdk/rocketnet_server_transport.cpp`) and an abort does not give it back
 (`rocketnet_server_transport_abort_packet_unchecked` clears only the slot's
 bytes); the count resets only when the transport sends
-(`rocketnet_server_transport_send_packets_impl`). So stalled or refused
-connections would spend the capacity the connections with work need, once
-per round.
+(`rocketnet_server_transport_send_packets_impl`). No transport returns an
+aborted reservation. So a frame started for a packet that is then not written
+spends capacity the other connections need ([MESSAGES.md m1.8](../../standard/MESSAGES.md#m1.8)).
+Two refusals can come after a frame is started unless they are decided
+first: the window cannot number the ready message (a stall, or an ack that
+clears the stall without making the room the message needs), and the send
+budget refuses the packet. The code decides the window's before the frame
+(`rn_endpoint_ordered_due` asks `rn_window_send_would_number`, the test the
+walk's first write applies, `RNWindow` `WouldNumber`), and the budget's by
+writing the packet into a stack payload first while the bucket holds less
+than one maximum packet (`rn_endpoint_write_may_be_refused`), starting a frame
+only when bytes came out ([m9.4](../../standard/MESSAGES.md#m9.4)).
+
+The loop runs rounds of one frame per connection while any connection wrote.
+A connection that writes nothing in a round has ended its pass until the next
+flush, so after the first round only the connections that wrote in the round
+before (the writer list) are visited, in the same cyclic order: a flush costs
+`num_connections` visits plus one per frame, not `num_connections` per round.
+The cursor is set as a walk over every connection would set it, so the
+rotation is the one the full walk gave.
 
 ## State
 
@@ -33,16 +48,23 @@ per round.
 | `conn[c].resend` | a resend due (`rn_endpoint_fifo_due`) |
 | `conn[c].unr` | queued unreliable records (`unreliable_count`) |
 | `conn[c].stalled` | `ordered.send.stalled` |
+| `conn[c].fits` | `rn_window_send_would_number` for the ready message |
 | `conn[c].pays` | the send budget pays this flush's packets |
 | `conn[c].waiting` | `budget.reliable_waiting` |
 | `used` | `payload_ring.num_packets`, frames started this flush |
-| `start`, `off`, `progress` | the loop's `start`, `offset` and `progress` |
+| `start`, `off` | the loop's `start` and `offset` |
+| `later`, `listed`, `wrote` | a round after the first; the writer list (`send_writers`, `count`); this round's writers (`kept`) |
 | `cursor` | `object->send_next_connection` |
+| `visits`, `aborts` | the development seam's `slot_visits` and `frames_aborted` (`rn_send_pass_cost_read`) |
+| `fullCursor`, `skipOk` | ghosts: the cursor a walk over every connection sets, and whether every slot the list skipped would have written nothing |
 
-Work, the stall and the budget change only between flushes (`Env`): nothing
+Work, the window and the budget change only between flushes (`Env`): nothing
 else runs while `send_packets` does. One visit of a connection is one action,
 since `rn_message_connection_write` runs to its return with nothing
-interleaved. `packets_per_update` is taken as never reached.
+interleaved. `packets_per_update` is taken as never reached. `MayBeRefused`
+is the budget's refusal itself: the code writes first in a superset of those
+cases (any bucket below one maximum packet), which changes where the bytes
+are written and nothing the model observes.
 
 ## Actions and the code they mirror
 
@@ -50,30 +72,42 @@ interleaved. `packets_per_update` is taken as never reached.
   (`sdk/rocketnet_message_server.cpp`): `rn_endpoint_begin_flush` for every
   connection (`sdk/rocketnet_endpoint.cpp`, a `DONE` pass reopens), then
   `start = send_next_connection % num_connections`.
-- **`Visit`**: one offset of a round of `rn_message_object_send_packets`: the
-  capacity test (`rocketnet_server_transport_send_capacity_available`, `goto
-  flush` when spent), `rn_message_connection_write`, the cursor set to
-  `( i + 1 ) % num_connections`, and the next round while any connection
-  progressed. Inside the visit, `ConnWrite` is
-  `rn_message_connection_write`: `rn_endpoint_next_packet_bytes` (endpoint.cpp:
-  an idle pass opens its reliable phase and clears `reliable_waiting` through
-  `rocketnet_send_budget_begin_update`; `rn_endpoint_ordered_due`, gated on
-  the stall; `rn_endpoint_end_reliable`; the pass ends `DONE`),
-  `start_packet` (a NULL start is `rn_endpoint_packet_failed` with nothing
-  written), `rn_endpoint_write_packet` (endpoint.cpp: an ordered packet the
-  budget refuses or with nothing to number writes nothing and ends the
-  reliable path; an unreliable packet the budget refuses drops every queued
-  record and ends the pass), the abort or the finish.
+- **`Visit`**: one offset of a round of `rn_message_object_send_packets`. In
+  the first round every connection is visited; in a later round a connection
+  off the writer list is not (the model walks the offset to compare with the
+  full walk). A visit is the capacity test
+  (`rocketnet_server_transport_send_capacity_available`, `goto flush` when
+  spent, with the cursor the loop held before this visit: in a later round the
+  one stored with the connection in the list),
+  `rn_message_connection_write`, and the cursor set to
+  `( i + 1 ) % num_connections`; after the round, another over this round's
+  writers, or the end with the cursor past the last connection. Inside the
+  visit, `ConnWrite` is `rn_message_connection_write`:
+  `rn_endpoint_next_packet_bytes` (an idle pass opens its reliable phase and
+  clears `reliable_waiting`; `rn_window_send_stall_unless_numbered` marks the
+  stall when the window cannot number the ready message;
+  `rn_endpoint_ordered_due`, gated on the stall and on `would_number`;
+  `rn_endpoint_end_reliable`; the pass ends `DONE`), then
+  `rn_endpoint_write_may_be_refused` (`MayBeRefused`): the packet is written
+  first and a refusal takes no frame, or the frame is started (a NULL start is
+  `rn_endpoint_packet_failed` with nothing written) and the packet written in
+  place, then the finish.
 - **`BeginUpdate`**: `rn_endpoint_begin_update` (endpoint.cpp): the pass
   reopens.
 - **`Env(c)`**: the environment between flushes.
 
 ## Invariants
 
-- **`NoAbortWhilePaying`**: no frame is aborted for a connection whose budget
-  pays: a stalled window with nothing to resend asks for no frame.
-- **`AbortsBounded`**: a connection aborts at most one frame a flush (one
-  budget refusal ends its pass until the next flush).
+- **`NoAbort`**: no frame of the capacity is started and aborted in the send
+  pass.
+- **`UnlistedPassEnded`**: in a later round every connection off the writer
+  list has ended its pass (the list's premise).
+- **`SkippedWritesNothing`**: every slot a later round skips is one a walk
+  over every connection would have found nothing to write in.
+- **`CursorAsFullWalk`**: between flushes the cursor is the one a walk over
+  every connection in every round leaves.
+- **`VisitsBounded`**: a flush visits at most `N` slots plus one per frame
+  started.
 - **`ServedWhenCapacity`**: a flush ends with its capacity spent or with no
   connection holding work the code would write.
 - **`BoundedWait`**: a connection with writable work at every flush is served
@@ -85,12 +119,15 @@ interleaved. `packets_per_update` is taken as never reached.
 
 ## The instances
 
-- `MCRNSendRotation.cfg`: two connections, three frames a flush, three
-  flushes, windows that stall and budgets that refuse. 379,396 distinct
-  states, depth 21.
-- `MCRNSendRotationFair.cfg`: three connections, one frame a flush, five
-  flushes, no stall and no refusal, so a connection starved for three flushes
-  would show. 1,221,453 distinct states, depth 26.
+Measured on the Linux bench, two workers:
+
+| Case | Connections, frames a flush, flushes | Environment | Distinct states |
+|---|---|---|---:|
+| `MCRNSendRotation.cfg` | 2, 3, 3 | stalls, refusals | 281,591 |
+| `MCRNSendRotationShortAck.cfg` | 2, 3, 3 | stalls, acks without room | 180,872 |
+| `MCRNSendRotationRounds.cfg` | 3, 4, 1 | stalls, refusals | 822,853 |
+| `MCRNSendRotationRoundsRotate.cfg` | 3, 2, 3 | none | 310,317 |
+| `MCRNSendRotationFair.cfg` | 3, 1, 5 | none | 1,149,208 |
 
 ## Reversed witnesses
 
@@ -99,23 +136,49 @@ counterexample was checked against the C by hand.
 
 1. **`MCRNSendRotationBrokenReopen.cfg`** (`KeepDone = FALSE`, an ended pass
    that reopens within the flush: the end of `rn_endpoint_next_packet_bytes`
-   sets `IDLE`). TLC, three connections and four frames: connection 0 has a
-   ready message and a budget that refuses it; connection 2 has an unreliable record. Round one:
-   connection 0 plans `ORDERED`, a frame is started (`used = 1`),
-   `rn_ordered_write` is refused and sets `reliable_waiting`, the frame is
-   aborted, the pass ends; connection 2 writes its record, so the round
-   progressed. Round two: connection 0's pass is `IDLE` again, so
-   `rn_endpoint_next_packet_bytes` restarts the budget phase (clearing
-   `reliable_waiting`) and plans the same refused packet: a second abort
-   (`AbortsBounded`), `used = 3` for one written frame.
+   sets `IDLE`). TLC, three connections and four frames: connections 0 and 1
+   have nothing to send and their passes end `IDLE`; connection 2 writes its
+   unreliable record, so a second round runs over the writer list `{2}` with
+   connections 0 and 1 off it and their passes open (`UnlistedPassEnded`).
+   Against the C: with `IDLE` at the pass's end, the next
+   `rn_endpoint_next_packet_bytes` restarts the pass, so a connection the list
+   skips could still have written.
 2. **`MCRNSendRotationBrokenStallDue.cfg`** (`StallGate = FALSE`, ready messages
    of a stalled window counted as due: `rn_endpoint_ordered_due` answers yes to
    `ready_head != RN_DESCRIPTOR_NONE` without `!ordered->send.stalled`). TLC:
    a connection whose budget pays has a ready message and a stalled window;
    it plans `ORDERED`, a frame is started, `rn_ordered_write` numbers nothing
    (`rn_window_send_first_write` refuses while stalled), the frame is aborted
-   (`NoAbortWhilePaying`).
-3. **`MCRNSendRotationBrokenCursorAtServed.cfg`** (`CursorNext = FALSE`:
+   (`NoAbort`).
+3. **`MCRNSendRotationBrokenShortAck.cfg`** (`FitsGate = FALSE`: the due test
+   does not ask `rn_window_send_would_number`, as on v1.1.1). TLC, two
+   connections: connection 0 has a ready message the window cannot number
+   and no stall (an ack moved `U'` by less than the message needs); it plans
+   `ORDERED`, a frame is started, the first write refuses and marks the stall,
+   the frame is aborted (`NoAbort`). Against the C at v1.1.1: the partial
+   ack clears `stalled` in `rn_window_send_mark_acked`, `rn_endpoint_ordered_due`
+   answers yes on `ready_head`, and `rn_window_send_first_write_block` refuses
+   (`test_endpoint_partial_ack_stall_requests_no_frame`).
+4. **`MCRNSendRotationBrokenBudgetFrame.cfg`** (`WriteFirst = FALSE`: the frame
+   is started before the budget decides, as on v1.1.1). TLC, two connections:
+   connection 0 has one unreliable record and a budget that refuses it; a
+   frame is started, `rn_endpoint_write_packet` drops the record and writes
+   nothing, the frame is aborted (`NoAbort`). Against the C at v1.1.1:
+   `rn_message_connection_write` starts the frame, the unreliable write is
+   refused by `rocketnet_send_budget_admit` and returns 0, and
+   `abort_packet` keeps the slot
+   (`test_server_send_cap_unreliable_over_budget_takes_no_slot`).
+5. **`MCRNSendRotationBrokenCutCursor.cfg`** (`CutCursor = FALSE`: at a capacity
+   cut in a later round the cursor is left where the last writer set it).
+   TLC, three connections and four frames: round one, connections 0 and 1
+   write and 2 writes nothing; round two over `{0, 1}` writes two more
+   frames and ends with the capacity spent; round three's first visit, of
+   connection 0, finds no capacity. The full walk visited connection 2 in
+   round two and left the cursor at 0; the broken cut leaves it at 2
+   (`CursorAsFullWalk`). Against the C: the stored cursor of connection 0 is
+   `-1`, past the last connected connection of round one (2), so the cut sets
+   `send_next_connection = 0`.
+6. **`MCRNSendRotationBrokenCursorAtServed.cfg`** (`CursorNext = FALSE`:
    `send_next_connection = i`). TLC, three connections and one frame a flush:
    connection 0 has three frames of work and connection 2 one. Each flush
    starts at 0, serves connection 0, finds the capacity spent at the next

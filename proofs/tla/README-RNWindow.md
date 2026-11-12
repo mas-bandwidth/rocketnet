@@ -19,6 +19,7 @@ functions, which cite it by name:
 |---|---|
 | `Init` | `rn_window_send_init` (`sdk/rocketnet_window_send.cpp`), `rn_window_receive_init` (`sdk/rocketnet_window_receive.cpp`), `rn_window_ack_init` (`sdk/rocketnet_window_ack.cpp`) |
 | `NumberRecord` | `rn_window_send_admit`, `rn_window_send_first_write` and `rn_window_send_first_write_block` (`sdk/rocketnet_window_send.cpp`) |
+| `WouldNumber` (NumberRecord's count bound alone) | `rn_window_send_would_number` and `rn_window_send_stall_unless_numbered` (`sdk/rocketnet_window_send.cpp`), asked by the send pass's due test (`rn_endpoint_ordered_due`, `sdk/rocketnet_endpoint.cpp`) before a frame is started |
 | `WritePacket`, `WriteOldest` | `rn_window_ack_commit`, the sent-packet map and the resend FIFO (`sdk/rocketnet_window_ack.cpp`) |
 | `ReceiveAck` | `rn_window_send_mark_acked` (`sdk/rocketnet_window_send.cpp`) and `rn_window_ack_on_ack` (`sdk/rocketnet_window_ack.cpp`) |
 | `OpenPacket` | `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp`) |
