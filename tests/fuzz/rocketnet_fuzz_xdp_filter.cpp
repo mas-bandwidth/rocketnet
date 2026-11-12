@@ -37,24 +37,69 @@
 //     and the converse: a well-formed frame (no tweak) to the configured
 //     address and port, whose payload passes those checks, with a socket and
 //     no replay entry, is redirected.
+//
+// WHERE IT RUNS: the filter is GNU C, built as host C only by GCC or Clang on
+// a non-Windows host (tests/xdp_host/). The build that links the host object
+// defines ROCKETNET_FUZZ_XDP_FILTER_HOST (tests/fuzz/Makefile, the fuzz
+// nightly's Linux legs, CMake's fuzz_replay_ driver where the
+// rocketnet_xdp_filter_host target exists); elsewhere (MSVC) the target
+// compiles to a no-op and its seed generator writes the seeds without
+// replaying them.
+//
+// THE SEED GENERATOR: ROCKETNET_FUZZ_SEED_DIR=<dir> writes, for every
+// server-facing packet type at its wire sizes and both families, three seeds
+// (tools/fuzz_seedgen wrote the committed set the same way): s_ structured
+// with a socket, r_ the same with a replay entry at high water 1000 (the
+// seeds' sequence is ahead of it, so the lookup runs and passes), w_ the same
+// frame raw. Each is replayed and must reach the verdict the userspace rungs
+// name for its payload: REDIRECT when the payload passes
+// rocketnet_prefilter_check, ROCKETNET_WIRE_SERVER_PACKET_VALID and the size
+// bounds, DROP otherwise; and each family must have seeds of both verdicts.
+// It exits 1 printing INCOMPLETE otherwise.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_protocol.h"
+
+#if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
+#define ROCKETNET_FUZZ_XDP_FILTER_ACTIVE 1
+#else // #if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
+#define ROCKETNET_FUZZ_XDP_FILTER_ACTIVE 0
+#endif // #if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
+
+#if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_frame.h"
-#include "rocketnet_protocol.h"
 #include "xdp_host/server_xdp_host.h"
+#endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "../portable_crt.h"
+
 #define FZ_XDP_ABORTED  0
 #define FZ_XDP_DROP     1
 #define FZ_XDP_PASS     2
 #define FZ_XDP_TX       3
 #define FZ_XDP_REDIRECT 4
+
+static const uint8_t fz_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+static const uint8_t fz_server_ipv4[4] = { 203, 0, 113, 10 };
+static const uint8_t fz_server_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0a };
+static const uint8_t fz_client_ipv4[4] = { 198, 51, 100, 10 };
+static const uint8_t fz_client_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10 };
+static const uint16_t fz_server_port = 40000;
+
+static void fz_put16( uint8_t * p, uint32_t v )
+{
+    p[0] = (uint8_t) ( v >> 8 );
+    p[1] = (uint8_t) v;
+}
+
+#if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
 
 static void fz_require( bool condition, const char * property )
 {
@@ -66,26 +111,16 @@ static void fz_require( bool condition, const char * property )
     abort();
 }
 
-static const uint8_t fz_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-static const uint8_t fz_server_ipv4[4] = { 203, 0, 113, 10 };
-static const uint8_t fz_server_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0a };
-static const uint8_t fz_client_ipv4[4] = { 198, 51, 100, 10 };
-static const uint8_t fz_client_ipv6[16] = { 0x20, 0x01, 0x0d, 0xb8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10 };
-static const uint16_t fz_server_port = 40000;
-
 static uint8_t fz_frame[16384];
 
-static void fz_put16( uint8_t * p, uint32_t v )
-{
-    p[0] = (uint8_t) ( v >> 8 );
-    p[1] = (uint8_t) v;
-}
+// one input through the filter and the oracles: the verdict, or -1 when the
+// input is too short to run
 
-extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
+static int fz_xdp_run( const uint8_t * data, size_t size )
 {
     if ( size < 7 )
     {
-        return 0;
+        return -1;
     }
 
     const uint8_t flags = data[0];
@@ -137,7 +172,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     {
         if ( body_bytes < 4 )
         {
-            return 0;
+            return -1;
         }
         const uint8_t t0 = body[0], t1 = body[1], t2 = body[2], t3 = body[3];
         payload = body + 4;
@@ -236,7 +271,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     if ( frame_bytes < 1 )
     {
-        return 0;
+        return -1;
     }
 
     const int redirects_before = rocketnet_xdp_host_redirect_calls();
@@ -254,7 +289,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     if ( lookup_fails || epoch != 0 )
     {
-        return 0;
+        return verdict;
     }
 
     // DIFFERENTIAL, every frame: what the filter redirects, the AF_XDP
@@ -302,7 +337,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     if ( !structured )
     {
-        return 0;
+        return verdict;
     }
 
     const bool user_accepts = payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES &&
@@ -324,5 +359,242 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         fz_require( verdict == FZ_XDP_REDIRECT, "DIFFERENTIAL: a clean frame the userspace prefilter accepts is redirected" );
     }
 
+    return verdict;
+}
+
+#endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+
+// -----------------------------------------------------------------------
+//  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir>
+
+#define FZ_SEED_MAX ( 11 + 14 + 40 + 8 + 2048 )
+
+struct fz_seed_type_t
+{
+    const char * name;
+    uint8_t type;
+    int bytes;
+};
+
+static const fz_seed_type_t fz_seed_types[] = {
+    { "request", 0, 710 },
+    { "response", 3, 50 },
+    { "keepalive", 4, 41 },
+    { "keepalive", 4, 60 },
+    { "payload", 5, 34 },
+    { "payload", 5, 200 },
+    { "payload", 5, 1416 + 17 + 16 },
+    { "disconnect", 6, 33 },
+    { "ack", 8, 33 },
+    { "ack", 8, 64 },
+    { "denied", 1, 34 },
+    { "challenge", 2, 66 },
+    { "cookie", 7, 38 },
+};
+
+// the UDP payload every seed carries: the type, epoch 0, the test filter
+// value, then a fixed pattern (the sequence after the prefilter header is
+// far ahead of the r_ seeds' high water)
+
+static int fz_seed_payload( const fz_seed_type_t * entry, uint8_t * out )
+{
+    out[0] = entry->type;
+    out[1] = 0;
+    memcpy( out + 2, fz_filter, ROCKETNET_FILTER_VALUE_BYTES );
+    for ( int i = 2 + ROCKETNET_FILTER_VALUE_BYTES; i < entry->bytes; i++ )
+    {
+        out[i] = (uint8_t) ( i * 13 );
+    }
+    return entry->bytes;
+}
+
+// the whole frame the structured mode builds for a clean frame, untweaked
+
+static int fz_seed_frame( bool ipv6, const uint8_t * payload, int payload_bytes, uint8_t * out )
+{
+    uint8_t * p = out;
+    memset( p, 0, 14 );
+    p[0] = 0x02;
+    p[6] = 0x02;
+    p[11] = 1;
+    fz_put16( p + 12, ipv6 ? 0x86dd : 0x0800 );
+    p += 14;
+    const int udp_bytes = 8 + payload_bytes;
+    if ( ipv6 )
+    {
+        memset( p, 0, 40 );
+        p[0] = 0x60;
+        fz_put16( p + 4, (uint32_t) udp_bytes );
+        p[6] = 17;
+        p[7] = 64;
+        memcpy( p + 8, fz_client_ipv6, 16 );
+        memcpy( p + 24, fz_server_ipv6, 16 );
+        p += 40;
+    }
+    else
+    {
+        memset( p, 0, 20 );
+        p[0] = 0x45;
+        fz_put16( p + 2, (uint32_t) ( 20 + udp_bytes ) );
+        p[8] = 64;
+        p[9] = 17;
+        memcpy( p + 12, fz_client_ipv4, 4 );
+        memcpy( p + 16, fz_server_ipv4, 4 );
+        p += 20;
+    }
+    memset( p, 0, 8 );
+    fz_put16( p, 50000 );
+    fz_put16( p + 2, fz_server_port );
+    fz_put16( p + 4, (uint32_t) udp_bytes );
+    p += 8;
+    memcpy( p, payload, (size_t) payload_bytes );
+    p += payload_bytes;
+    return (int) ( p - out );
+}
+
+static bool fz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
+{
+    char path[1024];
+    if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
+    {
+        fprintf( stderr, "seed generator: the seed path for %s does not fit\n", name );
+        return false;
+    }
+
+    FILE * file = rocketnet_test_fopen( path, "wb" );
+    if ( !file )
+    {
+        fprintf( stderr, "seed generator: cannot write %s\n", path );
+        return false;
+    }
+
+    const bool ok = fwrite( data, 1, (size_t) bytes, file ) == (size_t) bytes;
+
+    fclose( file );
+    if ( !ok )
+    {
+        fprintf( stderr, "seed generator: cannot write %s\n", path );
+    }
+
+    return ok;
+}
+
+static bool fz_generate( const char * dir )
+{
+    static uint8_t payload[2048];
+    static uint8_t seed[FZ_SEED_MAX];
+    bool complete = true;
+    int reached[2][2] = { { 0, 0 }, { 0, 0 } };     // [family][redirect]
+
+    for ( size_t i = 0; i < sizeof( fz_seed_types ) / sizeof( fz_seed_types[0] ); ++i )
+    {
+        const fz_seed_type_t * entry = &fz_seed_types[i];
+        const int payload_bytes = fz_seed_payload( entry, payload );
+
+        // the verdict the userspace rungs name for this payload
+
+        const bool redirect = payload_bytes >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && payload_bytes <= ROCKETNET_RECEIVE_CEILING &&
+                              rocketnet_prefilter_check( payload, payload_bytes, fz_filter ) >= 0 &&
+                              ROCKETNET_WIRE_SERVER_PACKET_VALID( payload[0], payload_bytes );
+
+        for ( int family = 0; family < 2; family++ )
+        {
+            const bool ipv6 = family == 1;
+            const uint8_t ipv6_flag = ipv6 ? 0x80 : 0;
+            for ( int form = 0; form < 3; form++ )
+            {
+                static const char * const prefixes[3] = { "s", "r", "w" };
+                int bytes = 0;
+                if ( form == 0 || form == 1 )
+                {
+                    // structured: [flags][queue 3][epoch 0][hw x4][tweaks x4], socket populated;
+                    // r_ adds a replay entry at high water 1000
+                    memset( seed, 0, 11 );
+                    seed[0] = (uint8_t) ( ( form == 0 ? 0x21 : 0x61 ) | ipv6_flag );
+                    seed[1] = 3;
+                    if ( form == 1 )
+                    {
+                        seed[3] = 0xe8;
+                        seed[4] = 0x03;
+                    }
+                    memcpy( seed + 11, payload, (size_t) payload_bytes );
+                    bytes = 11 + payload_bytes;
+                }
+                else
+                {
+                    // raw: [flags: socket][queue 3][epoch 0][hw x4] then the frame
+                    memset( seed, 0, 7 );
+                    seed[0] = 0x20;
+                    seed[1] = 3;
+                    bytes = 7 + fz_seed_frame( ipv6, payload, payload_bytes, seed + 7 );
+                }
+
+                char name[128];
+                snprintf( name, sizeof( name ), "%s_%s_%s_%d", prefixes[form], entry->name, ipv6 ? "v6" : "v4", payload_bytes );
+
+#if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+                const int verdict = fz_xdp_run( seed, (size_t) bytes );
+                const int want = redirect ? FZ_XDP_REDIRECT : FZ_XDP_DROP;
+                if ( verdict != want )
+                {
+                    fprintf( stderr, "seed generator: the %s seed's verdict is %d, not %d\n", name, verdict, want );
+                    complete = false;
+                    continue;
+                }
+                reached[family][redirect ? 1 : 0]++;
+#else // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+                (void) redirect;
+                reached[family][0] = reached[family][1] = 1;
+#endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+
+                if ( !fz_seed_write( dir, name, seed, bytes ) )
+                {
+                    complete = false;
+                }
+            }
+        }
+    }
+
+    for ( int family = 0; family < 2; family++ )
+    {
+        if ( reached[family][0] == 0 || reached[family][1] == 0 )
+        {
+            fprintf( stderr, "seed generator: the %s seeds do not reach both REDIRECT and DROP\n", family ? "IPv6" : "IPv4" );
+            complete = false;
+        }
+    }
+
+#if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+    printf( "seed generator: %s\n", complete ? "every seed reaches the verdict its payload names" : "INCOMPLETE" );
+#else // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+    printf( "seed generator: %s\n", complete ? "seeds written; the filter is not built here, so none was replayed" : "INCOMPLETE" );
+#endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+    return complete;
+}
+
+// -----------------------------------------------------------------------
+
+extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
+{
+    (void) argc;
+    (void) argv;
+
+    char seed_dir[1024];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
+    {
+        exit( fz_generate( seed_dir ) ? 0 : 1 );
+    }
+
+    return 0;
+}
+
+extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
+{
+#if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+    (void) fz_xdp_run( data, size );
+#else // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
+    (void) data;
+    (void) size;
+#endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
     return 0;
 }

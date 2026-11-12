@@ -100,6 +100,7 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 1
         env:
           LEG: ${{ matrix.leg }}
         run: |
@@ -113,6 +114,7 @@ jobs:
           cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags"
 
       - name: Build the suites and the functional suite's exec binaries
+        timeout-minutes: 3
         id: build
         run: cmake --build "$LEG_BUILD_DIR" --target test functional test_serialize test_transport_control test_msgx --parallel 4
 

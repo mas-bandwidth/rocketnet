@@ -140,9 +140,11 @@ jobs:
           clang++ --version | sed -n 1p
 
       - name: Configure (clang)
+        timeout-minutes: 1
         run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build static and shared libraries, unit suite and functional suite (clang)
+        timeout-minutes: 3
         run: cmake --build build-clang --parallel
 
       - name: Unit suite (clang)
@@ -176,12 +178,14 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, through the Makefile)
+        timeout-minutes: 10
         run: make -j8
 
       # functional_production links the production library, which only a
       # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
       # own directory, so the development binaries in bin/ stay as they are
       - name: Build the production functional suite (Release, ROCKETNET_DEV=OFF)
+        timeout-minutes: 2
         run: |
           cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
           cmake --build build-production --target functional_production --parallel 8
@@ -236,12 +240,14 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, through the Makefile)
+        timeout-minutes: 10
         run: make -j8
 
       # functional_production links the production library, which only a
       # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
       # own directory, so the development binaries in bin/ stay as they are
       - name: Build the production functional suite (Release, ROCKETNET_DEV=OFF)
+        timeout-minutes: 2
         run: |
           cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
           cmake --build build-production --target functional_production --parallel 8
@@ -294,18 +300,22 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       # functional_production links the production library, which only a
       # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
       # own directory, so the development binaries in bin/ stay as they are
       - name: Configure the production library (ROCKETNET_DEV=OFF)
+        timeout-minutes: 1
         run: cmake -B build-production -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-production/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-production/bin"
 
       - name: Build (Release)
+        timeout-minutes: 5
         run: cmake --build build --config Release --target functional --parallel
 
       - name: Build the production functional suite (Release)
+        timeout-minutes: 3
         run: cmake --build build-production --config Release --target functional_production --parallel
 
       - name: Functional suite, nightly tier
@@ -389,6 +399,7 @@ jobs:
       # unordered plain read (tools/check_tsan_flags.py holds every tsan
       # build to this).
       - name: Configure
+        timeout-minutes: 2
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
@@ -397,6 +408,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
+        timeout-minutes: 6
         run: cmake --build build --target test functional --parallel
 
       - name: Run the unit suite under tsan
@@ -447,6 +459,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build Release
+        timeout-minutes: 13
         run: make -j4
 
       # THE COMMAND-LINE REGRESSION. vng carries its guest command on the
@@ -523,6 +536,7 @@ jobs:
           persist-credentials: false
 
       - name: Build Release
+        timeout-minutes: 13
         run: make -j4
 
       - name: Every macOS transport cell, fifty times in a row
@@ -572,9 +586,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build Release
+        timeout-minutes: 13
         run: cmake --build build --config Release --parallel 4
 
       - name: The Windows transport cells, fifty times in a row
@@ -646,9 +662,11 @@ jobs:
         run: python tools/check_xdp_archive.py --committed-only
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
+        timeout-minutes: 5
         run: cmake --build build --config Debug --parallel
 
       - name: Run tests (RSS telemetry, deterministic verdict)
@@ -754,9 +772,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
+        timeout-minutes: 5
         run: cmake --build build --config Release --parallel
 
       - name: External transport backend
@@ -792,12 +812,15 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure with AddressSanitizer
+        timeout-minutes: 1
         run: cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON
 
       - name: Build Release
+        timeout-minutes: 13
         run: cmake --build build --config Release --parallel 4
 
       - name: Build Debug
+        timeout-minutes: 4
         # The Debug configuration of the same AddressSanitizer build is
         # build-checked here (debug CRT, /MDd, against the one
         # clang_rt.asan_dynamic-x86_64.dll the build stages beside the
@@ -889,11 +912,13 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure clang-cl x64
+        timeout-minutes: 3
         run: |
           set -euo pipefail
           cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
 
       - name: Build clang-cl x64
+        timeout-minutes: 7
         run: |
           set -euo pipefail
           cmake --build build-clang --config Release --parallel 4
@@ -924,11 +949,13 @@ jobs:
           python tools/check_exports.py build-clang/bin/Release/rocketnet.dll build-clang/Release/rocketnet.lib
 
       - name: Configure MSVC ARM64 cross build
+        timeout-minutes: 1
         run: |
           set -euo pipefail
           cmake -B build-arm64 -A ARM64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
 
       - name: Build the ARM64 static and shared libraries
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev

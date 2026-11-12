@@ -71,6 +71,7 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 1
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
@@ -78,6 +79,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build
+        timeout-minutes: 8
         run: cmake --build build --parallel
 
       - name: Run unit tests under LSan

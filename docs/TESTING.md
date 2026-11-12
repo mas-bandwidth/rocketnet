@@ -138,7 +138,8 @@ silence, server silence, reconnect). A run passes only when both ends exit
 0, neither reports a failure, the server verified every session and its end
 reasons are exactly the case's list. Each run that does not pass prints
 `XVER FAIL case=... client=... server=... transport=...: <reason>` and the job
-fails. `go test xver.go xver_test.go` in `tools/xver` checks the grading.
+fails. `go test xver.go xver_test.go` in `tools/xver` checks the grading (the
+nightly compiles it with `go test -c` under a deadline, then runs it with none).
 
 One difference between versions is expected, and stated in
 `silentClientEnd` in `xver.go`: a v1.0.x server may end a client that went

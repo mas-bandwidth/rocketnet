@@ -95,6 +95,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, ROCKETNET_DEV=ON, GCC)
+        timeout-minutes: 7
         env:
           CC: gcc
           CXX: g++
@@ -301,6 +302,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, ROCKETNET_DEV=ON, Clang)
+        timeout-minutes: 11
         env:
           CC: clang
           CXX: clang++
@@ -505,6 +507,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, ROCKETNET_DEV=ON, Clang)
+        timeout-minutes: 11
         env:
           CC: clang
           CXX: clang++
@@ -537,9 +540,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build (Release)
+        timeout-minutes: 5
         run: cmake --build build --config Release --target dst test --parallel
 
       - name: The test_dst_ unit cases

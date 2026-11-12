@@ -59,6 +59,7 @@ jobs:
           persist-credentials: false
 
       - name: Configure and build client_main_thread_cost (Release)
+        timeout-minutes: 1
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target client_main_thread_cost --parallel
@@ -119,6 +120,7 @@ jobs:
           exit "$missing"
 
       - name: Configure and build client_main_thread_cost (Release)
+        timeout-minutes: 1
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target client_main_thread_cost --parallel 4
@@ -145,9 +147,11 @@ jobs:
           persist-credentials: false
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build client_main_thread_cost (Release)
+        timeout-minutes: 2
         run: cmake --build build --config Release --target client_main_thread_cost --parallel
 
       - name: Report P=32 frame budget (portable, report-only)
