@@ -102,12 +102,14 @@ jobs:
     name: ${{ matrix.case.config }}
     needs: plan
     if: needs.plan.outputs.count != '0'
-    runs-on: [self-hosted, Linux, X64, fleet]
+    # Only vision carries tlc-debt runners (fleet record: rocketnet=2:tlc-debt): a case runs for up to 96 hours,
+    # nothing resumes a killed one, and no host that serves per-commit runners carries one.
+    runs-on: [self-hosted, Linux, X64, fleet, tlc-debt]
     timeout-minutes: 6000  # 100 h: the 96 h case deadline plus the build
     strategy:
       fail-fast: false
-      # Two cases at once, so the debt never holds more than two of the
-      # fleet's Linux runners for days and per-commit CI keeps the rest.
+      # Two cases at once, one per tlc-debt runner on vision; the
+      # per-commit hosts never carry a case.
       max-parallel: 2
       matrix:
         case: ${{ fromJSON(needs.plan.outputs.cases) }}
