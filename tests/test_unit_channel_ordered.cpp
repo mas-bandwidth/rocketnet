@@ -1270,6 +1270,7 @@ static void test_reservation_of_control_and_unordered_records()
 
     wire_packet_t control;
     check( rn_ordered_announce_config( &a->ordered, &config ) );
+    check( rn_ordered_announce_config( &b->ordered, &config ) );        // b's own CONFIG, which a's is compared with
     check( write_packets( a, 1.0, &control, 1 ) == 1 );
     channels->deliveries = channels->delivery_capacity;
     check( rn_ordered_receive( &b->ordered, control.data, control.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
