@@ -14,6 +14,11 @@ The harness checks properties that also appear in the TLA+ models:
   sender sent, is that message's only outcome, is LOSS only for type 5, and
   is ACKED only for a message the receiver delivered (type 7: or holds
   behind an earlier undelivered sequence);
+- every type 5 send of a live session has its outcome by its receipt
+  deadline, `message_resend_delay_max_ms` after the send, plus
+  `ROCKETNET_DST_RECEIPT_DUE_SLACK` for the update that writes its packet and
+  the one that surfaces the outcome (`receipt_outcome_due`; a session that
+  ends first owes none);
 - stale packets from an earlier connection cannot enter a reused slot;
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;
@@ -106,8 +111,8 @@ Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 requires every check to pass over the fixed range `--seeds 1-2050`, then runs
 one named short step per fault schedule (`clock-back`, `seq-gap`,
-`seq-wrap-31`, `seq-wrap-32`, `burst`, `dup-storm`, `outage` and
-`outage-past`, each over seeds 1-50)
+`seq-wrap-31`, `seq-wrap-32`, `burst`, `dup-storm`, `outage`, `outage-past` and
+`send-fail`, each over seeds 1-50)
 printing a `PASS schedule=<name> seeds=1-50 fired=<count>` line; a schedule
 that fires zero times fails its step. Each leg then sweeps a longer range
 sized to about twenty minutes on that OS (Linux 10950 seeds, macOS 13950,
@@ -289,6 +294,15 @@ schedule; a failure prints its seed and the replay command, which carries
     (`ROCKETNET_DST_OUTAGE_IN_FLIGHT_STEPS`, derived from the constants, not
     measured): a reliable send can queue behind two windows' worth of round
     trips on top of the default 96.
+- `send-fail`: draws a side (the client's sends or the server's), a window
+  of 50 to 200 steps and its start. In the window that side's transport
+  refuses one frame in three at finish (`finish_packet` returns 0), as a
+  transport whose send failed does; the message layer takes the packet as
+  failed. It reaches the failed-packet paths no other fault does: a reliable
+  packet's numbers go back to be resent, and each type 5 message in a refused
+  packet takes its LOSS at once, which `receipt_outcome_due` and
+  `receipt_one_outcome` judge. `MESSAGE_UNRELIABLE_SEND_FAILED` is explained
+  only on a run where the schedule refused a frame.
 
 A schedule that fires on no seed of the range fails the run, even if every
 check held: it prints `FAIL seeds=<a>-<b> schedule=<name> fired on no seed`

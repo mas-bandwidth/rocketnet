@@ -336,6 +336,51 @@ static void test_loopback_transport_rtt_client_sends( void ) { loopback_rtt_chec
 
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_server_sends );
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
+
+// The server's link carries the transport's round trip to the message layer
+// (rn_message_server_link, link->rtt; proofs/tla/RNResendTiming.tla Seed,
+// standard/MESSAGES.md m9.2): until the connection has an RTT sample of its
+// own, the first update in which the transport reports a round trip for the
+// client takes it as the first sample, so the resend delay follows the path
+// from then on rather than waiting message_resend_delay_initial_ms.
+static void test_loopback_server_resend_delay_seeded_from_transport_rtt( void )
+{
+    struct loopback_rtt_pair_t pair;
+    rocketnet_unit_check( loopback_rtt_pair_setup( &pair ) );
+
+    const struct rn_window_ack_t * ack = &pair.server->object.connections[0].ordered.ack;
+    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( pair.server );
+    const double initial = ack->resend_delay;
+    bool seeded = false;
+    for ( int i = 0; i < 400 && !seeded; i++ )
+    {
+        const int had_rtt = rocketnet_message_server_client_connected( pair.server, 0 ) ? ack->has_rtt : 0;
+        loopback_rtt_step( &pair, LOOPBACK_RTT_SERVER, false, NULL );
+        if ( !rocketnet_message_server_client_connected( pair.server, 0 ) || had_rtt )
+        {
+            continue;
+        }
+        const double rtt = rocketnet_server_transport_client_rtt( transport, 0 );
+        printf( "    step %d: transport rtt %.6f, has_rtt %d, srtt %.6f, resend delay %.6f (initial %.6f)\n", i, rtt, ack->has_rtt, ack->srtt,
+                ack->resend_delay, initial );
+        if ( rtt > 0.0 )
+        {
+            // the first update with a transport round trip and no sample of the layer's own
+
+            rocketnet_unit_check( ack->has_rtt == 1 );
+            rocketnet_unit_check( ack->srtt == rtt && ack->rttvar == rtt );
+            rocketnet_unit_check( ack->resend_delay == rn_window_ack_compute_resend_delay( rtt, rtt, ack->resend_delay_min, ack->resend_delay_max ) );
+            rocketnet_unit_check( ack->resend_delay < initial );
+            seeded = true;
+        }
+    }
+    rocketnet_unit_check( seeded );
+
+    rn_test_message_client_stop_and_destroy( pair.client );
+    rn_test_message_server_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_loopback_server_resend_delay_seeded_from_transport_rtt );
 #endif // #if ROCKETNET_DEV
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
