@@ -775,6 +775,20 @@ static void harden_print_cut_network( const char * role, const harden_options_t 
     }
 }
 
+// the kernel's UDP counts again, a quiet interval after the cut: equal to
+// the cut's unless something sent across it
+
+static void harden_print_settle( const char * role )
+{
+    const harden_kernel_t k = harden_kernel_read();
+    const harden_kernel_t & b = harden_kernel_base;
+    harden_print_term( role, "settle_udp_in", k.udp_in - b.udp_in );
+    harden_print_term( role, "settle_udp_out", k.udp_out - b.udp_out );
+    harden_print_term( role, "settle_udp_noports", k.udp_noports - b.udp_noports );
+    harden_print_term( role, "settle_udp_inerrors", k.udp_inerrors - b.udp_inerrors );
+    fflush( stdout );
+}
+
 static int harden_netstat_main( const harden_options_t & o )
 {
     char utc[32];
@@ -1263,6 +1277,7 @@ static int harden_server_main( const harden_options_t & o )
     // the clients read their own cut now; the server's stop (its disconnects)
     // waits until they have
     rocketnet_sleep( o.quiet_seconds );
+    harden_print_settle( role );
 
     rocketnet_server_stop( server );
     const double stop_deadline = harden_now() + 10.0;
@@ -1383,7 +1398,7 @@ struct harden_client_totals_t
     double end_at = 0.0;
     uint64_t joins = 0, connects = 0, connect_seconds_max_us = 0;
     uint64_t clean_leaves = 0, silent_stops = 0, reconnects = 0;
-    uint64_t silent_timed_out = 0, unplanned_ends = 0, stable_ends = 0;
+    uint64_t silent_timed_out = 0, unplanned_ends = 0, stable_ends = 0, end_of_run_ends = 0;
     uint64_t end_states[32] = {};
     uint64_t inputs_sent = 0, inputs_refused = 0;
     uint64_t connections_read = 0;
@@ -1440,7 +1455,7 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     std::vector<uint64_t> counters( HARDEN_CLIENT_SLOTS, 0 );
     harden_verify_t verify;
     uint64_t connections_read = 0, inputs_sent = 0, inputs_refused = 0, joins = 0, connects = 0, connect_max_us = 0;
-    uint64_t clean_leaves = 0, silent_stops = 0, reconnects = 0, silent_timed_out = 0, unplanned_ends = 0, stable_ends = 0;
+    uint64_t clean_leaves = 0, silent_stops = 0, reconnects = 0, silent_timed_out = 0, unplanned_ends = 0, stable_ends = 0, end_of_run_ends = 0;
     uint64_t end_states[32] = {};
 
     struct rocketnet_client_config_t config;
@@ -1667,6 +1682,11 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                     {
                         silent_timed_out++;
                     }
+                    else if ( stop_traffic )
+                    {
+                        // after end_at: the server's stop at the end of the run
+                        end_of_run_ends++;
+                    }
                     else
                     {
                         unplanned_ends++;
@@ -1806,6 +1826,7 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
     totals->silent_timed_out += silent_timed_out;
     totals->unplanned_ends += unplanned_ends;
     totals->stable_ends += stable_ends;
+    totals->end_of_run_ends += end_of_run_ends;
     for ( int s = 0; s < 32; s++ )
     {
         totals->end_states[s] += end_states[s];
@@ -1883,6 +1904,7 @@ static int harden_clients_main( const harden_options_t & o )
 
     // the cleanup, after the server's own cut read: every client leaves
     rocketnet_sleep( o.quiet_seconds );
+    harden_print_settle( role );
     harden_utc( utc, sizeof( utc ) );
     printf( "harden_phase: role=clients phase=leave utc=%s\n", utc );
     fflush( stdout );
@@ -1921,6 +1943,7 @@ static int harden_clients_main( const harden_options_t & o )
     harden_print_term( role, "reconnects", (int64_t) totals.reconnects );
     harden_print_term( role, "unplanned_ends", (int64_t) totals.unplanned_ends );
     harden_print_term( role, "stable_ends", (int64_t) totals.stable_ends );
+    harden_print_term( role, "end_of_run_ends", (int64_t) totals.end_of_run_ends );
     harden_print_term( role, "inputs_sent", (int64_t) totals.inputs_sent );
     harden_print_term( role, "inputs_refused", (int64_t) totals.inputs_refused );
     for ( int s = 0; s < 32; s++ )
