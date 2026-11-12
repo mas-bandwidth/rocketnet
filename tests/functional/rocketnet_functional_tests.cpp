@@ -13214,6 +13214,17 @@ static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_ser
 // overrides that, the pair connects over another transport, and nothing
 // registers on the hub, so the case is taken out of the suite under a pin
 static bool rocketnet_test_no_transport_pin_is_set() { return !rocketnet_test_a_transport_pin_is_set(); }
+
+// these cases create their server on port 0 (the port-zero law: the kernel
+// grants the port), and xdp refuses that create because it cannot discover a
+// kernel-granted port, so a whole-suite server pin of xdp takes them out of
+// the suite
+static bool rocketnet_test_server_pin_is_not_xdp()
+{
+    char pin[256];
+    return !rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) || strcmp( pin, "xdp" ) != 0;
+}
+static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketnet_test_a_transport_pin_is_set() && rocketnet_test_server_pin_is_not_xdp(); }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -13466,30 +13477,30 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_connect_disconnect_1000_msgx_msgx", rocketnet_test_posix_connect_disconnect_1000_msgx_msgx, NULL },
     { "test_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery, NULL },
-    { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn, NULL },
-    { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change, NULL },
+    { "test_transport_disconnect_delivery", rocketnet_test_transport_disconnect_delivery, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_reconnect_churn", rocketnet_test_transport_reconnect_churn, rocketnet_test_server_pin_is_not_xdp },
+    { "test_client_disconnect_reports_state_change", rocketnet_test_client_disconnect_reports_state_change, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_client_io_linux_handoff_round_trip", rocketnet_test_client_io_linux_handoff_round_trip, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "test_client_io_apple_handoff_round_trip", rocketnet_test_client_io_apple_handoff_round_trip, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion, NULL },
-    { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill, NULL },
-    { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill, NULL },
+    { "test_transport_ring_exhaustion", rocketnet_test_transport_ring_exhaustion, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_client_concurrent_fill", rocketnet_test_transport_client_concurrent_fill, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_concurrent_fill", rocketnet_test_transport_concurrent_fill, rocketnet_test_server_pin_is_not_xdp },
     { "test_transport_wire_totals_concurrent_send_exact", rocketnet_test_transport_wire_totals_concurrent_send_exact, NULL },
-    { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape, NULL },
-    { "test_loopback_transport_udp", rocketnet_test_transport_udp_loopback, NULL },
+    { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape, rocketnet_test_server_pin_is_not_xdp },
+    { "test_loopback_transport_udp", rocketnet_test_transport_udp_loopback, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_DEV
     { "test_client_ipv4_without_ipv6_stack", rocketnet_test_client_ipv4_without_ipv6_stack, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
-    { "test_loopback_transport_cpp_transports_connect", rocketnet_test_cpp_transports_connect_over_loopback, NULL },
-    { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity, NULL },
-    { "test_transport_stats", rocketnet_test_transport_stats, NULL },
-    { "test_client_ack_stats_computed_on_read", rocketnet_test_client_ack_stats_computed_on_read, NULL },
-    { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped, NULL },
-    { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats, NULL },
+    { "test_loopback_transport_cpp_transports_connect", rocketnet_test_cpp_transports_connect_over_loopback, rocketnet_test_server_pin_is_not_xdp },
+    { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_stats", rocketnet_test_transport_stats, rocketnet_test_server_pin_is_not_xdp },
+    { "test_client_ack_stats_computed_on_read", rocketnet_test_client_ack_stats_computed_on_read, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_update_time_clamped", rocketnet_test_transport_update_time_clamped, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_packet_loss_stats", rocketnet_test_transport_packet_loss_stats, rocketnet_test_server_pin_is_not_xdp },
     { "test_platform_socket", rocketnet_test_platform_socket, NULL },
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram, NULL },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump, NULL },
@@ -13547,15 +13558,15 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination, NULL },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff, NULL },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-    { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats, NULL },
-    { "test_client_stats_of_empty_slot_read_zero", rocketnet_test_client_stats_of_empty_slot_read_zero, NULL },
-    { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch, NULL },
-    { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update, NULL },
-    { "test_loopback_transport_ipv6", rocketnet_test_transport_ipv6_loopback, NULL },
-    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client, NULL },
+    { "test_transport_acks_and_client_stats", rocketnet_test_transport_acks_and_client_stats, rocketnet_test_server_pin_is_not_xdp },
+    { "test_client_stats_of_empty_slot_read_zero", rocketnet_test_client_stats_of_empty_slot_read_zero, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update, rocketnet_test_server_pin_is_not_xdp },
+    { "test_loopback_transport_ipv6", rocketnet_test_transport_ipv6_loopback, rocketnet_test_server_pin_is_not_xdp },
+    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client, rocketnet_test_server_pin_is_not_xdp },
     { "test_server_serves_both_families", rocketnet_test_server_serves_both_families, NULL },
-    { "test_max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4, NULL },
-    { "test_max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6, NULL },
+    { "test_max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4, rocketnet_test_server_pin_is_not_xdp },
+    { "test_max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     { "test_xdp_transport_max_size_both_ways_ipv4", rocketnet_test_xdp_max_size_both_ways_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
@@ -13576,7 +13587,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
 #endif // production excludes dev-key/test-filter cases
-    { "test_config_precedence", rocketnet_test_config_precedence, NULL },
+    { "test_config_precedence", rocketnet_test_config_precedence, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_DEV
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
@@ -13596,7 +13607,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_portable_transport_server_io_pin", rocketnet_test_server_transport_io_pin_portable, rocketnet_test_server_pin_allows_portable },
     { "test_loopback_transport_server_io_pin", rocketnet_test_server_transport_io_pin_loopback, NULL },
     { "test_loopback_transport_env_pins", rocketnet_test_transport_env_pins_loopback, NULL },
-    { "test_transport_env_pin_is_honoured", transport_env_pin_is_honoured, rocketnet_test_a_transport_pin_is_set },
+    { "test_transport_env_pin_is_honoured", transport_env_pin_is_honoured, rocketnet_test_a_transport_pin_is_set_and_not_xdp },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_iocp_transport_server_io_pin", rocketnet_test_server_transport_io_pin_iocp, rocketnet_test_server_pin_allows_iocp },
     { "test_rio_transport_server_io_pin", rocketnet_test_server_transport_io_pin_rio, rocketnet_test_server_pin_allows_rio },
@@ -13661,8 +13672,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_transport_all_skipped_uses_auto", rocketnet_test_transport_all_skipped_uses_auto, rocketnet_test_server_pin_allows_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases, NULL },
     { "test_client_transport_io", rocketnet_test_client_transport_io, rocketnet_test_client_pin_allows_auto },
-    { "test_lifecycle_transport", rocketnet_test_lifecycle_transport, NULL },
-    { "test_loopback_transport_message_objects_from_t1000", rocketnet_test_message_objects_loopback_from_t1000, NULL },
+    { "test_lifecycle_transport", rocketnet_test_lifecycle_transport, rocketnet_test_server_pin_is_not_xdp },
+    { "test_loopback_transport_message_objects_from_t1000", rocketnet_test_message_objects_loopback_from_t1000, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_DEV
     { "test_harness_one_message_each_way_lossless", harness_one_message_each_way_lossless, NULL },
     { "test_harness_one_message_each_way_lossy", harness_one_message_each_way_lossy, NULL },
@@ -13707,9 +13718,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_wire_totals_count_every_packet_and_byte", wire_totals_count_every_packet_and_byte, NULL },
     { "test_wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server, NULL },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
-    { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, NULL },
+    { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, rocketnet_test_server_pin_is_not_xdp },
 #if ROCKETNET_DEV
-    { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, NULL },
+    { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, rocketnet_test_server_pin_is_not_xdp },
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV
