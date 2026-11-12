@@ -48,14 +48,43 @@ func TestDeadlineChildProcess(t *testing.T) {
 		return
 	}
 	fmt.Println("started")
+	// bounded like every wait in the tool: a parent that never releases
+	// the child cannot leave it running past the cap
+	capped := time.Now().Add(waitCap)
 	for {
 		if _, err := os.Stat(os.Getenv("NIGHTLY_DEADLINE_RELEASE")); err == nil {
 			break
+		}
+		if !time.Now().Before(capped) {
+			fmt.Println("never released")
+			os.Exit(8)
 		}
 		time.Sleep(time.Millisecond)
 	}
 	fmt.Println("ready")
 	os.Exit(7)
+}
+
+// A zero deadline (the nightly opt-in) no longer means an unbounded wait: a
+// child that stays alive and silent ends the wait at the fixed cap, and the
+// error names what was awaited.
+func TestZeroDeadlineWaitsAreCapped(t *testing.T) {
+	saved := waitCap
+	waitCap = 20 * time.Millisecond
+	defer func() { waitCap = saved }()
+	t.Setenv("ROCKETNET_NIGHTLY_NO_TIMEOUT", "1")
+
+	c := &child{name: "silent", buf: &syncBuffer{}, done: make(chan struct{})}
+	defer close(c.done)
+
+	err := waitForLine(c, "ready", executionDeadline(60), 60, "fixture", "the ready line")
+	if err == nil || !strings.Contains(err.Error(), "per-wait deadline") || !strings.Contains(err.Error(), "the ready line") || !strings.Contains(err.Error(), "silent") {
+		t.Fatalf("zero-deadline line wait was not capped with a message naming what it awaited: %v", err)
+	}
+	err = waitForExit(c, executionDeadline(60), 60, "fixture")
+	if err == nil || !strings.Contains(err.Error(), "per-wait deadline") || !strings.Contains(err.Error(), "silent to exit") {
+		t.Fatalf("zero-deadline exit wait was not capped with a message naming what it awaited: %v", err)
+	}
 }
 
 func TestRealChildDeadlineAndFailureRemainDistinct(t *testing.T) {

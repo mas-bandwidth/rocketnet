@@ -1599,6 +1599,36 @@ POSIX_MAC_CONNECT_CASE( portable, msgx )
 POSIX_MAC_CONNECT_CASE( msgx, portable )
 POSIX_MAC_CONNECT_CASE( msgx, msgx )
 #undef POSIX_MAC_CONNECT_CASE
+
+// The server create and destroy case creates no client, so a cell's client
+// half does not change its work: the four macOS cells ran each server's 1000
+// cycles twice in one case, 4000 cycles under one per-case watchdog. One case
+// per server transport instead, on that transport's own pair: 1000 cycles
+// each, every resource assertion unchanged.
+#define POSIX_MAC_SERVER_CREATE_CASE( server_io )                                \
+void rocketnet_test_posix_server_create_destroy_1000_##server_io()                 \
+{                                                                                  \
+    posix_only_server_transport_io = #server_io;                                   \
+    posix_only_client_transport_io = #server_io;                                   \
+    int selected = 0;                                                              \
+    for ( int i = 0; i < posix_cell_count; i++ )                                     \
+    {                                                                                \
+        selected += posix_cell_selected( &posix_cells[i] ) ? 1 : 0;                 \
+    }                                                                                \
+    if ( selected != 1 )                                                           \
+    {                                                                              \
+        printf( "macOS POSIX lifecycle filter excludes or duplicates %s\n",       \
+                #server_io );                                                       \
+    }                                                                              \
+    posix_check( selected == 1 );                                                   \
+    rocketnet_test_posix_server_create_destroy_1000();                             \
+    posix_only_client_transport_io = NULL;                                         \
+    posix_only_server_transport_io = NULL;                                         \
+}
+
+POSIX_MAC_SERVER_CREATE_CASE( portable )
+POSIX_MAC_SERVER_CREATE_CASE( msgx )
+#undef POSIX_MAC_SERVER_CREATE_CASE
 #endif // #if defined( __APPLE__ )
 
 #endif // #if !defined(_WIN32)
@@ -1611,7 +1641,7 @@ POSIX_MAC_CONNECT_CASE( msgx, msgx )
 
         case                                 r1    r2    r3    r4    r5
         test_posix_init_term_1000                 12    11    10    8     8
-        test_posix_server_create_destroy_1000     owed: a run takes about 150 s
+        test_posix_server_create_destroy_1000     owed: a run takes about 150 s (2026-11-11: 7.7-8.5 s per cell, now one cell per case, _portable and _msgx)
         test_posix_client_create_destroy_1000     29    28    27    26    27
         test_posix_server_restart_same_port_100   23    22    22    20    20
         test_posix_connect_disconnect_1000        52    54    52    51    50

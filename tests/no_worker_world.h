@@ -157,7 +157,15 @@ static void no_worker_connect_all( no_worker_world_t * world )
                                                          token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
         check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) ==
                ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-        check( rocketnet_client_connect( world->clients[i], token_string ) == ROCKETNET_STATUS_OK );
+        // connect is synchronous here (loopback, step-driven, test clock): a
+        // refusal names its status and client, so a one-off red can be read
+        const enum rocketnet_status_t connect_status = rocketnet_client_connect( world->clients[i], token_string );
+        if ( connect_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "no_worker_connect_all: client %d of %d refused: %s\n", i, world->num_clients, rocketnet_status_name( connect_status ) );
+            fflush( stdout );
+        }
+        check( connect_status == ROCKETNET_STATUS_OK );
     }
 }
 
