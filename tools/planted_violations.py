@@ -417,11 +417,18 @@ def run_script(script, tree, timeout):
     """(exit status or None on timeout, output). The whole process group dies on a timeout."""
     # each row gets its own runner temp and step summary, so parallel rows never share a
     # timing receipt; the workspace is the scratch checkout
-    temp = Path(tree) / ".planted-runner-temp"
+    tree = Path(tree).resolve()  # the script runs inside the tree: every path it is given is absolute
+    temp = tree / ".planted-runner-temp"
     temp.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, ROCKETNET_PLANTED="1", RUNNER_TEMP=str(temp), GITHUB_WORKSPACE=str(tree),
                GITHUB_STEP_SUMMARY=str(temp / "step-summary.md"),
                RUNNER_OS={"linux": "Linux", "macos": "macOS", "windows": "Windows"}.get(host_os(), "Linux"))
+    # the files a step writes for the steps after it ($GITHUB_ENV, $GITHUB_OUTPUT, $GITHUB_PATH);
+    # the row's script applies $GITHUB_ENV and $GITHUB_PATH after its setup, as the runner would
+    for name, filename in (("GITHUB_ENV", "github-env"), ("GITHUB_OUTPUT", "github-output"),
+                           ("GITHUB_PATH", "github-path")):
+        (temp / filename).touch()
+        env[name] = str(temp / filename)
     env.setdefault("GITHUB_RUN_ID", "0")
     env.setdefault("GITHUB_RUN_ATTEMPT", "1")
     env.setdefault("RUNNER_NAME", platform.node())
@@ -446,6 +453,15 @@ def run_script(script, tree, timeout):
         return None, data.decode("utf-8", errors="replace")
 
 
+# what the runner does between steps: lines a setup step appended to $GITHUB_PATH and
+# $GITHUB_ENV (NAME=value form) reach the checked step
+APPLY_STEP_FILES = (
+    'while IFS= read -r planted_line; do if [ -n "$planted_line" ]; then PATH="$planted_line:$PATH"; fi; '
+    'done < "$GITHUB_PATH"; export PATH\n'
+    'while IFS= read -r planted_line; do case "$planted_line" in *=*) export "$planted_line";; esac; '
+    'done < "$GITHUB_ENV"\n')
+
+
 def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout):
     """(verdict, detail) for one row; verdict RED, GREEN, BROKEN or HUNG."""
     tree = checkout(root, path)
@@ -463,7 +479,7 @@ def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout
         exports = "".join(f"export {k}={shlex.quote(v)}\n" for k, v in sorted(env.items())
                           if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k))
         enter = f"cd {shlex.quote(str(wd))}\n" if wd and "${{" not in str(wd) else ""
-        script = f"{exports}{setup}\necho {MARKER}\n{enter}{unescape(row['command'])}\n"
+        script = f"{exports}{setup}\n{APPLY_STEP_FILES}echo {MARKER}\n{enter}{unescape(row['command'])}\n"
         status, output = run_script(script, tree, timeout)
         if status is None:
             return "HUNG", f"no verdict within {timeout} s"
@@ -552,7 +568,7 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
     selected = [r for r in selected if r["skip"] == "-"]
     for row in skipped:
         out(f"PLANT-SKIP {row['id']} ({row['skip']})")
-    base = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="planted-violations-"))
+    base = Path(args.scratch).resolve() if args.scratch else Path(tempfile.mkdtemp(prefix="planted-violations-"))
     base.mkdir(parents=True, exist_ok=True)
     counts = {"RED": 0, "GREEN": 0, "BROKEN": 0, "HUNG": 0}
     slots = queue.Queue()
@@ -673,6 +689,21 @@ def self_test(out=say):
         code, lines = go(complete, "--only", "w/good,w/matrixed")
         expect("catching check is PLANT-RED", has(lines, "PLANT-RED w/good :: check: BAD found in data.txt"))
         expect("matrix step filled in is PLANT-RED", has(lines, "PLANT-RED w/matrixed"))
+
+        # a setup step's $GITHUB_ENV line reaches the checked step, as on the runner
+        stepenv = ["w/stepenv", "w.yml", "matrixed", "Check ${{ matrix.part }}", "linux", "-",
+                   "write:a.txt:BAD\\n", 'echo PLANTED_PART=a >> "$GITHUB_ENV"',
+                   "sh check.sh ${PLANTED_PART}.txt", r"check: BAD found in a\.txt"]
+        # with a relative --scratch, read against the caller's directory (not the repo's)
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            env_code, env_lines = go([good, lazy, matrixed, uncovered, stepenv], "--only", "w/stepenv",
+                                     "--scratch", "relative-scratch")
+        finally:
+            os.chdir(here)
+        expect("a setup step's GITHUB_ENV reaches the check (relative --scratch)",
+               has(env_lines, "PLANT-RED w/stepenv") and env_code == 0)
         expect("all red, complete table exits 0", code == 0)
         expect("the plant did not touch the real tree", (repo / "data.txt").read_text() == "fine\n")
         # a check that does not catch its plant
