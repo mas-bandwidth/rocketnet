@@ -15,7 +15,8 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif // #ifdef __cplusplus
 
 // the client call the game thread is inside, or CFT_CALL_NONE

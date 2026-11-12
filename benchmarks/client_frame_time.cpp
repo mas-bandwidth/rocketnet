@@ -477,7 +477,8 @@ static void cft_impair_run()
                 }
             }
         }
-        std::sort( due.begin(), due.end(), []( const cft_held_send_t & a, const cft_held_send_t & b ) { return a.due_ns < b.due_ns; } );
+        std::sort( due.begin(), due.end(), []( const cft_held_send_t & a, const cft_held_send_t & b )
+                   { return a.due_ns < b.due_ns; } );
         for ( const cft_held_send_t & held : due )
         {
             cft_real_sendto( held.s, held.data, held.bytes, 0, (const sockaddr *) &held.to, held.to_bytes );
@@ -996,8 +997,10 @@ static int cft_client( int argc, char ** argv )
         memset( &f, 0, sizeof( f ) );
         int messages = 0;
 
-        cft_window( CFT_CALL_UPDATE, &f.call[CFT_CALL_UPDATE], [&] { rocketnet_client_update( client, cft_seconds() ); } );
-        cft_window( CFT_CALL_RECEIVE, &f.call[CFT_CALL_RECEIVE], [&] {
+        cft_window( CFT_CALL_UPDATE, &f.call[CFT_CALL_UPDATE], [&]
+                    { rocketnet_client_update( client, cft_seconds() ); } );
+        cft_window( CFT_CALL_RECEIVE, &f.call[CFT_CALL_RECEIVE], [&]
+                    {
             const struct rocketnet_message_batch_t * batch;
             while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
             {
@@ -1006,9 +1009,9 @@ static int cft_client( int argc, char ** argv )
                     touched = touched + batch->data[m][0];
                 }
                 messages += batch->num_messages;
-            }
-        } );
-        cft_window( CFT_CALL_WRITE, &f.call[CFT_CALL_WRITE], [&] {
+            } } );
+        cft_window( CFT_CALL_WRITE, &f.call[CFT_CALL_WRITE], [&]
+                    {
             uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, (int) sizeof( input ) );
             if ( p )
             {
@@ -1023,9 +1026,9 @@ static int cft_client( int argc, char ** argv )
                     memset( p, frame & 0xff, 32 );
                     rocketnet_client_finish_message( client, 32 );
                 }
-            }
-        } );
-        cft_window( CFT_CALL_SEND, &f.call[CFT_CALL_SEND], [&] { rocketnet_client_send_packets( client ); } );
+            } } );
+        cft_window( CFT_CALL_SEND, &f.call[CFT_CALL_SEND], [&]
+                    { rocketnet_client_send_packets( client ); } );
 
         f.connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
         if ( frame >= 0 )
@@ -1103,17 +1106,14 @@ static int cft_client( int argc, char ** argv )
                     messages_at.push_back( (double) f.messages );
                 }
             }
-            printf( "cft hitch offset=%d hitches=%zu total_p50_us=%.2f total_max_us=%.2f update_max_us=%.2f messages_p50=%.0f messages_max=%.0f\n", offset,
-                    at.size(), cft_percentile( at, 50.0 ), at.empty() ? 0.0 : *std::max_element( at.begin(), at.end() ),
-                    [&] {
+            printf( "cft hitch offset=%d hitches=%zu total_p50_us=%.2f total_max_us=%.2f update_max_us=%.2f messages_p50=%.0f messages_max=%.0f\n", offset, at.size(), cft_percentile( at, 50.0 ), at.empty() ? 0.0 : *std::max_element( at.begin(), at.end() ), [&]
+                    {
                         double m = 0.0;
                         for ( const cft_frame_t & f : frames )
                         {
                             m = f.hitch_offset == offset ? std::max( m, f.call[CFT_CALL_UPDATE].us ) : m;
                         }
-                        return m;
-                    }(),
-                    cft_percentile( messages_at, 50.0 ), messages_at.empty() ? 0.0 : *std::max_element( messages_at.begin(), messages_at.end() ) );
+                        return m; }(), cft_percentile( messages_at, 50.0 ), messages_at.empty() ? 0.0 : *std::max_element( messages_at.begin(), messages_at.end() ) );
         }
         uint64_t second = 0;
         double worst_after = 0.0;
