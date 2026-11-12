@@ -1114,12 +1114,15 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
             // sizes cycle per client here, not across the server as on main
             const int bytes = o.sizes[slot.next[HARDEN_KIND_BURST] % (uint32_t) o.num_sizes];
             struct rocketnet_packet_context_t context;
-            uint8_t * p = rocketnet_server_transport_start_packet( pool->transport, item.slot, bytes + 1, &context );
-            if ( !p )
+            // start_packet returns the frame (as the message server reads it), not
+            // the payload its header comment names: the payload is frame + payload_index
+            uint8_t * frame = rocketnet_server_transport_start_packet( pool->transport, item.slot, bytes + 1, &context );
+            if ( !frame )
             {
                 stats.start_refused++;
                 continue;
             }
+            uint8_t * p = context.frame + context.payload_index;
             harden_write_message( p, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, slot.next[HARDEN_KIND_BURST] );
             const int length = rocketnet_message_single_finish( p, context.payload_capacity, bytes );
             if ( length <= 0 )
