@@ -13,6 +13,8 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
+#include <stdio.h>
+
 struct rocketnet_server_socket_t;
 
 #if defined( __cplusplus )
@@ -257,6 +259,12 @@ void rocketnet_server_socket_clear_preflight_test_result();             // natur
 // "velocity0").
 
 bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name );
+
+// the next IRQ in /proc/interrupts whose line names interface_name: a line
+// that starts with its IRQ number and a ':', read whole however long it is.
+// false at the end of the file.
+
+bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq );
 
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.

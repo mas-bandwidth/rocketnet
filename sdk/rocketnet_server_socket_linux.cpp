@@ -942,12 +942,10 @@ static int rocketnet_server_socket_count_cpu_list( const char * list )
 // or '-' (transport-prefixed names like i40e-ens1f0-TxRx-0, the exact
 // family B3 tells operators to build) and followed by '-', ':', '@',
 // whitespace, or end. pure string logic, exported for the fixture test.
-// accepted asymmetries with the script's form, recorded: this reader
-// splits lines past its 4096-byte buffer where awk is unbounded (real
-// /proc/interrupts lines are far shorter); '\r' rides this after-set for
-// fgets robustness but is unreachable through awk (no CRLF procfs); the
-// empty interface name refuses here and is unreachable in the script
-// (empty arguments refuse at the door).
+// accepted asymmetries with the script's form, recorded: '\r' rides this
+// after-set for fgets robustness but is unreachable through awk (no CRLF
+// procfs); the empty interface name refuses here and is unreachable in the
+// script (empty arguments refuse at the door).
 
 bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line, const char * interface_name )
 {
@@ -972,6 +970,70 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
             return true;
         }
         match = strstr( match + 1, interface_name );
+    }
+
+    return false;
+}
+
+bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq )
+{
+    rocketnet_assert( interrupts );
+    rocketnet_assert( interface_name );
+    rocketnet_assert( irq );
+
+    // a line longer than the buffer is read in parts: its IRQ is taken from
+    // the first, and the token a part ends in is carried, from the blank
+    // before it, to the front of the next, so the name is matched whole
+
+    char line[4096];
+    size_t carry = 0;
+    bool line_start = true;
+    bool line_irq = false;
+    bool named = false;
+
+    while ( fgets( line + carry, (int) ( sizeof( line ) - carry ), interrupts ) )
+    {
+        const size_t length = carry + strlen( line + carry );
+        const bool line_end = ( length > 0 && line[length - 1] == '\n' ) || feof( interrupts );
+
+        if ( line_start )
+        {
+            int number_end = 0;
+            line_irq = sscanf( line, " %d%n", irq, &number_end ) == 1 && line[number_end] == ':';
+            named = false;
+        }
+
+        size_t judged = length;
+        if ( !line_end )
+        {
+            while ( judged > 0 && line[judged - 1] != ' ' && line[judged - 1] != '\t' )
+            {
+                judged--;
+            }
+            judged = judged > 0 ? judged - 1 : 0;
+        }
+
+        const char kept = line[judged];
+        line[judged] = '\0';
+        named = named || rocketnet_server_socket_interrupt_line_matches_interface( line, interface_name );
+        line[judged] = kept;
+
+        if ( line_end )
+        {
+            line_start = true;
+            carry = 0;
+            if ( line_irq && named )
+            {
+                return true;
+            }
+            continue;
+        }
+
+        // a token longer than a name could be is not carried
+
+        line_start = false;
+        carry = length - judged <= 256 ? length - judged : 0;
+        memmove( line, line + length - carry, carry );
     }
 
     return false;
@@ -1405,20 +1467,9 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             uint8_t cpu_seen[1024];
             memset( cpu_seen, 0, sizeof( cpu_seen ) );
 
-            char line[4096];
-            while ( fgets( line, sizeof( line ), interrupts ) )
+            int irq = 0;
+            while ( rocketnet_server_socket_interrupt_next_irq( interrupts, interface_name, &irq ) )
             {
-                if ( !rocketnet_server_socket_interrupt_line_matches_interface( line, interface_name ) )
-                {
-                    continue;
-                }
-
-                int irq = 0;
-                if ( sscanf( line, " %d:", &irq ) != 1 )
-                {
-                    continue;
-                }
-
                 matched_irqs++;
 
                 char affinity_path[256];
