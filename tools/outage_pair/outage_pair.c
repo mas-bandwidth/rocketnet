@@ -79,7 +79,49 @@ struct outage_pair_side_t
     int stop_sent;
     int stop_received;
     int stop_in_order;
+    // the library's own seconds since heard, read every frame while
+    // connected: the longest seen, and the last read before the end
+    double longest_silence;
+    double last_silence;
 };
+
+// an outage the script calls T - 1 must show as at least this much silence
+// on the side it darkens, or the case did not test what it says
+#define OUTAGE_PAIR_SURVIVE_MIN_SILENCE ( OUTAGE_PAIR_TIMEOUT_SECONDS - 1 - 0.5 )
+
+// a timeout end must come after at least this much silence: the last read is
+// one frame (1/60 s) before the end, so a loaded host is allowed a few frames
+#define OUTAGE_PAIR_TIMEOUT_MIN_SILENCE ( OUTAGE_PAIR_TIMEOUT_SECONDS - 0.25 )
+
+static void note_silence( struct outage_pair_side_t * side, double seconds_since_heard )
+{
+    side->last_silence = seconds_since_heard;
+    if ( seconds_since_heard > side->longest_silence )
+    {
+        side->longest_silence = seconds_since_heard;
+    }
+}
+
+// survive: this side heard nothing for about T - 1 at least once (the both
+// dark outage darkens every side), so the case tested an outage at all.
+// timeout: the end came after T of silence, not before it.
+static const char * silence_failure( const struct outage_pair_side_t * side, int expect_timeout )
+{
+    if ( expect_timeout )
+    {
+        if ( side->last_silence < OUTAGE_PAIR_TIMEOUT_MIN_SILENCE )
+        {
+            return "the timeout ended the connection before T of silence";
+        }
+        return NULL;
+    }
+
+    if ( side->longest_silence < OUTAGE_PAIR_SURVIVE_MIN_SILENCE )
+    {
+        return "no outage reached T - 1 of silence on this side: the case tested no outage";
+    }
+    return NULL;
+}
 
 static void write_u32( uint8_t * p, uint32_t value )
 {
@@ -287,17 +329,24 @@ static int run_server( const char * address, int expect_timeout )
             }
         }
 
-        if ( now >= next_timeline )
         {
-            struct rocketnet_server_stats_t stats;
             struct rocketnet_conditions_t conditions;
-            rocketnet_server_stats( server, &stats );
-            if ( !rocketnet_server_client_conditions( server, 0, &conditions, (int) sizeof( conditions ) ) )
+            if ( rocketnet_server_client_conditions( server, 0, &conditions, (int) sizeof( conditions ) ) )
+            {
+                note_silence( &side, conditions.seconds_since_heard );
+            }
+            else
             {
                 memset( &conditions, 0, sizeof( conditions ) );
             }
-            print_timeline( "server", now, stats.packets_sent, stats.packets_received, &conditions );
-            next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
+
+            if ( now >= next_timeline )
+            {
+                struct rocketnet_server_stats_t stats;
+                rocketnet_server_stats( server, &stats );
+                print_timeline( "server", now, stats.packets_sent, stats.packets_received, &conditions );
+                next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
+            }
         }
 
         const int is_connected = rocketnet_server_client_connected( server, 0 );
@@ -374,10 +423,16 @@ static int run_server( const char * address, int expect_timeout )
     }
 
     print_counts( "server", &side );
+    printf( "outage_pair server silence longest %.3f s, last before the end %.3f s\n", side.longest_silence, side.last_silence );
 
     if ( !failure && expect_timeout && end_reason != ROCKETNET_DISCONNECT_REASON_TIMED_OUT )
     {
         failure = "the end is not TIMED_OUT";
+    }
+
+    if ( !failure )
+    {
+        failure = silence_failure( &side, expect_timeout );
     }
 
     if ( !failure && !expect_timeout )
@@ -538,17 +593,24 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
             }
         }
 
-        if ( now >= next_timeline )
         {
-            struct rocketnet_client_stats_t stats;
             struct rocketnet_conditions_t conditions;
-            rocketnet_client_stats( client, &stats );
-            if ( !rocketnet_client_conditions( client, &conditions, (int) sizeof( conditions ) ) )
+            if ( rocketnet_client_conditions( client, &conditions, (int) sizeof( conditions ) ) )
+            {
+                note_silence( &side, conditions.seconds_since_heard );
+            }
+            else
             {
                 memset( &conditions, 0, sizeof( conditions ) );
             }
-            print_timeline( "client", now, stats.packets_sent, stats.packets_received, &conditions );
-            next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
+
+            if ( now >= next_timeline )
+            {
+                struct rocketnet_client_stats_t stats;
+                rocketnet_client_stats( client, &stats );
+                print_timeline( "client", now, stats.packets_sent, stats.packets_received, &conditions );
+                next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
+            }
         }
 
         const int state = rocketnet_client_state( client );
@@ -633,6 +695,7 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
     }
 
     print_counts( "client", &side );
+    printf( "outage_pair client silence longest %.3f s, last before the end %.3f s\n", side.longest_silence, side.last_silence );
 
     if ( !failure && !connected )
     {
@@ -642,6 +705,11 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
     if ( !failure && expect_timeout && end_state != ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT )
     {
         failure = "the end is not CONNECTION_TIMED_OUT";
+    }
+
+    if ( !failure )
+    {
+        failure = silence_failure( &side, expect_timeout );
     }
 
     if ( !failure && !expect_timeout )
