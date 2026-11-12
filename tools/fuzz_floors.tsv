@@ -22,6 +22,11 @@ rocketnet_fuzz_receive_structured	555	2.33
 rocketnet_fuzz_round_trip	163	1826.43
 rocketnet_fuzz_server_transport	1328	10.00
 rocketnet_fuzz_session	1826	0.63
+# rocketnet_fuzz_session_raw, 2026-11-12, bench-nyc-1 (tools/fuzz_ndebug.sh --seconds 30, twice): INITED cov 3724 and
+# 3721, executed units 1704 and 1250 in 31 s. min_cov is half of 3721. min_units_per_second is DERIVED, not measured on
+# the slow legs: rocketnet_fuzz_session ran 2133 units the same way, so 0.63 x 1250/2133 = 0.37, rounded down. PROVISIONAL:
+# the asan+ubsan, MSan, macOS and Windows legs are not yet measured; replace both figures from the first fuzz-nightly.
+rocketnet_fuzz_session_raw	1860	0.36
 rocketnet_fuzz_token_private	306	18.62
 rocketnet_fuzz_uring_recvmsg	39	10673.67
 rocketnet_fuzz_xdp_frame	31	17294.79
