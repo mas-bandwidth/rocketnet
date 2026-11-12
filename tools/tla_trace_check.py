@@ -57,6 +57,11 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-replay-marks": {
+        "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
