@@ -562,9 +562,11 @@ jobs:
   # check) fifty times in a row with the matrix's pins and pass rule, printing
   # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
   # keeping the first failing log. A failure is reported with its log, never
-  # retried. The cells named here are the portable, iocp and rio servers and
-  # loopback: every cell of the Windows matrix, each named so a cell added to
-  # ci.yml is added here on purpose.
+  # retried. It runs every cell of the Windows matrix, read from ci.yml with no
+  # --cell, as the Linux and macOS jobs do: the list named here once (4 cells)
+  # missed portable/iocp and portable/auto from 2026-10-24 on, and
+  # tools/check_transport_matrix.py now refuses a --cell list in any OS's
+  # fifty-times step.
 
   windows-transport-cells-repeat:
     name: windows / transport cells x50
@@ -597,7 +599,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
+          scripts/transport-cells-repeat --runs 50
 
       - name: Keep the logs of a failing run
         if: failure()
