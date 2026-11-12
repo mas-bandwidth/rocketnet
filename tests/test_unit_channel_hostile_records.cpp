@@ -490,6 +490,28 @@ static void test_hostile_held_state_waits_for_its_epoch()
     rn_unit_arena_destroy( h.arena );
 }
 
+// R5, by fault injection: a code-3 record at its turn with the delivery
+// table already full (rn_ordered_receive defers before that on the live path,
+// so the table is filled by hand) is not delivered past the table: the
+// region is exhausted, the read index stays, and the count stays at capacity.
+
+static void test_hostile_reliable_delivery_on_a_full_table_exhausts()
+{
+    hostile_t h;
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    rocketnet_message_record_t record;
+
+    hostile_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, 1 );
+    h.channels.deliveries = h.channels.delivery_capacity;
+    check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( h.channels.deliveries == h.channels.delivery_capacity );
+    check( h.region->channel_receive[0].ordered_read == 0 );
+    check( rn_region_exhausted( h.region ) );
+
+    rn_unit_arena_destroy( h.arena );
+}
+
+REGISTER_UNIT_TEST( test_hostile_reliable_delivery_on_a_full_table_exhausts );
 REGISTER_UNIT_TEST( test_hostile_held_reliable_sequenced_span_at_the_ring_end );
 REGISTER_UNIT_TEST( test_hostile_held_state_waits_for_its_epoch );
 REGISTER_UNIT_TEST( test_hostile_block_shape_at_each_bound );
