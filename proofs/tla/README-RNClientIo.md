@@ -1,5 +1,16 @@
 # RNClientIo
 
+**Historical design.** RNClientIo models the two-send-ring, two-receive-buffer,
+flag-handshake client I/O that `sdk/rocketnet_client_io.h` replaced. Today's
+code has three rings and three buffers exchanged by
+`sdk/rocketnet_buffer_handoff.h` under a try-acquired mutex, with a LATE
+hand-off on contention; that exchange, each ring's destination binding
+(`io->to`, `io->to_held`, `rocketnet_client_io_rebind_held`) and
+`SentToCommitted` are modelled and checked in
+[RNBufferHandoff](README-RNBufferHandoff.md). The code names RNClientIo
+actions only as that history. The cases below stay as the record of the
+earlier design; they are not evidence for the current source.
+
 **Shutdown scope:** This model retains its earlier synchronous shutdown
 abstraction and exact historical evidence. The approved request/completion API
 is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
