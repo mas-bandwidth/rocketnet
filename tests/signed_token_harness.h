@@ -276,4 +276,4 @@ static inline void signed_token_expect_challenged( const struct signed_token_spe
     signed_token_server_teardown( &test );
 }
 
-#endif // #ifndef ROCKETNET_TESTS_SIGNED_TOKEN_HARNESS_H
+#endif // ROCKETNET_TESTS_SIGNED_TOKEN_HARNESS_H
