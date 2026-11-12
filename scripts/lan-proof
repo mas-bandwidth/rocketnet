@@ -518,7 +518,7 @@ while [ "$s" -lt "$shard_count" ]; do
     idx=$(( s % client_count ))
     set -- $client_sshs
     eval "host=\${$(( idx + 1 ))}"
-    host_shards=$( printf '%s\n' $shard_hosts | grep -Fxc "$host" || true )
+    host_shards=$( printf '%s\n' $shard_hosts | grep -Fxc "$host" )
     nproc=$( sed -n 's/.* nproc=\([0-9]*\).*/\1/p' "$run_dir/client$idx.host" )
     [ -n "$nproc" ] || fail "client$idx host facts named no core count"
     [ $(( (host_shards + 1) * 2 )) -le "$nproc" ] ||

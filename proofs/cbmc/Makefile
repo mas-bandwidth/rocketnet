@@ -38,12 +38,10 @@
 #
 # `ack-run-bound-8`, `ack-run-full-4096`, and `ack-run-negative-control`
 # use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are on no
-# list here: the run-8 instance exhausts 48 GB (INVENTORY.md records the
-# measurements). `ack-run-bound-8` and `ack-run-negative-control` run each
-# night on studio (512 GB) by .github/workflows/nightly-ack-proof.yml, on an
-# ESBMC built from pinned source (tools/build_pinned_esbmc.sh), with
-# ACK_RUN_MEMORY_KB and ACK_RUN_TIMEOUT raised. run_bounded.sh applies both
-# limits on Linux and macOS.
+# list and in no workflow: ESBMC 8.5 cannot encode them in any memory we
+# have (INVENTORY.md, "ACK run measurements"). The nightly
+# (.github/workflows/nightly-ack-proof.yml) runs the ack-run-exhaustive-*
+# checks below instead.
 
 CBMC ?= cbmc
 
@@ -96,7 +94,10 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 
 .PHONY: all replay-delta-1-3 replay-near-4096 replay-far reconstruct \
         read-write message-read xdp-free-list \
-        ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
+        ack-run-bound-8 ack-run-full-4096 ack-run-negative-control \
+        ack-run-exhaustive-8 ack-run-exhaustive-negative-control \
+        ack-run-exhaustive-vacuity-plant ack-run-exhaustive-mutants \
+        clean
 
 all: replay-delta-1-3 replay-far reconstruct \
      read-write message-read xdp-free-list proofs-packet_open
@@ -228,6 +229,12 @@ define run_ack_proof
 	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/output.log"; then echo "$(1) HOLD out of memory"; exit 1; fi; \
 	if grep -q 'UNKNOWN' "$$work/output.log"; then echo "$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -A3 '^Violated property' "$$work/output.log" | grep -q 'unwinding assertion'; then echo "$(1) HOLD unwinding assertion failed"; exit 1; fi; \
+	if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$work/output.log"; then \
+	  echo "$(1) COUNTEREXAMPLE: a property is violated (the trace is above) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
+	if grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "$(1) HOLD solver error, no verdict (exit=$$status) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
 	if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
 	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3) named-unwinds=$(4)"; \
 	else \
@@ -263,9 +270,97 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	   grep -q 'negative control reaches the production ACK operation' "$$work/output.log" && \
 	   grep -Eq '\*\* 1 of [0-9]+ properties failed' "$$work/output.log"; then \
 	  echo "ack-run-negative-control EXPECTED FAILURE bound=8 unwind=65 named-unwinds=$(ACK_RUN_SMALL_UNWINDS)"; \
+	elif grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "ack-run-negative-control HOLD solver error, no verdict (exit=$$status)"; exit 1; \
 	else \
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
+
+# The ACK run checks the nightly runs (.github/workflows/nightly-ack-proof.yml).
+#
+# Why not ack-run-bound-8 (measured 2026-11-12 on space3, ESBMC 8.5.0,
+# proofs/cbmc/INVENTORY.md, "ACK run measurements"): ESBMC turns a write through a pointer
+# whose offset into the 260 KB endpoint is symbolic into a byte-level update
+# of the whole object, and from the second such write the formula grows by
+# tens of GB per write whatever the solver. The production visit makes one
+# (record->acked) per newly acked record, so a run of 8 is 8 of them. With Z3
+# the solver answers unknown ("SMT solver failed"), every night since 11-01.
+# Not even run length 1 fits: with the harness indexing the endpoint
+# directly and every unwind limited to one visit, ESBMC with Bitwuzla stops
+# "Out of memory" at a 150 GB limit after 400 s of symex and 15 minutes of
+# encoding. No ESBMC instance of this leaf runs in a nightly's means.
+#
+#   ack-run-exhaustive-8  the bound-8 claim, checked by running the
+#       production leaf natively on every case of the harness's finite state:
+#       every ring position, run length 1..8, prior-ack pattern and highest
+#       offset, with the rest of the ring empty and with the run's bitmap
+#       words full of live unacked neighbours, in the start-up block, the
+#       block after it and the last block below 2^64 (ack_run_exhaustive.cpp
+#       says why the other blocks are shifts of these). 51.3e9 cases; the
+#       whole set below took 880 s on 8 cores of an M5 Max.
+#   ack-run-exhaustive-negative-control  the visit check negated: must fail.
+#   ack-run-exhaustive-vacuity-plant  no case reaches the leaf: must report
+#       VACUOUS (the coverage counters are what catch a vacuous run).
+#   ack-run-exhaustive-mutants  four one-line bugs planted in a copy of
+#       sdk/rocketnet_ack.cpp (the masked top bit, the masked low bits, the
+#       unacked bit left set, the wrapped half of the walk skipped): each must
+#       fail the check.
+
+ACK_RUN_CXX ?= c++
+ACK_RUN_THREADS ?= $(shell getconf _NPROCESSORS_ONLN)
+ACK_RUN_LINK_GC = $(if $(filter Darwin,$(shell uname -s)),-Wl$(comma)-dead_strip,-Wl$(comma)--gc-sections)
+comma := ,
+ACK_RUN_CXXFLAGS = -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -DNDEBUG -DROCKETNET_DEV=1 \
+                   -ffunction-sections -fdata-sections -pthread
+
+# run_ack_exhaustive <target> <extra flags> <expected: pass|fail|vacuous> <sdk dir>
+define run_ack_exhaustive
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	$(ACK_RUN_CXX) $(ACK_RUN_CXXFLAGS) $(2) -I$(4) -I$(SDK) $(ACK_RUN_LINK_GC) \
+	    -o "$$work/ack_run_exhaustive" $(CURDIR)/ack_run_exhaustive.cpp || { echo "$(1) HOLD build failed"; exit 1; }; \
+	status=0; \
+	"$$work/ack_run_exhaustive" $(ACK_RUN_THREADS) > "$$work/output.log" 2>&1 || status=$$?; \
+	cat "$$work/output.log"; \
+	case "$(3)" in \
+	  pass) if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
+	          echo "$(1) VERIFICATION SUCCESSFUL bound=8 every ring position, length, ack pattern and highest offset"; \
+	        else echo "$(1) HOLD exit=$$status"; exit 1; fi ;; \
+	  fail) if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$work/output.log"; then \
+	          echo "$(1) EXPECTED FAILURE"; \
+	        else echo "$(1) HOLD: expected failure did not happen (exit=$$status)"; exit 1; fi ;; \
+	  vacuous) if [ $$status -eq 3 ] && grep -q '^VACUOUS' "$$work/output.log"; then \
+	          echo "$(1) EXPECTED VACUOUS"; \
+	        else echo "$(1) HOLD: the vacuous plant was not reported (exit=$$status)"; exit 1; fi ;; \
+	esac
+endef
+
+ack-run-exhaustive-8: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-8,,pass,$(SDK))
+
+ack-run-exhaustive-negative-control: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-negative-control,-DACK_NEGATIVE_CONTROL=1,fail,$(SDK))
+
+ack-run-exhaustive-vacuity-plant: ack_run_exhaustive.cpp
+	@$(call run_ack_exhaustive,ack-run-exhaustive-vacuity-plant,-DACK_RUN_PLANT_VACUOUS=1,vacuous,$(SDK))
+
+# Each mutant is one sed over a copy of sdk/rocketnet_ack.cpp; a sed that no
+# longer matches (the source moved) is HOLD, never a silent pass.
+ACK_RUN_MUTANT_top-bit = s/( ( 1ull << ( hi_bit + 1 ) ) - 1 )/( ( 1ull << hi_bit ) - 1 )/
+ACK_RUN_MUTANT_low-bits = s/word &= ~0ull << ( a & 63 );/word \&= ~0ull;/
+ACK_RUN_MUTANT_unacked-left-set = s/endpoint->sent_unacked\[s >> 6\] &= ~( 1ull << ( s & 63 ) );/( void ) s;/
+ACK_RUN_MUTANT_wrap-skipped = s/rn_bitmap_walk_bits_desc( endpoint->sent_unacked, 0, slot_high, high - slot_high, visit );/;/
+ACK_RUN_MUTANTS = top-bit low-bits unacked-left-set wrap-skipped
+
+ack-run-exhaustive-mutants: $(addprefix ack-run-exhaustive-mutant-,$(ACK_RUN_MUTANTS))
+	@echo "ack-run-exhaustive-mutants EXPECTED FAILURE for every mutant: $(ACK_RUN_MUTANTS)"
+
+ack-run-exhaustive-mutant-%: ack_run_exhaustive.cpp
+	@mutant=$$(mktemp -d); \
+	sed '$(ACK_RUN_MUTANT_$*)' $(SDK)/rocketnet_ack.cpp > "$$mutant/rocketnet_ack.cpp"; \
+	if cmp -s $(SDK)/rocketnet_ack.cpp "$$mutant/rocketnet_ack.cpp"; then \
+	  echo "$@ HOLD: the mutant no longer applies to sdk/rocketnet_ack.cpp"; rm -rf "$$mutant"; exit 1; fi; \
+	( $(call run_ack_exhaustive,$@,,fail,$$mutant) ); status=$$?; rm -rf "$$mutant"; exit $$status
 
 read-write: proof_read_write.c
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"

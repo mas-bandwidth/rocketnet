@@ -82,6 +82,11 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("total_us_p99_median=101.25", report_ro)
         self.assertIn("verdict=FAIL", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # ... and names the FAIL to the nightly watch, which lists it red
+        self.assertRegex(report_ro, r"(?m)^::warning title=REPORT-ONLY-FAIL::frame_budget transport=msgx P=32 "
+                         r"total_us_p99_median=101\.25 .*verdict=FAIL$")
+        # an enforcing leg exits 1 instead and prints no annotation
+        self.assertNotIn("REPORT-ONLY-FAIL", report)
 
     def test_malformed_or_missing_line_fails(self) -> None:
         missing_p32 = (
@@ -148,6 +153,9 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("VOID load=4.25 cores=16", report_ro)
         self.assertIn("verdict=VOID", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # a report-only void exits 0, so it names itself to the nightly watch
+        self.assertIn("::warning title=UNMEASURED::frame budget VOID: host load 4.25 over 4 (16 cores / 4) "
+                      "before run 1; nothing measured", report_ro)
 
         # Windows (load1=None) prints load=unavailable and does not void:
         code_win, report_win = cfb.evaluate_gate(
@@ -160,6 +168,20 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertEqual(code_win, 0, msg=report_win)
         self.assertIn("load=unavailable", report_win)
         self.assertIn("verdict=PASS", report_win)
+
+    def test_zero_runs_fails_and_is_never_a_pass(self) -> None:
+        # zero inputs is an error: no run collected must fail, even with --report-only
+        for report_only in (False, True):
+            code, report = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="portable",
+                runs=0,
+                report_only=report_only,
+                load_fn=lambda: (1.0, 16),
+                run_fn=lambda binary, transport: (0, make_stdout(45.0), ""),
+            )
+            self.assertEqual(code, 1, msg=report)
+            self.assertIn("verdict=FAIL (no runs collected)", report)
 
     def test_run_benchmark_with_load_checks_delegates_to_evaluate_gate(self) -> None:
         outputs = [make_stdout(45.0), make_stdout(55.0), make_stdout(50.0)]

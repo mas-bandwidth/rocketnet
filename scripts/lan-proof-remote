@@ -136,7 +136,7 @@ cmd_build()
     case "$commit" in
         ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
     esac
-    timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true )
+    timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null )
     # GNU and BSD timeout both print --kill-after in their help (BSD on
     # stderr) and both take -k.
     [ -n "$timeout_cmd" ] && "$timeout_cmd" --help 2>&1 | grep -q -- '--kill-after' ||
@@ -400,7 +400,7 @@ start_recorded()
     shift 2
     mkdir -p "$dir" || fail "start: cannot create $dir"
     if [ "$( uname -s )" = "Darwin" ]; then
-        ulimit -n 65535 2>/dev/null || true
+        ulimit -n 65535 2>/dev/null || echo "start: ulimit -n 65535 refused; the fd limit stays $( ulimit -n )" >&2
     fi
     nohup "$@" > "$dir/$name.log" 2>&1 &
     echo $! > "$dir/$name.pid"

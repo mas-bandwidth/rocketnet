@@ -167,7 +167,7 @@ def compile_alone(compiler_c, compiler_cxx):
     unit.write_text('#include "rocketnet.h"\n')
     for name, compiler, flags in languages:
         for suffix, defines in variants:
-            command = [compiler] + flags + defines + ["-I", str(HEADER.parent), str(unit)]
+            command = [compiler] + flags + defines + ["-ffp-contract=off", "-I", str(HEADER.parent), str(unit)]
             result = subprocess.run(command, capture_output=True, text=True)
             detail = "" if result.returncode == 0 else ": " + (result.stderr.strip().splitlines() or ["exit %d" % result.returncode])[0]
             report(result.returncode == 0, "(a) the header alone compiles as %s%s%s" % (name, suffix, detail))
@@ -224,8 +224,8 @@ def check_channel_bound(compiler_c, compiler_cxx):
                 flags = ["/I" + str(HEADER.parent)] + ["/D" + d for d in defines]
             else:
                 environment = None
-                commands = [("C99", [compiler_c, "-std=c99", "-x", "c"]),
-                            ("C++11", [compiler_cxx, "-std=c++11", "-x", "c++"])]
+                commands = [("C99", [compiler_c, "-std=c99", "-ffp-contract=off", "-x", "c"]),
+                            ("C++11", [compiler_cxx, "-std=c++11", "-ffp-contract=off", "-x", "c++"])]
                 flags = ["-pedantic", "-Wall", "-Wextra", "-Werror", "-fsyntax-only",
                          "-I", str(HEADER.parent)] + ["-D" + d for d in defines] + [str(source)]
             for language, command in commands:
@@ -457,14 +457,14 @@ def self_contained(build, config, compiler_c, compiler_cxx):
             if sys.platform == "win32":
                 # /Tc or /Tp names the one source file's language; the libraries stay plain link inputs
                 crt = "/MDd" if config.lower() == "debug" else "/MD"
-                command = [cl, "/nologo", "/W4", "/WX", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory),
+                command = [cl, "/nologo", "/W4", "/WX", "/fp:precise", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory),
                            ("/Tc" if name == "C99" else "/Tp") + str(source), str(directory / library.name),
                            "ws2_32.lib", "iphlpapi.lib", "advapi32.lib",
                            "/Fe:" + str(directory / (program + ".exe")), "/Fo:" + str(directory) + "\\"]
                 executable = directory / (program + ".exe")
             else:
                 executable = directory / program
-                command = [compiler] + flags + ["-I", str(directory), str(source), str(directory / library.name)] + \
+                command = [compiler] + flags + ["-ffp-contract=off", "-I", str(directory), str(source), str(directory / library.name)] + \
                           system_libraries(build) + ["-o", str(executable)]
             result = subprocess.run(command, capture_output=True, text=True, cwd=directory, env=environment)
             if result.returncode != 0:

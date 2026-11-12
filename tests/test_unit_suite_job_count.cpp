@@ -47,9 +47,21 @@ static void test_suite_job_count_fits_the_windows_wait_set()
     // the live count on this host, whatever its cores, memory and
     // ROCKETNET_TEST_JOBS, fits the Windows wait set
 
-#if defined( _WIN32 )
     check( suite_job_count() >= 1 );
+
+    // and the live count is wired to this platform's ceiling: a requested
+    // count far past it reads exactly the ceiling on Windows, on any host, and
+    // the request itself elsewhere (VERIFY-4 W10: no CI host asks for more
+    // than 64 jobs, so a bound on suite_job_count() alone could not go red).
+    // The request goes in as an argument; a unit case never writes the
+    // environment (tools/check_unit_purity.py).
+
+    const int asked_past = suite_job_count_requested( 1000 );
+#if defined( _WIN32 )
     check( suite_job_count() <= SUITE_WAIT_HANDLES );
+    check( asked_past == SUITE_WAIT_HANDLES );
+#else
+    check( asked_past == 1000 );
 #endif // #if defined( _WIN32 )
 }
 
@@ -66,3 +78,86 @@ static void test_suite_finish_fails_when_no_case_ran()
 }
 
 REGISTER_UNIT_TEST( test_suite_finish_fails_when_no_case_ran );
+
+// A case the runner failed (its memory bound, its time limit) gets the
+// runner's reason line even when the case printed a check line while passing,
+// as a case that exercises the check path does; a case that failed itself and
+// printed its own check line does not get a second one.
+static void test_suite_runner_reason_is_printed_over_a_check_line()
+{
+    suite_result over = suite_result();
+    over.name = "test_planted";
+    over.failed = false;
+    over.peak_rss_mb = 1506;
+    over.rss_over_bound = false;
+    over.output = "check failed: no case ran\n";
+    suite_check_rss( over, 698, true );
+    check( over.failed && over.rss_over_bound );
+    check( over.detail == "test_planted peak_rss_mb=1506 bound_mb=698" );
+    check( suite_runner_failed( over ) );
+    check( suite_failure_line_needed( over ) );
+
+    suite_result slow = suite_result();
+    slow.name = "test_planted";
+    slow.failed = true;
+    slow.rss_over_bound = false;
+    slow.detail = "test_planted exceeded 120s";
+    slow.output = "check failed: no case ran\n";
+    check( suite_runner_failed( slow ) );
+    check( suite_failure_line_needed( slow ) );
+
+    suite_result own = suite_result();
+    own.name = "test_planted";
+    own.failed = true;
+    own.rss_over_bound = false;
+    own.detail = "test_planted exit 1";
+    own.output = "check failed: x == 1, function f, file g, line 2\n";
+    check( !suite_runner_failed( own ) );
+    check( !suite_failure_line_needed( own ) );
+
+    own.output = "no check line\n";
+    check( suite_failure_line_needed( own ) );
+}
+
+REGISTER_UNIT_TEST( test_suite_runner_reason_is_printed_over_a_check_line );
+
+// A case passes only by returning. While it runs, the exit guard is armed for
+// the process that started it, so an exit( 0 ) inside the case fails it; a
+// child the case forks (another pid) and the time after the case returned are
+// not guarded. The guard's state is read inside and after a case here; the
+// exit itself is planted by hand (FIX-VERIFY-D: --run, the suite, shards).
+
+static bool suite_guard_seen_running;
+static long suite_guard_seen_pid;
+
+static int suite_guard_probe_worker( const char * name )
+{
+    const suite_case_guard_state & state = suite_case_guard();
+    suite_guard_seen_running = state.running && state.name != NULL && std::strcmp( state.name, name ) == 0;
+    suite_guard_seen_pid = state.pid;
+    return 7;
+}
+
+static void test_suite_case_exit_guard_is_armed_only_while_the_case_runs()
+{
+    const suite_case_guard_state before = suite_case_guard();
+    suite_guard_seen_running = false;
+    suite_guard_seen_pid = 0;
+
+    check( suite_run_case( suite_guard_probe_worker, "probe" ) == 7 );
+    check( suite_guard_seen_running );
+    check( suite_guard_seen_pid == suite_process_id() );
+    check( suite_case_guard().registered );
+    check( !suite_case_guard().running );
+
+    suite_case_guard_state armed = { "probe", 4242, true, true };
+    check( suite_case_exit_fails( armed, 4242 ) );
+    check( !suite_case_exit_fails( armed, 4243 ) );
+    armed.running = false;
+    check( !suite_case_exit_fails( armed, 4242 ) );
+
+    // this case itself runs under the guard: put its state back
+    suite_case_guard() = before;
+}
+
+REGISTER_UNIT_TEST( test_suite_case_exit_guard_is_armed_only_while_the_case_runs );

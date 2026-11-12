@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Check local Markdown links and fragments in maintained RocketNet guides.
+"""Check local Markdown links and fragments in every tracked RocketNet guide.
 
-Historical run/audit/release/qualification records and generated proof records
-are not rewritten as current guides. They are still checked when linked as a
-target. External URLs are not fetched. Only standard-library Python is needed.
+The guides are every .md file `git ls-files` names, less the historical
+run/audit/release/qualification records named in HISTORICAL_DIRS and
+HISTORICAL_PREFIXES, which are not rewritten as current guides (they are still
+checked when linked as a target). An empty guide list fails, and so does a
+named historical record that no longer names a tracked file. External URLs are
+not fetched. Only standard-library Python and git are needed.
 """
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -50,18 +54,26 @@ def anchors(text):
     return found
 
 
+# The historical records, by name: each is the record of a run, an audit, a
+# release or a qualification as it stood, so it is not rewritten when a guide
+# moves. Every other tracked .md file is a maintained guide and is checked.
+HISTORICAL_DIRS = ("docs/audits/", "docs/runs/", "docs/lan-bench/")
+HISTORICAL_PREFIXES = ("docs/RELEASE-NOTES-", "docs/QUALIFICATION-")
+
+
+def historical(rel):
+    return rel.startswith(HISTORICAL_DIRS) or rel.startswith(HISTORICAL_PREFIXES)
+
+
+def tracked_markdown(root):
+    """Every .md file git tracks under root, as root-relative POSIX paths."""
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+                         check=True, capture_output=True).stdout
+    return sorted(p for p in out.decode("utf-8").split("\0") if p)
+
+
 def documents(root):
-    paths = set(root.glob("*.md"))
-    for path in (root / "docs").rglob("*.md"):
-        rel = path.relative_to(root / "docs")
-        if rel.parts[0] in ("audits", "runs", "lan-bench"):
-            continue
-        if path.name.startswith(("RELEASE-NOTES-", "QUALIFICATION-")):
-            continue
-        paths.add(path)
-    paths.update((root / "standard").glob("*.md"))
-    paths.update((root / "examples").rglob("README.md"))
-    return sorted(paths)
+    return [root / rel for rel in tracked_markdown(root) if not historical(rel)]
 
 
 def check(paths, root):
@@ -89,9 +101,21 @@ def check(paths, root):
     return checked, failures
 
 
+def stale_exclusions(root):
+    """Each named historical directory or prefix must still name a tracked file."""
+    tracked = tracked_markdown(root)
+    return [f"historical record {name!r} names no tracked .md file; remove it from the list"
+            for name in HISTORICAL_DIRS + HISTORICAL_PREFIXES
+            if not any(rel.startswith(name) for rel in tracked)]
+
+
 def main():
     paths = documents(ROOT)
+    if not paths:
+        print("FAIL: git ls-files found no maintained .md guide to check", file=sys.stderr)
+        return 1
     checked, failures = check(paths, ROOT)
+    failures += stale_exclusions(ROOT)
     for failure in failures:
         print(failure, file=sys.stderr)
     if failures:

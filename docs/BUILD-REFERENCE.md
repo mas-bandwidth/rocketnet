@@ -124,8 +124,7 @@ Put a new test in `./bin/test` when the assertion can be reached through a
 state machine or the simulator. Put it in `./bin/functional`
 when the assertion is about a real socket or a real transport. A test that
 cannot run without a socket is functional, and it keeps its assertions.
-The functional-only sibling binaries are `test_serialize` (a real clock and
-`rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
+The functional-only sibling binaries are `test_xdp_filter` (a kernel, root or CAP_BPF, and
 `usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
 `test_production_client_lifecycle` (DEV=0 only), `test_msgx` and `test_iocp`;
 they are functional tests, never `./bin/test`.
@@ -212,7 +211,6 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |
@@ -434,6 +432,25 @@ server pinned to `xdp` refuses start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`
 configurations do not rewrite the checkout. macOS and Windows do not build the
 object.
 
+### Replaying a CI job before a dispatch
+
+`tools/replay_ci_steps.py` runs one job's `run:` steps from a workflow here,
+in order, with the runner's `if:` rule, shells, env levels and `$GITHUB_ENV`
+hand-on. Run it from the top of a fresh worktree of the commit, naming the
+job's matrix row:
+
+```sh
+git worktree add --detach ../replay HEAD && cd ../replay
+python3 tools/replay_ci_steps.py .github/workflows/ci.yml lint
+python3 tools/replay_ci_steps.py .github/workflows/ci.yml build-and-test \
+  --set matrix.leg=checks --set matrix.build_type=Release --set matrix.dev=OFF
+```
+
+`--list` prints which steps the row would run. A matrix value the job reads
+and `--set` does not give is an error. Steps that `uses:` an action are not
+run. A green replay says the step commands pass on this host; only the
+dispatched run says CI is green.
+
 ## Building the API reference
 
 `make docs` generates the public API reference at
@@ -528,7 +545,7 @@ cmake --build build --target rocketnet_dev --parallel 4
 make -C tests/fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 ```
 
-That builds the thirteen harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
+That builds the sixteen harnesses in `tests/fuzz/Makefile`'s `TARGETS` (the table
 in [tests/fuzz/README.md](../tests/fuzz/README.md) names each one, its seed
 corpus and its dictionary) in `tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
 `-ffp-contract=off` floor as the library. On macOS the link adds
@@ -556,11 +573,11 @@ with `TOOL-MISSING LLVM clang with libclang_rt.fuzzer_osx.a` when
 `$HOME/sdk/llvm` carries no libFuzzer runtime, before any build runs.
 `ci.yml`'s
 `Replay the fuzz corpora without libFuzzer` step stays the gate for the
-committed corpora: it builds `fuzz_replay_<harness>` for each of the thirteen
+committed corpora: it builds `fuzz_replay_<harness>` for each of the sixteen
 harnesses and runs each against its `tests/fuzz/corpus*` inputs, which executes
 every committed file exactly once. The
 `ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
 silicon specific: building the instrumented library with LLVM clang and
-running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the thirteen harnesses with
+running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the sixteen harnesses with
 `-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
 runtime.

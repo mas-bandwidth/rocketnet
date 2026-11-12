@@ -153,6 +153,11 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
         return 2;
     }
 
+    if ( lie->mode == 8 )
+    {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -245,6 +250,32 @@ static void test_transport_results_client_negative_byte_count_is_a_fault()
     transport_results_close_io( &transport, buffers );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_negative_byte_count_is_a_fault );
+
+// A receive_batch that returns a negative total is one fault: the step stops
+// receiving (one call, no retry), stores nothing and exposes no buffer. No
+// real or fake driver returns one, so only this lie reaches the branch
+// (VERIFY-4 W7, sdk/rocketnet_client_io.h `got < 0`).
+
+static void test_transport_results_client_batch_negative_total_is_a_fault()
+{
+    transport_results_lie_t lie = {};
+    lie.mode = 8;
+
+    rocketnet_client_transport_io_operations_t ops;
+    rocketnet_client_transport_io_t transport = {};
+    rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
+    transport_results_clock_t clock;
+    rocketnet_client_io_t io = {};
+    transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
+    rocketnet_unit_check( lie.calls == 1 );
+    rocketnet_unit_check( io.transport_faults == 1 );
+    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+
+    transport_results_close_io( &transport, buffers );
+}
+REGISTER_UNIT_TEST( test_transport_results_client_batch_negative_total_is_a_fault );
 
 static void test_transport_results_client_oversized_byte_count_is_a_fault()
 {

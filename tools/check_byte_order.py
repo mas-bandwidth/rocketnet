@@ -41,6 +41,7 @@ stale.
 Usage:
   check_byte_order.py              the check over sdk/
   check_byte_order.py FILE...      the check over the named files
+  check_byte_order.py --root DIR   the check over DIR/sdk/ (0 files there is an error)
   check_byte_order.py --self-test  the red and green controls
 """
 
@@ -271,6 +272,14 @@ def self_test():
                 print("  got: %s" % failure)
         print("self-test %-50s expected %d failure(s), got %d: %s" % ("the allow list", len(expected), len(failures), verdict))
 
+        # zero inputs: a tree with no library file is red, never "OK (0 files)"
+        (root / "empty").mkdir()
+        got = main(["check_byte_order.py", "--root", str(root / "empty")])
+        verdict = "ok" if got == 1 else "FAIL"
+        if got != 1:
+            failed += 1
+        print("self-test %-50s expected exit 1, got %d: %s" % ("zero library files", got, verdict))
+
     if failed:
         print("SELF-TEST FAILED %d" % failed)
         return 1
@@ -281,11 +290,18 @@ def self_test():
 def main(argv):
     if argv[1:] == ["--self-test"]:
         return self_test()
-    if len(argv) > 1 and argv[1].startswith("-"):
+    root, args = ROOT, argv[1:]
+    if args[:1] == ["--root"] and len(args) > 1:
+        root, args = Path(args[1]), args[2:]
+    if args and args[0].startswith("-"):
         print(__doc__)
         return 2
-    paths = [Path(arg) for arg in argv[1:]] if len(argv) > 1 else library_files(ROOT)
-    failures = check(paths, ROOT, ALLOWED)
+    paths = [Path(arg) for arg in args] if args else library_files(root)
+    if not paths:
+        # zero inputs is an error: an empty tree would otherwise pass unread
+        print("BYTE ORDER FAILED: 0 files under %s: nothing was checked" % (root / "sdk"))
+        return 1
+    failures = check(paths, root, ALLOWED)
     for failure in failures:
         print("FAIL check_byte_order: %s" % failure)
     if failures:

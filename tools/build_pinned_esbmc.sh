@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# build_pinned_esbmc.sh: builds the ESBMC the ACK run proof runs on
-# (proofs/cbmc ack-run-bound-8 and ack-run-negative-control, nightly on
-# studio by .github/workflows/nightly-ack-proof.yml) into one prefix, from
+# build_pinned_esbmc.sh: builds ESBMC (for the studio receipts in
+# proofs/cbmc/esbmc_r_ok/results.md; no workflow runs it since 2026-11-12)
+# into one prefix, from
 # release source tarballs over HTTPS checked against the sha256 pinned below.
 # The proof never takes ESBMC, its solver or its libraries from the host.
 #

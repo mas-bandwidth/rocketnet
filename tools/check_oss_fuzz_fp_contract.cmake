@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.15)
 # =on still fuses within an expression), so without an explicit flag the fuzzed
 # build contracts float arithmetic and diverges bit-wise from every CMake
 # build. This pins -ffp-contract=off onto every compile line in the script
-# (mirrors mas-bandwidth/reliable's tools/symbols/check_oss_fuzz_fp_contract.cmake).
+# so the OSS-Fuzz build computes what every CMake build computes.
 #
 # cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=<path> -P tools/check_oss_fuzz_fp_contract.cmake
 
@@ -35,7 +35,7 @@ foreach(line IN LISTS build_lines)
 endforeach()
 
 if(compile_lines EQUAL 0)
-    list(APPEND failures "no $CC or $CXX compile line found in tests/oss-fuzz/build.sh")
+    message(FATAL_ERROR "0 compile lines: no $CC or $CXX compile line found in ${ROCKETNET_OSS_FUZZ_BUILD_SCRIPT}")
 endif()
 
 if(failures)

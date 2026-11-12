@@ -396,6 +396,34 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_skipped_reads_are_counted );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && !defined( __OpenBSD__ )
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+// The Windows counterpart, for the refused source: a mapped source on a
+// socket that is not dual stack is refused by
+// rocketnet_platform_sockaddr_to_address and counted once per read, through
+// the per-packet call and the portable batch. The zero-length half is not
+// checked here: the receive hook's 0 skips the read before the count that a
+// real WSARecvFrom of 0 bytes reaches (sdk/rocketnet_platform.cpp,
+// rocketnet_platform_socket_receive_datagram; FIX-VERIFY-D.md, "W10").
+
+static void platform_socket_hygiene_refused_is_counted( platform_socket_hygiene_arm_t arm, int max_packets )
+{
+    const uint64_t refused = rocketnet_platform_receive_refused_sources();
+    const int refused_reads = platform_socket_hygiene_chaff_reads( arm, platform_socket_hygiene_mapped, max_packets );
+    rocketnet_unit_check( refused_reads > 0 );
+    rocketnet_unit_check( rocketnet_platform_receive_refused_sources() - refused == (uint64_t) refused_reads );
+}
+
+static void test_platform_socket_hygiene_refused_reads_are_counted_on_windows()
+{
+    platform_socket_hygiene_refused_is_counted( PLATFORM_SOCKET_HYGIENE_SINGLE, 1 );
+    platform_socket_hygiene_refused_is_counted( PLATFORM_SOCKET_HYGIENE_BATCH, 8 );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_reads_are_counted_on_windows );
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
 // Every descriptor the platform opens is close-on-exec, so a child process

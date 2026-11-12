@@ -38,8 +38,11 @@
 # prints XDP-GUEST-DID-NOT-BOOT and fails each of its cases with the guard's
 # log. That deadline is on the boot only: ROCKETNET_NIGHTLY_NO_TIMEOUT=1
 # lifts the 120 s limit on the guest's cases, never the boot deadline. The
-# io_uring cell is skipped, as the matrix skips it, when the kernel disables
-# io_uring.
+# io_uring cell is not run when the kernel disables io_uring, and
+# scripts/io-uring-gate decides the verdict: the cell fails by name unless
+# tools/io_uring_absent_runners.txt lists this machine with a reason (then it
+# is an explicit SKIP): the nightly's fleet kernels offer io_uring, so an
+# unlisted skip is a cell that went unrepeated, not a pass.
 #
 # Output: one line per case of every cell,
 #
@@ -49,7 +52,10 @@
 # kept, later failing logs of the same case are not) and " expected=<card>"
 # when ci.yml marks the case expected to fail. A failure is reported, never
 # retried. The exit status is 0 only when every run of every unmarked case
-# passed, no marked case passed, and (with --asan) every suite passed.
+# passed, no marked case passed, every cell run printed at least one CELL
+# line (a case list of blanks names no case and is refused when read), no
+# io_uring cell was skipped on an unlisted machine, and (with --asan) every
+# suite passed.
 #
 # --asan configures and builds a Release build with ROCKETNET_SANITIZE_ADDRESS
 # into its own build directory (build-asan by default, binaries in its bin/,
@@ -74,6 +80,10 @@
 #   --jobs N          build jobs for --asan (default 4)
 #   --out DIR         where the logs go (default build/transport-cells-repeat)
 #   --ci PATH         the workflow to read (default .github/workflows/ci.yml)
+#
+# ROCKETNET_IO_URING_DISABLED_FILE and ROCKETNET_IO_URING_ABSENT_RUNNERS are
+# scripts/io-uring-gate's test seams (the kernel switch, and the list of
+# machines allowed to lack io_uring).
 #
 # Bash 3.2 and later: Linux, macOS and Windows git-bash. Run from the
 # repository root.
@@ -159,8 +169,11 @@ parse() {
 }
 
 parsed=$(parse "$OS")
-socket_cases=$(printf '%s\n' "$parsed" | sed -n 's/^socket //p')
-xdp_cases=$(printf '%s\n' "$parsed" | sed -n 's/^xdp //p')
+# the case lists with their blanks squeezed out: a list of only blanks names
+# no case, and is refused below like an empty one (it once ran nothing and
+# passed)
+socket_cases=$(printf '%s\n' "$parsed" | sed -n 's/^socket //p' | tr -s ' \t' '  ' | sed 's/^ //; s/ $//')
+xdp_cases=$(printf '%s\n' "$parsed" | sed -n 's/^xdp //p' | tr -s ' \t' '  ' | sed 's/^ //; s/ $//')
 all_cells=$(printf '%s\n' "$parsed" | sed -n 's/^cell //p')
 
 [ -n "$all_cells" ] || { echo "transport-cells-repeat: no TRANSPORT_MATRIX_$OS cells in $ci" >&2; exit 2; }
@@ -228,8 +241,17 @@ fi
 [ -n "$functional" ] || { if [ "$os" = windows ]; then functional=./bin/Release/functional.exe; else functional=./bin/functional; fi; }
 [ -x "$functional" ] || { echo "transport-cells-repeat: no functional binary at $functional (build first, or --functional)" >&2; exit 2; }
 
+# io_uring: a Linux machine whose kernel disables it fails its io_uring cells by name, unless
+# tools/io_uring_absent_runners.txt lists it with a reason (scripts/io-uring-gate)
 uring_offered=0
-if [ "$os" = linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+uring_status=3
+uring_line="[SKIPPED io_uring is Linux only]"
+uring_refused=0
+if [ "$os" = linux ]; then
+    uring_status=0
+    uring_line=$("$(dirname "$0")/io-uring-gate" "io_uring") || uring_status=$?
+    if [ "$uring_status" = 0 ]; then uring_offered=1; fi
+fi
 
 # the logs live under the working directory: the xdp guest writes them through --rwdir "$PWD"
 mkdir -p "$out"
@@ -332,7 +354,8 @@ run_xdp_cell() { # server client
 while read -r server client expected; do
     [ -n "$server" ] || continue
     if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
-        echo "CELL $server/$client [SKIPPED this kernel disables io_uring]"
+        echo "CELL $server/$client ${uring_line#io_uring }"
+        if [ "$uring_status" != 3 ]; then uring_refused=1; fi
         continue
     fi
     if [ "$server" = xdp ]; then run_xdp_cell "$server" "$client" & else run_socket_cell "$server" "$client" & fi
@@ -340,10 +363,14 @@ done <<< "$cells"
 wait
 
 failed=0
+if [ "$uring_refused" = 1 ]; then failed=1; fi
 while read -r server client expected; do
     [ -n "$server" ] || continue
+    # an io_uring cell not offered was reported above by scripts/io-uring-gate's verdict
     [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
+    printed=0
     for case in $(cell_cases "$server"); do
+        printed=$((printed + 1))
         key="$logs/$server.$client.$case"
         pass=0; fail=0
         [ -f "$key.tally" ] && { pass=$(grep -c '^pass' "$key.tally"); fail=$(grep -c '^fail' "$key.tally"); }
@@ -359,6 +386,10 @@ while read -r server client expected; do
         fi
         echo "$line"
     done
+    if [ "$printed" = 0 ]; then
+        echo "CELL $server/$client NO-CASES: the cell printed no CELL line, so nothing was repeated"
+        failed=1
+    fi
 done <<< "$cells"
 
 # --asan: the whole functional suite once per cell, both transports pinned

@@ -18,7 +18,7 @@
 //                      after it, so the request, cookie, challenge and
 //                      response states are where the records land
 // each record is [mode][u16 length][length bytes], one datagram (or one tick)
-// per record, the yojimbo fuzz_connection shape:
+// per record:
 //   mode 0: the bytes, raw, from the connected client's own address
 //   mode 1: the bytes, raw, from a stranger the server has never seen
 //   mode 2: sealed with the live keys: bytes[0] picks the packet type,

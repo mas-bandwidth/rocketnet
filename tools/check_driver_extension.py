@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
@@ -16,6 +17,8 @@ def main():
     parser.add_argument("--config", default="Release")
     args = parser.parse_args()
     build = args.build.resolve()
+    if not (build / "CMakeCache.txt").is_file():
+        sys.exit(f"Native extension: 0 cache entries: no CMakeCache.txt in {build}")
     cache = {}
     for line in (build / "CMakeCache.txt").read_text().splitlines():
         if "=" in line and not line.startswith(("//", "#")):
@@ -32,7 +35,9 @@ def main():
         run(*command)
         native_options = ["--", "-nodeReuse:false"] if cache["CMAKE_GENERATOR"].startswith("Visual Studio") else []
         run("cmake", "--build", directory, "--config", args.config, "--parallel", "4", *native_options)
-        run("ctest", "--test-dir", directory, "-C", args.config, "--output-on-failure")
+        # ctest exits 0 when it finds 0 tests; an extension that registered
+        # none has exchanged nothing, so that is a failure
+        run("ctest", "--test-dir", directory, "-C", args.config, "--output-on-failure", "--no-tests=error")
     print("Native extension: new client/server transport registered without transport edits")
 
 

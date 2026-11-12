@@ -179,6 +179,8 @@ def check_citations():
 
 
 def iter_rows():
+    if not COVERAGE.is_file():
+        raise ValueError(f"{COVERAGE}: missing: 0 rows were read")
     lines = COVERAGE.read_text().splitlines()
     if not lines:
         return
@@ -710,12 +712,24 @@ def main():
                         help="report per-action citations for current-row modules")
     parser.add_argument("--actions-strict", action="store_true",
                         help="exit 1 while uncited actions remain")
+    parser.add_argument("--root", type=Path, default=None,
+                        help="the repository to check (default: this one); 0 coverage rows is an error")
     args = parser.parse_args()
+    if args.root is not None:
+        global ROOT, COVERAGE, TLA_DIR
+        ROOT = args.root
+        COVERAGE = ROOT / "proofs" / "tla" / "COVERAGE.tsv"
+        TLA_DIR = ROOT / "proofs" / "tla"
 
     try:
         rows = list(iter_rows())
     except ValueError as error:
         print(error)
+        print("COVERAGE FAIL 1")
+        return 1
+    if not rows:
+        # zero inputs is an error: a coverage table with no row checks nothing
+        print(f"{COVERAGE}: 0 rows: nothing was checked")
         print("COVERAGE FAIL 1")
         return 1
     failures = []

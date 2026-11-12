@@ -27,7 +27,27 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
+  # The execution watchdogs the proofs run under: run_with_timeout.sh (every
+  # replay-near partition below) and run_bounded.sh (the manual ack-run ESBMC
+  # targets). Default mode still expires, the nightly opt-out keeps the exit
+  # code past the old limit, and the memory limit holds in both modes. Its own
+  # job, so a red watchdog does not stop the proofs and the proofs' red does
+  # not hide it.
+  watchdog:
+    name: proof watchdog controls
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Proof watchdog controls pass
+        run: python3 tools/test_proof_timeouts.py -v
+
   plan:
     name: nightly proof targets
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -40,7 +60,6 @@ jobs:
 
       - name: List the targets
         id: list
-        shell: bash
         run: |
           set -euo pipefail
           json() { python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))'; }
@@ -69,11 +88,9 @@ jobs:
       # service's PATH. Append it (never prepend) for this job's later steps,
       # so a system tool always wins over a copy there.
       - name: Append the fleet sdk tools to the end of PATH
-        shell: bash
         run: echo "PATH=$PATH:$HOME/sdk/bin" >> "$GITHUB_ENV"
 
       - name: Check the pinned tools are present
-        shell: bash
         run: |
           set -euo pipefail
           pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
@@ -121,7 +138,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the pinned tools are present
-        shell: bash
         run: |
           set -euo pipefail
           pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }

@@ -1,0 +1,2 @@
+# tools/check_continue_on_error.py: the continue-on-error lines whose result is genuinely nobody's verdict.
+# path<TAB>exact line (stripped)<TAB>reason. A stale or reasonless entry is red. Empty since msan's was removed.

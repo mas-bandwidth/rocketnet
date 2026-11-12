@@ -19,7 +19,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* Amalgamated libsodium subset for yojimbo/netcode — generated; do not edit by hand. */
+/* Amalgamated libsodium subset for rocketnet — generated; do not edit by hand. */
 
 #ifndef SODIUM_AMALGAM_H
 #define SODIUM_AMALGAM_H
@@ -1537,7 +1537,7 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 /*
  * SIMD / intrinsics feature selection.
  *
- * The optimized implementations kept for the primitives yojimbo uses
+ * The optimized implementations kept for the primitives rocketnet uses
  * (ChaCha20 SSSE3/AVX2, Poly1305 SSE2) enable their own instruction set
  * per-function with #pragma target on GCC/Clang, and the fastest variant the
  * running CPU actually supports is chosen at runtime (see sodium_runtime.c and
@@ -1545,7 +1545,7 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
  * the intrinsic headers unconditionally and let runtime dispatch decide; targets
  * with no specialized implementation (e.g. arm64) fall back to the portable
  * reference code, which is correct on every platform. A build may still predefine
- * NETCODE_X64 / NETCODE_AVX / NETCODE_AVX2 to force the x86 set on.
+ * ROCKETNET_X64 / ROCKETNET_AVX / ROCKETNET_AVX2 to force the x86 set on.
  *
  * Note: the amd64/AVX *assembly* paths (HAVE_AMD64_ASM / HAVE_AVX_ASM) are left
  * off on purpose. They only accelerated primitives that have been pruned from
@@ -1554,8 +1554,8 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 
 #if defined(__clang__) || defined(__GNUC__)
 # if defined(__x86_64__) || defined(__amd64__) || defined(__i386__) || \
-     (defined(NETCODE_X64) && NETCODE_X64) || (defined(NETCODE_AVX) && NETCODE_AVX) || \
-     (defined(NETCODE_AVX2) && NETCODE_AVX2)
+     (defined(ROCKETNET_X64) && ROCKETNET_X64) || (defined(ROCKETNET_AVX) && ROCKETNET_AVX) || \
+     (defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)
 #  define HAVE_MMINTRIN_H   1
 #  define HAVE_EMMINTRIN_H  1   /* SSE2   */
 #  define HAVE_PMMINTRIN_H  1   /* SSE3   */
@@ -1585,11 +1585,11 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 
 /* MSVC has no per-function target pragma, so AVX/AVX2 codegen requires the
    matching /arch: switch (which predefines __AVX__ / __AVX2__). Honor that, and
-   still allow an explicit NETCODE_AVX/NETCODE_AVX2 override. */
-# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)
+   still allow an explicit ROCKETNET_AVX/ROCKETNET_AVX2 override. */
+# if defined(__AVX__) || (defined(ROCKETNET_AVX) && ROCKETNET_AVX) || (defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)
 #  define HAVE_AVXINTRIN_H 1
 # endif
-# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) && _MSC_VER >= 1700 && defined(_M_X64)
+# if (defined(__AVX2__) || (defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)) && _MSC_VER >= 1700 && defined(_M_X64)
 #  define HAVE_AVX2INTRIN_H 1
 # endif
 

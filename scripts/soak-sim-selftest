@@ -32,6 +32,10 @@
 #   7  profile is free  -- the soak's own output at a pinned seed must be
 #                          byte-identical with the profile on and off, or the
 #                          instrument is changing what it measures.
+#   8  delivery floor   -- with every server delivery dropped, the run MUST fail
+#                          with NO DELIVERY: a soak that verified no payload
+#                          soaked nothing (and the clean run must report both).
+#   Legs 1 and 7 also require each run to pass: two failures can agree.
 
 set -u
 
@@ -69,8 +73,14 @@ soak_summary()
 # 1. determinism at a pinned seed
 
 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/det_a.txt" 2>&1
+status_a=$?
 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/det_b.txt" 2>&1
-if soak_summary "$WORK/det_a.txt" | diff -q - <( soak_summary "$WORK/det_b.txt" ) > /dev/null; then
+status_b=$?
+# two failed runs can agree exactly too: each run must also pass
+if [ "$status_a" -ne 0 ] || [ "$status_b" -ne 0 ]; then
+    fail "a clean run at seed $SEED exited nonzero (exits $status_a and $status_b)"
+    tail -5 "$WORK/det_a.txt" >&2
+elif soak_summary "$WORK/det_a.txt" | diff -q - <( soak_summary "$WORK/det_b.txt" ) > /dev/null; then
     echo "leg 1  determinism at a pinned seed: two runs agree exactly"
 else
     fail "two runs at seed $SEED produced different results -- the A/B cannot be trusted"
@@ -157,11 +167,32 @@ fi
 # 7. the profile must not change what the soak does
 
 ROCKETNET_SOAK_SIM_PROFILE=1 ROCKETNET_SOAK_SIM_SEED=$SEED "$SOAK_SIM" $SHORT > "$WORK/profile_effect.txt" 2>&1
-if soak_summary "$WORK/profile_effect.txt" | diff -q - <( soak_summary "$WORK/det_a.txt" ) > /dev/null; then
+status=$?
+if [ "$status" -ne 0 ]; then
+    fail "the profiled run at seed $SEED exited $status"
+    tail -5 "$WORK/profile_effect.txt" >&2
+elif soak_summary "$WORK/profile_effect.txt" | diff -q - <( soak_summary "$WORK/det_a.txt" ) > /dev/null; then
     echo "leg 7  profile on vs off: the soak's own result is byte-identical"
 else
     fail "turning the profile on changed what the soak reported"
     diff <( soak_summary "$WORK/profile_effect.txt" ) <( soak_summary "$WORK/det_a.txt" ) >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 8. the delivery floor's negative control: drop every delivery, it must go red
+
+ROCKETNET_SOAK_SIM_FAULT_DELIVERY=1 ROCKETNET_SOAK_SIM_SEED=$SEED \
+    "$SOAK_SIM" $SHORT > "$WORK/delivery_fault.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "every delivery was dropped on purpose and the run still passed -- the delivery floor is decoration"
+elif ! grep -q '^NO DELIVERY:' "$WORK/delivery_fault.txt"; then
+    fail "the run without deliveries failed but never named the delivery floor (exit $status)"
+else
+    echo "leg 8  delivery floor against dropped deliveries: red, exit $status, $( grep -m1 '^NO DELIVERY:' "$WORK/delivery_fault.txt" | cut -c1-88 )"
+fi
+if ! grep -q '^soak_sim delivery: [1-9][0-9]* payloads written, [1-9][0-9]* verified at the server' "$WORK/det_a.txt"; then
+    fail "the clean run did not report payloads written and verified at the server"
 fi
 
 # ---------------------------------------------------------------------------

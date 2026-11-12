@@ -28,7 +28,9 @@
 #   - it never restarts soak: a restart would be a second connection and hide
 #     the failure. When soak exits the script prints one last summary line,
 #     copies soak's own "soak summary:" lines (every counter) to
-#     DIR/summary.log, and exits with soak's status: 0 only for a clean end.
+#     DIR/summary.log, and exits with soak's status: 0 only for a clean end,
+#     and, without --seconds, only when both directions' sequences passed
+#     0xFFFFFFFF (a run stopped before the 2^32 wrap exits 1).
 #
 # SIGINT or SIGTERM to the script is passed to soak as SIGINT, so an operator
 # stop still ends with soak's full counter summary. --seconds S bounds the run
@@ -212,4 +214,17 @@ done
 LOGS+=( "$LOG" )
 grep -h '^soak summary: \|^soak finished: \|^soak: ' "${LOGS[@]}" >> "$SUMMARY"
 echo "soak-multiday: soak exited $STATUS after $(( $( date +%s ) - START )) s" | tee -a "$SUMMARY"
+
+# the wrap is what a multi-day run exists for: without --seconds (a harness
+# check), a run is clean only when both directions' sequences passed
+# 0xFFFFFFFF; a run stopped before the wrap is not the proof, whatever soak said
+if [ "$STATUS" -eq 0 ] && [ -z "$SECONDS_BOUND" ]; then
+    client_wrapped=$( wrapped "$( field client_highest_sent_sequence )" )
+    server_wrapped=$( wrapped "$( field server_highest_sent_sequence )" )
+    if [ "$client_wrapped" != 1 ] || [ "$server_wrapped" != 1 ]; then
+        echo "soak-multiday: FAIL the run ended before the 2^32 wrap (client wrapped $client_wrapped, server wrapped $server_wrapped)" | tee -a "$SUMMARY"
+        exit 1
+    fi
+    echo "soak-multiday: both directions wrapped 2^32" | tee -a "$SUMMARY"
+fi
 exit "$STATUS"

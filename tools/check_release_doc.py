@@ -11,6 +11,7 @@ docs/RELEASING.md.
 Exit 0 when every site is named, 1 when one is missing (named on stderr).
 """
 
+import argparse
 from pathlib import Path
 import re
 import sys
@@ -64,10 +65,16 @@ def version_sites(text):
     return sites
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=REPO_ROOT,
+                        help="the repository root to check (default: this repository)")
+    args = parser.parse_args(argv)
+    workflow = args.root / ".github" / "workflows" / "release-check.yml"
+    releasing_doc = args.root / "docs" / "RELEASING.md"
     try:
-        workflow_text = WORKFLOW.read_text(encoding="utf-8")
-        doc_text = RELEASING_DOC.read_text(encoding="utf-8")
+        workflow_text = workflow.read_text(encoding="utf-8")
+        doc_text = releasing_doc.read_text(encoding="utf-8")
     except OSError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -80,8 +87,8 @@ def main():
 
     if not sites:
         print(
-            f"error: .github/workflows/release-check.yml {JOB_NAME} job names no "
-            "version site",
+            f"error: .github/workflows/release-check.yml {JOB_NAME} job names "
+            "0 version sites",
             file=sys.stderr,
         )
         return 1

@@ -35,7 +35,7 @@ struct rn_message_object_t;
     X( RESET, connection_salt ) X( RESET, client_ephemeral_public_key ) \
     X( RESET, client_ephemeral_secret_key ) X( RESET, return_cookie ) X( RESET, has_cookie ) \
     X( RESET, latest_cookie ) X( RESET, has_latest_cookie ) X( RESET, send_latest_cookie ) \
-    X( RESET, session_nonce ) X( RESET, keys ) X( RESET, stored_response ) \
+    X( RESET, keys ) X( RESET, stored_response ) \
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
     X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) \

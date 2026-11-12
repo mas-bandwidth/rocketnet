@@ -55,9 +55,9 @@
    :date "2026-11-01" :origin "proofs/tla/CASES.tsv and RUNS.tsv; existing TLC nightly; #833")
 
   (item "ack-proof-hold" :group "proof-debt" :area "proofs"
-   :title "ACK run proof remains HOLD"
-   :text "The source-bound ACK run-eight proof and its negative control have no completed accepted result; the full retained-window proof is also not established. #797 landed with this HOLD explicitly retained. The existing Nightly ACK proof runs ack-run-bound-8 and ack-run-negative-control serially with pinned ESBMC on Studio, at 384 GiB per target without a project elapsed-time cap. GitHub still imposes its five-day self-hosted job ceiling. It requires VERIFICATION SUCCESSFUL and the intended EXPECTED FAILURE; memory exhaustion, timeout, UNKNOWN or an unwinding failure stays red. The full-4096 target is declared separately and is not run by that nightly. Do not infer a proof from observed loop cutoffs or make successful completion a new per-commit landing requirement."
-   :date "2026-11-01" :origin "proofs/cbmc/INVENTORY.md; .github/workflows/nightly-ack-proof.yml; #797")
+   :title "ACK run leaf has no symbolic proof; bound 8 is checked exhaustively"
+   :text "ESBMC 8.5 cannot encode rocketnet_ack_apply_run at any run bound: each write through a pointer with a symbolic offset into the 260 KB endpoint (the visit's record->acked) becomes a byte-level update of the whole object, and bound 1 already stops Out of memory at 150 GB (proofs/cbmc/INVENTORY.md, ACK run measurements). Z3 answered unknown every night 11-01..11-12. Since 2026-11-12 the Nightly ACK proof runs ack-run-exhaustive-8 instead: every ring position, run length 1..8, ack pattern and highest offset, in three sequence blocks, with a negative control, a vacuity plant and four planted bugs that must each fail. That is exhaustive native testing, not a proof; blocks between 1 and the last rest on a translation argument, and lengths 9..4096 are not covered. A symbolic proof needs a verifier that keeps &a[i] as an index (CBMC does, but cannot parse the C++17 leaf) or an index-form write in the visit, which is an SDK change."
+   :date "2026-11-12" :origin "proofs/cbmc/INVENTORY.md; .github/workflows/nightly-ack-proof.yml; #797")
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"

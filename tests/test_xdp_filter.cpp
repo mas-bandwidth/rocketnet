@@ -2186,17 +2186,27 @@ static const case_t cases[] = {
 
 int main( int argc, char ** argv )
 {
+    // [-v] [object path]: any other flag, or a second path, is refused rather
+    // than taken as the path or silently replacing the first
+
     const char * path = ROCKETNET_XDP_FILTER_OBJECT;
     bool show_verifier = false;
+    bool path_given = false;
     for ( int i = 1; i < argc; i++ )
     {
         if ( strcmp( argv[i], "-v" ) == 0 )
         {
             show_verifier = true;
         }
+        else if ( argv[i][0] == '-' || path_given )
+        {
+            fprintf( stderr, "usage: %s [-v] [filter object]\n", argv[0] );
+            return 2;
+        }
         else
         {
             path = argv[i];
+            path_given = true;
         }
     }
 

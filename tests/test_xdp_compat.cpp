@@ -81,8 +81,18 @@ extern "C" int bpf_load_program_xattr( const bpf_load_program_attr * attrs, char
 }
 
 #define CHECK( condition ) do { if (!(condition)) { printf("FAIL line %d: %s\n", __LINE__, #condition); return 1; } } while (0)
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     found = false;
 
     CHECK( rocketnet_xdp_program_open( &object ) == NULL && load_calls == 0 );
