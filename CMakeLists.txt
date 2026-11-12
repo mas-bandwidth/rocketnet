@@ -1056,6 +1056,16 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
+    # The wide fill's cases alone (tests/test_wide_fill_main.cpp): the unit
+    # binary's own operator new collides with ThreadSanitizer's, so CI's tsan
+    # leg runs these from here. A unit-tier binary: no socket, no real time.
+    if(ROCKETNET_DEV)
+        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/test_unit_wide_fill.cpp)
+        target_include_directories(test_wide_fill PRIVATE tests)
+        target_link_libraries(test_wide_fill PRIVATE rocketnet_dev Threads::Threads)
+        rocketnet_use_sodium(test_wide_fill)
+        rocketnet_warning_floor(test_wide_fill)
+    endif()
     add_executable(test_serialize tests/test_serialize.cpp)
     target_include_directories(test_serialize PRIVATE tests)
     target_link_libraries(test_serialize PRIVATE rocketnet_dev)

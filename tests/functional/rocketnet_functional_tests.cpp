@@ -130,7 +130,7 @@ static void rocketnet_test_hammer_thread( rocketnet_platform_thread_t *, void * 
         uint8_t * frame = rocketnet_server_transport_start_packet( args->server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         rocketnet_check( frame );
 
-        uint8_t * payload = frame + context.payload_index;
+        uint8_t * payload = frame;
         payload[0] = (uint8_t) args->thread_id;
         payload[1] = (uint8_t) i;
 
@@ -161,7 +161,7 @@ static void rocketnet_test_wire_hammer_thread( rocketnet_platform_thread_t *, vo
         uint8_t * frame = rocketnet_server_transport_start_packet( args->server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         rocketnet_check( frame );
 
-        uint8_t * payload = frame + context.payload_index;
+        uint8_t * payload = frame;
         payload[0] = (uint8_t) args->thread_id;
         payload[1] = (uint8_t) i;
 
@@ -544,12 +544,12 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             }
 
             rocketnet_check( payload );
-            payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
-            payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+            payload[0] = (uint8_t) ( tag & 0xFF );
+            payload[1] = (uint8_t) ( tag >> 8 );
 
             for ( int j = 2; j < PAYLOAD_BYTES; j++ )
             {
-                payload[context.payload_index + j] = (uint8_t) ( tag * 31 + j );
+                payload[j] = (uint8_t) ( tag * 31 + j );
             }
 
             rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
@@ -735,7 +735,7 @@ static int rocketnet_test_fill_server_ring( rocketnet_server_transport_t * serve
             break;
         }
 
-        frame[context.payload_index] = (uint8_t) count;
+        frame[0] = (uint8_t) count;
         rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 1 ) > 0 );
         count++;
     }
@@ -874,7 +874,7 @@ void rocketnet_test_transport_ring_exhaustion()
         rocketnet_check( frame || completion_capacity );
         if ( frame )
         {
-            memcpy( frame + context.payload_index, "again", 5 );
+            memcpy( frame, "again", 5 );
             rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) > 0 );
         }
 
@@ -920,7 +920,7 @@ static void rocketnet_test_client_hammer_thread( rocketnet_platform_thread_t *, 
         uint8_t * frame = rocketnet_client_transport_start_packet( args->client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         rocketnet_check( frame );
 
-        uint8_t * payload = frame + context.payload_index;
+        uint8_t * payload = frame;
         payload[0] = (uint8_t) args->thread_id;
         payload[1] = (uint8_t) i;
         rocketnet_check( rocketnet_client_transport_finish_packet( args->client, &context, 2 ) > 0 );
@@ -1310,7 +1310,7 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_check( frame );
     rocketnet_check( ( (uintptr_t) frame % 16 ) == 0 );
     rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
-    rocketnet_check( ( (uintptr_t) ( frame + context.payload_index ) % 16 ) == 0 );
+    rocketnet_check( ( (uintptr_t) ( frame ) % 16 ) == 0 );
     rocketnet_check( context.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rocketnet_check( context.payload_capacity % 8 == 0 );
     rocketnet_check( context.sequence == 0 );
@@ -1318,7 +1318,7 @@ void rocketnet_test_transport_start_finish_shape()
     // packet metadata is a view, never authority over native storage
 
     int checked_capacity = 0;
-    rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame + context.payload_index );
+    rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame );
     rocketnet_check( checked_capacity == context.payload_capacity );
     rocketnet_check( rocketnet_client_transport_packet_payload( client, &context, &checked_capacity ) == NULL && checked_capacity == 0 );
 
@@ -1348,7 +1348,7 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     }
 
-    rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame + context.payload_index );
+    rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame );
 
     auto expired = context;
 
@@ -1374,7 +1374,7 @@ void rocketnet_test_transport_start_finish_shape()
     frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
     rocketnet_check( frame );
     rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
-    memcpy( frame + context.payload_index, "shape", 5 );
+    memcpy( frame, "shape", 5 );
     rocketnet_server_transport_finish_packet( server, &context, 5 );
     rocketnet_server_transport_send_packets( server );
 
@@ -1404,7 +1404,7 @@ void rocketnet_test_transport_start_finish_shape()
     uint8_t * reply_frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &reply );
     rocketnet_check( reply_frame );
     rocketnet_check( reply.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
-    memcpy( reply_frame + reply.payload_index, "reply", 5 );
+    memcpy( reply_frame, "reply", 5 );
     rocketnet_check( rocketnet_client_transport_finish_packet( client, &reply, 5 ) > 0 );
     rocketnet_client_transport_send_packets( client );
 
@@ -3379,14 +3379,14 @@ void rocketnet_test_transport_acks_and_client_stats()
     struct rocketnet_packet_context_t up_context;
     uint8_t * frame = rocketnet_client_transport_start_packet( high_client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &up_context );
     rocketnet_check( frame );
-    memcpy( frame + up_context.payload_index, "ping", 4 );
+    memcpy( frame, "ping", 4 );
     rocketnet_check( rocketnet_client_transport_finish_packet( high_client, &up_context, 4 ) > 0 );
     rocketnet_client_transport_send_packets( high_client );
 
     struct rocketnet_packet_context_t down_context;
     frame = rocketnet_server_transport_start_packet( server, high_slot, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &down_context );
     rocketnet_check( frame );
-    memcpy( frame + down_context.payload_index, "pong", 4 );
+    memcpy( frame, "pong", 4 );
     rocketnet_check( rocketnet_server_transport_finish_packet( server, &down_context, 4 ) > 0 );
 
     // pump until both notifications surface: the server sees its id come
@@ -3540,7 +3540,7 @@ void rocketnet_test_client_stats_of_empty_slot_read_zero()
         uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         if ( frame )
         {
-            memcpy( frame + context.payload_index, "ping", 4 );
+            memcpy( frame, "ping", 4 );
             if ( rocketnet_client_transport_finish_packet( client, &context, 4 ) > 0 )
             {
                 rocketnet_client_transport_send_packets( client );
@@ -6979,12 +6979,12 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             {
                 break;
             }
-            payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
-            payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+            payload[0] = (uint8_t) ( tag & 0xFF );
+            payload[1] = (uint8_t) ( tag >> 8 );
 
             for ( int j = 2; j < PAYLOAD_BYTES; j++ )
             {
-                payload[context.payload_index + j] = (uint8_t) ( tag * 31 + j );
+                payload[j] = (uint8_t) ( tag * 31 + j );
             }
 
             rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
@@ -7000,12 +7000,12 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             {
                 break;
             }
-            packet[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
-            packet[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+            packet[0] = (uint8_t) ( tag & 0xFF );
+            packet[1] = (uint8_t) ( tag >> 8 );
 
             for ( int j = 2; j < PAYLOAD_BYTES; j++ )
             {
-                packet[context.payload_index + j] = (uint8_t) ( tag * 17 + j );
+                packet[j] = (uint8_t) ( tag * 17 + j );
             }
 
             rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) > 0 );
@@ -8427,7 +8427,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
             if ( frame )
             {
                 const int sequence = sent_client + 1;
-                memcpy( frame + ctx.payload_index, &sequence, sizeof( sequence ) );
+                memcpy( frame, &sequence, sizeof( sequence ) );
                 if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof( sequence ) ) > 0 )
                 {
                     client_id_to_sequence[ctx.packet_id] = sequence;
@@ -8443,7 +8443,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
             if ( frame )
             {
                 const int sequence = sent_server + 1;
-                memcpy( frame + ctx.payload_index, &sequence, sizeof( sequence ) );
+                memcpy( frame, &sequence, sizeof( sequence ) );
                 if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof( sequence ) ) > 0 )
                 {
                     server_id_to_sequence[ctx.packet_id] = sequence;
@@ -8673,7 +8673,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
             if ( frame )
             {
                 const int request = sent + 1;
-                memcpy( frame + ctx.payload_index, &request, sizeof( request ) );
+                memcpy( frame, &request, sizeof( request ) );
                 if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof( request ) ) > 0 )
                 {
                     request_opened_update[request] = update;
@@ -8705,7 +8705,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                     uint8_t * frame = rocketnet_server_transport_start_packet( server, client_index, 32, &ctx );
                     if ( frame )
                     {
-                        memcpy( frame + ctx.payload_index, &request, sizeof( request ) );
+                        memcpy( frame, &request, sizeof( request ) );
                         if ( rocketnet_server_transport_finish_packet( server, &ctx, sizeof( request ) ) > 0 )
                         {
                             rocketnet_server_transport_send_packets( server );
@@ -13253,7 +13253,7 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
         struct rocketnet_packet_context_t context = {};
         uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
         rocketnet_check( payload );
-        msgx_client_fill_payload( payload + context.payload_index, tag );
+        msgx_client_fill_payload( payload, tag );
         rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, MSGX_CLIENT_PAYLOAD_BYTES ) > MSGX_CLIENT_PAYLOAD_BYTES );
     }
 
@@ -13556,7 +13556,7 @@ static void iocp_client_send_and_collect( struct iocp_client_pair_t * pair, int 
         struct rocketnet_packet_context_t context = {};
         uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, IOCP_CLIENT_PAYLOAD_BYTES, &context );
         rocketnet_check( payload );
-        iocp_client_fill_payload( payload + context.payload_index, tag );
+        iocp_client_fill_payload( payload, tag );
         rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, IOCP_CLIENT_PAYLOAD_BYTES ) > IOCP_CLIENT_PAYLOAD_BYTES );
     }
 

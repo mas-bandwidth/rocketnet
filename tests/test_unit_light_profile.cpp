@@ -125,8 +125,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // client, two 64-byte roundings above (the object's rounding moved with the
 // removed field). The two fill-phase counters and the two bind addresses
 // add 512 bytes to the server (actual=1469505023, measured on aws-win-5)
-// and nothing to the client.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456447 )
+// and nothing to the client. The wide fill's per-connection open message
+// (rn_message_open_t, one per connection) adds 64000 bytes to the server and
+// nothing to the client (actual=1469569023, measured on aws-win-5, MSVC
+// 19.52.37029, Release).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468520447 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -170,7 +173,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The two fill-phase counters and the server config's two bind addresses
 // (bind_ipv4_address, bind_ipv6_address) add 512 bytes to the server and
 // nothing to the client (measured); the probe's actual= line is 1469505439.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456863 )
+// The wide fill's per-connection open message (rn_message_open_t) adds 63936
+// bytes to the server and nothing to the client (actual=1469569375, the
+// studio, AppleClang 21.0.0, Release).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468520799 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -247,8 +253,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=15186146 for the client, 64 above it (the counters cross its
 // object's 64-byte rounding). The two fill-phase counters move the client
 // another 64 (actual=15186210, bench-nyc-6), and they and the two bind
-// addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
+// addresses move the server 576 (actual=3111681075). The wide fill's
+// per-connection open message (rn_message_open_t) moves the server 63936
+// and the client nothing (actual=3111745011, bench-nyc-4, clang, Debug).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110696435ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
 #endif // #if defined( _WIN32 )
 

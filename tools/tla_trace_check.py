@@ -39,6 +39,10 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
+    "fillphase": {
+        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+        "quiet": False,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
