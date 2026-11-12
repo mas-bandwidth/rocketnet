@@ -27,11 +27,24 @@ EXCLUDED_RE='^(sodium/|sdk/xdp/Makefile$|tools/check_fp_contract\.sh$)'
 default_files=()
 default_files_from_tree()
 {
-    local listing name head
+    local listing name head shebang_candidates status
     if ! listing="$(git ls-files)"; then
         echo "check_fp_contract: git ls-files failed; nothing was checked"
         return 2
     fi
+    # The files with a line naming sh or bash after #!, found by one git grep
+    # rather than by reading the head of each of the tree's files (thousands
+    # of forks); each is then held to the first-line rule below. git grep
+    # exits 1 when nothing matches and 2 or more when it fails.
+    status=0
+    shebang_candidates="$(git grep -l -I -E '^#!.*(/|[[:space:]])(ba)?sh([[:space:]]|$)')" || status=$?
+    if [ "$status" -gt 1 ]; then
+        echo "check_fp_contract: git grep failed; nothing was checked"
+        return 2
+    fi
+    shebang_candidates="
+$shebang_candidates
+"
     while IFS= read -r name; do
         [ -n "$name" ] || continue
         [[ "$name" =~ $EXCLUDED_RE ]] && continue
@@ -40,6 +53,12 @@ default_files_from_tree()
             */Makefile|Makefile|*/GNUmakefile|GNUmakefile|*.mk) default_files+=("$name"); continue ;;
             .github/*.yml|.github/*.yaml) default_files+=("$name"); continue ;;
             *.sh|*.py|scripts/*) default_files+=("$name"); continue ;;
+        esac
+        case "$shebang_candidates" in
+            *"
+$name
+"*) ;;
+            *) continue ;;
         esac
         head="$(head -c 64 "$name" 2>/dev/null | head -n 1 || true)"
         if [[ "$head" =~ ^\#!.*(/|[[:space:]])(ba)?sh([[:space:]]|$) ]]; then
@@ -453,16 +472,20 @@ run_selftest()
     printf 'jobs:\n  a:\n    steps:\n      - run: g++ -O2 -ffp-contract=off a.cpp\n' > "$repo/.github/workflows/ci.yml"
     printf 'jobs:\n  a:\n    steps:\n      - run: g++ -O2 dst.cpp -o dst\n' > "$repo/.github/workflows/nightly-dst.yml"
     printf '#!/usr/bin/env bash\nclang++ -O1 -fsanitize=memory a.cpp\n' > "$repo/tools/run_msan.sh"
+    # a script known only by its first line (no extension, outside scripts/)
+    # is read; one whose shebang is not on the first line is not a script
+    printf '#!/bin/sh\ng++ -O2 -c b.cpp\n' > "$repo/tools/build-b"
+    printf 'notes\n#!/bin/sh\ng++ -O2 -c c.cpp\n' > "$repo/tools/notes"
     git -C "$repo" add .github tools
     if (cd "$repo" && bash "$self") >/dev/null 2>&1; then
         echo "check_fp_contract self-test failed: a tree with g++ in nightly-dst.yml and tools/run_msan.sh passed" >&2
         return 1
     fi
-    if [ "$(cd "$repo" && bash "$self" 2>/dev/null | grep -c 'missing -ffp-contract=off')" != 2 ]; then
-        echo "check_fp_contract self-test failed: the tree run did not name both planted lines" >&2
+    if [ "$(cd "$repo" && bash "$self" 2>/dev/null | grep -c 'missing -ffp-contract=off')" != 3 ]; then
+        echo "check_fp_contract self-test failed: the tree run did not name the three planted lines (nightly-dst.yml, run_msan.sh, build-b) and only them" >&2
         return 1
     fi
-    git -C "$repo" rm -q --cached .github/workflows/nightly-dst.yml tools/run_msan.sh
+    git -C "$repo" rm -q --cached .github/workflows/nightly-dst.yml tools/run_msan.sh tools/build-b
     if ! (cd "$repo" && bash "$self") >/dev/null 2>&1; then
         echo "check_fp_contract self-test failed: a clean tree failed" >&2
         return 1
@@ -477,7 +500,7 @@ run_selftest()
         return 1
     fi
 
-    echo "check_fp_contract self-test: ok (13 negative and 6 positive cases)"
+    echo "check_fp_contract self-test: ok (14 negative and 7 positive cases)"
     return 0
 }
 
@@ -494,11 +517,40 @@ else
     echo "check_fp_contract: reading ${#files[@]} build files from the tree"
 fi
 
+# The files are read in parallel, a batch of one per core (at most 8) at a
+# time, each into its own report; the reports print in file order. A file
+# whose check left no status (killed, out of space) counts as failed.
+parallel="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+case "$parallel" in
+    ''|*[!0-9]*) parallel=4 ;;
+esac
+[ "$parallel" -gt 8 ] && parallel=8
+[ "$parallel" -lt 1 ] && parallel=1
+reports="$(mktemp -d)" || { echo "check_fp_contract: cannot make a report directory; nothing was checked"; exit 2; }
+trap 'rm -rf "$reports"' EXIT
+
+count=${#files[@]}
+next=0
+while [ "$next" -lt "$count" ]; do
+    batch_end=$((next + parallel))
+    [ "$batch_end" -gt "$count" ] && batch_end=$count
+    while [ "$next" -lt "$batch_end" ]; do
+        ( status=0; check_file "${files[$next]}" > "$reports/$next.out" 2>&1 || status=$?; echo "$status" > "$reports/$next.status" ) &
+        next=$((next + 1))
+    done
+    wait
+done
+
 bad=0
-for f in "${files[@]}"; do
-    if ! check_file "$f"; then
+index=0
+while [ "$index" -lt "$count" ]; do
+    [ -f "$reports/$index.out" ] && cat "$reports/$index.out"
+    status="$(cat "$reports/$index.status" 2>/dev/null || true)"
+    if [ "$status" != 0 ]; then
+        [ -n "$status" ] || echo "check_fp_contract: ${files[$index]}: the check left no status"
         bad=1
     fi
+    index=$((index + 1))
 done
 
 if [ "$bad" -eq 0 ]; then
