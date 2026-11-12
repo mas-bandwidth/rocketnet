@@ -100,11 +100,11 @@ static bool rp_is_stateless_refusal_counter( int counter )
 // payload, the receive ceiling and one past it
 static int rp_sizes( int * sizes )
 {
-    const int bounds[] = { ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,    ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES,
+    const int bounds[] = { ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES,
                            ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES, ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES,
                            ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES, ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES,
-                           ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,     ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES,
-                           ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES,    1200,
+                           ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES,
+                           ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES, 1200,
                            ROCKETNET_RECEIVE_CEILING };
     int count = 0;
     for ( int size = 0; size <= ROCKETNET_PREFILTER_BYTES + 1; ++size )

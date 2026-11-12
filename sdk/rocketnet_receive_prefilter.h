@@ -232,4 +232,4 @@ static inline void rocketnet_receive_drop_tally_sum( const struct rocketnet_rece
     }
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_RECEIVE_PREFILTER_H
+#endif // ROCKETNET_SDK_ROCKETNET_RECEIVE_PREFILTER_H
