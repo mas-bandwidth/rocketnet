@@ -30,6 +30,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "../kernel_drops.h"
+
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
@@ -66,6 +68,82 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 }
 
 #define posix_check( condition ) posix_check_impl( (condition), #condition, __FILE__, __LINE__ )
+
+// receive the `count` datagrams of sends[] through the socket's batch receive,
+// each matched by its bytes and each exactly once (a datagram that matches none,
+// or one already seen, fails). Loopback can drop one (tests/kernel_drops.h):
+// what is still missing at the deadline is sent again through the batch send
+// only when the kernel counted that many receive drops; otherwise the loss is
+// the socket layer's and the case fails. Returns the count received.
+
+#define POSIX_RECEIVE_EACH_MAX 128
+
+static int posix_receive_each( rocketnet_platform_socket_t * socket, struct rocketnet_loss_gate_t * gate, const struct rocketnet_platform_send_t * sends, int count )
+{
+    posix_check( count > 0 && count <= POSIX_RECEIVE_EACH_MAX );
+
+    bool arrived[POSIX_RECEIVE_EACH_MAX];
+    memset( arrived, 0, sizeof( arrived ) );
+
+    static uint8_t data[8 * ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+
+    int received = 0;
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < count )
+    {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: received %d of %d\n", gate->name, received, count );
+            fflush( stdout );
+            posix_check( rocketnet_loss_gate_resend( gate, count - received ) );
+
+            struct rocketnet_platform_send_t missing[POSIX_RECEIVE_EACH_MAX];
+            int num_missing = 0;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( !arrived[i] )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+
+            rocketnet_platform_socket_send_packets( socket, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        const int got = rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 );
+        if ( got == 0 )
+        {
+            rocketnet_platform_sleep( 0.0005 );
+            continue;
+        }
+
+        for ( int g = 0; g < got; g++ )
+        {
+            const uint8_t * packet = data + (size_t) g * ROCKETNET_RECEIVE_CEILING;
+            int match = -1;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( bytes[g] == sends[i].packet_bytes && memcmp( packet, sends[i].packet_data, (size_t) bytes[g] ) == 0 )
+                {
+                    match = i;
+                    break;
+                }
+            }
+            posix_check( match >= 0 );
+            posix_check( !arrived[match] );
+            arrived[match] = true;
+            received++;
+        }
+    }
+
+    return received;
+}
+
 
 // ---------------------------------------------------
 // the Linux native server transports (gso, io_uring) own their sockets, so no
@@ -1251,32 +1329,20 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
         rocketnet_platform_sleep( 0.01 );
         posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
 
-        // the next batch goes: all eight arrive, nothing more is counted
+        // the next batch goes: all eight arrive, each once, nothing more is
+        // counted (posix_receive_each: a loopback loss the kernel counted is
+        // sent again; any other loss fails)
+
+        struct rocketnet_loss_gate_t gate;
+        rocketnet_loss_gate_begin( &gate, "posix_send_seam_socket" );
 
         rocketnet_platform_socket_send_packets( socket, sends, 8 );
         posix_check( rocketnet_platform_socket_send_failures( socket ) - before == failed );
         posix_check( rocketnet_platform_socket_send_replay_failures( socket ) - replay_before == replay_failed );
 
-        int received = 0;
-        const double deadline = rocketnet_platform_time() + 5.0;
-        while ( received < 8 && rocketnet_platform_time() < deadline )
-        {
-            const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
-                                                                       ROCKETNET_RECEIVE_CEILING, bytes + received, 8 - received );
-            received += got;
-            if ( got == 0 )
-            {
-                rocketnet_platform_sleep( 0.0005 );
-            }
-        }
-
-        posix_check( received == 8 );
-
-        for ( int i = 0; i < 8; i++ )
-        {
-            posix_check( bytes[i] == 64 );
-            posix_check( memcmp( data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packets[i], 64 ) == 0 );
-        }
+        posix_check( posix_receive_each( socket, &gate, sends, 8 ) == 8 );
+        rocketnet_platform_sleep( 0.01 );
+        posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
 
         posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
     }
@@ -1628,6 +1694,9 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
     rocketnet_platform_sleep( 0.01 );
     posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, num_packets ) == 0 );
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_msgx_send_replay_refusals_counted_apart" );
+
     rocketnet_platform_socket_fail_next_sends( socket, 1, ENOBUFS );
     rocketnet_platform_socket_send_packets( socket, sends, num_packets );
     rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
@@ -1639,25 +1708,12 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
     posix_check( sent_failures == 1 );
     posix_check( sent_replay_failures == 0 );
 
-    int received = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( received < num_packets && rocketnet_platform_time() < deadline )
-    {
-        const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
-                                                                   ROCKETNET_RECEIVE_CEILING, bytes + received, num_packets - received );
-        received += got;
-        if ( got == 0 )
-        {
-            rocketnet_platform_sleep( 0.0005 );
-        }
-    }
+    // every datagram of the replay arrives, each once (posix_receive_each: a
+    // loopback loss the kernel counted is sent again; any other loss fails)
 
-    posix_check( received == num_packets );
-    for ( int i = 0; i < num_packets; i++ )
-    {
-        posix_check( bytes[i] == 64 );
-        posix_check( memcmp( data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packets[i], 64 ) == 0 );
-    }
+    posix_check( posix_receive_each( socket, &gate, sends, num_packets ) == num_packets );
+    rocketnet_platform_sleep( 0.01 );
+    posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, num_packets ) == 0 );
 
     posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
 
@@ -1829,6 +1885,9 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
     rocketnet_log_function( posix_mmsg_progress_log, &log );
     const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_mmsg_progress_retries_original_suffix" );
+
     rocketnet_platform_socket_fail_mmsg_after_packets( socket, prefix, error );
     const int first = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends, num_packets );
     const int invalid_after_first = log.invalid;
@@ -1854,9 +1913,36 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
     const int expected = num_packets - invalid_count - ( terminal ? 1 : 0 );
     bool seen[max_packets] = {};
     int received = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( received < expected && rocketnet_platform_time() < deadline )
+
+    // loopback can drop one (tests/kernel_drops.h): a datagram still missing at
+    // the deadline is sent again, through the plain batch send, only when the
+    // kernel counted that many receive drops; a loss the kernel did not count
+    // is the mmsg path's and fails here, before the progress bookkeeping
+
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < expected )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "  ipv%d mmsg progress errno=%d prefix=%d holes=%d: received %d of %d at the deadline\n", ipv6 ? 6 : 4, error, prefix, holes ? 1 : 0,
+                    received, expected );
+            fflush( stdout );
+            posix_check( rocketnet_loss_gate_resend( &gate, expected - received ) );
+            struct rocketnet_platform_send_t missing[max_packets];
+            int num_missing = 0;
+            for ( int i = 0; i < num_packets; i++ )
+            {
+                if ( !seen[i] && !refused_address[i] && !( terminal && i == refusal_index ) )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+            rocketnet_platform_socket_send_packets( socket, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_address_t from;
         uint8_t data[64];
         const int bytes = rocketnet_platform_socket_receive_packet( socket, &from, data, sizeof( data ) );
