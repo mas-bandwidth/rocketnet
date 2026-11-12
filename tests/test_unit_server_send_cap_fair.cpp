@@ -700,7 +700,8 @@ REGISTER_UNIT_TEST( test_server_send_cap_dark_neighbours_take_only_their_probes 
 // v1.1.1 probe-slot fix reverted, a held member takes a frame every update
 // and the healthy clients lose theirs.
 
-#define PC_MAX_CLIENTS      16
+#define PC_CLIENTS          16      // the per-commit cases
+#define PC_MAX_CLIENTS      ROCKETNET_MAX_CLIENTS   // the nightly case
 #define PC_TICKS            90
 #define PC_FIRST_TICK       5
 #define PC_STAGGER          3
@@ -998,13 +999,15 @@ static void pc_expect_healthy_identical( const pc_kind_t * kinds, int num_client
 // the subset: four clients spread over the slots, all of one kind, or (mixed)
 // two dark, one never acknowledging, one flooding
 
-static void pc_kinds( pc_kind_t * kinds, pc_kind_t kind, bool mixed )
+static void pc_kinds( pc_kind_t * kinds, int num_clients, pc_kind_t kind, bool mixed )
 {
-    for ( int c = 0; c < PC_MAX_CLIENTS; c++ )
+    for ( int c = 0; c < num_clients; c++ )
     {
         kinds[c] = PC_HEALTHY;
     }
-    const int members[] = { 1, 6, 10, 13 };
+    // at 16 clients the members are 1, 6, 10 and 13; at more, the same
+    // places in the slot range
+    const int members[] = { num_clients / 16, 6 * num_clients / 16, 10 * num_clients / 16, 13 * num_clients / 16 };
     const pc_kind_t mix[] = { PC_DARK, PC_FLOOD, PC_NO_ACK, PC_DARK };
     for ( int m = 0; m < 4; m++ )
     {
@@ -1012,35 +1015,35 @@ static void pc_kinds( pc_kind_t * kinds, pc_kind_t kind, bool mixed )
     }
 }
 
-static void pc_case( pc_kind_t kind, bool mixed )
+static void pc_case( pc_kind_t kind, bool mixed, int num_clients = PC_CLIENTS )
 {
     // one frame for each client with work in an update, and one spare: the
-    // twelve healthy clients take one each, a flooding member one (or more,
+    // healthy clients (twelve of 16) take one each, a flooding member one (or more,
     // from what the round leaves), and a member's probe the spare
 
     pc_kind_t kinds[PC_MAX_CLIENTS];
-    pc_kinds( kinds, kind, mixed );
+    pc_kinds( kinds, num_clients, kind, mixed );
     int flooding = 0;
-    for ( int c = 0; c < PC_MAX_CLIENTS; c++ )
+    for ( int c = 0; c < num_clients; c++ )
     {
         flooding += kinds[c] == PC_FLOOD ? 1 : 0;
     }
-    const int capacity = ( PC_MAX_CLIENTS - 4 ) + flooding + 1;
+    const int capacity = ( num_clients - 4 ) + flooding + 1;
 
     pc_kind_t idle[PC_MAX_CLIENTS];
-    for ( int c = 0; c < PC_MAX_CLIENTS; c++ )
+    for ( int c = 0; c < num_clients; c++ )
     {
         idle[c] = kinds[c] == PC_HEALTHY ? PC_HEALTHY : PC_IDLE;
     }
 
     static pc_record_t control;
     static pc_record_t run;
-    pc_run( idle, PC_MAX_CLIENTS, capacity, &control );
-    pc_run( kinds, PC_MAX_CLIENTS, capacity, &run );
+    pc_run( idle, num_clients, capacity, &control );
+    pc_run( kinds, num_clients, capacity, &run );
 
     // the healthy clients were served every update, in both runs
 
-    for ( int c = 0; c < PC_MAX_CLIENTS; c++ )
+    for ( int c = 0; c < num_clients; c++ )
     {
         if ( kinds[c] == PC_HEALTHY )
         {
@@ -1050,7 +1053,7 @@ static void pc_case( pc_kind_t kind, bool mixed )
             }
         }
     }
-    pc_expect_healthy_identical( kinds, PC_MAX_CLIENTS, &control, &run );
+    pc_expect_healthy_identical( kinds, num_clients, &control, &run );
 }
 
 static void test_server_per_client_dark_subset_changes_nothing_for_the_others()
@@ -1073,10 +1076,16 @@ static void test_server_per_client_mixed_subset_changes_nothing_for_the_others()
     pc_case( PC_DARK, true );
 }
 
+static void test_server_per_client_mixed_subset_at_max_clients()
+{
+    pc_case( PC_DARK, true, PC_MAX_CLIENTS );
+}
+
 REGISTER_UNIT_TEST( test_server_per_client_dark_subset_changes_nothing_for_the_others );
 REGISTER_UNIT_TEST( test_server_per_client_never_acking_subset_changes_nothing_for_the_others );
 REGISTER_UNIT_TEST( test_server_per_client_flooding_subset_changes_nothing_for_the_others );
 REGISTER_UNIT_TEST( test_server_per_client_mixed_subset_changes_nothing_for_the_others );
+REGISTER_UNIT_TEST( test_server_per_client_mixed_subset_at_max_clients );
 
 // A freed slot is clean (property X): a one-slot server whose client A builds
 // up history (reliable messages with receipts unacknowledged, a send side

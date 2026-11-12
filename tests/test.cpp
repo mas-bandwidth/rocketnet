@@ -63,6 +63,27 @@ static const char * rocketnet_suite_test_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
+// The unit nightly tier (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1,
+// nightly.yml): a case over a second that a per-commit case already covers
+// at a smaller size. A per-commit run leaves these out; `--run <name>`
+// runs one at any time.
+static const char * const rocketnet_unit_nightly_cases[] = {
+    "test_server_per_client_mixed_subset_at_max_clients",     // about 20 s; the 16-client cases run per commit
+    NULL,
+};
+
+static int rocketnet_unit_test_group( const char * name )
+{
+    for ( const char * const * nightly = rocketnet_unit_nightly_cases; *nightly; ++nightly )
+    {
+        if ( strcmp( name, *nightly ) == 0 )
+        {
+            return SUITE_GROUP_NIGHTLY;
+        }
+    }
+    return 0;
+}
+
 // the DEV unit suite opens no socket: the platform's network lookup reads this
 // instead of the IPv6 probe socket
 // (rocketnet_platform_set_network_lookups_for_testing, rocketnet_internal.h).
@@ -345,7 +366,7 @@ int main( int argc, char ** argv )
         // the functional suite's test_unit_case_memory row. That row invokes
         // this binary with --enforce-rss, reusing this process's registry.
         result = suite_main( argc, argv, rocketnet_unit_worker, rocketnet_suite_test_count, rocketnet_suite_test_name,
-                             NULL, 0, NULL, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
+                             NULL, 0, rocketnet_unit_test_group, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
     }
 
 #if defined( _WIN32 )

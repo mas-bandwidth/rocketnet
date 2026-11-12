@@ -791,6 +791,16 @@ static inline int dst_outage_run( const dst_outage_options_t * o, dst_outage_res
                 const dst_outage_message_t * m = &w->messages[i];
                 owed = dst_outage_mode_must_arrive( m->mode ) && ( m->delivered < 0.0 || ( m->mode >= 6 && m->outcome == 0 ) );
             }
+            // the last reliable-sequenced message on each channel is owed
+            // too: a lost one waits a resend delay and a one-way trip
+            for ( int dir = 0; dir < 2 && !owed; dir++ )
+            {
+                for ( int channel = 0; channel < 32 && !owed; channel++ )
+                {
+                    const uint32_t id1 = w->last_accepted[dir][channel];
+                    owed = id1 > 0 && w->messages[id1 - 1].delivered < 0.0;
+                }
+            }
             if ( !owed )
             {
                 // one more second for the last receipts and the sequenced tails
@@ -940,9 +950,14 @@ static inline int dst_outage_run( const dst_outage_options_t * o, dst_outage_res
             // delay after it. A timeout ends silently, so the other side then
             // hears nothing and ends by its own timeout T after the deaf
             // side's last packet. Both ends are the timeout, and nothing else.
+            // The upper edge carries three steps: the outage arms at the first
+            // step at or after its start, a packet is taken at the first update
+            // at or after it lands, and the step clock adds 0.01 each step, so a
+            // difference of exactly T can round short and end one step later
+            // (seed 11 measured T + one-way + 2.5 steps).
             const double one_way = rtt * 0.5;
             const double lo = T - DST_OUTAGE_KEEPALIVE_SECONDS - 2.0 * DST_OUTAGE_DT;
-            const double hi = T + one_way + 2.0 * DST_OUTAGE_DT;
+            const double hi = T + one_way + 3.0 * DST_OUTAGE_DT;
             const int server_deaf = ( o->dark & DST_OUTAGE_C2S ) != 0;
             const int client_deaf = ( o->dark & DST_OUTAGE_S2C ) != 0;
             const double deaf_end = server_deaf ? result->server_end_after : result->client_end_after;
