@@ -15,6 +15,7 @@
 
 #include "rocketnet.h"
 #include "loopback_hub_module.h"
+#include "../plan_rss.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -143,6 +144,47 @@ static void * loopback_hub_module_symbol( void * module, const char * name )
     return symbol;
 }
 
+// The modules' own copies of the library allocate with their own default
+// allocator, outside the host's plan counter (tests/plan_rss.h), so the case's
+// bound is the host's plan plus PLAN_RSS_SLACK_MB. In a Release build the
+// modules' untouched planned pages are never resident and fit in that slack.
+// Under the MSVC debug CRT every byte their malloc hands out is filled, so
+// their whole plan is resident: measured 2026-11-11 on captain (MSVC 2022
+// Debug), a 94 MiB peak against a 64 MiB bound. There the modules' planned
+// bytes (their server's and client's required memory, the configs the
+// modules build) are counted as held outside the allocator for as long as
+// the modules run, as the XDP cases count their UMEM; every other build
+// counts nothing.
+static uint64_t loopback_hub_modules_debug_crt_bytes()
+{
+#if defined( _MSC_VER ) && defined( _DEBUG )
+    struct rocketnet_server_config_t server_config;
+    struct rocketnet_client_config_t client_config;
+    rocketnet_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = LOOPBACK_HUB_MODULE_PROTOCOL_ID;
+    server_config.max_clients = 1;
+    server_config.transport = "loopback";
+    client_config.transport = "loopback";
+
+    // a loopback config plans only with a hub set: a host hub of the modules'
+    // size, for the plan only
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_loopback_hub_t * plan_hub = rocketnet_loopback_hub_create( NULL, 1, &status );
+    rocketnet_check( plan_hub != NULL && status == ROCKETNET_STATUS_OK );
+    server_config.loopback_hub = plan_hub;
+    client_config.loopback_hub = plan_hub;
+    const size_t server_bytes = rocketnet_server_required_memory( &server_config );
+    const size_t client_bytes = rocketnet_client_required_memory( &client_config );
+    rocketnet_check( rocketnet_loopback_hub_destroy( plan_hub ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( server_bytes > 0 && client_bytes > 0 );
+    printf( "loopback hub modules: debug CRT, counting server %zu + client %zu planned bytes\n", server_bytes, client_bytes );
+    return (uint64_t) server_bytes + (uint64_t) client_bytes;
+#else
+    return 0;
+#endif // #if defined( _MSC_VER ) && defined( _DEBUG )
+}
+
 void test_loopback_hub_two_shared_objects()
 {
     loopback_hub_env_pin_t server_pin, client_pin;
@@ -172,6 +214,9 @@ void test_loopback_hub_two_shared_objects()
 
     // each module initializes its own copy: a shared copy would refuse the
     // second init with ALREADY_INITIALIZED
+
+    const uint64_t modules_bytes = loopback_hub_modules_debug_crt_bytes();
+    plan_rss_count_outside_allocator( modules_bytes );
 
     struct rocketnet_loopback_hub_t * hub = NULL;
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
@@ -206,6 +251,7 @@ void test_loopback_hub_two_shared_objects()
 
     rocketnet_check( client_stop( time ) == 1 );
     rocketnet_check( server_stop() == 1 );
+    plan_rss_uncount_outside_allocator( modules_bytes );
 
     rocketnet_check( loopback_hub_module_close( client_module ) );
     rocketnet_check( loopback_hub_module_close( server_module ) );
