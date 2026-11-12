@@ -8,6 +8,7 @@
 // endpoints create and destroy on the profile without opening a socket.
 
 #include "test_unit_registry.h"
+#include "msan_scale_allocator.h"
 #include "rocketnet.h"
 
 #include <stddef.h>
@@ -255,6 +256,7 @@ static void test_light_profile_configs_create()
     // create does not bind, and it takes no clock. update at 1000.0 on a
     // stopped server and a disconnected client opens no socket.
 
+    debug_crt_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h: a 1000-slot plan
     const double now = 1000.0;
 
     struct rocketnet_server_config_t server_config;

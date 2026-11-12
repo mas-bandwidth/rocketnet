@@ -177,7 +177,12 @@
     preallocated pages, the runtime's own heaps) beside the library. The
     guard prints as "soak resources: memory guard library_bytes";
     on Windows os_threads
-    may fall and never rise, so the full thread count never grows. A resource
+    may fall and never rise, so the full thread count never grows; an end
+    sample that lands while the OS has pool workers of its own up is read
+    again each second until they retire, for at most 180 s (THE OS POOL
+    WINDOW, soak_os_pool_settle), and prints "soak resources: os_threads
+    end=<n> over post-warmup=<n>: waiting ..." then "back to <n> after
+    <s> s" or "still <n> after 180 s". A resource
     read that fails (a thread walk that ends on an error among them) fails
     the run. A count that is not
     flat prints "soak: --assert-flat FAILED: <name> start=<n> end=<n>" and
@@ -840,6 +845,71 @@ static void soak_print_os_threads( const char * sample_label )
     process_resources_walk_threads( &threads, &os_threads, sample_label );
 #else
     (void) sample_label;
+#endif // #if defined( _WIN32 )
+}
+
+// THE OS POOL WINDOW (Windows, --assert-flat). The OS starts thread-pool
+// workers in the process on timers of its own, whatever the library does:
+// measured 2026-11-11 on captain (Windows 11, four 3900 s impaired soaks,
+// portable, iocp and rio servers, sampled every 10 s), os_threads was 0 from
+// the post-warmup sample to t=301 s, 2 from t=301 to about t=420, 0 again to
+// t=602, 1 from t=602 to about t=693, then 0 for the remaining 3200 s, at
+// the same seconds in every process. A run whose end sample falls inside one
+// of those windows (a 600 s soak ends at about 602 s) read os_threads one
+// over its post-warmup count and failed the flat rule with no thread of the
+// library's. So when the end sample's os_threads is over the post-warmup
+// count, the end sample is read again every second, the server still
+// running and no client alive, until os_threads is back at or under the
+// post-warmup count: an OS pool worker retires on its own idle timer, a
+// thread something leaked never does. The wait is bounded by
+// SOAK_OS_POOL_RETIRE_SECONDS, 1.5 times the longest window measured (about
+// 120 s); past it the last sample read is compared and the flat rule fails
+// it as before. Returns 0 only when a read fails, which fails the run as
+// every other resource read does.
+
+#define SOAK_OS_POOL_RETIRE_SECONDS 180.0
+
+static int soak_os_pool_settle( const struct process_resources_t * start, struct process_resources_t * end )
+{
+#if defined( _WIN32 )
+    const int64_t baseline = start->values[PROCESS_RESOURCES_OS_THREADS];
+    if ( end->values[PROCESS_RESOURCES_OS_THREADS] <= baseline )
+    {
+        return 1;
+    }
+
+    printf( "soak resources: os_threads end=%lld over post-warmup=%lld: waiting up to %.0f s for the OS pool to retire its workers\n",
+            (long long) end->values[PROCESS_RESOURCES_OS_THREADS], (long long) baseline, SOAK_OS_POOL_RETIRE_SECONDS );
+    fflush( stdout );
+
+    const double wait_start = rocketnet_time();
+    while ( rocketnet_time() - wait_start < SOAK_OS_POOL_RETIRE_SECONDS )
+    {
+        rocketnet_sleep( 1.0 );
+
+        struct process_resources_t sample;
+        if ( !process_resources_read( &sample ) )
+        {
+            printf( "soak: --assert-flat FAILED: a resource read failed while waiting for the OS pool\n" );
+            return 0;
+        }
+        *end = sample;
+
+        if ( end->values[PROCESS_RESOURCES_OS_THREADS] <= baseline )
+        {
+            printf( "soak resources: os_threads back to %lld after %.0f s\n", (long long) end->values[PROCESS_RESOURCES_OS_THREADS],
+                    rocketnet_time() - wait_start );
+            return 1;
+        }
+    }
+
+    printf( "soak resources: os_threads still %lld after %.0f s\n", (long long) end->values[PROCESS_RESOURCES_OS_THREADS],
+            SOAK_OS_POOL_RETIRE_SECONDS );
+    return 1;
+#else
+    (void) start;
+    (void) end;
+    return 1;
 #endif // #if defined( _WIN32 )
 }
 
@@ -1822,6 +1892,13 @@ int main( int argc, char ** argv )
     if ( resources_started && process_resources_read( &resources_end ) )
     {
         resources_ended = 1;
+
+        // on Windows, past the OS pool window first (THE OS POOL WINDOW above)
+
+        if ( assert_flat && !soak_os_pool_settle( &resources_start, &resources_end ) )
+        {
+            failures++;
+        }
         soak_print_os_threads( "end" );
         process_resources_peak( &resources_peak, &resources_end );
         library_bytes_end = soak_library_bytes_read();

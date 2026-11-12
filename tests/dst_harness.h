@@ -76,7 +76,8 @@
 #define ROCKETNET_DST_SCHEDULE_DUP_STORM     6
 #define ROCKETNET_DST_SCHEDULE_OUTAGE        7
 #define ROCKETNET_DST_SCHEDULE_OUTAGE_PAST   8
-#define ROCKETNET_DST_NUM_SCHEDULES          9
+#define ROCKETNET_DST_SCHEDULE_SEND_FAIL     9
+#define ROCKETNET_DST_NUM_SCHEDULES          10
 
 // The connect token's timeout_seconds, T: a session silent for T ends.
 #define ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS  5
@@ -160,6 +161,13 @@
 #define ROCKETNET_DST_DUP_STORM_MAX_COPIES   5
 #define ROCKETNET_DST_DUP_STORM_MAX_DELAY_MS 50
 
+// send-fail: the window in steps, and one frame in ONE_IN that the drawn
+// side's transport refuses at finish (finish_packet returns 0: the frame
+// never leaves, and the message layer takes its packet as failed).
+#define ROCKETNET_DST_SEND_FAIL_MIN_STEPS    50
+#define ROCKETNET_DST_SEND_FAIL_MAX_STEPS    200
+#define ROCKETNET_DST_SEND_FAIL_ONE_IN       3
+
 static inline const char * rocketnet_dst_schedule_name( int schedule )
 {
     static const char * const names[ROCKETNET_DST_NUM_SCHEDULES] = {
@@ -172,6 +180,7 @@ static inline const char * rocketnet_dst_schedule_name( int schedule )
         "dup-storm",
         "outage",
         "outage-past",
+        "send-fail",
     };
     if ( schedule < 0 || schedule >= ROCKETNET_DST_NUM_SCHEDULES )
     {
@@ -433,7 +442,7 @@ struct rocketnet_dst_schedule_t
     uint64_t start_step;            // the step the fault fires (or its window opens)
     uint64_t end_step;              // the window's end, exclusive (burst, dup-storm)
     int endpoint;                   // clock-back: the endpoint; burst, seq-gap: the client
-    int side;                       // seq-gap: 0 the client's sends, 1 the server's
+    int side;                       // seq-gap, send-fail: 0 the client's sends, 1 the server's
     int pending;                    // seq-gap: waiting for the drawn client's session; burst: waiting for it to connect
     uint64_t amount;                // clock-back: ms; seq-gap: sequences skipped
     int burst_slot;                 // burst: the drawn client's server slot when it fired
@@ -1109,6 +1118,20 @@ static inline int rocketnet_dst_endpoint_finish_packet( void * transport, struct
         return 0;
     }
 
+    // send-fail: inside the window, the drawn side's transport refuses one
+    // frame in ONE_IN at finish, as a transport whose send failed does
+
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    if ( s->kind == ROCKETNET_DST_SCHEDULE_SEND_FAIL && w->step >= s->start_step && w->step < s->end_step &&
+         endpoint->is_server == s->side &&
+         rocketnet_dst_substream_uniform( &s->draws, 1, ROCKETNET_DST_SEND_FAIL_ONE_IN ) == 1 )
+    {
+        endpoint->pending_frame = -1;
+        s->fired++;
+        w->check.send_fail_seen = 1;
+        return 0;
+    }
+
     int wire_bytes;
     if ( endpoint->is_server )
     {
@@ -1736,6 +1759,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
         }
         rocketnet_dst_check_receipt_sent( &w->check, direction == 0 ? 16 + index : slot, identity, sent, session,
                                           channel, type, sequence );
+        rocketnet_dst_check_receipt_due_from( &w->check, direction == 0 ? 16 + index : slot, identity, sent, type, w->now );
     }
     else
     {
@@ -2096,6 +2120,15 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
                                : ROCKETNET_DST_OUTAGE_BOTH;
             const uint64_t length = s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE ? ROCKETNET_DST_OUTAGE_STEPS
                                                                              : ROCKETNET_DST_OUTAGE_PAST_STEPS;
+            s->start_step = rocketnet_dst_schedule_draw_step( s, fault_steps, length );
+            s->end_step = s->start_step + length;
+            break;
+        }
+        case ROCKETNET_DST_SCHEDULE_SEND_FAIL:
+        {
+            s->side = (int) rocketnet_dst_substream_uniform( &s->draws, 0, 1 );
+            const uint64_t length = rocketnet_dst_substream_uniform( &s->draws, ROCKETNET_DST_SEND_FAIL_MIN_STEPS,
+                                                                     ROCKETNET_DST_SEND_FAIL_MAX_STEPS );
             s->start_step = rocketnet_dst_schedule_draw_step( s, fault_steps, length );
             s->end_step = s->start_step + length;
             break;
@@ -3037,6 +3070,25 @@ static inline int rocketnet_dst_run_world_seed( uint64_t seed, const struct rock
                 {
                     rocketnet_dst_check_receipt_one_outcome( &w->check, slot, identity, receipts[r].serial, receipts[r].status );
                 }
+            }
+
+            // receipt_outcome_due: each live session's type 5 sends have
+            // their outcomes by the receipt deadline (plus the slack the
+            // check names)
+            const double receipt_deadline = (double) w->message_config.message_resend_delay_max_ms / 1000.0 + ROCKETNET_DST_RECEIPT_DUE_SLACK;
+            for ( int i = 0; i < w->num_clients; i++ )
+            {
+                const int live = w->client[i].message && w->client[i].protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+                const uint64_t identity = (uint64_t) (uint32_t) w->client[i].generation * 256 + (uint64_t) i;
+                const uint32_t serial_now = w->client[i].message ? w->client[i].message->object.connections[0].serial : 0;
+                rocketnet_dst_check_receipt_outcome_due( &w->check, 16 + i, identity, live, serial_now, w->now, receipt_deadline );
+            }
+            for ( int slot = 0; slot < ROCKETNET_DST_MAX_CLIENTS && slot < w->message_server->object.num_connections; slot++ )
+            {
+                const int live = rocketnet_message_server_client_connected( w->message_server, slot );
+                const uint64_t identity = (uint32_t) ( rocketnet_client_slots_client_id( w->server.client_slots, slot ) >> 8 );
+                rocketnet_dst_check_receipt_outcome_due( &w->check, slot, identity, live, w->message_server->object.connections[slot].serial,
+                                                         w->now, receipt_deadline );
             }
         }
 

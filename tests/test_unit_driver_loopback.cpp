@@ -28,6 +28,7 @@
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
 #include "loopback_hub.h"
+#include "msan_scale_allocator.h"
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -914,6 +915,7 @@ SUITE_CASE_RSS_BOUND( test_loopback_transport_io_holds_max_clients_plus_server, 
 
 static void test_loopback_transport_io_holds_max_clients_plus_server()
 {
+    debug_crt_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h: the hub for every build slot
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_test_loopback_hub_clients( ROCKETNET_MAX_CLIENTS );
     rocketnet_loopback_hub_t * hub = rocketnet_test_loopback_hub();

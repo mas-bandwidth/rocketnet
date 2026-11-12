@@ -1450,7 +1450,119 @@ static void test_rtt_filter_idle_connection_is_not_a_silence()
 }
 
 REGISTER_UNIT_TEST( test_rtt_filter_idle_connection_is_not_a_silence );
+
+// The silence boundary: a number owed an acknowledgement for exactly
+// RN_PROBE_SECONDS ends a silence when that acknowledgement arrives, and one
+// owed for less does not (proofs/tla/RNRttFilter.tla EndsSilence, ">=").
+// Times are exact in binary, so the boundary is met exactly.
+static void test_rtt_filter_silence_starts_at_exactly_the_probe_interval()
+{
+    for ( int leg = 0; leg < 2; leg++ )
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+
+        const double t0 = resend_timing_start;
+        const double owed = leg == 0 ? RN_PROBE_SECONDS : RN_PROBE_SECONDS - 0.25;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        check( f.send.U < f.send.next );
+        check( t0 + owed - t0 == owed );
+        check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + owed ) == 1 );
+        if ( leg == 0 )
+        {
+            check( f.ack.silence_end == t0 + owed );
+        }
+        else
+        {
+            check( f.ack.silence_end == 0.0 );
+        }
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_silence_starts_at_exactly_the_probe_interval );
+
+// The sample boundary: a packet sent exactly one srtt before the silence ended
+// is sampled, and one sent a quarter second earlier is not
+// (proofs/tla/RNRttFilter.tla Ack, ">=" on send time against silence_end - srtt).
+// Times are exact in binary, so the boundary is met exactly.
+static void test_rtt_filter_samples_a_packet_sent_exactly_one_srtt_before_the_silence_ended()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t0 = resend_timing_start;
+    const uint64_t pa = resend_timing_send( &f, t0, NULL );
+    check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.25 ) == 1 );
+    check( f.ack.srtt == 0.25 );
+
+    // pb is owed from t0 + 0.5; its ack a probe interval later ends a silence at t0 + 1.5
+    const double silence_end = t0 + 0.5 + RN_PROBE_SECONDS;
+    const uint64_t pb = resend_timing_send( &f, t0 + 0.5, NULL );
+    const uint64_t early = resend_timing_send( &f, silence_end - 0.5, NULL );
+    const uint64_t edge = resend_timing_send( &f, silence_end - 0.25, NULL );
+    check( rn_ordered_acks( &f.ordered, &pb, 1, silence_end ) == 1 );
+    check( f.ack.silence_end == silence_end );
+    check( f.ack.srtt == 0.25 );
+
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    check( rn_ordered_acks( &f.ordered, &early, 1, silence_end ) == 1 );
+    check( f.ack.srtt == srtt && f.ack.rttvar == rttvar );
+
+    check( silence_end - 0.25 == f.ack.silence_end - f.ack.srtt );
+    check( rn_ordered_acks( &f.ordered, &edge, 1, silence_end ) == 1 );
+    check( f.ack.silence_end == silence_end );
+    check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * 0.25 ) ) < 1e-12 );
+    check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - 0.25 ) ) ) < 1e-12 );
+    check( f.ack.rttvar < rttvar );                                         // the sample moved the deviation
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_samples_a_packet_sent_exactly_one_srtt_before_the_silence_ended );
 #endif // #if ROCKETNET_DEV
+
+// A silence needs the lowest unacknowledged number on the wire (m9.2): U is
+// numbered and its only packet is refused at finish (m9.1), so U was never
+// sent. 1.75 s after the last acknowledgement, a later number sent 0.5 s
+// earlier is acknowledged: no silence ends, however long since the last
+// acknowledgement, and its 0.5 s round trip is sampled.
+static void test_rtt_filter_unsent_lowest_number_owes_no_acknowledgement()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t0 = resend_timing_start;
+    const uint64_t pa = resend_timing_send( &f, t0, NULL );
+    check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.25 ) == 1 );
+    check( f.ack.srtt == 0.25 );
+
+    const uint32_t d = rn_region_send_alloc( f.region, 16 );
+    check( d != RN_DESCRIPTOR_NONE );
+    uint64_t unsent = 0, ring_start = 0;
+    check( rn_window_send_first_write( &f.send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, d, &unsent, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+    rn_window_ack_packet_failed( &f.ack, &unsent, 1, t0 + 0.5 );
+    check( f.send.U == unsent );
+    check( f.ack.has_oldest == 0 );
+
+    const uint64_t pc = resend_timing_send( &f, t0 + 1.5, NULL );
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    check( rn_ordered_acks( &f.ordered, &pc, 1, t0 + 2.0 ) == 1 );
+    check( f.ack.silence_end == 0.0 );
+    check( f.send.U == unsent );
+    check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * 0.5 ) ) < 1e-12 );
+    check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - 0.5 ) ) ) < 1e-12 );
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_unsent_lowest_number_owes_no_acknowledgement );
 
 // The first acknowledgement of a connection after an outage (m9.2): the
 // estimate is seeded from the transport's round trip at 50 ms, the first

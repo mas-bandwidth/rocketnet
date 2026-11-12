@@ -7,7 +7,9 @@ log to the verifier log file without a debugger (a stop ends the run with
 STATUS_VERIFIER_STOP after it is logged), runs the executable, exports the
 verifier log of every process the run starts with that image name (one log per
 process: the suite runners start one child per case) to XML and disables
-verification for the image again on every exit path. The machine-wide
+verification for the image again on every exit path, deleting the image's own
+Image File Execution Options key, which appverif leaves behind empty
+(remove_image_key; a key it cannot delete fails the run). The machine-wide
 -logtofile setting is put back the way the run found it, on every exit path
 too. Verifier settings and logs are keyed by image name, machine wide, so the
 run verifies a copy of the executable beside it under a name of its own
@@ -75,6 +77,17 @@ GLOBAL_SETTINGS_KEY = (
     r"\{ApplicationVerifierGlobalSettings}"
 )
 
+# Where appverif -enable writes a verified image's settings: one key per image
+# name under this one (GlobalFlag, VerifierDlls, VerifierFlags and one subkey
+# per layer). appverif -disable and -delete settings clear the values and the
+# layer subkeys but leave the image's key itself, empty (measured on captain,
+# 2026-11-11: one empty key per run), so the run deletes that key too.
+IFEO_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+
+# The only image names whose IFEO key the run may delete: the copies
+# verified_image_path names. Any other image's key is never touched.
+VERIFIED_IMAGE_PATTERN = re.compile(r".+_appverif_[0-9]+\.exe", re.IGNORECASE)
+
 # Frames from these modules are the verifier itself or the system call path
 # that raised the stop; the frames shown start at the system API the caller
 # entered.
@@ -110,6 +123,71 @@ def verified_image_path(exe_path: Path, token: str) -> Path:
     original, the copy finds the same PDB and the same sibling executables.
     """
     return exe_path.with_name(f"{exe_path.stem}_appverif_{token}{exe_path.suffix}")
+
+
+class WinregKeys:
+    """The HKLM keys the run deletes, through winreg (64-bit view)."""
+
+    def __init__(self):
+        import winreg
+
+        self.winreg = winreg
+
+    def exists(self, path: str) -> bool:
+        try:
+            with self.winreg.OpenKey(
+                self.winreg.HKEY_LOCAL_MACHINE, path, 0,
+                self.winreg.KEY_READ | self.winreg.KEY_WOW64_64KEY,
+            ):
+                return True
+        except FileNotFoundError:
+            return False
+
+    def subkeys(self, path: str) -> list:
+        names = []
+        with self.winreg.OpenKey(
+            self.winreg.HKEY_LOCAL_MACHINE, path, 0,
+            self.winreg.KEY_READ | self.winreg.KEY_WOW64_64KEY,
+        ) as key:
+            index = 0
+            while True:
+                try:
+                    names.append(self.winreg.EnumKey(key, index))
+                except OSError:
+                    return names
+                index += 1
+
+    def delete(self, path: str) -> None:
+        self.winreg.DeleteKeyEx(self.winreg.HKEY_LOCAL_MACHINE, path, self.winreg.KEY_WOW64_64KEY, 0)
+
+
+def image_key_path(image_name: str) -> str:
+    """The IFEO key of a verified copy; refuses any other image name."""
+    if not VERIFIED_IMAGE_PATTERN.fullmatch(image_name) or "\\" in image_name or "/" in image_name:
+        raise ValueError(f"not a verified copy's image name: {image_name!r}")
+    return f"{IFEO_KEY}\\{image_name}"
+
+
+def delete_key_tree(keys, path: str) -> None:
+    for name in keys.subkeys(path):
+        delete_key_tree(keys, f"{path}\\{name}")
+    keys.delete(path)
+
+
+def remove_image_key(keys, image_name: str) -> bool:
+    """Delete the run's IFEO key for image_name with every subkey; True once it is gone.
+
+    The image name is the run's own copy (verified_image_path, the run's pid), so
+    the key holds nothing but what this run's appverif calls wrote. A key that
+    cannot be deleted is reported by the caller as a cleanup failure.
+    """
+    path = image_key_path(image_name)
+    try:
+        if keys.exists(path):
+            delete_key_tree(keys, path)
+        return not keys.exists(path)
+    except OSError:
+        return False
 
 
 def find_appverif() -> str:
@@ -395,6 +473,12 @@ def main() -> int:
                 ["-logtofile", "enable" if logtofile_was_enabled else "disable"],
                 check=False,
             )
+        # the image's own key, which appverif leaves behind empty, and anything
+        # a failed -disable left in it: the name is this run's copy, so the
+        # key holds only what this run's appverif calls wrote
+        if sys.platform == "win32" and not remove_image_key(WinregKeys(), image_name):
+            cleanup_failed = True
+            print(f"appverif_run: could not remove HKLM\\{image_key_path(image_name)}", file=sys.stderr)
         left = enabled_layers(appverif, image_name)
         if left:
             cleanup_failed = True

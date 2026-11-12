@@ -37,6 +37,12 @@
 #define ROCKETNET_DST_CHECK_MAX_STREAMS 2304
 #define ROCKETNET_DST_CHECK_MAX_OPENED 64
 #define ROCKETNET_DST_CHECK_SEQ_BITS 4096
+
+// receipt_outcome_due: past the receipt deadline (the packet's send time plus
+// message_resend_delay_max_ms), the slack for the update that writes the
+// packet and the one that surfaces the outcome, in seconds. Not a measured
+// bound: generous against the DST step, and the only number the check adds.
+#define ROCKETNET_DST_RECEIPT_DUE_SLACK 0.5
 #define ROCKETNET_DST_CHECK_SEQ_BYTES ( ROCKETNET_DST_CHECK_SEQ_BITS / 8 )
 #define ROCKETNET_DST_CHECK_MAX_PACKETS 4096
 
@@ -189,6 +195,7 @@ struct rocketnet_dst_check_receipt_t
     int stream;
     int type;
     int outcomes;
+    double sent_time;       // receipt_outcome_due: when the send returned (type 5)
 };
 
 struct rocketnet_dst_check_state_t
@@ -224,6 +231,10 @@ struct rocketnet_dst_check_state_t
     // dark client's packet while that client is not yet connected.
     int outage_handshake_seen;
 
+    // unexplained_refusal, send-fail row: set when the send-fail schedule's
+    // transport refused a frame at finish.
+    int send_fail_seen;
+
     // liveness_delivered, the by-step rule: the steps a reliable send may
     // still be in flight at the end. 0 is ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
     // a run whose send side differs from the defaults sets its own.
@@ -250,6 +261,13 @@ struct rocketnet_dst_check_state_t
     // receipt_one_outcome and receipt_acked_delivered: each type 5, 6 or 7
     // send by its sender (server slot s is s, client i is 16 + i) and serial.
     struct rocketnet_dst_check_receipt_t receipt[ROCKETNET_DST_CHECK_MAX_SESSIONS][ROCKETNET_DST_CHECK_SEQ_BITS];
+
+    // receipt_outcome_due: each sender's type 5 serials in send order, the
+    // oldest at receipt_due_head (positions modulo SEQ_BITS)
+    uint32_t receipt_due[ROCKETNET_DST_CHECK_MAX_SESSIONS][ROCKETNET_DST_CHECK_SEQ_BITS];
+    uint32_t receipt_due_head[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    uint32_t receipt_due_tail[ROCKETNET_DST_CHECK_MAX_SESSIONS];
+    uint32_t receipt_due_serial[ROCKETNET_DST_CHECK_MAX_SESSIONS];  // the serial the endpoint had issued at the last step
 };
 
 static inline void rocketnet_dst_check_init( struct rocketnet_dst_check_state_t * st,
@@ -881,6 +899,85 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
     return rocketnet_dst_check_receipt_acked_delivered( st, sender, serial, status );
 }
 
+// receipt_outcome_due, the type 5 side of RNReceipts::ReceiptProgress
+// (standard/MESSAGES.md m7.4.3): a type 5 send gets its outcome at once when
+// the budget or the transport refuses it, and otherwise by its packet's send
+// time plus message_resend_delay_max_ms. Recorded after
+// rocketnet_dst_check_receipt_sent, with the time the send returned. Only a
+// type 5 send of this session counts: the table entry at its serial can be an
+// earlier session's type 5 send when this send is of another type, since
+// rocketnet_dst_check_receipt_sent records receipt types alone.
+
+static inline void rocketnet_dst_check_receipt_due_from( struct rocketnet_dst_check_state_t * st, int sender,
+                                                         uint64_t identity, uint32_t serial, int type, double now )
+{
+    if ( type != 5 || sender < 0 || sender >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
+    {
+        return;
+    }
+    struct rocketnet_dst_check_receipt_t * r = &st->receipt[sender][serial % ROCKETNET_DST_CHECK_SEQ_BITS];
+    if ( r->serial != serial || r->type != 5 || r->identity != identity )
+    {
+        return;
+    }
+    r->sent_time = now;
+    if ( st->receipt_due_tail[sender] - st->receipt_due_head[sender] == ROCKETNET_DST_CHECK_SEQ_BITS )
+    {
+        st->receipt_due_head[sender]++;     // the oldest's table entry is already reused by this serial's lap
+    }
+    st->receipt_due[sender][st->receipt_due_tail[sender] % ROCKETNET_DST_CHECK_SEQ_BITS] = serial;
+    st->receipt_due_tail[sender]++;
+}
+
+// Called each step, after the receipts are read, for every sender with the
+// serial its endpoint last issued (rn_endpoint_t serial, 0 again at each
+// reset): while its session identity is live, its oldest type 5 send of that
+// session with no outcome is not past the deadline (the receipt deadline
+// plus slack for the update that writes its packet and the one that surfaces
+// the outcome). A send of an earlier session or of a connection the endpoint
+// has reset since (its serial went back: a session can keep its identity
+// across a reset, and a reset's sends owe nothing), one with its outcome, and
+// one whose table entry a later lap reused are done with.
+
+static inline int rocketnet_dst_check_receipt_outcome_due( struct rocketnet_dst_check_state_t * st, int sender,
+                                                           uint64_t identity, int live, uint32_t serial_now,
+                                                           double now, double deadline )
+{
+    if ( sender < 0 || sender >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
+    {
+        return 0;
+    }
+    if ( serial_now < st->receipt_due_serial[sender] )
+    {
+        st->receipt_due_head[sender] = st->receipt_due_tail[sender];
+    }
+    st->receipt_due_serial[sender] = serial_now;
+    if ( !live )
+    {
+        return 0;
+    }
+    while ( st->receipt_due_head[sender] != st->receipt_due_tail[sender] )
+    {
+        const uint32_t serial = st->receipt_due[sender][st->receipt_due_head[sender] % ROCKETNET_DST_CHECK_SEQ_BITS];
+        const struct rocketnet_dst_check_receipt_t * r = &st->receipt[sender][serial % ROCKETNET_DST_CHECK_SEQ_BITS];
+        if ( r->serial != serial || r->type != 5 || r->outcomes > 0 || r->identity != identity || serial > serial_now )
+        {
+            st->receipt_due_head[sender]++;
+            continue;
+        }
+        if ( now <= r->sent_time + deadline )
+        {
+            return 0;
+        }
+        char what[160];
+        snprintf( what, sizeof( what ), "sender=%d serial=%u sent_ms=%lld now_ms=%lld no outcome", sender, serial,
+                  (long long) ( r->sent_time * 1000.0 ), (long long) ( now * 1000.0 ) );
+        rocketnet_dst_check_fail( st, "receipt_outcome_due", what );
+        return 1;
+    }
+    return 0;
+}
+
 // Mirrors ServerSession::SlotOwnsItsSession, ClientSession::
 // CurrentOnlyWhileLive and ServerSession::TokenAdmitsOnce. No two connected
 // slots hold one client_id; a client_id reaches connected once per server
@@ -1403,7 +1500,11 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // The outage schedules run the smallest numbering window (64)
             // and hold a dark sender's numbers unacknowledged, so the window
             // fills and new numbering waits: only on such a run.
-            ( window_bounded && i == ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL );
+            ( window_bounded && i == ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL ) ||
+            // The send-fail schedule's transport refuses frames at finish:
+            // an unreliable packet so refused is counted failed. Explained
+            // only when the schedule refused a frame on this run.
+            ( st->send_fail_seen && i == ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
         if ( !explained )
         {
             char what[256];

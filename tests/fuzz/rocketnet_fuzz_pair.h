@@ -1504,8 +1504,14 @@ static inline int rocketnet_fuzz_record_write( uint8_t * out, uint8_t mode, cons
 
 static inline bool rocketnet_fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
 {
+    // a truncated path would write the seed to the wrong file: refuse instead
     char path[1024];
-    snprintf( path, sizeof( path ), "%s/%s", dir, name );
+    const int path_bytes = snprintf( path, sizeof( path ), "%s/%s", dir, name );
+    if ( path_bytes < 0 || path_bytes >= (int) sizeof( path ) )
+    {
+        fprintf( stderr, "seed generator: path too long: %s/%s\n", dir, name );
+        return false;
+    }
 
     FILE * file = rocketnet_test_fopen( path, "wb" );
     if ( !file )

@@ -1000,6 +1000,13 @@ static void posix_hard_killed_client( const posix_hk_cell_t & cell )
 
     posix_hard_killed_require( sent_to_slot[dead_slot] > 0 );
 
+    // The slot must not free before the token's timeout. The server's silence
+    // clock starts at its last receive from the child, before the kill, and
+    // killed_at is read after waitpid returns, so scheduling delay makes
+    // timeout_seen read short, never long: one second of margin for that.
+
+    posix_hard_killed_require( timeout_seen >= (double) ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS - 1.0 );
+
     // Exact timeout boundaries are covered with simulated time in the unit tier
 
     for ( size_t i = 0; i < 3; i++ )

@@ -385,6 +385,25 @@ leg, another build) out of the run's logs, and removes the copy afterwards. It n
 the Windows SDK and an elevated prompt, and runs a Debug build so the frames
 carry symbols; arguments after the executable and the environment
 (`ROCKETNET_SERVER_TRANSPORT` and the rest) pass through to it, and `--xml <file>` keeps the exported logs.
+After the run it deletes the copy's own key under
+`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`, which
+appverif's own `-disable` and `-delete settings` leave behind empty, and a key it cannot delete fails the run.
+
+The functional binary is verified in shards, one run per shard:
+
+    py -3 tools\windows\appverif_run.py -- build-prod\bin\Debug\functional.exe --shard 0/8
+    ...
+    py -3 tools\windows\appverif_run.py -- build-prod\bin\Debug\functional.exe --shard 7/8
+
+with `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048` set, as CI's Debug leg does. Shards 0/8 to 7/8 together are the whole
+suite, and a case that fails stops only its own shard, where a single whole-suite run stops at its first failure.
+The Windows lifecycle stress cases are where such a run used to stop: they held the process's private bytes
+flat, and under the verifier its page heap and stack-trace bookkeeping grow private bytes by 3 to 6 MB over
+1000 cycles while the library's bytes, handles and threads stay flat. They read private bytes as a diagnostic
+when `verifier.dll` is loaded, as they do under ASan, and judge the library's own bytes, handles and the SDK
+identity ledger. Run it
+from a DEV=OFF Debug build (`build-prod`): the development Debug build's full-capacity cases commit tens of GB
+each, which page heap makes larger still.
 
 The examples are an echo server and a client that connects to it with a
 development token. Run each in its own window:

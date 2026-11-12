@@ -67,6 +67,7 @@ struct boundary_net_t
     boundary_endpoint_t * client;
     uint64_t slot_connection;
     uint64_t next_packet_id;
+    bool refuse_start;                      // start_packet gives no frame while set (a full send ring)
 };
 static void boundary_update( void * transport, double time )
 {
@@ -137,7 +138,7 @@ static uint8_t * boundary_start_packet( void * transport, int client_index, int 
     {
         return NULL;
     }
-    if ( e->is_server ? e->net->slot_connection == 0 : !e->connected )
+    if ( e->net->refuse_start || ( e->is_server ? e->net->slot_connection == 0 : !e->connected ) )
     {
         return NULL;
     }
@@ -712,3 +713,53 @@ static void test_unreliable_promotion_every_mode_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_unreliable_promotion_every_mode_opted_in );
+
+#if ROCKETNET_MAX_CHANNELS > 300
+
+// A sequenced message that fills a whole packet takes the large sequenced
+// packet, whose record header is 10 bytes below ROCKETNET_MESSAGE_WIDE_CHANNEL
+// and 11 from it (the channel index takes two bytes). Queued (no frame at
+// start) on each side of the boundary and past it, each is received once, on
+// its own channel, byte for byte, and no send fails.
+static void test_large_sequenced_at_the_wide_channel_boundary()
+{
+    const int channels[4] = { 255, 256, 257, 300 };
+    for ( int k = 0; k < 4; ++k )
+    {
+        const int channel = channels[k];
+        boundary_pair_t pair;
+        boundary_setup( &pair );
+        std::vector<boundary_received_t> got;
+        for ( int i = 0; i < 3; ++i )
+        {
+            boundary_step( &pair, &got );
+        }
+        got.clear();
+
+        const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.client );
+        const uint64_t failed = counters->values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED];
+
+        const int header = channel >= ROCKETNET_MESSAGE_WIDE_CHANNEL ? 11 : 10;
+        const std::vector<uint8_t> data = boundary_data( (uint32_t) channel, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 - header );
+        pair.net->refuse_start = true;
+        check( rocketnet_message_client_send( pair.client, channel, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, data.data(), (int) data.size() ) != 0 );
+        pair.net->refuse_start = false;
+
+        for ( int i = 0; i < 3; ++i )
+        {
+            boundary_step( &pair, &got );
+        }
+        check( got.size() == 1 );
+        if ( got.size() == 1 )
+        {
+            check( got[0].channel == channel );
+            check( got[0].data == data );
+        }
+        check( counters->values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == failed );
+        boundary_teardown( &pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_large_sequenced_at_the_wide_channel_boundary );
+
+#endif // #if ROCKETNET_MAX_CHANNELS > 300

@@ -29,6 +29,7 @@
 #include <string.h>
 #include "rocketnet_config.h"
 #include "loopback_hub.h"
+#include "msan_scale_allocator.h"
 
 #define check rocketnet_unit_check
 
@@ -1205,6 +1206,12 @@ static void pc_kinds( pc_kind_t * kinds, int num_clients, pc_kind_t kind, bool m
 
 static void pc_case( pc_kind_t kind, bool mixed, int num_clients = PC_CLIENTS )
 {
+    // tests/msan_scale_allocator.h: under the MSVC debug CRT the server's and
+    // every client's planned blocks are filled, so the plan is resident (the
+    // 16-client mixed case peaked at 716 MiB against the 698 bound, and the
+    // 1000-client case would hold every client's plan); nothing in other builds
+    debug_crt_scale_allocator_scope_t scale_allocator;
+
     // one frame for each client with work in an update, and one spare: the
     // healthy clients (twelve of 16) take one each, a flooding member one (or more,
     // from what the round leaves), and a member's probe the spare

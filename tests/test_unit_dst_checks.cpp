@@ -11,7 +11,36 @@
 #include "test_unit_registry.h"
 #include "dst_checks.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+// A check state is about 70 MB (the per-session ledgers). Each case holds its
+// own on the heap for the length of the case: held as static locals, the 23
+// states made 1.7 GB of the unit binary's image, and the MSVC Debug image went
+// past what Windows will load (CreateProcessW error 193, "not a valid Win32
+// application"). rocketnet_dst_check_init clears the state, as before.
+struct dst_check_heap_t
+{
+    struct rocketnet_dst_check_state_t * state;
+
+    dst_check_heap_t()
+        : state( static_cast<struct rocketnet_dst_check_state_t *>( calloc( 1, sizeof( struct rocketnet_dst_check_state_t ) ) ) )
+    {
+        rocketnet_unit_check( state != NULL );
+    }
+
+    ~dst_check_heap_t()
+    {
+        free( state );
+    }
+
+    dst_check_heap_t( const dst_check_heap_t & ) = delete;
+    dst_check_heap_t & operator=( const dst_check_heap_t & ) = delete;
+};
+
+#define DST_CHECK_STATE( name )                                                                                        \
+    dst_check_heap_t name##_heap;                                                                                      \
+    struct rocketnet_dst_check_state_t & name = *name##_heap.state
 
 static void rec_send( struct rocketnet_dst_check_state_t * st, int stream, uint32_t seq )
 {
@@ -48,7 +77,7 @@ static void rec_end( struct rocketnet_dst_check_state_t * st, int session )
 
 static void test_dst_check_ordered_out_of_order_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 42 );
 
     rec_sent( &st, 0, 0, 3, 0 );
@@ -63,7 +92,7 @@ static void test_dst_check_ordered_out_of_order_fails()
 
 static void test_dst_check_reliable_duplicate_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 43 );
 
     double time = 1000.0;
@@ -80,7 +109,7 @@ static void test_dst_check_reliable_duplicate_fails()
 
 static void test_dst_check_reliable_missing_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 44 );
 
     for ( uint32_t seq = 0; seq <= 30; seq++ )
@@ -126,7 +155,7 @@ static void dst_check_fault_window_loss( struct rocketnet_dst_check_state_t * st
 
 static void test_dst_check_reliable_missing_from_fault_window_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
 
     dst_check_fault_window_loss( &st, 2 );
     rocketnet_unit_check( st.failed == 1 );
@@ -148,7 +177,7 @@ static void rec_receipt_send( struct rocketnet_dst_check_state_t * st, int type,
 
 static void test_dst_check_receipt_acked_without_delivery_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 50 );
 
     rec_receipt_send( &st, 6, 0, 1 );
@@ -164,7 +193,7 @@ static void test_dst_check_receipt_acked_without_delivery_fails()
 
 static void test_dst_check_receipt_twice_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 51 );
 
     rec_receipt_send( &st, 5, 0, 1 );
@@ -181,9 +210,61 @@ static void test_dst_check_receipt_twice_fails()
     rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
 }
 
+// receipt_outcome_due: a type 5 send with no outcome past the deadline fails
+// while its session is live; one with its outcome, one of an ended session,
+// and a type 6 send never do.
+
+static void test_dst_check_receipt_outcome_due_fails()
+{
+    DST_CHECK_STATE( st );
+    rocketnet_dst_check_init( &st, 1, 53 );
+
+    rec_receipt_send( &st, 5, 0, 1 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 1, 5, 1000.0 );
+    rec_receipt_send( &st, 6, 0, 2 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 2, 6, 1000.0 );
+    rec_receipt_send( &st, 5, 1, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+
+    // serial 1 has its outcome; serial 3 is due at 1001.5, not before
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.5, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // another session's identity: serial 3 is done with, never judged
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 2, 1, 3, 1005.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the next session sends a type 2 at serial 3: the table entry there is
+    // still the last session's type 5 send, and the new send owes nothing
+    rocketnet_dst_check_receipt_due_from( &st, 16, 2, 3, 2, 1006.0 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 2, 3, 5, 1006.0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 2, 1, 3, 1010.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the endpoint reset under the same identity (its serial went back): the
+    // reset connection's sends owe nothing, nor while the session is down
+    rocketnet_dst_check_init( &st, 1, 55 );
+    rec_receipt_send( &st, 5, 0, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 0, 3, 1003.0, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 1, 1003.0, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 5, 1009.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the same, live: serial 3 past its deadline with no outcome
+    rocketnet_dst_check_init( &st, 1, 54 );
+    rec_receipt_send( &st, 5, 0, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.5, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.6, 1.0 ) == 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_outcome_due" ) == 0 );
+}
+
 static void test_dst_check_sequenced_backwards_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 45 );
 
     double time = 1000.0;
@@ -196,7 +277,7 @@ static void test_dst_check_sequenced_backwards_fails()
 
 static void test_dst_check_unreliable_duplicate_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 46 );
 
     double time = 1000.0;
@@ -212,7 +293,7 @@ static void test_dst_check_unreliable_duplicate_fails()
 
 static void test_dst_check_ack_never_issued_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 47 );
 
     rocketnet_dst_check_issued( &st, 1, 1 );
@@ -229,7 +310,7 @@ static void test_dst_check_ack_never_issued_fails()
 
 static void test_dst_check_ack_of_another_endpoints_id_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 50 );
 
     rocketnet_dst_check_issued( &st, 0, 1 );
@@ -240,7 +321,7 @@ static void test_dst_check_ack_of_another_endpoints_id_fails()
 
 static void test_dst_check_ack_twice_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 51 );
 
     rocketnet_dst_check_issued( &st, 0, 1 );
@@ -255,7 +336,7 @@ static void test_dst_check_ack_twice_fails()
 
 static void test_dst_check_ack_of_a_skipped_id_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 52 );
 
     rocketnet_dst_check_issued( &st, 0, 1 );
@@ -272,7 +353,7 @@ static void test_dst_check_ack_of_a_skipped_id_fails()
 
 static void test_dst_check_ack_after_endpoint_reset()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 53 );
 
     for ( uint64_t id = 1; id <= 5; id++ )
@@ -295,7 +376,7 @@ static void test_dst_check_ack_after_endpoint_reset()
 
 static void test_dst_check_ack_ledger_wraps()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 54 );
 
     const uint64_t last = 3 * ROCKETNET_DST_CHECK_LEDGER_PACKETS + 1;
@@ -310,7 +391,7 @@ static void test_dst_check_ack_ledger_wraps()
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "acked_means_opened" ) == 0 );
 
-    static struct rocketnet_dst_check_state_t old;
+    DST_CHECK_STATE( old );
     rocketnet_dst_check_init( &old, 1, 55 );
     for ( uint64_t id = 1; id <= last; id += 2 )
     {
@@ -324,7 +405,7 @@ static void test_dst_check_ack_ledger_wraps()
 
 static void test_dst_check_stale_session_payload_fails()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 48 );
 
     double time = 1000.0;
@@ -338,7 +419,7 @@ static void test_dst_check_stale_session_payload_fails()
 
 static void test_dst_check_clean_sequence_passes()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 49 );
 
     double time = 1000.0;
@@ -375,6 +456,7 @@ REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_from_fault_window_fails );
 REGISTER_UNIT_TEST( test_dst_check_receipt_acked_without_delivery_fails );
 REGISTER_UNIT_TEST( test_dst_check_receipt_twice_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_outcome_due_fails );
 REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
 REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_ack_never_issued_fails );
@@ -388,13 +470,13 @@ REGISTER_UNIT_TEST( test_dst_check_clean_sequence_passes );
 
 static void test_dst_check_whole_message_over_65535_bytes()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 44 );
     rocketnet_dst_check_sent( &st, 1000.0, 0, 0, 2, 5, 1, 1, 0, 70000 );
     rocketnet_dst_check_whole_message( &st, 2, 5, 70000 );
     rocketnet_unit_check( st.failed == 0 );
 
-    static struct rocketnet_dst_check_state_t st2;
+    DST_CHECK_STATE( st2 );
     rocketnet_dst_check_init( &st2, 1, 45 );
     rocketnet_dst_check_sent( &st2, 1000.0, 0, 0, 2, 5, 1, 1, 0, 70000 );
     rocketnet_dst_check_whole_message( &st2, 2, 5, 70000 + 65536 );
@@ -437,7 +519,7 @@ static void sequenced_end( struct rocketnet_dst_check_state_t * st )
 
 static void test_dst_check_sequenced_superseded_type4_passes()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 448, 100 );
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );
@@ -457,7 +539,7 @@ REGISTER_UNIT_TEST( test_dst_check_sequenced_superseded_type4_passes );
 
 static void test_dst_check_sequenced_older_type1_does_not_serve_type4()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 448, 100 );
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );
@@ -482,7 +564,7 @@ REGISTER_UNIT_TEST( test_dst_check_sequenced_older_type1_does_not_serve_type4 );
 
 static void test_dst_check_sequenced_later_type4_raises_the_requirement()
 {
-    static struct rocketnet_dst_check_state_t st;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 448, 100 );
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );

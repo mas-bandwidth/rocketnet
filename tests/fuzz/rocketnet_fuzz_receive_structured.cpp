@@ -695,8 +695,14 @@ static int rocketnet_fuzz_receive_generate_seed_dir( const char * directory )
             return 0;
         }
 
+        // a truncated path would write the seed to the wrong file: refuse instead
         char path[1024];
-        snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
+        const int path_bytes = snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
+        if ( path_bytes < 0 || path_bytes >= (int) sizeof( path ) )
+        {
+            fprintf( stderr, "seed generator: path too long: %s/%s\n", directory, spec->name );
+            return 0;
+        }
 
         FILE * f = rocketnet_test_fopen( path, "wb" );
         if ( !f )

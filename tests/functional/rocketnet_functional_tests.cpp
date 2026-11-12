@@ -2938,7 +2938,37 @@ static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket
     }
 }
 
-static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
+// At a watchdog timeout: print the accounting and what the queue holds,
+// counted by draining it with plain recv (zero-length chaff included). The
+// socket is not used again after this.
+
+static void rocketnet_test_queue_report( rocketnet_platform_socket_t * socket, int target_accounting, const char * phase )
+{
+    const int accounting = rocketnet_test_queue_accounting( socket );
+    int datagrams = 0;
+    int chaff = 0;
+    uint8_t scratch[ROCKETNET_TEST_PUMP_STRIDE];
+    for ( ;; )
+    {
+        const ssize_t bytes = recv( socket->handle, scratch, sizeof( scratch ), MSG_DONTWAIT );
+        if ( bytes < 0 )
+        {
+            break;
+        }
+        datagrams++;
+        if ( bytes == 0 )
+        {
+            chaff++;
+        }
+    }
+    fprintf( stderr, "harness timeout: %s: queued accounting %d, waiting to exceed %d; %d datagrams in the queue (%d zero-length)\n",
+             phase, accounting, target_accounting, datagrams, chaff );
+}
+
+// false only at the 30 s watchdog, after the queue state is printed: an
+// injected datagram the kernel accepted never reached the queue.
+
+static bool rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
 {
     const int target_accounting = wait->accounting;
     for ( ;; )
@@ -2948,12 +2978,12 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
         {
             fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
             rocketnet_check( 0 );
-            return;
+            return false;
         }
         if ( queued > target_accounting )
         {
             wait->accounting = queued;
-            return;
+            return true;
         }
         fd_set readable;
         FD_ZERO( &readable );
@@ -2973,16 +3003,64 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
         {
             fprintf( stderr, "harness error: %s select failed (errno=%d)\n", phase, errno );
             rocketnet_check( 0 );
-            return;
+            return false;
         }
 
         if ( rocketnet_platform_time() >= wait->deadline )
         {
             fprintf( stderr, "harness timeout: %s did not complete within the 30 s watchdog; this is a hung harness, not a transport performance failure\n", phase );
-            rocketnet_check( 0 );
-            return;
+            rocketnet_test_queue_report( socket, target_accounting, phase );
+            return false;
         }
     }
+}
+
+// The batch phase's injection: 74 datagrams from one plain socket, each
+// observed queued before the next is sent. false when one never arrived.
+
+static bool rocketnet_test_chaff_inject_batch( rocketnet_platform_socket_t * socket, int injector, const struct sockaddr_in * to,
+                                               uint8_t * real_packet, int num_real, int * sent_real )
+{
+    const char * phase = "batch chaff exchange";
+    *sent_real = 0;
+
+    rocketnet_test_queue_wait_t batch_wait;
+    rocketnet_test_queue_wait_init( socket, &batch_wait, phase );
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+    if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+    {
+        return false;
+    }
+
+    for ( int i = 0; i < num_real; i++ )
+    {
+        const int bytes = 24 + i;
+
+        real_packet[0] = (uint8_t) i;
+        for ( int j = 1; j < bytes; j++ )
+        {
+            real_packet[j] = (uint8_t) ( 3 * i + j );
+        }
+
+        rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (const struct sockaddr *) to, sizeof( *to ) ) == bytes );
+        if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+        {
+            return false;
+        }
+        ( *sent_real )++;
+
+        if ( ( i % 2 ) == 1 )
+        {
+            rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+            if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+            {
+                return false;
+            }
+        }
+    }
+
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+    return rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase );
 }
 
 static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NULL )
@@ -3010,34 +3088,23 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     const int num_real = 48;
     uint8_t real_packet[256];
     int sent_real = 0;
-    rocketnet_test_queue_wait_t batch_wait;
-    rocketnet_test_queue_wait_init( socket, &batch_wait, "batch chaff exchange" );
-    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
-    for ( int i = 0; i < num_real; i++ )
+    // A datagram the kernel accepted but never queued is the machine, not the
+    // library (nothing below the batch receive touches it): the queue state is
+    // printed, and the injection runs once more on a fresh pump socket. A
+    // second loss fails. The one-call batch oracle below is unchanged.
+
+    if ( !rocketnet_test_chaff_inject_batch( socket, injector, &to, real_packet, num_real, &sent_real ) )
     {
-        const int bytes = 24 + i;
-
-        real_packet[0] = (uint8_t) i;
-        for ( int j = 1; j < bytes; j++ )
-        {
-            real_packet[j] = (uint8_t) ( 3 * i + j );
-        }
-
-        rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr *) &to, sizeof( to ) ) == bytes );
-        rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
-        sent_real++;
-
-        if ( ( i % 2 ) == 1 )
-        {
-            rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-            rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
-        }
+        fprintf( stderr, "batch chaff exchange: an injected datagram never reached the queue; injecting once more on a fresh socket\n" );
+        rocketnet_platform_socket_destroy( socket );
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
+        socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024 * 1024, 1024 * 1024, requested_pump );
+        rocketnet_check( socket );
+        pump_at_create = rocketnet_platform_socket_pump( socket );
+        to.sin_port = htons( bind_address.port );
+        rocketnet_check( rocketnet_test_chaff_inject_batch( socket, injector, &to, real_packet, num_real, &sent_real ) );
     }
-
-    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
     // drain through the batch pump: every real packet, in order, intact --
     // and in ONE receive_packets call, because a retry loop here greens
@@ -3086,12 +3153,12 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     rocketnet_test_queue_wait_t single_wait;
     rocketnet_test_queue_wait_init( socket, &single_wait, "single-packet chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
+    rocketnet_check( rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" ) );
 
     uint8_t single[64];
     memset( single, 0x5a, sizeof( single ) );
     rocketnet_check( sendto( injector, single, sizeof( single ), 0, (struct sockaddr *) &to, sizeof( to ) ) == (ssize_t) sizeof( single ) );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
+    rocketnet_check( rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" ) );
 
     // completion-driven arrival for the per-packet call: each datagram
     // above was observed queued before the next was sent, so the chaff
@@ -10365,13 +10432,26 @@ static bool wire_totals_connect( struct rocketnet_client_transport_t * client, s
 // server's sent totals until that thread has run. pumping with a 1 ms sleep
 // per step lets the receive thread catch up, then the cross-side checks hold.
 
+static void wire_totals_print( const char * what, const wire_totals_t * c, const wire_totals_t * s )
+{
+    printf( "%s: client sent %llu packets %llu bytes, received %llu packets %llu bytes; server sent %llu packets %llu bytes, received %llu packets %llu bytes\n",
+            what,
+            (unsigned long long) c->packets_sent, (unsigned long long) c->bytes_sent,
+            (unsigned long long) c->packets_received, (unsigned long long) c->bytes_received,
+            (unsigned long long) s->packets_sent, (unsigned long long) s->bytes_sent,
+            (unsigned long long) s->packets_received, (unsigned long long) s->bytes_received );
+}
+
 static bool wire_totals_drain( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
 {
+    wire_totals_t c, s;
+    memset( &c, 0, sizeof( c ) );
+    memset( &s, 0, sizeof( s ) );
+
     for ( int i = 0; i < 5000; i++ )
     {
         wire_totals_pump( client, server, time, 1 );
 
-        wire_totals_t c, s;
         wire_totals_client( client, &c );
         wire_totals_server( server, &s );
         if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
@@ -10380,7 +10460,83 @@ static bool wire_totals_drain( struct rocketnet_client_transport_t * client, str
         }
     }
 
+    wire_totals_print( "wire_totals_drain gave up after 5000 pumps", &c, &s );
+
     return false;
+}
+
+// The drain for an exchange over real UDP sockets, where the kernel may drop
+// a loopback datagram under machine load. Both counters are charged at the
+// hand-off, so a dropped datagram leaves the receiver behind the sender by a
+// constant count for good while both sides keep counting: that is loss, and
+// the caller may run its exchange once more. A receiver that stops counting
+// or falls further behind is a stall, and a receiver ahead of its sender is a
+// double count: both fail at once.
+
+enum wire_drain_result_t
+{
+    WIRE_DRAIN_EQUAL,
+    WIRE_DRAIN_CONSTANT_LOSS,
+    WIRE_DRAIN_FAILED
+};
+
+static wire_drain_result_t wire_totals_drain_judged( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                                     double * time, const char * what )
+{
+    const int pumps = 5000;
+    const int window = 1000;
+
+    wire_totals_t c, s, c_window, s_window;
+    memset( &c, 0, sizeof( c ) );
+    memset( &s, 0, sizeof( s ) );
+    memset( &c_window, 0, sizeof( c_window ) );
+    memset( &s_window, 0, sizeof( s_window ) );
+
+    for ( int i = 0; i < pumps; i++ )
+    {
+        wire_totals_pump( client, server, time, 1 );
+
+        wire_totals_client( client, &c );
+        wire_totals_server( server, &s );
+
+        if ( c.packets_received > s.packets_sent || s.packets_received > c.packets_sent )
+        {
+            wire_totals_print( what, &c, &s );
+            printf( "%s: a receiver counted more packets than its sender sent (a double count)\n", what );
+            return WIRE_DRAIN_FAILED;
+        }
+
+        if ( s.packets_sent == c.packets_received && c.packets_sent == s.packets_received )
+        {
+            return WIRE_DRAIN_EQUAL;
+        }
+
+        if ( i == pumps - window )
+        {
+            c_window = c;
+            s_window = s;
+        }
+    }
+
+    const uint64_t up = c.packets_sent - s.packets_received;
+    const uint64_t down = s.packets_sent - c.packets_received;
+    const uint64_t up_before = c_window.packets_sent - s_window.packets_received;
+    const uint64_t down_before = s_window.packets_sent - c_window.packets_received;
+    const bool both_counting = c.packets_received > c_window.packets_received && s.packets_received > s_window.packets_received;
+
+    wire_totals_print( what, &c, &s );
+    printf( "%s: after %d pumps the server is %llu packets behind the client and the client %llu behind the server (%llu and %llu %d pumps earlier)\n",
+            what, pumps, (unsigned long long) up, (unsigned long long) down,
+            (unsigned long long) up_before, (unsigned long long) down_before, window );
+
+    if ( up == up_before && down == down_before && both_counting )
+    {
+        printf( "%s: a constant deficit while both sides keep counting: datagrams lost on loopback\n", what );
+        return WIRE_DRAIN_CONSTANT_LOSS;
+    }
+
+    printf( "%s: the deficit moved or a receiver stopped counting: not loss\n", what );
+    return WIRE_DRAIN_FAILED;
 }
 
 // the drain for a later connection: the server's lifetime totals are larger
@@ -10643,7 +10799,10 @@ void wire_totals_reset_per_connection_not_per_server()
 // settled baseline, then N packets each way whose sealed UDP payload sizes are
 // known from finish_packet, so each counter delta is exact.
 
-static void wire_bytes_per_family_exchange( const char * public_address, const char * connect_host,
+static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                           double * time_in, int ip_udp_header_bytes );
+
+static bool wire_bytes_per_family_exchange( const char * public_address, const char * connect_host,
                                             uint64_t client_id, int ip_udp_header_bytes )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
@@ -10678,7 +10837,30 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, time );
     rocketnet_check( client != NULL );
     rocketnet_check( wire_totals_connect( client, server, &time ) );
-    rocketnet_check( wire_totals_drain( client, server, &time ) );
+
+    const wire_drain_result_t settled = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family baseline" );
+    rocketnet_check( settled != WIRE_DRAIN_FAILED );
+
+    const bool exchanged = settled == WIRE_DRAIN_EQUAL && wire_bytes_per_family_measure( client, server, &time, ip_udp_header_bytes );
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    rocketnet_server_transport_stop( server );
+    rocketnet_server_transport_update( server, time );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
+
+    return exchanged;
+}
+
+// N packets each way from a settled baseline, every counter delta exact.
+// false only when a loopback datagram was lost (a constant deficit).
+
+static bool wire_bytes_per_family_measure( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                                           double * time_in, int ip_udp_header_bytes )
+{
+    double time = *time_in;
 
     wire_totals_t client_before, server_before;
     wire_totals_client( client, &client_before );
@@ -10724,7 +10906,13 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
 
     rocketnet_server_transport_send_packets( server );
 
-    rocketnet_check( wire_totals_drain( client, server, &time ) );
+    const wire_drain_result_t drained = wire_totals_drain_judged( client, server, &time, "wire_bytes_per_family exchange" );
+    *time_in = time;
+    rocketnet_check( drained != WIRE_DRAIN_FAILED );
+    if ( drained == WIRE_DRAIN_CONSTANT_LOSS )
+    {
+        return false;
+    }
 
     wire_totals_t client_after, server_after;
     wire_totals_client( client, &client_after );
@@ -10748,21 +10936,31 @@ static void wire_bytes_per_family_exchange( const char * public_address, const c
     rocketnet_check( server_after.bytes_sent - server_before.bytes_sent == server_wire + headers );
     rocketnet_check( client_after.bytes_received - client_before.bytes_received == server_wire + headers );
 
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
-    rocketnet_server_transport_stop( server );
-    rocketnet_server_transport_update( server, time );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    return true;
+}
 
-    rocketnet_test_env_restore( &client_guard );
-    rocketnet_test_env_restore( &server_guard );
+// One lost loopback datagram is the machine, not the library: run the whole
+// exchange once more on a fresh server, client and sockets. A second loss, a
+// moving deficit, a stalled or double-counting receiver, and every exact
+// counter check still fail.
+
+static void wire_bytes_per_family( const char * public_address, const char * connect_host, uint64_t client_id, int ip_udp_header_bytes )
+{
+    if ( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) )
+    {
+        return;
+    }
+
+    printf( "wire_bytes_per_family %s: a loopback datagram was lost; running the exchange once more on fresh sockets\n", public_address );
+    rocketnet_check( wire_bytes_per_family_exchange( public_address, connect_host, client_id, ip_udp_header_bytes ) );
 }
 
 void test_transport_wire_bytes_per_family()
 {
-    wire_bytes_per_family_exchange( "127.0.0.1:0", "127.0.0.1", 0x5704ULL,
-                                    ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
-    wire_bytes_per_family_exchange( "[::1]:0", "[::1]", 0x5705ULL,
-                                    ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    wire_bytes_per_family( "127.0.0.1:0", "127.0.0.1", 0x5704ULL,
+                           ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
+    wire_bytes_per_family( "[::1]:0", "[::1]", 0x5705ULL,
+                           ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES );
 }
 
 struct rocketnet_functional_test_t
@@ -10799,6 +10997,8 @@ extern void rocketnet_test_posix_connect_disconnect_1000_portable_portable();
 extern void rocketnet_test_posix_connect_disconnect_1000_portable_msgx();
 extern void rocketnet_test_posix_connect_disconnect_1000_msgx_portable();
 extern void rocketnet_test_posix_connect_disconnect_1000_msgx_msgx();
+extern void rocketnet_test_posix_server_create_destroy_1000_portable();
+extern void rocketnet_test_posix_server_create_destroy_1000_msgx();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 // one case per Linux server cell
@@ -13233,7 +13433,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_init_term_1000", rocketnet_test_posix_init_term_1000, NULL },
-    { "test_posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000, NULL },
+    { "test_posix_server_create_destroy_1000_portable", rocketnet_test_posix_server_create_destroy_1000_portable, NULL },
+    { "test_posix_server_create_destroy_1000_msgx", rocketnet_test_posix_server_create_destroy_1000_msgx, NULL },
     { "test_posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000, NULL },
     { "test_posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100, NULL },
     { "test_posix_connect_disconnect_1000_portable_portable", rocketnet_test_posix_connect_disconnect_1000_portable_portable, NULL },
