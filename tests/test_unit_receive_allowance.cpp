@@ -26,19 +26,24 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_layers.h"
 
+#include <inttypes.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
 
-// a slot's allowance as a connection starts it: zeroed by the slot's reset
-// (rocketnet_server_connection_reset), then full at the connection's time
-// (rocketnet_server_process_connection_response)
+// a slot's byte allowance as a connection starts it: zeroed by the slot's
+// reset (rocketnet_server_connection_reset), then full at the connection's
+// time (rocketnet_server_process_connection_response). The control tokens
+// and the ack credit are left empty, so only the bytes pay; the credits'
+// own cases start them with rocketnet_server_receive_allowance_start.
 static void allowance_start( struct rocketnet_server_receive_allowance_t * allowance, double capacity, double time )
 {
     memset( allowance, 0, sizeof( *allowance ) );
     allowance->bytes = capacity;
     allowance->time = time;
+    allowance->control_time = time;
 }
 
 // ---- the arithmetic ---------------------------------------------------------
@@ -284,6 +289,7 @@ static void allowance_fixture_setup( struct allowance_fixture_t * fixture, doubl
 
         allowance_start( &fixture->allowances[c], rocketnet_server_receive_allowance_capacity( rate, 1 ), time );
         fixture->allowances[c].bytes = 1000.0;
+        fixture->allowances[c].ack_credit_spent = mapping->send_sequence_session;      // the server has sent nothing
     }
 }
 
@@ -447,7 +453,189 @@ static void test_receive_allowance_off_refuses_nothing()
     allowance_fixture_teardown( &fixture );
 }
 
+// The ack credit (proofs/tla/RNReceiveAllowance.tla TakeAck, ServerAck): a
+// standalone ack is paid by an eliciting packet the server sent that client,
+// whatever the bytes hold; past the credit it is the bytes', here none, so
+// refused. The server's own standalone acks give no credit, and one client's
+// credit is never another's.
+
+static void test_receive_allowance_ack_credit()
+{
+    static struct allowance_fixture_t fixture;
+    allowance_fixture_setup( &fixture, 1000.0, 1000.0 );
+    fixture.server.acks = rocketnet_server_acks_create( NULL, 4 );
+    check( fixture.server.acks != NULL );
+    uint64_t * counters = fixture.counters.values;
+    fixture.allowances[0].bytes = 0.0;
+    fixture.allowances[1].bytes = 0.0;
+
+    // nothing sent to client 0: no credit
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_ACK_OVER_ALLOWANCE] == 1 && counters[ROCKETNET_COUNTER_ACK_ACCEPTED] == 0 );
+
+    // five keep-alives sent to client 0: five standalone acks, no more, all in one instant
+    uint8_t out[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < 5; i++ )
+    {
+        check( rocketnet_server_write_keep_alive( &fixture.server, 0, 1000.0, out ) > 0 );
+    }
+    for ( int i = 0; i < 5; i++ )
+    {
+        allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
+    }
+    check( counters[ROCKETNET_COUNTER_ACK_ACCEPTED] == 5 );
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_ACK_OVER_ALLOWANCE] == 2 );
+    check( fixture.allowances[0].bytes == 0.0 );
+
+    // client 1 was sent nothing: client 0's credit is not its
+    allowance_send( &fixture, 1, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_ACK_OVER_ALLOWANCE] == 3 );
+    check( fixture.allowances[1].refused_packets == 1 );
+
+    // a keep-alive from client 0 (paid in bytes) puts the server in its debt;
+    // the standalone ack the server answers with elicits nothing, so it gives
+    // no credit
+    fixture.allowances[0].bytes = (double) ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 8, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED] == 1 );
+    check( rocketnet_server_protocol_write_ack_if_due( &fixture.server, 0, 1000.0, out ) > 0 );
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_ACK_OVER_ALLOWANCE] == 4 && counters[ROCKETNET_COUNTER_ACK_ACCEPTED] == 5 );
+    check( fixture.allowances[0].ack_credit_spent == fixture.mappings[0]->send_sequence_session );
+    check( fixture.allowances[0].refused_packets == 3 );
+
+    check( rocketnet_counters_conserved( &fixture.counters, NULL, 0 ) == 1 );
+
+    rocketnet_server_acks_destroy( fixture.server.acks );
+    fixture.server.acks = NULL;
+    allowance_fixture_teardown( &fixture );
+}
+
+// The control tokens (proofs/tla/RNReceiveAllowance.tla TakeControl): with no
+// bytes at all, a client's keep-alives on its send tick for a minute, the
+// tick's worth of a whole timeout arriving at once, and its disconnect are
+// never refused; keep-alives past the tokens are, and a disconnect then
+// waits for a token like any of them.
+
+static void test_receive_allowance_control_tokens()
+{
+    static struct allowance_fixture_t fixture;
+    allowance_fixture_setup( &fixture, 1000.0, 1000.0 );
+    uint64_t * counters = fixture.counters.values;
+
+    // a one-second timeout: 2 x 10 x 1 + 2 = 22 tokens, refilled at 20 a second
+    for ( int c = 0; c < ALLOWANCE_FIXTURE_CLIENTS; c++ )
+    {
+        rocketnet_server_receive_allowance_start( &fixture.allowances[c], 1000.0, 1, 1000.0, fixture.mappings[c]->send_sequence_session );
+        check( fixture.allowances[c].control == 22.0 );
+        fixture.allowances[c].bytes = 0.0;
+    }
+
+    // client 1, correct: a keep-alive every tick (0.1 s) for a minute, then
+    // the ticks of a whole timeout held up and arriving at once, then its
+    // disconnect
+    double time = 1000.0;
+    for ( int i = 0; i < 600; i++ )
+    {
+        time += 0.1;
+        allowance_send( &fixture, 1, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 8, time );
+    }
+    time += 1.0;
+    for ( int i = 0; i < 11; i++ )
+    {
+        allowance_send( &fixture, 1, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 8, time );
+    }
+    allowance_send( &fixture, 1, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 0, time );
+    check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED] == 611 );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] == 1 );
+    check( fixture.allowances[1].refused_packets == 0 );
+
+    // client 0 floods: 22 keep-alives at once are taken, the 23rd is not
+    for ( int i = 0; i < 22; i++ )
+    {
+        allowance_send( &fixture, 0, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 8, 1000.0 );
+    }
+    check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED] == 611 + 22 );
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 8, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_KEEP_ALIVE_OVER_ALLOWANCE] == 1 );
+
+    // and its disconnect waits for a token: refused now, taken 1/16 s on
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 0, 1000.0 );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_OVER_ALLOWANCE] == 1 );
+    check( fixture.mappings[0]->control->client_index == 0 );
+    allowance_send( &fixture, 0, ROCKETNET_CONNECTION_DISCONNECT_PACKET, 0, 1000.0625 );
+    check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] == 2 );
+
+    check( rocketnet_counters_conserved( &fixture.counters, NULL, 0 ) == 1 );
+
+    allowance_fixture_teardown( &fixture );
+}
+
+// A flooder of payload at 2.5 times the allowance and of standalone acks
+// past its credit, for 60 seconds: refused, and what is taken never exceeds
+// the byte capacity plus the rate times the time, plus one standalone ack per
+// eliciting packet the server sent it.
+
+static void test_receive_allowance_flooder_bounded()
+{
+    static struct allowance_fixture_t fixture;
+    const double rate = rocketnet_server_receive_allowance_rate( 8 );         // 2000 bytes a second
+    allowance_fixture_setup( &fixture, rate, 1000.0 );
+    uint64_t * counters = fixture.counters.values;
+    rocketnet_server_receive_allowance_start( &fixture.allowances[0], rate, 1, 1000.0, fixture.mappings[0]->send_sequence_session );
+    const double capacity = rocketnet_server_receive_allowance_capacity( rate, 1 );
+
+    // each 1/16 s: one keep-alive sent to it, then 312.5 bytes of payload
+    // (2.5 x 2000 / 16, as packets of a 92-byte payload, 125 on the wire,
+    // two or three a tick) and ten standalone acks
+    uint8_t out[ROCKETNET_RECEIVE_CEILING];
+    double time = 1000.0;
+    uint64_t sent_eliciting = 0;
+    uint64_t taken_bytes = 0;
+    for ( int tick = 0; tick < 960; tick++ )
+    {
+        time += 0.0625;
+        check( rocketnet_server_write_keep_alive( &fixture.server, 0, time, out ) > 0 );
+        sent_eliciting++;
+        const int payloads = ( tick % 2 ) ? 2 : 3;
+        for ( int i = 0; i < payloads; i++ )
+        {
+            const uint64_t delivered = counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED];
+            struct allowance_outcome_t outcome = allowance_send( &fixture, 0, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 92, time );
+            check( outcome.bytes == 125 );
+            if ( counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] != delivered )
+            {
+                taken_bytes += (uint64_t) outcome.bytes;
+            }
+        }
+        for ( int i = 0; i < 10; i++ )
+        {
+            const uint64_t accepted = counters[ROCKETNET_COUNTER_ACK_ACCEPTED];
+            struct allowance_outcome_t outcome = allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, time );
+            if ( counters[ROCKETNET_COUNTER_ACK_ACCEPTED] != accepted && i > 0 )
+            {
+                taken_bytes += (uint64_t) outcome.bytes;        // the first each tick is the credit's; any more, the bytes'
+            }
+        }
+    }
+
+    check( counters[ROCKETNET_COUNTER_PAYLOAD_OVER_ALLOWANCE] > 0 );
+    check( counters[ROCKETNET_COUNTER_ACK_OVER_ALLOWANCE] > 0 );
+    check( counters[ROCKETNET_COUNTER_ACK_ACCEPTED] >= sent_eliciting );
+    check( (double) taken_bytes <= capacity + rate * 60.0 );
+    check( fixture.allowances[0].ack_credit_spent == fixture.mappings[0]->send_sequence_session );
+    check( fixture.allowances[1].refused_packets == 0 );
+
+    check( rocketnet_counters_conserved( &fixture.counters, NULL, 0 ) == 1 );
+
+    allowance_fixture_teardown( &fixture );
+}
+
 REGISTER_UNIT_TEST( test_receive_allowance_rate_and_capacity );
+REGISTER_UNIT_TEST( test_receive_allowance_ack_credit );
+REGISTER_UNIT_TEST( test_receive_allowance_control_tokens );
+REGISTER_UNIT_TEST( test_receive_allowance_flooder_bounded );
 REGISTER_UNIT_TEST( test_receive_allowance_at_the_rate_never_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_burst_after_silence_not_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_sustained_over_twice_refused );
@@ -729,18 +917,27 @@ static void test_receive_allowance_correct_client_never_refused()
     allowance_public_destroy( &pair );
 }
 
-// A low setting and the shortest timeout: 8 kbps over one second. The
-// client's keep-alives (up to ten a second, 41 bytes) and standalone acks are
-// outside its send budget and sit in the setting's second share. This is the
-// lowest power of two at which they fit in this run: at 4 and 6 kbps, with a
-// one-second timeout, the same run has packets refused (measured
-// 2026-11-11, 3 and 80 of about 540); with a ten-second timeout 2 and 4 kbps
-// refuse nothing. The capacity's maximum packet is checked in
+// Low settings and the shortest timeout: 4, 6 and 8 kbps over one second.
+// The client's keep-alives (up to ten a second) and standalone acks are
+// outside its send budget. Before the ack credit and the control tokens,
+// at 4 and 6 kbps this run had packets refused (measured 2026-11-11, 3 and
+// 80 of about 540); now they are paid by those, and nothing is refused at
+// any of the three. The capacity's maximum packet is checked in
 // test_receive_allowance_rate_and_capacity.
+
+static void allowance_low_setting_run( int kbps );
 
 static void test_receive_allowance_low_setting_correct_client_never_refused()
 {
-    const int kbps = 8;
+    static const int settings[] = { 4, 6, 8 };
+    for ( int s = 0; s < (int) ( sizeof( settings ) / sizeof( settings[0] ) ); s++ )
+    {
+        allowance_low_setting_run( settings[s] );
+    }
+}
+
+static void allowance_low_setting_run( int kbps )
+{
     struct allowance_public_t pair;
     allowance_public_create( &pair, kbps );
     pair.timeout_seconds = 1;
@@ -834,6 +1031,112 @@ static void test_receive_allowance_flooding_client_refused_alone()
     allowance_public_destroy( &pair );
 }
 
+// The server streaming to client c at its default per-client rate (10 Mbps,
+// 12.5 KB a 10 ms step: thirteen 1000-byte unreliable messages, more than the
+// budget carries) with one reliable message a step.
+static void allowance_public_server_stream( struct allowance_public_t * pair, int c )
+{
+    for ( int i = 0; i < 13; i++ )
+    {
+        uint8_t * out = rocketnet_server_start_message( pair->server, (uint64_t) c, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1000 );
+        if ( out )
+        {
+            memset( out, (uint8_t) i, 1000 );
+            rocketnet_server_finish_message( pair->server, 1000 );
+        }
+    }
+    allowance_public_server_queue( pair, c, 1 );
+}
+
+// The open finding of the first build, settled: a correct client at setting
+// kbps, the server streaming to it at its default 10 Mbps with loss server to
+// client, for 60 simulated seconds (30 with the client saturating its own
+// budget, 30 with it idle, sending only keep-alives and acks): refused
+// nothing, at 0, 1, 10 and 30% loss. Its standalone acks of the lossy stream
+// (up to a maximum packet each, at its update rate) run far over a low
+// setting; they are paid by the ack credit, its keep-alives by the control
+// tokens, so the bytes carry its budget alone.
+
+static void allowance_public_stream_matrix( int kbps )
+{
+    static const int losses[] = { 0, 1, 10, 30 };
+    for ( int l = 0; l < (int) ( sizeof( losses ) / sizeof( losses[0] ) ); l++ )
+    {
+        struct allowance_public_t pair;
+        allowance_public_create( &pair, kbps );
+        allowance_public_connect( &pair, 0, kbps );
+        rocketnet_server_network_simulator( pair.server, 0, 0, losses[l], 0 );
+
+        uint64_t received_before = 0;
+        {
+            struct rocketnet_client_stats_t stats;
+            rocketnet_client_stats( pair.clients[0], &stats );
+            received_before = stats.bytes_received;
+        }
+
+        for ( int i = 0; i < 6000; i++ )
+        {
+            if ( i < 3000 )
+            {
+                allowance_public_queue( &pair, 0, 2, 1000 );
+            }
+            allowance_public_server_stream( &pair, 0 );
+            allowance_public_pump( &pair );
+        }
+
+        check( rocketnet_client_state( pair.clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+        check( rocketnet_server_client_connected( pair.server, 0 ) );
+
+        // the stream ran: at least 5 Mbps of the 10 reached the client
+        struct rocketnet_client_stats_t stats;
+        rocketnet_client_stats( pair.clients[0], &stats );
+        check( stats.bytes_received - received_before > (uint64_t) 5000 * 125 * 60 );
+        check( stats.bytes_sent > (uint64_t) kbps * 125 * 25 );
+
+        uint64_t packets = 1, bytes = 1;
+        allowance_public_refused( &pair, 0, &packets, &bytes );
+        if ( packets != 0 )
+        {
+            printf( "receive allowance: %d kbps, %d%% loss: %" PRIu64 " packets, %" PRIu64 " bytes refused\n", kbps, losses[l], packets, bytes );
+        }
+        check( packets == 0 && bytes == 0 );
+
+        allowance_public_destroy( &pair );
+    }
+}
+
+static void test_receive_allowance_stream_4_kbps() { allowance_public_stream_matrix( 4 ); }
+static void test_receive_allowance_stream_8_kbps() { allowance_public_stream_matrix( 8 ); }
+static void test_receive_allowance_stream_64_kbps() { allowance_public_stream_matrix( 64 ); }
+static void test_receive_allowance_stream_256_kbps() { allowance_public_stream_matrix( 256 ); }
+static void test_receive_allowance_stream_1000_kbps() { allowance_public_stream_matrix( 1000 ); }
+
+// A client sending 2.5 times the setting in payload, the server streaming to
+// it: refused and counted, never disconnected.
+
+static void test_receive_allowance_two_and_a_half_times_refused()
+{
+    const int kbps = 64;
+    struct allowance_public_t pair;
+    allowance_public_create( &pair, kbps );
+    allowance_public_connect( &pair, 0, kbps * 5 / 2 );
+
+    for ( int i = 0; i < 3000; i++ )
+    {
+        allowance_public_queue( &pair, 0, 2, 1000 );
+        allowance_public_server_stream( &pair, 0 );
+        allowance_public_pump( &pair );
+    }
+
+    uint64_t packets = 0, bytes = 0;
+    allowance_public_refused( &pair, 0, &packets, &bytes );
+    check( packets > 0 );
+    check( rocketnet_server_client_connected( pair.server, 0 ) );
+    check( rocketnet_client_state( pair.clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    allowance_public_destroy( &pair );
+}
+
 // The unlimited setting turns the refusal off: the same flood is refused nothing.
 
 static void test_receive_allowance_unlimited_setting_is_off()
@@ -859,5 +1162,11 @@ REGISTER_UNIT_TEST( test_receive_allowance_correct_client_never_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_low_setting_correct_client_never_refused );
 REGISTER_UNIT_TEST( test_receive_allowance_flooding_client_refused_alone );
 REGISTER_UNIT_TEST( test_receive_allowance_unlimited_setting_is_off );
+REGISTER_UNIT_TEST( test_receive_allowance_stream_4_kbps );
+REGISTER_UNIT_TEST( test_receive_allowance_stream_8_kbps );
+REGISTER_UNIT_TEST( test_receive_allowance_stream_64_kbps );
+REGISTER_UNIT_TEST( test_receive_allowance_stream_256_kbps );
+REGISTER_UNIT_TEST( test_receive_allowance_stream_1000_kbps );
+REGISTER_UNIT_TEST( test_receive_allowance_two_and_a_half_times_refused );
 
 #endif // #if ROCKETNET_DEV

@@ -557,8 +557,8 @@ bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_t
         mapping->control->timeout_seconds = 1000;
         memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
         server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
-        server->protocol.receive_allowances[i].bytes = rocketnet_server_receive_allowance_capacity( server->protocol.receive_bytes_per_second, 1000 );
-        server->protocol.receive_allowances[i].time = server->time;
+        rocketnet_server_receive_allowance_start( &server->protocol.receive_allowances[i], server->protocol.receive_bytes_per_second, 1000, server->time,
+                                                  mapping->send_sequence_session );
     }
     return true;
 }

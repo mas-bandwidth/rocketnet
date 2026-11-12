@@ -99,13 +99,34 @@ static inline int rocketnet_server_cookie_reply_source_words( int max_clients )
 // allowance holds its wire bytes, which it then spends; otherwise it is
 // dropped and counted here, and spends nothing. A time at or before the last
 // refill adds nothing and leaves the refill time where it was, so a clock
-// that steps back never credits the same interval twice. 32 bytes a slot,
-// zeroed when the slot's connection ends.
+// that steps back never credits the same interval twice.
+//
+// Two kinds of packet a client sends outside its send budget pay first from
+// a credit of their own (rocketnet_server_receive_allowance_take_packet),
+// and from the byte allowance only when that credit is empty:
+// - a standalone ack spends one ack credit. The server has one credit for
+//   each eliciting packet it sent this connection (every session sequence
+//   it took less its own standalone acks): a client sends a standalone ack
+//   only for ack debt, and its debt grows by one for each distinct
+//   eliciting packet it received, so a correct client's standalone acks
+//   never outnumber the server's eliciting packets, however lossy the
+//   stream that its ack blocks describe.
+// - a keep-alive or a disconnect spends one control token. A client sends
+//   a keep-alive only on its own send tick (ROCKETNET_DEFAULT_SEND_RATE,
+//   fixed), and a disconnect ends the connection on the first one the
+//   server processes; the tokens refill at
+//   ROCKETNET_RECEIVE_ALLOWANCE_FACTOR x that rate up to that times the
+//   connection's timeout plus two (one keep-alive at the start of any
+//   interval, one disconnect), as the bytes do.
+// 56 bytes a slot, zeroed when the slot's connection ends.
 
 struct rocketnet_server_receive_allowance_t
 {
     double bytes;                                           // allowance left, 0 .. capacity
     double time;                                            // the server time of the last refill
+    double control;                                         // keep-alive and disconnect tokens left
+    double control_time;                                    // the server time of their last refill
+    uint64_t ack_credit_spent;                              // the session sequence the connection started at, plus every standalone ack either end sent on the credit
     uint64_t refused_packets;                               // authenticated packets dropped over the allowance, this connection
     uint64_t refused_bytes;                                 // their wire bytes
 };
@@ -149,6 +170,23 @@ static inline double rocketnet_server_receive_allowance_capacity( double bytes_p
 
 bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, double capacity,
                                               double time, int packet_bytes );
+
+// Starts a connection's allowance full at time: the bytes at their capacity,
+// the control tokens at theirs, and the ack credit counted from
+// sequences_sent, the server's next session sequence for the connection.
+
+void rocketnet_server_receive_allowance_start( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, int timeout_seconds,
+                                               double time, uint64_t sequences_sent );
+
+// One authenticated session packet of packet_type: a standalone ack spends an
+// ack credit while the server's next session sequence, sequences_sent, is
+// past ack_credit_spent; a keep-alive or a disconnect spends a control token
+// when one is left; anything else, or either without its credit, is
+// rocketnet_server_receive_allowance_take. Returns true when the packet is to
+// be processed.
+
+bool rocketnet_server_receive_allowance_take_packet( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, int timeout_seconds,
+                                                     double time, uint8_t packet_type, int packet_bytes, uint64_t sequences_sent );
 
 struct rocketnet_server_protocol_t
 {

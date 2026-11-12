@@ -110,6 +110,71 @@ bool rocketnet_server_receive_allowance_take( struct rocketnet_server_receive_al
     return false;
 }
 
+// the control tokens: a keep-alive is sent on the client's send tick, so at
+// most one plus the send rate times any interval; refilled at the factor
+// times that rate from the time argument like the bytes, up to the factor
+// times the rate times the timeout, plus one for the keep-alive at the start
+// of an interval and one for a disconnect
+
+static double rocketnet_server_receive_control_capacity( int timeout_seconds )
+{
+    return (double) ROCKETNET_RECEIVE_ALLOWANCE_FACTOR * ROCKETNET_DEFAULT_SEND_RATE * (double) ( timeout_seconds > 0 ? timeout_seconds : 1 ) + 2.0;
+}
+
+void rocketnet_server_receive_allowance_start( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, int timeout_seconds,
+                                               double time, uint64_t sequences_sent )
+{
+    rocketnet_assert( allowance );
+
+    allowance->bytes = rocketnet_server_receive_allowance_capacity( bytes_per_second, timeout_seconds );
+    allowance->time = time;
+    allowance->control = rocketnet_server_receive_control_capacity( timeout_seconds );
+    allowance->control_time = time;
+    allowance->ack_credit_spent = sequences_sent;
+}
+
+// proofs/tla/RNReceiveAllowance.tla TakeAck and TakeControl: the credit of
+// the packet's own kind first, then the bytes
+
+bool rocketnet_server_receive_allowance_take_packet( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, int timeout_seconds,
+                                                     double time, uint8_t packet_type, int packet_bytes, uint64_t sequences_sent )
+{
+    rocketnet_assert( allowance );
+
+    // proofs/tla/RNReceiveAllowance.tla TakeAck: every session sequence the
+    // server took before sequences_sent and past the connection's first is
+    // a packet it sent; its standalone acks were added to the spent mark as
+    // it sent them, so the rest elicited, and each pays for one standalone
+    // ack of the client's
+
+    if ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && allowance->ack_credit_spent < sequences_sent )
+    {
+        allowance->ack_credit_spent++;
+        return true;
+    }
+
+    // proofs/tla/RNReceiveAllowance.tla TakeControl: Refilled, as the bytes
+
+    if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+    {
+        const double capacity = rocketnet_server_receive_control_capacity( timeout_seconds );
+        if ( time > allowance->control_time )
+        {
+            const double refilled = allowance->control + ( time - allowance->control_time ) * (double) ROCKETNET_RECEIVE_ALLOWANCE_FACTOR * ROCKETNET_DEFAULT_SEND_RATE;
+            allowance->control = refilled < capacity ? refilled : capacity;
+            allowance->control_time = time;
+        }
+        if ( allowance->control >= 1.0 )
+        {
+            allowance->control -= 1.0;
+            return true;
+        }
+    }
+
+    return rocketnet_server_receive_allowance_take( allowance, bytes_per_second, rocketnet_server_receive_allowance_capacity( bytes_per_second, timeout_seconds ),
+                                                    time, packet_bytes );
+}
+
 static void rocketnet_server_connection_id_assigned( struct rocketnet_server_protocol_t * server, int client_index )
 {
     if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
@@ -1230,12 +1295,13 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     rocketnet_server_connection_id_assigned( server, client_index );
 
     // proofs/tla/RNReceiveAllowance.tla Reconnect: the slot's allowance starts
-    // full; its refused counts are zero from the slot's last reset
+    // full, its ack credit counted from the connection's first session
+    // sequence; its refused counts are zero from the slot's last reset
 
     if ( server->receive_allowances )
     {
-        server->receive_allowances[client_index].bytes = rocketnet_server_receive_allowance_capacity( server->receive_bytes_per_second, mapping->control->timeout_seconds );
-        server->receive_allowances[client_index].time = current_time;
+        rocketnet_server_receive_allowance_start( &server->receive_allowances[client_index], server->receive_bytes_per_second, mapping->control->timeout_seconds,
+                                                  current_time, rocketnet_platform_atomic_load_u64( &mapping->send_sequence_session ) );
     }
 
     mapping->control->client_index = client_index;
@@ -1582,13 +1648,16 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // client it is a lost packet. Its sequence stays marked in the replay
     // window above, as an accepted packet's is, so a copy of it cannot be
     // replayed in once the allowance refills; the client's resends carry new
-    // sequences. The open is the cost the server still pays for it.
+    // sequences. The open is the cost the server still pays for it. A
+    // standalone ack, keep-alive or disconnect pays from its own credit first
+    // (rocketnet_server_protocol.h), so a client's acks of a heavy, lossy
+    // stream and its keep-alives never draw on the bytes its payload uses.
 
     if ( server->receive_allowances && server->receive_bytes_per_second > 0.0 )
     {
         struct rocketnet_server_receive_allowance_t * allowance = &server->receive_allowances[client_index];
-        const double capacity = rocketnet_server_receive_allowance_capacity( server->receive_bytes_per_second, mapping->control->timeout_seconds );
-        if ( !rocketnet_server_receive_allowance_take( allowance, server->receive_bytes_per_second, capacity, current_time, packet_bytes ) )
+        if ( !rocketnet_server_receive_allowance_take_packet( allowance, server->receive_bytes_per_second, mapping->control->timeout_seconds, current_time,
+                                                              packet_type, packet_bytes, rocketnet_platform_atomic_load_u64( &mapping->send_sequence_session ) ) )
         {
             if ( allowance->refused_packets == 1 )
             {
@@ -2202,6 +2271,14 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
     int bytes = rocketnet_server_write_session_packet( server, mapping, client_index,
                                                        ROCKETNET_CONNECTION_ACK_PACKET,
                                                        NULL, 0, current_time, out_packet, NULL );
+
+    // proofs/tla/RNReceiveAllowance.tla ServerAck: the sequence it took (sent
+    // or not) elicits nothing, so it gives the client no ack credit
+
+    if ( server->receive_allowances )
+    {
+        server->receive_allowances[client_index].ack_credit_spent++;
+    }
 
     rocketnet_spam( "server sent standalone ack to client %d", client_index );
 
