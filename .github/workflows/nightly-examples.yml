@@ -151,7 +151,7 @@ jobs:
           fi
           arch -x86_64 ./bin/test
           arch -x86_64 ./bin/test_lifecycle
-          arch -x86_64 ./bin/functional
+          bash tools/run_functional.sh dev arch -x86_64 ./bin/functional
           # a pin covers every create in the process, so the suite's own
           # per-pump cases run unpinned above; the pinned cells run the
           # transport-matrix socket cases, as .github/workflows/ci.yml:322-373 does

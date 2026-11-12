@@ -566,8 +566,11 @@ jobs:
 
       # This run includes test_unit_case_memory, the row that enforces the unit
       # cases' measured RSS against their existing registry and fallback bound.
-      # io_uring is a documented host requirement on Linux (docs/LINUX.md):
-      # a full-suite run that skips an io_uring row fails here, naming it.
+      # Every whole-suite run goes through tools/run_functional.sh <variant>:
+      # its SKIPPED lines must be exactly the rows tests/functional/
+      # expected_skips.txt lists for the leg (<os>-<variant>), each with a
+      # reason, so a row that stops running here (io_uring, a documented host
+      # requirement on Linux, docs/LINUX.md, among them) fails, naming it.
       # Per commit the Linux Release row runs functional_production only; the
       # development suite runs per commit on the Linux Debug row and on the
       # macOS Release row (the one macOS functional row per commit).
@@ -584,11 +587,7 @@ jobs:
           ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
         run: |
           set -euo pipefail
-          ./bin/functional | tee functional-auto.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-auto.log; then
-            echo "io_uring functional rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+          bash tools/run_functional.sh dev --log functional-auto.log ./bin/functional
 
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
@@ -610,11 +609,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./bin/functional_production | tee functional-production-auto.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-auto.log; then
-            echo "io_uring functional_production rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+          bash tools/run_functional.sh prod --log functional-production-auto.log ./bin/functional_production
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
@@ -1483,7 +1478,7 @@ jobs:
       - name: Run functional suite (parallel)
         if: matrix.leg == 'c'
         shell: bash
-        run: ./bin/Release/functional.exe
+        run: bash tools/run_functional.sh dev ./bin/Release/functional.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
@@ -1551,7 +1546,7 @@ jobs:
       - name: Run functional_production suite (auto ladder, production library)
         if: matrix.leg == 'b'
         shell: bash
-        run: ./bin/Release/functional_production.exe
+        run: bash tools/run_functional.sh prod ./bin/Release/functional_production.exe
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.leg == 'b'
@@ -3456,6 +3451,18 @@ jobs:
           set -euo pipefail
           bash tools/bigendian/test_run_byte_cases.sh
           bash tools/bigendian/run_byte_cases.sh --count
+
+      # Every whole functional-suite run goes through tools/run_functional.sh,
+      # which holds its SKIPPED lines to tests/functional/expected_skips.txt
+      # both ways; --lint checks the list (a reason per predicate, names that
+      # exist, every leg run, no unwrapped whole-suite run in a workflow)
+      - name: Functional skips are held to the reviewed list
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_skips.py --self-test
+          bash tools/test_run_functional.sh
+          python3 tools/check_skips.py --lint
 
       - name: Test the mutation runner's generator and process cleanup
         shell: bash

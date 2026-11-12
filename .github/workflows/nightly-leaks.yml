@@ -98,7 +98,7 @@ jobs:
           ROCKETNET_TEST_CASE_TIME_SCALE: "2"
         run: |
           set -o pipefail
-          ./bin/functional 2>&1 | tee functional.log
+          bash tools/run_functional.sh dev-sanitized --log functional.log ./bin/functional
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref

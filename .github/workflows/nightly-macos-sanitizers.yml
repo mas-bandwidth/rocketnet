@@ -184,7 +184,7 @@ jobs:
           # the scale remains for bounded callers; nightly explicitly disables the elapsed cap
           if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-msgx 2>&1 | tee functional-msgx.log
-          else ./bin/functional 2>&1 | tee functional-msgx.log; fi
+          else bash tools/run_functional.sh dev-sanitized-msgx --log functional-msgx.log ./bin/functional; fi
 
       - name: Functional suite, portable
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -197,7 +197,7 @@ jobs:
           # the scale remains for bounded callers; nightly explicitly disables the elapsed cap
           if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-portable 2>&1 | tee functional-portable.log
-          else ./bin/functional 2>&1 | tee functional-portable.log; fi
+          else bash tools/run_functional.sh dev-sanitized-portable --log functional-portable.log ./bin/functional; fi
 
       # GitHub expressions have no replace(): the artifact name's ref and leg slug is made here
       - name: Artifact name for the ref and leg
