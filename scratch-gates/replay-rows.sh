@@ -18,14 +18,14 @@ row() {
 git -C $G worktree prune
 : > $L/rows.txt
 row lint lint --set inputs.full=false
-row rel-checks build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=checks --set matrix.dev=OFF --set inputs.full=false
-row rel-unit-0 build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=unit --set matrix.shard=0/2 --set matrix.dev=OFF --set inputs.full=false
+row rel-checks build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=checks --set matrix.dev=OFF --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
+row rel-unit-0 build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=unit --set matrix.shard=0/2 --set matrix.dev=OFF --set matrix.with_builds= --set matrix.with_builds= --set inputs.full=false
 row rel-unit-1 build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=unit --set matrix.shard=1/2 --set matrix.with_builds=true --set matrix.dev=OFF --set inputs.full=false
-row dbg-unit build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=unit --set matrix.dev=ON --set inputs.full=false
-row dbg-func build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=functional --set matrix.dev=ON --set inputs.full=false
-row rel-func build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=functional --set matrix.dev=OFF --set inputs.full=false
-row dbg-matrix build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=transport_matrix --set matrix.dev=ON --set inputs.full=false
-row rel-matrix build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=transport_matrix --set matrix.dev=OFF --set inputs.full=false
+row dbg-unit build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=unit --set matrix.dev=ON --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
+row dbg-func build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=functional --set matrix.dev=ON --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
+row rel-func build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=functional --set matrix.dev=OFF --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
+row dbg-matrix build-and-test --set matrix.os=linux --set matrix.build_type=Debug --set matrix.leg=transport_matrix --set matrix.dev=ON --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
+row rel-matrix build-and-test --set matrix.os=linux --set matrix.build_type=Release --set matrix.leg=transport_matrix --set matrix.dev=OFF --set matrix.shard= --set matrix.with_builds= --set inputs.full=false
 wait
 cat $L/rows.txt
 for f in $L/*.out; do echo "== $f"; grep -E 'FAIL|failed|exit [1-9]|STEP.*rc=[1-9]|^REPLAY' $f | head -8; tail -2 $f; done
