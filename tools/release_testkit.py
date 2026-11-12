@@ -178,9 +178,18 @@ def green_release(api, version=VERSION, sha=SHA, branch_ruleset=True):
     api.add_run("nightly-ci.yml", [job("full / " + n) for n in CI_JOBS + CI_SKIPPED], sha, "workflow_dispatch")
     api.add_run("cbmc.yml", [job("cbmc (arithmetic leaf proofs)")], sha, "workflow_dispatch")
     api.add_run("tlc.yml", [job("Model records are current"), job("TLC re-run full")], sha, "workflow_dispatch")
-    api.add_run("nightly.yml", [job("linux / clang"), job("tsan (threaded transport) (main)")], sha,
+    api.add_run("nightly.yml", [job("linux / clang"), job("tsan (threaded transport) (main)"),
+                                job("linux / Release functional nightly tier (main)"),
+                                job("macos / Release functional nightly tier (main)"),
+                                job("windows / Release functional nightly tier (main)")], sha,
                 "workflow_dispatch")
     api.add_run("msan.yml", [job("MemorySanitizer")], sha, "workflow_dispatch")
+    api.add_run("nightly-soak.yml", [job("soak (main)"), job("soak per transport (main / 1800 s per cell)")], sha,
+                "workflow_dispatch")
+    api.add_run("nightly-leaks.yml", [job("asan + ubsan + lsan (full suite) (main)")], sha, "workflow_dispatch")
+    api.add_run("nightly-macos-sanitizers.yml", [job("macOS leaks (main)"), job("macOS tsan (main)")], sha,
+                "workflow_dispatch")
+    api.add_run("nightly-channels-stress.yml", [job("channels-stress-linux (main)")], sha, "workflow_dispatch")
     return api
 
 

@@ -227,6 +227,38 @@ class Release(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("'MemorySanitizer': failure", text)
 
+    def test_soak_red_refuses_from_v1_1_8(self):
+        # v1.1.7 was tagged 2.5 h after soak per transport went red: no gate read nightly-soak.yml
+        api = green_release(FakeApi())
+        run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
+        api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
+        code, text = run_release(api)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
+
+    def test_nightly_functional_tier_missing_refuses(self):
+        api = green_release(FakeApi())
+        run = next(r for r in api.runs if r["path"].endswith("/nightly.yml"))
+        api.jobs[run["id"]] = [j for j in api.jobs[run["id"]] if not j["name"].startswith("windows / Release")]
+        code, text = run_release(api)
+        self.assertEqual(code, 1)
+        self.assertIn("no nightly run of nightly.yml on", text)
+        self.assertIn("windows / Release functional nightly tier", text)
+
+    def test_gates_as_of_judges_an_earlier_release_by_later_gates(self):
+        api = green_release(FakeApi(), version="v1.1.7")
+        api.runs = [r for r in api.runs if not r["path"].endswith("/nightly-soak.yml")]
+        out = io.StringIO()
+        gates = release.gates_as_of(rg.load_gates(), "v1.1.8", out)
+        code, text = run_release(api, version="v1.1.7", gates=gates)
+        self.assertEqual(code, 1, text)
+        self.assertIn("GATES AS OF v1.1.8", out.getvalue())
+        self.assertIn("MISSING: no nightly run of nightly-soak.yml", text)
+        self.assertNotIn("NOT IN FORCE", text)
+
+    def test_gates_as_of_is_dry_run_only(self):
+        self.assertEqual(release.main(["release.py", "v1.1.7", "76edea48e", "--gates-as-of", "v1.1.8"]), 2)
+
     def test_earlier_version_is_judged_by_the_gates_in_force_then(self):
         api = green_release(FakeApi(), version="v1.1.7")
         api.runs = [r for r in api.runs if not r["path"].endswith("/msan.yml")]

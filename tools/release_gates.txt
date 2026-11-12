@@ -71,6 +71,13 @@ tlc.yml | Model records are current | job | v1.1.8 | nightly | the committed TLC
 tlc.yml | TLC re-run | tlc-rerun | v1.1.8 | nightly | the models were re-run by TLC, not only their records read
 nightly.yml | tsan (threaded transport) (<ref>) | job | v1.0.0-preview-6 | nightly | threaded TSan leg on the run's own head commit
 msan.yml | MemorySanitizer | job | v1.1.8 | nightly | MemorySanitizer, a release gate from v1.1.8 (advisory before)
+nightly.yml | linux / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Linux
+nightly.yml | macos / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on macOS
+nightly.yml | windows / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Windows
+nightly-soak.yml | - | jobs | v1.1.8 | nightly | every soak job success (v1.1.7 was tagged 2.5 h after soak per transport went red)
+nightly-leaks.yml | - | jobs | v1.1.8 | nightly | asan + ubsan + lsan over the full suite
+nightly-macos-sanitizers.yml | - | jobs | v1.1.8 | nightly | macOS asan+ubsan, tsan and leaks
+nightly-channels-stress.yml | - | jobs | v1.1.8 | nightly | the channel stress runs
 
 # --- the tag push: waited for by tools/release.py before it publishes
 release-check.yml | threaded tsan run on the release commit | tag | v1.0.0-preview-6 | tag | the second check, on the tag, of every gate above
