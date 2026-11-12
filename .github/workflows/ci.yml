@@ -3387,6 +3387,17 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # The nightly watch's planted nights (no run, stale, cancelled, timed
+      # out, hung, startup failure, all skipped, a 503) must each be red and
+      # a clean night green, against a fake API.
+      - name: Test the nightly watch's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_nightly_dispositions.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
       - name: Test the nightly TLA+ case planner
         shell: bash
         run: |
