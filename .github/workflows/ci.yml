@@ -470,7 +470,7 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         run: |
-          # the fifteen harnesses build in one parallel build and replay at once;
+          # the sixteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
@@ -1501,7 +1501,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # the fifteen harnesses build in one parallel build and replay at once;
+          # the sixteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
@@ -2449,15 +2449,12 @@ jobs:
 
       # the build is a toolchain step and carries a deadline at five times its
       # normal length; the replay is a test step and carries none
-      - name: Build the fifteen replay drivers
+      - name: Build the sixteen replay drivers
         timeout-minutes: 3
         run: |
-          # the fourteen harnesses build in one parallel build and replay at once;
+          # the sixteen harnesses, the Linux-only XDP filter harness among them, build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
-          # and the Linux-only XDP filter harness (tests/fuzz/Makefile XDP_TARGETS)
-          xdp_harnesses="rocketnet_fuzz_xdp_filter"
-          harnesses="$harnesses $xdp_harnesses"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
@@ -2467,9 +2464,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          # the fifteen harnesses replay at once; each replay's exit status is
+          # the sixteen harnesses replay at once; each replay's exit status is
           # checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter rocketnet_fuzz_session_raw"
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -2576,7 +2573,7 @@ jobs:
       - name: Build every fuzzer with NDEBUG
         timeout-minutes: 2
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"
           echo "NDEBUG_HARNESSES=$harnesses" >> "$GITHUB_ENV"
           for src in $harnesses; do
             if [ "$src" = rocketnet_fuzz_xdp_filter ]; then continue; fi
@@ -2598,7 +2595,6 @@ jobs:
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itests tests/fuzz/rocketnet_fuzz_xdp_filter.cpp "$xdp_host" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread -o bin/rocketnet_fuzz_xdp_filter_ndebug
-          echo "NDEBUG_HARNESSES=$harnesses rocketnet_fuzz_xdp_filter" >> "$GITHUB_ENV"
 
       - name: Replay all corpora under NDEBUG
         env:

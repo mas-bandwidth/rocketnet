@@ -299,7 +299,7 @@ def self_test():
               "    rocketnet_fuzz_endpoint\n", "")
         plant("macOS loop loses a harness", "docs/MACOS.md",
               "rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter; do", "rocketnet_fuzz_endpoint; do")
-        plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the fifteen harnesses", "the fourteen harnesses")
+        plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the sixteen harnesses", "the fifteen harnesses")
         plant("the XDP filter fuzzed on macOS, where it is a no-op", "tests/fuzz/Makefile",
               "                     rocketnet_fuzz_gateway_netlink \\\n                     rocketnet_fuzz_xdp_filter",
               "                     rocketnet_fuzz_gateway_netlink")

@@ -528,7 +528,7 @@ abort assertions unchanged. A new forking case must do the same.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds a replay binary for each of the fifteen harnesses in
+libFuzzer"); `make` builds a replay binary for each of the sixteen harnesses in
 [tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
