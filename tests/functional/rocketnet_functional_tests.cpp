@@ -12884,6 +12884,11 @@ static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_tran
 
 extern void rocketnet_test_server_stats_creates_no_thread();
 extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+extern void rocketnet_test_disconnect_reason_server_disconnected_portable();
+extern void rocketnet_test_disconnect_reason_timed_out_portable();
+extern void rocketnet_test_disconnect_reason_reliable_timed_out_portable();
+extern void rocketnet_test_disconnect_reason_message_not_received_portable();
+extern void rocketnet_test_conditions_portable();
 extern void rocketnet_test_session_reconnect_isolation_portable();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_session_reconnect_isolation_gso();
@@ -13421,6 +13426,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
     { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
+    { "test_disconnect_reason_server_disconnected_portable", rocketnet_test_disconnect_reason_server_disconnected_portable, NULL },
+    { "test_disconnect_reason_timed_out_portable", rocketnet_test_disconnect_reason_timed_out_portable, NULL },
+    { "test_disconnect_reason_reliable_timed_out_portable", rocketnet_test_disconnect_reason_reliable_timed_out_portable, NULL },
+    { "test_disconnect_reason_message_not_received_portable", rocketnet_test_disconnect_reason_message_not_received_portable, NULL },
+    { "test_conditions_portable", rocketnet_test_conditions_portable, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

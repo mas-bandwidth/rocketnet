@@ -34,7 +34,10 @@ static const char * const source_audit_cases[] = {
     "test_xdp_transport_host_every_counter_has_a_case",
     "test_example_send_safety_every_example_and_snippet",
     "test_functional_cases_have_no_generated_empty_bodies",
-    "test_sequence_buffers_manifest_matches_source"
+    "test_sequence_buffers_manifest_matches_source",
+    "test_platform_spin_lock_backoff_source",
+    "test_platform_relaxed_u64_load_is_not_locked_on_64_bit_msvc",
+    "test_docs_abi_evolution_records_the_field_boundary"
 };
 
 // The unit suite runs every case in its own worker process, with the

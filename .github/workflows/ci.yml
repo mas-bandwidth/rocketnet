@@ -660,6 +660,7 @@ jobs:
         if: (matrix.leg == 'functional' && runner.os != 'Linux') || matrix.leg == 'transport_matrix'
         shell: bash
         env:
+          XDP_DEV: ${{ matrix.dev }}
           TRANSPORT_MATRIX_LINUX: |
             portable portable
             portable auto
@@ -686,11 +687,24 @@ jobs:
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
           xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6 test_xdp_transport_keep_alive_before_first_payloads_ipv4 test_xdp_transport_keep_alive_before_first_payloads_ipv6 test_xdp_transport_gateway_change_while_serving test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable test_session_reconnect_isolation_xdp"
+          # the other root-only xdp cases, in the same guest: the lifecycle
+          # cells that fit the per-commit budget (about 2 s together, the
+          # three 1000-cycle cells below take about 57 s and run nightly),
+          # and the receive-weather pair, registered in development builds
+          # only
+          xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000"
+          if [ "${XDP_DEV:-OFF}" = ON ]; then
+            xdp_root_cases="$xdp_root_cases test_xdp_transport_linux_receive_weather_ipv4 test_xdp_transport_linux_receive_weather_ipv6"
+          fi
+          if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
+            xdp_root_cases="$xdp_root_cases test_xdp_transport_posix_server_create_destroy_1000 test_xdp_transport_posix_server_restart_same_port_100 test_xdp_transport_posix_destroy_under_traffic_100"
+          fi
+          xdp_cases_run="$xdp_cases $xdp_root_cases"
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
           fi
-          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
+          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases_run"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -713,7 +727,7 @@ jobs:
                 vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
                 vm_missing=$(scripts/vm-tier-missing)
                 if [ -n "$vm_missing" ]; then
-                  for case in $xdp_cases; do
+                  for case in $xdp_cases_run; do
                     echo "VM-TIER-MISSING on $RUNNER_NAME: $vm_missing" > "$logs/$server.$client.$case.log"
                     echo 1 > "$logs/$server.$client.$case.rc"
                   done
@@ -726,9 +740,9 @@ jobs:
                   nightly_no_timeout=1
                 fi
                 ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                  sh -c 'for case in '"$xdp_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                  sh -c 'for case in '"$xdp_cases_run"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
                   > "$logs/$server.$client.vm.log" 2>&1
-                for case in $xdp_cases; do
+                for case in $xdp_cases_run; do
                   [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
                 done
               ) &
@@ -1136,10 +1150,26 @@ jobs:
           CXX: g++
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
-          cmake --build build --target test --parallel
+          cmake --build build --target test dst --parallel
 
       - name: Run unit tests (Release, ROCKETNET_DEV=ON)
         run: ./bin/test
+
+      # The dst binary per commit: seeds 1-50 print the reference trace that
+      # nightly-dst.yml pins (DST_REFERENCE_TRACE, the one copy; docs/DST.md),
+      # about 7 s on an idle fleet host. The nightly runs the long ranges and
+      # the fault schedules.
+      - name: DST seeds 1-50 print the reference trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace=$(sed -n 's/^  DST_REFERENCE_TRACE: \([0-9a-f]*\)$/\1/p' .github/workflows/nightly-dst.yml)
+          [ -n "$trace" ] || { echo "no DST_REFERENCE_TRACE in .github/workflows/nightly-dst.yml"; exit 1; }
+          ./bin/dst --seeds 1-50 | tee dst-reference.log
+          if grep -q '^FAIL' dst-reference.log; then echo "dst printed a FAIL line"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$trace"
+          got=$(tail -n 1 dst-reference.log)
+          [ "$got" = "$want" ] || { echo "TRACE-MISMATCH: want '$want' got '$got'"; exit 1; }
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full

@@ -657,6 +657,16 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
 {
     posix_env_restore( client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
     posix_env_restore( server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+#if defined( __linux__ ) && ROCKETNET_XDP
+    // the suite runner ends a case's process with _exit, so atexit never
+    // removes the pair: an xdp cell removes it here, or its 10.77.3.0/24
+    // pair outlives the case and takes the route a later case in the same
+    // guest needs
+    if ( posix_xdp_made )
+    {
+        posix_xdp_teardown();
+    }
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
 }
 
 #define POSIX_XDP_QUEUES 1

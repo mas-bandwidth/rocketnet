@@ -71,7 +71,8 @@ message resend delay from the transport's measured RTT, 93eaebd06, gave the
 last); the v1.0.1 audit fixes between e385557a and 27b56da21 moved it to
 cb02374fb45015e4. A change that moves this
 trace changes what a run does; it updates the reference here and
-`DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together, from
+`DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
+per-commit Release unit job reads its pin from there), from
 three equal PASS lines.
 
 ## The nightly

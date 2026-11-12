@@ -383,7 +383,24 @@ static void fair_run_case( int num_clients, int capacity = 1 )
             }
         }
 
+        // the cap itself: one update's send pass hands at most capacity
+        // frames to the transport, with every client's work due
+
+        uint64_t sent_before = 0;
+        for ( int c = 0; c < num_clients; c++ )
+        {
+            sent_before += rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent;
+        }
+
         rocketnet_server_send_packets( world.server );
+
+        uint64_t sent_after = 0;
+        for ( int c = 0; c < num_clients; c++ )
+        {
+            sent_after += rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent;
+        }
+        check( sent_after - sent_before <= (uint64_t) capacity );
+
         world.time += FAIR_DT;
     }
 
@@ -537,6 +554,16 @@ static void test_server_send_cap_two_multi_packet_service()
         }
 
         rocketnet_server_send_packets( world.server );
+
+        // each client has more than one frame due: the pass hands exactly
+        // the cap of two frames to the transport, never more
+
+        uint64_t sent = 0;
+        for ( int c = 0; c < 3; c++ )
+        {
+            sent += rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent - before[c];
+        }
+        check( sent == 2 );
 
         for ( int c = 0; c < 3; c++ )
         {
