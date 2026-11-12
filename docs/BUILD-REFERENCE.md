@@ -210,6 +210,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
 | `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | CI nightly tier `Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)`: the cases only it compiles, and the promotion case |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
+| `test_sodium_dispatch` | unit | the vendored pair's runtime picks are the best the CPU runs; every ChaCha20, Poly1305 and BLAKE2b implementation it contains agrees with the reference, and the known answers hold with AVX2 forced off (bundled sodium only) | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |
