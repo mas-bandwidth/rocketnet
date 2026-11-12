@@ -108,7 +108,7 @@ static int dst_parse_faults( const char * list, uint32_t * mask )
 static const char * dst_usage =
     "usage: dst --seeds a-b [--shape push|full] [--clients 1..16] [--steps n]\n"
     "           [--faults all|none|loss,dup,jitter]\n"
-    "           [--schedule clock-back|seq-gap|seq-wrap-31|seq-wrap-32|burst|dup-storm|outage|outage-past]\n"
+    "           [--schedule clock-back|seq-gap|seq-wrap-31|seq-wrap-32|burst|dup-storm|outage|outage-past|send-fail]\n"
     "           [--max-fails n] [--verbose]\n";
 
 // seq-wrap-31 and seq-wrap-32 move every session's first sequence through

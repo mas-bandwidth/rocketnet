@@ -92,7 +92,7 @@ struct cr_transport_t
     int aborts;                             // frames aborted
     int bound[CR_MAX_SLOTS];                // 1: the slot holds a connection
     int disconnects;                        // link.disconnect calls
-    int pad;
+    int fail_finish;                        // 1: finish_packet refuses every frame (a send that fails)
     std::vector<int> acked_slot;            // the last flush's frames, acknowledged at this update
     std::vector<uint64_t> acked;
     std::vector<int> pending_slot;          // this flush's frames, in the order they were finished
@@ -162,6 +162,10 @@ static uint8_t * cr_start_packet( void * transport, int client_index, int reques
 static int cr_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
 {
     cr_transport_t * t = (cr_transport_t *) transport;
+    if ( t->fail_finish )
+    {
+        return 0;
+    }
     t->pending.push_back( context->packet_id );
     t->pending_slot.push_back( context->client_index );
     return ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + payload_bytes;     // the seal path's wire bytes (rocketnet_send_budget.h)
@@ -1143,3 +1147,47 @@ static void test_server_abort_on_the_region_path_returns_the_room()
 }
 
 REGISTER_UNIT_TEST( test_server_abort_on_the_region_path_returns_the_room );
+
+// A frame whose send fails ends every receipt it carried with one LOSS, and
+// no other: sixteen receipted messages written in place fill one frame's
+// receipt list (RN_MESSAGE_RECEIPT_SERIALS_MAX), the transport refuses the
+// frame, and the receipts are exactly those sixteen serials, each LOSS once.
+static void test_server_failed_frame_loses_each_receipt_once()
+{
+    const int bound[2] = { 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 2, bound );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+
+    const uint64_t lost = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS];
+    w.t->fail_finish = 1;
+
+    uint8_t message[8];
+    memset( message, 0x33, sizeof( message ) );
+    uint32_t serials[RN_MESSAGE_RECEIPT_SERIALS_MAX];
+    for ( int n = 0; n < RN_MESSAGE_RECEIPT_SERIALS_MAX; n++ )
+    {
+        serials[n] = rocketnet_message_server_send( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, message, (int) sizeof( message ) );
+        check( serials[n] != 0 );
+    }
+    check( w.object->connections[0].unreliable_build.receipt_count == RN_MESSAGE_RECEIPT_SERIALS_MAX );
+
+    rocketnet_message_server_send_packets( w.server );
+    w.t->fail_finish = 0;
+    w.time += CR_DT;
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );     // this update's outcomes are the last flush's
+
+    rocketnet_message_receipt_t out[2 * RN_MESSAGE_RECEIPT_SERIALS_MAX];
+    const int count = rocketnet_message_server_receipts( w.server, 0, out, 2 * RN_MESSAGE_RECEIPT_SERIALS_MAX );
+    check( count == RN_MESSAGE_RECEIPT_SERIALS_MAX );
+    for ( int n = 0; n < count && n < RN_MESSAGE_RECEIPT_SERIALS_MAX; n++ )
+    {
+        check( out[n].serial == serials[n] );
+        check( out[n].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    }
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == lost + RN_MESSAGE_RECEIPT_SERIALS_MAX );
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_failed_frame_loses_each_receipt_once );

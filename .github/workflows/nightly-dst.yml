@@ -220,6 +220,17 @@ jobs:
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
+      - name: Schedule send-fail seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule send-fail | tr -d '\r' | tee dst-schedule-send-fail.log
+          if grep -q '^FAIL' dst-schedule-send-fail.log; then echo "dst schedule send-fail printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-send-fail.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
+
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
       - name: Outage scenarios seeds 1-50
@@ -409,6 +420,17 @@ jobs:
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
+
+      - name: Schedule send-fail seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule send-fail | tr -d '\r' | tee dst-schedule-send-fail.log
+          if grep -q '^FAIL' dst-schedule-send-fail.log; then echo "dst schedule send-fail printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-send-fail.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
 
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
@@ -621,6 +643,17 @@ jobs:
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
+
+      - name: Schedule send-fail seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule send-fail | tr -d '\r' | tee dst-schedule-send-fail.log
+          if grep -q '^FAIL' dst-schedule-send-fail.log; then echo "dst schedule send-fail printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-send-fail.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
 
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
       # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner

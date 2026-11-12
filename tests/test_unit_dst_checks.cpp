@@ -181,6 +181,58 @@ static void test_dst_check_receipt_twice_fails()
     rocketnet_unit_check( strcmp( st.check, "receipt_one_outcome" ) == 0 );
 }
 
+// receipt_outcome_due: a type 5 send with no outcome past the deadline fails
+// while its session is live; one with its outcome, one of an ended session,
+// and a type 6 send never do.
+
+static void test_dst_check_receipt_outcome_due_fails()
+{
+    static struct rocketnet_dst_check_state_t st;
+    rocketnet_dst_check_init( &st, 1, 53 );
+
+    rec_receipt_send( &st, 5, 0, 1 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 1, 5, 1000.0 );
+    rec_receipt_send( &st, 6, 0, 2 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 2, 6, 1000.0 );
+    rec_receipt_send( &st, 5, 1, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+
+    // serial 1 has its outcome; serial 3 is due at 1001.5, not before
+    rocketnet_dst_check_receipt_one_outcome( &st, 16, 1, 1, ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.5, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // another session's identity: serial 3 is done with, never judged
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 2, 1, 3, 1005.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the next session sends a type 2 at serial 3: the table entry there is
+    // still the last session's type 5 send, and the new send owes nothing
+    rocketnet_dst_check_receipt_due_from( &st, 16, 2, 3, 2, 1006.0 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 2, 3, 5, 1006.0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 2, 1, 3, 1010.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the endpoint reset under the same identity (its serial went back): the
+    // reset connection's sends owe nothing, nor while the session is down
+    rocketnet_dst_check_init( &st, 1, 55 );
+    rec_receipt_send( &st, 5, 0, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 0, 3, 1003.0, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 1, 1003.0, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 5, 1009.0, 1.0 ) == 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    // the same, live: serial 3 past its deadline with no outcome
+    rocketnet_dst_check_init( &st, 1, 54 );
+    rec_receipt_send( &st, 5, 0, 3 );
+    rocketnet_dst_check_receipt_due_from( &st, 16, 1, 3, 5, 1000.5 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.5, 1.0 ) == 0 );
+    rocketnet_unit_check( rocketnet_dst_check_receipt_outcome_due( &st, 16, 1, 1, 3, 1001.6, 1.0 ) == 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "receipt_outcome_due" ) == 0 );
+}
+
 static void test_dst_check_sequenced_backwards_fails()
 {
     static struct rocketnet_dst_check_state_t st;
@@ -375,6 +427,7 @@ REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_from_fault_window_fails );
 REGISTER_UNIT_TEST( test_dst_check_receipt_acked_without_delivery_fails );
 REGISTER_UNIT_TEST( test_dst_check_receipt_twice_fails );
+REGISTER_UNIT_TEST( test_dst_check_receipt_outcome_due_fails );
 REGISTER_UNIT_TEST( test_dst_check_sequenced_backwards_fails );
 REGISTER_UNIT_TEST( test_dst_check_unreliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_ack_never_issued_fails );
