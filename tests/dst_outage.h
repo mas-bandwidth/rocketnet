@@ -519,6 +519,14 @@ static inline void dst_outage_destroy( dst_outage_world_t * w )
 {
     if ( w->client )
     {
+        // destroy takes a disconnected client (a debug assert): disconnect,
+        // then step it until the attempt or session has retired
+        rocketnet_client_disconnect( w->client );
+        for ( int i = 0; i < 64 && !rocketnet_client_disconnected( w->client ); i++ )
+        {
+            w->now += DST_OUTAGE_DT;
+            rocketnet_client_update( w->client, w->now );
+        }
         rocketnet_client_destroy( w->client );
         w->client = NULL;
     }
