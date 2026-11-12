@@ -11,7 +11,8 @@
 // HAPPY_PATH_BREAK=client-skip-mode-<n> makes the client omit one send. It
 // exists only to prove this tool's failing path; a normal run does not set it.
 // HAPPY_PATH_DEADLINE_SECONDS overrides the tool's hard deadline (default 60).
-// ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables only that harness execution deadline.
+// ROCKETNET_NIGHTLY_NO_TIMEOUT=1 disables only that harness execution deadline;
+// every single wait keeps its own fixed cap (waitCap, 120 s) either way.
 //
 // The two binary names are constants below. When the examples' message-sending
 // examples land, point these two constants at the example binaries so this
@@ -157,7 +158,20 @@ func lineIndex(text, want string) int {
 	return -1
 }
 
+// waitCap bounds every single wait, whatever deadline the caller passes and
+// even when ROCKETNET_NIGHTLY_NO_TIMEOUT=1 makes that deadline zero: the whole
+// happy path takes seconds, so one wait this long is a hang, not a slow host.
+// It is longer than the default whole-run deadline, so it never fires first
+// in the default tier. A variable only so the tool's own test can shorten it.
+var waitCap = 120 * time.Second
+
+func waitCapError(stage, what string) error {
+	return fmt.Errorf("fixed per-wait deadline of %s seconds exceeded at stage %s waiting for %s (this cap holds even with ROCKETNET_NIGHTLY_NO_TIMEOUT=1)",
+		formatSeconds(waitCap.Seconds()), stage, what)
+}
+
 func waitForLine(c *child, want string, deadline time.Time, seconds float64, stage, what string) error {
+	capped := time.Now().Add(waitCap)
 	for {
 		if hasLine(c.buf.String(), want) {
 			return nil
@@ -169,19 +183,26 @@ func waitForLine(c *child, want string, deadline time.Time, seconds float64, sta
 			return fmt.Errorf("%s: %s exited before %s (exit code %d)", stage, c.name, what, c.exitCode())
 		}
 		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			return deadlineError(seconds, stage)
+			return fmt.Errorf("%w waiting for %s (line %q from %s)", deadlineError(seconds, stage), what, want, c.name)
+		}
+		if !time.Now().Before(capped) {
+			return waitCapError(stage, fmt.Sprintf("%s (line %q from %s)", what, want, c.name))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
 func waitForExit(c *child, deadline time.Time, seconds float64, stage string) error {
+	capped := time.Now().Add(waitCap)
 	for {
 		if c.exited() {
 			return nil
 		}
 		if !deadline.IsZero() && !time.Now().Before(deadline) {
-			return deadlineError(seconds, stage)
+			return fmt.Errorf("%w waiting for %s to exit", deadlineError(seconds, stage), c.name)
+		}
+		if !time.Now().Before(capped) {
+			return waitCapError(stage, fmt.Sprintf("%s to exit", c.name))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
