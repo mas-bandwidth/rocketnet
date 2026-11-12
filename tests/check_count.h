@@ -11,6 +11,8 @@
 // nothing. One counter for the process, shared by every translation unit
 // (an inline function's static), atomic because cases check on threads too.
 
+#pragma once
+
 #ifndef ROCKETNET_TESTS_CHECK_COUNT_H
 #define ROCKETNET_TESTS_CHECK_COUNT_H
 
