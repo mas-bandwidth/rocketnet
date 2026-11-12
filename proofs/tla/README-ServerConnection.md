@@ -79,7 +79,15 @@ caution 1).
 
 ### Properties
 
-Safety, checked under every loss pattern with no fairness:
+Safety, checked with no fairness. Every committed instance checks it on its own link
+setting, and two instances check it under every loss pattern: `MCServerConnectionLossy.cfg`
+(the committed run's two clients and one slot) and `MCServerConnectionLossyTimers.cfg` (one
+client, the idle timeout and the handshake deadline on), each with both links `"arbitrary"`,
+duplication and reordering. Under `"arbitrary"` any copy may be dropped at any time, so the
+drops of every other pattern (`"first"`, `"alternate"`, `"burst"`, `"everynth"`, a lost first
+packet of a kind) are behaviours it already contains. Larger lossy instances (two slots, an
+address change, a shared client id, a delay of 1) did not finish inside the 110-second budget
+and are not committed:
 
 | Property | The rule |
 |---|---|
@@ -204,13 +212,18 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | `MCServerConnectionHoldUntilExpire.cfg` | three clients, one slot, `HoldUntilExpire = TRUE` | `ChurnNeverDenied` | fails (invariant) |
 | `MCServerConnectionExpiredToken.cfg` | one client with an expired token | `ExpiredTokenNeverMapped` | pass |
 | `MCServerConnectionResponseReplay.cfg`, `...ResponseReplayBroken.cfg` | one client, timers on, duplication | `ResponseNeverRefreshesConnected` | pass; fails (action) |
+| `MCServerConnectionLossy.cfg` | the committed run with both links `"arbitrary"`, duplication and reordering | `SafetyInvariants`, `ChurnNeverDenied`, `ExpiredTokenNeverMapped`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
+| `MCServerConnectionLossyTimers.cfg` | `Timers` with both links `"arbitrary"`, duplication, reordering and two packets in flight each way | `SafetyInvariants`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered`, `ResponseNeverRefreshesConnected` | pass |
+| `MCServerConnectionLossyBrokenRefresh.cfg` | `LossyTimers` with a response refreshing a connected mapping's idle clock | `ResponseNeverRefreshesConnected` | fails (action) |
+| `MCServerConnectionLossyBrokenSweep.cfg` | `LossyTimers` with `SweepRemovesMapping = FALSE` | `SlotMappingBijection` | fails (invariant) |
 | `MCServerConnectionDualFamily.cfg`, `...BrokenIpv6OnlyMatch.cfg`, `...ServesBothFamilies.cfg`, `...BrokenOneFamilyServed.cfg`, `...Race.cfg`, `...RaceIpv6.cfg`, `...BrokenCommitEarly.cfg` | the address-family runs | `OneFamilyHostConnects`, `BothFamiliesConnect`, `Connects`, `CommitsOnAnswer` | as `CASES.tsv` declares |
 
 Every rule switch is off in some case: `RepeatKeepAlive`, `SweepRemovesMapping`,
 `AddressIsIdentity`, both client-id checks and `HoldUntilExpire` in a reversed witness;
-`SameId`, `MaxMoves`, `KindLoss` and `History` in a passing case. Other loss patterns
-(`"first"`, `"alternate"`, `"burst"`, `"arbitrary"`) and duplication with reordering are not
-committed cases; nothing here claims them.
+`SameId`, `MaxMoves`, `KindLoss` and `History` in a passing case. Loss, duplication and
+reordering together (`"arbitrary"` on both links) are the `Lossy` cases, with two reversed
+witnesses on the `LossyTimers` instance that still fail there. Liveness is checked only under
+`"none"` and `KindLoss = "firstkind"`; no liveness property is claimed under `"arbitrary"`.
 
 ## What TLC found
 
