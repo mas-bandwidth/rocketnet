@@ -259,6 +259,14 @@ struct rn_message_object_t
     // instead of always serving the low indices.
     int send_next_connection;
 
+    // the send pass's writers, two entries per connection: the connections
+    // that wrote a frame in the last round, in visiting order, each with the
+    // cursor the loop held before visiting it (-1: the cursor past the last
+    // connected connection). Later rounds walk only these, so a flush costs
+    // num_connections visits plus one per frame written.
+    // NULL for one connection: its two entries are on the send pass's stack.
+    int32_t * send_writers;
+
     // the in-place unreliable send (docs/OUTGOING-BUILD.md, proofs/tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
     int in_place;                               // pending start: 0 region, 1 whole frame, 2 appended record
@@ -339,6 +347,18 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 struct rn_message_connection_t * rn_message_object_connection( struct rn_message_object_t * object, int index );
 
 #if ROCKETNET_DEV
+// The send pass's cost, counted on this thread by
+// rn_message_object_send_packets (development builds only): the connection
+// slots its rounds visit, and the frames started and then aborted in it.
+struct rn_send_pass_cost_t
+{
+    uint64_t slot_visits;
+    uint64_t frames_aborted;
+};
+
+void rn_send_pass_cost_reset();
+rn_send_pass_cost_t rn_send_pass_cost_read();
+
 // the message half of the delivery capture (rocketnet_layers.h) for one
 // connection: the ordered path's window, resend FIFOs, RTT estimate and send
 // budget. A connection that is not CONNECTED leaves the capture untouched.

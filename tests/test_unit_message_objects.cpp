@@ -585,6 +585,7 @@ static uint64_t mo_message_object_layout_formula( const rocketnet_message_config
     offset += mo_align64( sizeof( rn_message_connection_t ) * n );
     offset += mo_align64( sizeof( uint64_t ) * n );     // the slots machine's connection ids
     offset += mo_align64( sizeof( uint8_t ) * n );      // and its changed flags
+    offset += n > 1 ? mo_align64( sizeof( int32_t ) * 2 * n ) : 0;    // the send pass's writer list (a server's)
     offset += mo_align64( deliveries ) * n;
     if ( old_cursor_array )
     {

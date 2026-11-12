@@ -63,7 +63,11 @@
 // 40000 at 1000 clients, and at most 64 to the client (one 64-byte
 // rounding): computed, not measured on Windows, by adding the 40000 and the
 // 64 that macOS and Linux both measured to the figures pinned before.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608849790 )
+// The server's send pass keeps a writer list, two int32_t a connection
+// (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
+// clients and nothing to the client (one connection keeps its two entries on
+// the stack): computed, not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608857790 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972215 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -95,7 +99,11 @@
 // 40000 at 1000 clients, and 64 to the client (its object's 64-byte
 // rounding) (measured); the probe's actual= lines are 1469493151 and
 // 15036426.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468444575 )
+// The server's send pass keeps a writer list, two int32_t a connection
+// (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
+// clients and nothing to the client (one connection keeps its two entries on
+// the stack) (measured); the probe's actual= line is 1469501151.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -150,7 +158,11 @@
 // bench's own v1.0.1 reading of 15186018). The client pin stays the earlier
 // figure plus 64: the earlier bench read the client 9744 bytes higher, and
 // the check is an upper bound.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110620139ULL )
+// The server's send pass keeps a writer list, two int32_t a connection
+// (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
+// clients and nothing to the client (one connection keeps its two entries on
+// the stack).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628139ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 

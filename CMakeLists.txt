@@ -716,6 +716,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_public_link_simulator.cpp
             tests/test_unit_rng_lifecycle.cpp
             tests/test_unit_send_errnos.cpp
+            tests/test_unit_send_pass_cost.cpp
             tests/test_unit_sequence_burn.cpp
             tests/test_unit_server_payload_capacity.cpp
             tests/test_unit_server_send_cap_fair.cpp

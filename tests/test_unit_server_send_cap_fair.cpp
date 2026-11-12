@@ -685,6 +685,168 @@ static void test_server_send_cap_dark_neighbours_take_only_their_probes()
 
 REGISTER_UNIT_TEST( test_server_send_cap_dark_neighbours_take_only_their_probes );
 
+// Per-client scope (standard/MESSAGES.md m1.8) under each neighbour's own
+// send budget (m9.4): three live neighbours at 16 kbps, each queued more
+// than its bucket pays every tick, so most updates its budget refuses the
+// packet it has due (reliable, or unreliable records all over budget). A
+// refused packet is never sent, so it must take no frame of the shared
+// per-update capacity: the healthy client, offered more than the cap every
+// tick, gets exactly the cap less the packets the neighbours really sent.
+
+enum fair_neighbour_mode_t
+{
+    FAIR_NEIGHBOURS_IDLE,
+    FAIR_NEIGHBOURS_RELIABLE_OVER_BUDGET,
+    FAIR_NEIGHBOURS_UNRELIABLE_OVER_BUDGET,
+};
+
+static void fair_budget_run( fair_neighbour_mode_t mode, int * received, int * neighbour_sent, int ticks, uint64_t * frames_aborted )
+{
+    const int healthy = FAIR_MAX_CLIENTS - 1;
+    fair_world_t world;
+    fair_world_create( &world, FAIR_MAX_CLIENTS, FAIR_MAX_CLIENTS );
+    for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+    {
+        fair_connect( &world, c, 0x9400 + (uint64_t) c );
+    }
+
+    for ( int c = 0; c < healthy; c++ )
+    {
+        check( rocketnet_server_set_send_kbps( world.server, world.server_index[c], 16 ) == ROCKETNET_STATUS_OK );
+    }
+
+    for ( int tick = 0; tick < ticks; tick++ )
+    {
+        received[tick] = 0;
+        neighbour_sent[tick] = 0;
+
+        fair_now = world.time;
+        for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+        {
+            rocketnet_client_update( world.clients[c], world.time );
+            const struct rocketnet_message_batch_t * batch = NULL;
+            while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
+            {
+                received[tick] += c == healthy ? batch->num_messages : 0;
+            }
+            rocketnet_client_send_packets( world.clients[c] );
+        }
+
+        fair_server_update( &world );
+        while ( rocketnet_server_receive_messages( world.server ) != NULL )
+        {
+        }
+
+        for ( int c = 0; mode != FAIR_NEIGHBOURS_IDLE && c < healthy; c++ )
+        {
+            const bool reliable = mode == FAIR_NEIGHBOURS_RELIABLE_OVER_BUDGET;
+            const int bytes = reliable ? 1000 : 600;
+            uint8_t * out = rocketnet_server_start_message( world.server, (uint64_t) world.server_index[c], reliable ? FAIR_CHANNEL_RELIABLE : FAIR_CHANNEL_UNRELIABLE,
+                                                            reliable ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+            check( out != NULL );
+            if ( out )
+            {
+                memset( out, tick, (size_t) bytes );
+                check( rocketnet_server_finish_message( world.server, bytes ) != 0 );
+            }
+        }
+
+        for ( int k = 0; k < FAIR_MAX_CLIENTS; k++ )
+        {
+            uint8_t * out = rocketnet_server_start_message( world.server, (uint64_t) world.server_index[healthy], FAIR_CHANNEL_RELIABLE,
+                                                            ROCKETNET_RELIABILITY_RELIABLE, 1200 );
+            check( out != NULL );
+            if ( out )
+            {
+                memset( out, tick, 1200 );
+                check( rocketnet_server_finish_message( world.server, 1200 ) != 0 );
+            }
+        }
+
+        uint64_t before[FAIR_MAX_CLIENTS];
+        for ( int c = 0; c < healthy; c++ )
+        {
+            before[c] = rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent;
+        }
+
+        rn_send_pass_cost_reset();
+        rocketnet_server_send_packets( world.server );
+        *frames_aborted += rn_send_pass_cost_read().frames_aborted;
+
+        for ( int c = 0; c < healthy; c++ )
+        {
+            neighbour_sent[tick] += (int) ( rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent - before[c] );
+        }
+
+        world.time += FAIR_DT;
+
+        for ( int c = 0; c < FAIR_MAX_CLIENTS; c++ )
+        {
+            check( rocketnet_server_client_connected( world.server, world.server_index[c] ) != 0 );
+        }
+    }
+
+    fair_world_destroy( &world );
+}
+
+static void fair_budget_case( fair_neighbour_mode_t mode )
+{
+    const int ticks = 60;
+    int idle_received[60];
+    int idle_sent[60];
+    int busy_received[60];
+    int busy_sent[60];
+    uint64_t idle_aborted = 0;
+    uint64_t busy_aborted = 0;
+    fair_budget_run( FAIR_NEIGHBOURS_IDLE, idle_received, idle_sent, ticks, &idle_aborted );
+    fair_budget_run( mode, busy_received, busy_sent, ticks, &busy_aborted );
+
+    // the send pass started no frame it then aborted (the development seam
+    // counts every abort in rn_message_connection_write)
+
+    check( idle_aborted == 0 );
+    check( busy_aborted == 0 );
+
+    int refused_updates = 0;
+    int healthy_total = 0;
+    int neighbour_total = 0;
+    for ( int tick = 10; tick < ticks - 1; tick++ )
+    {
+        refused_updates += busy_sent[tick] < FAIR_MAX_CLIENTS - 1 ? 1 : 0;
+        healthy_total += busy_received[tick + 1];
+        neighbour_total += busy_sent[tick];
+    }
+
+    printf( "    [%s] healthy %.2f per tick, neighbours sent %.2f per tick (idle: 4.00, 0.00) over %d updates\n",
+            mode == FAIR_NEIGHBOURS_RELIABLE_OVER_BUDGET ? "reliable over budget" : "unreliable over budget",
+            (double) healthy_total / (double) ( ticks - 11 ), (double) neighbour_total / (double) ( ticks - 11 ), ticks - 11 );
+
+    for ( int tick = 10; tick < ticks - 1; tick++ )
+    {
+        // what the server sent in update tick, the healthy client receives in update tick + 1
+
+        check( idle_sent[tick] == 0 );
+        check( idle_received[tick + 1] == FAIR_MAX_CLIENTS );
+        check( busy_received[tick + 1] == idle_received[tick + 1] - busy_sent[tick] );
+    }
+
+    // the budget refused a neighbour's due packet in most updates
+    check( refused_updates > ( ticks - 11 ) / 2 );
+}
+
+static void test_server_send_cap_budget_refused_reliable_takes_no_slot()
+{
+    fair_budget_case( FAIR_NEIGHBOURS_RELIABLE_OVER_BUDGET );
+}
+
+static void test_server_send_cap_unreliable_over_budget_takes_no_slot()
+{
+    fair_budget_case( FAIR_NEIGHBOURS_UNRELIABLE_OVER_BUDGET );
+}
+
+REGISTER_UNIT_TEST( test_server_send_cap_budget_refused_reliable_takes_no_slot );
+REGISTER_UNIT_TEST( test_server_send_cap_unreliable_over_budget_takes_no_slot );
+
 static void test_server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
