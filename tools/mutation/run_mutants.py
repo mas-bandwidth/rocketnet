@@ -870,7 +870,7 @@ def main():
     for key, title in (("report", "REPORTED (not failing)"), ("not_judged_here", "NOT JUDGED HERE (AF_XDP)"), ("fail", "FAILING")):
         for m in chosen:
             if m.get("verdict") == key:
-                print(f"{title}: {m['file']}:{m['line']} {m['operator']} "
+                print(f"{title}: {m['file']}:{m['line']} {m['class']}-class {m['operator']} "
                       f"{m['original'].strip()}  ->  {m['mutated'].strip()}")
     print(f"\nsummary: {json.dumps(summary)}\nresults: {out}")
     if verdicts["fail"]:
