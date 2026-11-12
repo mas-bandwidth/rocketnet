@@ -32,6 +32,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   channel-seed-sweep:
     runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]
@@ -47,7 +51,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -91,7 +94,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"

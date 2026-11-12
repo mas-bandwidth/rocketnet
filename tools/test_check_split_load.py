@@ -182,6 +182,13 @@ class SplitReceiptTests(unittest.TestCase):
             validate(server, shards, RUN, 2, 60, 1000.0,
                      allocation_manifest=allocation(server, shards), load="full")
 
+    def test_zero_inputs_fail(self):
+        # zero inputs is an error: an empty server log, no shard or empty shards never pass
+        server, shards = fixture()
+        for case_server, case_shards in (("", shards), (server, []), (server, ["", ""]), ("", [])):
+            with self.assertRaises(ValueError):
+                validate(case_server, case_shards, RUN, 2, 60, 1000.0, allocation_manifest={})
+
     def test_missing_shard(self):
         server, shards = fixture()
         with self.assertRaisesRegex(ValueError, "missing client shard"):

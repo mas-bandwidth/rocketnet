@@ -337,8 +337,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", default="build", help="build directory (default: build)")
     parser.add_argument("--config", default=None, help="Windows configuration, such as Release")
+    parser.add_argument("--root", default=None, help="tree holding examples/*.c and bin/ (default: this repository)")
     args = parser.parse_args()
 
+    global ROOT, EXAMPLES
+    if args.root is not None:
+        ROOT = Path(args.root).resolve()
+        EXAMPLES = ROOT / "examples"
     build = Path(args.build)
     if not build.is_absolute():
         build = (Path.cwd() / build).resolve()
@@ -346,7 +351,7 @@ def main():
 
     names = {path.stem for path in EXAMPLES.glob("*.c")}
     if not names:
-        print("FAIL: no examples/*.c", file=sys.stderr)
+        print(f"FAIL: 0 examples: no examples/*.c under {ROOT}", file=sys.stderr)
         return 1
 
     pair_bases = {
@@ -383,6 +388,9 @@ def main():
         if (extra.get("no_drive_environment") or extra.get("suffixless_argv0")) and os.name != "nt":
             continue
         name, args, environment = extra["run"], extra.get("args", []), extra.get("env", {})
+        if name not in binaries and name not in pairs:
+            print(f"FAIL: a further run names example_{name}, which is not among the examples", file=sys.stderr)
+            return 1
         label = " ".join([name, *args, *(f"{k}={v}" for k, v in environment.items()),
                           *(["(from a path with a space and a $)"] if extra.get("odd_path") else []),
                           *(["(without Windows drive environment entries)"] if extra.get("no_drive_environment") else []),

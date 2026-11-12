@@ -27,6 +27,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   soak:
     strategy:
@@ -42,7 +46,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -88,7 +91,6 @@ jobs:
       # expected server transport, and end with the fd and thread counts it
       # started with. A runner with no VM tier fails the xdp cell.
       - name: Many-client load (1000 clients, every Linux server cell)
-        shell: bash
         run: |
           set -euo pipefail
           ulimit -n 65536 || ulimit -n "$(ulimit -Hn)"
@@ -204,21 +206,31 @@ jobs:
           scripts/vm-boot-guard --marker "$guest/started" -- \
             vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
-          grep '^VM-BOOT-GUARD' "$guest/vm.log" || true
-          peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" 2>/dev/null | tail -n 1) || true
+          # grep exits 1 on no match (fine) and 2 on an unreadable log (red)
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]
+          peak_kib=""
+          if [ -f "$guest/xdp.time" ]; then
+            peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" | tail -n 1)
+          fi
           echo "LOAD cell=xdp guest_peak_rss_kib=${peak_kib:-unknown} need_bytes=$need_bytes guest_memory=${guest_gib}G"
           if [ -n "${peak_kib:-}" ] && [ $((peak_kib * 1024)) -gt $(( 1000 * touched_per_client_bytes )) ]; then
             echo "LOAD cell=xdp WARN peak RSS is above the measured touched bytes; re-measure touched_per_client_bytes (docs/LOAD.md)"
           fi
-          line=$(grep '^load: connected' "$guest/xdp.out" 2>/dev/null | tail -n 1) || true
-          [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
+          line=""
+          if [ -f "$guest/xdp.out" ]; then
+            line=$(grep '^load: connected' "$guest/xdp.out" | tail -n 1) || [ $? -eq 1 ]
+          fi
+          if [ -z "$line" ]; then
+            for log in "$guest/vm.log" "$guest/xdp.err"; do
+              if [ -f "$log" ]; then tail -n 60 "$log"; else echo "($log missing)"; fi
+            done
+          fi
           xdp_status=$(cat "$guest/xdp.exit" 2>/dev/null) || xdp_status="missing"
           [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
           check_cell xdp xdp "$line"
 
       - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
         if: runner.os == 'Linux'
-        shell: bash
         run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
 
       # Path outages on real UDP sockets (scripts/outage-pair-real): two
@@ -230,13 +242,11 @@ jobs:
       # the client CONNECTION_TIMED_OUT before the path comes back.
       - name: Outages at T - 1 survive and at T + 2 time out (two namespaces, netem, virtme-ng guest)
         if: runner.os == 'Linux'
-        shell: bash
         run: bash scripts/outage-pair-real --vm --log-dir "$PWD/build/outage-pair-real"
 
       - name: Artifact name for the ref
         id: refslug
         if: always() && runner.os == 'Linux'
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -267,7 +277,6 @@ jobs:
         run: make -j4
 
       - name: Run the enabled low-tick load case on an idle host
-        shell: bash
         run: |
           set -euo pipefail
           cores=$(nproc)
@@ -314,7 +323,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -336,14 +344,12 @@ jobs:
         run: make
 
       - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
-        shell: bash
         run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -370,7 +376,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -418,7 +423,6 @@ jobs:
         run: ./bin/soak 200000
 
       - name: Per-transport impaired soaks (1800 s each, flat resources)
-        shell: bash
         run: |
           set -uo pipefail
           # the impairment at both ends of the link simulator, the names soak
@@ -476,6 +480,9 @@ jobs:
     # rio server cells add 1800 s each, about 109 minutes in all. Those measurements
     # predate removal of the nightly elapsed caps; the finite scenarios are unchanged.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false
@@ -494,23 +501,32 @@ jobs:
 
       - name: Tests (Windows)
         shell: bash
-        run: ./bin/Release/test.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test.exe
 
       - name: Simulator wire audit (Windows)
         shell: bash
-        run: ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
+        run: |
+          set -euo pipefail
+          ROCKETNET_SOAK_SIM_AUDIT=1 ./bin/Release/soak_sim.exe 100000
 
       - name: Simulator soak (Windows)
         shell: bash
-        run: ./bin/Release/soak_sim.exe 10000000
+        run: |
+          set -euo pipefail
+          ./bin/Release/soak_sim.exe 10000000
 
       - name: UDP loopback soak (Windows)
         shell: bash
-        run: ./bin/Release/soak.exe 200000
+        run: |
+          set -euo pipefail
+          ./bin/Release/soak.exe 200000
 
       - name: Portable transport soak under loss, jitter and duplication (Windows)
         shell: bash
         run: |
+          set -euo pipefail
           set -uo pipefail
           # the portable server with the portable client, impaired at both
           # ends of the link simulator under the names soak writes into the
@@ -561,6 +577,7 @@ jobs:
       - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
         shell: bash
         run: |
+          set -euo pipefail
           set -uo pipefail
           seconds=1800
           want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
@@ -650,7 +667,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -702,7 +718,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -730,7 +745,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Test the frame-budget checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -738,7 +752,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the server-calls checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -746,7 +759,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the split-load checker's receipts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -754,7 +766,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the test-environment checker's inventory
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -762,7 +773,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the 1000-client load profiler's provenance
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -770,7 +780,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the release-version block and workflow
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }

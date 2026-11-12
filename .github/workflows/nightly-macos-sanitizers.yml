@@ -54,6 +54,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   sanitizers-macos:
     name: macOS ${{ matrix.leg }}
@@ -68,7 +72,7 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg: [asan+ubsan, tsan, leaks]
     concurrency:
-      group: nightly-macos-sanitizers-${{ matrix.ref }}-${{ matrix.leg }}
+      group: nightly-macos-sanitizers-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.leg }}
       cancel-in-progress: true
     env:
       CC: /usr/bin/clang
@@ -83,7 +87,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the member's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -97,7 +100,6 @@ jobs:
           exit "$missing"
 
       - name: Configure
-        shell: bash
         env:
           LEG: ${{ matrix.leg }}
         run: |
@@ -117,7 +119,6 @@ jobs:
       # the leaks leg's per-case runner, written once and called by the four run steps below
       - name: Write the leaks runner
         if: matrix.leg == 'leaks'
-        shell: bash
         run: |
           cat > "$RUNNER_TEMP/leaks_cases.sh" <<'EOF'
           # leaks_cases.sh <suite binary> <log dir>
@@ -164,7 +165,6 @@ jobs:
 
       - name: Unit suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: msgx
           ROCKETNET_CLIENT_TRANSPORT: msgx
@@ -175,7 +175,6 @@ jobs:
 
       - name: Functional suite, msgx
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: msgx
           ROCKETNET_CLIENT_TRANSPORT: msgx
@@ -188,7 +187,6 @@ jobs:
 
       - name: Functional suite, portable
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -203,7 +201,6 @@ jobs:
       - name: Artifact name for the ref and leg
         id: slug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
           LEG: ${{ matrix.leg }}

@@ -88,7 +88,7 @@ def evaluate(expressions):
 def check(files):
     found = [(path, number, expression, stated) for path in files for number, expression, stated in statements(path)]
     if not found:
-        print("FAIL: no bound statements found under proofs/cbmc", file=sys.stderr)
+        print(f"FAIL: 0 bound statements found in {len(files)} record files: nothing was checked", file=sys.stderr)
         return False
     values = evaluate([expression for _, _, expression, _ in found])
     ok = True
@@ -128,10 +128,12 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--self-test", action="store_true", help="require a planted stale statement to be refused")
+    parser.add_argument("--proofs", type=Path, default=PROOFS,
+                        help="the records directory to read (default proofs/cbmc); no statement there is an error")
     args = parser.parse_args()
     if args.self_test:
         return 0 if self_test() else 1
-    files = sorted(path for pattern in ("**/*.md", "**/*.c") for path in PROOFS.glob(pattern))
+    files = sorted(path for pattern in ("**/*.md", "**/*.c") for path in args.proofs.glob(pattern))
     return 0 if check(files) else 1
 
 

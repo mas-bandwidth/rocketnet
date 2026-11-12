@@ -58,4 +58,27 @@ if ! grep -q "clang-format-18 not found" "$tmp/missing.out"; then
     exit 1
 fi
 
+# zero inputs: a repository with no tracked source, and a git that cannot
+# list, are both red (CLANG_FORMAT=true: no file reaches the formatter)
+mkdir "$tmp/empty"
+git -C "$tmp/empty" init -q
+set +e
+(cd "$tmp/empty" && CLANG_FORMAT=true sh "$SCRIPT") >"$tmp/empty.out" 2>&1
+rc=$?
+set -e
+if [ "$rc" -ne 1 ] || ! grep -q "0 files to check" "$tmp/empty.out"; then
+    echo "FAIL: zero tracked sources expected exit 1 with '0 files to check', got $rc" >&2
+    cat "$tmp/empty.out" >&2
+    exit 1
+fi
+set +e
+GIT_DIR=/nonexistent CLANG_FORMAT=true sh "$SCRIPT" >"$tmp/nogit.out" 2>&1
+rc=$?
+set -e
+if [ "$rc" -eq 0 ]; then
+    echo "FAIL: a git that cannot list passed the format check" >&2
+    cat "$tmp/nogit.out" >&2
+    exit 1
+fi
+
 echo "ok: check_format.sh fixture checks passed"

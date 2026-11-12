@@ -68,13 +68,17 @@ if [ "${1:-}" = "--self-test" ]; then
   done
   printf 'jobs:\n  a:\n    runs-on:\n      - ubuntu-latest\n' > "$d/bad.yml"
   if check "$d/bad.yml" >/dev/null; then echo "self-test: hosted block list was accepted"; exit 1; fi
+  # zero inputs: a tree with no workflow files is red, never "nothing to refuse"
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  mkdir "$d/empty"
+  if (cd "$d/empty" && sh "$self" >/dev/null); then echo "self-test: zero workflow files was accepted"; exit 1; fi
   echo "check-runs-on self-test: ok"
   exit 0
 fi
 
 if [ $# -eq 0 ]; then
   set -- $(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null)
-  [ $# -gt 0 ] || { echo "check-runs-on: no workflows"; exit 0; }
+  [ $# -gt 0 ] || { echo "check-runs-on: 0 workflow files under .github/workflows: nothing was checked"; exit 1; }
 fi
 if check "$@"; then echo "check-runs-on: every runs-on selects the fleet ($# workflow files)"; exit 0; fi
 echo "check-runs-on: GitHub-hosted runners are refused (owner, 2026-10-18: \"all CI should run on our fleet, not github\")"

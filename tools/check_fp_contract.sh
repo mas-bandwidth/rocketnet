@@ -110,6 +110,9 @@ has_floor()
     return 1
 }
 
+# compiler invocations judged so far, over every file: zero is an error
+invocations=0
+
 check_file()
 {
     local f="$1"
@@ -214,6 +217,7 @@ check_file()
             ''|'#'*) buf=""; continue ;;
         esac
         if [[ "$f" == *.py && "$line" =~ ^subprocess\.(run|check_call|check_output)\((flags[[:space:]]*\+|\[[[:space:]]*compiler,) ]]; then
+            invocations=$((invocations + 1))
             if [[ "$line" == *"flags"* ]]; then
                 if [ "$ok_py_flags" -ne 1 ] && ! has_literal_floor "$line" "clang++"; then
                     echo "$f:$start_line: Python compiler invocation without verified -ffp-contract=off: $line"
@@ -253,6 +257,7 @@ check_file()
                     fi
                     ;;
             esac
+            invocations=$((invocations + 1))
             if ! has_floor "$buf" "$cmd" "$ok_cflags" "$ok_cxxflags" "$ok_flags"; then
                 echo "$f:$start_line: compiler invocation missing -ffp-contract=off, /fp:precise (cl) or -Xclang -ffp-contract=off (clang-cl): $buf"
                 file_bad=1
@@ -335,7 +340,14 @@ run_selftest()
         return 1
     fi
 
-    echo "check_fp_contract self-test: ok (7 negative and 3 positive cases)"
+    # 9. Zero inputs: a file with no compiler invocation checks nothing and must fail.
+    : > "$tmp/empty.sh"
+    if bash "${BASH_SOURCE[0]}" "$tmp/empty.sh" >/dev/null 2>&1; then
+        echo "check_fp_contract self-test failed: zero compiler invocations passed" >&2
+        return 1
+    fi
+
+    echo "check_fp_contract self-test: ok (8 negative and 3 positive cases)"
     return 0
 }
 
@@ -357,7 +369,11 @@ for f in "${files[@]}"; do
     fi
 done
 
+if [ "$invocations" -eq 0 ]; then
+    echo "check_fp_contract: 0 compiler invocations in ${#files[@]} files: nothing was checked"
+    bad=1
+fi
 if [ "$bad" -eq 0 ]; then
-    echo "ok: every compiler invocation carries the FP floor"
+    echo "ok: every compiler invocation carries the FP floor ($invocations invocations in ${#files[@]} files)"
 fi
 exit "$bad"

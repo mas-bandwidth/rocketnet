@@ -223,6 +223,13 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("Required outcomes match (5 rows)", text)
 
+    def test_zero_cases_or_rows_rejected(self):
+        # zero inputs is an error: header-only ledgers never pass
+        for cases, runs in (([], []), ([case_row()], []), ([], [run_row()])):
+            code, text = self.run_fixture(cases, runs)
+            self.assertEqual(code, 1, text)
+            self.assertIn("nothing was checked", text)
+
     def test_pass_row_with_wrong_exit_for_invariant_rejected(self):
         cases = [case_row("MCInv.cfg", "MCInv.tla", "invariant", "NoLeak")]
         runs = [run_row("MCInv.cfg", "MCInv.tla", "invariant", "NoLeak", "0", "PASS")]
@@ -328,6 +335,39 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertIn("MCPass.cfg: not a bounded measurement", text)
         self.assertIn("MCPass.cfg: different JAR", text)
         self.assertIn("MCPass.cfg: PASS row requires positive generated/distinct state counts", text)
+
+
+class NightlyDebtTest(unittest.TestCase):
+    """NIGHTLY-DEBT.tsv beside the committed ledgers: green as committed, red for each plant."""
+
+    def check_with(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            committed = check_tla_records.DEFAULT_CASES.parent
+            for name in ("CASES.tsv", "RUNS.tsv"):
+                (tla / name).write_bytes((committed / name).read_bytes())
+            if text is not None:
+                (tla / "NIGHTLY-DEBT.tsv").write_text(text, encoding="utf-8")
+            out = io.StringIO()
+            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+            return code, out.getvalue()
+
+    def test_committed_nightly_debt_and_plants(self):
+        committed = (check_tla_records.DEFAULT_CASES.parent / "NIGHTLY-DEBT.tsv").read_text(encoding="utf-8")
+        code, text = self.check_with(committed)
+        self.assertEqual(code, 0, text)
+        code, text = self.check_with(None)
+        self.assertEqual(code, 0, text)
+        header = committed.splitlines()[0] + "\n"
+        for row, want in (
+                ("MCRNRing.cfg\t900\t12\tbench\t222691\t79377\n", "MCRNRing.cfg: not declared timeout debt"),
+                ("MCReplayWindowMid.cfg\t600\t335.6\tbench\t69206063\t3145729\n",
+                 "MCReplayWindowMid.cfg: budget_s 600 is under twice measured_s 335.6"),
+                ("MCReplayWindowMid.cfg\t900\t335.6\tbench\t0\t3145729\n", "positive counts of a complete run")):
+            with self.subTest(want=want):
+                code, text = self.check_with(header + row)
+                self.assertEqual(code, 1, text)
+                self.assertIn(want, text)
 
 
 if __name__ == "__main__":

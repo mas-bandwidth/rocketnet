@@ -30,6 +30,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   leaks:
     name: asan + ubsan + lsan (full suite)
@@ -40,7 +44,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-leaks-${{ matrix.ref }}
+      group: nightly-leaks-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -49,7 +53,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -104,7 +107,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"

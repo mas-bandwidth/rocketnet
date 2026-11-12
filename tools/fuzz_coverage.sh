@@ -198,6 +198,10 @@ for t in "${TARGETS[@]}" all; do
     printf "%-36s %s\n" "$t" "$(report "$OUT/$t.profdata" "$ROOT/sdk")"
 done
 
-$LLVM_COV report "$PRIMARY" "${OBJECTS[@]}" -instr-profile="$OUT/all.profdata" "$ROOT/sdk" > "$OUT/all_vs_sdk.report.txt" 2>/dev/null || true
+if ! $LLVM_COV report "$PRIMARY" "${OBJECTS[@]}" -instr-profile="$OUT/all.profdata" "$ROOT/sdk" > "$OUT/all_vs_sdk.report.txt" 2> "$OUT/all_vs_sdk.report.err"; then
+    echo "fuzz_coverage: llvm-cov report of all targets against sdk/ failed:" >&2
+    cat "$OUT/all_vs_sdk.report.err" >&2
+    exit 1
+fi
 echo
 echo "(profiles and the full report in $OUT)"

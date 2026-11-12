@@ -99,7 +99,7 @@ def load_compile_db():
 def parser_files():
     files = set()
     sdk = os.path.join(ROOT, "sdk")
-    for name in sorted(os.listdir(sdk)):
+    for name in sorted(os.listdir(sdk)) if os.path.isdir(sdk) else []:
         if not name.endswith(".cpp"):
             continue
         path = os.path.join(sdk, name)
@@ -220,7 +220,22 @@ def main():
                         help="baseline file to compare against")
     parser.add_argument("--report", metavar="PATH",
                         help="write the finding set to this path")
+    parser.add_argument("--root", metavar="DIR",
+                        help="the tree to analyze (default: this repository); 0 parser units is an error")
     args = parser.parse_args()
+    if args.root:
+        global ROOT, BUILD, COMPILE_DB
+        ROOT = os.path.abspath(args.root)
+        BUILD = os.path.join(ROOT, "build")
+        COMPILE_DB = os.path.join(BUILD, "compile_commands.json")
+
+    # zero inputs is an error: with no parser translation unit the analyzer
+    # runs over nothing and an empty baseline would match
+    units = parser_files()
+    if not units:
+        print("static gate FAILED: 0 parser translation units under %s: nothing was analyzed"
+              % os.path.join(ROOT, "sdk"))
+        return 1
 
     ensure_compile_db()
     try:
@@ -265,7 +280,7 @@ def main():
         check = line.split("\t")[2]
         counts[check] = counts.get(check, 0) + 1
 
-    print("static gate: %d findings, baseline %d" % (len(now), len(baseline)))
+    print("static gate: %d findings in %d translation units, baseline %d" % (len(now), len(units), len(baseline)))
     for check in sorted(counts):
         print("  %-52s %d" % (check, counts[check]))
 

@@ -102,6 +102,14 @@ trace changes what a run does; it updates the reference here and
 per-commit Release unit job reads its pin from there), from
 three equal PASS lines.
 
+The nightly holds the fixed range and every fault schedule the same way:
+`DST_FIXED_TRACE` (`--seeds 1-2050`) and one `DST_TRACE_<SCHEDULE>` per
+schedule (`--seeds 1-50 --schedule <name>`) in the same workflow, each equal
+on Linux, macOS and Windows in run 43203428903 (main 555eb5963). A step whose
+PASS line differs is red with `TRACE-MISMATCH`; a change that moves one
+updates it from three equal PASS lines. The nightly sweep's trace is printed
+and not compared: its range rolls each night and differs per OS.
+
 ## The nightly
 
 `.github/workflows/nightly-dst.yml` runs every night (and by

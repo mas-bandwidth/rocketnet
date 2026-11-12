@@ -1,10 +1,38 @@
-# The release gate on the TLA+ records. It runs every case of a stale group
-# that is not timeout debt, with no project elapsed-time cutoff, then requires
-# every committed record to be current and every non-PASS record to be
-# declared timeout debt with its reason (tools/check_tla_records.py). It never
-# runs a timeout-debt case: those have taken up to 87 hours each (run
-# 41337755290), so with them the gate could not finish. They run in
-# tlc-debt.yml, a watch that is not a release gate.
+# The release gate on the TLA+ records, and the nightly re-run of the models.
+#
+# `Model records are current` runs every case of a stale group that is not
+# timeout debt, with no project elapsed-time cutoff, then requires every
+# committed record to be current and every non-PASS record to be declared
+# timeout debt with its reason (tools/check_tla_records.py). Per-commit CI
+# refuses a stale record, so on main this job normally runs no model: it
+# checks the records as text.
+#
+# `TLC re-run slice K/N` (scheduled) and `TLC re-run full` (dispatch with
+# full) run the models. Each night re-runs one slice of every case that is not
+# timeout debt: the cases whose slice key (SHA-256 of "<group>/<config>",
+# never a line number) modulo N is K, with K the UTC day number modulo N
+# (tools/plan_tlc_nightly.py, SLICES; N = 3, the arithmetic is there: a slice
+# is about 300 cases and 2025 s of recorded time at most, under an hour on a
+# loaded 4-CPU runner; the whole inventory every three nights). Each fresh
+# result is held to its RUNS.tsv record by tools/compare_tlc_rerun.py: result,
+# exit, violated property, input fingerprint, JAR, workers, and the generated
+# and distinct counts; any difference fails by case name. So a record that
+# no longer matches its model (a hand-edited fingerprint, a witness that
+# stopped failing, a count typed in) goes red within N nights. An empty slice
+# is red.
+#
+# Nightly debt: timeout debt that finishes in minutes (over the pinned
+# tlacheck's 110 s record cap, so its bounded record stays FAIL/124) is listed
+# in proofs/tla/NIGHTLY-DEBT.tsv and runs in every slice, first, each under
+# `timeout` at its budget_s (at least twice its slowest measurement; 900 s for
+# the three listed, measured 292 to 380 s), held to the completed result and
+# counts its row records. That adds about 1010 s of measured time a night,
+# about 505 s at two at once (they ran in 167 to 178 s each on a 4-CPU bench
+# slot). tools/check_tla_records.py checks the file on every commit.
+#
+# Neither job runs any other timeout-debt case: those have taken up to 87
+# hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch that
+# is not a release gate.
 # Finite models, configured properties, pinned engine/JAR, worker/heap limits
 # and bounded committed RUNS.tsv records are unchanged. Separate nightly JSON
 # evidence records outcomes; it must never be merged as a bounded measurement.
@@ -15,6 +43,11 @@ on:
   schedule:
     - cron: "0 5 * * *"   # daily at 05:00 UTC, before the nightly proofs
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Re-run every non-debt case (job `TLC re-run full`; 894 cases, about 5400 s of recorded single-case time, run nproc/2 at once) instead of today's slice"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,6 +59,10 @@ concurrency:
   group: tlc-records-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   stale:
     name: Model records are current
@@ -36,16 +73,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Model coverage rows are true
-        shell: bash
         run: python3 tools/check_tla_coverage.py --all --actions-strict
       - name: Coverage checker tests pass
-        shell: bash
         run: python3 tools/test_check_tla_coverage.py
       - name: Nightly case planner controls pass
-        shell: bash
         run: python3 tools/test_plan_tlc_nightly.py
       - name: Check the fleet's Go is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
@@ -62,7 +95,6 @@ jobs:
             echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
           fi
       - name: Build the pinned public runner and check records
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -123,7 +155,6 @@ jobs:
       # bounded FAIL/124 of a CASES.tsv bench row that declares the debt and
       # its reason, and check_tla_records.py refuses any other non-PASS record.
       - name: Check required outcomes and explicit timeout debt
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/test_check_tla_records.py -v
@@ -131,7 +162,6 @@ jobs:
           # The pinned tlacheck agrees: no committed record is stale.
           [ "$(cat "$TLC_EVIDENCE/stale.json")" = "[]" ] || { echo "TLC-STALE committed records: $(cat "$TLC_EVIDENCE/stale.json")"; exit 1; }
       - name: TLA ledgers merge clean
-        shell: bash
         run: |
           python3 tools/check_tla_ledger_merge.py
 
@@ -155,5 +185,141 @@ jobs:
 
       - name: Remove temporary proof state after preserving evidence
         if: always() && env.TLC_EVIDENCE != '' && steps.nightly-evidence.outcome == 'success'
-        shell: bash
+        run: rm -rf -- "$TLC_EVIDENCE"
+
+  # The night's selection, so the re-run job can carry K and N in its name.
+  # Red when the slice holds zero cases.
+  rerun-plan:
+    name: TLC re-run plan
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 10
+    outputs:
+      title: ${{ steps.plan.outputs.title }}
+      slice: ${{ steps.plan.outputs.slice }}
+      count: ${{ steps.plan.outputs.count }}
+      args: ${{ steps.plan.outputs.args }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Nightly case planner controls pass
+        run: python3 tools/test_plan_tlc_nightly.py
+      - name: Choose the night's slice
+        id: plan
+        env:
+          FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.full }}
+        run: |
+          set -euo pipefail
+          if [ "$FULL" = "true" ]; then
+            args="--full"
+          else
+            args="--day $(( $(date -u +%s) / 86400 ))"
+          fi
+          # shellcheck disable=SC2086  # args is two words or one, by construction
+          python3 tools/plan_tlc_nightly.py --select rerun $args --outputs > "$RUNNER_TEMP/rerun-outputs"
+          cat "$RUNNER_TEMP/rerun-outputs"
+          cat "$RUNNER_TEMP/rerun-outputs" >> "$GITHUB_OUTPUT"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+
+  rerun:
+    name: ${{ needs.rerun-plan.outputs.title }}
+    needs: rerun-plan
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 600  # a full dispatch: 5400 s of recorded time at nproc/2, loaded
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Re-run comparer controls pass
+        run: python3 tools/test_compare_tlc_rerun.py
+      - name: Check the fleet's Go is on PATH
+        run: |
+          set -euo pipefail
+          # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
+          # version in any fingerprint), so any Go at or above 1.26.6 builds it; the fleet declares its own patch.
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go >= 1.26.6 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\1/p')"
+          patch="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\)\.\([0-9][0-9]*\)[ -].*/\2/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 26 ] || { [ "$minor" -eq 26 ] && [ "$patch" -lt 6 ]; }; then
+            echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
+          fi
+      - name: Re-run the slice and compare each result with its record
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+          GOFLAGS: -mod=readonly
+          RERUN_ARGS: ${{ needs.rerun-plan.outputs.args }}
+          RERUN_SLICE: ${{ needs.rerun-plan.outputs.slice }}
+        run: |
+          set -euo pipefail
+          job=$(mktemp -d "$RUNNER_TEMP/rocketnet-tlc-rerun.XXXXXX")
+          echo "TLC_EVIDENCE=$job" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$job/source-revision.txt"
+          # the pinned JAR, from the fleet's tla play
+          jar=/opt/tla/tla2tools.jar
+          want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+          if [ ! -f "$jar" ] || [ "$(sha256sum "$jar" | cut -d' ' -f1)" != "$want" ]; then
+            echo "TOOL-MISSING tla2tools.jar sha256 $want at $jar on $RUNNER_NAME"
+            exit 1
+          fi
+          if ! command -v java >/dev/null 2>&1; then
+            echo "TOOL-MISSING java on $RUNNER_NAME"
+            exit 1
+          fi
+          git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
+          git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
+          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
+          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
+          export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
+          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
+          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+
+          parallel=$(( $(nproc) / 2 ))
+          [ "$parallel" -ge 1 ] || parallel=1
+          echo "TLC-RERUN $RERUN_SLICE ($RERUN_ARGS) at $(cat "$job/source-revision.txt") on $RUNNER_NAME"
+          read -r -a args <<< "$RERUN_ARGS"
+          rc=0
+          TLC_NIGHTLY="$job/tlc-nightly" TLC_JAR="$jar" tools/tlc_rerun.sh "$job/rerun" "$parallel" "${args[@]}" || rc=$?
+          {
+            echo "### TLC re-run $RERUN_SLICE at $(cat "$job/source-revision.txt")"
+            echo
+            # grep exits 1 on no match (fine); a missing log is named, and the
+            # step's verdict is the re-run's own exit below
+            if [ -f "$job/rerun/rerun-plan.log" ]; then
+              grep -h '^TLC-RERUN ' "$job/rerun/rerun-plan.log" | sed 's/^/    /' || [ $? -eq 1 ]
+            else
+              echo "    (no rerun-plan.log)"
+            fi
+            if [ -f "$job/rerun/rerun-compare.log" ]; then
+              grep -h -e '^TLC-RERUN MISMATCH' -e '^TLC-RERUN-' -e '^TLC-RERUN adapter' "$job/rerun/rerun-compare.log" | sed 's/^/    /' || [ $? -eq 1 ]
+            else
+              echo "    (no rerun-compare.log)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Upload the re-run evidence
+        id: rerun-evidence
+        if: always() && env.TLC_EVIDENCE != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: tlc-rerun-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.TLC_EVIDENCE }}/*-revision.txt
+            ${{ env.TLC_EVIDENCE }}/*-sha256.txt
+            ${{ env.TLC_EVIDENCE }}/*.log
+            ${{ env.TLC_EVIDENCE }}/rerun/rerun-*
+            ${{ env.TLC_EVIDENCE }}/rerun/*.log
+            ${{ env.TLC_EVIDENCE }}/rerun/run-*/result.json
+            ${{ env.TLC_EVIDENCE }}/rerun/run-*/tlc.log
+            ${{ env.TLC_EVIDENCE }}/controls/**/result.json
+            ${{ env.TLC_EVIDENCE }}/controls/**/tlc.log
+          if-no-files-found: ignore
+
+      - name: Remove temporary proof state after preserving evidence
+        if: always() && env.TLC_EVIDENCE != '' && steps.rerun-evidence.outcome == 'success'
         run: rm -rf -- "$TLC_EVIDENCE"

@@ -58,6 +58,10 @@ def export_list_names(exports_path):
 def check(header_path, exports_path):
     declared = header_export_names(header_path)
     listed = export_list_names(exports_path)
+    if not declared:
+        # an empty or unparsed header matches an empty list and proves nothing
+        print(f"Header exports: 0 declared in {header_path}; nothing was checked", file=sys.stderr)
+        return 1
     missing = sorted(set(declared) - listed)
     extra = sorted(listed - set(declared))
     for name in missing:

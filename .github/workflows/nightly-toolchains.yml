@@ -1,0 +1,299 @@
+# THE TOOLCHAIN MATRIX: MORE THAN ONE COMPILER PER OPERATING SYSTEM.
+#
+# Every other leg builds with the one compiler its runner defaults to (gcc 15
+# and clang 21 on the fleet's Ubuntu 26.04 hosts, the VS 2026 MSVC default,
+# Apple clang). A game links this library into a project whose compiler it did
+# not choose, so this nightly builds the libraries, the unit suite and the
+# functional suite with the other compilers the fleet carries, with warnings
+# as errors (the CMake default), and runs both suites with each. A red leg is
+# a compiler that cannot build or run the tree.
+#
+#   windows / <toolset>     every MSVC toolset of Visual Studio 18 2026 on
+#                           the fleet Windows runner, x64 Release: v141 (MSVC
+#                           14.16), v142 (14.29), v143 (14.44), v145 at 14.51
+#                           (the default) and at 14.52. Each leg proves from
+#                           CMake's compiler record that the compiler it names
+#                           is the one that built (tools/check_toolchain_build.py
+#                           compiler). A toolset the runner lacks fails its
+#                           configure by name.
+#
+#   linux / clang-18        the oldest clang on the fleet's Ubuntu 26.04 hosts,
+#                           Debug and Release (clang 21, the default, is
+#                           nightly.yml's linux / clang; gcc 15, the default,
+#                           is every other leg; gcc 11 and 13 are built in
+#                           ci.yml's 22.04 and 24.04 distro containers).
+#
+#   macos / minimum target  the deployment target CMakeLists.txt claims (12.0),
+#                           set explicitly, Debug, on the fleet's Apple-silicon
+#                           runner; every Mach-O in bin/ must carry minos 12.0
+#                           in every slice (tools/check_toolchain_build.py
+#                           minos), and both suites run natively.
+#                           nightly-examples.yml checks the Release universal
+#                           dylib only.
+#
+# What is NOT here: clang-cl x64 and the MSVC ARM64 cross build (nightly.yml,
+# windows-toolchains). Native Windows ARM64 and a Linux aarch64 leg waited on
+# hardware or a cross toolchain the fleet does not carry, and were left on the
+# branch this file came from.
+#
+# ZERO WARNINGS. -Werror and /WX fail a compile on a compiler warning; each leg
+# also keeps its configure and build output and fails on any warning line left
+# in it, a linker, MSBuild or CMake warning that no -Werror reaches
+# (tools/check_toolchain_build.py warnings).
+#
+# Brought to main 2026-11-12 from branch nightly/toolchains, where its cron
+# never fired. Its one run there (2026-10-28): every Linux and macOS leg green
+# but gcc-15 Debug's functional suite; the Windows legs were cancelled unrun.
+
+name: nightly-toolchains
+
+on:
+  schedule:
+    - cron: "55 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+
+  # THE MSVC TOOLSETS. One leg per toolset, on the one Windows runner through
+  # its CI-hold hooks like every other Windows job. Each build writes its
+  # binaries under its own build directory, as windows-toolchains in
+  # nightly.yml does, so nothing replaces bin/.
+  windows-msvc:
+    name: windows / ${{ matrix.toolset.name }}
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        toolset:
+          - { name: v141 MSVC 14.16 (VS 2017), id: v141, cmake: "v141", msvc: "14.16" }
+          - { name: v142 MSVC 14.29 (VS 2019), id: v142, cmake: "v142", msvc: "14.29" }
+          - { name: v143 MSVC 14.44 (VS 2022), id: v143, cmake: "v143", msvc: "14.44" }
+          - { name: v145 MSVC 14.51 (VS 2026 default), id: v145-1451, cmake: "v145,version=14.51.36231", msvc: "14.51" }
+          - { name: v145 MSVC 14.52 (newest), id: v145-1452, cmake: "v145,version=14.52.36815", msvc: "14.52" }
+    # keyed by the event as well as the ref: a dispatch never cancels or
+    # displaces the scheduled night, and the night never cancels a dispatch
+    concurrency:
+      group: nightly-toolchains-windows-${{ github.event_name }}-${{ matrix.toolset.id }}-${{ matrix.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD: build-${{ matrix.toolset.id }}
+      LOGS: logs-${{ matrix.toolset.id }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          mkdir -p "$LOGS"
+          cmake -B "$BUILD" -G "Visual Studio 18 2026" -A x64 -T "${{ matrix.toolset.cmake }}" \
+            "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$BUILD/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$BUILD/bin" \
+            2>&1 | tr -d '\r' | tee "$LOGS/configure.log"
+
+      - name: The named toolset is the one that built
+        run: |
+          set -euo pipefail
+          python tools/check_toolchain_build.py compiler "$BUILD" "MSVC/${{ matrix.toolset.msvc }}."
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          cmake --build "$BUILD" --config Release --parallel 4 2>&1 | tr -d '\r' | tee "$LOGS/build.log"
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          set -euo pipefail
+          python tools/check_toolchain_build.py warnings "$LOGS/configure.log" "$LOGS/build.log"
+
+      - name: Unit suite
+        run: |
+          set -euo pipefail
+          "./$BUILD/bin/Release/test.exe"
+
+      - name: Functional suite
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          "./$BUILD/bin/Release/functional.exe"
+
+      - name: Upload the configure and build logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-toolchains-windows-${{ matrix.toolset.id }}-${{ github.run_id }}
+          path: ${{ env.LOGS }}
+          if-no-files-found: ignore
+
+  # THE OLDEST CLANG ON THE FLEET'S LINUX HOSTS, Debug and Release.
+  linux-compilers:
+    name: linux / ${{ matrix.compiler.cc }} ${{ matrix.build_type }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        build_type: [Debug, Release]
+        compiler:
+          - { cc: clang-18, cxx: clang++-18 }
+    concurrency:
+      group: nightly-toolchains-linux-${{ github.event_name }}-${{ matrix.compiler.cc }}-${{ matrix.build_type }}-${{ matrix.ref }}
+      cancel-in-progress: false
+    env:
+      CC_NAME: ${{ matrix.compiler.cc }}
+      CXX_NAME: ${{ matrix.compiler.cxx }}
+      BUILD_TYPE: ${{ matrix.build_type }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the compiler is present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd pkg-config "$CC_NAME" "$CXX_NAME"; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          "$CC_NAME" --version | head -n 1
+          "$CXX_NAME" --version | head -n 1
+          cmake -B build -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+            "-DCMAKE_C_COMPILER=$CC_NAME" "-DCMAKE_CXX_COMPILER=$CXX_NAME" \
+            2>&1 | tee logs/configure.log
+
+      - name: The named compiler is the one that built
+        run: |
+          set -euo pipefail
+          python3 tools/check_toolchain_build.py compiler build "/$CC_NAME" "/$CXX_NAME"
+
+      - name: Build static and shared libraries, unit suite and functional suite
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 2>&1 | tee logs/build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          set -euo pipefail
+          python3 tools/check_toolchain_build.py warnings logs/configure.log logs/build.log
+
+      - name: Unit suite
+        run: |
+          set -euo pipefail
+          ./bin/test
+
+      - name: Functional suite
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          ./bin/functional
+
+      - name: Upload the configure and build logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-toolchains-linux-${{ matrix.compiler.cc }}-${{ matrix.build_type }}-${{ github.run_id }}
+          path: logs
+          if-no-files-found: ignore
+
+  # THE MACOS MINIMUM DEPLOYMENT TARGET. CMakeLists.txt claims 12.0. This leg
+  # sets it explicitly, so a change to the default cannot move what is
+  # checked, builds Debug (examples-macos builds Release), fails on any
+  # warning (an API newer than 12.0 used unguarded is
+  # -Wunguarded-availability-new, an error under -Werror), reads minos from
+  # every slice of every Mach-O the build put in bin/, and runs both suites.
+  macos-minimum-target:
+    name: macos / minimum deployment target 12.0
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-toolchains-macos-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: false
+    env:
+      MINIMUM: "12.0"
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: The minimum checked is the minimum CMakeLists.txt claims
+        run: |
+          set -euo pipefail
+          grep -q "set(CMAKE_OSX_DEPLOYMENT_TARGET \"$MINIMUM\"" CMakeLists.txt
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          clang --version | head -n 1
+          xcrun --show-sdk-version
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_OSX_DEPLOYMENT_TARGET=$MINIMUM" 2>&1 | tee logs/configure.log
+
+      - name: Build static and shared libraries, unit suite and functional suite
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 4 2>&1 | tee logs/build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          set -euo pipefail
+          python3 tools/check_toolchain_build.py warnings logs/configure.log logs/build.log
+
+      - name: Every Mach-O in bin/ carries minos ${{ env.MINIMUM }} in every slice
+        run: |
+          set -euo pipefail
+          python3 tools/check_toolchain_build.py minos bin "$MINIMUM"
+
+      - name: Unit suite
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          ./bin/test
+
+      - name: Functional suite
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          ./bin/functional
+
+      - name: Upload the configure and build logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-toolchains-macos-${{ github.run_id }}
+          path: logs
+          if-no-files-found: ignore

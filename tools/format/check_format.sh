@@ -17,8 +17,11 @@ if ! command -v "$CLANG_FORMAT" >/dev/null 2>&1; then
 fi
 
 if [ $# -eq 0 ]; then
-    list="$(git ls-files -- '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.inc' \
-        | grep -vE '^(sodium|tests/xdp_host/linux|tests/xdp_host/bpf|tools/format/testdata)/' || true)"
+    # git on its own line: a git that cannot list stops the check (set -e)
+    tracked="$(git ls-files -- '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.inc')"
+    # grep -v exits 1 when every name is excluded: the count below refuses that
+    list="$(printf '%s\n' "$tracked" \
+        | grep -vE '^(sodium|tests/xdp_host/linux|tests/xdp_host/bpf|tools/format/testdata)/')" || [ $? -eq 1 ]
     IFS='
 '
     for f in $list; do
@@ -33,6 +36,10 @@ fi
 # one clang-format per processor at once; the unformatted names come back
 # sorted, so the report does not depend on which finished first
 total=$#
+if [ "$total" -eq 0 ]; then
+    echo "check_format.sh: 0 files to check (git listed no tracked C/C++ source)" >&2
+    exit 1
+fi
 bad=0
 if [ "$total" -gt 0 ]; then
     jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)

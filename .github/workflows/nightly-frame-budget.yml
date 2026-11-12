@@ -31,13 +31,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-frame-budget-${{ github.ref }}
+  group: nightly-frame-budget-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Test execution has no repository wall-clock cap; GitHub still limits
 # self-hosted jobs to five days.
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
   linux-frame-budget:
@@ -68,7 +72,7 @@ jobs:
     # Report-only: the fleet Mac is not reserved quiet (it also carries other
     # fleet work), so the budget is recorded rather than enforced. Its one
     # runner takes one job at a time, so no other workflow job overlaps the
-    # measurement, and the workflow concurrency group above keeps one run of
+    # measurement, and the workflow concurrency group above keeps one run of each event kind of
     # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
@@ -83,7 +87,6 @@ jobs:
           persist-credentials: false
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -127,6 +130,9 @@ jobs:
   windows-frame-budget:
     name: frame budget (${{ matrix.ref }} / windows-2025 portable report-only)
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: 7200
     strategy:
       fail-fast: false

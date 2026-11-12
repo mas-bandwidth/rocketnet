@@ -9,7 +9,13 @@
 # case. tlc.yml still requires each one to stay declared as debt with its
 # reason.
 #
-# The plan job lists the debt cases; each case is then its own job, two at a
+# Debt that finishes in minutes is not run here: proofs/tla/NIGHTLY-DEBT.tsv
+# lists it, and tlc.yml's nightly re-run runs it every night under its own
+# budget_s (tools/plan_tlc_nightly.py --select debt leaves it out).
+#
+# The plan job lists the debt cases (red when CASES.tsv declares debt and none
+# is planned; green with a TLC-DEBT line when none is declared); each case is
+# then its own job, two at a
 # time (max-parallel), on its own runner, with its own deadline of 96 hours (TLC_DEBT_SECONDS, above the
 # longest measured case) inside a job bound of 100 hours, and its own evidence
 # artifact (tlc-debt-<config>). A runner that dies loses that one case; the
@@ -29,8 +35,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: tlc-debt
+  group: tlc-debt-${{ github.event_name }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
   plan:
@@ -45,10 +55,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Nightly case planner controls pass
-        shell: bash
         run: python3 tools/test_plan_tlc_nightly.py
       - name: Check the fleet's Go is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # The pinned runner's go.mod says go 1.26.6: that is a minimum, not an exact version (tlacheck records no Go
@@ -66,7 +74,6 @@ jobs:
           fi
       - name: List the timeout-debt cases
         id: plan
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -78,8 +85,14 @@ jobs:
           (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
           "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
           cat "$job/stale.json"
-          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" --select debt > "$job/plan" 2> "$job/plan.log"
+          # Zero planned cases while CASES.tsv declares timeout debt is red (the
+          # planner refuses it); zero declared debt is green with its own
+          # line, "TLC-DEBT CASES.tsv declares no timeout debt", here and in
+          # the run summary.
+          python3 tools/plan_tlc_nightly.py --stale "$job/stale.json" --select debt > "$job/plan" 2> "$job/plan.log" \
+            || { cat "$job/plan.log"; exit 1; }
           cat "$job/plan.log"
+          grep -h -e '^TLC-DEBT ' -e '^TLC-PLAN cases=' "$job/plan.log" >> "$GITHUB_STEP_SUMMARY"
           # One matrix entry per case, from the planner's own lines:
           # TLC-PLAN <reason> <config> (<group> shard <i>/<n>)
           python3 - "$job/plan.log" "$job/plan" >> "$GITHUB_OUTPUT" <<'EOF'
@@ -122,7 +135,6 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the case to its declared result
-        shell: bash
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -168,7 +180,7 @@ jobs:
           if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
             line="CASE UNFINISHED config=$CASE_CONFIG seconds=$seconds deadline=${TLC_DEBT_SECONDS}s"
           else
-            line=$(grep -h '^CASE' "$job/case.log" || true)
+            line=$(grep -h '^CASE' "$job/case.log") || [ $? -eq 1 ]
             [ -n "$line" ] || line="CASE NO-RESULT config=$CASE_CONFIG seconds=$seconds exit=$rc"
           fi
           echo "$line" | tee "$job/outcome.txt"
@@ -203,5 +215,4 @@ jobs:
 
       - name: Remove temporary proof state after preserving evidence
         if: always() && env.TLC_EVIDENCE != '' && steps.debt-evidence.outcome == 'success'
-        shell: bash
         run: rm -rf -- "$TLC_EVIDENCE"

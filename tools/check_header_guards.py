@@ -313,6 +313,9 @@ def check_repository(root: Path, headers=None) -> list:
 
     errors = []
     seen_guards = {}
+    if not headers:
+        # zero inputs is an error: no tracked header would otherwise pass unread
+        errors.append(f"{root}: 0 tracked .h files: nothing was checked")
 
     for rel_path in headers:
         owned = is_owned_path(rel_path)
@@ -490,6 +493,12 @@ class HeaderGuardCheckTests(unittest.TestCase):
             self.assertEqual(len(errs), 1)
             self.assertIn("guard collision on 'ROCKETNET_SDK_A_B_H'", errs[0])
 
+    def test_zero_headers_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            errs = check_repository(Path(tmp), [])
+            self.assertEqual(len(errs), 1)
+            self.assertIn("0 tracked .h files", errs[0])
+
     def test_repository_is_clean(self):
         self.assertEqual(check_repository(ROOT), [])
 
@@ -501,6 +510,8 @@ def main():
         action="store_true",
         help="run unit self-tests for the header guard checker",
     )
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="the repository to check (default: this one); 0 tracked .h files is an error")
     args, remaining = parser.parse_known_args()
     if args.self_test:
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(HeaderGuardCheckTests)
@@ -508,8 +519,11 @@ def main():
         result = runner.run(suite)
         return 0 if result.wasSuccessful() else 1
 
-    headers = tracked_headers(ROOT)
-    errors = check_repository(ROOT, headers)
+    try:
+        headers = tracked_headers(args.root)
+    except subprocess.CalledProcessError:
+        headers = []
+    errors = check_repository(args.root, headers)
     if errors:
         for err in errors:
             print(f"FAIL: {err}", file=sys.stderr)

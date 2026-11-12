@@ -14,7 +14,11 @@
 // The arena header is the start of the block, so destroy frees the block
 // through the arena pointer. NULL for a refused config or count, or no memory.
 
-static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
+// zeroed: the block starts all zero, for a case that compares a region's whole
+// memory; regions are written lazily, and bytes nothing has written yet have no
+// value to compare (MemorySanitizer reports the compare).
+
+static inline rn_arena_t * rn_unit_arena_create_block( const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters, bool zeroed )
 {
     const uint64_t bytes = rn_arena_required_bytes( config, num_regions );
     if ( bytes == 0 || bytes > (uint64_t) SIZE_MAX )
@@ -28,6 +32,11 @@ static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_
         return NULL;
     }
 
+    if ( zeroed )
+    {
+        memset( block, 0, (size_t) bytes );
+    }
+
     rn_arena_t * arena = rn_arena_create_in_block( block, bytes, config, num_regions, counters );
     if ( !arena )
     {
@@ -35,6 +44,16 @@ static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_
     }
 
     return arena;
+}
+
+static inline rn_arena_t * rn_unit_arena_create( const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
+{
+    return rn_unit_arena_create_block( config, num_regions, counters, false );
+}
+
+static inline rn_arena_t * rn_unit_arena_create_zeroed( const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
+{
+    return rn_unit_arena_create_block( config, num_regions, counters, true );
 }
 
 static inline void rn_unit_arena_destroy( rn_arena_t * arena )

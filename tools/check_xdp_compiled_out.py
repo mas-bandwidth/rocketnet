@@ -73,6 +73,13 @@ def classify(nm_lines, needed_lines):
     return defined, imports, libraries
 
 
+def zero_problems(nm_lines):
+    """Zero inputs is an error: no symbol read means nothing was checked, and --absent would pass."""
+    count = sum(1 for line in nm_lines
+                if line.strip() and not line.endswith(":") and symbol_name(line.strip())[1])
+    return [] if count else ["0 symbols read from the archive and shared library: nothing was checked"]
+
+
 def absent_problems(defined, imports, libraries):
     problems = [f"XDP symbol defined: {name}" for name in sorted(defined) if not ALLOWED_DEFINED.match(name)]
     problems += [f"libbpf/libxdp referenced: {name}" for name in sorted(imports)]
@@ -88,7 +95,12 @@ def present_problems(defined, imports, libraries):
 
 
 def run(*command):
-    return subprocess.check_output(command, text=True, errors="replace").splitlines()
+    try:
+        return subprocess.check_output(command, text=True, errors="replace").splitlines()
+    except FileNotFoundError:
+        raise SystemExit(f"TOOL-MISSING {command[0]}: nothing was checked")
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f"{' '.join(command)} exited {error.returncode}: nothing was checked")
 
 
 def main():
@@ -102,7 +114,8 @@ def main():
     nm_lines = run("nm", "-C", args.archive) + run("nm", "-C", "-D", args.shared)
     needed = [line for line in run("readelf", "-d", args.shared) if "NEEDED" in line]
     defined, imports, libraries = classify(nm_lines, needed)
-    problems = absent_problems(defined, imports, libraries) if args.absent else present_problems(defined, imports, libraries)
+    problems = zero_problems(nm_lines) or (
+        absent_problems(defined, imports, libraries) if args.absent else present_problems(defined, imports, libraries))
     for problem in problems:
         print(problem, file=sys.stderr)
     if problems:

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# ubuntu-lts-vm-guest: the work nightly-ubuntu-lts-vms.yml runs INSIDE an
+# Ubuntu LTS guest booted from that release's stock cloud image, from the
+# tree's root. The guest's own kernel owns the sockets, so this qualifies the
+# suites on that release's stock kernel, which a container (ci.yml
+# distro-container) cannot (docs/DEPLOYING.md).
+#
+#   scripts/ubuntu-lts-vm-guest <series>          jammy | noble | resolute
+#   scripts/ubuntu-lts-vm-guest --check-log FILE...
+#
+# The run, in order; the first failure ends it with one line
+#   LTS-VM-FAIL <series>: <why>
+# and exit 1; a full pass ends with
+#   LTS-VM-PASS <series> kernel=<uname -r> unit=<cases> functional=<cases>
+#
+#   1. the guest is the release it was booted as (lsb_release -cs = <series>)
+#   2. the development build and the production build (-DROCKETNET_DEV=OFF),
+#      both Release, strict warnings as errors (the CMake defaults, named
+#      here so a change of default cannot move what is checked)
+#   3. on jammy, configure selected the legacy libbpf AF_XDP provider; on the
+#      others it did not
+#   4. no configure or build log carries a warning line (--check-log): a
+#      CMake, linker or other warning no -Werror reaches
+#   5. ./bin/test, ./bin/test_xdp_compat (jammy), ./bin/functional, each
+#      required to list at least one case, then tools/check_package.py build
+#
+# --check-log is step 4 alone, over the files named: exit 1 with each warning
+# line printed, 0 when there is none, 2 when a file is missing or empty.
+
+set -euo pipefail
+
+check_log() {
+    local status=0 file
+    for file in "$@"; do
+        if [ ! -s "$file" ]; then
+            echo "LTS-VM-LOG-MISSING $file"
+            return 2
+        fi
+        if grep -nE 'CMake Warning|warning:' "$file"; then
+            echo "LTS-VM-WARNINGS in $file (lines above)"
+            status=1
+        fi
+    done
+    return "$status"
+}
+
+if [ "${1:-}" = "--check-log" ]; then
+    shift
+    [ "$#" -gt 0 ] || { echo "usage: $0 --check-log FILE..."; exit 2; }
+    rc=0
+    check_log "$@" || rc=$?
+    exit "$rc"
+fi
+
+series="${1:?usage: $0 <series> | --check-log FILE...}"
+case "$series" in
+    jammy|noble|resolute) ;;
+    *) echo "LTS-VM-FAIL $series: unknown series (jammy, noble, resolute)"; exit 1 ;;
+esac
+
+fail() { echo "LTS-VM-FAIL $series: $*"; exit 1; }
+
+codename=$(lsb_release -cs) || fail "lsb_release -cs"
+[ "$codename" = "$series" ] || fail "the guest is $codename, not $series"
+kernel=$(uname -r)
+echo "guest $series kernel $kernel"
+
+legacy='XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)'
+for kind in dev prod; do
+    # the development build writes ./bin as every build does; the production
+    # build writes its own bin under build-prod, so it replaces nothing
+    if [ "$kind" = dev ]; then
+        dir=build; extra=(-DROCKETNET_DEV=ON)
+    else
+        dir=build-prod
+        extra=(-DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$dir/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$dir/bin")
+    fi
+    cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=Release -DROCKETNET_STRICT_WARNINGS=ON -DROCKETNET_WARNINGS_AS_ERRORS=ON "${extra[@]}" \
+        > "configure-$kind.log" 2>&1 || { tail -n 40 "configure-$kind.log"; fail "configure ($kind)"; }
+    if [ "$series" = jammy ]; then
+        grep -qF "$legacy" "configure-$kind.log" || fail "configure ($kind) did not select the legacy libbpf AF_XDP provider"
+    elif grep -qF 'XDP: using legacy AF_XDP APIs' "configure-$kind.log"; then
+        fail "configure ($kind) selected the legacy provider though libxdp is installed"
+    fi
+    cmake --build "$dir" --parallel "$(nproc)" > "build-$kind.log" 2>&1 || { grep -nE 'error|Error' "build-$kind.log" | head -n 40; fail "build ($kind)"; }
+    check_log "configure-$kind.log" "build-$kind.log" || fail "the $kind configure or build printed warnings"
+    echo "$kind build: zero warnings"
+done
+
+export ROCKETNET_NIGHTLY_NO_TIMEOUT=1
+bin=bin
+unit=$("$bin/test" --list | grep -c .) || fail "./bin/test --list listed no case"
+"$bin/test" || fail "./bin/test (the unit suite)"
+if [ "$series" = jammy ]; then
+    "$bin/test_xdp_compat" || fail "./bin/test_xdp_compat"
+fi
+functional=$("$bin/functional" --list | grep -c .) || fail "./bin/functional --list listed no case"
+"$bin/functional" || fail "./bin/functional (the functional suite)"
+python3 tools/check_package.py build || fail "tools/check_package.py build"
+
+echo "LTS-VM-PASS $series kernel=$kernel unit=$unit functional=$functional"

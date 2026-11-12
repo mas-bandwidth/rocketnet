@@ -51,6 +51,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   bigendian-system:
     name: s390x full system
@@ -61,7 +65,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-bigendian-system-${{ matrix.ref }}
+      group: nightly-bigendian-system-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -69,7 +73,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's qemu packages are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -230,7 +233,11 @@ jobs:
             done
             [ "$ok" = 1 ] && break
             echo "GUEST-DID-NOT-BOOT attempt ${attempt}/${boot_attempts}: ${why}"
-            tail -n 40 "$WORK/serial.log" || true
+            if [ -f "$WORK/serial.log" ]; then
+              tail -n 40 "$WORK/serial.log"
+            else
+              echo "(no serial.log: qemu wrote no console)"
+            fi
             cleanup
             attempt=$((attempt + 1))
           done

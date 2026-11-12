@@ -134,7 +134,7 @@ on:
 concurrency:
   # each main commit queues in its own group: pending runs on main are
   # replaced, not queued, so a burst of landings leaves every commit a verdict
-  group: ci-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   # main never cancels a run in progress: every merge gets a verdict.
   # Branches and PRs still cancel a superseded run.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -184,6 +184,10 @@ env:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
 
@@ -287,7 +291,6 @@ jobs:
           python3 tools/check_dst_checks_wired.py
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -347,7 +350,6 @@ jobs:
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
       # nightly and/or release checks"; the legs run in parallel).
       - name: Start the job's timing (everything after the build)
-        shell: bash
         run: &start_unit_functional_timing |
           set -euo pipefail
           timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
@@ -378,8 +380,7 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
           set -euo pipefail
-          clang="$(command -v clang || true)"
-          if [ -z "$clang" ]; then
+          if ! clang="$(command -v clang)"; then
             echo "TOOL-MISSING clang (any) (PATH) on $RUNNER_NAME"
             exit 1
           fi
@@ -410,7 +411,6 @@ jobs:
       # sections and symbols. --self-test holds the red and green controls.
       - name: Check no thread-local storage in a production build
         if: matrix.leg == 'checks'
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_no_thread_local.py --self-test
@@ -454,7 +454,6 @@ jobs:
 
       - name: Replay the fuzz corpora without libFuzzer
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
-        shell: bash
         run: |
           # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
@@ -483,7 +482,6 @@ jobs:
       # not exit replays it and exits 0, which this step refuses.
       - name: Run the fuzz seed generators
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
-        shell: bash
         run: |
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           empty="$RUNNER_TEMP/fuzz-empty-input"
@@ -516,7 +514,6 @@ jobs:
       # configuration runs.
       - name: Save the registered unit cases
         if: inputs.full && matrix.leg == 'unit'
-        shell: bash
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
@@ -574,7 +571,6 @@ jobs:
       # macOS Release row (the one macOS functional row per commit).
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
-        shell: bash
         # Nightly (full) Linux Debug only: scale 2, as nightly.yml scales its
         # TSan leg. test_loopback_transport_live_message_matrix's window takes
         # 27 s on a quiet host and 37-84 s on a 16-core fleet host at load
@@ -596,7 +592,6 @@ jobs:
       # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
         if: matrix.leg == 'functional'
-        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -608,7 +603,6 @@ jobs:
       # macOS it is the functional_production row's, beside the functional row.
       - name: Run functional_production suite (auto ladder, production library)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
-        shell: bash
         run: |
           set -euo pipefail
           ./bin/functional_production | tee functional-production-auto.log
@@ -619,7 +613,6 @@ jobs:
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
-        shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -658,7 +651,6 @@ jobs:
       # runs in the functional row.
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: (matrix.leg == 'functional' && runner.os != 'Linux') || matrix.leg == 'transport_matrix'
-        shell: bash
         env:
           XDP_DEV: ${{ matrix.dev }}
           TRANSPORT_MATRIX_LINUX: |
@@ -858,7 +850,6 @@ jobs:
       # upgrade past 1.6 is tested before it is trusted.
       - name: The XDP cell ran against a libxdp in the tested range (1.4 to 1.6)
         if: runner.os == 'Linux' && matrix.leg == 'transport_matrix'
-        shell: bash
         run: |
           set -euo pipefail
           version=$(pkg-config --modversion libxdp)
@@ -970,6 +961,14 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_appverif_run.py
 
+      - name: Test the toolchain nightly's verdicts
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: python3 tools/test_check_toolchain_build.py
+
+      - name: Test the real-load nightly's verdicts
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: python3 tools/test_real_load_report.py
+
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
@@ -1007,7 +1006,6 @@ jobs:
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
         if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
-        shell: bash
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
@@ -1064,7 +1062,6 @@ jobs:
       # boundary channel is 300 there; each is recorded as it passes.
       - name: Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)
         if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
-        shell: bash
         run: |
           set -euo pipefail
           # Give sort and comm the same byte ordering on every runner.
@@ -1089,14 +1086,18 @@ jobs:
         if: (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      # Prints both JSON lines on macOS. A nonzero exit is red here (the
+      # assertion below requires exit 0 from the same runs) and the
+      # assertion still runs after it, so its planned and live figures show.
       - name: Memory plans echo the allocator observation on macOS
+        id: memory_echo
         if: runner.os == 'macOS' && matrix.leg == 'checks'
         run: |
-          ./bin/transport_memory 1 1416 portable 1 || true
-          ./bin/transport_memory 1 1416 msgx 1 || true
+          ./bin/transport_memory 1 1416 portable 1
+          ./bin/transport_memory 1 1416 msgx 1
 
       - name: Memory plans against allocator observations
-        if: matrix.leg == 'checks'
+        if: ${{ matrix.leg == 'checks' && (success() || steps.memory_echo.outcome == 'failure') }}
         run: python3 tools/check_memory.py ./bin/transport_memory
 
       - name: "Functional: native driver contract and external backend"
@@ -1106,7 +1107,6 @@ jobs:
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, matrix.build_type, matrix.leg) }}
         run: &enforce_unit_functional_timing |
@@ -1210,7 +1210,6 @@ jobs:
       # about 7 s on an idle fleet host. The nightly runs the long ranges and
       # the fault schedules.
       - name: DST seeds 1-50 print the reference trace
-        shell: bash
         run: |
           set -euo pipefail
           trace=$(sed -n 's/^  DST_REFERENCE_TRACE: \([0-9a-f]*\)$/\1/p' .github/workflows/nightly-dst.yml)
@@ -1320,6 +1319,9 @@ jobs:
     # the fleet's native Windows runner (Windows x64 MSVC: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
     # label rocketnet-windows), never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     # captain's job-started hook waits up to 2 minutes for one of its three
     # shared build slots on a check-in run (Glenn 2026-10-24: --slots 3), inside
     # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
@@ -1364,7 +1366,9 @@ jobs:
       - name: Start combined unit and functional timing (development legs)
         if: matrix.leg != 'b'
         shell: bash
-        run: *start_unit_functional_timing
+        run: |
+          set -euo pipefail
+          *start_unit_functional_timing
 
       # rocketnet.h alone under MSVC cl, and a C and a C++ client and server
       # built from only the header and the prebuilt static library (seconds)
@@ -1376,6 +1380,7 @@ jobs:
         if: matrix.leg != 'c'
         shell: bash
         run: |
+          set -euo pipefail
           # the thirteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
@@ -1397,7 +1402,9 @@ jobs:
       - name: Save the registered unit cases
         if: matrix.leg != 'c'
         shell: bash
-        run: mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
+        run: |
+          set -euo pipefail
+          mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
 
       - name: Upload the registered unit cases
         if: matrix.leg != 'c'
@@ -1413,6 +1420,7 @@ jobs:
         if: matrix.leg == 'a'
         shell: bash
         run: |
+          set -euo pipefail
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
@@ -1430,6 +1438,7 @@ jobs:
         if: matrix.leg == 'c'
         shell: bash
         run: |
+          set -euo pipefail
           set -uo pipefail
           cmake --build build --config Debug --target windows_no_dialogs || exit 1
           # runs one case alone; prints "exited <code> <seconds>" or "waiting <seconds>" (then kills it)
@@ -1482,7 +1491,9 @@ jobs:
       - name: Run functional suite (parallel)
         if: matrix.leg == 'c'
         shell: bash
-        run: ./bin/Release/functional.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
@@ -1505,7 +1516,9 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/Release/test_lifecycle.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_lifecycle.exe
 
       - name: Memory plans against allocator observations
         if: matrix.leg == 'a'
@@ -1527,7 +1540,9 @@ jobs:
       - name: Start combined unit and functional timing (production leg)
         if: matrix.leg == 'b'
         shell: bash
-        run: *start_unit_functional_timing
+        run: |
+          set -euo pipefail
+          *start_unit_functional_timing
 
       - name: Check the library is callable from C and C++ through rocketnet.h
         if: matrix.leg == 'b'
@@ -1550,7 +1565,9 @@ jobs:
       - name: Run functional_production suite (auto ladder, production library)
         if: matrix.leg == 'b'
         shell: bash
-        run: ./bin/Release/functional_production.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional_production.exe
 
       - name: Run functional_production suite (portable rung pinned by env)
         if: matrix.leg == 'b'
@@ -1558,7 +1575,9 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
 
       # test_iocp.cpp's DEV=0 main on the production library: ordinary IOCP
       # and RIO constructors, real loopback datagrams, bounded shutdown
@@ -1566,7 +1585,9 @@ jobs:
       - name: "Functional: production Windows transports"
         if: matrix.leg == 'b'
         shell: bash
-        run: ./bin/Release/test_windows_transports_production.exe
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_windows_transports_production.exe
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -1595,6 +1616,7 @@ jobs:
             rio portable
             loopback loopback
         run: |
+          set -euo pipefail
           set +e -uo pipefail
           case "$RUNNER_OS" in
             Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
@@ -1667,7 +1689,9 @@ jobs:
         shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/Release/{1}', runner.os, matrix.leg) }}
-        run: *enforce_unit_functional_timing
+        run: |
+          set -euo pipefail
+          *enforce_unit_functional_timing
 
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,
@@ -1683,6 +1707,12 @@ jobs:
     runs-on: ${{ fromJSON(matrix.os == 'windows' && '["self-hosted","Windows","X64","rocketnet-windows"]' || startsWith(matrix.os, 'macos') && '["self-hosted","macOS","ARM64","fleet"]' || '["self-hosted","Linux","X64","fleet"]') }}
     # the Windows row waits for a captain build slot first (build-and-test-windows)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # Git Bash on the Windows row: a bash command line (the workflow default)
+    # is looked up on PATH there, where WSL's bash may come first; each step
+    # sets -euo pipefail itself
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -1776,15 +1806,21 @@ jobs:
 
       - name: Build (Linux and macOS, through the Makefile)
         if: runner.os != 'Windows'
-        run: make
+        run: |
+          set -euo pipefail
+          make
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64
+        run: |
+          set -euo pipefail
+          cmake -B build -G "Visual Studio 18 2026" -A x64
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release --parallel
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory
@@ -1795,6 +1831,7 @@ jobs:
       - name: Run happy_path
         shell: bash
         run: |
+          set -euo pipefail
           cd tools/happy_path
           go_test_timeout=()
           if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
@@ -1820,6 +1857,9 @@ jobs:
   windows-unit:
     name: windows / Release / unit (${{ matrix.shard }}/2)
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    defaults:
+      run:
+        shell: pwsh
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     strategy:
       fail-fast: false
@@ -1852,7 +1892,9 @@ jobs:
 
       - name: Start combined unit and functional timing
         shell: bash
-        run: *start_unit_functional_timing
+        run: |
+          set -euo pipefail
+          *start_unit_functional_timing
 
       - name: The shards partition the unit suite
         if: matrix.shard == 0
@@ -1864,13 +1906,17 @@ jobs:
 
       - name: Run the unit suite (Windows, shard ${{ matrix.shard }} of 2)
         shell: bash
-        run: ./bin/Release/test.exe --shard ${{ matrix.shard }}/2
+        run: |
+          set -euo pipefail
+          ./bin/Release/test.exe --shard ${{ matrix.shard }}/2
 
       - name: Enforce combined unit and functional timing
         shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.shard) }}
-        run: *enforce_unit_functional_timing
+        run: |
+          set -euo pipefail
+          *enforce_unit_functional_timing
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
   # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
@@ -1902,7 +1948,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's toolchain is on PATH
-        shell: bash
         run: |
           set -euo pipefail
           # examples/backend/go/go.mod says go 1.26; the C# projects target net10.0 (the fleet pins go 1.26 and .NET SDK 10)
@@ -1919,7 +1964,6 @@ jobs:
       - name: Unit tests (Go)
         if: matrix.backend == 'go'
         working-directory: examples/backend/go
-        shell: bash
         run: |
           set -euo pipefail
           test -z "$(gofmt -l .)" || { gofmt -l .; echo "gofmt: the files above are not formatted"; exit 1; }
@@ -1938,7 +1982,6 @@ jobs:
       - name: Build the backend and run its unit tests (C#)
         if: matrix.backend == 'csharp'
         working-directory: examples/backend/csharp
-        shell: bash
         run: |
           set -euo pipefail
           dotnet build Backend -c Release
@@ -1950,7 +1993,6 @@ jobs:
           dotnet run --project Tests -c Release
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.backend) }}
         run: *enforce_unit_functional_timing
@@ -2009,7 +2051,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2044,12 +2085,10 @@ jobs:
 
       - name: Start combined unit and functional timing (unit rows)
         if: startsWith(matrix.leg, 'unit suite')
-        shell: bash
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
         if: inputs.full && matrix.shard == '0/2'
-        shell: bash
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
@@ -2075,7 +2114,6 @@ jobs:
 
       - name: Start combined unit and functional timing (functional row)
         if: matrix.leg == 'functional suite'
-        shell: bash
         run: *start_unit_functional_timing
 
       - name: Run focused functional transport recovery under sanitizers
@@ -2112,7 +2150,6 @@ jobs:
         run: python3 tools/check_xdp_guard_control.py
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
         run: *enforce_unit_functional_timing
@@ -2144,7 +2181,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2197,7 +2233,6 @@ jobs:
       # -- no mutation, no seeded randomness, no clock.
 
       - name: Build and replay every committed fuzz corpus
-        shell: bash
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -2254,7 +2289,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2445,7 +2479,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the s390x cross toolchain, libraries, and qemu are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2566,7 +2599,6 @@ jobs:
       # multiarch tree.
 
       - name: Start combined unit and functional timing
-        shell: bash
         run: *start_unit_functional_timing
 
       - name: Run the big-endian wire check
@@ -2586,7 +2618,6 @@ jobs:
         run: tools/bigendian/run_byte_cases.sh bin/test "$QEMU_S390X"
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.build_type) }}
         run: *enforce_unit_functional_timing
@@ -2673,7 +2704,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2717,7 +2747,6 @@ jobs:
 
       - name: Start combined unit and functional timing
         if: matrix.leg == 'loopback soak'
-        shell: bash
         run: *start_unit_functional_timing
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
@@ -2735,7 +2764,6 @@ jobs:
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
         run: *enforce_unit_functional_timing
@@ -2766,7 +2794,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -2786,7 +2813,6 @@ jobs:
 
       - name: Read the host the prefix is built for
         id: host
-        shell: bash
         run: |
           set -euo pipefail
           . /etc/os-release
@@ -2837,11 +2863,9 @@ jobs:
         run: cmake --build build --target test --parallel
 
       - name: Start combined unit and functional timing
-        shell: bash
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
-        shell: bash
         run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"
 
       - name: Upload the registered unit cases
@@ -2860,7 +2884,6 @@ jobs:
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"
 
       - name: Enforce combined unit and functional timing
-        shell: bash
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
         run: *enforce_unit_functional_timing
@@ -2891,7 +2914,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check a container runtime is present
-        shell: bash
         run: |
           set -euo pipefail
           if ! command -v podman >/dev/null 2>&1; then
@@ -2901,7 +2923,6 @@ jobs:
           podman --version
 
       - name: Build and test in an Ubuntu ${{ matrix.release }} container
-        shell: bash
         run: >
           podman run --rm --network host
           --volume "$PWD:/src" --workdir /src
@@ -2972,7 +2993,6 @@ jobs:
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -3095,7 +3115,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -3115,7 +3134,6 @@ jobs:
 
       - name: Read the pinned toolchain from the baseline
         id: pins
-        shell: bash
         run: |
           set -euo pipefail
           read -r gcc_version valgrind_version < <(python3 -c '
@@ -3142,7 +3160,6 @@ jobs:
 
       - name: Refuse a cold toolchain cache in the per-commit tier
         if: ${{ !inputs.full && steps.toolchain-cache.outputs.cache-hit != 'true' }}
-        shell: bash
         run: |
           echo "INSTRUCTION-TOOLCHAIN-COLD key=${{ steps.toolchain-cache.outputs.cache-primary-key }}"
           echo "The per-commit tier never builds the pinned toolchain. The nightly tier"
@@ -3166,7 +3183,6 @@ jobs:
       # PROVE THE PREMISE: the prefix holds exactly the pins, or every number
       # below is measured with the wrong tools.
       - name: Prove the prefix holds the pins
-        shell: bash
         env:
           VALGRIND_LIB: ${{ github.workspace }}/pinned-toolchain/libexec/valgrind
         run: |
@@ -3184,7 +3200,6 @@ jobs:
       # the pinned gcc's own libstdc++ by rpath, and the pinned valgrind's
       # cachegrind.h ahead of any the host carries
       - name: Build instruction_count (Release) with the pinned gcc
-        shell: bash
         run: |
           set -euo pipefail
           tc="$GITHUB_WORKSPACE/pinned-toolchain"
@@ -3197,7 +3212,6 @@ jobs:
           cmake --build build --target instruction_count --parallel
 
       - name: Run the cachegrind instruction gate with the pinned valgrind
-        shell: bash
         run: |
           set -euo pipefail
           status=0
@@ -3250,7 +3264,6 @@ jobs:
       # check_format.sh); one unformatted file fails the job, `make format-check`
       # runs the same check locally
       - name: Check clang-format 18 is present
-        shell: bash
         run: |
           set -euo pipefail
           if ! command -v clang-format-18 >/dev/null 2>&1; then echo "TOOL-MISSING clang-format-18 (missing) on $RUNNER_NAME"; exit 1; fi
@@ -3259,6 +3272,132 @@ jobs:
         run: sh tools/format/test_check_format.sh
       - name: Every source is formatted
         run: sh tools/format/check_format.sh
+
+      # tools/bigendian/run_byte_cases.sh (the big-endian job's byte cases)
+      # against a fixture tree and a fake unit binary: a failing or
+      # unregistered case is red, and so are zero cases named and a count
+      # under the committed floor.
+      - name: Test the big-endian byte-case runner
+        run: bash tools/bigendian/test_run_byte_cases.sh
+
+      # tools/check_or_true.py: no `|| true` / `|| :` discards a status in
+      # workflows, .github/scripts, scripts/ or tools/**/*.sh outside
+      # tools/or_true_allowlist.txt (file, exact line, reason; a stale entry
+      # is red). --self-test plants each spelling and the empty tree.
+      - name: No or-true discards a status in CI shell code
+        run: |
+          python3 tools/check_or_true.py --self-test
+          python3 tools/check_or_true.py
+
+      # tools/check_continue_on_error.py: a job or step that continues on
+      # error concludes success whatever it did; none outside
+      # tools/continue_on_error_allowlist.txt (empty). --self-test plants a
+      # step, a job, a composite action and the empty tree.
+      - name: No continue-on-error hides a result
+        run: |
+          python3 tools/check_continue_on_error.py --self-test
+          python3 tools/check_continue_on_error.py
+
+      # tools/check_run_shell.py: every run step's shell stops on its first
+      # failure (bash -euo pipefail, the workflow default; Git Bash with set
+      # -euo pipefail on Windows; pwsh one command or $LASTEXITCODE checked
+      # after each), and no `local|export x=$(...)` masks a status.
+      # --self-test plants each shell, a mask and the empty tree.
+      - name: Every run step stops on its first failure
+        run: |
+          python3 tools/check_run_shell.py --self-test
+          python3 tools/check_run_shell.py
+
+      # tools/check_scheduled_watched.py: the workflows with a cron equal the
+      # nightly watch's --list (the watch itself excepted). Its --remote mode
+      # (registered workflows against main, through the API) is not run
+      # here; --self-test covers both modes on fixtures.
+      - name: Every scheduled workflow is in the nightly watch's list
+        run: |
+          python3 tools/check_scheduled_watched.py --self-test
+          python3 tools/check_scheduled_watched.py
+
+      # tools/check_printed_compared.py: a step that prints trace=, hash= or
+      # sha256= (or runs dst --seeds) writes it against a committed value,
+      # or sits in a report-only job, or is in
+      # tools/printed_values_allowlist.txt with a reason.
+      - name: Every printed trace or hash is compared
+        run: |
+          python3 tools/check_printed_compared.py --self-test
+          python3 tools/check_printed_compared.py
+
+      # The self-tests of the checkers that have no step of their own
+      # (tools/checkers.txt names this step for each). Fixtures and fakes
+      # only: no build, no network; each plants its checker's violation and
+      # its empty input. One line per suite; the suites run in parallel, each
+      # into its own log, and a red one is named with its whole log. An empty
+      # list is red.
+      - name: Self-tests of the registered checkers
+        run: |
+          set -euo pipefail
+          list="$RUNNER_TEMP/checker-selftests.txt"
+          cat > "$list" <<'SUITES'
+          python3 tools/test_check_dll_consumer.py -v
+          python3 tools/test_check_driver_extension.py -v
+          python3 tools/test_check_examples.py -v
+          python3 tools/test_check_fuzz_oracle.py -v
+          python3 tools/test_check_header_exports.py -v
+          bash tools/test_check_make_jobs.sh
+          bash tools/test_check_memlock.sh
+          python3 tools/test_check_memory.py -v
+          bash tools/test_check_oss_fuzz_fp_contract.sh
+          bash tools/test_run_xdp_filter_guest.sh
+          python3 tools/test_check_package.py -v
+          python3 tools/test_check_platform_policy.py -v
+          python3 tools/test_check_public_header.py -v
+          python3 tools/test_check_release_doc.py -v
+          python3 tools/test_check_sdk_sources.py -v
+          python3 tools/test_check_sodium.py -v
+          python3 tools/test_check_test_scaffolding_boundary.py -v
+          python3 tools/test_check_tla_ledger_merge.py -v
+          python3 tools/test_check_transport_matrix.py -v
+          python3 tools/test_check_xdp_archive.py -v
+          python3 tools/test_check_xdp_guard_control.py -v
+          python3 tools/test_run_backend_examples.py -v
+          python3 tools/test_run_examples.py -v
+          bash scripts/lan-proof-selftest
+          SUITES
+          logs="$RUNNER_TEMP/checker-selftests"
+          mkdir -p "$logs"
+          pids=()
+          suites=()
+          while IFS= read -r suite; do
+            [ -n "$suite" ] || continue
+            bash -c "$suite" > "$logs/${#suites[@]}.log" 2>&1 &
+            pids+=("$!")
+            suites+=("$suite")
+          done < "$list"
+          if [ "${#suites[@]}" -eq 0 ]; then echo "0 checker self-tests listed: nothing was run"; exit 1; fi
+          failed=0
+          for i in "${!pids[@]}"; do
+            if wait "${pids[$i]}"; then
+              echo "ok: ${suites[$i]}"
+            else
+              status=$?
+              failed=$((failed + 1))
+              echo "::group::FAIL (exit $status): ${suites[$i]}"
+              cat "$logs/$i.log"
+              echo "::endgroup::"
+            fi
+          done
+          echo "checker self-tests: ${#suites[@]} run, $failed failed"
+          [ "$failed" -eq 0 ]
+
+      # tools/check_checkers.py: every tools/check_*, tools/run_*,
+      # .github/scripts/*.sh and scripts/*-selftest has a row in
+      # tools/checkers.txt whose self-test this or another workflow step
+      # runs, and whose zero-input command (an empty directory or file) is
+      # red. --self-test plants an unregistered checker, an unwired
+      # self-test, a passing, unrunnable and crashing zero-input command.
+      - name: Every checker is registered, its self-test runs, zero inputs are red
+        run: |
+          python3 tools/check_checkers.py --self-test
+          python3 tools/check_checkers.py
 
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
@@ -3313,6 +3452,15 @@ jobs:
           python3 tools/check_byte_order.py --self-test
           python3 tools/check_byte_order.py
 
+      # Every check has a planted violation (tools/planted_violations.tsv): every job of every
+      # per-commit and scheduled workflow has a row, every row names a real step and carries
+      # that step's own command. The plants themselves run nightly (planted-violations.yml);
+      # this is the table's consistency only, no plant is run.
+      - name: Every check has a planted violation in the table
+        run: |
+          python3 tools/planted_violations.py --self-test
+          python3 tools/planted_violations.py --check-table
+
       # The validation-tool self-test suites the repository ships
       # (tools/test_check_frame_budget.py, test_check_server_calls.py,
       # test_check_split_load.py, test_check_test_environment.py,
@@ -3332,7 +3480,6 @@ jobs:
         run: python3 tools/test_nightly_timeout.py -v
 
       - name: Test the frame-budget checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3340,7 +3487,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the server-calls checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3348,7 +3494,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the split-load checker's receipts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3356,7 +3501,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the test-environment checker's inventory
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3364,7 +3508,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the 1000-client load profiler's provenance
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3372,7 +3515,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the release-version block and workflow
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3380,23 +3522,61 @@ jobs:
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
       - name: Test the release nightly-gates check
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_release_tsan.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # The nightly watch's planted nights (no run, stale, cancelled, timed
+      # out, hung, startup failure, all skipped, a 503) must each be red and
+      # a clean night green, against a fake API.
+      - name: Test the nightly watch's verdicts
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_nightly_dispositions.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # The release and landing gates (tools/release_gates.txt): the release
+      # and landing tools' fixture suites (no network), then the list itself
+      # against the workflows: every workflow and job it names exists, and
+      # every per-commit workflow has a gate row.
+      - name: Test the release and landing tools; check the release gates list
+        run: |
+          set -euo pipefail
+          for suite in tools/test_release.py tools/test_land.py; do
+            output="$(python3 "$suite" -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+            printf '%s\n' "$output"
+            grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+          done
+          python3 tools/check_release_gates.py --self-test
+          python3 tools/check_release_gates.py
+
+      # .github/rulesets/main.json (docs/branch-protection.md) requires exactly
+      # the per-commit job names the workflows produce: a new or renamed
+      # per-commit job, or a stale required name, is red here.
+      - name: The main ruleset requires exactly the per-commit jobs
+        run: |
+          python3 tools/check_branch_protection.py --self-test
+          python3 tools/check_branch_protection.py
+
       - name: Test the nightly TLA+ case planner
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_plan_tlc_nightly.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      - name: Test the TLA+ re-run comparer
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_compare_tlc_rerun.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+          bash -n tools/tlc_rerun.sh
+
       - name: Test and check the TLA+ run records
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_tla_records.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3410,7 +3590,6 @@ jobs:
           python3 tools/check_fuzz_regressions.py
 
       - name: Test the unit-case coverage checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/test_check_unit_case_coverage.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3418,7 +3597,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the header-guard checker's verdicts
-        shell: bash
         run: |
           set -euo pipefail
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
@@ -3426,7 +3604,6 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the mutation runner's generator and process cleanup
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/mutation/run_mutants.py --self-test
@@ -3460,7 +3637,6 @@ jobs:
           merge-multiple: true
 
       - name: Every registered unit case runs in at least one configuration
-        shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_unit_case_coverage.py --repo . \

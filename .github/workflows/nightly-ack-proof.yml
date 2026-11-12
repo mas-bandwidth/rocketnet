@@ -26,6 +26,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   ack-proof:
     name: ACK run proof (ack-run-bound-8, studio)
@@ -40,7 +44,6 @@ jobs:
 
       - name: Build the pinned ESBMC
         id: build
-        shell: bash
         run: |
           set -euo pipefail
           version=$(awk '$1=="ESBMC" {print $2}' proofs/cbmc/TOOL-VERSIONS)

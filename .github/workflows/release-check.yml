@@ -24,16 +24,19 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
 
-  # The release commit's required nightly gates (docs/RELEASING.md).
-  # nightly.yml's `tsan (threaded transport)`, nightly-ci.yml (`Nightly CI`),
-  # cbmc.yml (`CBMC`), and tlc.yml (`TLC records`) are too long for the
-  # per-commit tier, so they are dispatched on the release commit before the
-  # tag; on a v* tag push this job fails unless the Actions API shows all four
-  # green for the tagged commit.
-  # Its reader is whoever cuts the release. tools/test_check_release_tsan.py
-  # drives the check with fake API answers.
+  # The second check of the release gates (docs/RELEASING.md). tools/release.py
+  # refuses to create the tag unless every gate in tools/release_gates.txt in
+  # force for the version is green for the commit; on the v* tag push this job
+  # judges the same list again (tools/check_release_tsan.py), and fails unless
+  # every gate is still green for the tagged commit. tools/release.py waits for
+  # this run and publishes only when this job and `release-gate` succeeded.
+  # tools/test_check_release_tsan.py drives the check with fake API answers.
 
   tsan-qualified:
     name: threaded tsan run on the release commit
@@ -46,10 +49,30 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: Find a green threaded TSan run for the tagged commit
+      - name: Every release gate is green for the tagged commit
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/check_release_tsan.py
+
+  # The tag run's final job: red unless the second check and the version check
+  # succeeded, so a tag pushed past a red gate leaves a red run, not a skipped
+  # or decorative one. tools/release.py publishes only when it is success.
+
+  release-gate:
+    name: release gates passed on the tag
+    needs: [tsan-qualified, version-consistency]
+    if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 2
+    steps:
+      - name: The second check and the version check succeeded
+        env:
+          GATES: ${{ needs.tsan-qualified.result }}
+          VERSION_CHECK: ${{ needs.version-consistency.result }}
+        run: |
+          echo "threaded tsan run on the release commit: $GATES; version consistency: $VERSION_CHECK"
+          test "$GATES" = success
+          test "$VERSION_CHECK" = success
 
   # The version sites in the tree agree with each other, and on a v* tag push
   # with the tag. Runs on every trigger; its reader is the pull request, and

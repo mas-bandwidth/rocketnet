@@ -42,6 +42,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   fuzz:
     name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
@@ -73,7 +77,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
     concurrency:
-      group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -82,7 +86,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -126,7 +129,6 @@ jobs:
 
       - name: Check out the pinned netcode reference
         if: contains(fromJSON(matrix.leg).target, 'differential')
-        shell: bash
         run: |
           set -euo pipefail
           git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
@@ -188,7 +190,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -238,7 +239,7 @@ jobs:
           - rocketnet_fuzz_session
           - rocketnet_fuzz_differential
     concurrency:
-      group: fuzz-nightly-ndebug-${{ matrix.ref }}-${{ matrix.target }}
+      group: fuzz-nightly-ndebug-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.target }}
       cancel-in-progress: true
     steps:
 
@@ -247,7 +248,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -282,7 +282,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -326,7 +325,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-macos-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -335,7 +334,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Find the LLVM clang that carries libFuzzer
-        shell: bash
         run: |
           set -euo pipefail
           LLVM_PREFIX=""
@@ -358,7 +356,6 @@ jobs:
           echo "ROCKETNET_FUZZ_CXX=$LLVM_PREFIX/bin/clang++" >> "$GITHUB_ENV"
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -425,7 +422,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -488,7 +484,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-windows-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     defaults:
       run:
@@ -549,6 +545,8 @@ jobs:
       # runtime for, and CMake calls the compiler broken.
       - name: Configure the instrumented library
         run: >
+          set -euo pipefail
+
           cmake -B build-fuzz -T ClangCL -A x64
           -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
           -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
@@ -556,7 +554,9 @@ jobs:
           "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+        run: |
+          set -euo pipefail
+          cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
@@ -592,7 +592,9 @@ jobs:
         if: failure()
         env:
           REF: ${{ matrix.ref }}
-        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Upload crash reproducers
         if: failure()
@@ -651,7 +653,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-msan-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -661,7 +663,6 @@ jobs:
 
       - name: Read the clang version
         id: msan-clang
-        shell: bash
         run: echo "version=$(clang++ -dumpversion)" >> "$GITHUB_OUTPUT"
 
       # a runner whose provisioning installed /opt/msan-libcxx-<version> uses
@@ -676,7 +677,6 @@ jobs:
           key: msan-libcxx-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-${{ hashFiles('tools/build_msan_libcxx.sh') }}
 
       - name: The MSan-instrumented libc++
-        shell: bash
         run: |
           set -euo pipefail
           clang_version=${{ steps.msan-clang.outputs.version }}
@@ -689,7 +689,6 @@ jobs:
           echo "MSAN_LIBCXX=$libcxx" >> "$GITHUB_ENV"
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -721,7 +720,6 @@ jobs:
             msan-libfuzzer-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-
 
       - name: Build the MSan libFuzzer engine
-        shell: bash
         run: |
           set -euo pipefail
           if [ -f .msan-libfuzzer/libFuzzer.a ]; then
@@ -803,7 +801,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: failure()
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -836,7 +833,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -867,7 +863,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0

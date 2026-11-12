@@ -114,6 +114,29 @@ class TestCheckInstructions(unittest.TestCase):
         )
         self.assertNotIn("verdict=FAIL", report)
 
+    def test_zero_regions_fails(self) -> None:
+        # zero inputs is an error: nothing measured, or a baseline with no regions, never passes
+        with self.assertRaises(ValueError):
+            ci.parse_scenario_stdout("")
+        with self.assertRaises(ValueError):
+            ci.parse_cachegrind_ir("")
+        for baseline, measured in (
+            (make_baseline(), {}),
+            (dict(make_baseline(), regions={}),
+             {"client_frame": {"ir": 1000000, "units": 100}, "server_tick": {"ir": 2000000, "units": 100}}),
+        ):
+            code, report = ci.evaluate_instructions(
+                baseline=baseline,
+                measured=measured,
+                compiler_id="GNU-13.3.0",
+                valgrind_version="valgrind-3.26.0",
+                build_type="Release",
+                toolchain_id=PINNED,
+            )
+            self.assertEqual(code, 1, msg=report)
+            self.assertIn("verdict=FAIL (missing", report)
+            self.assertNotIn("verdict=PASS", report)
+
     def test_fail_over_two_percent_threshold(self) -> None:
         baseline = make_baseline(client_ir=1000000, server_ir=2000000)
         measured = {

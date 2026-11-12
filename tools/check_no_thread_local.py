@@ -43,6 +43,7 @@ others cannot see:
 
 Usage:
   check_no_thread_local.py                         the source check
+  check_no_thread_local.py --root DIR              the source check over DIR (0 files is an error)
   check_no_thread_local.py --preprocess build/compile_commands.json
   check_no_thread_local.py --objects build/librocketnet.a
   check_no_thread_local.py --self-test             the red and green controls
@@ -267,12 +268,17 @@ def scan_text(text):
     return findings
 
 
-def source_check():
+def source_check(root=None):
+    root = root or ROOT
     failures = []
-    for path in library_files(ROOT):
+    files = library_files(root)
+    if not files:
+        # zero inputs is an error: a tree with no library file would otherwise pass unread
+        return ["0 library files under %s: nothing was checked" % root]
+    for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
         for line, token in scan_text(text):
-            failures.append("%s:%d: %s outside a ROCKETNET_DEV region" % (path.relative_to(ROOT), line, token))
+            failures.append("%s:%d: %s outside a ROCKETNET_DEV region" % (path.relative_to(root), line, token))
     return failures
 
 
@@ -431,6 +437,14 @@ def self_test():
             failed += 1
         print("self-test %-48s expected %d finding(s), got %d: %s" % (name, expected, got, verdict))
 
+    # zero inputs: a tree with no library file is red, never "OK"
+    with tempfile.TemporaryDirectory() as empty:
+        got = len(source_check(Path(empty)))
+        verdict = "ok" if got == 1 else "FAIL"
+        if got != 1:
+            failed += 1
+        print("self-test %-48s expected 1 finding(s), got %d: %s" % ("zero library files", got, verdict))
+
     # the preprocessor check reads its own controls through the host compiler
     compiler = os.environ.get("CXX", "c++")
     with tempfile.TemporaryDirectory() as scratch:
@@ -504,8 +518,8 @@ def main(argv):
     elif len(argv) >= 3 and argv[1] == "--objects":
         failures = objects_check(argv[2:])
         what = "objects"
-    elif len(argv) == 1:
-        failures = source_check()
+    elif len(argv) == 1 or (len(argv) == 3 and argv[1] == "--root"):
+        failures = source_check(Path(argv[2]) if len(argv) == 3 else None)
         what = "source"
     else:
         print(__doc__)
