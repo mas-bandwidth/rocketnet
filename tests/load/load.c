@@ -40,7 +40,7 @@
       gso        ROCKETNET_SERVER_TRANSPORT=gso
       gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
                  development library load links skips the UDP_SEGMENT and
-                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:657-659)
+                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp)
       io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
                  /proc/sys/kernel/io_uring_disabled reads 0
       xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
@@ -48,7 +48,7 @@
                  guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
                  veth pair whose far end sits in its own namespace:
                  LOAD_SERVER_ADDRESS=<near address>:<port> binds the server
-                 (load.c; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
+                 (load.c; xdp discovers no port, its row in sdk/rocketnet_drivers.inc)
                  and LOAD_CLIENT_NETNS=/var/run/netns/<name> opens every client
                  socket in the far namespace.
     load raises RLIMIT_NOFILE to 65536 or the hard limit and refuses by name

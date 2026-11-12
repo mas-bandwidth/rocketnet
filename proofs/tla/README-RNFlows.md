@@ -179,5 +179,5 @@ SendKick's trace (7 states): `Create`, `BeginUpdate`,
 `Subscribe` of slot 1, then a `Send` whose refused slot 1 is ended (`owner` to
 `<<0, 0>>`). The flow API is planned code (docs/FLOWS.md), not yet in `sdk/`,
 so there is no code line to check the trace against; the refusal it plans is
-`rn_region_send_alloc`'s, which ends nothing (`sdk/rocketnet_allocator.cpp:901`
+`rn_region_send_alloc`'s, which ends nothing (`sdk/rocketnet_allocator.cpp`
 to 905).
