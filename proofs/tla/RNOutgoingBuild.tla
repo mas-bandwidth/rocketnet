@@ -211,7 +211,11 @@ ReadRec(f, r) ==
 \* transport as one packet carrying the acks due, or, when the send budget
 \* cannot pay it (drop), they are dropped and counted
 \* (MESSAGE_UNRELIABLE_OVER_BUDGET) and the frame goes back.  Either way
-\* the packet counts against the allowance (the caller adds it).
+\* the packet counts against the allowance (the caller adds it).  The
+\* frame's sequence is not modelled here: a server numbers a packet at
+\* finish, so the drop spends none, and a client numbered it at start, so
+\* the drop burns it, never sent, which SessionAcks.tla models as BurnOne
+\* and checks with BurnedNeverNamed (standard/MESSAGES.md m9.4).
 Seal(drop) ==
     LET f == open
         msgs == FrameMsgs IN
