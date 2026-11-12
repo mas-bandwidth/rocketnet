@@ -1,0 +1,44 @@
+ok   format
+ok   abi
+ok   purity
+ok   text
+ok   standard
+ok   tla
+ok   cfg-off
+ok   build-off warnings=0
+ok   unit-off
+ok   functional-production
+ok   production-lifecycle
+ok   exports-off
+ok   hardening-off
+ok   scaffolding-off
+ok   scaffolding-red
+ok   main-wt
+ok   cfg-main-off
+ok   build-main-off warnings=0
+ok   build-rel warnings=0
+ok   unit-rel
+ok   no-sockets
+ok   functional-rel
+ok   dst
+ok   memory
+ok   source-audit
+ok   nightly-rss
+ok   cfg-dbg
+ok   build-dbg warnings=0
+ok   unit-dbg
+ok   functional-dbg
+ok   wide-dbg
+ok   cfg-clang
+ok   build-clang warnings=0
+ok   unit-clang
+ok   functional-clang
+ok   cfg-tsan
+ok   build-tsan warnings=0
+ok   unit-tsan
+ok   functional-tsan
+ok   cfg-asan
+ok   build-asan warnings=0
+ok   unit-asan
+ok   sodium-asan
+done

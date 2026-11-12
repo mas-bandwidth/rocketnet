@@ -1,0 +1,14 @@
+table inet rnfw {
+    chain input {
+        type filter hook input priority filter; policy drop;
+        iif "lo" accept
+        ct state related,established accept
+        ct state invalid drop
+        udp dport 40000 accept
+    }
+    chain output {
+        type filter hook output priority filter; policy drop;
+        oif "lo" accept
+        ct state related,established accept
+    }
+}
