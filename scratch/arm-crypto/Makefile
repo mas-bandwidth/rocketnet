@@ -7,15 +7,15 @@
 #   make ct && valgrind --error-exitcode=1 ./harness-ct ct   (Linux, valgrind headers)
 CC ?= cc
 WARN = -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion -Werror
-CFLAGS = -O3 -DNDEBUG -std=c11 $(WARN)
+CFLAGS = -O3 -DNDEBUG -std=gnu11 $(WARN)
 
 harness: harness.c rn_arm64.c sodium.c sodium.h
 	$(CC) $(CFLAGS) -c rn_arm64.c -o rn_arm64.o
 	$(CC) $(CFLAGS) harness.c rn_arm64.o -o harness
 
 ct: harness.c rn_arm64.c sodium.c sodium.h
-	$(CC) -O2 -g -std=c11 $(WARN) -DRN_CTGRIND -c rn_arm64.c -o rn_arm64_ct.o
-	$(CC) -O2 -g -std=c11 $(WARN) -DRN_CTGRIND harness.c rn_arm64_ct.o -o harness-ct
+	$(CC) -O2 -g -std=gnu11 $(WARN) -DRN_CTGRIND -c rn_arm64.c -o rn_arm64_ct.o
+	$(CC) -O2 -g -std=gnu11 $(WARN) -DRN_CTGRIND harness.c rn_arm64_ct.o -o harness-ct
 
 clean:
 	rm -f harness harness-ct *.o
