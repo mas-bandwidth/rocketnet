@@ -200,4 +200,18 @@ struct msan_scale_allocator_scope_t
 #endif // #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
 };
 
+// The same scope for a case whose large plan fits MSan but not the MSVC debug
+// CRT's fill (a 1000-slot light server, the loopback hub sized for every
+// build slot): the scale allocator under the debug CRT, nothing in every other
+// build, MSan included, so those cases keep MSan's poisoning of every block.
+
+#if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+typedef msan_scale_allocator_scope_t debug_crt_scale_allocator_scope_t;
+#else
+struct debug_crt_scale_allocator_scope_t
+{
+    debug_crt_scale_allocator_scope_t() {} // user-provided, so a case's scope is never an unused variable
+};
+#endif // #if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+
 #endif // ROCKETNET_TESTS_MSAN_SCALE_ALLOCATOR_H
