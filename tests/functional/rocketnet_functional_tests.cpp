@@ -9548,8 +9548,11 @@ static bool rocketnet_xdp_veth_capture_present = false;
 
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
 struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
+    rocketnet_functional_require_xdp_case( ROCKETNET_XDP_VETH_NETNS );
     atexit( rocketnet_xdp_veth_teardown );
 
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
