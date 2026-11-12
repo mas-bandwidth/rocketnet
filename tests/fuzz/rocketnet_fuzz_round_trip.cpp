@@ -83,11 +83,24 @@ static uint64_t fuzz_u64( struct fuzz_reader_t * r )
     return v;
 }
 
+// the next bytes of the input, then zeros once it runs out, as fuzz_u8 reads
+// them one at a time. One copy and one fill: gcc 15 on aarch64 vectorizes the
+// byte loop this replaces and its -Wstringop-overflow then reports a 16-byte
+// store past a 32-byte array the loop never writes beyond (every caller passes
+// the array's own size).
+
 static void fuzz_bytes( struct fuzz_reader_t * r, uint8_t * out, size_t bytes )
 {
-    for ( size_t i = 0; i < bytes; i++ )
+    const size_t left = r->pos < r->size ? r->size - r->pos : 0;
+    const size_t take = bytes < left ? bytes : left;
+    if ( take > 0 )
     {
-        out[i] = fuzz_u8( r );
+        memcpy( out, r->data + r->pos, take );
+        r->pos += take;
+    }
+    if ( take < bytes )
+    {
+        memset( out + take, 0, bytes - take );
     }
 }
 
