@@ -13012,6 +13012,7 @@ struct msgx_client_pair_t
     struct rocketnet_server_transport_t * server;
     struct rocketnet_client_transport_t * client;
     struct rocketnet_platform_socket_t * client_socket;
+    struct rocketnet_loss_gate_t gate;
 };
 
 // server_bind is the server's bind string, token_host the host the connect
@@ -13022,6 +13023,7 @@ static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const cha
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
+    rocketnet_loss_gate_begin( &pair->gate, "msgx client wire" );
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), server_transport ) == 0 );
@@ -13138,11 +13140,36 @@ static void msgx_client_send_and_collect( struct msgx_client_pair_t * pair, int 
 
     rocketnet_client_transport_send_packets( pair->client );
 
+    // loopback can drop one (tests/kernel_drops.h): a tag still missing at the
+    // deadline is sent again through the same client transport only when the
+    // kernel counted that many receive drops; a tag twice fails at !seen
+
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
-    const double start = rocketnet_platform_time();
-    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < num_packets )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: received %d of %d\n", pair->gate.name, received, num_packets );
+            rocketnet_check( rocketnet_loss_gate_resend( &pair->gate, num_packets - received ) );
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( !seen[tag] )
+                {
+                    struct rocketnet_packet_context_t context = {};
+                    uint8_t * payload = rocketnet_client_transport_start_packet( pair->client, MSGX_CLIENT_PAYLOAD_BYTES, &context );
+                    rocketnet_check( payload );
+                    msgx_client_fill_payload( payload + context.payload_index, tag );
+                    rocketnet_check( rocketnet_client_transport_finish_packet( pair->client, &context, MSGX_CLIENT_PAYLOAD_BYTES ) > MSGX_CLIENT_PAYLOAD_BYTES );
+                }
+            }
+            rocketnet_client_transport_send_packets( pair->client );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
@@ -13186,11 +13213,33 @@ static void msgx_client_receive_from_server( struct msgx_client_pair_t * pair, i
 
     rocketnet_server_transport_send_packets( pair->server );
 
+    // loopback can drop one (tests/kernel_drops.h): a tag still missing at the
+    // deadline is sent again through the same server transport only when the
+    // kernel counted that many receive drops; a tag twice fails at !seen
+
     bool seen[ROCKETNET_CLIENT_IO_BATCH] = {};
     int received = 0;
-    const double start = rocketnet_platform_time();
-    while ( received < num_packets && rocketnet_platform_time() - start < 5.0 )
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < num_packets )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: client received %d of %d\n", pair->gate.name, received, num_packets );
+            rocketnet_check( rocketnet_loss_gate_resend( &pair->gate, num_packets - received ) );
+            for ( int tag = 0; tag < num_packets; tag++ )
+            {
+                if ( !seen[tag] )
+                {
+                    msgx_client_fill_payload( payload, tag );
+                    rocketnet_server_transport_send_packet( pair->server, 0, payload, MSGX_CLIENT_PAYLOAD_BYTES );
+                }
+            }
+            rocketnet_server_transport_send_packets( pair->server );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( pair->client, rocketnet_platform_time() );
         rocketnet_server_transport_update( pair->server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( pair->server );
