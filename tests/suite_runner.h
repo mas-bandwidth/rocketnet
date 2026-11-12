@@ -333,6 +333,76 @@ inline uint64_t suite_page_bytes()
 #endif // #if defined( _WIN32 )
 }
 
+// A case passes only when its function returns 0. A case that ends the
+// process itself never returns: exit( 0 ) ahead of its checks would otherwise
+// leave with status 0 and pass in every entry (--run, the suite's children,
+// shards). While a case runs, an atexit handler stands guard: if the process
+// that started the case leaves through exit() before the case returned, the
+// handler prints why and ends the process with status 1. A failed check's
+// exit( 1 ) still ends with 1; abort and signals never run atexit handlers.
+// A child the case forks keeps its own exit status (the pid is compared).
+
+struct suite_case_guard_state
+{
+    const char * name;
+    long pid;
+    bool running;
+    bool registered;
+};
+
+inline suite_case_guard_state & suite_case_guard()
+{
+    static suite_case_guard_state state = { NULL, 0, false, false };
+    return state;
+}
+
+inline long suite_process_id()
+{
+#if defined( _WIN32 )
+    return (long) GetCurrentProcessId();
+#else
+    return (long) getpid();
+#endif // #if defined( _WIN32 )
+}
+
+// true when an exit() now, from process pid, must fail the case: a case is
+// running and this is the process that started it
+inline bool suite_case_exit_fails( const suite_case_guard_state & state, long pid )
+{
+    return state.running && state.pid == pid;
+}
+
+inline void suite_case_exit_guard()
+{
+    const suite_case_guard_state & state = suite_case_guard();
+    if ( suite_case_exit_fails( state, suite_process_id() ) )
+    {
+        printf( "check failed: %s left through exit() before it returned; a case ends only by returning\n", state.name );
+        fflush( stdout );
+        _exit( 1 );
+    }
+}
+
+inline int suite_run_case( int ( *worker )( const char * ), const char * name )
+{
+    suite_case_guard_state & state = suite_case_guard();
+    if ( !state.registered )
+    {
+        if ( atexit( suite_case_exit_guard ) != 0 )
+        {
+            printf( "check failed: %s: could not register the exit guard\n", name );
+            return 1;
+        }
+        state.registered = true;
+    }
+    state.name = name;
+    state.pid = suite_process_id();
+    state.running = true;
+    const int rc = worker( name );
+    state.running = false;
+    return rc;
+}
+
 // The bound for one case: none in a sanitizer build without the environment
 // override, else the bound the case declares, else the bound its process
 // reported from its plan (plan_mb, -1 for none), else the suite-wide one.
@@ -866,22 +936,6 @@ inline bool suite_take_shard_option( int * argc, char ** argv, int * index, int 
     return true;
 }
 
-inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int), int shard_index = 0, int shards = 0 )
-{
-    const int n = count ? count() : 0;
-    for ( int i = 0; i < n; i++ )
-    {
-        if ( shards > 0 && suite_shard_of( name_at( i ), shards ) != shard_index )
-        {
-            continue;
-        }
-        printf( "%s\n", name_at( i ) );
-    }
-    fflush( stdout );
-
-    return 0;
-}
-
 // Calls emit( line ) for each line of output, without its line ending.
 
 template <typename F> inline void suite_for_each_line( const std::string & output, F emit )
@@ -1088,6 +1142,29 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         }
     }
 
+    // every name once: a registry row or exec row repeated would run twice
+    // and the second result would stand for both (VERIFY-5 K3). Compared
+    // through pointers to the names, never string copies (the MSan note
+    // above)
+
+    {
+        std::vector<const char *> names( pending.size() );
+        for ( size_t i = 0; i < pending.size(); i++ )
+        {
+            names[i] = pending[i].name.c_str();
+        }
+        std::sort( names.begin(), names.end(), []( const char * a, const char * b )
+                   { return std::strcmp( a, b ) < 0; } );
+        for ( size_t i = 1; i < names.size(); i++ )
+        {
+            if ( std::strcmp( names[i - 1], names[i] ) == 0 )
+            {
+                printf( "check failed: test name %s is registered more than once\n", names[i] );
+                return false;
+            }
+        }
+    }
+
     suite_case_rss_bound_registry_t * rss_registry = suite_case_rss_bound_registry();
     for ( int i = 0; i < rss_registry->count; i++ )
     {
@@ -1138,7 +1215,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
 // Keeps the collected cases of shard index of shards (suite_shard_of), in
 // suite order, and prints how many of the collected cases that is.
 
-inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards )
+inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards, bool report = true )
 {
     if ( shards == 0 )
     {
@@ -1161,8 +1238,46 @@ inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<sui
     }
     pending.resize( kept );
     results.resize( kept );
-    printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+    if ( report )
+    {
+        printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+        fflush( stdout );
+    }
+}
+
+// --list [--shard i/n]: the names a run with the same environment and shard
+// would start, chosen by the run's own code (suite_collect, then
+// suite_keep_shard), never by a second reading of the registry: the nightly
+// tier's cases are listed only under ROCKETNET_TEST_NIGHTLY=1, an exec row is
+// listed with the registered cases, and a case a shard run drops is missing
+// from that shard's list too (tools/check_test_shards.py,
+// tools/check_unit_case_coverage.py).
+
+inline int suite_list_cases( int ( *count )(), const char * ( *name_at )(int), const suite_exec * execs, int nexecs,
+                             int ( *group_of )( const char * name ), const char * exe_suffix, int shard_index, int shards )
+{
+    const std::string self = suite_executable_path();
+    if ( self.empty() )
+    {
+        printf( "check failed: could not resolve this executable\n" );
+        return 1;
+    }
+
+    std::vector<suite_case> pending;
+    std::vector<suite_result> results;
+    if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), exe_suffix ) )
+    {
+        return 1;
+    }
+    suite_keep_shard( pending, results, shard_index, shards, false );
+
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        printf( "%s\n", pending[i].name.c_str() );
+    }
     fflush( stdout );
+
+    return 0;
 }
 
 // Rows a suite omitted because their runs_here predicate is false on this
@@ -1328,7 +1443,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
     {
-        return worker( name );
+        return suite_run_case( worker, name );
     }
 
     const pid_t pid = fork();
@@ -1336,7 +1451,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     {
         close( pipefd[0] );
         close( pipefd[1] );
-        return worker( name );
+        return suite_run_case( worker, name );
     }
 
     if ( pid == 0 )
@@ -1351,7 +1466,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
-        const int rc = worker( name );
+        const int rc = suite_run_case( worker, name );
         fflush( stdout );
         fflush( stderr );
         _exit( rc );
@@ -1410,7 +1525,7 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, "", shard_index, shards );
     }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
@@ -1421,16 +1536,12 @@ inline int suite_main( int argc, char ** argv,
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
-        }
-        for ( int i = 3; i < argc; i++ )
-        {
-            if ( argv[i][0] == '-' )
-            {
-                return suite_usage( argv );
-            }
         }
 
         // under a suite run the parent already captures this process, so
@@ -1440,22 +1551,23 @@ inline int suite_main( int argc, char ** argv,
         if ( suite_env_is_set( "ROCKETNET_TEST_SUITE_CAPTURE" ) )
         {
             unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
-            return worker( argv[2] );
+            return suite_run_case( worker, argv[2] );
         }
 
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
         {
             return suite_run_names_only( worker, argv[2] );
         }
-        return worker( argv[2] );
+        return suite_run_case( worker, argv[2] );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();
@@ -1779,6 +1891,33 @@ inline void suite_drain( HANDLE pipe, std::string & output )
 // the suite spawns; each child sets all of it again in its own CRT.
 // tests/windows_no_dialogs.cpp and ci.yml's Windows leg (c) prove it.
 
+#if defined( _MSC_VER ) && defined( _DEBUG )
+
+// The debug CRT reports what it detects (a heap block overrun at its free, a
+// bad pointer, a CRT assert) and, with the reports routed to stderr so no
+// dialog blocks CI, carries on: the case then exits 0 over a printed "HEAP
+// CORRUPTION DETECTED". Any error or assert report ends the process red: the
+// text goes to stderr first, then the process leaves with status 3. Warnings
+// (the leak dump) stay reports.
+
+inline int __cdecl suite_crt_report_fails( int report_type, char * message, int * return_value )
+{
+    if ( report_type == _CRT_ERROR || report_type == _CRT_ASSERT )
+    {
+        fprintf( stderr, "check failed: the debug CRT reported an error: %s\n", message ? message : "(no text)" );
+        fflush( stderr );
+        fflush( stdout );
+        _exit( 3 );
+    }
+    if ( return_value )
+    {
+        *return_value = 0;
+    }
+    return FALSE;
+}
+
+#endif // #if defined( _MSC_VER ) && defined( _DEBUG )
+
 inline void suite_no_dialogs()
 {
     SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX );
@@ -1792,6 +1931,7 @@ inline void suite_no_dialogs()
     _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDERR );
     _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
     _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDERR );
+    _CrtSetReportHook2( _CRT_RPTHOOK_INSTALL, suite_crt_report_fails );
 #endif // #if defined( _DEBUG )
 #endif // #if defined( _MSC_VER )
 }
@@ -1834,7 +1974,7 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, ".exe", shard_index, shards );
     }
 
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
@@ -1845,26 +1985,23 @@ inline int suite_main( int argc, char ** argv,
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
         }
-        for ( int i = 3; i < argc; i++ )
-        {
-            if ( argv[i][0] == '-' )
-            {
-                return suite_usage( argv );
-            }
-        }
-        return worker( argv[2] );
+        return suite_run_case( worker, argv[2] );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();

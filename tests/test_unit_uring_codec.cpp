@@ -204,6 +204,23 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
                               buf, (int) sizeof( buf ), 8, 0,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
 
+    // the control area is taken from the bytes left too: with 8 name and 8
+    // control bytes, 64-16-8-8=32 bytes are left, so 33 is truncated and 32
+    // is the whole payload, starting after both areas.
+
+    memset( buf, 0, sizeof( buf ) );
+    put_u32_native( buf + 8, 33 );
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+                              buf, (int) sizeof( buf ), 8, 8,
+                              &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
+
+    put_u32_native( buf + 8, 32 );
+    rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
+                              buf, (int) sizeof( buf ), 8, 8,
+                              &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_OK );
+    rocketnet_unit_check( payload == buf + 32 );
+    rocketnet_unit_check( payload_bytes == 32 );
+
     // a zero-length payload accepted as OK with payload_bytes 0.
 
     uint8_t zerobuf[16];

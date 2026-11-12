@@ -16,6 +16,45 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The portable socket's don't-fragment options as the kernel reports them on
+// a real socket made by rocketnet_platform_socket_create (the client's and
+// the portable server's Windows create sets them inline, not through
+// rocketnet_platform_socket_apply_dont_fragment, so a unit test of that helper
+// does not see them): IP_DONTFRAGMENT always, IPV6_DONTFRAG on an IPv6
+// socket. Returns false when the socket could not be made or read.
+
+static bool platform_socket_dont_fragment( const char * bind_text, int * ipv4_enabled, int * ipv6_enabled )
+{
+    rocketnet_address_t bind;
+    if ( !rocketnet_address_parse( &bind, bind_text ) )
+    {
+        return false;
+    }
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    if ( !socket )
+    {
+        return false;
+    }
+    *ipv4_enabled = 0;
+    *ipv6_enabled = 0;
+    int bytes = (int) sizeof( *ipv4_enabled );
+    bool read = getsockopt( (SOCKET) socket->handle, IPPROTO_IP, IP_DONTFRAGMENT, (char *) ipv4_enabled, &bytes ) == 0 &&
+                bytes == (int) sizeof( *ipv4_enabled );
+    if ( bind.type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        bytes = (int) sizeof( *ipv6_enabled );
+        read = read && getsockopt( (SOCKET) socket->handle, IPPROTO_IPV6, IPV6_DONTFRAG, (char *) ipv6_enabled, &bytes ) == 0 &&
+               bytes == (int) sizeof( *ipv6_enabled );
+    }
+    else
+    {
+        *ipv6_enabled = 1;
+    }
+    rocketnet_platform_socket_destroy( socket );
+    return read;
+}
+
 #if !ROCKETNET_DEV
 
 // This translation unit also supplies the production-linked native transport
@@ -123,8 +162,18 @@ static uint8_t * production_rio_start( void * p, const rocketnet_address_t * to,
 static void production_rio_finish( void * p, uint64_t id, uint8_t * frame, int bytes ) { rocketnet_server_rio_finish_packet( (rocketnet_server_rio_t *) p, id, frame, bytes ); }
 static void production_rio_send( void * p ) { rocketnet_server_rio_send_packets( (rocketnet_server_rio_t *) p ); }
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     PRODUCTION_CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 
@@ -164,6 +213,16 @@ int main()
     PRODUCTION_CHECK( rocketnet_server_rio_stopped( rio ) && rocketnet_server_rio_pending( rio ) == 0 );
     rocketnet_server_rio_destroy( rio );
     printf( "test_rio_production_exchange_shutdown\n" );
+
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int family = 0; family < 2; ++family )
+    {
+        int ipv4_enabled = 0;
+        int ipv6_enabled = 0;
+        PRODUCTION_CHECK( platform_socket_dont_fragment( binds[family], &ipv4_enabled, &ipv6_enabled ) );
+        PRODUCTION_CHECK( ipv4_enabled == 1 && ipv6_enabled == 1 );
+    }
+    printf( "test_platform_socket_production_sets_dont_fragment\n" );
 
     rocketnet_term();
     printf( "*** PRODUCTION WINDOWS TRANSPORTS PASSED ***\n" );
@@ -2706,6 +2765,21 @@ static void test_rio_transport_socket_sets_dont_fragment()
     CHECK( enabled_for_both );
 }
 
+static void test_platform_socket_sets_dont_fragment()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+    for ( int family = 0; family < 2; ++family )
+    {
+        int ipv4_enabled = 0;
+        int ipv6_enabled = 0;
+        CHECK( platform_socket_dont_fragment( binds[family], &ipv4_enabled, &ipv6_enabled ) );
+        printf( "test_platform_socket_sets_dont_fragment %s ipv4=%d ipv6=%d\n", binds[family], ipv4_enabled, ipv6_enabled );
+        CHECK( ipv4_enabled == 1 && ipv6_enabled == 1 );
+        CHECK( live_allocations.load() == baseline );
+    }
+}
+
 // every socket the Windows transports open is non-inheritable, so a child
 // process spawned with handle inheritance never holds the bound port or
 // stalls closesocket's cancel of the posted I/O
@@ -2853,6 +2927,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
     { "test_rio_transport_socket_sets_dont_fragment", test_rio_transport_socket_sets_dont_fragment },
+    { "test_platform_socket_sets_dont_fragment", test_platform_socket_sets_dont_fragment },
     { "test_iocp_transport_finish_refuses_unissued_packet_id", test_iocp_finish_refuses_unissued_packet_id },
     { "test_iocp_transport_finish_refuses_bad_packet_bytes", test_iocp_finish_refuses_bad_packet_bytes },
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },

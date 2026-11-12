@@ -311,6 +311,41 @@ static void standard_handshake_server_token_refusals()
 
         handshake_server_teardown( &test );
     }
+
+    // in every build, the DEV=OFF unit suite included (until now only the
+    // DEV vectors saw these two): an expired cookie is answered with a fresh
+    // cookie and counted, never taken as proof of the address ...
+
+    {
+        struct handshake_server_t test;
+        handshake_server_setup( &test );
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        handshake_server_build_request( request, "198.51.100.7:56789",
+                                        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, -100 );
+        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+        check( response_bytes > 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] == 1 );
+
+        handshake_server_teardown( &test );
+    }
+
+    // ... and a token for another protocol id is ignored and counted
+
+    {
+        struct handshake_server_t test;
+        handshake_server_setup( &test );
+        test.server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
+
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        handshake_server_build_request( request, "198.51.100.7:56789",
+                                        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+        check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        check( response_bytes == 0 );
+        check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] == 1 );
+
+        handshake_server_teardown( &test );
+    }
 }
 
 static void test_standard_handshake_server_vectors()

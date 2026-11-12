@@ -522,12 +522,17 @@ jobs:
           done
           exit $failed
 
-      # The cases this configuration compiles, for the unit-case-coverage job
+      # The cases this configuration runs, for the unit-case-coverage job
       # (tools/check_unit_case_coverage.py): every registered case must run in
       # at least one CI configuration. Nightly tier only, where every
-      # configuration runs.
+      # configuration runs. `--list` names what a run in the same environment
+      # starts (suite_list_cases), so the list and the run below both take
+      # ROCKETNET_TEST_NIGHTLY from the tier: the nightly tier's unit cases
+      # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
         if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
@@ -541,6 +546,8 @@ jobs:
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
@@ -558,6 +565,8 @@ jobs:
       # On the Linux Release leg each shard row runs its shard of the suite.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
         if: runner.os == 'Linux' && matrix.leg == 'unit'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           bash tools/test_check_unit_no_sockets.sh
           bash tools/check_unit_no_sockets.sh ./bin/test ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
@@ -1440,6 +1449,8 @@ jobs:
       - name: Save the registered unit cases
         if: matrix.leg != 'c'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && matrix.leg == 'a' && '1' || '0' }}
         run: |
           set -euo pipefail
           mkdir -p unit-cases && ./bin/Release/test.exe --list > "unit-cases/Windows-${{ matrix.leg }}.txt"
@@ -1457,10 +1468,39 @@ jobs:
       - name: Run tests
         if: matrix.leg == 'a'
         shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: |
           set -euo pipefail
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
+
+      # The shipped Windows sockets keep datagrams whole: each create (portable,
+      # iocp, rio) sets IP_DONTFRAGMENT, and IPV6_DONTFRAG on IPv6, inline. The
+      # unit case of the shared helper cannot see that, so the options are read
+      # back from real loopback sockets here (tests/test_iocp.cpp; the whole
+      # test_iocp run is nightly).
+      - name: Windows sockets set don't-fragment (real sockets)
+        if: matrix.leg == 'a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
+
+      # MSVC Debug with ROCKETNET_DEV=ON: the only MSVC build with the library's
+      # asserts and the debug CRT's heap checks on for the DEV-only Windows
+      # cases (the Debug runs elsewhere here are DEV=OFF or leg (c)'s dialog
+      # cases). The whole unit suite with the nightly tier; a debug-CRT report
+      # fails its case (suite_crt_report_fails). Measured on captain: 169 s.
+      - name: Unit suite, MSVC Debug, ROCKETNET_DEV=ON (nightly tier)
+        if: matrix.leg == 'a'
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: '1'
+        run: |
+          set -euo pipefail
+          cmake --build build --config Debug --target test --parallel
+          ./bin/Debug/test.exe
 
       # Leg (c): a Windows test child that fails exits at once and never waits
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
@@ -1498,10 +1538,13 @@ jobs:
           }
           failed=0
           for config in Release Debug; do
-            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation; do
+            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation test_no_dialogs_heap_overrun; do
               read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
               stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
-              if [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+              if [ "$config/$case" = Debug/test_no_dialogs_heap_overrun ] && ! grep -q "the debug CRT reported an error" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
+                echo "FAIL $config $case: the debug heap report did not end the case red"
+                failed=1
+              elif [ "$config/$case" = Debug/test_no_dialogs_assert ] && ! grep -q "Assertion failed" "$RUNNER_TEMP/no-dialogs-$config-$case.err"; then
                 echo "FAIL $config $case: the assertion report did not reach stderr"
                 failed=1
               elif [ "$state" = exited ] && [ "$code" != 0 ]; then
@@ -2177,6 +2220,8 @@ jobs:
 
       - name: Save the registered unit cases
         if: inputs.full && matrix.shard == '0/2'
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
@@ -2192,6 +2237,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: ./bin/test --shard ${{ matrix.shard }}
 
       # the same locked-memory check as build-and-test; this leg does not
@@ -3004,6 +3050,8 @@ jobs:
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"
 
       - name: Upload the registered unit cases
@@ -3014,6 +3062,8 @@ jobs:
           if-no-files-found: error
 
       - name: Run tests (auto ladder) against the pinned sodium
+        env:
+          ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
 
       - name: Vendor parity against the pinned backend
@@ -3751,10 +3801,13 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
-      - name: Test the mutation runner's generator and process cleanup
+      - name: Test the mutation runner's generator and process cleanup; check the survivor baseline
         run: |
           set -euo pipefail
           python3 tools/mutation/run_mutants.py --self-test
+          # the nightly's reviewed survivor baseline: it parses, its gap count is its
+          # gap-ratchet, and every entry is still a mutant of the source as it is now
+          python3 tools/mutation/run_mutants.py --check-baseline tools/mutation/survivors.tsv
           output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
