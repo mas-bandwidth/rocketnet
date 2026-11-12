@@ -498,7 +498,7 @@ static rocketnet_server_transport_t * rocketnet_server_transport_allocate( void 
     payloads->payload_data = (uint8_t **) ( base + layout.payload_data );
     payloads->payload_bytes = (int *) ( base + layout.payload_bytes );
     server_transport->payload_storage = base + layout.payload_storage;
-
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_transport_layout( max_clients, &layout ) );     // ASan builds: poison the red zones between the carves (sdk/rocketnet_memory.h)
     return server_transport;
 }
 

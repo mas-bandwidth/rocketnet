@@ -365,6 +365,13 @@ static uint64_t loopback_align( uint64_t bytes )
     return ( bytes + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) / ROCKETNET_ALLOCATION_ALIGNMENT * ROCKETNET_ALLOCATION_ALIGNMENT;
 }
 
+// an array's part of the hub's block: ASan builds leave a red zone after it
+// (sdk/rocketnet_memory.h), poisoned by create
+static uint64_t loopback_carve( uint64_t bytes )
+{
+    return loopback_align( bytes + ROCKETNET_RED_ZONE_BYTES );
+}
+
 uint64_t rocketnet_loopback_hub_bytes( int max_clients )
 {
     // the hub's one block: the hub, the endpoint records, their send failure
@@ -378,10 +385,10 @@ uint64_t rocketnet_loopback_hub_bytes( int max_clients )
     const uint64_t endpoints = (uint64_t) max_clients + 1;
 
     return loopback_align( sizeof( rocketnet_loopback_hub_t ) ) +
-           loopback_align( endpoints * sizeof( rocketnet_loopback_endpoint_t ) ) +
-           loopback_align( endpoints * sizeof( std::atomic<uint64_t> ) ) +
-           loopback_align( rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( max_clients ) ) ) +
-           (uint64_t) max_clients * loopback_align( rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
+           loopback_carve( endpoints * sizeof( rocketnet_loopback_endpoint_t ) ) +
+           loopback_carve( endpoints * sizeof( std::atomic<uint64_t> ) ) +
+           loopback_carve( rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( max_clients ) ) ) +
+           (uint64_t) max_clients * loopback_carve( rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
 }
 
 rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int max_clients, enum rocketnet_status_t * status )
@@ -437,8 +444,8 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
 
     const uint64_t endpoints = (uint64_t) max_clients + 1;
     const uint64_t endpoints_offset = loopback_align( sizeof( rocketnet_loopback_hub_t ) );
-    const uint64_t failures_offset = endpoints_offset + loopback_align( endpoints * sizeof( rocketnet_loopback_endpoint_t ) );
-    const uint64_t queues_offset = failures_offset + loopback_align( endpoints * sizeof( std::atomic<uint64_t> ) );
+    const uint64_t failures_offset = endpoints_offset + loopback_carve( endpoints * sizeof( rocketnet_loopback_endpoint_t ) );
+    const uint64_t queues_offset = failures_offset + loopback_carve( endpoints * sizeof( std::atomic<uint64_t> ) );
 
     // the records are zeroed; the queues are not, so their pages are touched
     // only by traffic
@@ -461,8 +468,17 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
         e.capacity = (uint32_t) packets;
         e.packets = (rocketnet_loopback_packet_t *) queue;
         new ( &hub->send_failures[i] ) std::atomic<uint64_t>( 0 );
-        queue += loopback_align( rocketnet_loopback_queue_bytes( packets ) );
+#if ROCKETNET_RED_ZONES
+        rocketnet_red_zone_poison( queue + rocketnet_loopback_queue_bytes( packets ), ROCKETNET_RED_ZONE_BYTES );
+#endif // #if ROCKETNET_RED_ZONES
+        queue += loopback_carve( rocketnet_loopback_queue_bytes( packets ) );
     }
+
+#if ROCKETNET_RED_ZONES
+    // ASan builds: the red zones after the records (sdk/rocketnet_memory.h)
+    rocketnet_red_zone_poison( block + endpoints_offset + endpoints * sizeof( rocketnet_loopback_endpoint_t ), ROCKETNET_RED_ZONE_BYTES );
+    rocketnet_red_zone_poison( block + failures_offset + endpoints * sizeof( std::atomic<uint64_t> ), ROCKETNET_RED_ZONE_BYTES );
+#endif // #if ROCKETNET_RED_ZONES
 
     if ( !rocketnet_platform_mutex_create( &hub->mutex ) )
     {

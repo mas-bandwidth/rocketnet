@@ -31,6 +31,7 @@
 
 #include "rocketnet_counters.h"
 #include "rocketnet_allocator.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_window_send.h"
 #include "rocketnet_window_receive.h"
 #include "rocketnet_window_ack.h"
@@ -1212,6 +1213,10 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 //                              the cases
 // ----------------------------------------------------------------
 
+// the bytes an ASan build adds to a region: a red zone after each part
+// (sdk/rocketnet_memory.h); 0 in every other build
+static const uint64_t RN_RED_ZONES_PER_REGION = (uint64_t) RN_NUM_PARTS * ROCKETNET_RED_ZONE_BYTES;
+
 static void test_channels_allocator_layout()
 {
     // docs/LOAD.md Table 3's formula, part by part, at the defaults: 6,706,560 bytes, no padding
@@ -1227,9 +1232,9 @@ static void test_channels_allocator_layout()
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
     check( layout.formula_bytes == 6706560 );
-    check( layout.region_bytes == 6706560 );
-    check( rocketnet_message_connection_bytes( &config ) == 6706560 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6706560 );
+    check( layout.region_bytes == 6706560 + RN_RED_ZONES_PER_REGION );       // ASan builds: a red zone after each part (sdk/rocketnet_memory.h)
+    check( rocketnet_message_connection_bytes( &config ) == 6706560 + RN_RED_ZONES_PER_REGION );
+    check( rocketnet_message_connection_bytes( NULL ) > 6706560 + RN_RED_ZONES_PER_REGION );
 
     const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 88 * C );
@@ -1256,7 +1261,7 @@ static void test_channels_allocator_layout()
     {
         check( rn_region_part_name( part ) != NULL );
         check( layout.offset[part] % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-        check( layout.offset[part] >= end );
+        check( layout.offset[part] >= end + ( part > 0 ? (uint64_t) ROCKETNET_RED_ZONE_BYTES : 0 ) );
         end = layout.offset[part] + layout.bytes[part];
     }
 
@@ -1279,14 +1284,14 @@ static void test_channels_allocator_layout()
     config.max_message_receipts = 17;
     check( rn_region_layout( &config, &layout ) );
     check( layout.region_bytes > layout.formula_bytes );
-    check( layout.region_bytes - layout.formula_bytes < 64 * RN_NUM_PARTS );
+    check( layout.region_bytes - layout.formula_bytes < ( 64 + ROCKETNET_RED_ZONE_BYTES ) * RN_NUM_PARTS );
     check( layout.region_bytes % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
     end = 0;
 
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
     {
         check( layout.offset[part] % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
-        check( layout.offset[part] >= end );
+        check( layout.offset[part] >= end + ( part > 0 ? (uint64_t) ROCKETNET_RED_ZONE_BYTES : 0 ) );
         end = layout.offset[part] + layout.bytes[part];
     }
 
@@ -1872,9 +1877,12 @@ static void test_channels_allocator_sizing()
     check( length > 0 && length < (int) sizeof( text ) );
     check( (int) strlen( text ) == length );
     check( strstr( text, "88C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6706560" ) != NULL );
+    char expected[128];
+    snprintf( expected, sizeof( expected ), "region bytes %llu", (unsigned long long) ( 6706560 + RN_RED_ZONES_PER_REGION ) );
+    check( strstr( text, expected ) != NULL );
     check( strstr( text, "formula bytes 6706560" ) != NULL );
-    check( strstr( text, "1000 connections 6706560000" ) != NULL );
+    snprintf( expected, sizeof( expected ), "1000 connections %llu", (unsigned long long) ( 1000 * ( 6706560 + RN_RED_ZONES_PER_REGION ) ) );
+    check( strstr( text, expected ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 

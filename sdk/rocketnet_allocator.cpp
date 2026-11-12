@@ -4,6 +4,7 @@
 */
 
 #include "rocketnet_allocator.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_platform.h"
 
 #include <stdarg.h>
@@ -254,11 +255,13 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 
     uint64_t offset = 0;
 
+    // ASan builds: a red zone after each part (sdk/rocketnet_memory.h), poisoned by rn_region_point
+
     for ( int part = 0; part < RN_NUM_PARTS; part++ )
     {
         layout->offset[part] = offset;
         layout->formula_bytes += layout->bytes[part];
-        offset = rn_align64( offset + layout->bytes[part] );
+        offset = rn_align64( offset + layout->bytes[part] + ROCKETNET_RED_ZONE_BYTES );
     }
 
     layout->region_bytes = offset;
@@ -575,6 +578,14 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->store_memory = base + layout->offset[RN_PART_SEND_STORE];
     region->store_bytes = layout->bytes[RN_PART_SEND_STORE];
     rn_send_store_init_counts( &region->store, region->store_memory, layout->store_chunks );
+
+#if ROCKETNET_RED_ZONES
+    // ASan builds: the red zone after each part (sdk/rocketnet_memory.h)
+    for ( int part = 0; part < RN_NUM_PARTS; part++ )
+    {
+        rocketnet_red_zone_poison( base + layout->offset[part] + layout->bytes[part], ROCKETNET_RED_ZONE_BYTES );
+    }
+#endif // #if ROCKETNET_RED_ZONES
 }
 
     // proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
@@ -1554,7 +1565,7 @@ static bool rn_arena_plan( const rocketnet_message_config_t * config, int num_re
         return false;
     }
 
-    *header = rn_align64( sizeof( rn_arena_t ) ) + rn_align64( sizeof( rn_region_t ) * (uint64_t) num_regions );
+    *header = rn_align64( sizeof( rn_arena_t ) ) + rn_align64( sizeof( rn_region_t ) * (uint64_t) num_regions + ROCKETNET_RED_ZONE_BYTES );
     if ( layout->region_bytes > ( UINT64_MAX - *header ) / (uint64_t) num_regions || *header + layout->region_bytes * (uint64_t) num_regions > (uint64_t) SIZE_MAX )
     {
         rocketnet_error( "message arena of %d regions of %" PRIu64 " bytes is too large", num_regions, layout->region_bytes );
@@ -1586,6 +1597,11 @@ static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_m
 
         rn_region_carve( &arena->regions[i] );
     }
+
+#if ROCKETNET_RED_ZONES
+    // ASan builds: the red zone after the region structs (sdk/rocketnet_memory.h)
+    rocketnet_red_zone_poison( (uint8_t *) ( arena->regions + num_regions ), ROCKETNET_RED_ZONE_BYTES );
+#endif // #if ROCKETNET_RED_ZONES
 
     return arena;
 }
@@ -1699,6 +1715,13 @@ void rn_arena_destroy( rn_arena_t * arena )
     {
         rocketnet_free( arena->context, arena );
     }
+#if ROCKETNET_RED_ZONES
+    else
+    {
+        // ASan builds: the caller's block goes back with no red zone poisoned (sdk/rocketnet_memory.h)
+        rocketnet_red_zone_unpoison( arena, arena->bytes );
+    }
+#endif // #if ROCKETNET_RED_ZONES
 }
 
 #if ROCKETNET_DEV

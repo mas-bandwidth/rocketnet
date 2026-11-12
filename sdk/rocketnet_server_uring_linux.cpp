@@ -815,6 +815,9 @@ static bool rocketnet_server_uring_buffers_create( struct rocketnet_server_uring
         uring->banks[i].packet_bytes = (int *) ( base + layout.packet_bytes[i] );
         uring->banks[i].packet_data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout.packet_data[i] );
     }
+
+    // ASan builds: the red zones between the carves (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_uring_banks_layout( bank_size, &layout ) );
     return true;
 }
 

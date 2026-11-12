@@ -10,6 +10,8 @@
 #include "test_unit_registry.h"
 #include "msan_scale_allocator.h"
 #include "rocketnet.h"
+#include "../sdk/rocketnet_allocator.h"
+#include "../sdk/rocketnet_memory.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -41,6 +43,14 @@
 // and two receive_any scan counters (sdk/rocketnet_network_simulator.h,
 // 40 bytes).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
+// An AddressSanitizer build plans its red zones too (sdk/rocketnet_memory.h):
+// each connection a red zone after each region part and one after its views,
+// and a red zone plus 8 header bytes for each other carved array and each
+// allocation. The fixed term is a bound of mine, 256 such arrays and
+// allocations; Linux read 7720 bytes of it at 1000 clients (2026-11-12, gcc
+// Debug ASan: actual= 3112964443), the macOS client 3184 bytes over its
+// figure (Apple clang Debug ASan: actual= 15039610). 0 in every other build.
+#define LIGHT_RED_ZONE_BYTES( connections ) ( (size_t) ( connections ) * ( RN_NUM_PARTS + 1 ) * ROCKETNET_RED_ZONE_BYTES + ( ROCKETNET_RED_ZONE_BYTES > 0 ? (size_t) 256 * ( ROCKETNET_RED_ZONE_BYTES + 8 ) : 0 ) )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
 // The server protocol's cookie reply limit (a 262144-bit bitmap carved with
@@ -224,11 +234,11 @@ static void test_light_profile_server_1000_required_memory()
 
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
-    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES )
+    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1000 ) )
     {
-        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1000 ) );
     }
-    check( bytes <= LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+    check( bytes <= LIGHT_SERVER_1000_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1000 ) );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
@@ -242,11 +252,11 @@ static void test_light_profile_client_required_memory()
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
-    if ( bytes != LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES )
+    if ( bytes != LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1 ) )
     {
-        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1 ) );
     }
-    check( bytes <= LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES );
+    check( bytes <= LIGHT_CLIENT_MAX_BYTES + LIGHT_REQUIRED_MEMORY_SLACK_BYTES + LIGHT_RED_ZONE_BYTES( 1 ) );
 }
 
 REGISTER_UNIT_TEST( test_light_profile_client_required_memory );

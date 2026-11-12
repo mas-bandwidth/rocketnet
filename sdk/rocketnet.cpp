@@ -8,6 +8,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_config.h"
 #include "rocketnet_hash.h"
+#include "rocketnet_memory.h"
 
 #include <sodium.h>
 
@@ -469,11 +470,15 @@ struct rocketnet_allocation_header_t
     void * base;
     void * context;
     void ( *free_function )( void *, void * );
+#if ROCKETNET_RED_ZONES
+    size_t bytes;                       // the allocator's block, so free can unpoison all of it
+#endif // #if ROCKETNET_RED_ZONES
 };
 
 uint64_t rocketnet_allocation_overhead()
 {
-    return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+    // ASan builds: a red zone after the caller's bytes (sdk/rocketnet_memory.h)
+    return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1 + ROCKETNET_RED_ZONE_BYTES;
 }
 
 #if ROCKETNET_DEV
@@ -650,11 +655,20 @@ void * rocketnet_malloc( void * context, size_t bytes )
         return NULL;
     }
 
-    const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t) ( alignment - 1 );
+    const uintptr_t aligned = ( (uintptr_t) base + overhead - ROCKETNET_RED_ZONE_BYTES ) & ~(uintptr_t) ( alignment - 1 );
     rocketnet_allocation_header_t * header = (rocketnet_allocation_header_t *) ( aligned - sizeof( rocketnet_allocation_header_t ) );
     header->base = base;
     header->context = context;
     header->free_function = installed.release;
+
+#if ROCKETNET_RED_ZONES
+    // everything of the allocator's block but the header and the caller's
+    // bytes is poisoned: the slack before the header and, at least
+    // ROCKETNET_RED_ZONE_BYTES of it, after the caller's bytes
+    header->bytes = bytes + overhead;
+    rocketnet_red_zone_poison( base, (uint64_t) ( (uintptr_t) header - (uintptr_t) base ) );
+    rocketnet_red_zone_poison( (uint8_t *) aligned + bytes, (uint64_t) ( (uintptr_t) base + bytes + overhead - ( aligned + bytes ) ) );
+#endif // #if ROCKETNET_RED_ZONES
 
     return (void *) aligned;
 }
@@ -669,6 +683,12 @@ void rocketnet_free( void * context, void * p )
     }
 
     const rocketnet_allocation_header_t allocation = *(rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
+
+#if ROCKETNET_RED_ZONES
+    // the block goes back to its allocator whole and addressable, red zones
+    // included (an allocator that reuses it without ASan's own free sees no poison)
+    rocketnet_red_zone_unpoison( allocation.base, allocation.bytes );
+#endif // #if ROCKETNET_RED_ZONES
 
     // proofs/tla/RNAllocatorInstall.tla CallFree: through the header's
     // release, then uncounted
