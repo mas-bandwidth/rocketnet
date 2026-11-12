@@ -516,6 +516,67 @@ static void test_public_link_simulator_drain_spreads_within_room()
     live_link_pair_teardown( &pair );
     free( fake );
 }
+
+// A staged commit reads the link setting once. The staged transport here has
+// no send_batch, as gso has none: a commit that answered active and then sent
+// as if inactive would call through it. The simulator is on, a switch to
+// all-zero is handed over, and the commit's setting take meets the lock held,
+// so it answers the setting in force (active): the simulator takes the
+// datagram, the slot goes back by abort and it is charged. The next commit
+// meets a free lock, applies the zero setting and the staging finishes it.
+// The clock is an argument.
+static void test_public_link_simulator_staged_commit_reads_setting_once()
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    struct staged_fake_t * fake = (struct staged_fake_t *) calloc( 1, sizeof( *fake ) );
+    check( fake != NULL );
+    struct rocketnet_server_transport_io_operations_t operations = {};
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.start_packet = staged_fake_start;
+    operations.finish_packet = staged_fake_finish;
+    operations.abort_packet = staged_fake_abort;
+    operations.flush = staged_fake_flush;
+    operations.receive = staged_fake_receive;
+
+    const struct rocketnet_server_transport_io_operations_t * swapped_operations = &operations;
+    void * swapped_instance = fake;
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+
+    // the simulator on and in force: the send takes the setting
+
+    uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    check( rocketnet_server_transport_network_simulator( pair.server, 1, 0, 0, 0 ) );
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 1 && fake->finishes == 0 );
+
+    struct rocketnet_server_transport_stats_t before;
+    struct rocketnet_server_transport_stats_t after;
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &before );
+
+    // the switch off waits behind a held lock at the commit's one read
+
+    check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+    rocketnet_server_transport_link_setting_busy_for_test( pair.server, 1 );
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 2 && fake->finishes == 0 );
+
+    // the lock free: the zero setting applies and the staging finishes it
+
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->aborts == 2 && fake->finishes == 1 );
+
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &after );
+    check( after.packets_sent == before.packets_sent + 2 );
+
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+    live_link_pair_teardown( &pair );
+    free( fake );
+}
 #endif // #if ROCKETNET_DEV
 
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
@@ -1015,6 +1076,7 @@ REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent
 REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_arms );
 REGISTER_UNIT_TEST( test_public_link_simulator_drain_spreads_within_room );
 REGISTER_UNIT_TEST( test_public_link_simulator_client_hold_sends_each_committed_frame_once );
+REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_reads_setting_once );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
