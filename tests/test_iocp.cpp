@@ -4,6 +4,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_server_rio.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_memory.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -3101,6 +3102,297 @@ static void test_rio_send_waits_counted()
     printf( "test_rio_transport_send_waits_counted\n" );
 }
 
+// ---- RIO lanes ----
+
+static rocketnet_server_rio_t * rio_open_lanes( rocketnet_address_t * bind, int lanes, const uint8_t * packet_filter )
+{
+    *bind = address( "127.0.0.1:0" );
+    rocketnet_server_rio_options_t options;
+    options.lanes = lanes;
+    options.packet_filter = packet_filter;
+    rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options );
+    CHECK( rio && bind->port );
+    return rio;
+}
+
+// Four lanes on one port: every client's frames leave through the lane its
+// address hashes to, arrive whole and in staged order, and the clients' own
+// datagrams to the port all reach the one process view whichever lane's
+// socket Windows hands them to. Every lane posts its receives.
+static void test_rio_lanes_send_and_receive()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    const int lanes = 4;
+    const int clients = 32;
+    const int n = 20;
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open_lanes( &bind, lanes, NULL );
+    CHECK( rocketnet_server_rio_lanes( rio ) == lanes );
+
+    std::vector<rocketnet_platform_socket_t *> client( (size_t) clients );
+    std::vector<rocketnet_address_t> client_address( (size_t) clients );
+    bool used[lanes] = {};
+    for ( int c = 0; c < clients; ++c )
+    {
+        client[(size_t) c] = fault_client( &client_address[(size_t) c] );
+        const int lane = rocketnet_server_rio_lane_of( rio, &client_address[(size_t) c] );
+        CHECK( lane >= 0 && lane < lanes );
+        CHECK( rocketnet_server_rio_lane_of( rio, &client_address[(size_t) c] ) == lane );
+        used[lane] = true;
+    }
+    int lanes_used = 0;
+    for ( int l = 0; l < lanes; ++l )
+    {
+        lanes_used += used[l] ? 1 : 0;
+    }
+    CHECK( lanes_used >= 2 );
+
+    const uint64_t sent = rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT );
+    const int round = ++fault_round & 0xFF;
+    for ( int i = 0; i < n; ++i )
+    {
+        for ( int c = 0; c < clients; ++c )
+        {
+            uint64_t id;
+            uint8_t * frame = rio_reserve( rio, &client_address[(size_t) c], &id );
+            CHECK( frame );
+            CHECK( id < (uint64_t) lanes * (uint64_t) ( 3 * rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) ) );
+            fault_mark( frame + ROCKETNET_FRAME_WIRE_OFFSET, round, i );
+            rocketnet_server_rio_finish_packet( rio, id, frame, FAULT_BYTES );
+        }
+    }
+    rio_flush( rio );
+
+    // each client: all n, in the order staged
+    for ( int c = 0; c < clients; ++c )
+    {
+        int next = 0;
+        const double deadline = rocketnet_platform_time() + 5.0;
+        while ( next < n && rocketnet_platform_time() < deadline )
+        {
+            uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_address_t from;
+            const int bytes = rocketnet_platform_socket_receive_packet( client[(size_t) c], &from, packet, sizeof( packet ) );
+            if ( !bytes )
+            {
+                rocketnet_platform_sleep( 0.001 );
+                continue;
+            }
+            CHECK( from.port == bind.port );
+            CHECK( fault_index( packet, bytes, round ) == next );
+            ++next;
+        }
+        CHECK( next == n );
+    }
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT ) - sent == (uint64_t) ( clients * n ) );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED ) == 0 );
+
+    // inbound: every client's datagrams reach the one view
+    for ( int c = 0; c < clients; ++c )
+    {
+        fault_client_send( client[(size_t) c], &bind, round, n );
+    }
+    std::vector<int> seen( (size_t) clients, 0 );
+    int count = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( count < clients * n && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_rio_process_packets( rio );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            const int index = fault_index( batch->packet_data[i], batch->packet_bytes[i], round );
+            CHECK( index >= 0 && index < n );
+            for ( int c = 0; c < clients; ++c )
+            {
+                if ( rocketnet_address_equal( &batch->from[i], &client_address[(size_t) c] ) )
+                {
+                    ++seen[(size_t) c];
+                }
+            }
+            ++count;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    CHECK( count == clients * n );
+    for ( int c = 0; c < clients; ++c )
+    {
+        CHECK( seen[(size_t) c] == n );
+    }
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED ) == (uint64_t) ( clients * n ) );
+
+    // every lane's receives posted again, nothing outstanding
+    const int receives = lanes * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    wait_until( "RIO lanes settle", [&]()
+                {
+        rocketnet_server_rio_send_packets( rio );
+        rocketnet_server_rio_receive_packets( rio );
+        return rocketnet_server_rio_pending( rio ) == receives && rocketnet_server_rio_test_retry_receives( rio ) == 0 &&
+               rocketnet_server_rio_test_send_idle( rio ); } );
+
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    for ( int c = 0; c < clients; ++c )
+    {
+        rocketnet_platform_socket_destroy( client[(size_t) c] );
+    }
+    printf( "test_rio_transport_lanes_send_and_receive lanes_used=%d\n", lanes_used );
+}
+
+// A port another socket already holds, with or without SO_REUSEADDR, is
+// refused before any lane binds: the exclusive probe. One lane is refused as
+// before, by its own exclusive bind.
+static void test_rio_lanes_refuse_a_held_port()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    for ( int reuse = 0; reuse < 2; ++reuse )
+    {
+        SOCKET holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+        CHECK( holder != INVALID_SOCKET );
+        BOOL enabled = TRUE;
+        if ( reuse )
+        {
+            CHECK( setsockopt( holder, SOL_SOCKET, SO_REUSEADDR, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+        }
+        sockaddr_in a = {};
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        CHECK( bind( holder, (sockaddr *) &a, sizeof( a ) ) == 0 );
+        int bytes = sizeof( a );
+        CHECK( getsockname( holder, (sockaddr *) &a, &bytes ) == 0 );
+
+        for ( int lanes : { 1, 4 } )
+        {
+            rocketnet_address_t at = address( "127.0.0.1:0" );
+            at.port = ntohs( a.sin_port );
+            rocketnet_server_rio_options_t options;
+            options.lanes = lanes;
+            options.packet_filter = NULL;
+            CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options ) );
+        }
+        closesocket( holder );
+    }
+
+    // lane counts outside 0 .. ROCKETNET_RIO_MAX_LANES are refused
+    for ( int lanes : { -1, ROCKETNET_RIO_MAX_LANES + 1 } )
+    {
+        rocketnet_address_t at = address( "127.0.0.1:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = lanes;
+        options.packet_filter = NULL;
+        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options ) );
+    }
+    printf( "test_rio_transport_lanes_refuse_a_held_port\n" );
+}
+
+// With lanes the sockets share the port with SO_REUSEADDR, so a later socket
+// of the same user may bind it too. Windows does not document which socket
+// gets a datagram once a second binds; measured, the first bound keeps
+// everything. This pins that: a change in Windows shows here first.
+static void test_rio_lanes_later_binder_receives_nothing()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open_lanes( &bind, 4, NULL );
+    rocketnet_address_t target = address( "127.0.0.1:0" );
+    target.port = bind.port;
+    SOCKET thief;
+    const bool bound = port_thief_binds( &target, &thief );
+    const int stolen = bound ? port_thief_steals( &target, thief ) : 0;
+    closesocket( thief );
+    rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d\n", bound ? 1 : 0, stolen );
+    CHECK( stolen == 0 );
+}
+
+// With a packet filter every lane worker runs the prefilter before banking:
+// datagrams that fail it never reach the view, are not PACKETS_RECEIVED, and
+// are counted by reason in receive_drop_totals.
+static void test_rio_lanes_prefilter_counts_drops()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0x5a, 0x17, 0xc3, 0x09 };
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open_lanes( &bind, 2, filter );
+
+    rocketnet_address_t client_address;
+    rocketnet_platform_socket_t * client = fault_client( &client_address );
+    const int n = 50;
+    const int round = ++fault_round & 0xFF;
+    fault_client_send( client, &bind, round, n );
+
+    uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
+    uint64_t dropped = 0;
+    int viewed = 0;
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( dropped < (uint64_t) n && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+        viewed += rocketnet_server_rio_process_packets( rio )->num_packets;
+        rocketnet_server_rio_receive_drop_totals( rio, totals );
+        dropped = 0;
+        for ( int i = 0; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
+        {
+            dropped += totals[i];
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    CHECK( totals[ROCKETNET_RECEIVE_ACCEPT] == 0 );
+    CHECK( totals[ROCKETNET_RECEIVE_DROP_BANK_FULL] == 0 );
+    CHECK( dropped == (uint64_t) n );
+    CHECK( viewed == 0 );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED ) == 0 );
+
+    rio_finish( rio, client );
+    printf( "test_rio_transport_lanes_prefilter_counts_drops\n" );
+}
+
+// finish refuses an id past the last lane's last slot, the largest id, and
+// an id that names another slot than the frame's, as SEND_FAILED; the
+// reserved slot is skipped, nothing is sent and the lanes go idle.
+static void test_rio_lanes_finish_refuses_foreign_ids()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    const int lanes = 3;
+    rocketnet_address_t bind;
+    rocketnet_server_rio_t * rio = rio_open_lanes( &bind, lanes, NULL );
+    rocketnet_address_t client_address;
+    rocketnet_platform_socket_t * client = fault_client( &client_address );
+
+    const uint64_t slots = 3ull * (uint64_t) rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const uint64_t foreign[] = { (uint64_t) lanes * slots, 0xFFFFFFFFFFFFFFFFull };
+    const uint64_t sent = rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT );
+    for ( uint64_t bad : foreign )
+    {
+        uint64_t id;
+        uint8_t * frame = rio_reserve( rio, &client_address, &id );
+        CHECK( frame && id < (uint64_t) lanes * slots );
+        fault_mark( frame + ROCKETNET_FRAME_WIRE_OFFSET, 1, 0 );
+        rocketnet_server_rio_finish_packet( rio, bad, frame, FAULT_BYTES );
+        rocketnet_server_rio_abort_packet( rio, bad, frame );
+    }
+    // an id in range that names another slot of the frame's own lane
+    {
+        uint64_t id;
+        uint8_t * frame = rio_reserve( rio, &client_address, &id );
+        CHECK( frame && id < (uint64_t) lanes * slots );
+        fault_mark( frame + ROCKETNET_FRAME_WIRE_OFFSET, 1, 0 );
+        const uint64_t other = ( id % slots ) + 1 < slots ? id + 1 : id - 1;
+        rocketnet_server_rio_finish_packet( rio, other, frame, FAULT_BYTES );
+        rocketnet_server_rio_abort_packet( rio, other, frame );
+    }
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED ) == 3 );
+    rio_flush( rio );
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT ) == sent );
+
+    rio_finish( rio, client );
+    printf( "test_rio_transport_lanes_finish_refuses_foreign_ids\n" );
+}
+
 struct fault_case_t
 {
     const char * name;
@@ -3136,6 +3428,11 @@ static const fault_case_t fault_cases[] = {
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
     { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
+    { "test_rio_transport_lanes_send_and_receive", test_rio_lanes_send_and_receive },
+    { "test_rio_transport_lanes_refuse_a_held_port", test_rio_lanes_refuse_a_held_port },
+    { "test_rio_transport_lanes_later_binder_receives_nothing", test_rio_lanes_later_binder_receives_nothing },
+    { "test_rio_transport_lanes_prefilter_counts_drops", test_rio_lanes_prefilter_counts_drops },
+    { "test_rio_transport_lanes_finish_refuses_foreign_ids", test_rio_lanes_finish_refuses_foreign_ids },
 };
 
 // With no argument every case runs; with names, only those cases run.

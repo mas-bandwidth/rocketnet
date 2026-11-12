@@ -10,14 +10,35 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_rio_layout.h"
 
-// The Windows Registered I/O (RIO) server transport. One UDP socket opened with
+// The Windows Registered I/O (RIO) server transport. It runs one or more
+// lanes (the server's num_xdp_queues, default 1, at most
+// ROCKETNET_RIO_MAX_LANES). A lane is one UDP socket opened with
 // WSA_FLAG_REGISTERED_IO, one registered region carved by
 // sdk/rocketnet_rio_layout.h into send frames, send address slots, receive
 // slices and receive address slots, one send completion queue, one receive
-// completion queue and one request queue.
+// completion queue, one request queue and one I/O worker. One worker's
+// RIOSendEx path tops out near 210k datagrams a second and one socket's
+// request queue near 650k however many threads drive it, and RIO refuses a
+// second request queue on a socket, so the rate past that is more sockets.
 //
-// RIO queues are unsynchronized and sends and receives share the request
+// With one lane the socket binds with SO_EXCLUSIVEADDRUSE. With several,
+// create first binds a plain probe socket to the address with
+// SO_EXCLUSIVEADDRUSE, refusing if anything holds the port, closes it, then
+// binds every lane socket to that address and port with SO_REUSEADDR. A
+// frame is staged in the lane its destination address hashes to
+// (rocketnet_rio_lane_hash), so one client's frames leave through one lane in
+// order. Windows does not say which of several sockets sharing a port
+// receives a datagram (it delivered everything to the first bound in every
+// measured run), so every lane posts receives and banks what it gets, and
+// receive_packets appends every lane's ready banks to one process view.
+//
+// Each lane's worker runs the stateless receive prefilter
+// (sdk/rocketnet_receive_prefilter.h) before a datagram takes a bank slot and
+// counts each refusal in its own tally; receive_drop_totals sums them.
+//
+// Within a lane: RIO queues are unsynchronized and sends and receives share the request
 // queue, so after create one background I/O worker makes every RIO call:
 // receive dequeue and re-post, send post and commit, send retirement. It
 // waits on RIONotify for both completion queues and on a wake from main. The
@@ -44,12 +65,17 @@
 // RIOSendEx and RIOReceiveEx). Elsewhere the module is not compiled: only
 // rocketnet_server_rio_available() is defined, and it is false.
 
-// One socket serves every client: each send phase is the server-wide send
-// staging for the configured max_clients (2048 at 1000 clients) and the
-// posted receives are twice it. Both are sized at create.
+// Each lane's send phase is the server-wide send staging for the configured
+// max_clients, and at least ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE (4096 at 1000
+// clients): the rate a lane carries per flush, with room for the uneven
+// share the destination hash gives a lane. Each lane's posted receives are
+// twice the staging. Both are sized at create.
+#define ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE 4096
+
 static inline int rocketnet_server_rio_send_queue_size( int max_clients )
 {
-    return rocketnet_server_send_staging_packets( max_clients );
+    const int staging = rocketnet_server_send_staging_packets( max_clients );
+    return staging > ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ? staging : ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE;
 }
 
 static inline int rocketnet_server_rio_receives( int max_clients )
@@ -58,19 +84,31 @@ static inline int rocketnet_server_rio_receives( int max_clients )
 }
 
 // The receive budget twice send, at the smallest sizing count: a phase is the
-// staging (at most four packets per sized client) and the process batch holds
-// sixteen per sized client, so the relation holds at every count.
+// staging (at most four packets per sized client) or the floor, and the
+// process batch holds sixteen per sized client, so the relation holds at
+// every count.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE,
+                         "receive budget twice send: server process batch holds at least twice the RIO send queue floor" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
 struct rocketnet_server_rio_t;
 
+// lanes: 0 or 1 is one lane; at most ROCKETNET_RIO_MAX_LANES.
+// packet_filter: the server's ROCKETNET_FILTER_VALUE_BYTES filter value, copied
+// at create; NULL runs no prefilter.
+struct rocketnet_server_rio_options_t
+{
+    int lanes;
+    const uint8_t * packet_filter;
+};
+
 // bind_address is updated with the actual port. IPv6 binds are dual stack
 // and normalize mapped IPv4 sources to IPv4. max_clients is the server's
-// configured client count: it sizes the send phases, the receive slices and
-// banks, the process view, the registered region and the socket receive
-// buffer request.
+// configured client count: it sizes each lane's send phases, receive slices
+// and banks, the process view, each registered region and each socket
+// receive buffer request. options NULL is one lane and no prefilter.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
                                                       rocketnet_address_t * bind_address, int max_clients
 #if ROCKETNET_DEV
@@ -81,7 +119,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
                                                       ,
-                                                      int * status = NULL );
+                                                      int * status = NULL, const rocketnet_server_rio_options_t * options = NULL );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );
@@ -93,8 +131,14 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio,
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio,
                                         uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio );
-// the slots start_packet may still take in the open fill phase. Main thread.
+// the slots start_packet may still take in the open fill phase of the
+// fullest lane, so a frame to any destination fits. Main thread.
 int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio );
+// the lanes, the lane a destination's frames are staged in, and one lane's
+// send_room (the server's per-queue protocol send reserve)
+int rocketnet_server_rio_lanes( rocketnet_server_rio_t * rio );
+int rocketnet_server_rio_lane_of( rocketnet_server_rio_t * rio, const rocketnet_address_t * to );
+int rocketnet_server_rio_lane_send_room( rocketnet_server_rio_t * rio, int lane );
 // true once the open fill phase is empty, every other phase is idle and no
 // posted send waits for its completion. Main thread; a mutex held by the
 // worker reads as not idle.
@@ -119,13 +163,24 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_NUM_COUNTERS
 };
 
+// summed over every lane
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters );
+// ROCKETNET_RECEIVE_NUM_DROPS values in rocketnet_receive_drop_t order: every
+// lane worker's prefilter refusals and bank-full drops, summed. Main thread.
+void rocketnet_server_rio_receive_drop_totals( rocketnet_server_rio_t * rio, uint64_t * values );
 // posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
-uint64_t rocketnet_server_rio_allocation_bytes( int max_clients );
+// the allocator bytes create holds for lanes lanes (as in
+// rocketnet_server_rio_options_t), past the registered regions: one per lane,
+// each rocketnet_server_rio_registered_region_bytes (sdk/rocketnet_memory.h)
+uint64_t rocketnet_server_rio_allocation_bytes( int max_clients, int lanes = 1 );
+// the lane count create runs for a lanes option: 1 for 0 or 1, else lanes;
+// 0 for a value it refuses (below 0 or past ROCKETNET_RIO_MAX_LANES)
+int rocketnet_server_rio_lane_count( int lanes );
 
 #if ROCKETNET_DEV
+// lane 0's socket
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // the waits between drain passes that failed creates have made in this process
 int rocketnet_server_rio_test_create_drain_waits();
@@ -144,6 +199,7 @@ enum rocketnet_server_rio_test_fault_t
     ROCKETNET_RIO_TEST_FAULT_COMMIT,
     ROCKETNET_RIO_TEST_NUM_FAULTS
 };
+// the fault, hold and observe seams act on lane 0
 void rocketnet_server_rio_test_fail_next( rocketnet_server_rio_t * rio, int fault, int count, int status );
 int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fault );
 // receive slices whose re-post was refused and that wait for the worker's

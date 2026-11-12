@@ -197,6 +197,10 @@ packet that became postable, so those losses are outside `sent`.
   the last stalled pass, and `MCRNRioWorkerReachLateCancelLeak.cfg` reaches
   that leak (`NotReachedLateCancelLeak`, expected to fail). The leak is the
   safe direction: memory the kernel may still write is never freed.
+- `NoGarbageBanked`: no datagram the prefilter refuses (`Garbage`) is ever
+  in a bank; the worker counts it in its lane's drop tally and re-posts the
+  slice. `ExactDelivery` and `EveryDatagramConsumed` range over the
+  datagrams that pass.
 - `EveryDatagramConsumed` and `EveryStagedSent` are the running liveness
   properties; a staged send is sent, or its post refused and counted.
   They are checked with no wait timeout for an idle worker.
@@ -234,6 +238,8 @@ packet that became postable, so those losses are outside `sent`.
 | `MCRNRioWorkerReachLateCancelLeak.cfg` | `NotReachedLateCancelLeak` | 65 | 1.1 | Reachability: the constants of `InlineStop`; the drain leaks after a `closesocket` that succeeded, its cancellations not yet arrived. |
 | `MCRNRioWorkerReachRefusedPost.cfg` | `NotReachedRefusedPostAtExit` | 184 | 2.4 | Reachability: one send; the stop burst's post is refused, counted, and the worker exits. |
 | `MCRNRioWorkerBrokenUncountedPost.cfg` | `StopSendsFinished` | 184 | 1.2 | `CountRefusedPost <- FALSE`: a refused post is lost uncounted. |
+| `MCRNRioWorkerGarbage.cfg` | pass | 17877 | 7.2 | Two banks, four datagrams, two of them garbage (`Garbage = {2, 3}`): the prefilter refuses them in the worker before banking; invariants with `NoGarbageBanked`, receive liveness over the datagrams that pass. |
+| `MCRNRioWorkerBrokenBankGarbage.cfg` | `NoGarbageBanked` | 66 | 0.8 | `PrefilterInWorker <- FALSE`: the old shape, filtering on main after the bank; a garbage datagram is banked and takes room. Checked against `rocketnet_rio_complete_receive`, which calls `rocketnet_receive_prefilter` before it copies into the bank. |
 
 The liveness controls are split by direction so each run fits the 110 s
 budget at two TLC workers. The distinct states and seconds are the

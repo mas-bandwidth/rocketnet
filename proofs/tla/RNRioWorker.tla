@@ -95,6 +95,18 @@ ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn,
 \* post is counted SEND_FAILED.  FALSE in MCRNRioWorkerBrokenUncountedPost.cfg.
 CountRefusedPost == TRUE
 
+\* The datagrams that fail the stateless prefilter (an operator, overridden
+\* in a cfg with <-; none by default).  PrefilterInWorker is the rule: the
+\* worker runs the prefilter on each completion before it takes a bank slot,
+\* counts a refusal in its drop tally and re-posts the slice, so a refused
+\* datagram never takes room a player's datagram needs.  FALSE in
+\* MCRNRioWorkerBrokenBankGarbage.cfg: garbage is banked and main refuses
+\* it later.
+Garbage == {}
+PrefilterInWorker == TRUE
+Refused == IF PrefilterInWorker THEN Garbage ELSE {}
+Pass(s) == SelectSeq(s, LAMBDA x : x \notin Refused)
+
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
 SendIds == 1..MaxSends
@@ -380,17 +392,30 @@ WRetire ==
 \* pass can therefore leave a re-posted prefix and a retired suffix.
 \* stopDuring summarizes that one Stop interleaving, including its wake.
 \* It does not introduce a second worker or a new fairness assumption.
+\* proofs/tla/RNRioWorker.tla WDequeue Refuse: the prefilter's refusals take
+\* no room, so the worker dequeues while the fill bank has room and it has
+\* taken at most one bank of completions (Slices): it stops with the queue
+\* empty, the room used up or that budget spent.
+Banked(k) == Len(Pass(NonZero(SubSeq(rcq, 1, k))))
+DequeueCounts ==
+    IF ~BoundedDequeue THEN {Len(rcq)}
+    ELSE LET room == Cap - Len(data[fill])
+         IN {k \in 0..Len(rcq) :
+                /\ k <= Slices
+                /\ (room = 0 => k = 0)
+                /\ Banked(k) <= room
+                /\ (k = Len(rcq) \/ Banked(k) = room \/ k = Slices)}
+
 WDequeue ==
     /\ wpc = "dequeue"
-    /\ LET room == IF BoundedDequeue THEN Cap - Len(data[fill]) ELSE Len(rcq)
-           k == IF Len(rcq) < room THEN Len(rcq) ELSE room
-       IN \E stopDuring \in BOOLEAN, attemptRetry \in BOOLEAN, repost \in 0..k :
+    /\ \E k \in DequeueCounts :
+          \E stopDuring \in BOOLEAN, attemptRetry \in BOOLEAN, repost \in 0..k :
              /\ stopDuring => ~stopping
              /\ stopping => (~attemptRetry /\ repost = 0)
              /\ (~stopping /\ ~stopDuring) => (attemptRetry /\ repost = k)
              /\ ~attemptRetry => repost = 0
              /\ LET attempted == IF attemptRetry THEN retry ELSE 0
-                    got == NonZero(SubSeq(rcq, 1, k))
+                    got == Pass(NonZero(SubSeq(rcq, 1, k)))
                     keep == IF Len(data[fill]) + Len(got) <= Cap THEN got
                             ELSE SubSeq(got, 1, Cap - Len(data[fill]))
                 IN \E refused \in 0..(attempted + repost) :
@@ -668,7 +693,12 @@ ExposedStable == Concat(exposed) = view
 
 \* Exact delivery of every accepted datagram, until stop.
 ExactDelivery ==
-    ~stopping => consumed \o Concat(ready) \o data[fill] \o NonZero(rcq) = accepted
+    ~stopping => consumed \o Concat(ready) \o data[fill] \o Pass(NonZero(rcq)) = Pass(accepted)
+
+\* No datagram that fails the prefilter is ever banked or reaches main.
+NoGarbageBanked ==
+    /\ \A b \in Banks : Range(data[b]) \cap Garbage = {}
+    /\ Range(consumed) \cap Garbage = {}
 
 \* The fill threads never write a frame the kernel owns or a phase the
 \* worker holds: the open fill phase has no send outstanding.
@@ -701,7 +731,7 @@ NotReachedRefusedPostAtExit == ~(exited /\ failed # {})
 
 \* Liveness: every accepted datagram reaches main unless stop begins.
 EveryDatagramConsumed ==
-    \A i \in Ids : (\E j \in 1..Len(accepted) : accepted[j] = i)
+    \A i \in Ids \ Refused : (\E j \in 1..Len(accepted) : accepted[j] = i)
                    ~> (stopping \/ \E j \in 1..Len(consumed) : consumed[j] = i)
 
 \* Liveness: a staged packet is sent, or its post refused and counted,

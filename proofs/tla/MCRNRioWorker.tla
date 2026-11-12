@@ -33,6 +33,9 @@
 (* MCRNRioWorkerReachLateCancelLeak.cfg must fail                          *)
 (* NotReachedLateCancelLeak: the inline drain can leak after a close that  *)
 (* succeeded when the cancellations arrive late, as the code can.          *)
+(* MCRNRioWorkerGarbage.cfg is the rule with datagrams that fail the       *)
+(* prefilter; MCRNRioWorkerBrokenBankGarbage.cfg (PrefilterInWorker) must  *)
+(* fail NoGarbageBanked.                                                   *)
 (* README-RNRioWorker.md gives each trace and its check against the code.  *)
 (***************************************************************************)
 EXTENDS RNRioWorker
@@ -40,4 +43,10 @@ EXTENDS RNRioWorker
 \* MCRNRioWorkerBrokenUncountedPost.cfg: a refused send post is lost
 \* uncounted; must fail StopSendsFinished.
 CountRefusedPostBroken == FALSE
+
+\* MCRNRioWorkerGarbage.cfg: datagrams 2 and 3 fail the prefilter.
+\* MCRNRioWorkerBrokenBankGarbage.cfg: and main, not the worker, refuses
+\* them; must fail NoGarbageBanked.
+MCGarbage == {2, 3}
+MCPrefilterOnMain == FALSE
 =============================================================================
