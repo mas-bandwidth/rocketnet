@@ -67,6 +67,56 @@ static void test_suite_job_count_fits_the_windows_wait_set()
 
 REGISTER_UNIT_TEST( test_suite_job_count_fits_the_windows_wait_set );
 
+// The default job count follows the cpus the process may run on, not the
+// host's: a 48-cpu bench whose run is held to 5 cpus (a nova-reserve slot)
+// ran 48 jobs on 5 cpus before (std::thread::hardware_concurrency()). It plans
+// SUITE_JOBS_PER_USABLE_CPU (3) jobs a usable cpu, never more than the host's
+// count. The mask goes in as an argument; the live count is checked against
+// the live mask.
+static void test_suite_job_count_follows_the_cpu_mask()
+{
+    const uint64_t gib = 1024ull * 1024 * 1024;
+
+    // cpus 4-8 of a 48-cpu host, as a nova-reserve slot holds them: 15 jobs
+
+    const uint64_t slot[1] = { 0x1F0ull };
+    check( suite_cpus_in_mask( slot, 1 ) == 5 );
+    check( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ) == 15 );
+    check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ), 300 * gib, 0, 0 ) == 15 );
+
+    // the whole host plans the host's count, as before; a wide slot stops at
+    // the host's count; an unknown host count plans the usable cpus
+
+    const uint64_t host[1] = { ( 1ull << 48 ) - 1 };
+    check( suite_cpus_in_mask( host, 1 ) == 48 );
+    check( suite_planned_cpus( suite_cpus_in_mask( host, 1 ), 48 ) == 48 );
+    check( suite_planned_cpus( 20, 48 ) == 48 );
+    check( suite_planned_cpus( 4, 0 ) == 4 );
+
+    // a mask over two words, and an empty mask
+
+    const uint64_t split[2] = { 1ull << 3, ( 1ull << 0 ) | ( 1ull << 63 ) };
+    check( suite_cpus_in_mask( split, 2 ) == 3 );
+    check( suite_planned_cpus( suite_cpus_in_mask( split, 2 ), 64 ) == 9 );
+    const uint64_t none[2] = { 0, 0 };
+    check( suite_cpus_in_mask( none, 2 ) == 0 );
+    check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( none, 2 ), 48 ), 300 * gib, 0, 0 ) == 1 );
+
+    // the memory budget still caps the planned count, and a request still wins
+
+    check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ), 10 * gib, 0, 0 ) == 6 );
+    check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ), 300 * gib, 4, 0 ) == 4 );
+
+    // live: with no request, this process never plans more than
+    // SUITE_JOBS_PER_USABLE_CPU jobs a cpu it may run on
+
+    const unsigned usable = suite_usable_cpus();
+    check( usable >= 1 );
+    check( suite_job_count_requested( 0 ) <= (int) ( usable * SUITE_JOBS_PER_USABLE_CPU ) );
+}
+
+REGISTER_UNIT_TEST( test_suite_job_count_follows_the_cpu_mask );
+
 // A run that collected no case, a suite or a shard with nothing registered
 // for it, fails: an empty suite is a lost registration, not a pass. The
 // failure line is printed instead of the pass banner.
