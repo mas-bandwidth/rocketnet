@@ -376,6 +376,9 @@ struct rocketnet_server_transport_t
     uint8_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
     uint64_t fill_own_frames_left = 0;                      // own frames not yet taken this phase (atomic on the fill threads)
 
+    // the fill-phase contract's check, every build (rocketnet_fill_phase.h, proofs/tla/RNFillPhase.tla)
+    struct rocketnet_fill_phase_t fill_phase;
+
     struct rocketnet_server_payloads_t payloads;
     // payloads.capacity slots of ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES, plus 8:
     // serialize's BitReader loads 8-byte windows at byte granularity, so any
@@ -2865,6 +2868,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     }
 
     protocol->counters = &server_transport->counters;
+    rocketnet_fill_phase_init( &server_transport->fill_phase, max_clients,
+                               &server_transport->counters.values[ROCKETNET_COUNTER_FILL_PHASE_OVERLAP],
+                               &server_transport->counters.values[ROCKETNET_COUNTER_FILL_TWO_FILLERS] );
 
     if ( server_transport->io.operations->replay_mark )
     {
@@ -2937,6 +2943,13 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
         return;
+    }
+    {
+        rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+        if ( !phase.entered )
+        {
+            return;
+        }
     }
     rocketnet_assert( server_transport );
 
@@ -3071,6 +3084,11 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
+    {
+        return;
+    }
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    if ( !phase.entered )
     {
         return;
     }
@@ -3397,6 +3415,11 @@ static void rocketnet_server_transport_update_body( struct rocketnet_server_tran
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return;
+    }
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    if ( !phase.entered )
     {
         return;
     }
@@ -3864,6 +3887,12 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     memset( context, 0, sizeof( struct rocketnet_packet_context_t ) );
 
+    rocketnet_fill_phase_fill_scope_t phase( &server_transport->fill_phase, client_index );
+    if ( !phase.entered )
+    {
+        return NULL;
+    }
+
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
     {
         return NULL;
@@ -4017,6 +4046,11 @@ void rocketnet_server_transport_abort_packet( rocketnet_server_transport_t * ser
     {
         return;
     }
+    rocketnet_fill_phase_fill_scope_t phase( &server_transport->fill_phase, context->client_index );
+    if ( !phase.entered )
+    {
+        return;                                     // the lease stays for the next reset
+    }
     rocketnet_packet_context_t trusted;
     uint64_t backend_id;
     if ( server_transport->packet_leases.take( *context, trusted, backend_id ) )
@@ -4118,6 +4152,11 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     {
         return 0;
     }
+    rocketnet_fill_phase_fill_scope_t phase( &server_transport->fill_phase, context->client_index );
+    if ( !phase.entered )
+    {
+        return 0;                                   // not sealed; the lease stays for the next reset
+    }
     rocketnet_packet_context_t trusted;
     uint64_t backend_id;
     if ( !server_transport->packet_leases.take( *context, trusted, backend_id ) )
@@ -4146,6 +4185,11 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     context->sequence = trusted.sequence;
 
     return result;
+}
+
+struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct rocketnet_server_transport_t * server_transport )
+{
+    return server_transport ? &server_transport->fill_phase : NULL;
 }
 
 // A drained payload frame charges its slot only while the connection that
@@ -4272,6 +4316,11 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return;
+    }
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    if ( !phase.entered )
     {
         return;
     }
@@ -4619,6 +4668,15 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
 
 void rocketnet_server_transport_disconnect_client( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return;
+    }
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    if ( !phase.entered )
+    {
+        return;
+    }
     rocketnet_server_transport_disconnect_client_impl( server_transport, client_index, false );
 }
 

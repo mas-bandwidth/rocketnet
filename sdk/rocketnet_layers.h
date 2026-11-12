@@ -1155,6 +1155,15 @@ struct rocketnet_packet_context_t
     int client_index;
 };
 
+struct rocketnet_fill_phase_t;
+/**
+ * @brief The transport's fill-phase check (sdk/rocketnet_fill_phase.h), which the message layer above it brackets its own main-thread operations and fill calls with.
+ *
+ * @param server_transport Server transport; NULL returns NULL.
+ * @return The transport's fill phase, valid for the transport's life.
+ */
+struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport or context is a counted no-op that returns NULL
 /**
  * @brief Reserves a send frame for one connected server client.

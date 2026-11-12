@@ -11,139 +11,146 @@
 #include "rocketnet_internal.h"
 
 #include <atomic>
-#if ROCKETNET_ASSERTS
-#include <functional>
-#include <thread>
-#endif // #if ROCKETNET_ASSERTS
 
-// The fill-phase contract (X0), and its debug-build check.
-// Model: proofs/tla/RNFillPhase.tla (README-RNFillPhase.md).
+// The fill-phase contract (X0) and its check, in every build.
+// Model: proofs/tla/RNFillPhase.tla (README-RNFillPhase.md); trace check
+// tests/tla_trace_fill_phase.cpp (TraceRNFillPhase.tla).
 //
 // The contract, as rocketnet.h states it to the game:
-//   - Main-thread operations: update, send_packets, stop, disconnect,
-//     disconnect_client, and every other server call that is not a fill call.
+//   - Main-thread operations: update, send_packets, receive, stop, destroy,
+//     disconnect, and the other server calls that change a client's state.
 //     One thread makes them, one at a time.
 //   - Fill calls: start_packet, finish_packet and abort_packet, and the
-//     message calls built on them. Any number of game threads make them,
-//     strictly between one main-thread operation and the next; the handoff
-//     both ways is a synchronizing operation (a join or a barrier).
+//     message calls built on them (start, finish and abort of a message).
+//     Any number of game threads make them, strictly between one main-thread
+//     operation and the next; the handoff both ways is a synchronizing
+//     operation (a join or a barrier).
 //   - One filler per client: within one fill phase (from the end of one
 //     main-thread operation to the start of the next), every fill call for a
 //     given client index comes from one thread. Different clients may be
 //     filled by different threads at the same time. The per-client state a
-//     fill writes (the send history, the ack baseline, the order of that
-//     client's staged packets) has one writer for that reason.
+//     fill writes (the open message, the unreliable build, the send history,
+//     the ack baseline, the order of that client's staged packets) has one
+//     writer for that reason.
 //
-// What the transports get from it: start, finish and abort never run during
-// flush, receive, stop or destroy, and every packet of one client in one
-// fill phase was staged by one thread, in that thread's order.
+// The check. A break of the contract is refused and counted in every build
+// (FILL_PHASE_OVERLAP, FILL_TWO_FILLERS) and asserts in a build with
+// ROCKETNET_ASSERTS. A refused fill call does nothing (start returns NULL,
+// finish 0, abort leaves the lease to the next reset); a refused main-thread
+// operation does nothing and returns.
 //
-// The check, in builds with ROCKETNET_ASSERTS (Debug), and nothing at all
-// otherwise:
-//   - each main-thread operation brackets itself with main_begin/main_end,
-//     each fill call with fill_begin/fill_end. Each side announces itself
-//     (an increment) before it looks at the other (a load), both
-//     sequentially consistent, so when a main operation and a fill call
-//     overlap in time at least one of them sees the other and asserts
-//     (RNFillPhase Sound; the reversed witness MCRNFillPhaseBrokenLookFirst
-//     looks first and lets an update run inside a fill unflagged);
-//   - fill_begin claims the client for its thread with one compare-and-swap
-//     on that client's owner word; a second thread's claim in the same fill
-//     phase asserts (RNFillPhase OneFiller; reversed witness
-//     MCRNFillPhaseBrokenLoadStore, a load then a store, lets two fillers in
-//     unflagged). main_end clears every owner, so a client may move to
-//     another thread in the next fill phase without a false alarm
-//     (RNFillPhase NoFalseAlarm; reversed witness MCRNFillPhaseBrokenNoReset).
-// A fill call is the call, not the lease: a lease that outlives a main
-// operation (start, then update, then finish on one thread) is the
-// sequential misuse the packet lease already refuses and counts as
-// api_misuse, and is not asserted here.
+//   - one word per client: [epoch:32][thread:31][in:1]. thread is the
+//     claiming thread's token (nonzero, unique per thread for the process),
+//     epoch the fill phase it was claimed in, in set while that thread is
+//     inside a fill call for the client.
+//   - fill_begin claims the client with one compare-and-swap that sets in,
+//     then looks at main_calls (RNFillPhase FillClaim, FillLook). It refuses
+//     when another thread is inside a call for the client, or claimed it in
+//     this epoch (OneFiller), or when a main operation is running (Sound).
+//     fill_end clears in (FillLeave).
+//   - main_begin increments main_calls, then looks at every client's in bit
+//     (MainAnnounce, MainLook), and refuses when one is set (Sound) or when a
+//     second main operation is running. main_end advances the epoch, so the
+//     next fill phase finds every client unclaimed without a reset pass
+//     (MainLeave; NoFalseAlarm), then decrements main_calls.
+//   - Each side announces itself (the CAS, the increment) before it looks at
+//     the other (the load), both sequentially consistent, so when a main
+//     operation and a fill call overlap in time at least one of them sees the
+//     other (the reversed witness MCRNFillPhaseBrokenLookFirst looks first and
+//     lets both in). The claim is one CAS (MCRNFillPhaseBrokenLoadStore lets
+//     two fillers in); the epoch ends a phase's claims
+//     (MCRNFillPhaseBrokenNoReset flags a client that moved to another thread
+//     in the next phase).
+//   - Calls nest: the message layer's start calls the transport's
+//     start_packet on the same thread for the same client. A per-thread depth
+//     makes only the outermost call of each kind check; an inner call is the
+//     outer call's own work.
+//
+// Cost per fill call: one CAS and one load on shared words that main writes
+// twice a frame, and one store; the client's word is written only by its
+// filler. Per main operation: one atomic add and a scan of max_clients words.
+//
+// The epoch wraps after 2^32 main operations (about 200 days at four a
+// frame and 60 Hz): a client last claimed exactly 2^32 phases earlier by
+// another thread, and not since, would read as claimed for one call. Stated,
+// not handled.
 
-#if ROCKETNET_ASSERTS
+#define ROCKETNET_FILL_PHASE_IN                 1ULL
+#define ROCKETNET_FILL_PHASE_THREAD_MASK        0xFFFFFFFEULL
+#define ROCKETNET_FILL_PHASE_EPOCH_SHIFT        32
 
 struct rocketnet_fill_phase_t
 {
-    std::atomic<uint32_t> main_calls{ 0 };
-    std::atomic<uint32_t> fill_calls{ 0 };
-    std::atomic<uint64_t> owners[ROCKETNET_MAX_CLIENTS];
+    std::atomic<uint32_t> main_calls;
+    std::atomic<uint32_t> epoch;
+    int num_clients;
+    uint64_t * overlap_counter;                 // FILL_PHASE_OVERLAP, NULL: not counted
+    uint64_t * two_fillers_counter;             // FILL_TWO_FILLERS, NULL: not counted
+    std::atomic<uint64_t> claims[ROCKETNET_MAX_CLIENTS];
 };
 
-// a nonzero token for the calling thread: its id, unique among live threads
-static inline uint64_t rocketnet_fill_phase_thread_token()
-{
-    return (uint64_t) std::hash<std::thread::id>()( std::this_thread::get_id() ) | 1;
-}
+// num_clients is the server's max_clients; the counters may be NULL
+void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int num_clients,
+                                uint64_t * overlap_counter, uint64_t * two_fillers_counter );
 
-static inline void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase )
+// false: refused and counted (and asserted): the operation must not run.
+// Every true is matched by one main_end on the same thread.
+bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase );
+void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase );
+
+// false: refused and counted (and asserted): the call must do nothing. Every
+// true is matched by one fill_end for the same client on the same thread. A
+// client_index outside [0, num_clients) claims no client and checks only the
+// overlap with a main operation.
+bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index );
+void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index );
+
+// the calling thread's token: nonzero, even, unique among the process's threads
+uint32_t rocketnet_fill_phase_thread_token();
+
+// RAII forms for the call sites
+struct rocketnet_fill_phase_main_scope_t
 {
-    fill_phase->main_calls.store( 0 );
-    fill_phase->fill_calls.store( 0 );
-    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    struct rocketnet_fill_phase_t * fill_phase;
+    bool entered;
+
+    explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase )
+        : fill_phase( phase ), entered( phase ? rocketnet_fill_phase_main_begin( phase ) : true ) {}
+    ~rocketnet_fill_phase_main_scope_t()
     {
-        fill_phase->owners[i].store( 0, std::memory_order_relaxed );
+        if ( fill_phase && entered )
+        {
+            rocketnet_fill_phase_main_end( fill_phase );
+        }
     }
-}
-
-// RNFillPhase MainAnnounce, MainLook
-static inline void rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase )
-{
-    const uint32_t mains = fill_phase->main_calls.fetch_add( 1 );
-    rocketnet_assert( mains == 0 );                              // two main-thread operations at once
-    rocketnet_assert( fill_phase->fill_calls.load() == 0 );      // a main-thread operation inside a fill call
-    (void) mains;
-}
-
-// RNFillPhase MainReset, MainLeave: the next fill phase begins with every
-// client unowned
-static inline void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
-{
-    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
-    {
-        fill_phase->owners[i].store( 0, std::memory_order_relaxed );
-    }
-    fill_phase->main_calls.fetch_sub( 1 );
-}
-
-// RNFillPhase FillAnnounce, FillLook, FillClaim. A client_index outside
-// [0, ROCKETNET_MAX_CLIENTS) claims no client (a frame with no slot).
-static inline void rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
-{
-    fill_phase->fill_calls.fetch_add( 1 );
-    rocketnet_assert( fill_phase->main_calls.load() == 0 );      // a fill call inside a main-thread operation
-
-    if ( client_index < 0 || client_index >= ROCKETNET_MAX_CLIENTS )
-    {
-        return;
-    }
-
-    const uint64_t mine = rocketnet_fill_phase_thread_token();
-    uint64_t owner = 0;
-    if ( !fill_phase->owners[client_index].compare_exchange_strong( owner, mine ) )
-    {
-        rocketnet_assert( owner == mine );                       // two fillers on one client in one fill phase
-    }
-}
-
-// RNFillPhase FillLeave
-static inline void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase )
-{
-    const uint32_t fills = fill_phase->fill_calls.fetch_sub( 1 );
-    rocketnet_assert( fills > 0 );
-    (void) fills;
-}
-
-#else // #if ROCKETNET_ASSERTS
-
-struct rocketnet_fill_phase_t
-{
+    rocketnet_fill_phase_main_scope_t( const rocketnet_fill_phase_main_scope_t & ) = delete;
+    rocketnet_fill_phase_main_scope_t & operator=( const rocketnet_fill_phase_main_scope_t & ) = delete;
 };
 
-static inline void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * ) {}
-static inline void rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * ) {}
-static inline void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * ) {}
-static inline void rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t *, int ) {}
-static inline void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * ) {}
+struct rocketnet_fill_phase_fill_scope_t
+{
+    struct rocketnet_fill_phase_t * fill_phase;
+    int client_index;
+    bool entered;
 
-#endif // #if ROCKETNET_ASSERTS
+    rocketnet_fill_phase_fill_scope_t( struct rocketnet_fill_phase_t * phase, int client )
+        : fill_phase( phase ), client_index( client ), entered( phase ? rocketnet_fill_phase_fill_begin( phase, client ) : true ) {}
+    ~rocketnet_fill_phase_fill_scope_t()
+    {
+        if ( fill_phase && entered )
+        {
+            rocketnet_fill_phase_fill_end( fill_phase, client_index );
+        }
+    }
+    rocketnet_fill_phase_fill_scope_t( const rocketnet_fill_phase_fill_scope_t & ) = delete;
+    rocketnet_fill_phase_fill_scope_t & operator=( const rocketnet_fill_phase_fill_scope_t & ) = delete;
+};
+
+#if ROCKETNET_DEV
+// the trace check's recorder (tests/tla_trace_fill_phase.cpp): called at each
+// step the model names, on the thread taking it; NULL (the default): nothing
+typedef void rocketnet_fill_phase_trace_function_t( void * context, const char * action, int client_index, uint64_t word, bool refused );
+void rocketnet_fill_phase_set_trace( rocketnet_fill_phase_trace_function_t * function, void * context );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_FILL_PHASE_H

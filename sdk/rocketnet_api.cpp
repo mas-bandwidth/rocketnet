@@ -3504,7 +3504,7 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
 
     if ( !server->running )
     {
-        server->lifetime[RN_SERVER_NOT_CONNECTED_DROPS]++;
+        rocketnet_platform_atomic_add_u64( &server->lifetime[RN_SERVER_NOT_CONNECTED_DROPS], 1 );     // fill threads may count it
         return NULL;
     }
 
@@ -3515,11 +3515,14 @@ uint8_t * rocketnet_server_start_message( struct rocketnet_server_t * server, ui
     return rocketnet_message_server_start( rn_server( server ), (int) destination_id, channel, reliability_value, max_bytes );
 }
 
-// finish and abort act on the one pending start (rn_message_object_t
-// pending_connection), so they take no destination. A finish with no start
-// pending (a dropped start included) asserts in a debug build and returns 0
-// in a release build, counted nowhere; a refused bytes_written aborts the
-// pending start (rn_message_object_finish).
+// finish and abort without a destination act on the server's one open
+// start: the forms for a server used from one thread. With more than one
+// message open (fill threads each holding one on its own client, the
+// _client_message forms) they cannot tell which is meant: a finish asserts in
+// a debug build and returns 0 in a release build, an abort does nothing. A
+// finish with no start pending (a dropped start included) asserts in a debug
+// build and returns 0 in a release build, counted nowhere; a refused
+// bytes_written aborts the pending start (rn_message_object_finish).
 
 static int rn_server_pending_slot( const struct rocketnet_server_t * server )
 {
@@ -3528,7 +3531,59 @@ static int rn_server_pending_slot( const struct rocketnet_server_t * server )
         return -1;
     }
 
-    return server->running->object.pending_connection;
+    const struct rn_message_object_t * object = &server->running->object;
+    if ( rocketnet_platform_atomic_load_u64( const_cast<uint64_t *>( &object->open_count ) ) != 1 )
+    {
+        return -1;
+    }
+
+    return (int) rocketnet_platform_atomic_load_u64( const_cast<uint64_t *>( &object->last_open ) );
+}
+
+// finish and abort of the message open on one client: any number of fill
+// threads, each on its own clients (sdk/rocketnet_fill_phase.h)
+
+uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return 0;
+    }
+
+    if ( !server->running )
+    {
+        rocketnet_assert( server->running );
+        return 0;
+    }
+
+    return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
+}
+
+void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+
+    if ( client_index < 0 || client_index >= server->max_clients )
+    {
+        rocketnet_api_misuse_record();
+        return;
+    }
+
+    if ( !server->running )
+    {
+        return;
+    }
+
+    rocketnet_message_server_abort( rn_server( server ), client_index );
 }
 
 uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int bytes_written )

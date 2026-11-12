@@ -12651,9 +12651,9 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, 8 );
     rocketnet_check( pointer != NULL );
 
-    rocketnet_check( object->pending_connection == 0 );
+    rocketnet_check( object->connections[0].open.pending );
     rocketnet_check( rn_message_object_finish( object, 0, 0 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( object->open_count == 0 );
 
     // a new start is not refused as one already pending; bytes_written past
     // the start's bytes is refused and aborts it too
@@ -12662,7 +12662,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     rocketnet_check( pointer != NULL );
 
     rocketnet_check( rn_message_object_finish( object, 0, 9 ) == 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( object->open_count == 0 );
 
     // a finish with nothing pending asserts in a debug build and returns 0 in a release build
 
@@ -12685,7 +12685,7 @@ void rocketnet_test_refused_finish_aborts_pending_start()
     }
 
     rocketnet_check( rn_message_object_finish( object, 0, 8 ) != 0 );
-    rocketnet_check( object->pending_connection == -1 );
+    rocketnet_check( object->open_count == 0 );
 
     rn_message_object_destroy( object );
 }
