@@ -25,6 +25,15 @@
 #
 #     and exits 125.
 #
+# When COMMAND runs vng (a word whose last path part is vng), the guard
+# first runs that vng with --dry-run, prints
+#
+#   VM-BOOT-GUARD guest kernel command line N bytes (limit 2048, refused above 1900)
+#
+# and, above 1900, exits 125 at once with "guest kernel command line is N
+# bytes, limit 2048": x86 keeps 2048 bytes and a guest whose command line is
+# cut there never boots (see THE COMMAND LINE below).
+#
 # ROCKETNET_NIGHTLY_NO_TIMEOUT does not touch this deadline: that opt-in lifts
 # limits on test cases, and a guest that never booted runs no case. A TERM,
 # INT or HUP to the guard (a cancelled CI step) kills COMMAND's group first.
@@ -80,6 +89,38 @@ stop() { # status
 trap 'stop 143' TERM
 trap 'stop 130' INT
 trap 'stop 129' HUP
+
+# THE COMMAND LINE. vng passes the guest command to the guest kernel as
+# base64 in virtme.exec on the kernel command line, beside the working
+# directory (virtme_chdir, virtme_initmount). x86 keeps 2048 bytes of it; a
+# longer one is cut inside its last parameter (init=...), the kernel panics
+# before its console is up and the guest halts with nothing on any log
+# (nightly run 43151301540: 2079 bytes). So before the first boot the guard
+# asks the same vng for its qemu command (--dry-run, same arguments, same
+# directory), prints the -append length, and refuses above max_cmdline
+# bytes, by name and at once, with no retry. Callers keep the case lists and
+# long paths in a guest script file and pass vng only its short path.
+max_cmdline=1900
+vng_at=0
+n=0
+for word in "$@"; do
+    n=$((n + 1))
+    if [ "${word##*/}" = vng ]; then vng_at=$n; break; fi
+done
+if [ "$vng_at" -gt 0 ]; then
+    dry=$( "${@:vng_at:1}" --dry-run "${@:vng_at+1}" < /dev/null 2>&1 )
+    append=$(printf '%s\n' "$dry" | sed -n "s/.* -append '\([^']*\)'.*/\1/p" | head -n 1)
+    if [ -z "$append" ]; then
+        echo "VM-BOOT-GUARD could not read the guest kernel command line from ${*:vng_at:1} --dry-run; booting with the boot deadline only" >&2
+    else
+        bytes=${#append}
+        echo "VM-BOOT-GUARD guest kernel command line $bytes bytes (limit 2048, refused above $max_cmdline)" >&2
+        if [ "$bytes" -gt "$max_cmdline" ]; then
+            echo "VM-BOOT-GUARD guest did not boot: guest kernel command line is $bytes bytes, limit 2048 (refused above $max_cmdline): put the guest's commands in a script file and pass vng its short path" >&2
+            exit 125
+        fi
+    fi
+fi
 
 attempt=1
 while [ "$attempt" -le "$attempts" ]; do

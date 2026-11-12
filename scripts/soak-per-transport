@@ -205,6 +205,7 @@ run_xdp_cell()
     local guest
     guest=$(mktemp -d "$LOG_DIR/xdp-guest.XXXXXX")
     {
+        printf ': > %q\n' "$guest/started"
         echo 'set -u'
         echo 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
         echo 'ip netns add rnxdpsoak'
@@ -232,12 +233,13 @@ run_xdp_cell()
     # vng from a short directory: its virtiofs socket path must stay under 108 bytes
     local short
     short=$(mktemp -d /tmp/rnsoak.XXXXXX)
-    # the guest's first act writes $guest/started; scripts/vm-boot-guard kills
-    # and boots again a guest that has not written it in 120 s (three
-    # attempts), whether or not the execution watchdog is on
+    # the guest's first act (run.sh's first line) writes $guest/started;
+    # scripts/vm-boot-guard refuses a guest kernel command line over 1900
+    # bytes, and kills and boots again a guest that has not written the
+    # marker in 120 s (three attempts), whether or not the execution watchdog
+    # is on. vng's command line carries only run.sh's path.
     ( cd "$short" && "$SCRIPT_DIR/vm-boot-guard" --marker "$guest/started" -- \
         ${TIMEOUT_COMMAND[@]+"${TIMEOUT_COMMAND[@]}"} vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
-        sh -c ': > "$1"; shift; exec "$@"' sh "$guest/started" \
         sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (execution watchdog: ${TIMEOUT_COMMAND[*]:-disabled})" >> "$guest/vm.log"
     rmdir "$short" 2>/dev/null
     local status

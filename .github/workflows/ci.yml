@@ -751,14 +751,28 @@ jobs:
                     if [ $((n % xdp_guests)) = "$guest" ]; then guest_cases="$guest_cases $case"; fi
                     n=$((n + 1))
                   done
-                  # the guest's first act writes its started marker; a guest
-                  # with none after the boot deadline is killed and booted
-                  # again (scripts/vm-boot-guard), which the nightly opt-in
-                  # does not lift: it bounds the boot, never the cases
+                  # the guest's commands go in a script file, never on vng's
+                  # command line: vng carries its guest command on the guest
+                  # kernel's command line, which x86 cuts at 2048 bytes (the
+                  # nightly repeat's one guest of 13 cases from a 77-byte
+                  # runner path never booted). The script's first act writes
+                  # its started marker; scripts/vm-boot-guard refuses a
+                  # command line over 1900 bytes by name, and kills and boots
+                  # again a guest with no marker after the boot deadline,
+                  # which the nightly opt-in does not lift: it bounds the
+                  # boot, never the cases
                   marker="$logs/$server.$client.vm$guest.started"
+                  script="$logs/$server.$client.vm$guest.sh"
+                  {
+                    printf ': > %q\n' "$marker"
+                    printf 'for case in %s; do\n' "$guest_cases"
+                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s %q --run "$case" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$functional" "$logs/$server.$client"
+                    printf '  echo $? > %q.$case.rc\n' "$logs/$server.$client"
+                    printf 'done\n'
+                  } > "$script"
                   scripts/vm-boot-guard --marker "$marker" -- \
                   ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                    sh -c ': > "'"$marker"'"; for case in '"$guest_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                    sh "${script#"$PWD"/}" \
                     > "$logs/$server.$client.vm$guest.log" 2>&1 &
                 done
                 wait

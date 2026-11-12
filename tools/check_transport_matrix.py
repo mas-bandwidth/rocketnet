@@ -290,6 +290,8 @@ def main():
                         problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run {case}")
                 if "vng --run" not in step:
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its step does not run it inside a virtme-ng guest (vng --run)")
+                if re.search(r"vng --run[^\n]*\\\n\s*sh -c", step):
+                    problems.append(f"TRANSPORT_MATRIX_{os_name}: its xdp guests get their commands on vng's command line (sh -c ...), which is the guest kernel's, cut at 2048 bytes on x86: write them to a script file and pass vng its path")
                 if "scripts/vm-boot-guard --marker" not in step:
                     problems.append(f"TRANSPORT_MATRIX_{os_name}: it has an xdp cell but its guests do not boot under scripts/vm-boot-guard (a guest that never boots would wait with no deadline)")
             if step not in driven:

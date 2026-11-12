@@ -437,6 +437,32 @@ jobs:
       - name: Build Release
         run: make -j4
 
+      # THE COMMAND-LINE REGRESSION. vng carries its guest command on the
+      # guest kernel's command line, which x86 cuts at 2048 bytes; with the
+      # case list on it, the xdp cell's one guest of 13 cases from this
+      # runner's 77-character work directory was 2079 bytes, its kernel
+      # panicked before its console was up and the guest halted (run
+      # 43151301540). transport-cells-repeat now hands vng only a script
+      # file's short relative path, and scripts/vm-boot-guard refuses a
+      # command line over 1900 bytes by name. This step holds that: one
+      # repetition of every xdp case from a copy of the run's files in a
+      # work directory over 100 characters long must pass. It boots a guest,
+      # so it is here and not on the per-commit gate (about a minute).
+      - name: One xdp repetition from a work directory over 100 characters long
+        shell: bash
+        run: |
+          set -euo pipefail
+          long="$RUNNER_TEMP/rocketnet-xdp-cell-from-a-long-work-directory/$(printf '%040d' 0)"
+          rm -rf "$long"
+          mkdir -p "$long/tests/functional" "$long/.github/workflows"
+          cp -a bin scripts "$long/"
+          cp .github/workflows/ci.yml "$long/.github/workflows/"
+          cp tests/functional/rocketnet_functional_tests.cpp "$long/tests/functional/"
+          echo "work directory: $long (${#long} characters)"
+          [ "${#long}" -ge 100 ]
+          cd "$long"
+          scripts/transport-cells-repeat --runs 1 --cell xdp/portable
+
       - name: Every Linux transport cell, fifty times in a row
         shell: bash
         run: scripts/transport-cells-repeat --runs 50
