@@ -119,11 +119,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reading did not move.
 // The protocol send reserve, the worker receive drop totals and three
 // appended counters (the Linux note below) then move both figures, measured
-// on aws-win-5 (MSVC, Release and Debug, ROCKETNET_TEST_VERBOSE=1) before the
-// session_nonce removal: actual=1469504511 for the server, 3776 above, and
-// actual=15258812 for the client, 64 above, so 15258748 with it.
+// on aws-win-5 (MSVC 19.52.37029, x64, DEV=ON, Release and Debug,
+// ROCKETNET_TEST_VERBOSE=1) on the tree with session_nonce removed:
+// actual=1469504511 for the server, 3776 above, and actual=15258812 for the
+// client, two 64-byte roundings above (the object's rounding moved with the
+// removed field).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468455935 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
