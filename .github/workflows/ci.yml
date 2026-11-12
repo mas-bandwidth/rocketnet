@@ -891,6 +891,14 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
+      # the 1.x C ABI (exports, public struct sizes and field offsets) against
+      # its recorded baseline, tools/abi_v1.txt; one small C compile
+      - name: Check the 1.x ABI baseline
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: |
+          python3 tools/test_check_abi.py
+          python3 tools/check_abi.py
+
       - name: Test the hardening checker's verdicts
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_hardening.py
