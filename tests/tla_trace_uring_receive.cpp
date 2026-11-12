@@ -54,8 +54,15 @@
 #define RECEIVE_BUFFERS 4
 #define RECEIVE_MAX_SEGS 2
 #define RECEIVE_DRAIN_MAX 2
-#define RECEIVE_MAX_ARRIVE 80
+#define RECEIVE_MAX_ARRIVE 40
 #define RECEIVE_DATAGRAM_BYTES 64
+
+// the most steps one walk takes, whatever --steps asks: each record carries
+// the datagrams banked and delivered so far, so a record's size grows with
+// the walk, and TLC's time for a trace grows faster than its length cubed
+// (on amd-2: 201 records 5 s, 401 records 116 s, against a 110 s budget).
+// Coverage comes from more seeds, each inside the budget.
+#define RECEIVE_MAX_STEPS 200
 #define RECEIVE_BUFFER_BYTES ( 70 * 1024 )
 #define RECEIVE_TAIL_WRAP 65536
 
@@ -449,7 +456,8 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
         DONE
     };
 
-    for ( int step = 0; step < steps; step++ )
+    const int walk_steps = steps < RECEIVE_MAX_STEPS ? steps : RECEIVE_MAX_STEPS;
+    for ( int step = 0; step < walk_steps; step++ )
     {
         struct rocketnet_uring_receive_queue_t * queue = walk.queue;
         const uint16_t ring_count = (uint16_t) ( __atomic_load_n( &queue->buf_ring->tail, __ATOMIC_ACQUIRE ) - walk.br_head );

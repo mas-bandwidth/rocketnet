@@ -60,7 +60,11 @@ The layout model (MCRNUringQueueReceiveLayout.tla) checks `InOrder`, `NoTornRead
   to 2.
 - **Layout:** 3 slots, 4 buffers, ring counters wrapping at 8, 4 receives of up to 2
   datagrams, drains of up to 2.
-- **Trace walk:** 3 slots, 4 buffers, the kernel's 65536 wrap, up to 80 receives.
+- **Trace walk:** 3 slots, 4 buffers, the kernel's 65536 wrap, up to 40 receives in at
+  most 200 steps. Each record carries every datagram banked and delivered so far, so
+  TLC's time grows faster than the cube of the walk's length: on amd-2, 201 records
+  took 5 s and 401 took 116 s. The walk is capped to stay well inside the 110 s
+  budget, and more seeds give the coverage.
 
 ## The reversed witnesses
 
