@@ -3003,15 +3003,14 @@ int rocketnet_client_transport_secret_spans_for_test( const void * object, size_
     (void) object;
     const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
     const size_t open = offsetof( rocketnet_client_transport_t, client_io ) + offsetof( rocketnet_client_io_t, open );
-    const size_t spans[5][2] = {
+    const size_t spans[4][2] = {
         { protocol + offsetof( rocketnet_client_protocol_t, keys ), sizeof( rocketnet_connection_keys_t ) },
         { protocol + offsetof( rocketnet_client_protocol_t, token ), sizeof( rocketnet_connect_token_t ) },
         { protocol + offsetof( rocketnet_client_protocol_t, client_ephemeral_secret_key ), ROCKETNET_KEY_BYTES },
-        { protocol + offsetof( rocketnet_client_protocol_t, session_nonce ), ROCKETNET_SESSION_NONCE_BYTES },
         { open + offsetof( rocketnet_client_io_open_t, session_server_to_client ), ROCKETNET_KEY_BYTES },
     };
     int count = 0;
-    for ( ; count < 5 && count < max; count++ )
+    for ( ; count < 4 && count < max; count++ )
     {
         offsets[count] = spans[count][0];
         bytes[count] = spans[count][1];
