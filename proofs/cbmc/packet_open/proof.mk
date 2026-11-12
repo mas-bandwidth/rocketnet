@@ -32,5 +32,5 @@ proofs-packet_open:
 	    fi; \
 	    echo "$$harness $$verdict"; \
 	    rm -f "$$output"; \
-	    if [ $$status -ne 0 ]; then exit 1; fi; \
+	    if [ $$status -ne 0 ] || [ "$$verdict" != "VERIFICATION SUCCESSFUL" ]; then exit 1; fi; \
 	done
