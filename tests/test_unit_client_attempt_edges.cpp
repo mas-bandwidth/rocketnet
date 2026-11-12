@@ -88,9 +88,12 @@ static void attempt_edges_mint_valid( uint8_t * token_data )
 }
 
 // the server on the test vector keys, and a client connected to it through
-// the three round trips
+// the three round trips: the client sends at 1000.0, 1000.2 and 1000.4, and
+// each answer reaches it the round's delay later
 
-static struct attempt_edges_pair_t * attempt_edges_pair_create()
+static const double attempt_edges_delays[3] = { 0.05, 0.05, 0.05 };
+
+static struct attempt_edges_pair_t * attempt_edges_pair_create_answered( const double * answer_delays )
 {
     struct attempt_edges_pair_t * pair = (struct attempt_edges_pair_t *) malloc( sizeof( struct attempt_edges_pair_t ) );
     check( pair != NULL );
@@ -133,7 +136,7 @@ static struct attempt_edges_pair_t * attempt_edges_pair_create()
                                                          ROCKETNET_TEST_CREATE_TS, times[i],
                                                          pair->response, &response_bytes,
                                                          pair->payload, &payload_bytes, &payload_client_index ) != ROCKETNET_SERVER_PROCESS_IGNORED );
-        check( rocketnet_client_protocol_process_packet( &pair->client, pair->response, response_bytes, times[i] + 0.05,
+        check( rocketnet_client_protocol_process_packet( &pair->client, pair->response, response_bytes, times[i] + answer_delays[i],
                                                          pair->payload, (int) sizeof( pair->payload ), &payload_bytes ) );
     }
 
@@ -218,7 +221,7 @@ REGISTER_UNIT_TEST( test_client_attempt_salt_is_fresh_and_nonzero );
 
 static void test_client_keep_alive_carries_index_and_slot_count()
 {
-    struct attempt_edges_pair_t * pair = attempt_edges_pair_create();
+    struct attempt_edges_pair_t * pair = attempt_edges_pair_create_answered( attempt_edges_delays );
     check( pair->client.client_index == 0 );
     check( pair->client.max_clients == ATTEMPT_EDGES_SLOTS );
 
@@ -402,3 +405,24 @@ static void test_client_send_falls_due_at_exactly_the_interval()
 }
 
 REGISTER_UNIT_TEST( test_client_send_falls_due_at_exactly_the_interval );
+
+// t11 (the cookie paragraph): round-trip samples come from the challenge and
+// the packets after it that open under the attempt's keys, never from the
+// cookie. The cookie answers in 0.03 s, the challenge in 0.04 s and the
+// first session packet, answering the connection response, in 0.01 s: the
+// handshake estimate is 0.01. The accepted session packet is also recorded
+// received in the delivery bookkeeping.
+
+static void test_client_third_round_trip_is_sampled_and_recorded()
+{
+    const double delays[3] = { 0.03, 0.04, 0.01 };
+    struct attempt_edges_pair_t * pair = attempt_edges_pair_create_answered( delays );
+
+    check( pair->client.rtt_estimate > 0.0099 && pair->client.rtt_estimate < 0.0101 );
+    check( pair->client.received_session_sequence > 0 );
+    check( pair->client.ack.highest_received_sequence == pair->client.received_session_sequence );
+
+    attempt_edges_pair_destroy( pair );
+}
+
+REGISTER_UNIT_TEST( test_client_third_round_trip_is_sampled_and_recorded );
