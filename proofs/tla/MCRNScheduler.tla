@@ -13,11 +13,23 @@
 (* MCRNSchedulerBrokenPerMessagePriority.cfg): channel 0 queues a LOW      *)
 (* item and then an IMMEDIATE item (the boost case), channel 1 one HIGH    *)
 (* item.                                                                   *)
+(*                                                                         *)
+(* MCMsgsKeepsSending is a channel that keeps sending                      *)
+(* (MCRNSchedulerKeepsSending.cfg and MCRNSchedulerBrokenReadyKeepsTurn.  *)
+(* cfg): CONFIG, two MEDIUM messages on channel 0 queued again whenever    *)
+(* acked (MCRefill), and one MEDIUM message on channel 1.                  *)
 (***************************************************************************)
 EXTENDS RNScheduler
 
 MCMsgs == << [ch |-> 0, lv |-> 0], [ch |-> 0, lv |-> 2], [ch |-> 1, lv |-> 2] >>
 
 MCMsgsReserved == << [ch |-> 0, lv |-> 3], [ch |-> 0, lv |-> 0], [ch |-> 1, lv |-> 1] >>
+
+MCMsgsKeepsSending == << [ch |-> 0, lv |-> 0], [ch |-> 0, lv |-> 2], [ch |-> 0, lv |-> 2],
+                         [ch |-> 1, lv |-> 2] >>
+
+MCRefill == {2, 3}
+
+MCNoRefill == {}
 
 =============================================================================
