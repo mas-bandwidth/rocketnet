@@ -239,6 +239,28 @@ jobs:
         shell: bash
         run: bash scripts/outage-pair-real --vm --log-dir "$PWD/build/outage-pair-real"
 
+      # The split load harness's proof mode end to end on one host
+      # (scripts/split-smoke): one load_split server and two client shards on
+      # loopback, a same_host_smoke manifest, and the merger with
+      # --same-host-smoke --load proof. Every stream joined across roles,
+      # every delivery once, every receipt; never a qualification
+      # (docs/LOAD_SPLIT.md, "Same-host smoke").
+      - name: Split load proof, same-host smoke (server and two shards on loopback)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/split-smoke --bin ./bin/load_split --dir "$PWD/build/split-smoke" | tee split-smoke.log
+          grep -q '^split_smoke_cell: verdict=PASS' split-smoke.log
+
+      - name: Upload the split smoke logs
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: split-smoke-${{ github.run_id }}-${{ strategy.job-index }}
+          path: build/split-smoke
+          if-no-files-found: ignore
+
       - name: Artifact name for the ref
         id: refslug
         if: always() && runner.os == 'Linux'
