@@ -1409,7 +1409,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
     set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} tests/fuzz/${harness}.cpp tests/fuzz/replay_main.cpp)
         else()
@@ -1424,6 +1424,13 @@ if(ROCKETNET_BUILD_TOOLS)
         rocketnet_use_sodium(fuzz_replay_${harness})
         target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
     endforeach()
+    # The XDP filter harness runs the filter where its host-C target exists
+    # (GCC or Clang, not Windows); elsewhere it compiles to a no-op whose seed
+    # generator writes without replaying.
+    if(TARGET rocketnet_xdp_filter_host)
+        target_link_libraries(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE rocketnet_xdp_filter_host)
+        target_compile_definitions(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE ROCKETNET_FUZZ_XDP_FILTER_HOST=1)
+    endif()
 endif()
 
 set(rocketnet_install_targets rocketnet)

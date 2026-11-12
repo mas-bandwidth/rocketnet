@@ -40,6 +40,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
+        timeout-minutes: 4
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
@@ -62,6 +63,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
+        timeout-minutes: 4
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
@@ -84,9 +86,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build
+        timeout-minutes: 4
         run: cmake --build build --config Release --parallel 4 --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels

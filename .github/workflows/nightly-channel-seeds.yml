@@ -66,6 +66,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 10
         id: build
         run: make
 

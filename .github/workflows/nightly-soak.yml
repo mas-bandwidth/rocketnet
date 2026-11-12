@@ -61,6 +61,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
       - name: Tests
@@ -264,6 +265,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build the named low-tick load case
+        timeout-minutes: 8
         run: make -j4
 
       - name: Run the enabled low-tick load case on an idle host
@@ -333,6 +335,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
       - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
@@ -403,6 +406,7 @@ jobs:
           exit "$missing"
 
       - name: Build
+        timeout-minutes: 6
         run: make
 
       - name: Tests
@@ -487,9 +491,11 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Configure (Windows)
+        timeout-minutes: 2
         run: cmake -B build -A x64
 
       - name: Build (Windows)
+        timeout-minutes: 4
         run: cmake --build build --config Release --parallel
 
       - name: Tests (Windows)
@@ -669,6 +675,7 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 1
         run: >
           cmake -B build
           -DCMAKE_BUILD_TYPE=Debug
@@ -676,6 +683,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build soak_sim
+        timeout-minutes: 1
         run: cmake --build build --target soak_sim --parallel
 
       # bounded, seed-pinned. the sim's own iteration bound is the clock, not

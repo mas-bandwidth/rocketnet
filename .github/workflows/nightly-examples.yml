@@ -55,9 +55,11 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Check the examples against the house rules
@@ -118,9 +120,11 @@ jobs:
           exit "$missing"
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Check the examples against the house rules
@@ -171,9 +175,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Configure
+        timeout-minutes: 2
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        timeout-minutes: 22
         run: cmake --build build --config Release --parallel 4
 
       - name: Run the examples (Windows)

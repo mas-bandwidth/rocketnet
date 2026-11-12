@@ -116,15 +116,26 @@ jobs:
             echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
           fi
 
-      # xver.c shares the directory with the Go tool, so name the .go files
+      # xver.c shares the directory with the Go tool, so name the .go files.
+      # Compiling the grading's tests is a toolchain step, bounded at five
+      # times its normal length; running them carries no deadline.
+      - name: Build the grading's tests
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/xver
+          go test -c -o "$RUNNER_TEMP/xver.test" xver.go xver_test.go
+
       - name: Test the grading
         shell: bash
         run: |
           set -euo pipefail
           cd tools/xver
-          go test -timeout=0 xver.go xver_test.go
+          "$RUNNER_TEMP/xver.test" -test.timeout=0
 
       - name: Build the harness against the newest, the previous release and v1.0.0
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail

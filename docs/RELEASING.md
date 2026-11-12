@@ -102,8 +102,9 @@ required runs are:
   - `build-and-test`, named `<os> / <build_type> / <leg>`: Linux (the
     fleet's Ubuntu 26.04 runners, rows named `linux`) Debug `unit` and
     `functional` (which carries the XDP cell in the runner kernel guest,
-    against a libxdp in the tested range 1.4 to 1.6), Release `unit` (which
-    also runs the `builds` leg's steps), `functional` and `checks`; macOS on
+    against a libxdp in the tested range 1.4 to 1.6), Release `unit (<i>/2)`
+    (two shards that together run every case; shard 1/2 also runs the
+    `builds` leg's steps), `functional` and `checks`; macOS on
     arm64 (rows named `macos`) Debug `unit`, Release `functional` (the
     development suite) and Release `functional_production` (the production
     library's suite);
@@ -118,7 +119,9 @@ required runs are:
     caches; red on a cold cache) and
     `lint (workflows, format, standard, tool selftests)`.
 - **Nightly CI** ([.github/workflows/nightly-ci.yml](../.github/workflows/nightly-ci.yml)):
-  ci.yml with `full: true`, every job and step with no time bound, including
+  ci.yml with `full: true`, no test step with a time bound (configure, build
+  and compile steps carry a deadline at five times their normal length),
+  including
   everything the per-commit tier leaves out (listed in nightly-ci.yml's
   header). Run it on the release commit with
   `gh workflow run nightly-ci.yml --ref main` once that commit is `main`'s
