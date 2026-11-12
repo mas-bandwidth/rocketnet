@@ -78,9 +78,12 @@
 #                           exhaustive functional suite is in nightly-leaks
 #   fuzz-smoke              a bounded, deterministic replay of the committed
 #                           regression corpus over the wire-facing parsers
-#   big-endian              the suite on real big-endian bytes (s390x), the
-#                           only leg that can see an endianness break before
-#                           a customer does
+#   big-endian              the whole suite COMPILED for s390x; RUN under
+#                           qemu-user: the wire check, test_sodium and the
+#                           88 byte cases (58 standard vectors, 30 XDP filter
+#                           host cases; tools/bigendian/run_byte_cases.sh,
+#                           counts held against docs/PLATFORMS.md). The full
+#                           suite runs on s390x in nightly-bigendian-system
 #   conformance             the standard in standard/ against the implementation
 #   platform-selftests      soak_sim's instruments and the bench harnesses'
 #                           abort paths, each against its own negative
@@ -3424,6 +3427,17 @@ jobs:
           output="$(python3 tools/check_header_guards.py --self-test -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # tools/bigendian/run_byte_cases.sh refuses an empty list, a
+      # registration its pattern cannot read and a count other than the one
+      # docs/PLATFORMS.md states; its self-test plants each of those, an
+      # unbuilt case and a failing case on a fake binary
+      - name: Test and count the big-endian byte cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/bigendian/test_run_byte_cases.sh
+          bash tools/bigendian/run_byte_cases.sh --count
 
       - name: Test the mutation runner's generator and process cleanup
         shell: bash
