@@ -1885,6 +1885,85 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
     rn_arena_destroy( arena_fresh );
 }
 
+// Each refused start of a bare endpoint (the client's path, where no server
+// clamps the channel first) returns NULL and counts exactly its own counter:
+// a channel at num_channels, a size of 0 and a second start while one is
+// pending count MESSAGE_SEND_REFUSED; a reliability outside 0 .. 7 counts
+// MESSAGE_SEND_REFUSED; a type the channel set does not enable counts
+// MESSAGE_SEND_TYPE_NOT_ENABLED.
+static void test_endpoint_start_refusals_count_their_own_counter()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+    rocketnet_quiet( 1 );
+
+    const int last_channel = config.num_channels - 1;
+    const int reliabilities[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    for ( int r = 0; r < 3; r++ )
+    {
+        const uint64_t refused = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED];
+        const uint64_t not_enabled = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED];
+        check( rn_endpoint_start( &endpoint, config.num_channels, reliabilities[r], 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+        check( rn_endpoint_start( &endpoint, -1, reliabilities[r], 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+        check( rn_endpoint_start( &endpoint, 0, reliabilities[r], 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED] == refused + 3 );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == not_enabled );
+        check( endpoint.pending_type == -1 );
+    }
+
+    // the last channel is a channel like any other
+
+    check( rn_endpoint_start( &endpoint, last_channel, ROCKETNET_RELIABILITY_UNRELIABLE, 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) != NULL );
+    const uint64_t refused = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED];
+    check( rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED] == refused + 1 );
+    rn_endpoint_abort( &endpoint );
+
+    // reliabilities outside the types: MESSAGE_SEND_REFUSED
+
+    const int outside[3] = { -1, ROCKETNET_CHANNEL_NUM_TYPES, 99 };
+    for ( int k = 0; k < 3; k++ )
+    {
+        const uint64_t before_refused = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED];
+        const uint64_t before_not_enabled = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED];
+        check( rn_endpoint_start( &endpoint, 0, outside[k], 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED] == before_refused + 1 );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == before_not_enabled );
+    }
+
+    // types the channel set does not enable, the lowest (0) and the highest
+    // unreliable one: MESSAGE_SEND_TYPE_NOT_ENABLED only
+
+    const int disabled[2] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    const uint32_t enabled = endpoint.ordered.channels.enabled_types;
+    for ( int k = 0; k < 2; k++ )
+    {
+        endpoint.ordered.channels.enabled_types = enabled & ~( 1u << disabled[k] );
+        const uint64_t before_refused = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED];
+        const uint64_t before_not_enabled = counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED];
+        check( rn_endpoint_start( &endpoint, 0, disabled[k], 100, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == NULL );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED] == before_refused );
+        check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == before_not_enabled + 1 );
+        check( endpoint.pending_type == -1 );
+    }
+    endpoint.ordered.channels.enabled_types = enabled;
+
+    rocketnet_quiet( 0 );
+    rn_arena_destroy( arena );
+}
+
 // ---------------------------------------------------------------------------
 // the reliable timeout off by default (standard/MESSAGES.md m9.3, 10.3): a
 // heard connection whose reliable stream never progresses never ends, and
@@ -2050,6 +2129,7 @@ REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue
 REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_message );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
+REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
