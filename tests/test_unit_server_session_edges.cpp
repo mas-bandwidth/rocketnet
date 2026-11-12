@@ -356,7 +356,7 @@ struct edges_world_t
 };
 
 // what a refusal must leave as it was: everything but its counters
-struct edges_snapshot_t
+struct edges_state_t
 {
     struct rocketnet_server_protocol_t server;
     struct rocketnet_encryption_mapping_t mapping;
@@ -508,17 +508,17 @@ static int edges_send( struct edges_world_t * world, const struct rocketnet_addr
     return edges_deliver( world, address, bytes, time );
 }
 
-static void edges_snapshot( struct edges_world_t * world, const struct rocketnet_address_t * address, int client_index, struct edges_snapshot_t * snapshot )
+static void edges_read_state( struct edges_world_t * world, const struct rocketnet_address_t * address, int client_index, struct edges_state_t * state )
 {
     struct rocketnet_encryption_mapping_t * mapping = edges_mapping( world, address );
-    snapshot->server = world->server;
-    snapshot->mapping = *mapping;
-    snapshot->control = *mapping->control;
-    snapshot->endpoint = world->server.acks->endpoints[client_index];
-    snapshot->counters = world->server_counters;
-    snapshot->connected = rocketnet_client_slots_connected( world->server.client_slots, client_index );
-    snapshot->confirmed = rocketnet_client_slots_confirmed( world->server.client_slots, client_index );
-    snapshot->num_acked = world->server.acks->num_acked;
+    state->server = world->server;
+    state->mapping = *mapping;
+    state->control = *mapping->control;
+    state->endpoint = world->server.acks->endpoints[client_index];
+    state->counters = world->server_counters;
+    state->connected = rocketnet_client_slots_connected( world->server.client_slots, client_index );
+    state->confirmed = rocketnet_client_slots_confirmed( world->server.client_slots, client_index );
+    state->num_acked = world->server.acks->num_acked;
 }
 
 static int edges_received_counter( uint8_t type )
@@ -533,16 +533,16 @@ static int edges_received_counter( uint8_t type )
 static void edges_refused( struct edges_world_t * world, const struct rocketnet_address_t * address, int client_index,
                            uint8_t type, uint64_t sequence, double time, int counter )
 {
-    struct edges_snapshot_t * before = (struct edges_snapshot_t *) calloc( 1, sizeof( struct edges_snapshot_t ) );
-    struct edges_snapshot_t * after = (struct edges_snapshot_t *) calloc( 1, sizeof( struct edges_snapshot_t ) );
+    struct edges_state_t * before = (struct edges_state_t *) calloc( 1, sizeof( struct edges_state_t ) );
+    struct edges_state_t * after = (struct edges_state_t *) calloc( 1, sizeof( struct edges_state_t ) );
     check( before != NULL && after != NULL );
-    edges_snapshot( world, address, client_index, before );
+    edges_read_state( world, address, client_index, before );
 
     check( edges_send( world, address, type, sequence, time ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( world->response_bytes == 0 );
     check( world->payload_bytes == 0 );
 
-    edges_snapshot( world, address, client_index, after );
+    edges_read_state( world, address, client_index, after );
     check( memcmp( &before->server, &after->server, sizeof( before->server ) ) == 0 );
     check( memcmp( &before->mapping, &after->mapping, sizeof( before->mapping ) ) == 0 );
     check( memcmp( &before->control, &after->control, sizeof( before->control ) ) == 0 );

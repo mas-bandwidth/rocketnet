@@ -630,6 +630,14 @@ static int race_pair_send_progress( void * instance, const rocketnet_platform_se
     return count;
 }
 
+// a batch read never asks a socket for nothing: the race reads the second
+// family only with room left after the first
+static int race_pair_receive_batch( void * instance, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    rocketnet_unit_check( max_packets > 0 );
+    return rocketnet_fake_client_receive_batch( instance, from, packet_data, packet_stride, packet_bytes, max_packets );
+}
+
 struct race_harness_t
 {
     rocketnet_address_t ipv4_server, ipv6_server, client_address;
@@ -643,7 +651,7 @@ struct race_harness_t
     int forwarded;      // fake[1]'s sends already handed to the server
 };
 
-static void race_harness_setup( race_harness_t * h, bool progress = false )
+static void race_harness_setup( race_harness_t * h, bool progress = false, bool batch = false )
 {
     rocketnet_unit_check( rocketnet_address_parse( &h->ipv4_server, "203.0.113.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &h->ipv6_server, "[2001:db8::1]:40000" ) );
@@ -651,7 +659,11 @@ static void race_harness_setup( race_harness_t * h, bool progress = false )
 
     bind_family_server_setup( &h->server, &h->server_counters );
 
-    h->operations = rocketnet_fake_client_operations_io;
+    h->operations = batch ? rocketnet_fake_client_operations_batch : rocketnet_fake_client_operations_io;
+    if ( batch )
+    {
+        h->operations.receive_batch = race_pair_receive_batch;
+    }
     h->operations.create = race_pair_create;
     h->operations.connect = rocketnet_fake_client_connect;
     h->operations.close = rocketnet_fake_client_close;
@@ -918,5 +930,535 @@ static void test_client_race_partial_fanout_shutdown_attempts_only_missing_copy(
     delete storage;
 }
 REGISTER_UNIT_TEST( test_client_race_partial_fanout_shutdown_attempts_only_missing_copy );
+
+// The race to its end with one fake per family, for both outcomes
+// (TRANSPORT.md t11 rule 3; proofs/tla/RNClientRace.tla CallerSend, CallerRead,
+// ReaderStep, CallerCommit, CallerDestroy). The winning family's server
+// answers (the same server protocol for either family); the losing family's
+// route never reaches it, and its server's cookie arrives never, early (read
+// before the commit, processed after it) or late (after the reader closed
+// that family). Each outcome runs on the per-packet table (receive, wait,
+// wake) and on the batch table (send_batch, receive_batch too).
+//
+// Checked: before the commit every packet to the primary server went to the
+// second server too, on its own socket, and both families were woken; the
+// commit keeps the winning family and the protocol's server is its server;
+// from the commit on the losing family is never sent to, read, waited on or
+// woken, and its socket is closed once by the reading step; the winning
+// family is read, woken and waited on (the race's poll while in flight, the
+// I/O guard after); an early losing cookie is dropped as a foreign source
+// exactly once and changes nothing, a late one is never read; the losing
+// family's send failures (all its sends fail when it never answers) are
+// kept in SEND_FAILED at the commit and failures after its close add
+// nothing; the connection reaches CONNECTED, and its disconnect burst leaves
+// on the winning family only, the whole burst, also when the disconnect
+// comes as the client answers the challenge (a ring still bound to the
+// primary server from before the commit). Destroy frees each family once
+// and closes nothing more. Time is an argument, from 1000.0.
+
+enum race_loser_cookie_t
+{
+    RACE_LOSER_NEVER,
+    RACE_LOSER_EARLY,
+    RACE_LOSER_LATE
+};
+
+struct race_world_t
+{
+    race_harness_t h;
+    int winner;
+    int loser;
+    race_loser_cookie_t loser_cookie;
+    rocketnet_address_t server[2];
+    int forwarded[2];
+    uint8_t cookie[ROCKETNET_RECEIVE_CEILING];
+    int cookie_bytes;
+    bool loser_cookie_sent;
+    bool committed;
+    rocketnet_fake_client_transport_io_t loser_at_commit;   // the losing fake's counters just after the committing update
+    int winner_sent_at_commit;
+    int winner_wakes_at_commit;
+    uint64_t send_failed_at_commit;
+};
+
+// the winning family's new sends reach the server, its answers come back on
+// the winning socket from the winning server; the losing family's sends are
+// lost and, when its server never answers, each one failed
+
+static void race_world_forward( race_world_t * w )
+{
+    race_harness_t * h = &w->h;
+    for ( int family = 0; family < 2; family++ )
+    {
+        rocketnet_fake_client_transport_io_t * fake = &h->pair.fake[family];
+        for ( ; w->forwarded[family] < fake->num_sent; w->forwarded[family]++ )
+        {
+            const rocketnet_fake_client_datagram_t * datagram = &fake->sent[w->forwarded[family]];
+            rocketnet_unit_check( rocketnet_address_equal( &datagram->address, &w->server[family] ) );
+
+            if ( family != w->winner )
+            {
+                if ( w->loser_cookie == RACE_LOSER_NEVER )
+                {
+                    h->pair.send_failures[family]++;
+                }
+                continue;
+            }
+
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0, payload_bytes = 0, payload_client_index = -1;
+            rocketnet_server_protocol_process_packet( &h->server, &h->client_address, datagram->data, datagram->bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, h->clock.now, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+            if ( response_bytes > 0 )
+            {
+                rocketnet_fake_client_push( fake, &w->server[family], response, response_bytes );
+                if ( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES && w->cookie_bytes == 0 )
+                {
+                    memcpy( w->cookie, response, (size_t) response_bytes );
+                    w->cookie_bytes = response_bytes;
+                }
+            }
+        }
+    }
+}
+
+static int race_world_state( race_world_t * w )
+{
+    return rocketnet_client_transport_state( w->h.transport );
+}
+
+// one update of the caller with the reading steps around it; the early
+// losing cookie is pushed once the winning cookie was read and read by one
+// more step before the update that commits
+
+static void race_world_tick( race_world_t * w )
+{
+    race_harness_t * h = &w->h;
+    rocketnet_fake_client_transport_io_t * winner = &h->pair.fake[w->winner];
+    rocketnet_fake_client_transport_io_t * loser = &h->pair.fake[w->loser];
+
+    const bool cookie_waiting = w->cookie_bytes > 0 && winner->inbound_count > 0 &&
+                                race_world_state( w ) == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE;
+
+    rocketnet_client_io_step( h->io, false );
+
+    if ( cookie_waiting && w->loser_cookie == RACE_LOSER_EARLY && !w->loser_cookie_sent )
+    {
+        rocketnet_unit_check( winner->inbound_count == 0 );
+        rocketnet_fake_client_push( loser, &w->server[w->loser], w->cookie, w->cookie_bytes );
+        rocketnet_client_io_step( h->io, false );
+        rocketnet_unit_check( loser->inbound_count == 0 );
+        w->loser_cookie_sent = true;
+    }
+
+    if ( !w->committed )
+    {
+        // in flight: every packet to the primary went to both servers, each
+        // on its own family's socket, and every hand-off woke both
+
+        rocketnet_unit_check( h->pair.fake[0].num_sent == h->pair.fake[1].num_sent );
+        for ( int i = 0; i < h->pair.fake[0].num_sent; i++ )
+        {
+            rocketnet_unit_check( h->pair.fake[0].sent[i].bytes == h->pair.fake[1].sent[i].bytes );
+            rocketnet_unit_check( memcmp( h->pair.fake[0].sent[i].data, h->pair.fake[1].sent[i].data, (size_t) h->pair.fake[0].sent[i].bytes ) == 0 );
+        }
+        rocketnet_unit_check( h->pair.fake[0].wake_calls == h->pair.fake[1].wake_calls );
+        rocketnet_unit_check( h->pair.fake[0].close_calls == 0 && h->pair.fake[1].close_calls == 0 );
+    }
+
+    const int state_before = race_world_state( w );
+    rocketnet_client_transport_update( h->transport, h->clock.now );
+
+    if ( state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE && race_world_state( w ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
+    {
+        rocketnet_unit_check( !w->committed );
+        w->committed = true;
+        w->loser_at_commit = *loser;
+        w->winner_sent_at_commit = winner->num_sent;
+        w->winner_wakes_at_commit = winner->wake_calls;
+        w->send_failed_at_commit = race_harness_send_failed( h );
+    }
+
+    rocketnet_client_io_step( h->io, false );
+    race_world_forward( w );
+
+    if ( w->committed )
+    {
+        // the reading step closed the losing socket once; nothing touches it
+        // again: no send, read, wait or wake
+
+        rocketnet_unit_check( loser->close_calls == 1 );
+        rocketnet_unit_check( winner->close_calls == 0 );
+        rocketnet_unit_check( loser->num_sent == w->loser_at_commit.num_sent );
+        rocketnet_unit_check( loser->send_calls == w->loser_at_commit.send_calls );
+        rocketnet_unit_check( loser->send_batch_calls == w->loser_at_commit.send_batch_calls );
+        rocketnet_unit_check( loser->receive_calls == w->loser_at_commit.receive_calls );
+        rocketnet_unit_check( loser->receive_batch_calls == w->loser_at_commit.receive_batch_calls );
+        rocketnet_unit_check( loser->wait_calls == w->loser_at_commit.wait_calls );
+        rocketnet_unit_check( loser->wake_calls == w->loser_at_commit.wake_calls );
+
+        // every later send goes to the winning server on the winning socket
+
+        for ( int i = w->winner_sent_at_commit; i < winner->num_sent; i++ )
+        {
+            rocketnet_unit_check( rocketnet_address_equal( &winner->sent[i].address, &w->server[w->winner] ) );
+        }
+
+        if ( w->loser_cookie == RACE_LOSER_LATE && !w->loser_cookie_sent )
+        {
+            rocketnet_fake_client_push( loser, &w->server[w->loser], w->cookie, w->cookie_bytes );
+            w->loser_cookie_sent = true;
+        }
+    }
+
+    h->clock.now += 0.01;
+}
+
+static race_world_t * race_world_create( bool batch, int winner, race_loser_cookie_t loser_cookie )
+{
+    race_world_t * w = new race_world_t();
+    race_harness_t * h = &w->h;
+    race_harness_setup( h, false, batch );
+    w->winner = winner;
+    w->loser = 1 - winner;
+    w->loser_cookie = loser_cookie;
+    w->server[0] = h->ipv6_server;
+    w->server[1] = h->ipv4_server;
+    return w;
+}
+
+// ticks until the state is reached, a terminal state or the token's timeout
+
+static void race_world_until( race_world_t * w, int until_state )
+{
+    while ( w->h.clock.now < 1000.0 + bind_family_timeout_seconds )
+    {
+        race_world_tick( w );
+
+        const int state = race_world_state( w );
+        if ( state == until_state || state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || state < 0 )
+        {
+            break;
+        }
+    }
+}
+
+static void race_world_destroy( race_world_t * w )
+{
+    race_harness_teardown( &w->h );
+    delete w;
+}
+
+static void race_world_run( bool batch, int winner, race_loser_cookie_t loser_cookie, bool disconnect_at_response )
+{
+    race_world_t * w = race_world_create( batch, winner, loser_cookie );
+    race_harness_t * h = &w->h;
+
+    const uint64_t * counters = rocketnet_client_transport_counters( h->transport )->values;
+    const uint64_t foreign_before = counters[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE];
+
+    // in flight and idle: the reading step polls the primary socket, for the
+    // race's poll at most, readable, and reports readable so the second is read
+
+    rocketnet_client_io_step( h->io, true );
+    rocketnet_unit_check( h->pair.fake[0].wait_calls == 1 && h->pair.fake[1].wait_calls == 0 );
+    rocketnet_unit_check( h->pair.fake[0].last_wait_readable );
+    rocketnet_unit_check( h->pair.fake[0].last_wait_timeout == 0.001 );
+
+    bool disconnected = false;
+    int winner_sent_at_disconnect = 0;
+    race_world_until( w, disconnect_at_response ? ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE
+                                                : ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    rocketnet_fake_client_transport_io_t * won = &h->pair.fake[winner];
+    rocketnet_fake_client_transport_io_t * lost = &h->pair.fake[w->loser];
+
+    rocketnet_unit_check( w->committed );
+    rocketnet_unit_check( race_world_state( w ) == ( disconnect_at_response ? ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE
+                                                                            : ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) );
+
+    // the winning family was sent to and woken after the commit
+
+    rocketnet_unit_check( won->num_sent > w->winner_sent_at_commit );
+    rocketnet_unit_check( won->wake_calls > w->winner_wakes_at_commit );
+
+    // the losing cookie: early, dropped as foreign once; late, never read;
+    // never, nothing foreign
+
+    rocketnet_unit_check( w->loser_cookie_sent == ( loser_cookie != RACE_LOSER_NEVER ) );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] == foreign_before + ( loser_cookie == RACE_LOSER_EARLY ? 1 : 0 ) );
+    rocketnet_unit_check( lost->inbound_count == ( loser_cookie == RACE_LOSER_LATE ? 1 : 0 ) );
+
+    // the losing family's send failures were kept at the commit; failures
+    // on it after its close add nothing
+
+    const uint64_t send_failed = race_harness_send_failed( h );
+    rocketnet_unit_check( send_failed == w->send_failed_at_commit );
+    rocketnet_unit_check( send_failed == ( loser_cookie == RACE_LOSER_NEVER ? (uint64_t) w->loser_at_commit.num_sent : 0 ) );
+    h->pair.send_failures[w->loser] += 5;
+    rocketnet_unit_check( race_harness_send_failed( h ) == send_failed );
+
+    // connected and idle: the reading step waits on the winning family alone,
+    // for the I/O guard
+
+    rocketnet_client_io_step( h->io, false );
+    const int won_waits = won->wait_calls;
+    rocketnet_client_io_step( h->io, true );
+    rocketnet_unit_check( won->wait_calls == won_waits + 1 );
+    rocketnet_unit_check( won->last_wait_readable );
+    rocketnet_unit_check( won->last_wait_timeout == h->io->guard_timeout_seconds );
+    rocketnet_unit_check( lost->wait_calls == w->loser_at_commit.wait_calls );
+
+    // the disconnect burst leaves whole, on the winning family only
+
+    winner_sent_at_disconnect = won->num_sent;
+    rocketnet_client_transport_disconnect( h->transport );
+    disconnected = race_world_state( w ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+    rocketnet_client_io_step( h->io, false );
+    rocketnet_client_io_step( h->io, false );
+    rocketnet_unit_check( disconnected );
+
+    int burst = 0;
+    for ( int i = winner_sent_at_disconnect; i < won->num_sent; i++ )
+    {
+        rocketnet_unit_check( rocketnet_address_equal( &won->sent[i].address, &w->server[winner] ) );
+        if ( won->sent[i].data[0] == ROCKETNET_CONNECTION_DISCONNECT_PACKET )
+        {
+            burst++;
+        }
+    }
+    if ( burst != ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS )
+    {
+        printf( "race_world_run( batch %d, winner %d, loser cookie %d, disconnect at response %d ): %d disconnect packets on the winning family\n",
+                batch ? 1 : 0, winner, (int) loser_cookie, disconnect_at_response ? 1 : 0, burst );
+    }
+    rocketnet_unit_check( burst == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( lost->num_sent == w->loser_at_commit.num_sent );
+
+    // destroy frees each family once; the losing one stays closed once and
+    // the kept one is closed by its destroy, not by close
+
+    race_harness_teardown( h );
+    rocketnet_unit_check( lost->num_sent == w->loser_at_commit.num_sent );
+    rocketnet_unit_check( won->destroy_calls == 1 && lost->destroy_calls == 1 );
+    rocketnet_unit_check( won->close_calls == 0 && lost->close_calls == 1 );
+    delete w;
+}
+
+// The client's payload accessor reads only this update's batch (the twin of
+// test_server_transport_reads_refuse_null_outputs_and_stale_indexes): after an
+// update that delivered two payloads, the next delivers one, and index 1
+// still holds the earlier update's entry; index 1 (the count), -1 and
+// INT32_MAX give NULL and 0 bytes, index 0 the new payload. Mutation that
+// must bite: `||` to `&&`, or `>=` to `>`, in the index check.
+
+static void race_world_deliver( race_world_t * w, const uint8_t * data, int bytes )
+{
+    race_harness_t * h = &w->h;
+    uint8_t wire[ROCKETNET_RECEIVE_CEILING];
+    const int wire_bytes = rocketnet_server_protocol_write_payload( &h->server, 0, data, bytes, h->clock.now, wire );
+    rocketnet_unit_check( wire_bytes > 0 );
+    rocketnet_fake_client_push( &h->pair.fake[w->winner], &w->server[w->winner], wire, wire_bytes );
+}
+
+static void test_client_transport_payload_refuses_indexes_outside_the_batch()
+{
+    race_world_t * w = race_world_create( false, 1, RACE_LOSER_NEVER );
+    race_harness_t * h = &w->h;
+    race_world_until( w, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_unit_check( race_world_state( w ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    const uint8_t first[3] = { 0xA1, 0xA2, 0xA3 };
+    const uint8_t second[5] = { 0xB1, 0xB2, 0xB3, 0xB4, 0xB5 };
+    const uint8_t third[2] = { 0xC1, 0xC2 };
+
+    race_world_deliver( w, first, (int) sizeof( first ) );
+    race_world_deliver( w, second, (int) sizeof( second ) );
+    h->clock.now += 0.01;
+    rocketnet_client_io_step( h->io, false );
+    rocketnet_client_transport_update( h->transport, h->clock.now );
+    rocketnet_unit_check( rocketnet_client_transport_num_payloads( h->transport ) == 2 );
+
+    race_world_deliver( w, third, (int) sizeof( third ) );
+    h->clock.now += 0.01;
+    rocketnet_client_io_step( h->io, false );
+    rocketnet_client_transport_update( h->transport, h->clock.now );
+    rocketnet_unit_check( rocketnet_client_transport_num_payloads( h->transport ) == 1 );
+
+    int bytes = 9;
+    uint8_t * payload = rocketnet_client_transport_payload( h->transport, 0, &bytes );
+    rocketnet_unit_check( payload != NULL && bytes == (int) sizeof( third ) );
+    rocketnet_unit_check( payload != NULL && memcmp( payload, third, sizeof( third ) ) == 0 );
+
+    const int outside[3] = { 1, -1, INT32_MAX };
+    for ( int i = 0; i < 3; i++ )
+    {
+        bytes = 9;
+        rocketnet_unit_check( rocketnet_client_transport_payload( h->transport, outside[i], &bytes ) == NULL );
+        rocketnet_unit_check( bytes == 0 );
+    }
+
+    race_world_destroy( w );
+}
+
+REGISTER_UNIT_TEST( test_client_transport_payload_refuses_indexes_outside_the_batch );
+
+// The hand-off's statistics count what goes on the wire (the cumulative
+// totals of rocketnet_client_transport_stats): a send_packets with nothing
+// committed hands nothing off and wakes nothing; a payload started and
+// aborted leaves a slot of 0 bytes that is neither sent nor counted; the
+// packets and bytes counted (wire bytes plus the IPv4 header) equal the
+// datagrams the winning family's socket took. Mutation that must bite:
+// count a slot of 0 bytes, or hand off an empty ring.
+
+static void test_client_hand_off_counts_only_what_it_sends()
+{
+    race_world_t * w = race_world_create( false, 1, RACE_LOSER_NEVER );
+    race_harness_t * h = &w->h;
+    race_world_until( w, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_unit_check( race_world_state( w ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_client_io_step( h->io, false );
+
+    rocketnet_fake_client_transport_io_t * won = &h->pair.fake[w->winner];
+    const uint64_t * counters = rocketnet_client_transport_counters( h->transport )->values;
+
+    // nothing committed: no hand-off, no wake, nothing deferred
+
+    const int wakes = won->wake_calls;
+    const uint64_t deferred = counters[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED];
+    rocketnet_client_transport_send_packets( h->transport );
+    rocketnet_unit_check( won->wake_calls == wakes );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED] == deferred );
+
+    struct rocketnet_client_transport_stats_t before;
+    rocketnet_client_transport_stats( h->transport, &before );
+    const int sent_before = won->num_sent;
+
+    struct rocketnet_packet_context_t aborted;
+    rocketnet_unit_check( rocketnet_client_transport_start_packet( h->transport, 100, &aborted ) != NULL );
+    rocketnet_client_transport_abort_packet( h->transport, &aborted );
+
+    struct rocketnet_packet_context_t context;
+    rocketnet_unit_check( rocketnet_client_transport_start_packet( h->transport, 100, &context ) != NULL );
+    int capacity = 0;
+    uint8_t * payload = rocketnet_client_transport_packet_payload( h->transport, &context, &capacity );
+    rocketnet_unit_check( payload != NULL && capacity >= 40 );
+    if ( payload )
+    {
+        memset( payload, 0x5C, 40 );
+    }
+    const int wire_bytes = rocketnet_client_transport_finish_packet( h->transport, &context, 40 );
+    rocketnet_unit_check( wire_bytes > 40 );
+
+    rocketnet_client_transport_send_packets( h->transport );
+    rocketnet_client_io_step( h->io, false );
+
+    struct rocketnet_client_transport_stats_t after;
+    rocketnet_client_transport_stats( h->transport, &after );
+
+    uint64_t wire_total = 0;
+    for ( int i = sent_before; i < won->num_sent; i++ )
+    {
+        wire_total += (uint64_t) ( won->sent[i].bytes + rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 ) );
+    }
+    rocketnet_unit_check( won->num_sent == sent_before + 1 );
+    rocketnet_unit_check( won->sent[sent_before].bytes == wire_bytes );
+    rocketnet_unit_check( after.packets_sent == before.packets_sent + (uint64_t) ( won->num_sent - sent_before ) );
+    rocketnet_unit_check( after.bytes_sent == before.bytes_sent + wire_total );
+
+    race_world_destroy( w );
+}
+
+REGISTER_UNIT_TEST( test_client_hand_off_counts_only_what_it_sends );
+
+static void test_client_race_each_family_wins_and_the_other_is_dropped()
+{
+    for ( int batch = 0; batch < 2; batch++ )
+    {
+        for ( int winner = 0; winner < 2; winner++ )
+        {
+            race_world_run( batch != 0, winner, RACE_LOSER_NEVER, false );
+            race_world_run( batch != 0, winner, RACE_LOSER_EARLY, false );
+            race_world_run( batch != 0, winner, RACE_LOSER_LATE, false );
+            race_world_run( batch != 0, winner, RACE_LOSER_NEVER, true );
+        }
+    }
+}
+
+REGISTER_UNIT_TEST( test_client_race_each_family_wins_and_the_other_is_dropped );
+
+// A race nobody answers, destroyed in flight: each family is freed once and
+// neither is closed (only a commit closes a family before destroy).
+
+static void test_client_race_destroyed_in_flight_frees_both()
+{
+    for ( int batch = 0; batch < 2; batch++ )
+    {
+        race_harness_t * h = new race_harness_t();
+        race_harness_setup( h, false, batch != 0 );
+        for ( int i = 0; i < 20; i++ )
+        {
+            rocketnet_client_io_step( h->io, false );
+            rocketnet_client_transport_update( h->transport, h->clock.now );
+            rocketnet_client_io_step( h->io, false );
+            h->clock.now += 0.01;
+        }
+        rocketnet_unit_check( rocketnet_client_transport_state( h->transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+        rocketnet_unit_check( h->pair.fake[0].num_sent > 0 && h->pair.fake[0].num_sent == h->pair.fake[1].num_sent );
+        race_harness_teardown( h );
+        for ( int family = 0; family < 2; family++ )
+        {
+            rocketnet_unit_check( h->pair.fake[family].destroy_calls == 1 );
+            rocketnet_unit_check( h->pair.fake[family].close_calls == 0 );
+        }
+        delete h;
+    }
+}
+
+REGISTER_UNIT_TEST( test_client_race_destroyed_in_flight_frees_both );
+
+// In flight with the reading step's buffer full (one buffer published and
+// not yet taken, the next filled to ROCKETNET_NUM_CLIENT_PACKETS): the step
+// waits on the wake alone (FullWaitsOnWake), and during the race that wait
+// is the primary family's, for the whole I/O guard, not the race's poll and
+// not readable; the second family is not waited on.
+
+static void test_client_race_full_buffer_waits_on_the_primary_wake_alone()
+{
+    for ( int batch = 0; batch < 2; batch++ )
+    {
+        race_harness_t * h = new race_harness_t();
+        race_harness_setup( h, false, batch != 0 );
+        rocketnet_fake_client_transport_io_t * primary = &h->pair.fake[0];
+        const uint8_t junk[1] = { 0xEE };
+
+        rocketnet_fake_client_push( primary, &h->ipv6_server, junk, 1 );
+        rocketnet_client_io_step( h->io, false );
+        for ( int round = 0; round < ROCKETNET_NUM_CLIENT_PACKETS / 256; round++ )
+        {
+            for ( int i = 0; i < 256; i++ )
+            {
+                rocketnet_fake_client_push( primary, &h->ipv6_server, junk, 1 );
+            }
+            rocketnet_client_io_step( h->io, false );
+            rocketnet_unit_check( primary->inbound_count == 0 );
+        }
+        rocketnet_unit_check( h->io->fill_slots == ROCKETNET_NUM_CLIENT_PACKETS );
+
+        const int waits = primary->wait_calls;
+        rocketnet_client_io_step( h->io, true );
+        rocketnet_unit_check( primary->wait_calls == waits + 1 );
+        rocketnet_unit_check( !primary->last_wait_readable );
+        rocketnet_unit_check( primary->last_wait_timeout == h->io->guard_timeout_seconds );
+        rocketnet_unit_check( h->pair.fake[1].wait_calls == 0 );
+
+        race_harness_teardown( h );
+        delete h;
+    }
+}
+
+REGISTER_UNIT_TEST( test_client_race_full_buffer_waits_on_the_primary_wake_alone );
 
 #endif // #if ROCKETNET_DEV
