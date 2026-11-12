@@ -471,6 +471,66 @@ static void test_server_gso_send_gathers_interleaved_destinations()
 
 REGISTER_UNIT_TEST( test_server_gso_send_gathers_interleaved_destinations );
 
+// the first port from first whose destination stages on queue q of num_queues
+static uint16_t gso_segment_port_on_queue( uint16_t first, int q, int num_queues )
+{
+    for ( int port = first; port < 65535; port++ )
+    {
+        struct rocketnet_address_t to;
+        memset( &to, 0, sizeof( to ) );
+        to.type = ROCKETNET_ADDRESS_IPV4;
+        to.data.ipv4[0] = 127;
+        to.data.ipv4[3] = 1;
+        to.port = (uint16_t) port;
+        if ( rocketnet_server_gso_send_queue( &to, num_queues ) == q )
+        {
+            return (uint16_t) port;
+        }
+    }
+    check( false );
+    return 0;
+}
+
+// a segmented send one queue had accepted shows the transport can segment:
+// refusals by any number of destinations on another queue stay theirs, and
+// the tier stays on for every queue
+static void test_server_gso_segment_accepted_on_any_queue()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 2 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    gso_segment_stage( gso, gso_segment_port_on_queue( 40000, 0, 2 ), 2 );
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.segmented == 1 );
+
+    uint16_t port = 41000;
+    for ( int i = 0; i < 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD; i++ )
+    {
+        port = gso_segment_port_on_queue( port, 1, 2 );
+        memset( &socket, 0, sizeof( socket ) );
+        socket.refuse_segment = 100;
+        gso_segment_stage( gso, port, 2 );
+        check( rocketnet_server_gso_test_flush_staged( gso ) );
+        check( socket.plain_packets == 2 );
+        check( ( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0 );
+        port++;
+    }
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_segment_accepted_on_any_queue );
+
 // a refused segmented run is resent plain, and that plain send fails too. a
 // full socket stops the resend at the first unsent packet with nothing
 // dropped; a hard error drops that one packet, counts it, and the rest of the

@@ -217,7 +217,8 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_PREFILTER     11       // segment the worker's prefilter refused for a reason other than size (sdk/rocketnet_receive_prefilter.h)
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          12
+#define ROCKETNET_SERVER_GSO_COUNTER_SEND_FINISH_REFUSED           12       // finishes refused because the id and pointer named no slot of the queue's producer (or came after stop): never staged, counted
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          13
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6

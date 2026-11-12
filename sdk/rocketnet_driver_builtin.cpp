@@ -2309,11 +2309,12 @@ ROCKETNET_STAGED_ADAPTER( gso, rocketnet_server_gso_t, rocketnet_server_gso )
 
 static uint64_t gso_send_failures( void * transport )
 {
-    // SEND_DROPPED: the datagrams a refused sendmmsg dropped
+    // SEND_DROPPED: the datagrams a refused sendmmsg dropped; SEND_FINISH_REFUSED:
+    // the frames a refused finish never staged
 
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
     rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
-    return counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED];
+    return counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] + counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_FINISH_REFUSED];
 }
 
 // the queue workers' prefilter and bank drops (sdk/rocketnet_receive_prefilter.h)
