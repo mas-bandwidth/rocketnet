@@ -2880,7 +2880,7 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
 
         rocketnet_client_io_retire_keys( io );
 
-        rocketnet_client_io_stop( io, committed, rocketnet_client_transport_fill_destination( client_transport ) );
+        rocketnet_client_io_stop( io, rocketnet_client_transport_count_final( client_transport, committed ), rocketnet_client_transport_fill_destination( client_transport ) );
 
 #if ROCKETNET_DEV
         if ( rocketnet_client_memory_plan_seam_enabled )
@@ -3139,8 +3139,8 @@ static void rocketnet_client_transport_count_sent( rocketnet_client_transport_t 
 // they leave the main thread: handed to the I/O thread, which sends every
 // ring it takes (rocketnet_client_io_hand_off, proofs/tla/RNClientIo.tla
 // NoReuseBeforeSent, HandOffNeverWaits), or to the link simulator. A deferred
-// slot is counted by the hand-off that takes it, so a connection that ends
-// with it still deferred, which drops it unsent, never counts it
+// slot is counted by the hand-off or the stop that takes it; a connection
+// that ends with it still deferred drops it unsent and never counts it
 // (packets_sent is datagrams sent). A ROCKETNET_CLIENT_RINGS_LATE result is
 // the deferred hand-off: it counts CLIENT_SEND_DEFERRED and returns at once,
 // the committed slots staying in the Filling ring, open to the game threads,
@@ -4718,4 +4718,26 @@ void rocketnet_client_transport_accept_payload( struct rocketnet_client_transpor
     {
         rocketnet_client_protocol_accept_payload( &transport->protocol, batch->sequence[k] );
     }
+}
+
+// Stop's count: the committed slots of the final ring, which the I/O thread
+// sends at its exit (rocketnet_client_io_stop, then the worker's send_final),
+// added to the stats as they leave the main thread, like a hand-off's.
+
+uint64_t rocketnet_client_transport_count_final( struct rocketnet_client_transport_t * client_transport, uint64_t committed )
+{
+    const struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
+    const rocketnet_address_t * to = rocketnet_client_transport_fill_destination( client_transport );
+    uint64_t packets = 0;
+    uint64_t bytes = 0;
+    for ( uint64_t i = 0; i < committed; i++ )
+    {
+        if ( ring->info[i].wire_bytes > 0 )
+        {
+            packets++;
+            bytes += (uint64_t) ( ring->info[i].wire_bytes + rocketnet_wire_header_bytes( to->type ) );
+        }
+    }
+    rocketnet_client_transport_count_sent( client_transport, packets, bytes );
+    return committed;
 }

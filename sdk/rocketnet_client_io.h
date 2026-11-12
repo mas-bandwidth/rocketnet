@@ -1152,4 +1152,7 @@ void rocketnet_client_transport_step_legacy_for_test( struct rocketnet_client_tr
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
 
+// Stop's count of the final ring's committed slots, sent at the I/O thread's exit; returns committed.
+uint64_t rocketnet_client_transport_count_final( struct rocketnet_client_transport_t * client_transport, uint64_t committed );
+
 #endif // ROCKETNET_SDK_ROCKETNET_CLIENT_IO_H

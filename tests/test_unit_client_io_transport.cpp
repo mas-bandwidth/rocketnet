@@ -347,6 +347,37 @@ static void test_client_io_destroy_hands_off_deferred_slots()
 
 REGISTER_UNIT_TEST( test_client_io_destroy_hands_off_deferred_slots );
 
+// The final ring stop hands to the I/O thread is sent at its exit, so its
+// datagrams are counted like any other ring that leaves the main thread:
+// packets_sent after stop matches the three the fake sent, the deferred one
+// included.
+
+static void test_client_io_stop_counts_final_ring()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    client_io_transport_clock_t clock = { 1000.0, 0 };
+    rocketnet_client_transport_t * transport = client_io_transport_create( fake, &rocketnet_fake_client_operations_io, &clock );
+
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_client_transport_update( transport, 1001.0 );
+    rocketnet_client_transport_update( transport, 1002.0 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+    check( fake->num_sent == 0 );
+
+    rocketnet_client_transport_stop( transport );
+    rn_test_client_transport_wait_stopped( transport );
+    check( fake->num_sent == 3 );
+
+    struct rocketnet_client_transport_stats_t stats;
+    rocketnet_client_transport_stats( transport, &stats );
+    check( stats.packets_sent == 3 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( test_client_io_stop_counts_final_ring );
+
 // packets_sent counts datagrams sent (rocketnet.h): a slot deferred behind
 // two queued rings is counted when it leaves, never before. The connection
 // ending with the slot still deferred (a disconnect, or the attempt timing
