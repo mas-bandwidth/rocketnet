@@ -4890,6 +4890,37 @@ static uint8_t * rocketnet_test_server_rio_start( rocketnet_server_rio_t * rio, 
     }
 }
 
+// The lanes a RIO server made through rocketnet_server_rio_create with
+// default options should have: ROCKETNET_TEST_RIO_LANES (2 .. 32) when the bind
+// is not the wildcard, else one. Every direct-create case checks the count the
+// server really made against it, so a run meant for lanes cannot quietly run
+// one.
+static int rocketnet_test_rio_expected_lanes( const rocketnet_address_t * bind_address )
+{
+    char text[64];
+    if ( !rocketnet_test_getenv( "ROCKETNET_TEST_RIO_LANES", text, sizeof( text ) ) )
+    {
+        return 1;
+    }
+    const int n = atoi( text );
+    bool wildcard = true;
+    for ( int i = 0; i < 8; i++ )
+    {
+        if ( ( bind_address->type == ROCKETNET_ADDRESS_IPV4 && i < 4 && bind_address->data.ipv4[i] != 0 ) ||
+             ( bind_address->type == ROCKETNET_ADDRESS_IPV6 && bind_address->data.ipv6[i] != 0 ) )
+        {
+            wildcard = false;
+        }
+    }
+    return ( n >= 2 && n <= ROCKETNET_RIO_MAX_LANES && !wildcard ) ? n : 1;
+}
+
+// every lane keeps its own receives posted
+static int rocketnet_test_rio_receives( rocketnet_server_rio_t * rio )
+{
+    return rocketnet_server_rio_lanes( rio ) * rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS );
+}
+
 void rocketnet_test_server_rio_probe()
 {
     rocketnet_check( rocketnet_server_rio_available() );
@@ -4899,6 +4930,7 @@ void rocketnet_test_server_rio_probe()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
     rocketnet_check( bind_address.port != 0 );
 
     uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
@@ -4911,11 +4943,11 @@ void rocketnet_test_server_rio_probe()
     // nothing but the receive slices is outstanding, and a flush with
     // nothing staged posts nothing and commits nothing
 
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
     rocketnet_server_rio_send_packets( rio );
     rocketnet_server_rio_receive_packets( rio );
     rocketnet_check( rocketnet_server_rio_process_packets( rio )->num_packets == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
     rocketnet_server_rio_counters( rio, counters );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
@@ -4932,7 +4964,7 @@ void rocketnet_test_server_rio_probe()
     rocketnet_server_rio_send_packets( rio );
     rocketnet_server_rio_counters( rio, counters );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     // destroy with nothing but receives outstanding: closesocket completes
     // them, the drain accounts for every one, then the region is freed
@@ -4955,6 +4987,7 @@ void rocketnet_test_server_rio_probe()
     rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
     rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }
 
@@ -4973,6 +5006,7 @@ void rocketnet_test_server_rio_wire_ipv4()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1:0" ) );
@@ -5063,7 +5097,11 @@ void rocketnet_test_server_rio_wire_ipv4()
             uint64_t packet_id = 0;
             uint8_t * frame = rocketnet_test_server_rio_start( rio, &client_address, &packet_id, &refused );
             rocketnet_check( frame );
-            used_phase[packet_id / (uint64_t) rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
+            int lane = 0;
+            int index = 0;
+            rocketnet_check( rocketnet_rio_lane_packet_decode( packet_id, rocketnet_server_rio_lanes( rio ),
+                                                               3 * rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ), &lane, &index ) );
+            used_phase[index / rocketnet_server_rio_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS )] = true;
 
             const int packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + i;
             uint8_t * wire = frame + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -5147,12 +5185,12 @@ void rocketnet_test_server_rio_wire_ipv4()
     // the worker counts a completion before it re-posts or retires the request
 
     start = rocketnet_platform_time();
-    while ( rocketnet_server_rio_pending( rio ) != rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) && rocketnet_platform_time() - start < 5.0 )
+    while ( rocketnet_server_rio_pending( rio ) != rocketnet_test_rio_receives( rio ) && rocketnet_platform_time() - start < 5.0 )
     {
         rocketnet_platform_sleep( 0.0005 );
     }
 
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     rocketnet_platform_socket_destroy( client_socket );
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
@@ -5260,6 +5298,7 @@ void rocketnet_test_server_rio_wire_ipv6()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "[::1]:0", &client_address );
@@ -5283,6 +5322,7 @@ void rocketnet_test_server_rio_wire_dual_stack()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t client_address;
     struct rocketnet_platform_socket_t * client_socket = rocketnet_test_server_rio_client_socket( "127.0.0.1:0", &client_address );
@@ -5308,6 +5348,7 @@ void rocketnet_test_server_rio_send_full()
 
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &bind_address, ROCKETNET_DEFAULT_MAX_CLIENTS );
     rocketnet_check( rio );
+    rocketnet_check( rocketnet_server_rio_lanes( rio ) == rocketnet_test_rio_expected_lanes( &bind_address ) );
 
     rocketnet_address_t destination;
     rocketnet_check( rocketnet_address_parse( &destination, "127.0.0.1:9" ) );
@@ -5334,7 +5375,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     frame = rocketnet_server_rio_start_packet( rio, &destination, &packet_id );
     rocketnet_check( frame );
@@ -5345,7 +5386,7 @@ void rocketnet_test_server_rio_send_full()
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_SEND_FAILED] == 0 );
     rocketnet_check( counters[ROCKETNET_RIO_COUNTER_COMMITS] == 0 );
-    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_server_rio_receives( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
+    rocketnet_check( rocketnet_server_rio_pending( rio ) == rocketnet_test_rio_receives( rio ) );
 
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
 }

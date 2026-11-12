@@ -3129,6 +3129,7 @@ static rocketnet_server_rio_t * rio_open_lanes( rocketnet_address_t * bind, int 
     options.packet_filter = packet_filter;
     rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options );
     CHECK( rio && bind->port );
+    CHECK( rocketnet_server_rio_lanes( rio ) == lanes );
     return rio;
 }
 
