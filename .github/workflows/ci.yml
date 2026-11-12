@@ -459,7 +459,7 @@ jobs:
         run: |
           # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --target $targets --parallel 8
@@ -1439,7 +1439,7 @@ jobs:
         run: |
           # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --config Release --target $targets --parallel 8
@@ -2265,7 +2265,7 @@ jobs:
         run: |
           # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           # and the Linux-only XDP filter harness (tests/fuzz/Makefile XDP_TARGETS)
           xdp_harnesses="rocketnet_fuzz_xdp_filter"
           harnesses="$harnesses $xdp_harnesses"
@@ -2374,7 +2374,7 @@ jobs:
 
       - name: Build every fuzzer with NDEBUG
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           echo "NDEBUG_HARNESSES=$harnesses" >> "$GITHUB_ENV"
           for src in $harnesses; do
             clang++ -g -O1 -std=c++17 \
