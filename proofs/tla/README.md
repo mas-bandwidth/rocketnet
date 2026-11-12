@@ -186,6 +186,8 @@ model's README for its current controls, witnesses and configured bounds.
 | `rniocprefqueue` | The IOCP server's MPMC reference queue as laid out, and the push a stalled pop refuses (README-RNIocpRefQueue.md). |
 | `rniocpsendlease` | The IOCP send operations' generation tags over free_sends as laid out, and the release push a stalled pop refuses, retried (RNIocpSendLease.tla). |
 | `rniocprunring` | The IOCP USO run-ticket ring (RNIocpRunRing.tla). |
+| `rniocpreceiveadmit` | The IOCP completion worker's admission to its receive bank: the prefilter before the capacity check, every drop counted (README-RNIocpReceiveAdmit.md). |
+| `rniocpsendlanes` | The IOCP send lanes: a destination in one lane, each operation released to its own lane, handle indexes unique (README-RNIocpSendLanes.md). |
 | `rniocpretrystop` | The IOCP receive retry queue and its stop-ticketed pass (RNIocpRetryStop.tla). |
 | `rnportabletx` | The portable/msgx server transmit handoff at the code's own fields (README-RNPortableTx.md). |
 | `rnpacketlease` | The packet lease table (README-RNPacketLease.md). |

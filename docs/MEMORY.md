@@ -286,8 +286,10 @@ a larger server does not make every transport buffer larger.
 | client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
 | per-update receive budget, payload batch, io_uring receive bank | 16 packets per client | 16000 | 160000 |
 | portable send batch | one per client | 1000 | 10000 |
-| server-wide send staging (IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
-| IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
+| server-wide send staging (RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
+| IOCP send lanes x operations per lane | 32 packets per client (at least 512 clients), in lanes of at most 4096, at most 16 lanes (`rocketnet_server_iocp_send_lanes`, `rocketnet_server_iocp_send_queue_size`) | 8 x 4096 | 16 x 4096 |
+| IOCP receive staging (all completion workers together) | the per-update receive budget, split across the workers | 16000 | 160000 |
+| RIO posted receives | twice the send staging | 4096 | 65536 |
 | XDP kernel replay map (set at load) and userspace replay marks | one entry per client, rounded up to a multiple of 1024 | 1024 | 10240 |
 | XDP reply MAC table | four slots per client, rounded up to a power of two | 4096 | 65536 |
 | socket receive buffer request | see [Receive buffer sizing](#receive-buffer-sizing) | 25,000,000 | 250,000,000 |
