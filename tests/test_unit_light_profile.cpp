@@ -179,7 +179,22 @@
 // rounding: a development Debug build reads 3111676787, 64 above a
 // production Release build's unchanged 3111676723 (measured, gcc). The pin
 // is the higher figure less the slack, as the check is an upper bound.
+#if defined( __aarch64__ )
+// Linux arm64 adds 56 bytes. glibc's pthread_mutex_t is 48 bytes on aarch64
+// and 40 on x86-64, so the thread record each worker allocates
+// (sdk/rocketnet_platform.cpp thread_record_t, holding
+// rocketnet_platform_thread_t's wake_mutex) is 144 bytes, not 136. The xdp
+// ladder candidate starts one thread for each of its 7 default queues
+// (rocketnet_server_xdp_allocation_bytes): 7 * 8 = 56. The two sizes were
+// read from gcc 15 for aarch64 and gcc for x86-64 at this branch. A
+// Graviton Release build read 3111676779 before the link-lock count, which
+// is 56 above 3111676723. This figure is the development Debug figure above
+// plus those 56 bytes, less the slack. It is computed, not read on a
+// Graviton.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628267ULL )
+#else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628211ULL )
+#endif // #if defined( __aarch64__ )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 
