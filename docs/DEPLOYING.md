@@ -103,8 +103,9 @@ Cold, on a fresh box, as root:
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
     #    then: update-grub && reboot
-    #    (build a recent vendor NIC driver where the distro's is too old — for
-    #    Intel 700 series, i40e from github.com/mas-bandwidth/ethernet-linux-i40e)
+    #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
+    #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
+    #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
 
     # 2. RUNTIME TIER (idempotent, re-run any time):
     scripts/rocketnet-provision eth0 7

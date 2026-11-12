@@ -37,10 +37,10 @@
 #                             ("higher bandwidth nics may need more cores").
 #   B2. isolated cpu set      /sys/devices/system/cpu/isolated is non-empty
 #                             (the observable effect of B1's isolcpus).
-#   B3. NIC transport            a recent vendor transport built manually where the
-#                             distro's is too old for stable AF_XDP zero copy
-#                             -- for Intel 700 series, i40e from
-#                             github.com/mas-bandwidth/ethernet-linux-i40e.
+#   B3. NIC driver            one with AF_XDP zero copy. Measured on an X710:
+#                             the in-tree i40e of Ubuntu's 7.0.0-43-generic
+#                             binds it; Intel's i40e 2.30.18 compiles it out
+#                             on Ubuntu and on kernels 5.2 and newer.
 #                             Reported informationally (ethtool -i); not
 #                             machine-verifiable beyond the version string.
 #
@@ -1527,11 +1527,11 @@ else
     fail "ip (iproute2) is not installed, so whether $INTERFACE is a VLAN or a stacked device cannot be read (R2)"
 fi
 
-# B3. NIC transport, reported informationally
+# B3. NIC driver, reported informationally
 
 if command -v ethtool >/dev/null 2>&1; then
-    TRANSPORT_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^transport:|^version:/{printf "%s ", $2}')"
-    [ -n "$TRANSPORT_INFO" ] && say "NIC transport: $TRANSPORT_INFO(B3: build a recent vendor transport where the distro's is too old -- see the header)"
+    TRANSPORT_INFO="$(ethtool -i "$INTERFACE" 2>/dev/null | awk '/^driver:|^version:/{printf "%s ", $2}')"
+    [ -n "$TRANSPORT_INFO" ] && say "NIC driver: $TRANSPORT_INFO(B3: it needs AF_XDP zero copy -- see the header)"
 fi
 
 # R2. interface exists and is up

@@ -1180,6 +1180,12 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
+      # XDP SAFETY 4's kernel rule for the in-tree i40e, in the live fleet
+      # script and in the bench server, held to one case list
+      - name: In-tree i40e kernel rule selftest
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        run: bash scripts/live-xdp-fleet-remote i40e-guard-selftest ./bin/server
+
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
   # Release build, on its own runner, so the optimizer sees those cases on

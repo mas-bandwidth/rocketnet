@@ -326,7 +326,7 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | --- | --- | --- |
 | B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); grub and reboot | `:27-37` |
 | B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
-| B3 | a vendor NIC driver recent enough for AF_XDP zero copy (reported, not verified) | `:40-45` |
+| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
 | R1 | euid 0 | `:49` |
 | R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
 | R3 | no XDP program already attached | `:54-64` |
@@ -453,6 +453,25 @@ with Linux have different feature support. Intel's standalone 2.30.18 driver
 A fork of that driver
 contains the same restriction. Rebuilding that source unchanged does not
 provide zero-copy on Ubuntu 22.04.
+
+Measured on 2026-11-12 on one X710 (firmware 9.00) under Ubuntu 26.04.1,
+kernel 7.0.0-43-generic, with the in-tree `i40e`: the server bound zero copy
+on seven queues and ran for 60 minutes, with 55 sessions of 1,000 or 100
+clients connecting and disconnecting, up to 10.0 Gb/s on the wire and about
+7.24 billion frames received. It recorded no payload error, NIC reset, NETDEV
+watchdog, Tx hang or AF_XDP error. The kernel logged `Failed to allocate some
+buffers on AF_XDP ZC enabled Rx ring` once per queue at bind. That is one
+machine, one kernel and one hour. The in-tree `i40e` of 7.0.0-31-generic
+panicked twice on 2026-10-15 and 10-16 in its zero-copy receive path
+(`i40e_construct_skb_zc`), so the bench server (`tests/client_server/server.c`)
+and `scripts/live-xdp-fleet` still refuse the in-tree `i40e` on a kernel
+older than 7.0.0-43.
+
+**An ixgbe attach takes the link down.** On an 82599 (`ixgbe`, kernel
+7.0.0-42-generic), attaching an XDP program resets the port: the link came
+back 7 to 19 seconds later in every attach recorded on 2026-11-12. Clients whose
+connect starts in that window time out, because a client stops requesting a
+cookie after 10 seconds. Attach before you announce the server.
 
 Start qualification with Ubuntu's supplied `i40e` module on the GA
 `linux-generic` 5.15 track. The
