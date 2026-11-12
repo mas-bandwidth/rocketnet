@@ -1,0 +1,16 @@
+# In-source analyzer and warning suppressions in sdk/, each reviewed.
+# tools/check_suppressions.py fails on a suppression not listed here and on a
+# line listed here that is no longer in the tree. Format: <file> <kind>
+# <hash>[:<ordinal>], a tab, then the reason. `python3 tools/check_suppressions.py
+# --list` prints the keys; a new line here is a review decision, made in the
+# pull request that adds the suppression.
+sdk/rocketnet.h pragma-warning-disable f6e7bff390260742	MSVC C4514 (unreferenced inline function removed) is informational under /Wall; the public header's static inline helpers raise it in every consumer
+sdk/rocketnet.h pragma-diagnostic-ignored 41e125b8412886df	clang -Wc++98-compat on the enum's fixed underlying type, inside a C++11-only branch, push/pop scoped: the header is clean under -Weverything
+sdk/rocketnet.h pragma-diagnostic-ignored 41e125b8412886df:1	as above, the second enum with a fixed underlying type, push/pop scoped
+sdk/rocketnet.h pragma-diagnostic-ignored 2fe74af943520b00	clang versions without -Wpre-c11-compat or -Wc++98-compat warn on the unknown option inside the push/pop around the enum-size static_assert
+sdk/rocketnet.h pragma-diagnostic-ignored 41e125b8412886df:2	clang -Wc++98-compat on static_assert, inside a C++11-only branch, push/pop scoped
+sdk/rocketnet.h pragma-diagnostic-ignored 2fe74af943520b00:1	as the first -Wunknown-warning-option line, around the C11 _Static_assert
+sdk/rocketnet.h pragma-diagnostic-ignored c5210cedb80e833b	clang -Wpre-c11-compat on _Static_assert, inside a C11-only branch, push/pop scoped
+sdk/rocketnet_client_transport.cpp pragma-warning-disable f7147679f94b0731	MSVC C4324 (structure padded by alignment) on the members-only measure struct whose tail padding is intended; push/pop scoped to that struct
+sdk/rocketnet_message_object.h NOLINT 9f9a8950a71036b6	clang-tidy bugprone-macro-parentheses: F is a function name used as a non-type template argument, &F must be written bare
+sdk/rocketnet_server_rio_windows.cpp pragma-warning-disable f7147679f94b0731	MSVC C4324 on the cache-line aligned private RIO server structure (ARM64 tail padding); push/pop scoped to that struct

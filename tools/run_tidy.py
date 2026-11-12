@@ -31,6 +31,11 @@ deleted in the same pull request that removes the finding. A translation
 unit the analyzer cannot parse fails the job too: a file that is not
 analyzed must never read as a clean file.
 
+Every in-source suppression in sdk/ (NOLINT, cppcheck-suppress, a diagnostic
+pragma) must be listed in tools/suppressions_reviewed.txt with a reason
+(tools/check_suppressions.py, run first): a suppression the list does not
+name fails the gate, since it hides a finding before any baseline sees it.
+
 clang-tidy is found as CLANG_TIDY, clang-tidy or clang-tidy-18; cppcheck as
 CPPCHECK or cppcheck. A missing tool prints a TOOL-MISSING line and fails.
 The gate prints the cppcheck path and version it uses, and a cppcheck other
@@ -515,6 +520,14 @@ def main():
     parser.add_argument("--cppcheck-baseline", default=CPPCHECK_BASELINE)
     parser.add_argument("--dispositions", default=DISPOSITIONS)
     args = parser.parse_args()
+
+    # an in-source suppression (NOLINT, cppcheck-suppress, a diagnostic
+    # pragma) hides a finding before the baselines see it: each must be
+    # reviewed in tools/suppressions_reviewed.txt (tools/check_suppressions.py)
+    suppressions = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "check_suppressions.py")])
+    if suppressions.returncode != 0:
+        print("tidy gate FAILED: an in-source suppression is not reviewed")
+        return 1
 
     dispositions, disposition_errors = read_dispositions(args.dispositions)
     if disposition_errors:

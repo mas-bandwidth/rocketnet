@@ -3434,6 +3434,16 @@ jobs:
           python3 tools/check_make_jobs.py --self-test
           python3 tools/check_make_jobs.py
 
+      # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
+      # diagnostic pragma in sdk/ is listed with a reason in
+      # tools/suppressions_reviewed.txt, and every listed one still exists. A
+      # suppression hides a finding before the static gates' baselines see
+      # it; static.yml's tidy gate runs the same check first.
+      - name: Every in-source suppression in the library is reviewed
+        run: |
+          python3 tools/check_suppressions.py --self-test
+          python3 tools/check_suppressions.py
+
       # tools/bigendian/run_byte_cases.sh refuses an empty list, a
       # registration its pattern cannot read and a count other than the one
       # docs/PLATFORMS.md states; its self-test plants each of those, an
