@@ -3188,8 +3188,11 @@ static void posix_xdp_update( struct rocketnet_server_transport_t * server, stru
     rocketnet_server_transport_send_packets( server );
 }
 
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
 static void posix_xdp_weather( int ipv6 )
 {
+    rocketnet_functional_require_xdp_case( POSIX_XDP_NETNS );
     const char * case_name = ipv6 ? "test_xdp_transport_linux_receive_weather_ipv6" : "test_xdp_transport_linux_receive_weather_ipv4";
 
     atexit( posix_xdp_teardown );
