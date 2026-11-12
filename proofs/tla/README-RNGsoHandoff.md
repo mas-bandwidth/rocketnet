@@ -1,9 +1,13 @@
 # RNGsoHandoff: the GSO server transport's bank handoff
 
 `RNGsoHandoff.tla` models the cross-thread bank handoff of the Linux GSO
-server transport, `sdk/rocketnet_server_gso_linux.cpp`: one receive queue
-of three buffers, the three transmit banks, the send worker's flush with a
-full socket and the shutdown retry bound, and stop, join and free. The
+server transport, `sdk/rocketnet_server_gso_linux.cpp`, for one queue:
+its three receive buffers, its three transmit banks, its worker's send step
+(`rocketnet_server_gso_send_step`, each pass of `rocketnet_server_gso_worker`
+sends, then drains) with a full socket and the shutdown retry bound, and
+stop, join and free. Every queue has its own banks, lane mutex and worker,
+so the model holds for each; the worker's poll and main's eventfd wake are
+folded. The per-queue staging layout is `RNGsoQueueBankLayout.tla`. The
 module header gives the actions and the code each one stands for;
 `proofs/tla/COVERAGE.tsv` (row `server-gso-handoff`) maps them to the
 functions.
@@ -23,7 +27,7 @@ functions.
   the model had no hard-error drop.
 - `TxInOrder`, `RxInOrder`: packets are sent and consumed in order; a gap
   below a sent packet is a counted drop.
-- `MainNeverWaits`: main only try-acquires the TX mutex.
+- `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
 - `RefusalsBounded`, `StopJoinsBeforeFree`, and the liveness properties
   `StopCompletes` and `ShutdownCompletes`.
 
@@ -69,7 +73,7 @@ jar, one shard per case, two workers, four cases at a time.
 | `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 413 | 1.2 | `NoBackoff <- TRUE`. |
 | `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 5302 | 1.1 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
 | `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 12600 | 4.1 | `BoundOnQuitOnly <- TRUE`. |
-| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the TX mutex. |
+| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the lane mutex. |
 | `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 571 | 0.8 | Reachability: a counted hard-error drop before shutdown. |
 | `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 0.9 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
 
@@ -78,7 +82,7 @@ jar, one shard per case, two workers, four cases at a time.
 - **ReachErrorDropRunning.** One packet is staged, main publishes it, the
   worker takes the bank and sends it; the kernel refuses the one message
   with a hard error, so `txErrDropped = <<1>>` with `shut.on` FALSE. In the
-  code, `rocketnet_server_gso_send_worker` calls
+  code, `rocketnet_server_gso_send_step` calls
   `rocketnet_server_gso_send_bank`, whose `rocketnet_server_gso_flush`
   gets `sendmmsg` -1 with, say, EPERM: not EINTR, not EAGAIN, EWOULDBLOCK,
   ENOBUFS or ENOMEM, so it adds the message's packets to
@@ -88,12 +92,13 @@ jar, one shard per case, two workers, four cases at a time.
   refused packet leaves the bank and reaches neither list, so one staged
   packet is unaccounted for. The code's counted drop above is the line
   this reverses.
-- **MainBlocks.** The send worker takes the TX mutex (`TxWorkerLock`); main
+- **MainBlocks.** The queue's worker takes the lane mutex (`TxWorkerLock`); main
   then reaches its publish and, with `MainBlocks`, waits for the mutex
   (`pc["main"] = "waitlock"`). In the code,
   `rocketnet_server_gso_publish_send` uses
-  `rocketnet_platform_mutex_try_acquire( &gso->send_mutex )` and returns
-  false on contention (line 346), and `rocketnet_server_gso_send_idle` does
-  the same (line 1554). In the trace the producer is empty, which the code
+  `rocketnet_platform_mutex_try_acquire( &lane->mutex )` on the queue's send
+  lane and returns -1 (the producer retained) on contention, and
+  `rocketnet_server_gso_send_idle` does the same for each lane. In the trace
+  the producer is empty, which the code
   returns on before its try; the model's `TxMainLock` does not test that,
   an over-approximation that does not change the defect.

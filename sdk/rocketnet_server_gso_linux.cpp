@@ -419,8 +419,10 @@ static void rocketnet_server_gso_wake( struct rocketnet_server_gso_queue_t * que
 // boundary try-publishes exactly one complete bank of this queue. All fill
 // threads have joined; no worker can see the producer until the exchange
 // completes. A contended mutex or an empty free FIFO retains the producer:
-// main never waits. The releases that end each exchange are RNGsoHandoff.tla
-// Unlock.
+// main never waits. RNGsoHandoff.tla TxMainWait has no such step here: the
+// try-acquire below is the only acquire on main's path, so a held lane mutex
+// defers the publish to the next frame instead of blocking. The releases that
+// end each exchange are RNGsoHandoff.tla Unlock.
 // proofs/tla/RNBankFifoLayout.tla Publish: the free head and the ready tail, each % ROCKETNET_GSO_TX_BANKS.
 // proofs/tla/RNGsoQueueBankLayout.tla Flush: the producer turns over only onto a
 // free bank, and the turn (the packet id's high part) counts it.
@@ -512,6 +514,8 @@ static int rocketnet_server_gso_take_send( struct rocketnet_server_gso_queue_t *
 
 // proofs/tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
 // its synchronous sends finished (the worker cleared it first).
+// proofs/tla/RNGsoQueueBankLayout.tla WorkerReturn: the bank's counter is reset
+// before it is free, so the producer it next becomes starts at slot 0.
 // proofs/tla/RNBankFifoLayout.tla Release: the free tail ( free_head + free_count ) % ROCKETNET_GSO_TX_BANKS.
 static void rocketnet_server_gso_return_send( struct rocketnet_server_gso_queue_t * queue, int index )
 {
@@ -1725,7 +1729,10 @@ bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
 // bank, outside the ownership mutex, with one compare-and-swap on that queue's
 // count. The packet id is ( turn * slots + slot ) * queues + queue: unique
 // across queues and turn-overs with no shared counter, and finish and abort
-// read the queue back from it (IdRule).
+// read the queue back from it (IdRule). proofs/tla/RNGsoQueueBankLayout.tla
+// Load is the queue, producer and counter read below, and Claim the
+// compare-and-swap: one that loses reloads the counter it found (the model's
+// reload), and an index at ROCKETNET_GSO_SEND_QUEUE_SIZE is refused (ClaimCmp).
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )
 {
     rocketnet_assert( gso );
@@ -1811,6 +1818,8 @@ static int rocketnet_server_gso_send_slot( struct rocketnet_server_gso_t * gso, 
     return slot;
 }
 
+// proofs/tla/RNGsoQueueBankLayout.tla Finish: the slot the id's queue and the
+// pointer name in that queue's producer, or nothing (rocketnet_server_gso_send_slot).
 void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
     rocketnet_assert( gso );
@@ -1828,6 +1837,7 @@ void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, ui
     bank->info[slot].packet_bytes = packet_bytes;
 }
 
+// proofs/tla/RNGsoQueueBankLayout.tla Finish, as an abort: the same slot, or nothing.
 void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data )
 {
     rocketnet_assert( gso );

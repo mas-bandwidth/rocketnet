@@ -35,7 +35,8 @@ action.
   operators (e.g. `Next == RefuseStep \/ AdvanceStep \/ AcceptStep` reaches the
   three steps), stopping at an operator whose body primes a variable or uses
   `UNCHANGED`. Parameters and quantifiers are dropped: `Connect(s)` is
-  `Connect`.
+  `Connect`. A trace module (README-TraceCheck.md) extends its spec and cannot
+  define `Next` again: its actions are the operators its `TraceNext` reaches.
 - The rule applies to every module with at least one `current` coverage row; a
   module with only `owed`, `dst`, `none` or `covered` rows is out of scope,
   and Link is excluded as the module-grain checker excludes it.

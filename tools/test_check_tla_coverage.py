@@ -441,6 +441,38 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertNotEqual(code, 0, out)
         self.assertIn("unknown action Bogus", out)
 
+    TRACE_MODULE = r"""MODULE ActMod
+EXTENDS ActBase
+VARIABLES ti
+TraceStep == /\ ti < 3 /\ ti' = ti + 1
+TraceReject == /\ ti = 3 /\ ti' = 0
+TraceDone == /\ ti = 0 /\ UNCHANGED ti
+TraceNext == TraceStep \/ TraceReject \/ TraceDone
+"""
+
+    def test_actions_trace_module_read_from_trace_next(self):
+        code_text = "// proofs/tla/ActMod.tla TraceStep and TraceReject\n"
+        note = "ActMod is the trace check of the demo; environment actions TraceDone."
+        root = self.plant_action_repo(code_text, note=note, module_text=self.TRACE_MODULE)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("ACTIONS UNCITED 0", out)
+
+    def test_actions_trace_module_uncited_step_reported(self):
+        code_text = "// proofs/tla/ActMod.tla TraceStep\n"
+        note = "ActMod is the trace check of the demo; environment actions TraceDone."
+        root = self.plant_action_repo(code_text, note=note, module_text=self.TRACE_MODULE)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("ActMod TraceReject: sdk/act.c", out)
+
+    def test_actions_module_without_next_fails(self):
+        module_text = "MODULE ActMod\nVARIABLES x\nStep == x' = x\n"
+        root = self.plant_action_repo("// proofs/tla/ActMod.tla Step\n", module_text=module_text)
+        code, out = run_check(root, ["--actions-strict"])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("ActMod: no Next definition to follow", out)
+
     def test_actions_strict_fails_on_uncited(self):
         code_text = "// proofs/tla/ActMod.tla ActionA\n"
         root = self.plant_action_repo(code_text)

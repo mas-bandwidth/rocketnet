@@ -54,7 +54,10 @@ TraceDone ==
     /\ rejected \/ ti = Len(TraceLog)
     /\ UNCHANGED <<vars, ti, rejected>>
 
-TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
+\* the trace module's own steps (it extends the spec, so Next is the spec's)
+TraceNext == TraceStep \/ TraceReject \/ TraceDone
+
+TraceSpec == TraceInit /\ [][TraceNext]_<<vars, ti, rejected>>
 
 \* every record of the trace is a model step from the one before
 TraceConsistent == ~rejected
