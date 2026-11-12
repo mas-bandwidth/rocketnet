@@ -99,8 +99,19 @@ static void test_max_clients_derived_limits()
 
         const int staging = rocketnet_server_send_staging_packets( n );
         check( staging >= 2 * sized && staging < 4 * sized && ( staging & ( staging - 1 ) ) == 0 );
-        check( rocketnet_server_iocp_send_queue_size( n ) == staging );
-        check( rocketnet_server_iocp_receive_queue_size( n ) == 2 * staging );
+
+        // the iocp send lanes stage ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT
+        // for every sized client, a lane at most ROCKETNET_IOCP_LANE_PACKETS
+        // and a power of two, every lane's operations within the packet
+        // handle's sixteen index bits
+
+        const int lanes = rocketnet_server_iocp_send_lanes( n );
+        const int lane_packets = rocketnet_server_iocp_send_queue_size( n );
+        check( lanes >= 1 && lanes <= ROCKETNET_IOCP_MAX_LANES );
+        check( lane_packets <= ROCKETNET_IOCP_LANE_PACKETS && ( lane_packets & ( lane_packets - 1 ) ) == 0 );
+        check( lanes * lane_packets >= ( lanes == ROCKETNET_IOCP_MAX_LANES ? lanes * ROCKETNET_IOCP_LANE_PACKETS : ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * sized ) );
+        check( lanes * lane_packets <= UINT16_MAX + 1 );
+        check( rocketnet_server_iocp_receive_queue_size( n, 1 ) == rocketnet_server_receive_packets_per_update( n ) );
         check( rocketnet_server_rio_send_queue_size( n ) == staging );
         check( rocketnet_server_rio_receives( n ) == 2 * staging );
 
@@ -128,8 +139,8 @@ static void test_max_clients_derived_limits()
         check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
         check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
         check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
-        check( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
-        check( rocketnet_server_iocp_receive_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_iocp_receive_queue_size( 1000, 1 ) == 16000 && rocketnet_server_iocp_receive_queue_size( 1000, 4 ) == 4000 );
         check( rocketnet_server_rio_send_queue_size( 1000 ) == 2048 );
         check( rocketnet_server_rio_receives( 1000 ) == 4096 );
         check( rocketnet_xdp_replay_entries( 1000 ) == 1024 );

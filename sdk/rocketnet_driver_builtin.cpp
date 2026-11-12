@@ -2511,10 +2511,19 @@ static void * iocp_create( void * context, const rocketnet_server_transport_io_c
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
 
 #if ROCKETNET_DEV
-    return iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
+    rocketnet_server_iocp_t * iocp = iocp_create_function( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
+    rocketnet_server_iocp_t * iocp = rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
+
+    // the completion workers refuse what main's stateless rungs would, before
+    // it takes a bank slot (rocketnet_receive_prefilter)
+
+    if ( iocp )
+    {
+        rocketnet_server_iocp_set_packet_filter( iocp, config->transport->packet_filter );
+    }
+    return iocp;
 }
 
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t *) transport ); }
@@ -2549,11 +2558,37 @@ static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t
     *too_large = counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
 }
 
+static void iocp_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_iocp_receive_drop_totals( (rocketnet_server_iocp_t *) transport, values );
+}
+
+// the send lanes are the server's send queues: the protocol reserve is held
+// in the lane each client's frames stage in
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES <= ROCKETNET_SERVER_MAX_SEND_QUEUES, "every send lane must be a queue the server's reserve can hold" );
+
+static int iocp_send_queues( void * transport )
+{
+    return rocketnet_server_iocp_send_lane_count( (rocketnet_server_iocp_t *) transport );
+}
+
+static int iocp_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_iocp_send_lane( (rocketnet_server_iocp_t *) transport, to );
+}
+
+static int iocp_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_iocp_send_lane_room( (rocketnet_server_iocp_t *) transport, queue );
+}
+
 static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle, NULL, iocp_receive_drop_totals,
+    iocp_send_queues, iocp_send_queue_of, iocp_send_room_queue
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):

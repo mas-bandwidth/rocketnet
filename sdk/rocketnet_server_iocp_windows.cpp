@@ -18,6 +18,7 @@
 
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_receive_prefilter.h"
 #include <atomic>
 #include <new>
 #include <stddef.h>
@@ -268,6 +269,107 @@ static bool rocketnet_iocp_queue_send_idle( const rocketnet_iocp_ref_queue_t * f
     const uint64_t enqueue = free_sends->enqueue.load( std::memory_order_acquire );
     return enqueue - dequeue >= (uint64_t) send_queue_size;
 }
+
+// The worker prefilter's state as one word, so a completion worker reads it
+// with one load per batch: bit 32 set once the server's packet filter is
+// published, its four bytes in bits 0-31 (rocketnet_server_iocp_set_packet_filter).
+#define ROCKETNET_IOCP_FILTER_ON ( 1ull << 32 )
+
+static uint64_t rocketnet_iocp_filter_state( const uint8_t * packet_filter )
+{
+    return ROCKETNET_IOCP_FILTER_ON | (uint64_t) packet_filter[0] | ( (uint64_t) packet_filter[1] << 8 ) |
+           ( (uint64_t) packet_filter[2] << 16 ) | ( (uint64_t) packet_filter[3] << 24 );
+}
+
+// One received datagram's admission to its worker's receive bank, the
+// completion worker's only decision about it. The prefilter runs first, so a
+// datagram main would refuse on its stateless rungs never takes a slot; only
+// a datagram it accepts (or every datagram, before the filter is published)
+// meets the capacity check. ACCEPT means the caller banks it at num_packets.
+// proofs/tla/RNIocpReceiveAdmit.tla Arrive: Refuse, then Bank or Full.
+static rocketnet_receive_drop_t rocketnet_iocp_receive_admit( uint64_t filter_state, const uint8_t * packet_data, int packet_bytes,
+                                                              int num_packets, int capacity )
+{
+#if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+    // the trace check's plant (tests/tla_trace_iocp.cpp): the capacity check
+    // first, the order the blast row measured. Its trace must fail.
+    if ( num_packets >= capacity )
+    {
+        return ROCKETNET_RECEIVE_DROP_BANK_FULL;
+    }
+    (void) filter_state;
+    (void) packet_data;
+    (void) packet_bytes;
+    return ROCKETNET_RECEIVE_ACCEPT;
+#else  // #if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+    if ( filter_state & ROCKETNET_IOCP_FILTER_ON )
+    {
+        const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = { (uint8_t) filter_state, (uint8_t) ( filter_state >> 8 ),
+                                                                      (uint8_t) ( filter_state >> 16 ), (uint8_t) ( filter_state >> 24 ) };
+        const rocketnet_receive_drop_t drop = rocketnet_receive_prefilter( packet_data, packet_bytes, packet_filter );
+        if ( drop != ROCKETNET_RECEIVE_ACCEPT )
+        {
+            return drop;
+        }
+    }
+    return num_packets < capacity ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_BANK_FULL;
+#endif // #if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+}
+
+// The send lane of a destination: FNV-1a over exactly the fields
+// rocketnet_address_equal compares (the type, the address bytes of that type
+// and the port), so equal addresses always share a lane and every packet of a
+// client stages, and is posted, in one lane in the order it was started.
+// proofs/tla/RNIocpSendLanes.tla DestLane; the reversed witness
+// MCRNIocpSendLanesBrokenAnyLane breaks InOrder without it.
+static int rocketnet_iocp_lane_index( const rocketnet_address_t * to, int lanes )
+{
+    if ( lanes <= 1 )
+    {
+        return 0;
+    }
+    uint32_t hash = 2166136261u;
+    const auto fold = [&hash]( uint8_t byte )
+    {
+        hash ^= (uint32_t) byte;
+        hash *= 16777619u;
+    };
+    fold( to->type );
+    if ( to->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        for ( int i = 0; i < 4; ++i )
+        {
+            fold( to->data.ipv4[i] );
+        }
+    }
+    else if ( to->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        for ( int i = 0; i < 8; ++i )
+        {
+            fold( (uint8_t) ( to->data.ipv6[i] >> 8 ) );
+            fold( (uint8_t) to->data.ipv6[i] );
+        }
+    }
+    fold( (uint8_t) ( to->port >> 8 ) );
+    fold( (uint8_t) to->port );
+    return (int) ( hash % (uint32_t) lanes );
+}
+
+#if ROCKETNET_DEV
+// The admission as the unit suite and the trace harness drive it, with no
+// socket: packet_filter NULL is the filter not yet published.
+int rocketnet_server_iocp_test_receive_admit( const uint8_t * packet_filter, const uint8_t * packet_data, int packet_bytes,
+                                              int num_packets, int capacity )
+{
+    const uint64_t filter_state = packet_filter ? rocketnet_iocp_filter_state( packet_filter ) : 0;
+    return (int) rocketnet_iocp_receive_admit( filter_state, packet_data, packet_bytes, num_packets, capacity );
+}
+
+int rocketnet_server_iocp_test_lane_index( const rocketnet_address_t * to, int lanes )
+{
+    return rocketnet_iocp_lane_index( to, lanes );
+}
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 // A pop stalls between its CAS and its sequence store and outlasts refusals
@@ -539,30 +641,33 @@ struct rocketnet_iocp_run_slot_t
     bool occupied = false;
 };
 
-struct rocketnet_server_iocp_t
+// a run of a bank: order[first .. first + count - 1] are its slots
+struct rocketnet_iocp_run_t
 {
+    int first;
+    int count;
+};
+
+// A send lane: its own staging banks, operation pool, run ring and TX worker.
+// Operations [base, base + send_queue_size) of the transport's sends are the
+// lane's, so an operation's index names its lane.
+struct rocketnet_iocp_lane_t
+{
+    rocketnet_server_iocp_t * owner = NULL;
+    int base = 0;
     rocketnet_iocp_ref_queue_t free_sends;      // send_queue_size cells
-    rocketnet_iocp_ref_queue_t retry_receives;  // a power of two at least every receive operation
-    // the send queue (rocketnet_server_iocp_send_queue_size) and each receive
-    // bank (rocketnet_server_iocp_receive_queue_size) for the configured
-    // max_clients, and the one allocation every client-scaled array below is
-    // carved from (rocketnet_iocp_sized_layout)
-    int send_queue_size = 0;
-    int receive_queue_size = 0;
-    void * sized_storage = NULL;
-    // The TX worker is the only run producer. Completion workers retire runs.
-    // Tickets select fixed physical slots; the mutex publishes the whole run
-    // and prevents an out-of-order completion from aliasing a reused slot.
+    // The lane's TX worker is its only run producer. Completion workers retire
+    // runs. Tickets select fixed physical slots; the mutex publishes the whole
+    // run and prevents an out-of-order completion from aliasing a reused slot.
     rocketnet_platform_mutex_t run_mutex = {};
     rocketnet_iocp_run_slot_t * run_refs = NULL;        // send_queue_size slots
     uint64_t next_run_ticket = 1;
-    uint64_t owner_epoch = 0;
     std::atomic<uint64_t> num_staged{ 0 };
     rocketnet_iocp_send_bank_t send_banks[ROCKETNET_IOCP_SEND_BANKS];
     rocketnet_platform_mutex_t send_mutex = {};
     rocketnet_platform_wake_t * send_wake = NULL;
     rocketnet_platform_thread_t * send_thread = NULL;
-    std::atomic<bool> send_exited{ true }; // also true before a worker is created
+    std::atomic<bool> send_exited{ true }; // also true before its worker is created
     int send_producer = 0; // caller-owned until stop publishes stopping
     // proofs/tla/RNBankFifoLayout.tla Init: as a stack this literal holds banks 1 and 2, right for three banks only.
     int send_free[ROCKETNET_IOCP_SEND_BANKS] = { 1, 2, 0 };
@@ -570,6 +675,31 @@ struct rocketnet_server_iocp_t
     int send_ready[ROCKETNET_IOCP_SEND_BANKS] = {};
     int send_ready_head = 0;
     int send_ready_count = 0;
+    // The TX worker's view of a bank, slot by slot, for run grouping: bytes
+    // (zero for an aborted or empty slot) and destination.
+    int * run_bytes = NULL;                     // send_queue_size entries
+    rocketnet_address_t * run_to = NULL;
+    int * order = NULL;                         // send_queue_size entries
+    rocketnet_iocp_run_t * runs = NULL;         // send_queue_size entries
+};
+
+struct rocketnet_server_iocp_t
+{
+    rocketnet_iocp_ref_queue_t retry_receives;  // a power of two at least every receive operation
+    // one lane's staging (rocketnet_server_iocp_send_queue_size), the lanes
+    // (rocketnet_server_iocp_send_lanes) and each receive bank
+    // (rocketnet_server_iocp_receive_queue_size) for the configured
+    // max_clients, and the one allocation every client-scaled array below is
+    // carved from (rocketnet_iocp_sized_layout)
+    int send_queue_size = 0;
+    int num_lanes = 0;
+    int num_sends = 0;                          // num_lanes * send_queue_size
+    int receive_queue_size = 0;
+    void * sized_storage = NULL;
+    uint64_t owner_epoch = 0;
+    rocketnet_iocp_lane_t * lanes[ROCKETNET_IOCP_MAX_LANES] = {}; // each its own allocation
+    // the lanes whose TX worker has not exited; zero before any is created
+    std::atomic<int> live_lanes{ 0 };
     void * context;
     SOCKET socket = INVALID_SOCKET;
     HANDLE port;
@@ -586,14 +716,14 @@ struct rocketnet_server_iocp_t
     std::atomic<int> pending{ 0 };
     std::atomic<int> active_workers{ 0 };
     std::atomic<uint64_t> counters[ROCKETNET_IOCP_NUM_COUNTERS]{};
+    // the worker prefilter (rocketnet_iocp_filter_state), 0 until published
+    std::atomic<uint64_t> filter_state{ 0 };
+    // one drop tally per completion worker, each written by its worker only
+    rocketnet_receive_drop_tally_t * drop_tallies = NULL;
     rocketnet_server_socket_process_packets_t process;
     std::atomic<int> features{ 0 };
     LPFN_WSARECVMSG receive_message = NULL;
     uint8_t * uro_buffers = NULL;
-    // The flush's view of the staged frames, slot by slot, for run grouping:
-    // bytes (zero for an aborted or empty slot) and destination.
-    int * run_bytes = NULL;                     // send_queue_size entries
-    rocketnet_address_t * run_to = NULL;
 #if ROCKETNET_DEV
     std::atomic<int> test_faults[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
@@ -646,12 +776,21 @@ static rocketnet_iocp_operation_t * rocketnet_iocp_send_from_ref( rocketnet_serv
                                                                   const rocketnet_iocp_ref_t & ref,
                                                                   int state )
 {
-    if ( ref.owner_epoch != iocp->owner_epoch || ref.index >= (uint32_t) iocp->send_queue_size )
+    if ( ref.owner_epoch != iocp->owner_epoch || ref.index >= (uint32_t) iocp->num_sends )
     {
         return NULL;
     }
     rocketnet_iocp_operation_t * op = &iocp->sends[ref.index];
     return op->owner_epoch == ref.owner_epoch && op->generation == ref.generation && op->state == state ? op : NULL;
+}
+
+// the lane a send operation belongs to: operations are carved lane by lane
+// (proofs/tla/RNIocpSendLanes.tla OpLane; OwnLane holds only while release
+// reads the carve this way, MCRNIocpSendLanesBrokenReleaseMod)
+static rocketnet_iocp_lane_t * rocketnet_iocp_lane_of_index( rocketnet_server_iocp_t * iocp, uint32_t index )
+{
+    rocketnet_assert( index < (uint32_t) iocp->num_sends );
+    return iocp->lanes[index / (uint32_t) iocp->send_queue_size];
 }
 
 static rocketnet_iocp_operation_t * rocketnet_iocp_receive_from_ref( rocketnet_server_iocp_t * iocp,
@@ -671,6 +810,8 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
 {
     // proofs/tla/RNIocpSendLease.tla ReleaseStaged and Retire: FREE, then the
     // reference at its unchanged generation goes back on free_sends.
+    // proofs/tla/RNIocpSendLanes.tla Complete: the free_sends of the lane the
+    // index names (rocketnet_iocp_lane_of_index).
     // proofs/tla/RNIocpSendLease.tla ReleasePush claims a position (a pop
     // stalled before its sequence store refuses it, and the push retries,
     // never retires: RetiredOnlyAtGenMax) and ReleasePublish writes the cell.
@@ -679,16 +820,16 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
     {
         return false;
     }
-    return rocketnet_iocp_queue_release_send( &iocp->free_sends, ref, &op->state );
+    return rocketnet_iocp_queue_release_send( &rocketnet_iocp_lane_of_index( iocp, ref.index )->free_sends, ref, &op->state );
 }
 
-static bool rocketnet_iocp_acquire_send( rocketnet_server_iocp_t * iocp, rocketnet_iocp_ref_t * ref )
+static bool rocketnet_iocp_acquire_send( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane, rocketnet_iocp_ref_t * ref )
 {
     // proofs/tla/RNIocpSendLease.tla AcquireClaim is the pop's CAS and read,
     // Acquire its sequence store and one pass of this loop; its
     // StaleNeverNamesLease is why the GenMax refusal below must stay.
     rocketnet_iocp_ref_t free_ref;
-    while ( rocketnet_iocp_queue_pop( &iocp->free_sends, &free_ref ) )
+    while ( rocketnet_iocp_queue_pop( &lane->free_sends, &free_ref ) )
     {
         rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, free_ref, ROCKETNET_IOCP_OPERATION_FREE );
         if ( !op )
@@ -725,24 +866,24 @@ static bool rocketnet_iocp_packet_ref( rocketnet_server_iocp_t * iocp, uint64_t 
     ref->owner_epoch = iocp->owner_epoch;
     ref->generation = packet_id >> 16;
     ref->index = (uint32_t) ( packet_id & UINT16_MAX );
-    return ref->generation != 0 && ref->index < (uint32_t) iocp->send_queue_size;
+    return ref->generation != 0 && ref->index < (uint32_t) iocp->num_sends;
 }
 
-static bool rocketnet_iocp_allocate_run( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t * refs,
+static bool rocketnet_iocp_allocate_run( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane, const rocketnet_iocp_ref_t * refs,
                                          int count, uint64_t * first_ticket )
 {
     // proofs/tla/RNIocpRunRing.tla Allocate: the overflow guard and the check
     // of all count slots (NoOverwrite) before any slot is written.
     rocketnet_assert( count > 1 && count <= ROCKETNET_IOCP_USO_MAX_SEGMENTS );
 
-    rocketnet_platform_mutex_acquire( &iocp->run_mutex );
+    rocketnet_platform_mutex_acquire( &lane->run_mutex );
 
-    const uint64_t first = iocp->next_run_ticket;
+    const uint64_t first = lane->next_run_ticket;
     bool available = first != 0 && first <= UINT64_MAX - (uint64_t) count;
     for ( int i = 0; available && i < count; ++i )
     {
         const size_t index = (size_t) ( ( first + (uint64_t) i - 1 ) % (uint64_t) iocp->send_queue_size );
-        available = !iocp->run_refs[index].occupied;
+        available = !lane->run_refs[index].occupied;
     }
 
     if ( available )
@@ -750,23 +891,23 @@ static bool rocketnet_iocp_allocate_run( rocketnet_server_iocp_t * iocp, const r
         for ( int i = 0; i < count; ++i )
         {
             const uint64_t ticket = first + (uint64_t) i;
-            rocketnet_iocp_run_slot_t * slot = &iocp->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
+            rocketnet_iocp_run_slot_t * slot = &lane->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
             slot->ref = refs[i];
             slot->owner_epoch = iocp->owner_epoch;
             slot->ticket = ticket;
             slot->occupied = true;
         }
 
-        iocp->next_run_ticket = first + (uint64_t) count;
+        lane->next_run_ticket = first + (uint64_t) count;
         *first_ticket = first;
     }
 
-    rocketnet_platform_mutex_release( &iocp->run_mutex );
+    rocketnet_platform_mutex_release( &lane->run_mutex );
 
     return available;
 }
 
-static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, uint64_t first, int count,
+static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane, uint64_t first, int count,
                                      rocketnet_iocp_ref_t * refs )
 {
     if ( first == 0 || count < 1 || count > ROCKETNET_IOCP_USO_MAX_SEGMENTS )
@@ -776,13 +917,13 @@ static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, uint64_t fi
 
     // proofs/tla/RNIocpRunRing.tla Take: a stale or repeated (first, count) is
     // refused by the ticket compare (TakeOnlyLive).
-    rocketnet_platform_mutex_acquire( &iocp->run_mutex );
+    rocketnet_platform_mutex_acquire( &lane->run_mutex );
 
     bool valid = true;
     for ( int i = 0; valid && i < count; ++i )
     {
         const uint64_t ticket = first + (uint64_t) i;
-        const rocketnet_iocp_run_slot_t * slot = &iocp->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
+        const rocketnet_iocp_run_slot_t * slot = &lane->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
         valid = slot->occupied && slot->owner_epoch == iocp->owner_epoch && slot->ticket == ticket;
     }
 
@@ -791,13 +932,13 @@ static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, uint64_t fi
         for ( int i = 0; i < count; ++i )
         {
             const uint64_t ticket = first + (uint64_t) i;
-            rocketnet_iocp_run_slot_t * slot = &iocp->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
+            rocketnet_iocp_run_slot_t * slot = &lane->run_refs[( ticket - 1 ) % (uint64_t) iocp->send_queue_size];
             refs[i] = slot->ref;
             slot->occupied = false;
         }
     }
 
-    rocketnet_platform_mutex_release( &iocp->run_mutex );
+    rocketnet_platform_mutex_release( &lane->run_mutex );
 
     return valid;
 }
@@ -818,7 +959,7 @@ static bool rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, const ro
     }
 
     rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
-    if ( !rocketnet_iocp_take_run( iocp, run_ticket, run_count, refs ) )
+    if ( !rocketnet_iocp_take_run( iocp, rocketnet_iocp_lane_of_index( iocp, root.index ), run_ticket, run_count, refs ) )
     {
         return false;
     }
@@ -970,24 +1111,57 @@ DWORD rocketnet_iocp_coalesced_stride( WSAMSG * message )
     return 0;
 }
 
+// One completion batch's view of the worker's receive state: the prefilter
+// word read once at the batch's start, the batch's counter growth (added to
+// the transport counters once, at the batch's end, instead of one atomic add
+// per datagram) and the worker's own drop tally.
+struct rocketnet_iocp_batch_t
+{
+    uint64_t filter_state;
+    uint64_t tally[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_receive_drop_tally_t * drops;
+};
+
+// A completed datagram's bank admission (rocketnet_iocp_receive_admit),
+// counted: banked and RECEIVE_COMPLETED, or RECEIVE_DROPPED with its reason
+// in the worker's drop tally. proofs/tla/RNIocpReceiveAdmit.tla Arrive: Bank, or the
+// count of Refuse and Full (EveryDropCounted).
+static void rocketnet_iocp_bank_datagram( rocketnet_iocp_batch_t * batch, rocketnet_iocp_receive_buffer_t * buffer,
+                                          const rocketnet_address_t & from, const uint8_t * packet_data, int packet_bytes )
+{
+    const rocketnet_receive_drop_t drop = rocketnet_iocp_receive_admit( batch->filter_state, packet_data, packet_bytes,
+                                                                        buffer->num_packets, buffer->capacity );
+    if ( drop != ROCKETNET_RECEIVE_ACCEPT )
+    {
+        ++batch->tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
+        rocketnet_receive_drop_tally_count( batch->drops, drop );
+        return;
+    }
+    const int index = buffer->num_packets++;
+    buffer->from[index] = from;
+    buffer->packet_bytes[index] = packet_bytes;
+    memcpy( buffer->data[index], packet_data, (size_t) packet_bytes );
+    ++batch->tally[ROCKETNET_IOCP_RECEIVE_COMPLETED];
+}
+
 // Publishes one URO completion: the datagrams of one source, each the
 // UDP_COALESCED_INFO stride except a shorter last one, split by the shared
 // coalescing rule and each checked against the bounds a single datagram is.
-static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketnet_iocp_receive_buffer_t * buffer,
+static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketnet_iocp_batch_t * batch, rocketnet_iocp_receive_buffer_t * buffer,
                                         rocketnet_iocp_operation_t * op, bool success, int receive_error, DWORD bytes )
 {
     rocketnet_address_t from;
     if ( !success || bytes == 0 || ( op->message.dwFlags & MSG_TRUNC ) ||
          !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
     {
-        iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+        ++batch->tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
         if ( success && bytes == 0 )
         {
-            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+            ++batch->tally[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
         }
         else if ( receive_error == WSAEMSGSIZE || ( success && ( op->message.dwFlags & MSG_TRUNC ) ) )
         {
-            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            ++batch->tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
         }
         return;
     }
@@ -1016,22 +1190,13 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
             // rocketnet_coalesce_split writes only positive lengths
 
             const int length = lengths[i];
-            if ( length <= ROCKETNET_RECEIVE_CEILING && buffer->num_packets < buffer->capacity )
+            if ( length > ROCKETNET_RECEIVE_CEILING )
             {
-                const int index = buffer->num_packets++;
-                buffer->from[index] = from;
-                buffer->packet_bytes[index] = length;
-                memcpy( buffer->data[index], op->uro_data + base + offsets[i], (size_t) length );
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
+                ++batch->tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
+                ++batch->tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+                continue;
             }
-            else
-            {
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
-                if ( length > ROCKETNET_RECEIVE_CEILING )
-                {
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
-                }
-            }
+            rocketnet_iocp_bank_datagram( batch, buffer, from, op->uro_data + base + offsets[i], length );
         }
 
         base += window;
@@ -1039,7 +1204,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
 
     if ( segments > 1 )
     {
-        iocp->counters[ROCKETNET_IOCP_URO_BATCHES].fetch_add( 1, std::memory_order_relaxed );
+        ++batch->tally[ROCKETNET_IOCP_URO_BATCHES];
     }
 }
 
@@ -1085,7 +1250,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         // proofs/tla/RNIocpRetryStop.tla Exit: stopping and nothing pending;
         // retries still queued are abandoned with the transport.
         if ( iocp->stopping.load( std::memory_order_acquire ) &&
-             iocp->send_exited.load( std::memory_order_acquire ) )
+             iocp->live_lanes.load( std::memory_order_acquire ) == 0 )
         {
             // Every worker repeats cancellation after its last possible repost.
             // Cancel only receives, so the final posted sends can complete.
@@ -1142,6 +1307,10 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         }
 #endif // #if ROCKETNET_DEV
         rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[worker->fill_index];
+        rocketnet_iocp_batch_t batch;
+        batch.filter_state = iocp->filter_state.load( std::memory_order_acquire );
+        memset( batch.tally, 0, sizeof( batch.tally ) );
+        batch.drops = &iocp->drop_tallies[worker - iocp->workers];
 
         // proofs/tla/RNIocpRetryStop.tla Complete: each receive completion is
         // taken by this worker and reposted.
@@ -1217,29 +1386,24 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             {
                 if ( running )
                 {
-                    rocketnet_iocp_publish_uro( iocp, buffer, op, success, receive_error, bytes );
+                    rocketnet_iocp_publish_uro( iocp, &batch, buffer, op, success, receive_error, bytes );
                 }
             }
             else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
-                      buffer->num_packets < buffer->capacity &&
                       rocketnet_iocp_address_read( &op->address, op->address_bytes, iocp->ipv6, &from ) )
             {
-                const int index = buffer->num_packets++;
-                buffer->from[index] = from;
-                buffer->packet_bytes[index] = (int) bytes;
-                memcpy( buffer->data[index], op->frame, bytes );
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
+                rocketnet_iocp_bank_datagram( &batch, buffer, from, op->frame, (int) bytes );
             }
             else if ( running )
             {
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                ++batch.tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
                 if ( success && bytes == 0 )
                 {
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                    ++batch.tally[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
                 }
                 else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
                 {
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+                    ++batch.tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
                 }
             }
 
@@ -1270,6 +1434,15 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             rocketnet_iocp_post_receive( iocp, op );
         }
 
+        // the batch's counter growth, visible before its bank is published
+        for ( int c = 0; c < ROCKETNET_IOCP_NUM_COUNTERS; ++c )
+        {
+            if ( batch.tally[c] )
+            {
+                iocp->counters[c].fetch_add( batch.tally[c], std::memory_order_relaxed );
+            }
+        }
+
         if ( !iocp->stopping.load( std::memory_order_acquire ) )
         {
             rocketnet_iocp_publish_receive_bank( worker );
@@ -1292,17 +1465,28 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
     // Fill threads have joined before stop. The release transfers the final
     // unpublished producer to TX, without scanning it or acquiring a mutex.
 
-    uint64_t count = iocp->num_staged.load( std::memory_order_relaxed );
-    if ( count > (uint64_t) iocp->send_queue_size )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        count = (uint64_t) iocp->send_queue_size;
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        if ( !lane )
+        {
+            continue;
+        }
+        uint64_t count = lane->num_staged.load( std::memory_order_relaxed );
+        if ( count > (uint64_t) iocp->send_queue_size )
+        {
+            count = (uint64_t) iocp->send_queue_size;
+        }
+        lane->send_banks[lane->send_producer].count = (int) count;
     }
-    iocp->send_banks[iocp->send_producer].count = (int) count;
     // proofs/tla/RNIocpRetryStop.tla Stop: post_receive retires from here on.
     iocp->stopping.store( true, std::memory_order_release );
-    if ( iocp->send_wake )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        rocketnet_platform_wake_set( iocp->send_wake );
+        if ( iocp->lanes[l] && iocp->lanes[l]->send_wake )
+        {
+            rocketnet_platform_wake_set( iocp->lanes[l]->send_wake );
+        }
     }
     // Cancellation runs on the workers after their current pass. This request
     // never acquires a worker mutex or waits for an overlapped operation.
@@ -1319,7 +1503,7 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
 bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp )
 {
     return iocp->stopping.load( std::memory_order_acquire ) &&
-           iocp->send_exited.load( std::memory_order_acquire ) &&
+           iocp->live_lanes.load( std::memory_order_acquire ) == 0 &&
            iocp->pending.load( std::memory_order_acquire ) == 0 &&
            iocp->active_workers.load( std::memory_order_acquire ) == 0;
 }
@@ -1336,19 +1520,30 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
     {
         return;
     }
-    if ( iocp->send_thread )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        rocketnet_platform_thread_join( iocp->send_thread );
-        rocketnet_platform_thread_destroy( iocp->send_thread );
-    }
-
-    if ( iocp->send_wake )
-    {
-        rocketnet_platform_wake_destroy( iocp->send_wake );
-    }
-    if ( iocp->send_mutex.ok )
-    {
-        rocketnet_platform_mutex_destroy( &iocp->send_mutex );
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        if ( !lane )
+        {
+            continue;
+        }
+        if ( lane->send_thread )
+        {
+            rocketnet_platform_thread_join( lane->send_thread );
+            rocketnet_platform_thread_destroy( lane->send_thread );
+        }
+        if ( lane->send_wake )
+        {
+            rocketnet_platform_wake_destroy( lane->send_wake );
+        }
+        if ( lane->send_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &lane->send_mutex );
+        }
+        if ( lane->run_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &lane->run_mutex );
+        }
     }
     if ( iocp->workers )
     {
@@ -1367,10 +1562,6 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
             }
             worker->~rocketnet_iocp_worker_t();
         }
-    }
-    if ( iocp->run_mutex.ok )
-    {
-        rocketnet_platform_mutex_destroy( &iocp->run_mutex );
     }
     rocketnet_assert( iocp->pending.load() == 0 );
 
@@ -1402,7 +1593,7 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
 
     if ( iocp->sends )
     {
-        for ( int i = 0; i < iocp->send_queue_size; ++i )
+        for ( int i = 0; i < iocp->num_sends; ++i )
         {
             iocp->sends[i].~rocketnet_iocp_operation_t();
         }
@@ -1416,10 +1607,19 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
     }
     void * context = iocp->context;
     rocketnet_free( context, iocp->workers );
+    rocketnet_free( context, iocp->drop_tallies );
     rocketnet_free( context, iocp->sends );
     rocketnet_free( context, iocp->receives );
     rocketnet_free( context, iocp->uro_buffers );
     rocketnet_free( context, iocp->sized_storage );
+    for ( int l = 0; l < iocp->num_lanes; ++l )
+    {
+        if ( iocp->lanes[l] )
+        {
+            iocp->lanes[l]->~rocketnet_iocp_lane_t();
+            rocketnet_free( context, iocp->lanes[l] );
+        }
+    }
     iocp->~rocketnet_server_iocp_t();
     rocketnet_free( context, iocp );
 }
@@ -1429,9 +1629,13 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
 // count). Create and the memory plan both take this layout.
 struct rocketnet_iocp_sized_layout_t
 {
-    int send_queue_size, receive_queue_size, process_capacity;
+    int send_queue_size, num_lanes, receive_queue_size, process_capacity;
     uint64_t retry_capacity;
-    uint64_t free_cells, retry_cells, run_refs, staged[ROCKETNET_IOCP_SEND_BANKS], run_bytes, run_to;
+    uint64_t retry_cells;
+    uint64_t free_cells[ROCKETNET_IOCP_MAX_LANES], run_refs[ROCKETNET_IOCP_MAX_LANES];
+    uint64_t staged[ROCKETNET_IOCP_MAX_LANES][ROCKETNET_IOCP_SEND_BANKS];
+    uint64_t run_bytes[ROCKETNET_IOCP_MAX_LANES], run_to[ROCKETNET_IOCP_MAX_LANES];
+    uint64_t order[ROCKETNET_IOCP_MAX_LANES], runs[ROCKETNET_IOCP_MAX_LANES];
     uint64_t process_from, process_packet_bytes, process_packet_data;
     uint64_t bank_data[ROCKETNET_IOCP_MAX_WORKERS][ROCKETNET_IOCP_RECEIVE_BANKS];
     uint64_t bank_from[ROCKETNET_IOCP_MAX_WORKERS][ROCKETNET_IOCP_RECEIVE_BANKS];
@@ -1448,7 +1652,8 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
     }
 
     layout->send_queue_size = rocketnet_server_iocp_send_queue_size( max_clients );
-    layout->receive_queue_size = rocketnet_server_iocp_receive_queue_size( max_clients );
+    layout->num_lanes = rocketnet_server_iocp_send_lanes( max_clients );
+    layout->receive_queue_size = rocketnet_server_iocp_receive_queue_size( max_clients, workers );
     layout->process_capacity = rocketnet_server_receive_packets_per_update( max_clients );
     layout->retry_capacity = (uint64_t) rocketnet_power_of_two_at_least( workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
 
@@ -1457,15 +1662,20 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
     const uint64_t process = (uint64_t) layout->process_capacity;
 
     rocketnet_carve_t carve = { 0, false };
-    layout->free_cells = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_ref_cell_t ) );
     layout->retry_cells = rocketnet_carve( carve, layout->retry_capacity, sizeof( rocketnet_iocp_ref_cell_t ) );
-    layout->run_refs = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_run_slot_t ) );
-    for ( int i = 0; i < ROCKETNET_IOCP_SEND_BANKS; ++i )
+    for ( int l = 0; l < layout->num_lanes; ++l )
     {
-        layout->staged[i] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_ref_t ) );
+        layout->free_cells[l] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_ref_cell_t ) );
+        layout->run_refs[l] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_run_slot_t ) );
+        for ( int i = 0; i < ROCKETNET_IOCP_SEND_BANKS; ++i )
+        {
+            layout->staged[l][i] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_ref_t ) );
+        }
+        layout->run_bytes[l] = rocketnet_carve( carve, send, sizeof( int ) );
+        layout->run_to[l] = rocketnet_carve( carve, send, sizeof( rocketnet_address_t ) );
+        layout->order[l] = rocketnet_carve( carve, send, sizeof( int ) );
+        layout->runs[l] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_run_t ) );
     }
-    layout->run_bytes = rocketnet_carve( carve, send, sizeof( int ) );
-    layout->run_to = rocketnet_carve( carve, send, sizeof( rocketnet_address_t ) );
     layout->process_from = rocketnet_carve( carve, process, sizeof( rocketnet_address_t ) );
     layout->process_packet_bytes = rocketnet_carve( carve, process, sizeof( int ) );
     layout->process_packet_data = rocketnet_carve( carve, process, sizeof( uint8_t * ) );
@@ -1497,11 +1707,14 @@ uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients )
     uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_iocp_t ),
                                                      layout.bytes,
                                                      (uint64_t) workers * sizeof( rocketnet_iocp_worker_t ),
-                                                     (uint64_t) layout.send_queue_size * sizeof( rocketnet_iocp_operation_t ),
+                                                     (uint64_t) workers * sizeof( rocketnet_receive_drop_tally_t ),
+                                                     (uint64_t) layout.num_lanes * (uint64_t) layout.send_queue_size * sizeof( rocketnet_iocp_operation_t ),
                                                      (uint64_t) workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * sizeof( rocketnet_iocp_operation_t ),
                                                      (uint64_t) workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES } );
-    if ( !bytes || !rocketnet_memory_add( bytes, (uint64_t) workers + 1, rocketnet_platform_thread_allocation_bytes() ) ||
-         !rocketnet_memory_add( bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+    const uint64_t lanes = (uint64_t) layout.num_lanes;
+    if ( !bytes || !rocketnet_memory_add( bytes, lanes, sizeof( rocketnet_iocp_lane_t ) + rocketnet_allocation_overhead() ) ||
+         !rocketnet_memory_add( bytes, (uint64_t) workers + lanes, rocketnet_platform_thread_allocation_bytes() ) ||
+         !rocketnet_memory_add( bytes, lanes, rocketnet_platform_wake_allocation_bytes() ) )
     {
         return 0;
     }
@@ -1563,6 +1776,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     iocp->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
+    iocp->num_lanes = layout.num_lanes;
+    iocp->num_sends = layout.num_lanes * layout.send_queue_size;
     iocp->receive_queue_size = layout.receive_queue_size;
 
     sockaddr_storage address;
@@ -1578,10 +1793,26 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     DWORD returned_bytes = 0;
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    if ( iocp->owner_epoch == 0 || !rocketnet_platform_mutex_create( &iocp->run_mutex ) ||
-         !rocketnet_platform_mutex_create( &iocp->send_mutex ) )
+    if ( iocp->owner_epoch == 0 )
     {
         goto failed;
+    }
+    for ( int l = 0; l < layout.num_lanes; ++l )
+    {
+        void * lane_storage = rocketnet_malloc( context, sizeof( rocketnet_iocp_lane_t ) );
+        if ( !lane_storage )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            goto failed;
+        }
+        rocketnet_iocp_lane_t * lane = new ( lane_storage ) rocketnet_iocp_lane_t();
+        iocp->lanes[l] = lane;
+        lane->owner = iocp;
+        lane->base = l * layout.send_queue_size;
+        if ( !rocketnet_platform_mutex_create( &lane->run_mutex ) || !rocketnet_platform_mutex_create( &lane->send_mutex ) )
+        {
+            goto failed;
+        }
     }
 
     iocp->sized_storage = rocketnet_malloc( context, (size_t) layout.bytes );
@@ -1592,19 +1823,25 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     }
     {
         uint8_t * base = (uint8_t *) iocp->sized_storage;
-        rocketnet_iocp_queue_initialize( &iocp->free_sends, base + layout.free_cells, (uint64_t) layout.send_queue_size );
         rocketnet_iocp_queue_initialize( &iocp->retry_receives, base + layout.retry_cells, layout.retry_capacity );
-        iocp->run_refs = (rocketnet_iocp_run_slot_t *) ( base + layout.run_refs );
-        for ( int i = 0; i < layout.send_queue_size; ++i )
+        for ( int l = 0; l < layout.num_lanes; ++l )
         {
-            new ( &iocp->run_refs[i] ) rocketnet_iocp_run_slot_t();
+            rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+            rocketnet_iocp_queue_initialize( &lane->free_sends, base + layout.free_cells[l], (uint64_t) layout.send_queue_size );
+            lane->run_refs = (rocketnet_iocp_run_slot_t *) ( base + layout.run_refs[l] );
+            for ( int i = 0; i < layout.send_queue_size; ++i )
+            {
+                new ( &lane->run_refs[i] ) rocketnet_iocp_run_slot_t();
+            }
+            for ( int i = 0; i < ROCKETNET_IOCP_SEND_BANKS; ++i )
+            {
+                lane->send_banks[i].staged = (rocketnet_iocp_ref_t *) ( base + layout.staged[l][i] );
+            }
+            lane->run_bytes = (int *) ( base + layout.run_bytes[l] );
+            lane->run_to = (rocketnet_address_t *) ( base + layout.run_to[l] );
+            lane->order = (int *) ( base + layout.order[l] );
+            lane->runs = (rocketnet_iocp_run_t *) ( base + layout.runs[l] );
         }
-        for ( int i = 0; i < ROCKETNET_IOCP_SEND_BANKS; ++i )
-        {
-            iocp->send_banks[i].staged = (rocketnet_iocp_ref_t *) ( base + layout.staged[i] );
-        }
-        iocp->run_bytes = (int *) ( base + layout.run_bytes );
-        iocp->run_to = (rocketnet_address_t *) ( base + layout.run_to );
         iocp->process.num_packets = 0;
         iocp->process.capacity = layout.process_capacity;
         iocp->process.from = (rocketnet_address_t *) ( base + layout.process_from );
@@ -1638,13 +1875,24 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         }
     }
 
-    iocp->sends = (rocketnet_iocp_operation_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_operation_t ) * (size_t) layout.send_queue_size );
+    iocp->drop_tallies = (rocketnet_receive_drop_tally_t *) rocketnet_malloc( context, sizeof( rocketnet_receive_drop_tally_t ) * (size_t) num_workers );
+    if ( !iocp->drop_tallies )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        goto failed;
+    }
+    for ( int i = 0; i < num_workers; ++i )
+    {
+        rocketnet_receive_drop_tally_reset( new ( &iocp->drop_tallies[i] ) rocketnet_receive_drop_tally_t() );
+    }
+
+    iocp->sends = (rocketnet_iocp_operation_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_operation_t ) * (size_t) iocp->num_sends );
     if ( !iocp->sends )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         goto failed;
     }
-    for ( int i = 0; i < layout.send_queue_size; ++i )
+    for ( int i = 0; i < iocp->num_sends; ++i )
     {
         rocketnet_iocp_operation_t * op = new ( &iocp->sends[i] ) rocketnet_iocp_operation_t();
         op->index = i;
@@ -1653,9 +1901,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         op->state = ROCKETNET_IOCP_OPERATION_FREE;
     }
 
-    for ( int i = 0; i < layout.send_queue_size; ++i )
+    for ( int i = 0; i < iocp->num_sends; ++i )
     {
-        if ( !rocketnet_iocp_queue_push( &iocp->free_sends, rocketnet_iocp_operation_ref( &iocp->sends[i] ) ) )
+        if ( !rocketnet_iocp_queue_push( &rocketnet_iocp_lane_of_index( iocp, (uint32_t) i )->free_sends, rocketnet_iocp_operation_ref( &iocp->sends[i] ) ) )
         {
             goto failed;
         }
@@ -1796,20 +2044,26 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     {
         goto failed;
     }
-    iocp->send_wake = rocketnet_platform_wake_create( context, NULL, status );
-    if ( !iocp->send_wake )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        goto failed;
-    }
-    iocp->send_exited.store( false, std::memory_order_relaxed );
-    iocp->send_thread = rocketnet_platform_thread_create( context, rocketnet_iocp_send_worker, iocp, status );
-    if ( !iocp->send_thread )
-    {
-        iocp->send_exited.store( true, std::memory_order_relaxed );
-        goto failed;
-    }
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        lane->send_wake = rocketnet_platform_wake_create( context, NULL, status );
+        if ( !lane->send_wake )
+        {
+            goto failed;
+        }
+        lane->send_exited.store( false, std::memory_order_relaxed );
+        iocp->live_lanes.fetch_add( 1, std::memory_order_relaxed );
+        lane->send_thread = rocketnet_platform_thread_create( context, rocketnet_iocp_send_worker, lane, status );
+        if ( !lane->send_thread )
+        {
+            lane->send_exited.store( true, std::memory_order_relaxed );
+            iocp->live_lanes.fetch_sub( 1, std::memory_order_relaxed );
+            goto failed;
+        }
 
-    rocketnet_platform_server_thread_priority( iocp->send_thread );
+        rocketnet_platform_server_thread_priority( lane->send_thread );
+    }
 
     for ( int i = 0; i < num_workers; ++i )
     {
@@ -1863,7 +2117,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     {
         goto failed;
     }
-    rocketnet_info( "iocp transport: %d completion workers and one TX worker on port %d, USO %s, URO %s", num_workers, bind_address->port,
+    rocketnet_info( "iocp transport: %d completion workers and %d send lanes of %d on port %d, USO %s, URO %s", num_workers, iocp->num_lanes, iocp->send_queue_size, bind_address->port,
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
     return iocp;
@@ -1900,33 +2154,75 @@ failed:
 // enqueue read first; a free whose push is claimed but not yet published can
 // make one start refuse, and the stop step retries it on its next step.
 
+// One lane's room. The transport's room is the lanes' together: a start for
+// a destination whose lane is full refuses while another lane has room, and
+// the driver's send queue operations give the server each lane's room.
+
+static int rocketnet_iocp_lane_room( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane )
+{
+    const uint64_t staged = lane->num_staged.load( std::memory_order_relaxed );
+    if ( staged >= (uint64_t) iocp->send_queue_size )
+    {
+        return 0;
+    }
+    const uint64_t enqueue = lane->free_sends.enqueue.load( std::memory_order_acquire );
+    const uint64_t dequeue = lane->free_sends.dequeue.load( std::memory_order_acquire );
+    const uint64_t free_sends = enqueue > dequeue ? enqueue - dequeue : 0;
+    const uint64_t slots = (uint64_t) iocp->send_queue_size - staged;
+    return (int) ( free_sends < slots ? free_sends : slots );
+}
+
 int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) )
     {
         return 0;
     }
-    const uint64_t staged = iocp->num_staged.load( std::memory_order_relaxed );
-    if ( staged >= (uint64_t) iocp->send_queue_size )
+    int room = 0;
+    for ( int l = 0; l < iocp->num_lanes; ++l )
+    {
+        room += rocketnet_iocp_lane_room( iocp, iocp->lanes[l] );
+    }
+    return room;
+}
+
+int rocketnet_server_iocp_send_lane_count( rocketnet_server_iocp_t * iocp )
+{
+    return iocp->num_lanes;
+}
+
+int rocketnet_server_iocp_send_lane( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to )
+{
+    return rocketnet_iocp_lane_index( to, iocp->num_lanes );
+}
+
+int rocketnet_server_iocp_send_lane_room( rocketnet_server_iocp_t * iocp, int lane )
+{
+    rocketnet_assert( lane >= 0 && lane < iocp->num_lanes );
+    if ( lane < 0 || lane >= iocp->num_lanes || iocp->stopping.load( std::memory_order_acquire ) )
     {
         return 0;
     }
-    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
-    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
-    const uint64_t free_sends = enqueue > dequeue ? enqueue - dequeue : 0;
-    const uint64_t slots = (uint64_t) iocp->send_queue_size - staged;
-    return (int) ( free_sends < slots ? free_sends : slots );
+    return rocketnet_iocp_lane_room( iocp, iocp->lanes[lane] );
 }
 
 // proofs/tla/ServerStopSpread.tla RequestIoStop: every send operation free.
 // An operation holds its slot from its start through the bank, the post and
-// its completion, so all of them free means no send is in flight. dequeue is
-// read first: a free whose push is claimed and not yet published already
-// finished its send.
+// its completion, so all of them free in every lane means no send is in
+// flight. dequeue is read first: a free whose push is claimed and not yet
+// published already finished its send.
 
 bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp )
 {
-    return rocketnet_iocp_queue_send_idle( &iocp->free_sends, iocp->num_staged.load( std::memory_order_relaxed ), iocp->send_queue_size );
+    for ( int l = 0; l < iocp->num_lanes; ++l )
+    {
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        if ( !rocketnet_iocp_queue_send_idle( &lane->free_sends, lane->num_staged.load( std::memory_order_relaxed ), iocp->send_queue_size ) )
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
@@ -1935,8 +2231,12 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     {
         return NULL;
     }
+    // every packet of a destination stages in its one lane, so the lane's
+    // TX worker posts a client's packets in the order they were started
+    // (proofs/tla/RNIocpSendLanes.tla Start)
+    rocketnet_iocp_lane_t * lane = iocp->lanes[rocketnet_iocp_lane_index( to, iocp->num_lanes )];
     rocketnet_iocp_ref_t ref;
-    if ( !rocketnet_iocp_acquire_send( iocp, &ref ) )
+    if ( !rocketnet_iocp_acquire_send( iocp, lane, &ref ) )
     {
         return NULL;
     }
@@ -1954,7 +2254,7 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     // pop/address must not consume capacity while completions return frames
     // during this same fill phase. Every accepted slot owns one pool entry.
 
-    const uint64_t slot = iocp->num_staged.fetch_add( 1, std::memory_order_relaxed );
+    const uint64_t slot = lane->num_staged.fetch_add( 1, std::memory_order_relaxed );
     if ( slot >= (uint64_t) iocp->send_queue_size )
     {
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
@@ -1963,7 +2263,7 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
 
     op->packet_bytes = 0;
     op->to = *to;
-    iocp->send_banks[iocp->send_producer].staged[slot] = ref;
+    lane->send_banks[lane->send_producer].staged[slot] = ref;
     *packet_id = rocketnet_iocp_packet_id( ref );
 
     return op->frame;
@@ -2095,7 +2395,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
     }
 
     uint64_t run_ticket = 0;
-    if ( !rocketnet_iocp_allocate_run( iocp, staged, run, &run_ticket ) )
+    if ( !rocketnet_iocp_allocate_run( iocp, rocketnet_iocp_lane_of_index( iocp, staged[0].index ), staged, run, &run_ticket ) )
     {
         return false; // bounded run storage is busy; send frames individually
     }
@@ -2162,7 +2462,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed );
 
         rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
-        const bool released = rocketnet_iocp_take_run( iocp, run_ticket, run, refs );
+        const bool released = rocketnet_iocp_take_run( iocp, rocketnet_iocp_lane_of_index( iocp, staged[0].index ), run_ticket, run, refs );
         rocketnet_assert( released );
         for ( int k = 0; released && k < run; ++k )
         {
@@ -2182,54 +2482,86 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
     return true;
 }
 
-static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_iocp_send_bank_t * bank )
+// The lane's view of a bank, cut into the runs its posts carry: run r is
+// slots order[runs[r].first .. runs[r].first + runs[r].count - 1] of the
+// bank, one destination and one stride; an aborted slot is in no run. With
+// USO off every live slot is a run of one. Returns the number of runs.
+static int rocketnet_iocp_group_bank( rocketnet_iocp_lane_t * lane, int count, bool uso )
+{
+    int num_runs = 0;
+    for ( int i = 0; i < count; )
+    {
+        if ( lane->run_bytes[i] == 0 )
+        {
+            ++i;
+            continue;
+        }
+        const int run = uso ? rocketnet_coalesce_send_run( &lane->run_bytes[i], &lane->run_to[i], count - i,
+                                                           ROCKETNET_IOCP_USO_MAX_SEGMENTS, ROCKETNET_IOCP_USO_MAX_SUPER_BYTES )
+                            : 1;
+        rocketnet_assert( run >= 1 && run <= count - i );
+        for ( int k = 0; k < run; ++k )
+        {
+            lane->order[i + k] = i + k;
+        }
+        lane->runs[num_runs].first = i;
+        lane->runs[num_runs].count = run;
+        ++num_runs;
+        i += run;
+    }
+    return num_runs;
+}
+
+static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane, rocketnet_iocp_send_bank_t * bank )
 {
     // proofs/tla/RNBufferHandoff.tla Consume and WorkerExit keep sending after quit.
-    const uint64_t count = (uint64_t) bank->count;
+    const int count = bank->count;
+    const bool uso = ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO ) != 0;
 
-    if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
-    {
-        for ( uint64_t i = 0; i < count; ++i )
-        {
-            iocp->run_bytes[i] = iocp->sends[bank->staged[i].index].packet_bytes;
-            iocp->run_to[i] = iocp->sends[bank->staged[i].index].to;
-        }
-    }
+    // every staged slot names a STAGED operation of this lane; an aborted or
+    // refused one (zero bytes) goes back to the lane's free queue here
 
-    for ( uint64_t i = 0; i < count; ++i )
+    for ( int i = 0; i < count; ++i )
     {
         const rocketnet_iocp_ref_t ref = bank->staged[i];
         rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
-        if ( !op )
+        lane->run_bytes[i] = op ? op->packet_bytes : 0;
+        if ( op )
         {
-            continue;
-        }
-        if ( op->packet_bytes == 0 )
-        {
-            rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
-            continue;
-        }
-
-        if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
-        {
-            const int run = rocketnet_coalesce_send_run( &iocp->run_bytes[i], &iocp->run_to[i], (int) ( count - i ),
-                                                         ROCKETNET_IOCP_USO_MAX_SEGMENTS, ROCKETNET_IOCP_USO_MAX_SUPER_BYTES );
-            if ( run > 1 && rocketnet_iocp_post_send_run( iocp, &bank->staged[i], run ) )
+            lane->run_to[i] = op->to;
+            if ( op->packet_bytes == 0 )
             {
-                i += (uint64_t) ( run - 1 );
-                continue;
+                rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
             }
         }
+    }
 
-        rocketnet_iocp_post_send( iocp, ref );
+    const int num_runs = rocketnet_iocp_group_bank( lane, count, uso );
+
+    for ( int r = 0; r < num_runs; ++r )
+    {
+        const int run = lane->runs[r].count;
+        rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
+        for ( int k = 0; k < run; ++k )
+        {
+            refs[k] = bank->staged[lane->order[lane->runs[r].first + k]];
+        }
+        if ( run > 1 && rocketnet_iocp_post_send_run( iocp, refs, run ) )
+        {
+            continue;
+        }
+        for ( int k = 0; k < run; ++k )
+        {
+            rocketnet_iocp_post_send( iocp, refs[k] );
+        }
     }
 
     bank->count = 0;
 }
 
-
-// Publish an already finished producer with a constant-time ownership swap.
-// A failed try leaves every frame in the caller-owned bank for the next call.
+// Publish each lane's already finished producer with a constant-time
+// ownership swap. A failed try leaves every frame in that lane's caller-owned
+// bank for the next call; the other lanes publish regardless.
 // proofs/tla/RNBankFifoLayout.tla Publish: the free stack's top and the ready tail % ROCKETNET_IOCP_SEND_BANKS,
 // MCRNBankFifoLayoutLifoSend.cfg.
 void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
@@ -2238,42 +2570,50 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
     {
         return;
     }
-    uint64_t count = iocp->num_staged.load( std::memory_order_relaxed );
-    if ( count == 0 )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        return;
-    }
-    if ( count > (uint64_t) iocp->send_queue_size )
-    {
-        count = (uint64_t) iocp->send_queue_size;
-    }
-    if ( !rocketnet_platform_mutex_try_acquire( &iocp->send_mutex ) )
-    {
-        return;
-    }
-    if ( iocp->send_free_count == 0 )
-    {
-        rocketnet_platform_mutex_release( &iocp->send_mutex );
-        return;
-    }
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        uint64_t count = lane->num_staged.load( std::memory_order_relaxed );
+        if ( count == 0 )
+        {
+            continue;
+        }
+        if ( count > (uint64_t) iocp->send_queue_size )
+        {
+            count = (uint64_t) iocp->send_queue_size;
+        }
+        if ( !rocketnet_platform_mutex_try_acquire( &lane->send_mutex ) )
+        {
+            continue;
+        }
+        if ( lane->send_free_count == 0 )
+        {
+            rocketnet_platform_mutex_release( &lane->send_mutex );
+            continue;
+        }
 
-    const int producer = iocp->send_producer;
-    iocp->send_banks[producer].count = (int) count;
-    iocp->send_producer = iocp->send_free[--iocp->send_free_count];
-    iocp->send_ready[( iocp->send_ready_head + iocp->send_ready_count ) % ROCKETNET_IOCP_SEND_BANKS] = producer;
-    iocp->send_ready_count++;
+        const int producer = lane->send_producer;
+        lane->send_banks[producer].count = (int) count;
+        lane->send_producer = lane->send_free[--lane->send_free_count];
+        lane->send_ready[( lane->send_ready_head + lane->send_ready_count ) % ROCKETNET_IOCP_SEND_BANKS] = producer;
+        lane->send_ready_count++;
 #if ROCKETNET_DEV
-    iocp->test_pending_tx_banks.fetch_add( 1, std::memory_order_release );
+        iocp->test_pending_tx_banks.fetch_add( 1, std::memory_order_release );
 #endif // #if ROCKETNET_DEV
-    rocketnet_platform_mutex_release( &iocp->send_mutex );
-    iocp->num_staged.store( 0, std::memory_order_relaxed );
-    rocketnet_platform_wake_set( iocp->send_wake );
+        rocketnet_platform_mutex_release( &lane->send_mutex );
+        lane->num_staged.store( 0, std::memory_order_relaxed );
+        rocketnet_platform_wake_set( lane->send_wake );
+    }
 }
 
+// One lane's TX worker: it alone takes the lane's ready banks, groups and
+// posts them.
+// proofs/tla/RNIocpSendLanes.tla Post.
 static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, void * argument )
 {
     // proofs/tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
-    rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t *) argument;
+    rocketnet_iocp_lane_t * lane = (rocketnet_iocp_lane_t *) argument;
+    rocketnet_server_iocp_t * iocp = lane->owner;
     (void) thread; // the development test hold sleeps on it
 
     for ( ;; )
@@ -2297,26 +2637,26 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
 #endif // #if ROCKETNET_DEV
 
         // proofs/tla/RNBankFifoLayout.tla Take: the ready head; Release: the bank back on the free stack after its sends.
-        rocketnet_platform_mutex_acquire( &iocp->send_mutex );
+        rocketnet_platform_mutex_acquire( &lane->send_mutex );
 
         int index = -1;
 
-        if ( iocp->send_ready_count )
+        if ( lane->send_ready_count )
         {
-            index = iocp->send_ready[iocp->send_ready_head];
-            iocp->send_ready_head = ( iocp->send_ready_head + 1 ) % ROCKETNET_IOCP_SEND_BANKS;
-            iocp->send_ready_count--;
+            index = lane->send_ready[lane->send_ready_head];
+            lane->send_ready_head = ( lane->send_ready_head + 1 ) % ROCKETNET_IOCP_SEND_BANKS;
+            lane->send_ready_count--;
         }
 
         const bool finish = index < 0 && iocp->stopping.load( std::memory_order_acquire );
-        rocketnet_platform_mutex_release( &iocp->send_mutex );
+        rocketnet_platform_mutex_release( &lane->send_mutex );
 
         if ( index >= 0 )
         {
-            rocketnet_iocp_send_bank( iocp, &iocp->send_banks[index] );
-            rocketnet_platform_mutex_acquire( &iocp->send_mutex );
-            iocp->send_free[iocp->send_free_count++] = index;
-            rocketnet_platform_mutex_release( &iocp->send_mutex );
+            rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[index] );
+            rocketnet_platform_mutex_acquire( &lane->send_mutex );
+            lane->send_free[lane->send_free_count++] = index;
+            rocketnet_platform_mutex_release( &lane->send_mutex );
 #if ROCKETNET_DEV
             iocp->test_pending_tx_banks.fetch_sub( 1, std::memory_order_release );
 #endif // #if ROCKETNET_DEV
@@ -2326,7 +2666,7 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
             // Stop's release transferred the last unpublished producer. It
             // contains no kernel-owned sends; post those frames outside the
             // mutex before advertising that no later post is possible.
-            rocketnet_iocp_send_bank( iocp, &iocp->send_banks[iocp->send_producer] );
+            rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[lane->send_producer] );
         }
 #if ROCKETNET_DEV
         iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
@@ -2337,11 +2677,14 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
         }
         if ( index < 0 )
         {
-            rocketnet_platform_wake_wait( iocp->send_wake, false, 0.05 );
+            rocketnet_platform_wake_wait( lane->send_wake, false, 0.05 );
         }
     }
 
-    iocp->send_exited.store( true, std::memory_order_release );
+    // the completion workers exit once every lane has: wake them on each
+    // lane's exit, so the last one is never missed
+    lane->send_exited.store( true, std::memory_order_release );
+    iocp->live_lanes.fetch_sub( 1, std::memory_order_acq_rel );
     for ( int i = 0; i < iocp->num_workers; ++i )
     {
         PostQueuedCompletionStatus( iocp->port, 0, 0, NULL );
@@ -2350,6 +2693,7 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
 
 // proofs/tla/RNBankFifoLayout.tla Release and Take: the exposed banks back on the free stack, then the
 // ready banks that fit from the ready head, MCRNBankFifoLayoutLifoExposed.cfg.
+// proofs/tla/RNIocpReceiveAdmit.tla Drain: the banks main takes, abstracted to one step.
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp )
 {
     iocp->process.num_packets = 0;
@@ -2425,6 +2769,22 @@ void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * 
     }
 }
 
+void rocketnet_server_iocp_set_packet_filter( rocketnet_server_iocp_t * iocp, const uint8_t * packet_filter )
+{
+    // release: a worker that reads the word on at its next batch reads the
+    // whole value with it
+    iocp->filter_state.store( rocketnet_iocp_filter_state( packet_filter ), std::memory_order_release );
+}
+
+void rocketnet_server_iocp_receive_drop_totals( rocketnet_server_iocp_t * iocp, uint64_t * values )
+{
+    for ( int i = 0; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
+    {
+        values[i] = 0;
+    }
+    rocketnet_receive_drop_tally_sum( iocp->drop_tallies, iocp->num_workers, values );
+}
+
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp )
 {
     return iocp->pending.load( std::memory_order_acquire );
@@ -2444,9 +2804,9 @@ uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp )
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold )
 {
     iocp->test_hold_tx.store( hold, std::memory_order_release );
-    if ( iocp->send_wake )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        rocketnet_platform_wake_set( iocp->send_wake );
+        rocketnet_platform_wake_set( iocp->lanes[l]->send_wake );
     }
     if ( hold )
     {
@@ -2461,16 +2821,26 @@ bool rocketnet_server_iocp_test_tx_idle( rocketnet_server_iocp_t * iocp )
 {
     // Idle: the producer is published (nothing staged) and every published
     // bank is serviced.
-    return iocp->num_staged.load( std::memory_order_relaxed ) == 0 &&
-           iocp->test_pending_tx_banks.load( std::memory_order_acquire ) == 0;
+    for ( int l = 0; l < iocp->num_lanes; ++l )
+    {
+        if ( iocp->lanes[l]->num_staged.load( std::memory_order_relaxed ) != 0 )
+        {
+            return false;
+        }
+    }
+    return iocp->test_pending_tx_banks.load( std::memory_order_acquire ) == 0;
 }
 
 int rocketnet_server_iocp_test_ready_tx_banks( rocketnet_server_iocp_t * iocp )
 {
-    rocketnet_platform_mutex_acquire( &iocp->send_mutex );
-
-    const int count = iocp->send_ready_count;
-    rocketnet_platform_mutex_release( &iocp->send_mutex );
+    int count = 0;
+    for ( int l = 0; l < iocp->num_lanes; ++l )
+    {
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        rocketnet_platform_mutex_acquire( &lane->send_mutex );
+        count += lane->send_ready_count;
+        rocketnet_platform_mutex_release( &lane->send_mutex );
+    }
     return count;
 }
 
@@ -2565,20 +2935,24 @@ void rocketnet_server_iocp_test_queue_stats( rocketnet_server_iocp_t * iocp,
                                              rocketnet_server_iocp_test_queue_stats_t * stats )
 {
     memset( stats, 0, sizeof( *stats ) );
-    stats->free_pushes = iocp->free_sends.pushes.load( std::memory_order_relaxed );
-    stats->free_pops = iocp->free_sends.pops.load( std::memory_order_relaxed );
     stats->retry_pushes = iocp->retry_receives.pushes.load( std::memory_order_relaxed );
     stats->retry_pops = iocp->retry_receives.pops.load( std::memory_order_relaxed );
-    stats->queue_probes = iocp->free_sends.probes.load( std::memory_order_relaxed ) +
-                          iocp->retry_receives.probes.load( std::memory_order_relaxed );
-    stats->free_count = (int) rocketnet_iocp_queue_count( &iocp->free_sends );
+    stats->queue_probes = iocp->retry_receives.probes.load( std::memory_order_relaxed );
     stats->retry_count = (int) rocketnet_iocp_queue_count( &iocp->retry_receives );
-    rocketnet_platform_mutex_acquire( &iocp->run_mutex );
-    for ( int i = 0; i < iocp->send_queue_size; ++i )
+    for ( int l = 0; l < iocp->num_lanes; ++l )
     {
-        stats->live_run_refs += iocp->run_refs[i].occupied ? 1 : 0;
+        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
+        stats->free_pushes += lane->free_sends.pushes.load( std::memory_order_relaxed );
+        stats->free_pops += lane->free_sends.pops.load( std::memory_order_relaxed );
+        stats->queue_probes += lane->free_sends.probes.load( std::memory_order_relaxed );
+        stats->free_count += (int) rocketnet_iocp_queue_count( &lane->free_sends );
+        rocketnet_platform_mutex_acquire( &lane->run_mutex );
+        for ( int i = 0; i < iocp->send_queue_size; ++i )
+        {
+            stats->live_run_refs += lane->run_refs[i].occupied ? 1 : 0;
+        }
+        rocketnet_platform_mutex_release( &lane->run_mutex );
     }
-    rocketnet_platform_mutex_release( &iocp->run_mutex );
 }
 
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status )
