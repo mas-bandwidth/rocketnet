@@ -92,8 +92,19 @@ bool rocketnet_uring_send_queues_abort( struct rocketnet_uring_send_queues_t * q
 
 int rocketnet_uring_send_queues_staged( const struct rocketnet_uring_send_queues_t * queues, int queue );
 
+// main thread, the fill threads joined: queue's producer moves to bank next,
+// whose counter is reset before any fill sees it. next is the bank the
+// queue's exchange handed over (layer L1, rocketnet_uring_queue_send_publish),
+// which no fill and no worker holds.
+
+void rocketnet_uring_send_queues_turn_to( struct rocketnet_uring_send_queues_t * queues, int queue, int next );
+
 // main thread, the fill threads joined: every queue that staged moves its
-// producer to its next bank and resets that bank. Returns the queues turned.
+// producer to its next bank in turn (turn_to the producer + 1) and resets that
+// bank. Returns the queues turned. The bank layer alone, as its model's Flush
+// has it: the trace walk and the unit suite of L0, where every bank is free
+// again before the producer comes back to it. The transport turns through its
+// exchange instead.
 
 int rocketnet_uring_send_queues_turn( struct rocketnet_uring_send_queues_t * queues );
 
