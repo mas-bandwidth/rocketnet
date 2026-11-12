@@ -149,6 +149,18 @@ inline tla_record_t tla_step( const char * op, const char * act, const tla_recor
     return step;
 }
 
+// the same with the walk's arguments to the call, the model action's
+// parameters in order (tla_sequence): records [op, act, args, state]
+inline tla_record_t tla_step( const char * op, const char * act, const std::string & args, const tla_record_t & state )
+{
+    tla_record_t step;
+    step.add( "op", tla_string( op ) );
+    step.add( "act", tla_string( act ) );
+    step.add( "args", args );
+    step.add( "state", state.text() );
+    return step;
+}
+
 // the deterministic generator of the walk: splitmix64
 struct tla_random_t
 {
