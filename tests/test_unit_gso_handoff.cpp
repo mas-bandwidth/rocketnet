@@ -424,6 +424,53 @@ static void test_server_gso_segment_refusal_keeps_other_destinations()
 
 REGISTER_UNIT_TEST( test_server_gso_segment_refusal_keeps_other_destinations );
 
+// the worker gathers a bank by destination before it sends: packets to two
+// destinations staged interleaved (a game server's update loop, one packet
+// per client per pass) still leave as one segmented send per destination
+static void test_server_gso_send_gathers_interleaved_destinations()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( 1 );
+    check( gso );
+
+    rocketnet_server_gso_test_set_features( gso, ROCKETNET_SERVER_GSO_FEATURE_SEGMENT );
+
+    struct gso_segment_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    rocketnet_server_gso_test_set_send( gso, gso_segment_send, &socket );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        gso_segment_stage( gso, 40000, 1 );
+        gso_segment_stage( gso, 40001, 1 );
+    }
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+
+    check( socket.segmented == 2 );
+    check( socket.plain_packets == 0 );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 6 );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] == 2 );
+    check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+
+    // segmentation off: the same bank leaves as six plain datagrams
+    rocketnet_server_gso_test_set_features( gso, 0 );
+    memset( &socket, 0, sizeof( socket ) );
+    for ( int i = 0; i < 3; i++ )
+    {
+        gso_segment_stage( gso, 40000, 1 );
+        gso_segment_stage( gso, 40001, 1 );
+    }
+    check( rocketnet_server_gso_test_flush_staged( gso ) );
+    check( socket.segmented == 0 );
+    check( socket.plain_packets == 6 );
+
+    rocketnet_server_gso_test_close( gso );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_gathers_interleaved_destinations );
+
 // a refused segmented run is resent plain, and that plain send fails too. a
 // full socket stops the resend at the first unsent packet with nothing
 // dropped; a hard error drops that one packet, counts it, and the rest of the

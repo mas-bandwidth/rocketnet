@@ -48,6 +48,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_receive_prefilter.h"
+#include "rocketnet_send_gather.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -178,8 +179,9 @@ struct rocketnet_server_gso_send_lane_t
 
     uint8_t padding_3[4096];
 
-    // worker only: the bank it holds (-1 none), where its send stopped, its
-    // count, the retries after shutdown, and whether it is stop's final bank
+    // worker only: the bank it holds (-1 none), the position in order where
+    // its send stopped, its number of positions, the retries after shutdown,
+    // and whether it is stop's final bank
     int held = -1;
     int held_slot = 0;
     int held_count = 0;
@@ -194,6 +196,17 @@ struct rocketnet_server_gso_send_lane_t
     struct iovec iovecs[ROCKETNET_GSO_SEND_BATCH * ROCKETNET_GSO_MAX_SEGMENTS];
     struct sockaddr_storage names[ROCKETNET_GSO_SEND_BATCH];
     char controls[ROCKETNET_GSO_SEND_BATCH][CMSG_SPACE( sizeof( uint16_t ) )];
+
+    // worker-only gather (sdk/rocketnet_send_gather.h): a taken bank's slots
+    // grouped by destination, each destination's in staged order. The flush
+    // walks positions in order, so a destination's packets sit together and
+    // segment even when other destinations were staged between them.
+    // gather_memory holds the gather's scratch: buckets (a power of two at
+    // least twice the slots) plus two ints per slot, four ints per slot in all
+    int gather_memory[4 * ROCKETNET_GSO_SEND_QUEUE_SIZE];
+    struct rocketnet_send_gather_scratch_t gather = {};
+    int order[ROCKETNET_GSO_SEND_QUEUE_SIZE];
+    struct rocketnet_send_gather_run_t runs[ROCKETNET_GSO_SEND_QUEUE_SIZE];
 
     uint8_t padding_4[4096];
 
@@ -552,6 +565,36 @@ static void rocketnet_server_gso_lane_add( std::atomic<uint64_t> * counter, uint
     counter->store( counter->load( std::memory_order_relaxed ) + amount, std::memory_order_relaxed );
 }
 
+// lays a lane's gather scratch over its own memory, once, when its queue is made
+static void rocketnet_server_gso_gather_init( struct rocketnet_server_gso_send_lane_t * lane )
+{
+    rocketnet_assert( rocketnet_send_gather_scratch_bytes( ROCKETNET_GSO_SEND_QUEUE_SIZE ) <= sizeof( lane->gather_memory ) );
+    const bool laid_out = rocketnet_send_gather_scratch_init( &lane->gather, lane->gather_memory, ROCKETNET_GSO_SEND_QUEUE_SIZE );
+    rocketnet_assert( laid_out );
+    (void) laid_out;
+}
+
+// groups a taken bank's count slots by destination into lane->order and
+// returns the number of positions in it: every slot holding a packet, an
+// aborted slot in none. The flush walks positions, not slots.
+static int rocketnet_server_gso_gather_bank( rocketnet_server_gso_t * gso, struct rocketnet_server_gso_queue_t * queue,
+                                             rocketnet_server_gso_send_buffer_t * bank, int count )
+{
+    struct rocketnet_server_gso_send_lane_t * lane = &queue->send;
+    const bool use_gso = ( gso->features.load( std::memory_order_relaxed ) & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0;
+    const int num_runs = rocketnet_send_gather( &bank->info[0].to, sizeof( bank->info[0] ),
+                                                &bank->info[0].packet_bytes, sizeof( bank->info[0] ), count,
+                                                use_gso ? ROCKETNET_GSO_MAX_SEGMENTS : 1, ROCKETNET_GSO_MAX_SUPER_BYTES,
+                                                &lane->gather, lane->order, lane->runs );
+    rocketnet_assert( num_runs >= 0 );
+    int positions = 0;
+    for ( int i = 0; i < num_runs; i++ )
+    {
+        positions += lane->runs[i].count;
+    }
+    return positions;
+}
+
 static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rocketnet_server_gso_queue_t * queue,
                                        rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full );
 
@@ -614,7 +657,7 @@ static bool rocketnet_server_gso_send_step( rocketnet_server_gso_t * gso, struct
             }
             lane->held = index;
             lane->held_slot = 0;
-            lane->held_count = count;
+            lane->held_count = rocketnet_server_gso_gather_bank( gso, queue, &lane->banks[index], count );
             lane->held_final = final;
             lane->retries_after_quit = 0;
         }
@@ -640,7 +683,7 @@ static bool rocketnet_server_gso_send_step( rocketnet_server_gso_t * gso, struct
             uint64_t dropped = 0;
             for ( int i = lane->held_slot; i < lane->held_count; i++ )
             {
-                if ( bank->info[i].packet_bytes > 0 )
+                if ( bank->info[lane->order[i]].packet_bytes > 0 )
                 {
                     dropped++;
                 }
@@ -1424,6 +1467,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     {
         new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
         rocketnet_receive_drop_tally_reset( &gso->queues[i].receive_tally );
+        rocketnet_server_gso_gather_init( &gso->queues[i].send );
         gso->queues[i].stopped.store( true, std::memory_order_relaxed );
         gso->queues[i].fd = -1;
         gso->queues[i].wake_fd = -1;
@@ -2026,10 +2070,12 @@ static int rocketnet_server_gso_resend_plain( struct rocketnet_server_gso_t * gs
     return first_slot + run_packets;
 }
 
-// one flush pass: walk the staged slots once, build sendmmsg batches,
-// coalescing adjacent same-destination runs into GSO super-datagrams where
-// the feature is on and the destination has not refused one. returns the
-// first unconsumed slot. a refused segmented run is resent plain, its
+// one flush pass: walk the bank's positions in lane->order (its slots grouped
+// by destination, rocketnet_server_gso_gather_bank) once, build sendmmsg
+// batches, coalescing adjacent same-destination positions into GSO
+// super-datagrams where the feature is on and the destination has not refused
+// one. first_slot, num_slots and the return are positions in order. returns
+// the first unconsumed position. a refused segmented run is resent plain, its
 // destination remembered, and the batch continues; when the transport cannot
 // segment at all (rocketnet_segment_refused_add) the caller flips the feature
 // off and resumes plain from this message. a full socket (*full) resumes from its
@@ -2058,7 +2104,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
 
         while ( batch_end < num_slots && num_messages < ROCKETNET_GSO_SEND_BATCH )
         {
-            struct rocketnet_server_gso_send_info_t * info = &bank->info[batch_end];
+            struct rocketnet_server_gso_send_info_t * info = &bank->info[lane->order[batch_end]];
 
             if ( info->packet_bytes <= 0 )
             {
@@ -2083,7 +2129,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
 
                 while ( batch_end < num_slots && run_count < ROCKETNET_GSO_MAX_SEGMENTS )
                 {
-                    struct rocketnet_server_gso_send_info_t * next = &bank->info[batch_end];
+                    struct rocketnet_server_gso_send_info_t * next = &bank->info[lane->order[batch_end]];
 
                     if ( next->packet_bytes <= 0 )
                     {
@@ -2127,7 +2173,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
                 rocketnet_server_gso_lane_add( &lane->counter_send_dropped, (uint64_t) run_count );
                 for ( int i = 0; i < run_count; i++ )
                 {
-                    bank->info[run_first + i].packet_bytes = 0;
+                    bank->info[lane->order[run_first + i]].packet_bytes = 0;
                 }
                 continue;
             }
@@ -2138,7 +2184,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
             hdr->msg_iov = &lane->iovecs[num_iovecs];
             hdr->msg_iovlen = (size_t) run_count;
 
-            // the run is contiguous slots [run_first, run_first + run_count)
+            // the run is contiguous positions [run_first, run_first + run_count)
             // with every packet_bytes positive, by construction of the run
             // builder above -- so the fill is bounded by run_count and never
             // walks the arrays. a concurrent mutation of a slot's bytes here
@@ -2147,7 +2193,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
 
             for ( int i = 0; i < run_count; i++ )
             {
-                const int iovec_slot = run_first + i;
+                const int iovec_slot = lane->order[run_first + i];
                 lane->iovecs[num_iovecs + i].iov_base = bank->data[iovec_slot] + ROCKETNET_FRAME_WIRE_OFFSET;
                 lane->iovecs[num_iovecs + i].iov_len = (size_t) bank->info[iovec_slot].packet_bytes;
             }
@@ -2226,7 +2272,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
                 const char * reason = strerror( errno );
                 const int refused_slot = message_first_slot[sent];
 
-                if ( rocketnet_segment_refused_add( &lane->segment_refused, &bank->info[refused_slot].to ) )
+                if ( rocketnet_segment_refused_add( &lane->segment_refused, &bank->info[lane->order[refused_slot]].to ) )
                 {
                     rocketnet_warn( "gso transport: live GSO send refused (%s). %d destinations refused and none accepted, degrading to plain sendmmsg", reason, lane->segment_refused.destinations );
                     *disable_gso = true;
@@ -2451,6 +2497,7 @@ static bool rocketnet_server_gso_test_init_queue( struct rocketnet_server_gso_t 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[index];
     new ( queue ) rocketnet_server_gso_queue_t();
     rocketnet_receive_drop_tally_reset( &queue->receive_tally );
+    rocketnet_server_gso_gather_init( &queue->send );
     queue->fd = -1;
     queue->wake_fd = -1;
     queue->index = index;
@@ -3118,6 +3165,7 @@ bool rocketnet_server_gso_test_send_refusals()
     bool disable_gso = false;
     bool full = false;
     struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[0].send;
+    valid = valid && rocketnet_server_gso_gather_bank( gso, &gso->queues[0], &lane->banks[taken], 3 ) == 3;
     int next = rocketnet_server_gso_flush( gso, &gso->queues[0], &lane->banks[taken], 0, 3, &disable_gso, &full );
     valid = valid && next == 3 && !disable_gso && !full;
     valid = valid && lane->counter_send_syscalls == 3 && lane->counter_send_dropped == 3 && lane->counter_packets_sent == 0;
@@ -3232,6 +3280,7 @@ bool rocketnet_server_gso_test_send_full_keeps_rest()
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[taken];
     const int staged = bank->num_packets.load( std::memory_order_relaxed );
     valid = valid && staged == count;
+    valid = valid && rocketnet_server_gso_gather_bank( gso, &gso->queues[0], bank, staged ) == staged;
     valid = valid && !rocketnet_server_gso_send_bank( gso, &gso->queues[0], bank, &slot, staged );
     valid = valid && slot == 50 && socket.calls == 2;
     valid = valid && lane->counter_send_syscalls == 2 && lane->counter_packets_sent == 50 && lane->counter_send_dropped == 1;
@@ -3317,8 +3366,9 @@ bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso
             count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
         }
 
+        const int positions = rocketnet_server_gso_gather_bank( gso, queue, bank, count );
         int slot = 0;
-        sent = rocketnet_server_gso_send_bank( gso, queue, bank, &slot, count ) && slot == count && sent;
+        sent = rocketnet_server_gso_send_bank( gso, queue, bank, &slot, positions ) && slot == positions && sent;
         rocketnet_server_gso_return_send( queue, taken );
     }
 
