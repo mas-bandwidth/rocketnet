@@ -1568,8 +1568,6 @@ static int harden_server_main( const harden_options_t & o )
             next = harden_now();
         }
     }
-    // the fill jobs end with the frames: the cuts and the cleanup are main's
-    harden_fill_stop( &pool );
 
     total_messages += w.messages;
     total_start_refused += w.start_refused;
@@ -1581,6 +1579,9 @@ static int harden_server_main( const harden_options_t & o )
     process_resources_t resources_end;
     const bool end_read = process_resources_read( &resources_end );
     const int64_t library_end = harden_library_bytes();
+    // the fill jobs end with the frames, after the end sample (they are the
+    // game's threads, alive at both samples): the cuts and the cleanup are main's
+    harden_fill_stop( &pool );
     const double run_seconds = harden_now() - resources_started_at;
 
     // T1, client to server cut: what the server took, then it freezes
