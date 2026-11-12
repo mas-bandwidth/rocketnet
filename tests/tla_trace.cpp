@@ -153,7 +153,8 @@ static bool tla_write_trace( const char * dir, const std::string & name, const c
 }
 
 // ---------------------------------------------------------------------------
-// layer L0: the per-queue send banks (proofs/tla/RNUringQueueBankLayout.tla)
+// layer L0: the per-queue send banks (proofs/tla/RNUringQueueBankLayout.tla),
+// checked by proofs/tla/TraceRNUringQueueBankLayout.tla
 // ---------------------------------------------------------------------------
 
 // the instance: small enough for TLC to check each trace in seconds, with
