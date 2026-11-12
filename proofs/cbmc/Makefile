@@ -228,6 +228,12 @@ define run_ack_proof
 	if [ $$status -eq 137 ] || grep -qi 'out of memory' "$$work/output.log"; then echo "$(1) HOLD out of memory"; exit 1; fi; \
 	if grep -q 'UNKNOWN' "$$work/output.log"; then echo "$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -A3 '^Violated property' "$$work/output.log" | grep -q 'unwinding assertion'; then echo "$(1) HOLD unwinding assertion failed"; exit 1; fi; \
+	if [ $$status -eq 1 ] && grep -q '^VERIFICATION FAILED' "$$work/output.log"; then \
+	  echo "$(1) COUNTEREXAMPLE: a property is violated (the trace is above) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
+	if grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "$(1) HOLD solver error, no verdict (exit=$$status) bound=$(2) unwind=$(3) named-unwinds=$(4)"; exit 1; \
+	fi; \
 	if [ $$status -eq 0 ] && grep -q '^VERIFICATION SUCCESSFUL' "$$work/output.log"; then \
 	  echo "$(1) VERIFICATION SUCCESSFUL bound=$(2) unwind=$(3) named-unwinds=$(4)"; \
 	else \
@@ -263,6 +269,8 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	   grep -q 'negative control reaches the production ACK operation' "$$work/output.log" && \
 	   grep -Eq '\*\* 1 of [0-9]+ properties failed' "$$work/output.log"; then \
 	  echo "ack-run-negative-control EXPECTED FAILURE bound=8 unwind=65 named-unwinds=$(ACK_RUN_SMALL_UNWINDS)"; \
+	elif grep -q 'ERROR: SMT solver failed' "$$work/output.log"; then \
+	  echo "ack-run-negative-control HOLD solver error, no verdict (exit=$$status)"; exit 1; \
 	else \
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
