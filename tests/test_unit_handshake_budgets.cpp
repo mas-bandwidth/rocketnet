@@ -970,7 +970,13 @@ static void test_handshake_map_full_spends_no_work_budget()
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
+    // each refused request is also one MAPPING_TABLE_FULL (server_protocol.cpp,
+    // the capacity rung), the table's own count beside the request's reason
+
+    const uint64_t table_full_before = test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL];
     budgets_flood_spends_nothing( &test, NULL, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING, 1000.1 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     uint8_t salt[sizeof( rocketnet_test_salt )];
     memcpy( salt, rocketnet_test_salt, sizeof( salt ) );
@@ -979,6 +985,11 @@ static void test_handshake_map_full_spends_no_work_budget()
     struct rocketnet_address_t honest;
     budgets_honest_address( &honest, 0 );
     budgets_honest_challenged( &test, &honest, 0x50000 + capacity, salt, 1000.1 );
+
+    // the replacement found its own mapping: the table was full, yet it counts no MAPPING_TABLE_FULL
+
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_TABLE_FULL] - table_full_before ==
+           (uint64_t) ( 4 * test.server.handshakes_per_update ) );
 
     budgets_server_teardown( &test );
 }
@@ -1037,6 +1048,122 @@ static void test_handshake_claim_table_full_spends_no_work_budget()
 }
 
 REGISTER_UNIT_TEST( test_handshake_claim_table_full_spends_no_work_budget );
+
+// the claim-capacity rung's second witness (t12 rule 9, step 5), in another
+// shape: a claim table of one, held by one half-open handshake. One fresh
+// token from a second address is refused before the signature, then admitted
+// once the held claim's handshake deadline has passed, with nothing
+// connecting in between.
+
+static void test_handshake_claim_table_of_one_frees_at_the_handshake_deadline()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    rocketnet_used_token_history_destroy( test.server.used_token_history );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, 1 );
+    check( test.server.used_token_history );
+
+    struct rocketnet_address_t holder;
+    budgets_honest_address( &holder, 0 );
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    budgets_challenge( &test, &holder, 0x52000, rocketnet_test_salt, 1000.0, request, challenge, &challenge_bytes );
+
+    struct rocketnet_address_t newcomer;
+    budgets_honest_address( &newcomer, 1 );
+    uint8_t fresh[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    budgets_build_request( fresh, 0x52001, &newcomer, test.server.cookie_key );
+
+    const struct rocketnet_counters_t before = test.counters;
+    const uint64_t work_before = test.server.counters->handshakes_processed_this_update;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( budgets_send_request( &test, &newcomer, fresh, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL] ==
+           before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL] + 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] ==
+           before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] );
+    check( test.server.counters->handshakes_processed_this_update == work_before );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
+    // past the holder's handshake deadline its claim has lapsed
+
+    rocketnet_server_protocol_update( &test.server, 1000.0 + test.server.handshake_deadline_seconds + 1.0 );
+    check( budgets_send_request( &test, &newcomer, fresh, 1000.0 + test.server.handshake_deadline_seconds + 1.0, response, &response_bytes ) ==
+           ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_claim_table_of_one_frees_at_the_handshake_deadline );
+
+// the bound-token replacement rung's second witness (t12 rule 3), in another
+// shape: the binding is made by a real session, not written into the
+// history. A client connects with its first token (bound to its address),
+// is disconnected, and starts a new attempt with a second token and a new
+// salt (a half-open mapping). Its first token, presented again from the same
+// address with a third salt, passes the different-address rung (it is bound
+// to this very address) and is refused at the replacement rung, before any
+// asymmetric work; the half-open mapping keeps its challenge.
+
+static void test_handshake_token_bound_by_a_session_never_replaces_its_own_half_open_mapping()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int first_token = 0x53000;
+    uint8_t first_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    budgets_challenge( &test, &test.client_address, first_token, rocketnet_test_salt, 1000.0, first_request, challenge, &challenge_bytes );
+    budgets_connect( &test, &test.client_address, challenge, challenge_bytes, 1000.0 );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    const int client_index = rocketnet_client_slots_find( test.server.client_slots, (uint64_t) first_token );
+    check( client_index != -1 );
+    static uint8_t burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+    int burst_count = 0;
+    int burst_bytes = 0;
+    rocketnet_server_protocol_disconnect_client( &test.server, client_index, burst, &burst_count, &burst_bytes );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 0 );
+    check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
+
+    uint8_t second_salt[sizeof( rocketnet_test_salt )];
+    memcpy( second_salt, rocketnet_test_salt, sizeof( second_salt ) );
+    second_salt[0] ^= 1;
+    uint8_t second_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t second_challenge[ROCKETNET_RECEIVE_CEILING];
+    int second_challenge_bytes = 0;
+    budgets_challenge( &test, &test.client_address, first_token + 1, second_salt, 1000.0, second_request, second_challenge, &second_challenge_bytes );
+
+    uint8_t third_salt[sizeof( rocketnet_test_salt )];
+    memcpy( third_salt, rocketnet_test_salt, sizeof( third_salt ) );
+    third_salt[0] ^= 2;
+    uint8_t replay[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    memcpy( replay, first_request, sizeof( replay ) );
+    memcpy( replay + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES, third_salt, sizeof( third_salt ) );
+    budgets_write_cookie( replay, &test.client_address, test.server.cookie_key, third_salt );
+
+    const uint64_t used_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
+    const uint64_t work_before = test.server.counters->handshakes_processed_this_update;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    check( budgets_send_request( &test, &test.client_address, replay, 1000.0, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == used_before + 1 );
+    check( test.server.counters->handshakes_processed_this_update == work_before );
+
+    const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
+    check( index != -1 );
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
+    check( memcmp( mapping->connection_salt, second_salt, sizeof( second_salt ) ) == 0 );
+    check( memcmp( mapping->challenge_packet, second_challenge, (size_t) second_challenge_bytes ) == 0 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_token_bound_by_a_session_never_replaces_its_own_half_open_mapping );
 
 // A burst over the cap: 40 honest clients, each with a valid cookie for its
 // own address, send a request every update until they are challenged, as a
@@ -1230,25 +1357,59 @@ static void test_handshake_cookie_replies_not_capped_by_max_clients()
     const int max_clients = rocketnet_client_slots_max_clients( test.server.client_slots );
     check( max_clients == 4 );
 
+    // the sources are chosen so that no two share a bit of the source
+    // bitmap: which addresses collide depends on the hash bytes the index is
+    // read from, and that read is in host byte order, so a fixed list that
+    // does not collide on one byte order can collide on the other (it did on
+    // s390x). A collision is the limit working, not a cap; this case is about
+    // the cap, so it takes distinct sources by construction.
+
+    const int client_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &test.client_address );
+    check( client_index >= 0 );
+    struct rocketnet_address_t honest;
+    check( rocketnet_address_parse( &honest, "198.51.100.200:40000" ) );
+    const int last_index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &honest );
+    check( last_index >= 0 && last_index != client_index );
+
+    int used[16 * 4 + 2];
+    int num_used = 0;
+    used[num_used++] = client_index;
+    used[num_used++] = last_index;
+
     int replies = 0;
+    int candidate = 0;
     for ( int i = 0; i < 16 * max_clients; i++ )
     {
         struct rocketnet_address_t address;
-        char addr_str[64];
-        snprintf( addr_str, sizeof( addr_str ), "10.5.0.%d:56789", i + 1 );
-        check( rocketnet_address_parse( &address, addr_str ) );
+        int index = -1;
+        bool fresh = false;
+        while ( !fresh )
+        {
+            check( candidate < 60000 );
+            char addr_str[64];
+            snprintf( addr_str, sizeof( addr_str ), "10.5.%d.%d:56789", candidate / 250, candidate % 250 + 1 );
+            candidate++;
+            check( rocketnet_address_parse( &address, addr_str ) );
+            index = rocketnet_server_protocol_cookie_reply_source_index( &test.server, &address );
+            check( index >= 0 );
+            fresh = true;
+            for ( int j = 0; j < num_used; j++ )
+            {
+                if ( used[j] == index )
+                {
+                    fresh = false;
+                }
+            }
+        }
+        used[num_used++] = index;
         if ( budgets_send_cookieless( &test, &address, 0xA0000 + i, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE )
         {
             replies++;
         }
     }
 
-    struct rocketnet_address_t honest;
-    check( rocketnet_address_parse( &honest, "198.51.100.200:40000" ) );
     check( budgets_send_cookieless( &test, &honest, 0xA0100, 1000.0 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
-    // none of these 65 sources collide in the harness's 4096 bits under its
-    // zero key
     check( replies == 16 * max_clients );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
     check( test.server.counters->handshakes_processed_this_update == 0 );

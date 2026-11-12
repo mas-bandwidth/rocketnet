@@ -50,7 +50,7 @@ binary from another configuration can be mistaken for an up-to-date target.
 Then build the selected configuration and run its tests before switching again.
 
 The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
-(functional suite; it also runs `test_msgx`, `test_serialize` and
+(functional suite; it also runs `test_msgx` and
 `test_transport_control` as sibling executables, `tests/functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
 that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
@@ -503,7 +503,7 @@ One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
   -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
-cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
+cmake --build build-tsan --target test functional test_transport_control test_msgx --parallel 4
 ROCKETNET_NIGHTLY_NO_TIMEOUT=1 TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
 ```
@@ -528,15 +528,15 @@ abort assertions unchanged. A new forking case must do the same.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds a replay binary for each of the thirteen harnesses in
+libFuzzer"); `make` builds a replay binary for each of the fifteen harnesses in
 [tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
 for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token \
     rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip \
     rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport \
-    rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg \
-    rocketnet_fuzz_gateway_netlink; do
+    rocketnet_fuzz_session rocketnet_fuzz_session_raw rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg \
+    rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter; do
   ./bin/fuzz_replay_$harness tests/fuzz/corpus${harness#rocketnet_fuzz}/* || echo "FAIL $harness"
 done
 ```

@@ -3,12 +3,13 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// test_unit_standard_transport_appendices.cpp -- RN-1 tb and tc
-// (standard/TRANSPORT.md, Appendix B and Appendix C).
+// test_unit_standard_transport_appendices.cpp -- RN-1 tc
+// (standard/TRANSPORT.md, Appendix C), and properties of RN-1 that cross
+// sections, each check naming the section that states it.
 //
-// Neither appendix has a known-answer vector block, so the twin table stays
-// empty and the walk still accepts that. The checks below are the appendix
-// rows themselves: a broken constant or rule fails this case.
+// The appendix has no known-answer vector block, so the twin table stays
+// empty and the walk still accepts that. The checks below are the note and
+// those properties: a broken constant or rule fails this case.
 
 #include "test_unit_standard.h"
 #include "test_env_source.h"
@@ -144,21 +145,20 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( count == 0 );
 
     uint8_t scratch[4];
-    rocketnet_unit_check( standard_transport_appendices_generate( "tb.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
     rocketnet_unit_check( standard_transport_appendices_generate( "tc.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 
-    // tb. Backend trust: Ed25519 public key on the server, seal is X25519, no shared secret.
+    // t2.2. Backend trust: Ed25519 public key on the server, seal is X25519, no shared secret.
     rocketnet_unit_check( ROCKETNET_SIGNATURE_BYTES == crypto_sign_BYTES );
     rocketnet_unit_check( sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->backend_public_key ) == (size_t) crypto_sign_PUBLICKEYBYTES );
     rocketnet_unit_check( sizeof( ( (struct rocketnet_server_transport_config_t *) 0 )->server_public_key ) == (size_t) crypto_scalarmult_BYTES );
     rocketnet_unit_check( ROCKETNET_SEALED_BLOCK_BYTES == ROCKETNET_PRIVATE_BLOCK_BYTES + crypto_box_SEALBYTES );
     rocketnet_unit_check( ROCKETNET_KEY_BYTES == crypto_box_PUBLICKEYBYTES );
 
-    // tb. Token authenticity: detached Ed25519 over the signed block, private block sealed to the server.
+    // t6. Token authenticity: detached Ed25519 over the signed block, private block sealed to the server.
     rocketnet_unit_check( crypto_sign_BYTES == 64 );
     rocketnet_unit_check( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES );
 
-    // tb. Token scope: one server, one optional IPv4 and one optional IPv6, contiguous, no server list.
+    // t2. Token scope: one server, one optional IPv4 and one optional IPv6, contiguous, no server list.
     rocketnet_unit_check( ROCKETNET_ADDRESS_FLAG_IPV4 == 0x01 );
     rocketnet_unit_check( ROCKETNET_ADDRESS_FLAG_IPV6 == 0x02 );
     rocketnet_unit_check( ( ROCKETNET_ADDRESS_FLAG_IPV4 & ROCKETNET_ADDRESS_FLAG_IPV6 ) == 0 );
@@ -171,10 +171,10 @@ static void test_standard_transport_appendices_vectors()
     rocketnet_unit_check( sizeof( ( (struct rocketnet_signed_connect_data_t *) 0 )->ipv6_address ) == 18 );
     rocketnet_unit_check( sizeof( ( (struct rocketnet_signed_connect_data_t *) 0 )->server_public_key ) == 32 );
 
-    // tb. Token binding: a token already in use is refused. One live connection.
+    // t12. Token binding: a token already in use is refused. One live connection.
     rocketnet_unit_check( rocketnet_counter_class( ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
 
-    // tb. Packet keys: token keys only key a derivation. Handshake keys differ from them.
+    // t7. Packet keys: token keys only key a derivation. Handshake keys differ from them.
     // A small-order ephemeral public key refuses the whole derivation.
     struct rocketnet_connection_keys_t keys;
     memset( &keys, 0, sizeof( keys ) );
@@ -205,18 +205,18 @@ static void test_standard_transport_appendices_vectors()
                                                             rocketnet_test_client_eph_public,
                                                             rocketnet_test_server_eph_public ) == 0 );
 
-    // tb. Forward secrecy: session keys are not the token keys and not the handshake keys.
+    // t7. Forward secrecy: session keys are not the token keys and not the handshake keys.
     rocketnet_unit_check( memcmp( keys.session_client_to_server, rocketnet_test_token_c2s_key, ROCKETNET_KEY_BYTES ) != 0 );
     rocketnet_unit_check( memcmp( keys.session_server_to_client, rocketnet_test_token_s2c_key, ROCKETNET_KEY_BYTES ) != 0 );
     rocketnet_unit_check( memcmp( keys.session_client_to_server, keys.handshake_client_to_server, ROCKETNET_KEY_BYTES ) != 0 );
     rocketnet_unit_check( memcmp( keys.session_server_to_client, keys.handshake_server_to_client, ROCKETNET_KEY_BYTES ) != 0 );
 
-    // tb. IPv6: dual stack, and an IPv6 header is present and larger than IPv4.
+    // t2. IPv6: dual stack, and an IPv6 header is present and larger than IPv4.
     rocketnet_unit_check( ROCKETNET_ADDRESS_IPV4 != ROCKETNET_ADDRESS_IPV6 );
     rocketnet_unit_check( rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 ) > 0 );
     rocketnet_unit_check( rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV6 ) > rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 ) );
 
-    // tb. Packet prefix: every packet begins with the prefilter.
+    // t5. Packet prefix: every packet begins with the prefilter.
     const int packet_bytes[] = {
         ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
         ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
@@ -234,13 +234,13 @@ static void test_standard_transport_appendices_vectors()
         rocketnet_unit_check( packet_bytes[i] >= ROCKETNET_PREFILTER_BYTES );
     }
 
-    // tb. Payload to an unconfirmed client: no keep-alive prefix. The challenge is its own packet.
+    // t13. Payload to an unconfirmed client: no keep-alive prefix. The challenge is its own packet.
     rocketnet_unit_check( ROCKETNET_CONNECTION_PAYLOAD_PACKET != ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
     rocketnet_unit_check( ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES < ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
     rocketnet_unit_check( ROCKETNET_CONNECTION_CHALLENGE_PACKET != ROCKETNET_CONNECTION_PAYLOAD_PACKET );
     rocketnet_unit_check( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES >= ROCKETNET_PREFILTER_BYTES );
 
-    // tb. A zero timeout is outside the field and is refused. t2.3: default 60, range 1 to 3600.
+    // t2.3. A zero timeout is outside the field and is refused. t2.3: default 60, range 1 to 3600.
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
     const struct rocketnet_config_field_t * timeout = server_field( fields, num_fields, "max_timeout_seconds" );

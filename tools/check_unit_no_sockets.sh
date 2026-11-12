@@ -9,11 +9,17 @@
 # an error: a run in which no case worker was started (the runner spawns each
 # case as `<binary> --run <case>`) checked nothing and fails.
 #
-# usage: tools/check_unit_no_sockets.sh [binary]   (default ./bin/test)
+# usage: tools/check_unit_no_sockets.sh [binary [suite arguments...]]   (default ./bin/test)
+#
+# Arguments after the binary go to it, so a shard runs as
+# tools/check_unit_no_sockets.sh ./bin/test --shard 0/2.
 
 set -eu
 
 binary=${1:-./bin/test}
+if [ "$#" -gt 0 ]; then
+    shift
+fi
 
 if ! command -v strace >/dev/null 2>&1; then
     echo "TOOL-MISSING strace (any) (missing)"
@@ -31,7 +37,7 @@ suite=0
 # Filter in the kernel: ordinary -e filtering still stops at every unrelated
 # syscall under ptrace. That multiplied the 1000-client Debug case's cost
 # under CI load. -f retains fork/exec tracing, including child socket openers.
-strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
+strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" "$@" || suite=$?
 
 if [ ! -s "$trace" ]; then
     echo "check_unit_no_sockets: strace wrote no trace for $binary"

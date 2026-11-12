@@ -111,7 +111,11 @@
     an end with no already-received refusal at the other.
     ROCKETNET_SOAK_FAULT_VERIFY=1 (off by default) corrupts the first
     received payload: the planted verify failure scripts/soak-args-selftest
-    uses as its negative control.
+    uses as its negative control. ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates
+    the endpoints with no loss and no duplication while the run records the
+    requested ones: --assert-flat must fail "link impairment not observed"
+    (the selftest's impairment leg). ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one
+    file open past the end sample: --assert-flat must fail on fds (handles).
 
     THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
     warm cycle is the first planned reconnect cycle: 30 s of the first client,
@@ -146,7 +150,8 @@
     staged_proxy_max=<n> deferred_run_max=<n> deferred_iterations=<n>
     unacked_span_max=<n> acked_packets=<n> refused_sends=<n>
     iteration_gap_max_ms=<ms> client_lifetime_send_deferred=<n>
-    client_lifetime_send_ring_full=<n> library_bytes=<n>" line, the client
+    client_lifetime_send_ring_full=<n> server_lifetime_send_ring_full=<n>
+    library_bytes=<n>" line, the client
     send path over the interval read from what the library already keeps
     (soak_print_send). staged_proxy_max is a proxy, not the fill ring's
     occupancy, which the library does not expose: it counts only the
@@ -976,17 +981,21 @@ static void soak_send_interval_reset( struct soak_send_interval_t * send )
     send->iteration_gap_max = 0.0;
 }
 
-static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
+static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                             int counter_send_deferred, int counter_send_ring_full )
 {
     const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+    const struct rocketnet_counters_t * server_counters = server ? rocketnet_server_transport_counters( server ) : NULL;
 
     printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
-            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu server_lifetime_send_ring_full=%llu "
+            "library_bytes=%lld\n",
             seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
             (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
             (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
             (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
             (unsigned long long) ( counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( counters, counter_send_ring_full ) : 0 ),
+            (unsigned long long) ( server_counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( server_counters, counter_send_ring_full ) : 0 ),
             (long long) soak_library_bytes_read() );
     fflush( stdout );
 }
@@ -1099,6 +1108,12 @@ int main( int argc, char ** argv )
     char fault_verify_env[256];
     int fault_verify_pending = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_VERIFY", fault_verify_env, sizeof( fault_verify_env ) ) && fault_verify_env[0] != '\0' && strcmp( fault_verify_env, "0" ) != 0 ) ? 1 : 0;
 
+    // the impairment witness's negative control: the endpoints are created
+    // with no loss and no duplication while the run records and prints the
+    // requested ones, so --assert-flat must fail "link impairment not observed"
+    char fault_impairment_env[256];
+    const int fault_impairment = ( rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_IMPAIRMENT", fault_impairment_env, sizeof( fault_impairment_env ) ) && fault_impairment_env[0] != '\0' && strcmp( fault_impairment_env, "0" ) != 0 ) ? 1 : 0;
+
     if ( soak_link_unread_name_set() || !soak_link_request( "SERVER", &soak_server_link ) || !soak_link_request( "CLIENT", &soak_client_link ) )
     {
         return 2;
@@ -1153,7 +1168,15 @@ int main( int argc, char ** argv )
         snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
     }
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_config, sizeof( server_config ) );
+    struct rocketnet_server_transport_config_t server_create_config = server_config;
+    if ( fault_impairment )
+    {
+        printf( "soak: impairment fault ARMED -- the endpoints get no loss and no duplication; --assert-flat must go red\n" );
+        server_create_config.simulated_loss_percent = 0;
+        server_create_config.simulated_duplicate_percent = 0;
+    }
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_create_config, sizeof( server_create_config ) );
     if ( !server )
     {
         printf( "soak: failed to create the server transport on %s\n", server_bind );
@@ -1395,7 +1418,13 @@ int main( int argc, char ** argv )
                 break;
             }
 #endif // #if defined( __linux__ )
-            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
+            struct rocketnet_client_transport_config_t client_create_config = client_config;
+            if ( fault_impairment )
+            {
+                client_create_config.simulated_loss_percent = 0;
+                client_create_config.simulated_duplicate_percent = 0;
+            }
+            client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_create_config, sizeof( client_create_config ), rocketnet_time() );
 #if defined( __linux__ )
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
             {
@@ -1734,7 +1763,7 @@ int main( int argc, char ** argv )
                 }
             }
 
-            soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
+            soak_print_send( rocketnet_time() - start_time, &send_interval, client, server, counter_send_deferred, counter_send_ring_full );
             soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,
@@ -1884,6 +1913,22 @@ int main( int argc, char ** argv )
             printf( "soak: --assert-flat FAILED: link impairment not observed: server duplicate_percent=%d and no already-received refusal at the client\n", soak_server_link.duplicate_percent );
             failures++;
         }
+    }
+
+    // the --assert-flat negative control: ROCKETNET_SOAK_FAULT_LEAK_FD=1 opens
+    // one file after the start sample and never closes it, so the end sample
+    // holds one more fd (a handle on Windows) and --assert-flat must go red
+
+    char fault_leak_env[256];
+    static FILE * soak_fault_leaked_file = NULL;
+    if ( resources_started && rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_LEAK_FD", fault_leak_env, sizeof( fault_leak_env ) ) && fault_leak_env[0] != '\0' && strcmp( fault_leak_env, "0" ) != 0 )
+    {
+#if defined( _WIN32 )
+        soak_fault_leaked_file = rocketnet_test_fopen( "NUL", "r" );
+#else
+        soak_fault_leaked_file = rocketnet_test_fopen( "/dev/null", "r" );
+#endif
+        printf( "soak: fd leak fault ARMED -- one file held open past the end sample (%s); --assert-flat must go red\n", soak_fault_leaked_file ? "opened" : "open failed" );
     }
 
     // the end sample, between clients as the post-warmup sample was: the

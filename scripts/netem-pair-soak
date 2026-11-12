@@ -6,7 +6,9 @@
 # and the loss given), bin/server in one and N bin/client in the other for a
 # number of seconds. The server prints every counter at stop
 # (ROCKETNET_SERVER_PRINT_COUNTERS=1); the run exits 0 only when
-# SEND_HISTORY_OVERFLOW is 0 and every client connected and received payloads.
+# SEND_HISTORY_OVERFLOW is 0, every client connected, stayed connected to the
+# end (its last state line) and received payloads, and every client and the
+# server exited 0 (client-N.exit, server.exit beside the logs).
 # SEND_HISTORY_LOST is printed beside it: on a lossy path it is above 0, and it
 # is an outcome (packets the path lost), not a failure.
 #
@@ -100,7 +102,7 @@ counter_value()
 
 evaluate()
 {
-    local dir=$1 connected=0 receiving=0 i log received sent
+    local dir=$1 connected=0 receiving=0 exited_bad=0 i log received sent
     local server_log="$dir/server.log"
 
     [ -f "$server_log" ] || fail "no server log in $dir"
@@ -119,11 +121,21 @@ evaluate()
             echo "client $i: no log"
             continue
         fi
-        if grep -q '^client state: connected$' "$log"; then
+        # connected means connected to the end: the last state line is
+        # "connected" (SIGINT stops the client without a new state), so a
+        # client that connected and then timed out or was refused is not
+        local last_state
+        last_state=$(sed -n 's/^client state: //p' "$log" | tail -n 1)
+        if [ "$last_state" = connected ]; then
             connected=$((connected + 1))
             local is_connected=yes
         else
             local is_connected=no
+        fi
+        local exit_status
+        exit_status=$(cat "$dir/client-$i.exit" 2>/dev/null)
+        if [ "$exit_status" != 0 ]; then
+            exited_bad=$((exited_bad + 1))
         fi
         # the client prints "client sent S and received R payloads" every 100 received
         received=$(awk '/^client sent [0-9]+ and received [0-9]+ payloads$/ { r = $6; s = $3 } END { if (r != "") print r }' "$log")
@@ -147,6 +159,8 @@ evaluate()
     [ "$connected" -eq "$CLIENTS" ] || fail "only $connected of $CLIENTS clients connected"
     [ "$receiving" -eq "$CLIENTS" ] || fail "only $receiving of $CLIENTS clients received payloads"
     [ "$overflow" -eq 0 ] || fail "SEND_HISTORY_OVERFLOW is $overflow, not 0"
+    [ "$exited_bad" -eq 0 ] || fail "$exited_bad client(s) exited nonzero or have no recorded exit status (client-N.exit)"
+    [ "$(cat "$dir/server.exit" 2>/dev/null)" = 0 ] || fail "the server exited $(cat "$dir/server.exit" 2>/dev/null || echo "unrecorded") (server.exit), not 0"
 
     echo "$NAME: PASS (SEND_HISTORY_OVERFLOW 0, SEND_HISTORY_LOST $lost, $CLIENTS of $CLIENTS clients connected and receiving)"
     return 0
@@ -276,8 +290,12 @@ sleep "$SECONDS_TO_RUN"
 for pid in "${CLIENT_PIDS[@]}"; do
     kill -INT "$pid" 2>/dev/null
 done
+i=0
 for pid in "${CLIENT_PIDS[@]}"; do
-    wait "$pid" 2>/dev/null
+    i=$((i + 1))
+    status=0
+    wait "$pid" 2>/dev/null || status=$?
+    echo "$status" > "$LOG_DIR/client-$i.exit"
 done
 CLIENT_PIDS=()
 
@@ -293,7 +311,9 @@ if kill -0 "$SERVER_PID" 2>/dev/null; then
     SERVER_PID=
     fail "the server did not stop within 60 s of SIGINT"
 fi
-wait "$SERVER_PID" 2>/dev/null
+status=0
+wait "$SERVER_PID" 2>/dev/null || status=$?
+echo "$status" > "$LOG_DIR/server.exit"
 SERVER_PID=
 
 evaluate "$LOG_DIR"

@@ -861,8 +861,16 @@ static void test_channels_stress_memory_is_planned()
 
 int main( int argc, char ** argv )
 {
-    (void) argc;
-    (void) argv;
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     check( rocketnet_init( NULL, stress_malloc, stress_free ) == ROCKETNET_STATUS_OK );
     test_channels_stress_memory_is_planned();
     test_channels_stress_every_channel_delivers();

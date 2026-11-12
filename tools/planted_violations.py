@@ -483,6 +483,15 @@ APPLY_STEP_FILES = (
     'while IFS= read -r planted_line; do case "$planted_line" in *=*) export "$planted_line";; esac; '
     'done < "$GITHUB_ENV"\n')
 
+# a setup line that is exactly this separates two of the job's steps: what the first wrote to
+# $GITHUB_ENV and $GITHUB_PATH reaches the second, as on the runner
+STEP_BREAK = "# --- next step ---"
+
+
+def setup_script(setup):
+    """The setup cell as a script: each STEP_BREAK line applies the step files."""
+    return "".join(APPLY_STEP_FILES if line == STEP_BREAK else line + "\n" for line in setup.split("\n"))
+
 
 def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout):
     """(verdict, detail) for one row; verdict RED, GREEN, BROKEN or HUNG."""
@@ -501,7 +510,7 @@ def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout
         exports = "".join(f"export {k}={shlex.quote(v)}\n" for k, v in sorted(env.items())
                           if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k))
         enter = f"cd {shlex.quote(str(wd))}\n" if wd and "${{" not in str(wd) else ""
-        script = f"{exports}{setup}\n{APPLY_STEP_FILES}echo {MARKER}\n{enter}{unescape(row['command'])}\n"
+        script = f"{exports}{setup_script(setup)}{APPLY_STEP_FILES}echo {MARKER}\n{enter}{unescape(row['command'])}\n"
         status, output = run_script(script, tree, timeout)
         if status is None:
             return "HUNG", f"no verdict within {timeout} s"
@@ -574,13 +583,20 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
         return 0
     want_os = args.os or host_os()
     selected = [r for r in rows if r["os"] == want_os]
+    elsewhere = [r for r in rows if r["os"] != want_os]
     if args.only:
         names = set(n.strip() for n in args.only.split(",") if n.strip())
         unknown = names - {r["id"] for r in rows}
         for name in sorted(unknown):
             out(f"PLANT-STALE {name} (--only names no row)")
             problems.append(name)
+        for row in [r for r in elsewhere if r["id"] in names]:
+            out(f"PLANT-NOT-RUN {row['id']} (a {row['os']} row; this run is {want_os})")
         selected = [r for r in selected if r["id"] in names]
+        elsewhere = [r for r in elsewhere if r["id"] in names]
+    other = {name: sum(1 for r in elsewhere if r["os"] == name) for name in OSES if name != want_os}
+    out(f"planted-violations: {len(selected)} {want_os} row(s) selected; not run here, being other systems' rows: "
+        + ", ".join(f"{name} {count}" for name, count in other.items()))
     if args.exclude:
         dropped = set(n.strip() for n in args.exclude.split(",") if n.strip())
         for row in [r for r in selected if r["id"] in dropped]:
@@ -726,6 +742,19 @@ def self_test(out=say):
             os.chdir(here)
         expect("a setup step's GITHUB_ENV reaches the check (relative --scratch)",
                has(env_lines, "PLANT-RED w/stepenv") and env_code == 0)
+        # a STEP_BREAK line hands one setup step's $GITHUB_ENV to the next setup step
+        wrote = 'echo PLANTED_PART=a >> "$GITHUB_ENV"'
+        needs = '[ "${PLANTED_PART:-}" = a ] || exit 3'
+        broken_row = ["w/stepbreak", "w.yml", "matrixed", "Check ${{ matrix.part }}", "linux", "-",
+                      "write:a.txt:BAD\\n", f"{wrote}\\n{needs}",
+                      "sh check.sh ${PLANTED_PART}.txt", r"check: BAD found in a\.txt"]
+        code_b, lines_b = go([good, lazy, matrixed, uncovered, broken_row], "--only", "w/stepbreak")
+        expect("without a step break the next setup step does not see GITHUB_ENV (BROKEN)",
+               has(lines_b, "PLANT-BROKEN w/stepbreak") and code_b == 1)
+        broken_row[7] = f"{wrote}\\n{STEP_BREAK}\\n{needs}"
+        code_b, lines_b = go([good, lazy, matrixed, uncovered, broken_row], "--only", "w/stepbreak")
+        expect("a step break hands GITHUB_ENV to the next setup step (RED)",
+               has(lines_b, "PLANT-RED w/stepbreak") and code_b == 0)
         expect("all red, complete table exits 0", code == 0)
         expect("the plant did not touch the real tree", (repo / "data.txt").read_text() == "fine\n")
         # a check that does not catch its plant

@@ -11,11 +11,14 @@
 #define RN_BLASTER_MAX_DURATION_SECONDS 600u
 #define RN_BLASTER_MAX_CLIENTS 1000u
 #define RN_BLASTER_MAX_RATE_PPS 20000000u
-/* The largest body one unreliable record carries in one packet: three record
- * header bytes, the body and one trailing form byte fill the endpoint's
- * 1416-byte packet payload, so the RocketNet packet is 37 + 1412 = 1449 bytes
- * of the 1452-byte send budget. */
-#define RN_BLASTER_MAX_PAYLOAD_BYTES 1412u
+/* The largest message the endpoint sends as one unreliable record:
+ * ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES (1411). One byte more is promoted to
+ * its reliable twin, a numbered message, and the test server's raw echo
+ * refuses those (tests/echo_payload.h): it would hand the blaster its own
+ * send numbers. The echo cells measure the transport echo of one unreliable
+ * record. The RocketNet packet is at most 37 + 1411 = 1448 bytes of the
+ * 1452-byte send budget. */
+#define RN_BLASTER_MAX_PAYLOAD_BYTES 1411u
 #define RN_BLASTER_MIN_SOURCE_PORT 1024u
 #define RN_BLASTER_MAX_THREADS 32u
 #define RN_BLASTER_MAX_CPU 1023u

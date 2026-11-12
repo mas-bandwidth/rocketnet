@@ -1,6 +1,7 @@
-# The 1.x C ABI: exports, and each public struct's size and its fields'
-# offsets and sizes on 64-bit targets. Checked by tools/check_abi.py;
-# within 1.x lines are only added.
+# The 1.x C ABI of sdk/rocketnet.h (recorded from v1.1.0, cb6f75b94) on 64-bit targets, default build: exports,
+# prototypes, typedefs, struct sizes, field offsets, sizes and types, enumerator
+# values and macro values. Checked by tools/check_abi.py; within 1.x lines are
+# only added.
 export rocketnet_assert_function
 export rocketnet_client_abort_message
 export rocketnet_client_can_send_message
@@ -79,6 +80,228 @@ export rocketnet_term
 export rocketnet_thread_priority
 export rocketnet_time
 export rocketnet_version
+prototype rocketnet_assert_function void rocketnet_assert_function(rocketnet_assert_function_t)
+prototype rocketnet_client_abort_message void rocketnet_client_abort_message(struct rocketnet_client_t*)
+prototype rocketnet_client_can_send_message bool rocketnet_client_can_send_message(const struct rocketnet_client_t*, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_client_conditions bool rocketnet_client_conditions(const struct rocketnet_client_t*, struct rocketnet_conditions_t*, int)
+prototype rocketnet_client_connect enum rocketnet_status_t rocketnet_client_connect(struct rocketnet_client_t*, const char*)
+prototype rocketnet_client_create struct rocketnet_client_t*rocketnet_client_create(void*, const struct rocketnet_client_config_t*, enum rocketnet_status_t*)
+prototype rocketnet_client_default_config static inline enum rocketnet_status_t rocketnet_client_default_config(struct rocketnet_client_config_t*)
+prototype rocketnet_client_default_config_internal enum rocketnet_status_t rocketnet_client_default_config_internal(struct rocketnet_client_config_t*)
+prototype rocketnet_client_destroy void rocketnet_client_destroy(struct rocketnet_client_t*)
+prototype rocketnet_client_disconnect void rocketnet_client_disconnect(struct rocketnet_client_t*)
+prototype rocketnet_client_disconnected bool rocketnet_client_disconnected(const struct rocketnet_client_t*)
+prototype rocketnet_client_finish_message uint32_t rocketnet_client_finish_message(struct rocketnet_client_t*, int)
+prototype rocketnet_client_index int rocketnet_client_index(const struct rocketnet_client_t*)
+prototype rocketnet_client_light_config static inline enum rocketnet_status_t rocketnet_client_light_config(struct rocketnet_client_config_t*)
+prototype rocketnet_client_light_config_internal enum rocketnet_status_t rocketnet_client_light_config_internal(struct rocketnet_client_config_t*)
+prototype rocketnet_client_network_simulator void rocketnet_client_network_simulator(struct rocketnet_client_t*, int, int, int, int)
+prototype rocketnet_client_receipts int rocketnet_client_receipts(struct rocketnet_client_t*, struct rocketnet_receipt_t*, int)
+prototype rocketnet_client_receive_messages const struct rocketnet_message_batch_t*rocketnet_client_receive_messages(struct rocketnet_client_t*)
+prototype rocketnet_client_required_memory size_t rocketnet_client_required_memory(const struct rocketnet_client_config_t*)
+prototype rocketnet_client_send_packets void rocketnet_client_send_packets(struct rocketnet_client_t*)
+prototype rocketnet_client_set_send_kbps enum rocketnet_status_t rocketnet_client_set_send_kbps(struct rocketnet_client_t*, int)
+prototype rocketnet_client_start_message uint8_t*rocketnet_client_start_message(struct rocketnet_client_t*, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_client_state enum rocketnet_client_state_t rocketnet_client_state(const struct rocketnet_client_t*)
+prototype rocketnet_client_state_name const char*rocketnet_client_state_name(enum rocketnet_client_state_t)
+prototype rocketnet_client_stats void rocketnet_client_stats(const struct rocketnet_client_t*, struct rocketnet_client_stats_t*)
+prototype rocketnet_client_transport_name const char*rocketnet_client_transport_name(const struct rocketnet_client_t*)
+prototype rocketnet_client_update void rocketnet_client_update(struct rocketnet_client_t*, double)
+prototype rocketnet_connect_token_default_config static inline enum rocketnet_status_t rocketnet_connect_token_default_config(struct rocketnet_connect_token_config_t*)
+prototype rocketnet_connect_token_default_config_internal enum rocketnet_status_t rocketnet_connect_token_default_config_internal(struct rocketnet_connect_token_config_t*)
+prototype rocketnet_create_connect_token enum rocketnet_status_t rocketnet_create_connect_token(const struct rocketnet_connect_token_config_t*, char*)
+prototype rocketnet_create_dev_connect_token enum rocketnet_status_t rocketnet_create_dev_connect_token(const char*, const char*, const uint8_t*, int, int, uint64_t, uint64_t, uint64_t, const uint8_t*, char*)
+prototype rocketnet_disconnect_reason_name const char*rocketnet_disconnect_reason_name(enum rocketnet_disconnect_reason_t)
+prototype rocketnet_generate_backend_keypair enum rocketnet_status_t rocketnet_generate_backend_keypair(uint8_t*, uint8_t*)
+prototype rocketnet_generate_server_keypair enum rocketnet_status_t rocketnet_generate_server_keypair(uint8_t*, uint8_t*)
+prototype rocketnet_init enum rocketnet_status_t rocketnet_init(void*, void*(*)(void*context, size_t bytes), void(*)(void*context, void*p))
+prototype rocketnet_log_function void rocketnet_log_function(rocketnet_log_function_t, void*)
+prototype rocketnet_log_level void rocketnet_log_level(enum rocketnet_log_level_t)
+prototype rocketnet_log_level_name const char*rocketnet_log_level_name(enum rocketnet_log_level_t)
+prototype rocketnet_loopback_hub_create struct rocketnet_loopback_hub_t*rocketnet_loopback_hub_create(void*, int, enum rocketnet_status_t*)
+prototype rocketnet_loopback_hub_destroy enum rocketnet_status_t rocketnet_loopback_hub_destroy(struct rocketnet_loopback_hub_t*)
+prototype rocketnet_max_unfragmented_message_bytes int rocketnet_max_unfragmented_message_bytes(enum rocketnet_reliability_t, int)
+prototype rocketnet_quiet void rocketnet_quiet(bool)
+prototype rocketnet_server_abort_message void rocketnet_server_abort_message(struct rocketnet_server_t*)
+prototype rocketnet_server_can_send_message bool rocketnet_server_can_send_message(const struct rocketnet_server_t*, int, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_server_client_conditions bool rocketnet_server_client_conditions(const struct rocketnet_server_t*, int, struct rocketnet_conditions_t*, int)
+prototype rocketnet_server_client_connected bool rocketnet_server_client_connected(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_connection_id uint64_t rocketnet_server_client_connection_id(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_id uint64_t rocketnet_server_client_id(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_stats void rocketnet_server_client_stats(const struct rocketnet_server_t*, int, struct rocketnet_server_client_stats_t*)
+prototype rocketnet_server_client_user_data bool rocketnet_server_client_user_data(const struct rocketnet_server_t*, int, uint8_t*)
+prototype rocketnet_server_create struct rocketnet_server_t*rocketnet_server_create(void*, const char*, const char*, const struct rocketnet_server_config_t*, enum rocketnet_status_t*)
+prototype rocketnet_server_default_config static inline enum rocketnet_status_t rocketnet_server_default_config(struct rocketnet_server_config_t*)
+prototype rocketnet_server_default_config_internal enum rocketnet_status_t rocketnet_server_default_config_internal(struct rocketnet_server_config_t*)
+prototype rocketnet_server_destroy void rocketnet_server_destroy(struct rocketnet_server_t*)
+prototype rocketnet_server_disconnect_all_clients void rocketnet_server_disconnect_all_clients(struct rocketnet_server_t*)
+prototype rocketnet_server_disconnect_client void rocketnet_server_disconnect_client(struct rocketnet_server_t*, int)
+prototype rocketnet_server_disconnect_reason enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_finish_message uint32_t rocketnet_server_finish_message(struct rocketnet_server_t*, int)
+prototype rocketnet_server_ipv4_address bool rocketnet_server_ipv4_address(const struct rocketnet_server_t*, char*, size_t)
+prototype rocketnet_server_ipv6_address bool rocketnet_server_ipv6_address(const struct rocketnet_server_t*, char*, size_t)
+prototype rocketnet_server_light_config static inline enum rocketnet_status_t rocketnet_server_light_config(struct rocketnet_server_config_t*)
+prototype rocketnet_server_light_config_internal enum rocketnet_status_t rocketnet_server_light_config_internal(struct rocketnet_server_config_t*)
+prototype rocketnet_server_max_clients int rocketnet_server_max_clients(const struct rocketnet_server_t*)
+prototype rocketnet_server_network_simulator void rocketnet_server_network_simulator(struct rocketnet_server_t*, int, int, int, int)
+prototype rocketnet_server_num_connected_clients int rocketnet_server_num_connected_clients(const struct rocketnet_server_t*)
+prototype rocketnet_server_port uint16_t rocketnet_server_port(const struct rocketnet_server_t*)
+prototype rocketnet_server_public_key void rocketnet_server_public_key(const struct rocketnet_server_t*, uint8_t*)
+prototype rocketnet_server_receipts int rocketnet_server_receipts(struct rocketnet_server_t*, int, struct rocketnet_receipt_t*, int)
+prototype rocketnet_server_receive_messages const struct rocketnet_message_batch_t*rocketnet_server_receive_messages(struct rocketnet_server_t*)
+prototype rocketnet_server_required_memory size_t rocketnet_server_required_memory(const struct rocketnet_server_config_t*)
+prototype rocketnet_server_running bool rocketnet_server_running(const struct rocketnet_server_t*)
+prototype rocketnet_server_send_packets void rocketnet_server_send_packets(struct rocketnet_server_t*)
+prototype rocketnet_server_set_send_kbps enum rocketnet_status_t rocketnet_server_set_send_kbps(struct rocketnet_server_t*, int, int)
+prototype rocketnet_server_start enum rocketnet_status_t rocketnet_server_start(struct rocketnet_server_t*)
+prototype rocketnet_server_start_message uint8_t*rocketnet_server_start_message(struct rocketnet_server_t*, uint64_t, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_server_stats void rocketnet_server_stats(const struct rocketnet_server_t*, struct rocketnet_server_stats_t*)
+prototype rocketnet_server_stop void rocketnet_server_stop(struct rocketnet_server_t*)
+prototype rocketnet_server_stopped bool rocketnet_server_stopped(const struct rocketnet_server_t*)
+prototype rocketnet_server_transport_name const char*rocketnet_server_transport_name(const struct rocketnet_server_t*)
+prototype rocketnet_server_update void rocketnet_server_update(struct rocketnet_server_t*, double)
+prototype rocketnet_sleep void rocketnet_sleep(double)
+prototype rocketnet_status_name const char*rocketnet_status_name(enum rocketnet_status_t)
+prototype rocketnet_term enum rocketnet_status_t rocketnet_term(void)
+prototype rocketnet_thread_priority void rocketnet_thread_priority(bool)
+prototype rocketnet_time double rocketnet_time(void)
+prototype rocketnet_version uint32_t rocketnet_version(void)
+typedef rocketnet_assert_function_t typedef void(*rocketnet_assert_function_t)(const char*, const char*, const char*, int)
+typedef rocketnet_log_function_t typedef void(*rocketnet_log_function_t)(void*, enum rocketnet_log_level_t, const char*, size_t)
+fieldtype rocketnet_client_stats_t packets_sent uint64_t
+fieldtype rocketnet_client_stats_t packets_received uint64_t
+fieldtype rocketnet_client_stats_t bytes_sent uint64_t
+fieldtype rocketnet_client_stats_t bytes_received uint64_t
+fieldtype rocketnet_client_stats_t payloads_received uint64_t
+fieldtype rocketnet_client_stats_t messages_resent uint64_t
+fieldtype rocketnet_client_stats_t messages_duplicated uint64_t
+fieldtype rocketnet_client_stats_t receipts_acked uint64_t
+fieldtype rocketnet_client_stats_t receipts_lost uint64_t
+fieldtype rocketnet_client_stats_t receipts_dropped uint64_t
+fieldtype rocketnet_client_stats_t messages_dropped_over_budget uint64_t
+fieldtype rocketnet_client_stats_t messages_dropped_not_connected uint64_t
+fieldtype rocketnet_client_stats_t api_misuses uint64_t
+fieldtype rocketnet_client_stats_t thread_priority_refusals uint64_t
+fieldtype rocketnet_client_stats_t rtt_ms double
+fieldtype rocketnet_client_stats_t jitter_ms double
+fieldtype rocketnet_client_stats_t packet_loss_percent double
+fieldtype rocketnet_client_stats_t packets_sent_per_second double
+fieldtype rocketnet_client_stats_t packets_received_per_second double
+fieldtype rocketnet_client_stats_t bandwidth_sent_kbps double
+fieldtype rocketnet_client_stats_t bandwidth_received_kbps double
+fieldtype rocketnet_server_stats_t packets_sent uint64_t
+fieldtype rocketnet_server_stats_t packets_received uint64_t
+fieldtype rocketnet_server_stats_t bytes_sent uint64_t
+fieldtype rocketnet_server_stats_t bytes_received uint64_t
+fieldtype rocketnet_server_stats_t connections_accepted uint64_t
+fieldtype rocketnet_server_stats_t connections_denied_full uint64_t
+fieldtype rocketnet_server_stats_t handshakes_dropped_over_budget uint64_t
+fieldtype rocketnet_server_stats_t payloads_received uint64_t
+fieldtype rocketnet_server_stats_t messages_resent uint64_t
+fieldtype rocketnet_server_stats_t messages_duplicated uint64_t
+fieldtype rocketnet_server_stats_t receipts_acked uint64_t
+fieldtype rocketnet_server_stats_t receipts_lost uint64_t
+fieldtype rocketnet_server_stats_t receipts_dropped uint64_t
+fieldtype rocketnet_server_stats_t messages_dropped_over_budget uint64_t
+fieldtype rocketnet_server_stats_t messages_dropped_not_connected uint64_t
+fieldtype rocketnet_server_stats_t api_misuses uint64_t
+fieldtype rocketnet_server_stats_t thread_priority_refusals uint64_t
+fieldtype rocketnet_server_stats_t packets_sent_per_second double
+fieldtype rocketnet_server_stats_t packets_received_per_second double
+fieldtype rocketnet_server_stats_t bandwidth_sent_kbps double
+fieldtype rocketnet_server_stats_t bandwidth_received_kbps double
+fieldtype rocketnet_server_client_stats_t packets_sent uint64_t
+fieldtype rocketnet_server_client_stats_t packets_received uint64_t
+fieldtype rocketnet_server_client_stats_t bytes_sent uint64_t
+fieldtype rocketnet_server_client_stats_t bytes_received uint64_t
+fieldtype rocketnet_server_client_stats_t rtt_ms double
+fieldtype rocketnet_server_client_stats_t jitter_ms double
+fieldtype rocketnet_server_client_stats_t packet_loss_percent double
+fieldtype rocketnet_server_client_stats_t bandwidth_sent_kbps double
+fieldtype rocketnet_server_client_stats_t bandwidth_received_kbps double
+fieldtype rocketnet_server_client_stats_t bandwidth_acked_kbps double
+fieldtype rocketnet_conditions_t seconds_since_heard double
+fieldtype rocketnet_conditions_t seconds_since_progress double
+fieldtype rocketnet_conditions_t reliable_in_flight uint64_t
+fieldtype rocketnet_conditions_t send_refused uint64_t
+fieldtype rocketnet_client_config_t config_bytes size_t
+fieldtype rocketnet_client_config_t transport const char*
+fieldtype rocketnet_client_config_t state_change_callback void(*)(void*context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state)
+fieldtype rocketnet_client_config_t packet_filter uint8_t[ROCKETNET_PACKET_FILTER_BYTES]
+fieldtype rocketnet_client_config_t send_kbps int
+fieldtype rocketnet_client_config_t num_channels int
+fieldtype rocketnet_client_config_t reliable_messages_in_flight int
+fieldtype rocketnet_client_config_t receive_message_buffer_bytes int
+fieldtype rocketnet_client_config_t max_message_bytes int
+fieldtype rocketnet_client_config_t send_message_buffer_bytes int
+fieldtype rocketnet_client_config_t send_queue_messages int
+fieldtype rocketnet_client_config_t packets_in_flight int
+fieldtype rocketnet_client_config_t packets_per_update int
+fieldtype rocketnet_client_config_t unreliable_messages_per_update int
+fieldtype rocketnet_client_config_t sequenced_messages_held int
+fieldtype rocketnet_client_config_t max_message_receipts int
+fieldtype rocketnet_client_config_t message_resend_delay_initial_ms int
+fieldtype rocketnet_client_config_t message_resend_delay_min_ms int
+fieldtype rocketnet_client_config_t message_resend_delay_max_ms int
+fieldtype rocketnet_client_config_t reliable_message_timeout_ms int
+fieldtype rocketnet_client_config_t loopback_hub struct rocketnet_loopback_hub_t*
+fieldtype rocketnet_client_config_t time_callback double(*)(void*context)
+fieldtype rocketnet_client_config_t step_driven bool
+fieldtype rocketnet_client_config_t token_epoch_unix_seconds uint64_t
+fieldtype rocketnet_server_config_t config_bytes size_t
+fieldtype rocketnet_server_config_t protocol_id uint64_t
+fieldtype rocketnet_server_config_t max_clients int
+fieldtype rocketnet_server_config_t packet_filter uint8_t[ROCKETNET_PACKET_FILTER_BYTES]
+fieldtype rocketnet_server_config_t backend_public_key uint8_t[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES]
+fieldtype rocketnet_server_config_t num_xdp_queues int
+fieldtype rocketnet_server_config_t num_os_cpus int
+fieldtype rocketnet_server_config_t max_timeout_seconds int
+fieldtype rocketnet_server_config_t handshake_deadline_seconds int
+fieldtype rocketnet_server_config_t transport const char*
+fieldtype rocketnet_server_config_t per_client_send_kbps int
+fieldtype rocketnet_server_config_t num_channels int
+fieldtype rocketnet_server_config_t reliable_messages_in_flight int
+fieldtype rocketnet_server_config_t receive_message_buffer_bytes int
+fieldtype rocketnet_server_config_t max_message_bytes int
+fieldtype rocketnet_server_config_t send_message_buffer_bytes int
+fieldtype rocketnet_server_config_t send_queue_messages int
+fieldtype rocketnet_server_config_t packets_in_flight int
+fieldtype rocketnet_server_config_t packets_per_update int
+fieldtype rocketnet_server_config_t unreliable_messages_per_update int
+fieldtype rocketnet_server_config_t sequenced_messages_held int
+fieldtype rocketnet_server_config_t max_message_receipts int
+fieldtype rocketnet_server_config_t message_resend_delay_initial_ms int
+fieldtype rocketnet_server_config_t message_resend_delay_min_ms int
+fieldtype rocketnet_server_config_t message_resend_delay_max_ms int
+fieldtype rocketnet_server_config_t reliable_message_timeout_ms int
+fieldtype rocketnet_server_config_t disconnect_packets_per_update int
+fieldtype rocketnet_server_config_t handshakes_per_update int
+fieldtype rocketnet_server_config_t loopback_hub struct rocketnet_loopback_hub_t*
+fieldtype rocketnet_server_config_t server_secret_key uint8_t[ROCKETNET_SERVER_SECRET_KEY_BYTES]
+fieldtype rocketnet_server_config_t token_epoch_unix_seconds uint64_t
+fieldtype rocketnet_receipt_t serial uint32_t
+fieldtype rocketnet_receipt_t status enum rocketnet_receipt_status_t
+fieldtype rocketnet_connect_token_config_t config_bytes size_t
+fieldtype rocketnet_connect_token_config_t backend_secret_key uint8_t[ROCKETNET_BACKEND_SECRET_KEY_BYTES]
+fieldtype rocketnet_connect_token_config_t server_address_ipv4 const char*
+fieldtype rocketnet_connect_token_config_t server_address_ipv6 const char*
+fieldtype rocketnet_connect_token_config_t server_public_key uint8_t[ROCKETNET_SERVER_PUBLIC_KEY_BYTES]
+fieldtype rocketnet_connect_token_config_t client_id uint64_t
+fieldtype rocketnet_connect_token_config_t protocol_id uint64_t
+fieldtype rocketnet_connect_token_config_t user_data uint8_t[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES]
+fieldtype rocketnet_connect_token_config_t expire_seconds int
+fieldtype rocketnet_connect_token_config_t timeout_seconds int
+fieldtype rocketnet_connect_token_config_t unix_timestamp uint64_t
+fieldtype rocketnet_message_batch_t num_messages int
+fieldtype rocketnet_message_batch_t client_index int[ROCKETNET_RECEIVE_BATCH_MESSAGES]
+fieldtype rocketnet_message_batch_t channel int[ROCKETNET_RECEIVE_BATCH_MESSAGES]
+fieldtype rocketnet_message_batch_t reliability enum rocketnet_reliability_t[ROCKETNET_RECEIVE_BATCH_MESSAGES]
+fieldtype rocketnet_message_batch_t bytes int[ROCKETNET_RECEIVE_BATCH_MESSAGES]
+fieldtype rocketnet_message_batch_t data const uint8_t*[ROCKETNET_RECEIVE_BATCH_MESSAGES]
+macro ROCKETNET_DEV_BACKEND_PUBLIC_KEY { 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, 0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+macro ROCKETNET_DEV_BACKEND_SECRET_KEY { 0x75, 0x29, 0x02, 0x15, 0xe1, 0xff, 0x4d, 0xf2, 0x09, 0x92, 0x57, 0x8a, 0x22, 0x3c, 0x7c, 0xd4, 0x63, 0xb9, 0xa2, 0x7c, 0xf8, 0x3a, 0xa7, 0x1c, 0x7a, 0x16, 0x93, 0x1c, 0x01, 0x9b, 0x7c, 0x30, 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, 0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+macro ROCKETNET_DEV_SERVER_PUBLIC_KEY { 0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57, 0x70, 0xcb, 0x71, 0x47, 0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c, 0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c }
+macro ROCKETNET_DEV_SERVER_SECRET_KEY { 0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde, 0x31, 0x18, 0xd8, 0x39, 0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70, 0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97 }
 pointer 8
 struct rocketnet_client_stats_t 168
 field rocketnet_client_stats_t packets_sent 0 8
@@ -219,3 +442,103 @@ field rocketnet_message_batch_t channel 262148 262144
 field rocketnet_message_batch_t reliability 524292 262144
 field rocketnet_message_batch_t bytes 786436 262144
 field rocketnet_message_batch_t data 1048584 524288
+enum rocketnet_address_type_t ROCKETNET_ADDRESS_NONE 0
+enum rocketnet_address_type_t ROCKETNET_ADDRESS_IPV4 1
+enum rocketnet_address_type_t ROCKETNET_ADDRESS_IPV6 2
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED -13
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED -12
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH -11
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION -10
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT -9
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED -8
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED -7
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN -6
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT -5
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT -4
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT -3
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT -2
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECTION_DENIED -1
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_DISCONNECTED 0
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE 1
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST 2
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE 3
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONNECTED 4
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_NONE 0
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH -1
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION -2
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT -3
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED -4
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED -5
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED -6
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_TIMED_OUT -7
+enum rocketnet_disconnect_reason_t ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED -8
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_NONE 0
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_ERROR 1
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_WARN 2
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_INFO 3
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_DEBUG 4
+enum rocketnet_log_level_t ROCKETNET_LOG_LEVEL_SPAM 5
+enum rocketnet_receipt_status_t ROCKETNET_RECEIPT_STATUS_LOSS -1
+enum rocketnet_receipt_status_t ROCKETNET_RECEIPT_STATUS_NONE 0
+enum rocketnet_receipt_status_t ROCKETNET_RECEIPT_STATUS_ACKED 1
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_UNRELIABLE 0
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED 1
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_RELIABLE 2
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_RELIABLE_ORDERED 3
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED 4
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT 5
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT 6
+enum rocketnet_reliability_t ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT 7
+enum rocketnet_status_t ROCKETNET_STATUS_OK 0
+enum rocketnet_status_t ROCKETNET_STATUS_ALREADY_INITIALIZED -1
+enum rocketnet_status_t ROCKETNET_STATUS_NOT_INITIALIZED -2
+enum rocketnet_status_t ROCKETNET_STATUS_LIVE_ALLOCATIONS -3
+enum rocketnet_status_t ROCKETNET_STATUS_PLATFORM_INIT_FAILED -4
+enum rocketnet_status_t ROCKETNET_STATUS_CRYPTO_INIT_FAILED -5
+enum rocketnet_status_t ROCKETNET_STATUS_INVALID_ARGUMENT -6
+enum rocketnet_status_t ROCKETNET_STATUS_CONFIG_ENV_INVALID -7
+enum rocketnet_status_t ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE -8
+enum rocketnet_status_t ROCKETNET_STATUS_MISSING_KEYS -10
+enum rocketnet_status_t ROCKETNET_STATUS_INVALID_PROTOCOL_ID -11
+enum rocketnet_status_t ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION -12
+enum rocketnet_status_t ROCKETNET_STATUS_INVALID_ADDRESS -13
+enum rocketnet_status_t ROCKETNET_STATUS_INVALID_TRANSPORT_LIST -14
+enum rocketnet_status_t ROCKETNET_STATUS_INVALID_CONNECT_TOKEN -15
+enum rocketnet_status_t ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED -16
+enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED -17
+enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED -18
+enum rocketnet_status_t ROCKETNET_STATUS_OUT_OF_MEMORY -19
+enum rocketnet_status_t ROCKETNET_STATUS_MUTEX_CREATE_FAILED -20
+enum rocketnet_status_t ROCKETNET_STATUS_THREAD_CREATE_FAILED -21
+enum rocketnet_status_t ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED -23
+enum rocketnet_status_t ROCKETNET_STATUS_SERVER_NOT_STOPPED -24
+enum rocketnet_status_t ROCKETNET_STATUS_FLOW_ID_RESERVED -25
+enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED -26
+enum rocketnet_status_t ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED -27
+enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_NOT_BUILT -28
+enum rocketnet_status_t ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION -29
+enum rocketnet_status_t ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION -30
+enum rocketnet_status_t ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO -31
+enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISSING -32
+enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH -33
+enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE -34
+macro ROCKETNET_ALLOCATION_ALIGNMENT 64
+macro ROCKETNET_BACKEND_PUBLIC_KEY_BYTES 32
+macro ROCKETNET_BACKEND_SECRET_KEY_BYTES 64
+macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 256
+macro ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS 1000
+macro ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS 10000
+macro ROCKETNET_FLOW_ID_BIT 9223372036854775808
+macro ROCKETNET_MAX_ADDRESS_STRING_BYTES 256
+macro ROCKETNET_MAX_CHANNELS 32
+macro ROCKETNET_MAX_CLIENTS 1000
+macro ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES 1025
+macro ROCKETNET_MAX_MESSAGE_BYTES 1048576
+macro ROCKETNET_MAX_PACKET_BYTES 1452
+macro ROCKETNET_MAX_PACKET_PAYLOAD_BYTES 1416
+macro ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES 1411
+macro ROCKETNET_PACKET_FILTER_BYTES 4
+macro ROCKETNET_RECEIVE_BATCH_MESSAGES 65536
+macro ROCKETNET_SEND_KBPS_UNLIMITED 2147483647
+macro ROCKETNET_SERVER_PUBLIC_KEY_BYTES 32
+macro ROCKETNET_SERVER_SECRET_KEY_BYTES 32

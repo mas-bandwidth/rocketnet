@@ -37,9 +37,40 @@ and the jobs of the newest completed one. It is red on:
               date is more than ROW_MAX_AGE_DAYS old while the job is still red
               (re-confirm the cause and owner, or fix it), or its workflow is
               not scheduled.
-  API-ERROR   a GET failed three times (each try waits a little longer). The
-              failure is counted and the listing continues.
+  API-ERROR   could not read run state: a GET failed, printed as
+                API-ERROR could not read run state: GET <url>: <why>
+              A transient failure (HTTP 5xx, 429, a rate-limit 403, a failure
+              before any status) is tried TRIES times, BACKOFF seconds apart or
+              as long as GitHub asks (up to MAX_WAIT); any other status is not
+              retried. After a request runs out of tries, later requests get
+              one try each until one is answered. The failure is counted, the
+              listing continues, and the watch exits 1: an unreadable API is
+              never a pass.
+  NO-MEASUREMENT
+              a job that may decline to measure (below) declined again
+              tonight and none of its last MEASURE_NIGHTS (7) scheduled runs
+              measured.
+  REPORT-FAIL a report-only job (job env `ROCKETNET_REPORT_ONLY: <why>`) exited 0
+              on a failed verdict and said so with a
+              `::warning title=REPORT-ONLY-FAIL::<verdict line>` annotation; owned
+              by a disposition row like any red job.
   BAD-ROW     a disposition row that does not parse (exit 2).
+
+A job that may end without its measurement (a load gate that voids or
+discards, a report-only leg) declares it in its job env:
+`ROCKETNET_MAY_NOT_MEASURE: <why>`, and on such a night prints
+`::warning title=UNMEASURED::<why tonight>`, which GitHub keeps as a check-run
+annotation. The watch derives the list from the files and, for each such job,
+prints
+  MEASURED <workflow> :: <job>: measured k of the last n scheduled nights ...
+and when tonight carries the annotation:
+  UNMEASURED  never counted green, and not red by itself (the summary heading
+              says UNMEASURED and the run carries a warning), or
+  NO-MEASUREMENT (red) when k is 0 over a full window of 7.
+A night measured means the job concluded success or failure without the
+annotation. Seven: low-tick load measured 3 of its last 10 nights; on a host
+that is merely busy seven unmeasured nights in a row is about 0.7^7 = 8% of
+weeks, and a host never quiet enough goes red within the week.
 
 A run still going and younger than its next firing plus GRACE is reported as
 RUNNING and the newest completed run stands for the workflow (that run itself
@@ -70,6 +101,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -84,17 +116,42 @@ GRACE = datetime.timedelta(hours=3)
 # fix to land and short enough that a forgotten row surfaces before it hides a
 # second cause behind the same job name.
 ROW_MAX_AGE_DAYS = 14
-TRIES = 3
+# A job that may decline to measure (job env ROCKETNET_MAY_NOT_MEASURE: <why>; it then emits a
+# `::warning title=UNMEASURED::<why tonight>` annotation) goes red when none of its last
+# MEASURE_NIGHTS scheduled runs measured. Seven nights is one week: low-tick load measured on 3 of
+# its last 10 nights (2026-11-12), so on a merely busy host seven unmeasured nights in a row come
+# about 0.7^7 = 8% of weeks, while a host that is never quiet enough goes red within one week.
+MEASURE_NIGHTS = 7
+UNMEASURED_TITLE = "UNMEASURED"
+MAY_NOT_MEASURE = "ROCKETNET_MAY_NOT_MEASURE"
+# A report-only job (job env ROCKETNET_REPORT_ONLY: <why>, where the design states it) exits 0 on a
+# failed verdict and prints `::warning title=REPORT-ONLY-FAIL::<verdict line>`; the watch lists that
+# night red (REPORT-FAIL, ownable by a disposition row like any red job).
+REPORT_ONLY = "ROCKETNET_REPORT_ONLY"
+REPORT_FAIL_TITLE = "REPORT-ONLY-FAIL"
+# A transient GitHub failure (5xx, a rate limit, a dropped connection) is tried four
+# times, 5 + 10 + 20 s apart; a wait GitHub names (Retry-After, X-RateLimit-Reset) is
+# honoured up to MAX_WAIT. The job's 15-minute deadline bounds the rest.
+TRIES = 4
+BACKOFF = (5, 10, 20)
+MAX_WAIT = 120
 WATCH_FILE = "nightly-watch.yml"
 DISPOSITIONS = os.path.join("tools", "nightly_dispositions.txt")
 
 UTC = datetime.timezone.utc
 
 
+def api_base():
+    """The REST API root: GITHUB_API_URL as the runner sets it, else github.com's."""
+    return os.environ.get("GITHUB_API_URL") or API
+
+
 class ApiError(Exception):
-    def __init__(self, url):
-        super().__init__(url)
+    def __init__(self, url, why="failed", status=None):
+        super().__init__(f"{url}: {why}")
         self.url = url
+        self.why = why
+        self.status = status
 
 
 # ---------------------------------------------------------------- cron
@@ -232,6 +289,24 @@ def git_since(root, name):
     return parse_time(out)
 
 
+def may_not_measure(root, name, key=MAY_NOT_MEASURE):
+    """[(display-name regex, why)] for the jobs of one workflow that declare, in their job env,
+    <key>: <why>: ROCKETNET_MAY_NOT_MEASURE (a job that can end without its measurement: a load
+    gate, a report-only leg that voids) or ROCKETNET_REPORT_ONLY (a job whose failed verdict exits
+    0). Derived from the file, never hand-listed here."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import workflow_jobs  # noqa: E402 -- the repository's own workflow reader
+    flow = workflow_jobs.Workflow(os.path.join(root, ".github", "workflows", name))
+    found = []
+    for job in flow.jobs:
+        body = (flow.data.get("jobs") or {}).get(job.id) or {}
+        env = body.get("env") if isinstance(body, dict) else None
+        why = env.get(key) if isinstance(env, dict) else None
+        if why:
+            found.append((job.pattern(), str(why)))
+    return found
+
+
 def parse_time(text):
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
@@ -244,32 +319,122 @@ def parse_time(text):
 def http_fetch(url):
     request = urllib.request.Request(url)
     request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("Authorization", "Bearer " + os.environ["GITHUB_TOKEN"])
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        request.add_header("Authorization", "Bearer " + token)
     request.add_header("X-GitHub-Api-Version", "2022-11-28")
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)
 
 
+def replay_fetch(file):
+    """A fetch that answers from a recorded API: a JSON object mapping each request path
+    (/repos/<repo>/...) to its response body; a path it lacks answers HTTP 404 (for a run
+    list: no runs). Used by the planted-violations rows (tools/nightly_replay.py writes one);
+    the nightly run never passes --replay."""
+    with open(file, encoding="utf-8") as f:
+        recorded = json.load(f)
+
+    def fetch(url):
+        path = urllib.parse.urlparse(url).path
+        if path not in recorded:
+            raise urllib.error.HTTPError(url, 404, "Not Found (not in the replay)", {}, None)
+        return recorded[path]
+    return fetch
+
+
+def _header(error, name):
+    headers = getattr(error, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get(name)
+    return None if value is None else str(value)
+
+
+def retry_after(error, now_epoch):
+    """Seconds GitHub asked the client to wait (Retry-After, or X-RateLimit-Reset when the
+    remaining count is 0), or None when it named none."""
+    value = _header(error, "Retry-After")
+    if value is not None and value.strip().isdigit():
+        return int(value.strip())
+    if _header(error, "X-RateLimit-Remaining") == "0":
+        reset = _header(error, "X-RateLimit-Reset")
+        if reset is not None and reset.strip().isdigit():
+            return max(0, int(reset.strip()) - int(now_epoch))
+    return None
+
+
+def transient(error):
+    """True for a failure a later try can fix: HTTP 5xx, 429, a 403 that is a rate limit
+    (GitHub's primary limit says X-RateLimit-Remaining: 0; its secondary limit sends
+    Retry-After), and a failure before any HTTP status (connection refused or reset, DNS,
+    timeout, a truncated or non-JSON body). Any other HTTP status (401, 404, 422, ...) is not
+    transient: trying again reads the same answer."""
+    if isinstance(error, urllib.error.HTTPError):
+        code = error.code
+        if code >= 500 or code == 429:
+            return True
+        if code == 403:
+            return (_header(error, "X-RateLimit-Remaining") == "0"
+                    or _header(error, "Retry-After") is not None)
+        return False
+    return isinstance(error, (OSError, ValueError))
+
+
+def describe(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    return f"{type(error).__name__}: {error}"
+
+
 class Api:
-    def __init__(self, fetch, sleep):
+    """GETs with bounded retries. A transient failure is tried TRIES times in all, waiting
+    BACKOFF[i] seconds (or what GitHub asked, up to MAX_WAIT) between tries; any other failure
+    is not retried. While the API is down (the last request ran out of tries on a transient
+    failure) a request is tried once, so an API that stays down costs one backoff, not one per
+    request; the first answer clears it."""
+
+    def __init__(self, fetch, sleep, clock=time.time):
         self.fetch = fetch
         self.sleep = sleep
+        self.clock = clock
+        self.down = False
 
     def get(self, path, params=None):
-        url = API + path
+        url = api_base() + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        for attempt in range(TRIES):
+        tries = 1 if self.down else TRIES
+        for attempt in range(tries):
             try:
-                return self.fetch(url)
-            except Exception:  # noqa: BLE001 -- any failure of a GET is retried, then reported
-                if attempt + 1 < TRIES:
-                    self.sleep(5 * (attempt + 1))
-        raise ApiError(url)
+                answer = self.fetch(url)
+            except Exception as error:  # noqa: BLE001 -- every failure is classified and reported
+                if not transient(error):
+                    raise ApiError(url, f"{describe(error)}, not retried",
+                                   status=getattr(error, "code", None)) from error
+                if attempt + 1 < tries:
+                    asked = retry_after(error, self.clock())
+                    wait = BACKOFF[attempt] if asked is None else min(max(asked, BACKOFF[attempt]), MAX_WAIT)
+                    self.sleep(wait)
+                    continue
+                self.down = True
+                what = f"{tries} tries" if tries > 1 else "1 try (the API was down for the request before)"
+                raise ApiError(url, f"{describe(error)} after {what}") from error
+            self.down = False
+            return answer
+        raise AssertionError("unreachable")
 
     def scheduled_runs(self, repo, workflow, count):
-        data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
-                        {"event": "schedule", "branch": "main", "per_page": count})
+        try:
+            data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
+                            {"event": "schedule", "branch": "main", "per_page": count})
+        except ApiError as error:
+            # GitHub knows no workflow at that path until the file has been on the default
+            # branch (or run somewhere): it has no runs, and the watch's NO-RUN / PENDING
+            # rule, from the file's age on main, gives the verdict
+            if error.status == 404:
+                return []
+            raise
         return data.get("workflow_runs", [])
 
     def run_jobs(self, repo, run_id):
@@ -338,9 +503,12 @@ class Watch:
         self.out = out
         self.where = dispositions_name
         self.count = {"NEW-RED": 0, "NO-VERDICT": 0, "STALE": 0, "API-ERROR": 0,
-                      "OWNED": 0, "GREEN": 0, "RUNNING": 0, "PENDING": 0}
+                      "OWNED": 0, "GREEN": 0, "RUNNING": 0, "PENDING": 0,
+                      "UNMEASURED": 0, "NO-MEASUREMENT": 0, "REPORT-FAIL": 0}
         self.evaluated = set()
         self.scheduled = set()
+        self.jobs_cache = {}
+        self.notes_cache = {}
 
     def say(self, text):
         print(text, file=self.out)
@@ -353,7 +521,7 @@ class Watch:
         self.red("NO-VERDICT", f"{workflow} :: {what} {why}")
 
     def api_error(self, error):
-        self.red("API-ERROR", error.url)
+        self.red("API-ERROR", f"could not read run state: GET {error.url}: {error.why}")
 
     def owner_of(self, workflow, job_name, skip=None):
         for row in self.rows:
@@ -384,7 +552,7 @@ class Watch:
         self.count["OWNED"] += 1
         self.say(f"OWNED {workflow} :: {job_name} ({what}) by {row['owner']} since {row['date']}: {row['cause']}")
 
-    def watch(self, workflow, crons, since):
+    def watch(self, workflow, crons, since, gated=None, report_only=None):
         self.scheduled.add(workflow)
         start = self.flagged()
         if not crons:
@@ -462,10 +630,34 @@ class Watch:
             self.no_verdict(workflow, f"(run {verdict['id']})", f"every one of its {len(jobs)} jobs was skipped")
             return
 
+        self.jobs_cache[verdict["id"]] = jobs
         earlier = None
         for job in jobs:
             conclusion = job.get("conclusion")
             name = job["name"]
+            reason = next((why for regex, why in (gated or []) if re.fullmatch(regex, name)), None)
+            if reason is not None and conclusion != "skipped":
+                try:
+                    if self.gated(workflow, job, completed, reason):
+                        continue
+                except ApiError as error:
+                    self.api_error(error)
+                    continue
+            report = next((why for regex, why in (report_only or []) if re.fullmatch(regex, name)), None)
+            if report is not None and conclusion == "success":
+                try:
+                    failed = self.note(job, REPORT_FAIL_TITLE)
+                except ApiError as error:
+                    self.api_error(error)
+                    continue
+                if failed is not None:
+                    row = self.owner_of(workflow, name, skip=False)
+                    if row is not None:
+                        self.check_owner(row, workflow, name, f"report-only FAIL: {failed}")
+                    else:
+                        self.red("REPORT-FAIL", f"{workflow} :: {name}: {failed} (report-only, so the job "
+                                 f"exited 0: {report}); no disposition in {self.where}")
+                continue
             if conclusion == "success":
                 continue
             if conclusion == "skipped":
@@ -479,7 +671,7 @@ class Watch:
                     earlier = []
                     for run in completed[1:]:
                         try:
-                            earlier.append((run, self.api.run_jobs(self.repo, run["id"])))
+                            earlier.append((run, self.jobs_of(run["id"])))
                         except ApiError as error:
                             self.api_error(error)
                 good = next((run["head_sha"] for run, run_jobs in earlier
@@ -514,7 +706,61 @@ class Watch:
             self.count["GREEN"] += 1
 
     def flagged(self):
-        return sum(self.count[k] for k in ("NEW-RED", "NO-VERDICT", "STALE", "OWNED", "API-ERROR"))
+        return sum(self.count[k] for k in ("NEW-RED", "NO-VERDICT", "STALE", "OWNED", "API-ERROR",
+                                           "UNMEASURED", "NO-MEASUREMENT", "REPORT-FAIL"))
+
+    # ------------------------------------------------ jobs that may decline to measure
+
+    def jobs_of(self, run_id):
+        if run_id not in self.jobs_cache:
+            self.jobs_cache[run_id] = self.api.run_jobs(self.repo, run_id)
+        return self.jobs_cache[run_id]
+
+    def note(self, job, title):
+        """The message of the job's annotation titled `title`, or None when it has none."""
+        if job["id"] not in self.notes_cache:
+            notes = self.api.get(f"/repos/{self.repo}/check-runs/{job['id']}/annotations", {"per_page": 100})
+            self.notes_cache[job["id"]] = notes if isinstance(notes, list) else []
+        for note in self.notes_cache[job["id"]]:
+            if note.get("title") == title:
+                return str(note.get("message", "")).strip() or "(no message)"
+        return None
+
+    def unmeasured_note(self, job):
+        """The job's UNMEASURED annotation message, or None when it has none."""
+        return self.note(job, UNMEASURED_TITLE)
+
+    def measured(self, job):
+        """True when the job concluded with a verdict and declared no UNMEASURED."""
+        if job.get("conclusion") not in ("success", "failure"):
+            return False
+        return self.unmeasured_note(job) is None
+
+    def gated(self, workflow, job, completed, reason):
+        """A job that declares ROCKETNET_MAY_NOT_MEASURE: print how many of its last MEASURE_NIGHTS
+        scheduled runs measured. Returns True when tonight it declined to measure (an UNMEASURED
+        outcome, never green; NO-MEASUREMENT, red, when none of the last MEASURE_NIGHTS measured)."""
+        name = job["name"]
+        tonight = self.unmeasured_note(job)
+        nights = completed[:MEASURE_NIGHTS]
+        measured = 0
+        for index, run in enumerate(nights):
+            if index == 0:
+                ok = tonight is None and job.get("conclusion") in ("success", "failure")
+            else:
+                same = [j for j in self.jobs_of(run["id"]) if j["name"] == name]
+                ok = bool(same) and self.measured(same[0])
+            measured += 1 if ok else 0
+        history = f"measured {measured} of the last {len(nights)} scheduled nights (window {MEASURE_NIGHTS})"
+        self.say(f"MEASURED {workflow} :: {name}: {history}; may not measure because: {reason}")
+        if tonight is None:
+            return False
+        if measured == 0 and len(nights) >= MEASURE_NIGHTS:
+            self.red("NO-MEASUREMENT", f"{workflow} :: {name}: no measurement in {MEASURE_NIGHTS} nights; "
+                     f"tonight: {tonight}")
+        else:
+            self.red("UNMEASURED", f"{workflow} :: {name}: {tonight}; {history}")
+        return True
 
     def finish_rows(self):
         for row in self.rows:
@@ -537,7 +783,11 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     parser.add_argument("--root", default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     parser.add_argument("--dispositions", default=None)
     parser.add_argument("--list", action="store_true", help="print the scheduled workflows the watch reads")
+    parser.add_argument("--replay", default=None,
+                        help="answer from a recorded API (tools/nightly_replay.py) instead of GitHub")
     args = parser.parse_args(argv)
+    if args.replay and fetch is None:
+        fetch = replay_fetch(args.replay)
 
     workflows = scheduled_workflows(args.root)
     if not workflows:
@@ -554,20 +804,35 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     rows = read_dispositions(dispositions, now.date(), out)
     if rows is None:
         return 2
-    api = Api(fetch or http_fetch, sleep or time.sleep)
+    # the watch's own "now" is the clock a rate-limit reset is measured against
+    api = Api(fetch or http_fetch, sleep or time.sleep, clock=now.timestamp)
     repo = os.environ.get("GITHUB_REPOSITORY", "mas-bandwidth/rocketnet")
     watch = Watch(api, repo, rows, now, out, DISPOSITIONS)
     for name, crons in workflows:
-        watch.watch(name, crons, since(name))
+        try:
+            gated = may_not_measure(args.root, name)
+            report_only = may_not_measure(args.root, name, REPORT_ONLY)
+        except Exception as error:  # noqa: BLE001 -- a workflow the reader cannot read is red, never skipped
+            watch.no_verdict(name, "(file)", f"cannot read its jobs for {MAY_NOT_MEASURE}: {error}")
+            gated, report_only = [], []
+        watch.watch(name, crons, since(name), gated, report_only)
     watch.finish_rows()
 
     c = watch.count
-    failures = c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"]
+    failures = (c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"] + c["NO-MEASUREMENT"]
+                + c["REPORT-FAIL"])
     print(f"nightly watch: {len(workflows)} scheduled workflows, {c['GREEN']} green, {c['OWNED']} owned, "
           f"{c['RUNNING']} running, {c['PENDING']} pending; NEW-RED {c['NEW-RED']}, "
-          f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}", file=out)
-    print(f"nightly watch: {'RED' if failures else 'green'}: {failures} unowned, no-verdict, stale or api-error",
+          f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}, "
+          f"UNMEASURED {c['UNMEASURED']}, NO-MEASUREMENT {c['NO-MEASUREMENT']}, REPORT-FAIL {c['REPORT-FAIL']}",
           file=out)
+    # an unmeasured night is its own outcome: never reported as green, red only after MEASURE_NIGHTS
+    status = "RED" if failures else ("UNMEASURED" if c["UNMEASURED"] else "green")
+    print(f"nightly watch: {status}: {failures} unowned, no-verdict, stale, api-error, "
+          f"no-measurement or report-fail; {c['UNMEASURED']} unmeasured tonight (not green, not yet red)", file=out)
+    if c["API-ERROR"]:
+        print(f"nightly watch: RED: could not read run state for {c['API-ERROR']} request(s); "
+              "what those requests cover has no verdict tonight", file=out)
     return 1 if failures else 0
 
 

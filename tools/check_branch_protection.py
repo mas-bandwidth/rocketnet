@@ -97,6 +97,14 @@ jobs:
   pr:
     if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/')
     name: wire changes
+  shards:
+    name: ${{ matrix.leg }}${{ matrix.shard && format(' ({0})', matrix.shard) || '' }}
+    strategy:
+      matrix:
+        leg: [functional]
+        include:
+          - { leg: unit, shard: '0/2' }
+          - { leg: unit, shard: '1/2' }
 """
 
 FILTERED = """\
@@ -118,8 +126,11 @@ def ruleset(names, strict=True, integration=ACTIONS_APP):
             "required_status_checks": [{"context": n, "integration_id": integration} for n in names]}}]})
 
 
-GOOD = ["linux / unit", "macos / unit", "wire changes"]
+GOOD = ["linux / unit", "macos / unit", "wire changes", "functional", "unit (0/2)", "unit (1/2)"]
 BAD = [
+    ("the unsharded name of a sharded leg", ruleset(GOOD[:4] + ["unit"])),
+    ("one shard left out", ruleset(GOOD[:5])),
+    ("a shard term printed on a row without the key", ruleset(GOOD + ["functional ()"])),
     ("a per-commit job left out", ruleset(GOOD[:2])),
     ("a name no job produces", ruleset(GOOD + ["windows / unit"])),
     ("a nightly-only job required", ruleset(GOOD + ["nightly only"])),

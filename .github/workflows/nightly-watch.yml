@@ -7,6 +7,14 @@
 # cancelled, timed out, could not start, ran no job or skipped every job, or a
 # job that did not succeed), STALE (a row that is wrong now or older than 14
 # days with its job still red) and API-ERROR (a GET that failed three times).
+# A job that declares ROCKETNET_MAY_NOT_MEASURE in its env (a load gate, a
+# report-only leg that voids) and annotates `UNMEASURED` on a night it did not
+# measure is never counted green: that night is UNMEASURED (named in the
+# summary and as a warning, the run not failed), and NO-MEASUREMENT, red, when
+# none of its last 7 scheduled runs measured. Every such job prints
+# "MEASURED ... measured k of the last n scheduled nights". A job that declares
+# ROCKETNET_REPORT_ONLY exits 0 on a failed verdict and annotates
+# `REPORT-ONLY-FAIL`; the watch lists that night red (REPORT-FAIL).
 #
 # Telling: the last step writes the red lines first into the job summary and
 # fails this run, so GitHub's notification of a failed scheduled run reaches
@@ -85,10 +93,13 @@ jobs:
             printf '## nightly watch: RED\n\nThe watch did not run (no output; step status %s).\n' "$status" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          grep -E '^(NEW-RED|NO-VERDICT|STALE|API-ERROR|BAD-ROW|NO-WORKFLOWS)' nightly-watch.log > "$tmp/red.txt" || [ $? -eq 1 ]
+          grep -E '^(NEW-RED|NO-VERDICT|STALE|API-ERROR|BAD-ROW|NO-WORKFLOWS|NO-MEASUREMENT|REPORT-FAIL|UNMEASURED)' nightly-watch.log > "$tmp/red.txt" || [ $? -eq 1 ]
           grep -E '^nightly watch: ' nightly-watch.log > "$tmp/counts.txt" || [ $? -eq 1 ]
+          grep -E '^UNMEASURED ' nightly-watch.log > "$tmp/unmeasured.txt" || [ $? -eq 1 ]
           {
-            if [ "$status" = "0" ]; then
+            if [ "$status" = "0" ] && [ -s "$tmp/unmeasured.txt" ]; then
+              echo "## nightly watch: UNMEASURED (not green; red after 7 nights without a measurement)"
+            elif [ "$status" = "0" ]; then
               echo "## nightly watch: green"
             else
               echo "## nightly watch: RED (exit $status)"
@@ -116,6 +127,7 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" != "0" ]; then
+            cat "$tmp/red.txt" >&2
             echo "nightly watch is red (exit $status); see the job summary" >&2
             exit 1
           fi
@@ -123,6 +135,9 @@ jobs:
             echo "nightly watch printed no counts line" >&2
             exit 1
           fi
+          while IFS= read -r line; do
+            echo "::warning title=nightly watch UNMEASURED::$line"
+          done < "$tmp/unmeasured.txt"
 
       - name: Run matrix verdict (fail the run when a declared cell did not run)
         if: ${{ always() }}

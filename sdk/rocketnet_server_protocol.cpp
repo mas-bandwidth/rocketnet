@@ -349,8 +349,7 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
 
             if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
             {
-                rocketnet_address_convert_ipv6_to_ipv4( &addr );
-                return rocketnet_server_address_is_advertised( server, &addr );
+                return rocketnet_server_address_is_advertised( server, &addr );     // which converts it to that IPv4 address
             }
         }
 

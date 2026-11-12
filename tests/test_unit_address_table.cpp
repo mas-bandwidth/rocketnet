@@ -238,6 +238,7 @@ static void address_equality_property()
     property_rng_state = UINT64_C( 0x9E3779B97F4A7C15 );
 
     const int iterations = 10000;
+    int transitive_runs = 0;
     for ( int i = 0; i < iterations; ++i )
     {
         struct rocketnet_address_t a;
@@ -246,6 +247,25 @@ static void address_equality_property()
         property_random_address( &a );
         property_random_address( &b );
         property_random_address( &c );
+
+        // independent draws are almost never equal, so the transitivity leg
+        // below would never run: every third iteration b and c are copies of
+        // a, and every third after that they are a with the port changed (b
+        // to 0, c to another port), so an equality that let a port of 0 match
+        // any port would pass a == b and b == c and fail a == c
+
+        if ( i % 3 == 1 )
+        {
+            b = a;
+            c = a;
+        }
+        else if ( i % 3 == 2 )
+        {
+            b = a;
+            c = a;
+            b.port = 0;
+            c.port = (uint16_t) ( a.port + 1u );
+        }
 
         // reflexive except for NONE
 
@@ -261,8 +281,11 @@ static void address_equality_property()
         if ( rocketnet_address_equal( &a, &b ) && rocketnet_address_equal( &b, &c ) )
         {
             rocketnet_unit_check( rocketnet_address_equal( &a, &c ) );
+            transitive_runs++;
         }
     }
+
+    rocketnet_unit_check( transitive_runs > iterations / 10 );
 }
 
 void test_rocketnet_test_address_acceptance_table()

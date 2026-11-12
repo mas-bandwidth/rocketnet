@@ -4,15 +4,14 @@
 */
 
 // The client's handshake deadline is the token's lifetime measured from the
-// attempt start, as in netcode 1.02, not the token's expire timestamp on the
-// token's own clock. The client refuses to begin at or after expire
+// attempt start, not the token's expire timestamp on the token's own clock
+// (TRANSPORT.md t11 rule 6: the attempt is abandoned for connect token
+// expired once expire_timestamp - create_timestamp has elapsed since it
+// began). The client refuses to begin at or after expire
 // (sdk/rocketnet_client_protocol.cpp:160), gives the attempt the whole
 // lifetime (sdk/rocketnet_client_protocol.cpp:201) and ends it once that
 // lifetime has elapsed since the attempt began
-// (sdk/rocketnet_client_protocol.cpp:220-222). netcode 1.02 does the same:
-// netcode_client_update abandons with NETCODE_CLIENT_STATE_CONNECT_TOKEN_EXPIRED
-// once client->time - client->connect_start_time >= expire_timestamp -
-// create_timestamp, at tag v1.2.1, netcode.c:3254-3262.
+// (sdk/rocketnet_client_protocol.cpp:220-222).
 //
 // The clock is an argument: the test starts at 1000.0 and uses no socket, no
 // network and no real clock.
@@ -72,7 +71,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // seconds is still requesting cookie (1), past the token's expire timestamp on
 // the token's own clock; the update at five seconds is connect token expired
 // (-7). These are sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222,
-// and netcode.c:3254-3262 at tag v1.2.1.
+// and TRANSPORT.md t11 rule 6.
 
 static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 {
@@ -105,7 +104,7 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 // before an attempt begins, with connect token expired (-7) and nothing on the
 // wire: connect at C + 5 for a token that expires at C + 5. These are
 // sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222, and
-// netcode.c:3254-3262 at tag v1.2.1.
+// TRANSPORT.md t11 rule 6.
 
 static void test_client_connect_at_the_expire_timestamp_is_refused()
 {

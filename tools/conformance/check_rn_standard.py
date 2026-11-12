@@ -525,7 +525,7 @@ def compile_pins(pins, includes):
         binary = os.path.join(tmp, "rn_standard_pins")
         with open(source, "w", encoding="utf-8") as handle:
             handle.write("\n".join(lines))
-        command = [cxx, "-std=c++11", "-w", "-DROCKETNET_ASSERTS=0", "-I", os.path.join(ROOT, "sdk"), "-I", ROOT, source, "-o", binary]
+        command = [cxx, "-std=c++11", "-ffp-contract=off", "-w", "-DROCKETNET_ASSERTS=0", "-I", os.path.join(ROOT, "sdk"), "-I", ROOT, source, "-o", binary]
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode != 0:
             sys.stderr.write(result.stderr)
