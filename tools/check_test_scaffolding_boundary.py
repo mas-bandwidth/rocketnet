@@ -65,6 +65,8 @@ FORBIDDEN_PUBLIC_HEADER_TOKENS = (
 FORBIDDEN_DEV0_SYMBOLS = (
     "rocketnet_write_connect_token_deterministic",
     "rocketnet_box_seal_with_ephemeral",
+    "rocketnet_token_writer_wipe_hook",
+    "rocketnet_dev_crypto_holders",
     "rocketnet_reset_inventory_matches",
     "rocketnet_client_transport_inventory_matches_for_test",
     "rocketnet_client_slots_inventory_matches_for_test",

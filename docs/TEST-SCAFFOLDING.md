@@ -23,7 +23,7 @@ Seams, by the files that carry them:
 | --- | --- |
 | ACK visit counter, span-cost, block-cost and pending-stats witnesses | `sdk/rocketnet_ack.cpp`, `sdk/rocketnet_allocator.cpp`, `sdk/rocketnet_allocator.h`, `sdk/rocketnet_window_ack.cpp`, `sdk/rocketnet_window_ack.h`, `sdk/rocketnet_channel.h`, `sdk/rocketnet_channel_reliable.cpp`, `sdk/rocketnet_client_transport.cpp`, `proofs/cbmc/proof_ack_apply_run.c` |
 | Link simulator and its test switch | `sdk/rocketnet_api.cpp`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_config.h`, `sdk/rocketnet_network_simulator.cpp` |
-| Payload-copy counters, secret-wipe witnesses | `sdk/rocketnet_message.h`, `sdk/rocketnet_message.cpp`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_connect_token.cpp`, `tests/test_unit_secrets_wiped.cpp` |
+| Payload-copy counters, secret-wipe witnesses (the token writers' `rocketnet_token_writer_wipe_hook`), crypto holder count (`rocketnet_dev_crypto_holders`) | `sdk/rocketnet_message.h`, `sdk/rocketnet_message.cpp`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_connect_token.cpp`, `sdk/rocketnet_internal.h`, `sdk/rocketnet.cpp`, `tests/test_unit_secrets_wiped.cpp` |
 | io_uring fake CQE source and rearm counters | `sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp` |
 | Receive hook, in-memory environment table, send-failure registry, Darwin `sendmsg_x`/`recvmsg_x` hooks | `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`, `tests/test_msgx.cpp` |
 | Portable transmit fault hooks, loopback fault hooks | `sdk/rocketnet_driver_builtin.cpp`, `sdk/rocketnet_driver_loopback.h`, `sdk/rocketnet_driver_loopback.cpp` |
