@@ -35106,6 +35106,16 @@ rn_fused_setup(rn_chacha_state *st, uint64_t *ctr0, const unsigned char *npub,
     *ctr0 = (uint64_t) load32_le(npub) << 32;
 }
 
+/* Upstream's message bound: the IETF block counter runs from 1 to 2^32 - 1,
+ * so at most 64 * (2^32 - 1) bytes. Above it both directions call
+ * sodium_misuse() before reading or writing any data, as the composed seal
+ * does through crypto_stream_chacha20_ietf_xor_ic. */
+static int
+rn_fused_length_ok(unsigned long long len)
+{
+    return len <= crypto_aead_chacha20poly1305_ietf_MESSAGEBYTES_MAX;
+}
+
 static int
 rn_fused_encrypt_detached(unsigned char *c, unsigned char *mac,
                           unsigned long long *maclen_p,
@@ -35127,18 +35137,22 @@ rn_fused_encrypt_detached(unsigned char *c, unsigned char *mac,
     const size_t    len = (size_t) mlen;
 
     (void) nsec;
+    if (!rn_fused_length_ok(mlen)) {
+        sodium_misuse();
+    }
     rn_fused_setup(&st, &ctr0, npub, k);
 
     /* blocks 0..3 in one step: block 0 is the Poly1305 key, blocks 1..3
-     * cover message bytes 0..191 */
+     * cover message bytes 0..191. The associated data is absorbed before any
+     * byte of c is written, as in the composed seal, so ad may lie inside c. */
     first = len < 192U ? len : 192U;
     rn_neon_blocks4(&st, ctr0, ks, NULL, 64U + first);
     rn_fused_poly_init(&p, pad, ks);
+    rn_fused_absorb_padded(&p, ad, (size_t) adlen);
     for (i = 0; i < first; i++) {
         c[i] = (unsigned char) (ks[64 + i] ^ m[i]);
     }
     sodium_memzero(ks, sizeof ks);
-    rn_fused_absorb_padded(&p, ad, (size_t) adlen);
 
     /* c[0, absorbed) is in the MAC; each step absorbs what the step before it
      * wrote, so the MAC trails the cipher by one step */
@@ -35189,6 +35203,9 @@ rn_fused_decrypt_detached(unsigned char *m, unsigned char *nsec,
     int             ret;
 
     (void) nsec;
+    if (!rn_fused_length_ok(clen)) {
+        sodium_misuse();
+    }
     rn_fused_setup(&st, &ctr0, npub, k);
     rn_neon_block1(&st, ctr0, ks, NULL, 64U);
     rn_fused_poly_init(&p, pad, ks);

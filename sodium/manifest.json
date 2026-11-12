@@ -10,7 +10,7 @@
   "local_sha256": {
     "local/dispatch.h.in": "9c31a13a4419d273a8f1862cde5a58168708e5500f4084469b46469909022ff3",
     "local/mul64.h.in": "544c805cd959ca42fec5de91415643bd6d3659e2315f6e08331c47d0ebd99787",
-    "local/arm64.c.in": "ae72a83d0bd9dc2fbad4df0d7e6399b181d4cb3119179c316e5f87c084641f67",
+    "local/arm64.c.in": "cac9a20b2bcbd74c99c3e9ac5f24bf633a04b615631f08fddddf08ef7354cdcc",
     "local/dispatch.c.in": "0cbef4ff2600477f1ba407b77b43c00038855d9bcbc08131d491c4139b27242e"
   },
   "public_headers": [
