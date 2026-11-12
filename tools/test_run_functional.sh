@@ -20,7 +20,11 @@ printf '%s\n' "leg $(echo "$os" | sed -e 's/Linux/linux/' -e 's/Darwin/macos/' -
     'reason p_root needs root, which this host does not give' \
     "skip test_a p_root $(echo "$os" | sed -e 's/Linux/linux/' -e 's/Darwin/macos/' -e 's/Windows/windows/')-t" > "$work/list.txt"
 export ROCKETNET_EXPECTED_SKIPS="$work/list.txt"
-unset ROCKETNET_SERVER_TRANSPORT
+# The registry run_functional.sh's second check (check_test_environment.py
+# --functional-log) holds the run to: test_a under p_root, test_b everywhere.
+printf '%s\n' '{ "test_a", rocketnet_test_a, p_root },' '{ "test_b", rocketnet_test_b, NULL },' > "$work/registry.cpp"
+export ROCKETNET_FUNCTIONAL_REGISTRY="$work/registry.cpp"
+unset ROCKETNET_SERVER_TRANSPORT || true
 
 # fake <name> <exit> <lines...>: a suite that prints the lines and exits
 fake() {
@@ -36,12 +40,14 @@ fake() {
     chmod +x "$work/$name"
 }
 
-fake good 0 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***'
+fake good 0 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 fake red_suite 1 'check failed: test_b exit 1' 'SKIPPED test_a: p_root' 'skipped: 1'
 fake unlisted 0 'SKIPPED test_a: p_root' 'SKIPPED test_c: p_root' 'skipped: 2' '*** ALL TESTS PASSED ***'
 fake ran 0 'test_a' 'skipped: 0' '*** ALL TESTS PASSED ***'
 fake crashed 139 'test_b'
-fake crlf 0 $'SKIPPED test_a: p_root\r' $'skipped: 1\r'
+fake crlf 0 $'test_b\r' $'SKIPPED test_a: p_root\r' $'skipped: 1\r' $'\r' $'*** ALL TESTS PASSED ***\r' $'\r'
+fake lost 0 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake stranger 0 'test_b' 'test_z' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 
 failures=0
 cases=0
@@ -66,6 +72,8 @@ expect 0 "carriage returns removed" t "$work/crlf"
 expect 1 "suite failed: the suite's exit" t "$work/red_suite"
 expect 1 "unlisted skip" t "$work/unlisted"
 expect 1 "listed row ran" t "$work/ran"
+expect 1 "a registered row neither ran nor skipped" t "$work/lost"
+expect 1 "a printed name no registry holds" t "$work/stranger"
 expect 139 "crash: the suite's exit, not the check's" t "$work/crashed"
 expect 1 "undeclared variant" other "$work/good"
 expect 2 "no command" t

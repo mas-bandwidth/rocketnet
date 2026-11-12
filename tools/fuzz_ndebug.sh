@@ -52,6 +52,7 @@ ALL_TARGETS=(
     rocketnet_fuzz_server_transport
     rocketnet_fuzz_client_transport
     rocketnet_fuzz_session
+    rocketnet_fuzz_session_raw
     rocketnet_fuzz_xdp_frame
     rocketnet_fuzz_uring_recvmsg
     rocketnet_fuzz_gateway_netlink
@@ -176,6 +177,8 @@ echo "NDEBUG-LIBRARY nm: no object in $(basename "$LIB") references rn_assert_fu
 # 3. the harnesses: the nightly's compile and link line plus -DNDEBUG
 build_target() {
     local t="$1"
+    # bash 3.2 under set -u calls an empty "${extra[@]}" unbound, hence the
+    # ${extra[@]+...} form below
     local extra=()
     if [ "$t" = rocketnet_fuzz_differential ]; then
         local ref="$BUILD/netcode-ref"
@@ -199,7 +202,7 @@ build_target() {
         -ffp-contract=off \
         -DROCKETNET_DEV=1 -DNDEBUG \
         "${SAN_BIN[@]}" \
-        -Isodium -Isdk -Itests "${extra[@]}" "tests/fuzz/$t.cpp" "$LIB" \
+        -Isodium -Isdk -Itests ${extra[@]+"${extra[@]}"} "tests/fuzz/$t.cpp" "$LIB" \
         "${LINK[@]}" \
         -o "$BIN/$t"
 }
@@ -250,22 +253,24 @@ fuzz_target() {
 }
 
 echo "== fuzz ${#TARGETS[@]} target(s), ${SECONDS_PER_TARGET}s each, $JOBS at a time; output $OUT"
-declare -A PID_TARGET=()
-running=0
+# bash 3.2 (macOS's /bin/bash) has neither associative arrays nor wait -n:
+# the pool is a queue of pids, and a full pool waits for its oldest job
+pids=()
 for t in "${TARGETS[@]}"; do
-    if [ "$running" -ge "$JOBS" ]; then
-        wait -n || true
-        running=$((running - 1))
+    if [ "${#pids[@]}" -ge "$JOBS" ]; then
+        wait "${pids[0]}" 2>/dev/null || true
+        pids=("${pids[@]:1}")
     fi
     fuzz_target "$t" &
-    PID_TARGET[$!]="$t"
-    running=$((running + 1))
+    pids+=("$!")
 done
 
 failed=0
-for pid in "${!PID_TARGET[@]}"; do
-    wait "$pid" 2>/dev/null || true
-done
+if [ "${#pids[@]}" -gt 0 ]; then
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+fi
 
 # the exit status of a reaped background job is gone, so a target's result
 # is read from its log: libFuzzer prints "Done N runs" only on a clean finish

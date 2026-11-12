@@ -90,6 +90,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict","seconds":"9600"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_filter","source":"tests/fuzz/rocketnet_fuzz_xdp_filter.cpp","seeds":"tests/fuzz/corpus_xdp_filter","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_filter.dict","xdp_host":"1"}'
           - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
@@ -279,6 +280,7 @@ jobs:
           - rocketnet_fuzz_server_transport
           - rocketnet_fuzz_client_transport
           - rocketnet_fuzz_session
+          - rocketnet_fuzz_session_raw
           - rocketnet_fuzz_endpoint
           - rocketnet_fuzz_xdp_filter
           - rocketnet_fuzz_differential
@@ -370,6 +372,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
       group: fuzz-nightly-macos-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
@@ -545,6 +548,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
       group: fuzz-nightly-windows-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
@@ -720,6 +724,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_session_raw","source":"tests/fuzz/rocketnet_fuzz_session_raw.cpp","seeds":"tests/fuzz/corpus_session_raw","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_filter","source":"tests/fuzz/rocketnet_fuzz_xdp_filter.cpp","seeds":"tests/fuzz/corpus_xdp_filter","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_filter.dict","xdp_host":"1"}'
     concurrency:
