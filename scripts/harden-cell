@@ -33,7 +33,7 @@ quiet=1.5
 
 usage()
 {
-    echo "usage: sudo $0 --bin DIR --transport NAME --row control|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--fill-jobs J] [--hostile-pps P] [--frame-p99-us U]" >&2
+    echo "usage: sudo $0 --bin DIR --transport NAME --row control|bar|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--fill-jobs J] [--hostile-pps P] [--frame-p99-us U]" >&2
     exit 2
 }
 
