@@ -1142,6 +1142,29 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         }
     }
 
+    // every name once: a registry row or exec row repeated would run twice
+    // and the second result would stand for both (VERIFY-5 K3). Compared
+    // through pointers to the names, never string copies (the MSan note
+    // above)
+
+    {
+        std::vector<const char *> names( pending.size() );
+        for ( size_t i = 0; i < pending.size(); i++ )
+        {
+            names[i] = pending[i].name.c_str();
+        }
+        std::sort( names.begin(), names.end(), []( const char * a, const char * b )
+                   { return std::strcmp( a, b ) < 0; } );
+        for ( size_t i = 1; i < names.size(); i++ )
+        {
+            if ( std::strcmp( names[i - 1], names[i] ) == 0 )
+            {
+                printf( "check failed: test name %s is registered more than once\n", names[i] );
+                return false;
+            }
+        }
+    }
+
     suite_case_rss_bound_registry_t * rss_registry = suite_case_rss_bound_registry();
     for ( int i = 0; i < rss_registry->count; i++ )
     {
