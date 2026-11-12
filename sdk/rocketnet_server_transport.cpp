@@ -785,8 +785,8 @@ int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t
 
 // The frames the transport accepts before its next flush without a refusal
 // for room, as its send_room operation reports it; a transport without one
-// is unbounded. The staged transports' staging is one server-wide bank,
-// whatever their queue count. proofs/tla/ServerStopSpread.tla Room.
+// is unbounded. gso and io_uring stage one server-wide bank; xdp a bank per
+// queue, reporting the fewest free slots. proofs/tla/ServerStopSpread.tla Room.
 static int rocketnet_server_transport_io_send_room( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport->io.operations || !server_transport->io.operations->send_room )
