@@ -9,12 +9,15 @@
 #include <string.h>
 
 // proofs/tla/RNSendGatherLayout.tla models the gather at this layout: the
-// scan's open-addressed table probed modulo its size, each destination's
-// chain appended at its tail, and the emit's runs cut by the segment limit,
-// the byte cap and a smaller packet. Each step cites the action it is.
-// ROCKETNET_SEND_GATHER_PLANT is the trace check's plant (a chain appended
-// after its head, reversing a destination's later packets): only
-// tla_trace_plant defines it, and its traces must fail TraceConsistent.
+// scan's open-addressed table probed modulo its size, a group per
+// destination in order of its first slot, the counts turned into starts, a
+// stable placement of the slots first to last, and the emit's runs cut by
+// the segment limit, the byte cap and a smaller packet. No slot links to
+// another (docs/SEQUENCE-BUFFERS.md). Each step cites the action it is.
+// ROCKETNET_SEND_GATHER_PLANT is the trace check's plant (the placement last
+// to first, reversing each destination's packets): only
+// tests/tla_trace_gather.cpp in the plant build defines it, and its traces
+// must fail TraceConsistent.
 
 static int rocketnet_send_gather_buckets( int max_slots )
 {
@@ -32,7 +35,7 @@ size_t rocketnet_send_gather_scratch_bytes( int max_slots )
     {
         return 0;
     }
-    return ( (size_t) rocketnet_send_gather_buckets( max_slots ) + 2 * (size_t) max_slots ) * sizeof( int );
+    return ( (size_t) rocketnet_send_gather_buckets( max_slots ) + 3 * (size_t) max_slots ) * sizeof( int );
 }
 
 bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t * scratch, void * memory, int max_slots )
@@ -48,8 +51,9 @@ bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t 
     scratch->max_slots = max_slots;
     scratch->buckets = rocketnet_send_gather_buckets( max_slots );
     scratch->bucket = ints;
-    scratch->next = ints + scratch->buckets;
-    scratch->tail = scratch->next + max_slots;
+    scratch->head = ints + scratch->buckets;
+    scratch->group = scratch->head + max_slots;
+    scratch->start = scratch->group + max_slots;
     return true;
 }
 
@@ -107,25 +111,23 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
 
     const int buckets = scratch->buckets;
     int * bucket = scratch->bucket;
-    int * next = scratch->next;
-    int * tail = scratch->tail;
+    int * head = scratch->head;
+    int * group = scratch->group;
+    int * start = scratch->start;
 
     for ( int b = 0; b < buckets; b++ )
     {
         bucket[b] = -1;
     }
-    for ( int s = 0; s < count; s++ )
-    {
-        next[s] = -1;
-        tail[s] = -1;
-    }
 
     // RNSendGatherLayout Scan and Probe: each staged slot finds its
-    // destination's bucket by linear probing modulo the table, and either
-    // becomes the destination's head or joins its chain at the tail
+    // destination's group by linear probing modulo the table, or takes a new
+    // group, and counts itself into it
 
+    int num_groups = 0;
     for ( int i = 0; i < count; i++ )
     {
+        group[i] = -1;
         if ( rocketnet_send_gather_bytes( packet_bytes, bytes_stride, i ) <= 0 )
         {
             continue;
@@ -135,53 +137,70 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         int k = rocketnet_send_gather_home( address, buckets );
         while ( true )
         {
-            const int h = bucket[k];
-            if ( h == -1 )
+            const int g = bucket[k];
+            if ( g == -1 )
             {
-                bucket[k] = i;
-                tail[i] = i;
+                bucket[k] = num_groups;
+                head[num_groups] = i;
+                start[num_groups] = 1;
+                group[i] = num_groups;
+                num_groups++;
                 break;
             }
-            if ( rocketnet_address_equal( rocketnet_send_gather_to( to, to_stride, h ), address ) )
+            if ( rocketnet_address_equal( rocketnet_send_gather_to( to, to_stride, head[g] ), address ) )
             {
-#if defined( ROCKETNET_SEND_GATHER_PLANT )
-                next[i] = next[h];
-                next[h] = i;
-#else  // #if defined( ROCKETNET_SEND_GATHER_PLANT )
-                next[tail[h]] = i;
-                tail[h] = i;
-#endif // #if defined( ROCKETNET_SEND_GATHER_PLANT )
+                start[g]++;
+                group[i] = g;
                 break;
             }
             k = ( k + 1 ) & ( buckets - 1 );
         }
     }
 
-    // RNSendGatherLayout Emit and Walk: each head's chain, in slot order of
-    // the heads, goes to order; a packet joins the open run while the run
+    // RNSendGatherLayout Prefix: each group's count becomes its start
+
+    int sum = 0;
+    for ( int g = 0; g < num_groups; g++ )
+    {
+        const int n = start[g];
+        start[g] = sum;
+        sum += n;
+    }
+
+    // RNSendGatherLayout Place: each staged slot goes to its group's next
+    // position, first to last, so a destination keeps its staged order; each
+    // start then ends its group
+
+#if defined( ROCKETNET_SEND_GATHER_PLANT )
+    for ( int i = count - 1; i >= 0; i-- )
+#else  // #if defined( ROCKETNET_SEND_GATHER_PLANT )
+    for ( int i = 0; i < count; i++ )
+#endif // #if defined( ROCKETNET_SEND_GATHER_PLANT )
+    {
+        if ( group[i] >= 0 )
+        {
+            order[start[group[i]]++] = i;
+        }
+    }
+
+    // RNSendGatherLayout Emit and Walk: each group's range of order, groups
+    // in order, is cut into runs; a packet joins the open run while the run
     // has room under both caps and the packet is no larger than its first,
     // and a smaller packet closes it
 
-    int num_order = 0;
     int num_runs = 0;
-
-    for ( int i = 0; i < count; i++ )
+    int from = 0;
+    for ( int g = 0; g < num_groups; g++ )
     {
-        if ( tail[i] == -1 )
-        {
-            continue;
-        }
-
-        bool open = false;
         bool closed = false;
         int run_total = 0;
         struct rocketnet_send_gather_run_t * run = NULL;
 
-        for ( int c = i; c != -1; c = next[c] )
+        for ( int p = from; p < start[g]; p++ )
         {
-            const int bytes = rocketnet_send_gather_bytes( packet_bytes, bytes_stride, c );
+            const int bytes = rocketnet_send_gather_bytes( packet_bytes, bytes_stride, order[p] );
 
-            const bool fits = open && !closed && run->count < max_segments && run_total + bytes <= max_bytes && bytes <= run->segment_bytes;
+            const bool fits = run && !closed && run->count < max_segments && run_total + bytes <= max_bytes && bytes <= run->segment_bytes;
             if ( fits )
             {
                 run->count++;
@@ -192,17 +211,16 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
             else
             {
                 run = &runs[num_runs++];
-                run->first = num_order;
+                run->first = p;
                 run->count = 1;
                 run->segment_bytes = bytes;
                 run->last_bytes = bytes;
                 run_total = bytes;
-                open = true;
                 closed = false;
             }
-
-            order[num_order++] = c;
         }
+
+        from = start[g];
     }
 
     return num_runs;

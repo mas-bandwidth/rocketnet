@@ -156,7 +156,7 @@ static int trace_gather( uint64_t seed, int steps, const char * out )
     char constants[1024];
     snprintf( constants, sizeof( constants ),
               "    S = %d\n    Buckets = %d\n    Dests = {1, 2, 3}\n    Sizes = {0, 600, 1200}\n    Hash <- MCHash\n"
-              "    MaxSeg = %d\n    MaxBytes = %d\n    ProbeRule = \"mod\"\n    MatchRule = \"dest\"\n    AppendRule = \"tail\"\n"
+              "    MaxSeg = %d\n    MaxBytes = %d\n    ProbeRule = \"mod\"\n    MatchRule = \"dest\"\n    PlaceRule = \"forward\"\n"
               "    CapRule = \"bytes\"\n    ShortRule = \"close\"\n",
               GATHER_SLOTS, scratch.buckets, GATHER_MAX_SEGMENTS, GATHER_MAX_BYTES );
 

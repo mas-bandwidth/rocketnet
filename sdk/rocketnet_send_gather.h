@@ -40,9 +40,10 @@ struct rocketnet_send_gather_scratch_t
 {
     int max_slots;
     int buckets;                // a power of two, at least 2 * max_slots
-    int * bucket;               // [buckets]: a destination's first slot in this gather, or -1
-    int * next;                 // [max_slots]: the next slot to the same destination, or -1
-    int * tail;                 // [max_slots]: per destination head, its last slot so far
+    int * bucket;               // [buckets]: a destination's group in this gather, or -1
+    int * head;                 // [max_slots]: each group's first slot
+    int * group;                // [max_slots]: each slot's group, -1 for an aborted slot
+    int * start;                // [max_slots]: each group's count, then start, then end in order
 };
 
 size_t rocketnet_send_gather_scratch_bytes( int max_slots );
@@ -59,15 +60,16 @@ bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t 
 // each destination's slots in staged order) and the runs to runs (count
 // entries at most), and returns the number of runs. Refuses (-1) when count
 // exceeds the scratch's max_slots, max_segments < 1 or max_bytes < 1; a
-// packet larger than max_bytes is a run of its own.
-// a destination's home bucket in a table of buckets entries (a power of two):
-// the trace harness reads it to give the model the same table
-int rocketnet_send_gather_home( const struct rocketnet_address_t * address, int buckets );
-
+// packet larger than max_bytes is a run of its own. The grouping is a stable
+// counting placement, no links: O(count) with the table at most half full.
 int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stride,
                            const int * packet_bytes, size_t bytes_stride, int count,
                            int max_segments, int max_bytes,
                            struct rocketnet_send_gather_scratch_t * scratch,
                            int * order, struct rocketnet_send_gather_run_t * runs );
+
+// a destination's home bucket in a table of buckets entries (a power of two):
+// the trace harness reads it to give the model the same table
+int rocketnet_send_gather_home( const struct rocketnet_address_t * address, int buckets );
 
 #endif // ROCKETNET_SDK_ROCKETNET_SEND_GATHER_H
