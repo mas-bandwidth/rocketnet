@@ -4,6 +4,7 @@
 */
 
 #include "../tests/test_env_source.h"
+#include "../tests/check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_ack.h"
@@ -188,6 +189,7 @@ static void rocketnet_check_handler( const char * condition,
 #define rocketnet_check( condition )                                                                                 \
 do                                                                                                              \
 {                                                                                                               \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                               \
     if ( !(condition) )                                                                                         \
     {                                                                                                           \
         rocketnet_check_handler( #condition, (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );         \

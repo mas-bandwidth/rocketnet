@@ -19,6 +19,7 @@
     one test alone.
 */
 
+#include "check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_read_write.h"
@@ -49,6 +50,7 @@
 #define channels_check( condition )                                                         \
 do                                                                                          \
 {                                                                                           \
+    ROCKETNET_TEST_COUNT_CHECK();                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n",                    \
@@ -1173,6 +1175,7 @@ static void rn_test_log_function( void * context, enum rocketnet_log_level_t lev
 #define check( condition )                                                                               \
     do                                                                                                   \
     {                                                                                                    \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                    \
         if ( !( condition ) )                                                                            \
         {                                                                                                \
             rn_trap_armed = 0;                                                                           \
