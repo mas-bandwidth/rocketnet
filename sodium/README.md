@@ -90,19 +90,13 @@ below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 
 ChaCha20 (AVX2, SSSE3, reference) and BLAKE2b (AVX2, SSE4.1, SSSE3,
 reference) pick their implementation at `sodium_init` from the CPU features
-the baseline's `_sodium_runtime_intel_cpu_features` detects. AVX, and AVX2
-with it, counts only when CPUID reports AVX, XSAVE and OSXSAVE and XCR0 shows
-the OS saves both SSE and YMM state, upstream's check. Upstream reads XCR0 on
-GCC and Clang with an inline XGETBV opcode when its configure defines
-`HAVE_AVX_ASM`; this pair has no configure and leaves `HAVE_AVX_ASM` off,
-because it also selects assembly the subset does not carry. Through v1.1.7
-XCR0 therefore stayed 0 on GCC and Clang, and AVX2 was compiled in but never
-chosen. One generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`)
-lets that same XGETBV run when `HAVE_CPUID` is defined (GCC or Clang on x86;
-`sodium.h`). MSVC keeps its `_xgetbv` path, and an MSVC build without
-`/arch:AVX2` compiles no AVX2 code, as before. `bin/test_sodium_dispatch`
-checks the picks against the CPU and that every implementation agrees with
-the reference.
+the baseline's `_sodium_runtime_intel_cpu_features` detects, unchanged from
+upstream. AVX, and AVX2 with it, counts only when XCR0 shows the OS saves
+SSE and YMM state, and the pair reads XCR0 only where upstream does without
+a configure step (`_xgetbv` on MSVC, or `HAVE_AVX_ASM`, which this pair
+leaves off): on GCC and Clang x86 AVX2 is compiled in and not chosen.
+`bin/test_sodium_dispatch` expects exactly that (`sodium_dispatch_built("cpu",
+"avx2")` in `tests/sodium_dispatch_seam.c` mirrors the XCR0 read).
 
 ## AEAD dispatch and AArch64
 
@@ -115,11 +109,15 @@ SHA-256 under `local_sha256` in `manifest.json`, join the generated pair
   (`crypto_aead_chacha20poly1305_ietf_implementation`: a name and the two
   public detached functions), the forced fallback and the selection report.
 - `local/arm64.c.in`: on AArch64 little endian with 128-bit integers (GCC
-  and Clang), ChaCha20 with Advanced SIMD (`neon`: four blocks per vector
-  set, eight in flight past 256 bytes, a scalar block for a tail of 64 bytes
-  or less), Poly1305 with 64-bit limbs (`mul64`), and the AEAD in one pass
-  (`neon-fused`: each four-block ChaCha20 step absorbs up to 16 Poly1305
-  blocks on the integer multiplier between its double rounds).
+  and Clang, outside Windows: Windows on ARM64, MSVC or clang-cl, keeps the
+  portable code until a CI leg runs it), ChaCha20 with Advanced SIMD (`neon`:
+  four blocks per vector set, eight in flight past 256 bytes, a scalar block
+  for a tail of 64 bytes or less), Poly1305 with 64-bit limbs (`mul64`, its
+  limb step and final reduction in `local/mul64.h.in`, proved by
+  `proofs/cbmc/proof_poly1305_mul64.c`), and the AEAD (`neon-fused`: seal in
+  one pass, each four-block ChaCha20 step absorbing up to 16 Poly1305 blocks
+  on the integer multiplier between its double rounds; open checks the tag
+  first and decrypts only on success).
 - `local/dispatch.c.in`: the `composed` AEAD (the pinned IETF bodies, which
   `DISPATCH_ADAPTATIONS` renames static, ChaCha20 then Poly1305 through the
   primitive pointers), the AEAD pick, the public detached functions that call
@@ -144,14 +142,13 @@ and `composed` when the build defines `ROCKETNET_SODIUM_PORTABLE` nonzero, or
 when the environment has `ROCKETNET_SODIUM_PORTABLE` set as `sodium_init`
 runs (`rocketnet_init` runs it). BLAKE2b's pick is not affected.
 
-Open's output: the one pass writes plaintext before it checks the tag and
-zeroes all of it when the check fails, so the output of
-`crypto_aead_chacha20poly1305_ietf_decrypt` is defined only on success, as
-`local/dispatch.h.in` states; every SDK caller opens into memory private to
-it until the call returns (`ARM64-CONSTANT-TIME.md`, "Where a failed open
-writes"). The constant-time review of the AArch64 code is
-`ARM64-CONSTANT-TIME.md`. The wire format is unchanged: every implementation
-produces the same bytes, which `bin/test_sodium_dispatch` checks.
+Open's output: no implementation writes plaintext before the tag checks. A
+refused open leaves the output zeroed (`composed`, as upstream) or as it was
+(`neon-fused`); it is defined only on success (`local/dispatch.h.in`). Input
+and output are exactly in place or apart; partial overlap is unsupported.
+The constant-time review of the AArch64 code is `ARM64-CONSTANT-TIME.md`.
+The wire format is unchanged: every implementation produces the same bytes,
+which `bin/test_sodium_dispatch` checks.
 
 ## MemorySanitizer
 

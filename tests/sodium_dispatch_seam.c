@@ -132,18 +132,26 @@ const char * sodium_dispatch_blake2b( void )
 // Whether this build contains a detection or an implementation: "cpu" with
 // "avx" or "avx2" (the AVX detection itself), or a primitive and a name.
 
+// The baseline reads XCR0, without which AVX is never detected, under exactly
+// these conditions (_sodium_runtime_intel_cpu_features in sodium.c; sodium/
+// README.md, "CPU feature detection").
+#if defined( HAVE__XGETBV ) || ( defined( _MSC_VER ) && defined( _XCR_XFEATURE_ENABLED_MASK ) && _MSC_FULL_VER >= 160040219 ) || \
+    ( defined( _MSC_VER ) && defined( _M_IX86 ) ) || defined( HAVE_AVX_ASM )
+#define SODIUM_DISPATCH_SEAM_READS_XCR0 1
+#endif
+
 int sodium_dispatch_built( const char * primitive, const char * name )
 {
     const int ref = strcmp( name, "ref" ) == 0;
     if ( strcmp( primitive, "cpu" ) == 0 )
     {
-#if defined( HAVE_AVXINTRIN_H )
+#if defined( HAVE_AVXINTRIN_H ) && defined( SODIUM_DISPATCH_SEAM_READS_XCR0 )
         if ( strcmp( name, "avx" ) == 0 )
         {
             return 1;
         }
 #endif
-#if defined( HAVE_AVX2INTRIN_H )
+#if defined( HAVE_AVX2INTRIN_H ) && defined( SODIUM_DISPATCH_SEAM_READS_XCR0 )
         if ( strcmp( name, "avx2" ) == 0 )
         {
             return 1;

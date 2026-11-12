@@ -1,9 +1,9 @@
 # AArch64 ChaCha20-Poly1305: constant-time review
 
 The review of `local/arm64.c.in` (README.md, "AEAD dispatch and AArch64"):
-what the code may branch on and index by, how that was checked, and where a
-failed open writes. A change to `local/arm64.c.in` repeats the reading below
-and the secret-tracking run.
+what the code may branch on and index by, what it wipes, what a refused open
+writes, and how each was checked. A change to `local/arm64.c.in` repeats the
+reading below and the secret-tracking run.
 
 ## The rule
 
@@ -32,65 +32,60 @@ result, 0 or -1, which is the public outcome the caller is told.
   and they are the classes the portable donna64 Poly1305 already compiles to
   on AArch64. Setting DIT around the AEAD is a possible hardening, not done.
 - **Final reduction**: `h - p` is kept by a mask built from the carry out of
-  `h + 5`, never by a branch.
+  `h + 5`, never by a branch (proved for every input by
+  `proofs/cbmc/proof_poly1305_mul64.c`).
 - **Tag check**: `crypto_verify_16`, the bundle's constant-time compare.
-- **Wiping**: keystream, the Poly1305 key, state and pads, and the partial
-  blocks on the stack are wiped with `sodium_memzero`. Vector registers are
-  not wiped, as on the x86 paths.
-- **Speculation**: after a tag check passes, the one pass runs
-  `ACQUIRE_FENCE` before it returns, as the composed open does before it
-  decrypts. The composed open never computes plaintext for a forgery; the one
-  pass computes it, writes it to `m` and zeroes it before it returns -1. A
-  forgery's plaintext is the keystream for the forged nonce XOR bytes the
-  sender chose, so the bytes in `m` between the write and the zeroing are
-  keystream for that nonce. They are readable only by code that reads `m`
-  during the call, which is the reason for the next section.
+- **Wiping**: `sodium_memzero` clears, before each function returns, every
+  stack copy of key or keystream material the AArch64 code makes: the input
+  words and working state of each ChaCha20 step (`in_v` and `x` in the
+  four-block step and in the one-pass step, `a_in`, `b_in`, `x` and `y` in
+  the eight-block step, `in` and `x` in the scalar block), the transposed
+  keystream rows (`row`), the partial-chunk and partial-block buffers, the
+  key block, the Poly1305 key, state and pads, and the computed tag. The
+  portable reference wipes less (its block words and `tmp` stay on the
+  stack). Values held only in vector or general registers are not wiped, as
+  on every other path.
+- **Speculation**: open checks the tag before it computes any plaintext. It
+  MACs the ciphertext, compares in constant time, and only on success runs
+  `ACQUIRE_FENCE` and then the NEON keystream from block 1 over the
+  ciphertext, as the composed open does. A forgery's plaintext is never
+  computed, so no read of the output during or after a refused call can see
+  keystream. The one pass (MAC and cipher in the same step) is used for seal
+  only, where every byte it writes is ciphertext.
 
-## Where a failed open writes
+## A refused open
 
-`crypto_aead_chacha20poly1305_ietf_decrypt` writes `m` before the tag check
-in the one pass; `m` is defined only when it returns 0, and holds zeros when
-it returns -1 (`local/dispatch.h.in`). In the SDK every open goes through
-`rocketnet_open_sealed_packet` (`sdk/rocketnet_protocol.cpp`), the one AEAD
-open outside the tests. Its callers and where each opens (audited
-2026-11-12, at the commit that added this file):
+`crypto_aead_chacha20poly1305_ietf_decrypt` returns -1 without writing a
+byte of plaintext under either implementation (`local/dispatch.h.in`): the
+composed AEAD zeroes the output as upstream does, the AArch64 open leaves it
+as it was. Input and output are exactly in place or apart; partial overlap is
+unsupported, stated in `local/dispatch.h.in` and asserted at the SDK's seal
+and open (`sdk/rocketnet_protocol.cpp`).
 
-| caller | destination | readable by anyone else before the open returns? |
-|---|---|---|
-| `sdk/rocketnet_client_io.h`, the client I/O thread's open | the stack array `opened`; copied into the packet buffer only on success | no |
-| `sdk/rocketnet_client_protocol.cpp`, the challenge | the stack `server_ephemeral_public_key` | no |
-| `sdk/rocketnet_client_protocol.cpp`, the two denied opens | the stack `opened` | no |
-| `sdk/rocketnet_client_protocol.cpp`, the session open | `opened`, passed by its four callers, each a stack array | no |
-| `sdk/rocketnet_server_protocol.cpp`, `process_received` | `opened`, passed by its callers: | |
-| - `sdk/rocketnet_server_protocol.cpp`, the stack caller | a stack array | no |
-| - `sdk/rocketnet_server_transport.cpp`, `rocketnet_server_receive_one` | the next payload slot, `payload_storage + num_payloads * SLOT`, or the stack `payload_overflow` when the batch is full | no: see below |
+## Checks
 
-The server's payload slots are owned by the server transport and touched on
-the thread that runs `rocketnet_server_transport_update` (the application's
-own call). `update` resets `num_payloads` to 0 and then receives, and slot
-`num_payloads` is published only by `num_payloads++` after an accepted open.
-The application reads payloads through `rocketnet_server_transport_payload`,
-which refuses an index at or past `num_payloads`, and between updates, not
-during one; the driver threads (XDP, io_uring, GSO, RIO, IOCP and the
-portable receive thread) fill receive frames and never touch
-`payload_storage`. So no caller decrypts into memory that another thread or
-the application can read, and none keeps verify-then-decrypt.
-
-Checks that hold this:
-
-- `bin/test_sodium_dispatch`: for every implementation set, at every length
-  0 to 2048 that is 0, 1 or 15 mod 16, a forged packet (tag, ciphertext or
-  associated data) is refused with the reported length 0, every output byte
-  zero and nothing past the output written, into a separate buffer, in
-  place, and through the detached function.
-- A DEV build's `rocketnet_open_sealed_packet` asserts a failed open left
-  zeros, then fills the output with `ROCKETNET_OPEN_POISON_BYTE`
-  (`sdk/rocketnet_protocol.h`). `test_sealed_packet_refusals` and
-  `test_server_payload_capacity_uses_live_session_path` (a forged payload into
-  the server's open buffer: nothing handed out, the replay window and the
-  delivered count unchanged, the buffer poisoned) check it.
-- A new caller of `rocketnet_open_sealed_packet` must open into memory private
-  to it until the call returns, and this table gets its row.
+- `bin/test_sodium_dispatch`, on every commit on the macOS arm64 runners in
+  Debug (the unit row), Release and asan + ubsan (the `sodium-arm64` rows),
+  and on every x86 row:
+  - RFC 8439 and 316 Wycheproof vectors, the Poly1305 carry edges, and
+    every implementation set against the composed reference at every length
+    0 to 4096;
+  - forgery (a tag, ciphertext or associated data bit) at every length 0 to
+    4096 that is 0, 1 or 15 mod 16: refused, length 0, the output's poison
+    pattern untouched by the AArch64 open (zeroed by the composed one), and
+    nothing past the output written; apart, exactly in place, detached;
+  - the sweep: every length 0 to 4096, seal and open, apart and exactly in
+    place, with 16 guard bytes after every output checked untouched;
+  - the ChaCha20 entry points the AEAD does not use (the 8-byte-nonce
+    stream, and the 64-bit counter across the word-12 to word-13 carry and
+    its wrap; the IETF counter to its last blocks), against the reference.
+- Nightly: the exhaustive sweep (`--sweep-full`) and a 10,000,000-case
+  differential on macOS arm64 and Linux x64.
+- A DEV build with the bundled pair poisons an apart output before
+  `rocketnet_open_sealed_packet` opens, and asserts a refusal left only
+  poison or zeros; every DEV build then poisons a refused output
+  (`sdk/rocketnet_protocol.h`), which `test_sealed_packet_refusals` and
+  `test_server_payload_capacity_uses_live_session_path` check.
 
 ## By tool: secret tracking
 
@@ -104,10 +99,12 @@ CPU runs; a branch or memory index on an undefined byte is an error. The tag
 check's result is the one declassification: the bundle marks the 0/-1 of
 `crypto_verify_16` defined in a secret-tracking build only
 (`SODIUM_DECLASSIFY` in `local/dispatch.h.in`), so the run is clean when the
-code is. The nightly row runs it on a Linux arm64 runner. Recorded runs:
+code is.
 
-- 2026-11-12, Neoverse N1 (c6gn), valgrind 3.26.0, the tracer build: 30
-  errors from 2 contexts, both the branch on the `crypto_verify_16` result
-  (the composed open's and the one pass's), nothing else.
-- 2026-11-12, Neoverse V2 (c8g), valgrind, the tracer build: 18 errors from
-  1 context, the composed open's branch on the `crypto_verify_16` result.
+**The gap.** The fleet has no Linux arm64 runner, so no CI job runs this
+today. The nightly `sodium-secrets-linux-arm64` row is written and waits on
+the repository variable `ROCKETNET_LINUX_ARM64_RUNNER`; until a runner
+exists, the receipts below are the evidence, and a change to
+`local/arm64.c.in` needs a new pair of them by hand.
+
+Receipts at the committed code (RECEIPTS_PENDING).

@@ -3364,14 +3364,19 @@ extern "C" {
 /* The ChaCha20-Poly1305 IETF AEAD as one implementation, beside the ChaCha20
  * and Poly1305 primitive structs. "composed" is the pinned construction
  * (ChaCha20, then Poly1305 over the ciphertext, through the two primitive
- * pointers); an implementation may instead run both in one pass. The two
+ * pointers); an implementation may instead seal in one pass. The two
  * functions have the public detached signatures and the same results.
  *
- * decrypt_detached: m is defined only when the call returns 0. When it
- * returns -1 every byte of m[0, clen) is zero. An implementation may write
- * plaintext into m before the tag is checked (the AArch64 one pass does), so
- * m must be memory no other thread and no application code reads until the
- * call returns 0. */
+ * Buffers: m and c are either the same pointer (exactly in place) or do not
+ * overlap at all; any other overlap is unsupported and gives wrong output
+ * (the SDK asserts against it in debug builds, sdk/rocketnet_protocol.cpp).
+ *
+ * decrypt_detached checks the tag before it writes any plaintext: no
+ * implementation writes a byte of plaintext into m unless the call returns
+ * 0, and none reads c for the plaintext before the constant-time compare
+ * (ACQUIRE_FENCE). When it returns -1, "composed" zeroes m[0, clen) as
+ * upstream does, and "neon-fused" leaves m as it was. m is defined only
+ * when the call returns 0. */
 typedef struct crypto_aead_chacha20poly1305_ietf_implementation {
     const char *name;
     int (*encrypt_detached)(unsigned char *c, unsigned char *mac,
@@ -3390,11 +3395,13 @@ typedef struct crypto_aead_chacha20poly1305_ietf_implementation {
 extern struct crypto_aead_chacha20poly1305_ietf_implementation
     crypto_aead_chacha20poly1305_ietf_composed_implementation;
 
-/* AArch64 little endian with 128-bit integers (GCC and Clang): ChaCha20 with
- * Advanced SIMD, Poly1305 with 64-bit limbs, and the AEAD in one pass. MSVC
- * on ARM64 keeps the portable code. */
+/* AArch64 little endian with 128-bit integers (GCC and Clang, outside
+ * Windows): ChaCha20 with Advanced SIMD, Poly1305 with 64-bit limbs, and the
+ * AEAD sealed in one pass. Windows on ARM64 keeps the portable code, under
+ * MSVC and under clang-cl (which defines __aarch64__ and has 128-bit
+ * integers), until a CI leg runs it. */
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN) && \
-    defined(HAVE_TI_MODE)
+    defined(HAVE_TI_MODE) && !defined(_WIN32)
 # define SODIUM_ROCKETNET_ARM64 1
 extern struct crypto_stream_chacha20_implementation
     crypto_stream_chacha20_neon_implementation;
