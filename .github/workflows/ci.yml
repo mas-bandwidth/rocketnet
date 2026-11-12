@@ -941,8 +941,10 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
-      # the 1.x C ABI (exports, public struct sizes and field offsets) against
-      # its recorded baseline, tools/abi_v1.txt; one small C compile
+      # the 1.x C ABI against its recorded baseline, tools/abi_v1.txt (from
+      # v1.1.0): exports, prototypes, callback typedefs, struct sizes, field
+      # offsets, sizes and types, enumerator values and macro values; one
+      # small C compile. test_check_abi.py plants each kind of change
       - name: Check the 1.x ABI baseline
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
