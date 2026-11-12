@@ -43,7 +43,12 @@
 (* The window stall: a new reliable item takes a message number when it   *)
 (* is first written, and at most W numbers are outstanding (numbered, not  *)
 (* yet acked).  A full window holds the "rel" class back; it never holds   *)
-(* back "rtx" (already numbered) or "unrel" (never numbered, I13).         *)
+(* back "rtx" (already numbered) or "unrel" (never numbered, I13).  In the *)
+(* endpoint a stalled window with nothing due ends the reliable phase      *)
+(* (rn_endpoint_ordered_due false), and rn_endpoint_end_reliable starts    *)
+(* the unreliable phase unless the budget refused a reliable packet: the   *)
+(* unreliable phase runs while budget remains                              *)
+(* (UnreliableNotBlockedByWindow).                                         *)
 (*                                                                         *)
 (* The budget: Cap items per update.  An update ends when nothing more can *)
 (* be written; the unreliable items it did not write are dropped and       *)
@@ -77,6 +82,10 @@
 (*                           a steady unreliable load the budget is spent  *)
 (*                           every update before any reliable item.        *)
 (*                           Fails NoStarvation.                           *)
+(*   StallEndsPass = TRUE    a stalled window ends the update's pass, as   *)
+(*                           a budget refusal does: the unreliable items   *)
+(*                           are dropped with budget left.  Fails          *)
+(*                           UnreliableNotBlockedByWindow.                 *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -90,7 +99,8 @@ CONSTANTS
     MaxLoss,        \* transport packet losses, at most
     ChannelFIFO,    \* TRUE: only a channel's head is offered (FALSE: BrokenPerMessagePriority, BrokenRtxPerMessage)
     RtxSendOrder,   \* TRUE: the rtx head is the least recently sent lost item (FALSE: BrokenRtxById)
-    UnreliableLast  \* TRUE: the class order (FALSE: BrokenUnreliableStarvesOrdered)
+    UnreliableLast, \* TRUE: the class order (FALSE: BrokenUnreliableStarvesOrdered)
+    StallEndsPass   \* FALSE: a stalled window leaves the unreliable phase to run (TRUE: BrokenStallEndsPass)
 
 Levels == 0..3
 N == Len(Msgs)
@@ -102,6 +112,7 @@ ASSUME /\ NC \in Nat \ {0}
        /\ W \in Nat \ {0} /\ Cap \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxLoss \in Nat
        /\ ChannelFIFO \in BOOLEAN /\ RtxSendOrder \in BOOLEAN /\ UnreliableLast \in BOOLEAN
+       /\ StallEndsPass \in BOOLEAN
 
 \* The stride and seed per level
 Pow2(p) == CASE p = 0 -> 1 [] p = 1 -> 2 [] p = 2 -> 4 [] p = 3 -> 8
@@ -125,10 +136,11 @@ VARIABLES
     drops,      \* unreliable drops counted (capped)
     written,    \* ghost: per channel, the orderings first-written, in order
     classBad,   \* ghost: a write took a class while a higher class had an item
+    unrelHeld,  \* ghost: an update ended with unreliable items and budget left
     resendQ     \* the resend FIFO: written, unacked reliable items, least recently sent first
 
 vars == << sent, st, clock, rr, unrelQ, budget, losses, drops, written,
-           classBad, resendQ >>
+           classBad, unrelHeld, resendQ >>
 
 DropCap == 2
 
@@ -140,6 +152,10 @@ Ordering(i) == Cardinality({ j \in Ids : j <= i /\ Msgs[j].ch = Msgs[i].ch }) - 
 
 Outstanding == Cardinality({ i \in Ids : st[i] \in {"inflight", "lost"} })
 WindowOpen == Outstanding < W
+
+\* a new item waits on a closed window (rn_window_send_first_write refuses:
+\* send->stalled)
+Stalled == ~WindowOpen /\ \E i \in Ids : st[i] = "queued"
 
 \* a channel's head: its earliest queued item
 IsHead(i) == st[i] = "queued" /\
@@ -182,7 +198,8 @@ Cands(c) ==
                  THEN { [id |-> i, ch |-> Msgs[i].ch, lv |-> Boost(Msgs[i].ch)] : i \in { j \in Ids : IsHead(j) } }
                  ELSE { [id |-> i, ch |-> Msgs[i].ch, lv |-> Msgs[i].lv] : i \in { j \in Ids : st[j] = "queued" } }
       [] c = "unrel" ->
-            IF unrelQ > 0 THEN { [id |-> 0, ch |-> 0, lv |-> ULevel] } ELSE {}
+            IF unrelQ > 0 /\ ~(StallEndsPass /\ Stalled)
+            THEN { [id |-> 0, ch |-> 0, lv |-> ULevel] } ELSE {}
 
 \* source contract: a retransmit group offers only its resend-FIFO head at its
 \* best level.  Stated from resendQ (FifoHead), not from RtxHead, so it checks
@@ -229,6 +246,7 @@ TypeOK ==
     /\ drops \in 0..DropCap
     /\ written \in [0..(NC - 1) -> Seq(Nat)]
     /\ classBad \in BOOLEAN
+    /\ unrelHeld \in BOOLEAN
     /\ resendQ \in Seq(Ids)
 
 Init ==
@@ -242,6 +260,7 @@ Init ==
     /\ drops = 0
     /\ written = [c \in 0..(NC - 1) |-> << >>]
     /\ classBad = FALSE
+    /\ unrelHeld = FALSE
     /\ resendQ = << >>
 
 (***************************************************************************)
@@ -251,7 +270,7 @@ Queue ==
     /\ sent < N
     /\ sent' = sent + 1
     /\ st' = [st EXCEPT ![sent + 1] = "queued"]
-    /\ UNCHANGED << clock, rr, unrelQ, budget, losses, drops, written, classBad, resendQ >>
+    /\ UNCHANGED << clock, rr, unrelQ, budget, losses, drops, written, classBad, unrelHeld, resendQ >>
 
 (***************************************************************************)
 (* Write: the builder takes the next item.  The level taken becomes the    *)
@@ -281,7 +300,7 @@ Write ==
                /\ IF c = "rel"
                   THEN written' = [written EXCEPT ![x.ch] = Append(@, Ordering(x.id))]
                   ELSE written' = written
-    /\ UNCHANGED << sent, losses, drops >>
+    /\ UNCHANGED << sent, losses, drops, unrelHeld >>
 
 (***************************************************************************)
 (* Tick: the update ends when nothing more can be written.  The unreliable *)
@@ -291,6 +310,7 @@ Write ==
 (***************************************************************************)
 Tick ==
     /\ ~CanWrite
+    /\ unrelHeld' = (unrelHeld \/ (unrelQ > 0 /\ budget > 0))
     /\ drops' = Min(drops + unrelQ, DropCap)
     /\ unrelQ' = UPerTick
     /\ budget' = Cap
@@ -301,14 +321,14 @@ Ack(i) ==
     /\ st[i] = "inflight"
     /\ st' = [st EXCEPT ![i] = "acked"]
     /\ resendQ' = Without(resendQ, i)
-    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, losses, drops, written, classBad >>
+    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, losses, drops, written, classBad, unrelHeld >>
 
 Lose(i) ==
     /\ st[i] = "inflight"
     /\ losses < MaxLoss
     /\ st' = [st EXCEPT ![i] = "lost"]
     /\ losses' = losses + 1
-    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, drops, written, classBad, resendQ >>
+    /\ UNCHANGED << sent, clock, rr, unrelQ, budget, drops, written, classBad, unrelHeld, resendQ >>
 
 Next ==
     \/ Queue
@@ -334,9 +354,10 @@ Spec == Init /\ [][Next]_vars /\ Fairness
 FirstWriteInOrderPerChannel ==
     \A c \in 0..(NC - 1) : \A k \in 1..Len(written[c]) : written[c][k] = k - 1
 
-\* a closed window never stops an unreliable item that has budget
-UnreliableNotBlockedByWindow ==
-    (budget > 0 /\ unrelQ > 0 /\ ~WindowOpen) => CanWrite
+\* the code's shape: a closed window ends the reliable phase, and the
+\* unreliable phase still runs while budget remains; an update ends with
+\* unreliable items dropped only when its budget is spent
+UnreliableNotBlockedByWindow == ~unrelHeld
 
 \* the class order is the outer rule: no write ever took a class while a
 \* higher class had an item it could write, whatever the priorities

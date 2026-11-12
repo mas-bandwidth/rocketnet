@@ -46,7 +46,18 @@ first written, and at most W numbers are outstanding. A full window holds the
 new-reliable class back. It never holds back retransmits (already numbered)
 or unreliable items (never numbered, I13). In the code the window is layer
 3's and the caller offers only items the window admits; the builder has no
-window gate, so it cannot block unreliable items on one.
+window gate. The unreliable items are not the ordered builder's at all: in
+the endpoint a stalled window with nothing due ends the reliable phase
+(`rn_endpoint_ordered_due` is false: the ready head is stalled and no resend
+is due) and `rn_endpoint_end_reliable` starts the unreliable phase, unless the
+budget refused a reliable packet (`reliable_waiting`): the unreliable phase
+runs while budget remains (`sdk/rocketnet_endpoint.cpp`,
+`rn_endpoint_next_packet_bytes`). That is the shape
+`UnreliableNotBlockedByWindow` states. The earlier statement,
+`(budget > 0 /\ unrelQ > 0 /\ ~WindowOpen) => CanWrite`, could not fail: the
+unreliable candidate never read the window, so `unrelQ > 0` alone made
+`CanWrite` true (it held with every guard reversed at once, `ChannelFIFO =
+FALSE` and `UnreliableLast = FALSE`: 183 distinct states, no error).
 
 ## What the module covers
 
@@ -62,6 +73,7 @@ window gate, so it cannot block unreliable items on one.
 | `drops` | unreliable items dropped at the end of an update (counted, capped) |
 | `written` | ghost: per channel, the orderings first-written, in order |
 | `classBad` | ghost: a write took a class while a higher class had an item |
+| `unrelHeld` | ghost: an update ended with unreliable items queued and budget left |
 | `resendQ` | the resend FIFO: written, unacked reliable items, least recently sent first; a write moves the item to the tail, an ack removes it |
 
 Actions: `Queue` (the application queues the next item of the scenario
@@ -78,7 +90,7 @@ Properties:
 |---|---|---|
 | `TypeOK` | invariant | every variable in its range |
 | `FirstWriteInOrderPerChannel` | invariant | within each channel, first writes follow the ordering |
-| `UnreliableNotBlockedByWindow` | invariant | a closed window never stops an unreliable item that has budget |
+| `UnreliableNotBlockedByWindow` | invariant | an update never ends with unreliable items queued and budget left (ghost `unrelHeld`, set by `Tick`): a closed window ends the reliable phase and the unreliable phase still runs. Under the design constants `Tick` needs `~CanWrite`, which unreliable items with budget make false, so it holds by construction; `MCRNSchedulerBrokenStallEndsPass.cfg` is the code change it guards against. |
 | `ClassOrderBeforePriority` | invariant | no write took a class while a higher class had an item it could write |
 | `RtxHeadBoost` | invariant | each retransmit channel offers only its lost item earliest in `resendQ` at the best level among its lost items. It is stated from `resendQ` (`FifoHead`), not from `RtxHead`; under the design constants `Cands` is built from the same definitions, so there it holds by construction and guards `Cands` against drift. It bites in the two broken cases below. |
 | `NoStarvation` | liveness | every queued reliable item is eventually first-written |
@@ -123,6 +135,7 @@ instance.
 | `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | `UnreliableLast = FALSE`: the unreliable class offered first | temporal `NoStarvation` | a lasso: all three reliable items queued, then every update writes its one arriving unreliable item and ticks, forever. The code takes classes in the budget's order, so the three reliable items go in the first three updates and the unreliable class gets the budget only after (`test_rnscheduler_witness_replays`, `test_budget_class_order_still_rules`). `ClassOrderBeforePriority` is the safety face of the same flaw and is left out of this case, so the failure checked is the liveness one. |
 | `MCRNSchedulerBrokenRtxPerMessage.cfg` | `ChannelFIFO = FALSE`: retransmits offered independently | invariant `RtxHeadBoost` | after both channel 0 items are lost, the second lost item appears as another candidate at its own priority instead of boosting the first lost item. |
 | `MCRNSchedulerBrokenRtxById.cfg` | `RtxSendOrder = FALSE`: a retransmit group's head is its lowest id | invariant `RtxHeadBoost` | 11 states: on channel 0, items 1 (CONFIG, IMMEDIATE) and 2 (MEDIUM) queued and first-written (`resendQ` 1, 2), item 1 lost and resent (`resendQ` 2, 1), then item 1 and item 2 lost (3 losses); this case's head is item 1. The code's resend FIFO is then 2, 1 (each send pushes to the tail), `rn_ordered_walk` hands the builder 2 then 1, and `rn_builder_plan`'s stable grouping makes 2 the channel's rtx head at the boosted level IMMEDIATE. Unreachable with 2 losses. |
+| `MCRNSchedulerBrokenStallEndsPass.cfg` | `StallEndsPass = TRUE`: a stalled window ends the update's pass, as a budget refusal does | invariant `UnreliableNotBlockedByWindow` | 9 states: CONFIG and channel 1's message first-written over two updates (the round robin takes channel 1 after channel 0; the window of 2 closed), channel 0's message queued and stalled, one unreliable item and one budget item: the update ends and drops it. The code there: `rn_window_send_first_write` refuses (`send->stalled`), no resend is due, so `rn_endpoint_ordered_due` is false; `rn_endpoint_end_reliable` finds no `reliable_waiting`, sets `RN_ENDPOINT_WRITE_UNRELIABLE`, and the unreliable packet is written. |
 
 ## Action-to-function map
 
