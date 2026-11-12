@@ -321,6 +321,10 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket );
 
+// the keep-alives send_packets held for a session whose first mark is not yet
+// applied (HoldGreetingUntilMarked). Main thread, as the commit failures are.
+uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
+
 void rocketnet_server_socket_stop( struct rocketnet_server_socket_t * server_socket );
 bool rocketnet_server_socket_stopped( struct rocketnet_server_socket_t * server_socket );
 
@@ -368,11 +372,15 @@ bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_send_idle_hard_error();
-// the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped
-// and xdp the xdp operations table, as the transport's counter read uses them
+// the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped,
+// replay_dispatch rocketnet_server_transport_io_replay_counts, and xdp the xdp
+// operations table, as the transport's counter read uses them
 typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                             uint64_t * dropped );
+typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                           uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();

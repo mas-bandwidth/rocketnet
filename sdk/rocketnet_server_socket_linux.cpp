@@ -3283,6 +3283,12 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
     return server_socket->replay_commit_failures;
 }
 
+uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+    return server_socket->replay_greetings_held;
+}
+
 #if ROCKETNET_DEV
 // A fixture's server socket in the caller's raw storage, with its sized parts
 // for the default configuration; the destruct frees them and leaves the
@@ -4020,6 +4026,7 @@ uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket
 
 #if ROCKETNET_DEV
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const rocketnet_server_transport_io_operations_t * xdp )
 {
     // two synthetic queues, no worker: each queue's receive drops by reason
@@ -4086,6 +4093,17 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
 
     rocketnet_server_socket_publish_kernel_dropped( &queues[0], &statistics, 3 * sizeof( uint64_t ) );
     valid = valid && dispatch( xdp, server, &dropped ) && dropped == 63;
+
+    // the replay writer's counts, which the main thread keeps on the server
+    // socket (rocketnet_server_socket_replay_commit, hold_greetings), reach
+    // XDP_REPLAY_COMMIT_FAILED and XDP_REPLAY_GREETING_HELD the same way
+
+    uint64_t commit_failed = 99;
+    uint64_t greetings_held = 99;
+    valid = valid && replay_dispatch( xdp, server, &commit_failed, &greetings_held ) && commit_failed == 0 && greetings_held == 0;
+    server->replay_commit_failures = 5;
+    server->replay_greetings_held = 3;
+    valid = valid && replay_dispatch( xdp, server, &commit_failed, &greetings_held ) && commit_failed == 5 && greetings_held == 3;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();
