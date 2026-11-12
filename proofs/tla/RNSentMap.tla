@@ -33,9 +33,19 @@
 (* only when no ack is due), as the code's update runs before its send.   *)
 (* A packet carries 1..MaxPerPacket numbers: first sends of next, next+1,  *)
 (* ... while inside the window (n < U + W), and resends of numbers whose  *)
-(* last send is at least RTO ago.  Blocks (U') and unreliable receipt      *)
-(* records are not modelled: a block only narrows the window, and a        *)
-(* receipt-only packet carries no reliable number (README-RNSentMap.md).  *)
+(* last send is at least RTO ago.  Blocks (U') are not modelled: a block   *)
+(* only narrows the window.                                                *)
+(*                                                                         *)
+(* Receipt-only packets (unreliable records with receipts and no reliable *)
+(* number, rn_window_ack_commit_receipt_packet) take ring entries too:    *)
+(* WriteReceipt, at most ReceiptsPerUpdate a update.  W does not bound     *)
+(* them, so the counting argument above holds only without them:          *)
+(* MCRNSentMap.cfg runs ReceiptsPerUpdate = 0, and                         *)
+(* MCRNSentMapReceiptEviction.cfg (one a update, P = W) fails              *)
+(* NoLiveEviction: the code evicts a reliable entry whose ack is on its    *)
+(* way when receipt-only and reliable packets together pass P in a round   *)
+(* trip.  NoLiveEviction is about entries that carry numbers; an evicted   *)
+(* receipt-only entry resolves its receipts as LOSS (RNReceipts EvictMap). *)
 (*                                                                         *)
 (* The map is the code's ring: entries in send order, an acked entry       *)
 (* left as a hole (live = FALSE) until it reaches the head, the head       *)
@@ -49,6 +59,8 @@
 (*              with P = W: the bound needs the resend delay above the    *)
 (*              round trip, which the code's 2 x srtt + 4 x deviation +    *)
 (*              30 ms keeps (standard/MESSAGES.md m9.2).                   *)
+(*   ReceiptsPerUpdate = 1  MCRNSentMapReceiptEviction.cfg must fail        *)
+(*              NoLiveEviction with P = W: the code's open risk above.     *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -59,9 +71,11 @@ CONSTANTS
     RTO,            \* ticks from a number's last send to its resend
     MaxNum,         \* numbers are 0..MaxNum
     MaxTime,        \* the clock runs 0..MaxTime
-    MaxPerPacket    \* reliable numbers a packet may carry, >= 1
+    MaxPerPacket,   \* reliable numbers a packet may carry, >= 1
+    ReceiptsPerUpdate \* receipt-only packets an update may write
 
 ASSUME /\ W \in Nat \ {0}
+       /\ ReceiptsPerUpdate \in Nat
        /\ P \in Nat \ {0}
        /\ RTT \in Nat \ {0}
        /\ RTO \in Nat \ {0}
@@ -80,9 +94,10 @@ VARIABLES
     smap,           \* the ring: Seq of [id, nums, live], oldest first
     wire,           \* opened packets whose acks are on their way: [id, land]
     pid,            \* the next packet id; every write takes a fresh one
-    liveEvicted     \* ghost: an entry was evicted while its ack was on its way
+    receipts,       \* receipt-only packets written this update
+    liveEvicted     \* ghost: an entry with numbers was evicted while its ack was on its way
 
-vars == <<now, next, acked, lastSend, smap, wire, pid, liveEvicted>>
+vars == <<now, next, acked, lastSend, smap, wire, pid, receipts, liveEvicted>>
 
 Min(S) == CHOOSE m \in S : \A x \in S : m <= x
 
@@ -110,6 +125,7 @@ Init ==
     /\ smap = <<>>
     /\ wire = {}
     /\ pid = 0
+    /\ receipts = 0
     /\ liveEvicted = FALSE
 
 \* A packet is written: k first sends from next, inside the window, and any
@@ -131,13 +147,30 @@ Write(k, R, lost) ==
        /\ next' = next + k
        /\ lastSend' = [n \in Nums |-> IF n \in S THEN now ELSE lastSend[n]]
        /\ smap' = Append(r2, [id |-> pid, nums |-> S, live |-> TRUE])
-       /\ liveEvicted' = (liveEvicted \/ (full /\ OnWire(r[1].id)))
+       /\ liveEvicted' = (liveEvicted \/ (full /\ r[1].nums # {} /\ OnWire(r[1].id)))
        /\ wire' = IF lost THEN wire ELSE wire \cup {[id |-> pid, land |-> now + RTT]}
        /\ pid' = pid + 1
-       /\ UNCHANGED <<now, acked>>
+       /\ UNCHANGED <<now, acked, receipts>>
 
 WriteAny ==
     \E k \in 0..MaxPerPacket, R \in SUBSET Due, lost \in BOOLEAN : Write(k, R, lost)
+
+\* A receipt-only packet is written (rn_window_ack_commit_receipt_packet):
+\* no numbers, the same ring step as Write.
+WriteReceipt(lost) ==
+    LET r == Reclaim(smap)
+        full == Len(r) >= P
+        r2 == IF full THEN Reclaim(Tail(r)) ELSE r
+    IN /\ AcksDue = {}
+       /\ receipts < ReceiptsPerUpdate
+       /\ receipts' = receipts + 1
+       /\ smap' = Append(r2, [id |-> pid, nums |-> {}, live |-> TRUE])
+       /\ liveEvicted' = (liveEvicted \/ (full /\ r[1].nums # {} /\ OnWire(r[1].id)))
+       /\ wire' = IF lost THEN wire ELSE wire \cup {[id |-> pid, land |-> now + RTT]}
+       /\ pid' = pid + 1
+       /\ UNCHANGED <<now, next, acked, lastSend>>
+
+WriteReceiptAny == \E lost \in BOOLEAN : WriteReceipt(lost)
 
 \* An ack lands (rn_window_ack_on_ack): an id the ring still holds marks its
 \* numbers acked and leaves a hole; an id the ring no longer holds is ignored.
@@ -150,7 +183,7 @@ Ack(q) ==
             ELSE LET i == CHOOSE i \in hit : TRUE
                  IN /\ acked' = acked \cup smap[i].nums
                     /\ smap' = Reclaim([smap EXCEPT ![i].live = FALSE])
-    /\ UNCHANGED <<now, next, lastSend, pid, liveEvicted>>
+    /\ UNCHANGED <<now, next, lastSend, pid, receipts, liveEvicted>>
 
 AckAny == \E q \in wire : Ack(q)
 
@@ -159,6 +192,7 @@ Tick ==
     /\ AcksDue = {}
     /\ now < MaxTime
     /\ now' = now + 1
+    /\ receipts' = 0
     /\ UNCHANGED <<next, acked, lastSend, smap, wire, pid, liveEvicted>>
 
 \* the bounded run's end: the clock stops and nothing is due
@@ -167,7 +201,7 @@ Done ==
     /\ now = MaxTime
     /\ UNCHANGED vars
 
-Next == WriteAny \/ AckAny \/ Tick \/ Done
+Next == WriteAny \/ WriteReceiptAny \/ AckAny \/ Tick \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -182,6 +216,7 @@ TypeOK ==
     /\ smap \in Seq([id : Nat, nums : SUBSET Nums, live : BOOLEAN])
     /\ \A q \in wire : q.land \in now..(now + RTT)
     /\ pid \in Nat
+    /\ receipts \in 0..ReceiptsPerUpdate
     /\ liveEvicted \in BOOLEAN
 
 \* the ring never spans more than P entries

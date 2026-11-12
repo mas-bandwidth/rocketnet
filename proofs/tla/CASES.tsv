@@ -459,6 +459,7 @@ MCRNClientIocpBrokenCopyPosted.cfg	MCRNClientIocp.tla	invariant	NeverCopiedWhile
 MCRNSentMap.cfg	MCRNSentMap.tla	pass	-	check	rnsentmap	required	-
 MCRNSentMapBrokenSmallMap.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
 MCRNSentMapBrokenEarlyResend.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
+MCRNSentMapReceiptEviction.cfg	MCRNSentMap.tla	invariant	NoLiveEviction	check	rnsentmap	required	-
 MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
