@@ -1531,6 +1531,7 @@ static struct live_matrix_t * live_matrix_open()
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+    server_config.per_client_receive_kbps = LIVE_MATRIX_SEND_KBPS;     // the server allows what its client is set to send
 
     m->server = rocketnet_message_server_create_internal( NULL, "127.0.0.1", &server_config, &m->message_config, NULL, 0, LIVE_MATRIX_SEND_KBPS, NULL, 1 );
     live_matrix_check( m->server );
