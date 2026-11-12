@@ -3,6 +3,7 @@
 
 import argparse
 import re
+import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -37,20 +38,13 @@ _CITED_SYMBOL = r"((?:rn_|rocketnet_|RN_|ROCKETNET_)[A-Za-z0-9_]+)"
 PATH_THEN_SYMBOL_RE = re.compile(_CITED_PATH + r"`?\s*\(\s*`?" + _CITED_SYMBOL + r"`?\s*\)")
 # "rn_x (sdk/a.cpp)": the symbol, then the path that defines it
 SYMBOL_THEN_PATH_RE = re.compile(_CITED_SYMBOL + r"`?\s*\(\s*`?" + _CITED_PATH + r"`?\s*\)")
-# Every file that can carry a path:line citation: the models, their notes
-# and ledgers, and the code and tests they cite. A hand list of 16 files left
-# 74 citations unchecked (VERIFY-6 A5, VERIFY-3 C-14).
-CITATION_SCAN_GLOBS = (
-    "proofs/tla/*.tla",
-    "proofs/tla/*.md",
-    "proofs/tla/*.tsv",
-    "sdk/**/*.h",
-    "sdk/**/*.c",
-    "sdk/**/*.cpp",
-    "tests/**/*.h",
-    "tests/**/*.c",
-    "tests/**/*.cpp",
-)
+# Every file that can carry a path:line citation: every tracked source file
+# wherever it lives (git ls-files, not a list of directories), and the models'
+# own notes and ledgers under proofs/tla/. A hand
+# list of 16 files left 74 citations unchecked (VERIFY-6 A5, VERIFY-3 C-14),
+# and a directory list missed the test code outside tests/ (VERIFY-3 W16:
+# sdk/rocketnet_tests.cpp, tools/, benchmarks/, examples/).
+CITATION_SCAN_SUFFIXES = (".tla", ".md", ".tsv", ".h", ".hpp", ".c", ".cpp", ".inc")
 _FUNC_HEADER_RE = re.compile(
     r"^\s*(?:static\s+|extern\s+\"C\"\s+|inline\s+)*[A-Za-z_][\w\s\*&<>:,]*?"
     r"\b((?:rn_|rocketnet_|split_|simulated_)[A-Za-z0-9_]+)\s*\(")
@@ -150,17 +144,28 @@ def _function_starts(text):
 
 
 def citation_scan_files():
+    # the checkout's tracked files; a tree that is not its own checkout (a
+    # self-test's) is walked whole
+    rels = None
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        if Path(top).resolve() == ROOT.resolve():
+            out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+            rels = out.decode("utf-8", "replace").split("\0")
+    except (OSError, subprocess.CalledProcessError):
+        rels = None
+    if rels is None:
+        rels = [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*") if ".git" not in p.parts]
     files = []
-    for pattern in CITATION_SCAN_GLOBS:
-        for path in sorted(ROOT.glob(pattern)):
-            rel = path.relative_to(ROOT).as_posix()
-            if path.is_file() and rel not in files:
-                files.append(rel)
+    for rel in sorted(rels):
+        notes = rel.endswith((".md", ".tsv")) and not rel.startswith("proofs/tla/")
+        if rel.endswith(CITATION_SCAN_SUFFIXES) and not notes and (ROOT / rel).is_file():
+            files.append(rel)
     return files
 
 
 def check_citations():
-    """Every file under CITATION_SCAN_GLOBS: no path:line citation (cite
+    """Every tracked file of a CITATION_SCAN_SUFFIXES kind: no path:line citation (cite
     the symbol), and a path cited beside a symbol, either way round, must
     still name that symbol: a rename or a removal leaves the citation
     pointing at nothing. (A note may cite the header that declares a
