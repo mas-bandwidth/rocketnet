@@ -26,15 +26,11 @@
     replaces every bound, this one included.
 
     Planned bytes the SDK takes from the OS outside the allocator are counted
-    by construction: the SDK keeps its own count of them
-    (rocketnet_direct_allocation_bytes, sdk/rocketnet_memory.h: the AF_XDP
-    UMEM, a posix_memalign block registered with the kernel, the XDP rings
-    and the io_uring rings), and the peak is taken over the counted bytes plus
-    that count, read at every allocator call. No case counts them by hand, so
-    no case can forget to: before this (2026-11-12) every xdp case but the
-    lifecycle-stress cells left its UMEM out and reported a bound of about
-    358 MiB against a peak of about 451 MiB. Bytes a case itself holds outside
-    the SDK are counted by that case with plan_rss_count_outside_allocator.
+    by the case that makes them: the AF_XDP UMEM (rocketnet_xdp_umem_bytes) is
+    in the server's plan but is a posix_memalign block registered with the
+    kernel (sdk/rocketnet_server_socket_linux.cpp:1814), so a case that builds
+    an xdp server counts it with plan_rss_count_outside_allocator after the
+    create and plan_rss_uncount_outside_allocator after the destroy.
 */
 
 #pragma once
@@ -56,10 +52,6 @@
 #else
 #include <sys/mman.h>
 #endif // #if defined( _WIN32 )
-
-// the SDK's own count of the bytes it holds outside the allocator
-// (sdk/rocketnet_memory.h)
-extern "C" uint64_t rocketnet_direct_allocation_bytes( void );
 
 // the line a case process prints to report its bound, then the bound in MiB
 #define PLAN_RSS_LINE "plan_rss_bound_mb="
@@ -104,27 +96,17 @@ inline std::atomic<uint64_t> & plan_rss_peak()
     return peak;
 }
 
-// the peak takes the counted bytes plus what the SDK holds outside the
-// allocator by its own count (the header comment), read at every count and
-// before every uncount
-
-inline void plan_rss_sample( uint64_t live )
+inline void plan_rss_count( uint64_t bytes )
 {
-    const uint64_t total = live + rocketnet_direct_allocation_bytes();
+    const uint64_t live = plan_rss_live().fetch_add( bytes ) + bytes;
     uint64_t peak = plan_rss_peak().load();
-    while ( total > peak && !plan_rss_peak().compare_exchange_weak( peak, total ) )
+    while ( live > peak && !plan_rss_peak().compare_exchange_weak( peak, live ) )
     {
     }
 }
 
-inline void plan_rss_count( uint64_t bytes )
-{
-    plan_rss_sample( plan_rss_live().fetch_add( bytes ) + bytes );
-}
-
 inline void plan_rss_uncount( uint64_t bytes )
 {
-    plan_rss_sample( plan_rss_live().load() );
     plan_rss_live().fetch_sub( bytes );
 }
 
@@ -203,7 +185,7 @@ inline void plan_rss_free( void * context, void * p )
     }
 }
 
-// bytes a case itself holds outside the SDK, counted while it holds them
+// planned bytes the SDK holds outside the allocator (the header comment)
 
 inline void plan_rss_count_outside_allocator( uint64_t bytes )
 {
@@ -220,7 +202,6 @@ inline void plan_rss_uncount_outside_allocator( uint64_t bytes )
 inline long plan_rss_bound_mb()
 {
     const uint64_t mib = 1024 * 1024;
-    plan_rss_sample( plan_rss_live().load() );
     return (long) ( ( plan_rss_peak().load() + mib - 1 ) / mib ) + PLAN_RSS_SLACK_MB;
 }
 

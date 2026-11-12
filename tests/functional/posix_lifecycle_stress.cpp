@@ -671,6 +671,17 @@ static void posix_cell_end( const posix_env_guard_t * server_guard, const posix_
 
 #define POSIX_XDP_QUEUES 1
 
+// the UMEM an xdp cell's server takes outside the allocator: 0 on a build
+// without the xdp transport, which has no xdp cell that runs
+static uint64_t posix_xdp_umem_bytes()
+{
+#if defined( __linux__ ) && ROCKETNET_XDP
+    return rocketnet_xdp_umem_bytes( POSIX_XDP_QUEUES );
+#else
+    return 0;
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
+}
+
 static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * cell, const char * address, int max_clients )
 {
     struct rocketnet_server_transport_config_t config;
@@ -697,15 +708,25 @@ static rocketnet_server_transport_t * posix_server_create( const posix_cell_t * 
     posix_check( server != NULL );
     posix_check( strcmp( rocketnet_server_transport_io_name( server ), cell->server_granted ) == 0 );
 
-    // the xdp server's UMEM is outside the allocator; tests/plan_rss.h takes
-    // it from the SDK's own count
+    // the xdp server's UMEM is planned but taken outside the allocator
+    // (tests/plan_rss.h): counted while the server lives
+
+    if ( cell->xdp )
+    {
+        plan_rss_count_outside_allocator( posix_xdp_umem_bytes() );
+    }
 
     return server;
 }
 
-static void posix_server_destroy( rocketnet_server_transport_t * server )
+static void posix_server_destroy( const posix_cell_t * cell, rocketnet_server_transport_t * server )
 {
     rn_native_server_transport_stop_and_destroy( server );
+
+    if ( cell->xdp )
+    {
+        plan_rss_uncount_outside_allocator( posix_xdp_umem_bytes() );
+    }
 }
 
 // the client's clock: the platform clock plus the send intervals skipped.
@@ -1050,7 +1071,7 @@ void rocketnet_test_posix_server_create_destroy_1000()
 #endif // #if defined( __GLIBC__ ) && ROCKETNET_XDP
             }
 
-            posix_server_destroy( server );
+            posix_server_destroy( cell, server );
 
             // a leak per cycle exhausts a kernel limit long before the last of
             // 1000 creates, so the counts are also compared after the first
@@ -1229,7 +1250,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
         {
             rocketnet_server_transport_t * discovery = posix_server_create( cell, posix_bind_address( cell ), 4 );
             fixed_port = (unsigned) rocketnet_server_transport_port( discovery );
-            posix_server_destroy( discovery );
+            posix_server_destroy( cell, discovery );
         }
         else
         {
@@ -1255,7 +1276,7 @@ void rocketnet_test_posix_server_restart_same_port_100()
             rocketnet_client_transport_t * client = posix_client_create( cell, server_address, &clock );
             posix_check( posix_wait_connected( server, client, &clock, 5.0 ) );
             rn_native_client_transport_stop_and_destroy( client );
-            posix_server_destroy( server );
+            posix_server_destroy( cell, server );
         }
 
         const double seconds = posix_now_seconds() - start;
@@ -1323,7 +1344,7 @@ void rocketnet_test_posix_connect_disconnect_1000()
         const double seconds = posix_now_seconds() - start;
 
         posix_release_ipv4_ports( held_ports, POSIX_HELD_IPV4_PORTS );
-        posix_server_destroy( server );
+        posix_server_destroy( cell, server );
 
         const posix_resource_counts_t after = posix_settled_counts( &before );
 
@@ -1452,7 +1473,7 @@ void rocketnet_test_posix_destroy_under_traffic_100()
             // destroy the server while all eight clients are sending, then
             // stop the senders before the clients themselves are destroyed
 
-            posix_server_destroy( server );
+            posix_server_destroy( cell, server );
 
             running.store( false, std::memory_order_release );
 
