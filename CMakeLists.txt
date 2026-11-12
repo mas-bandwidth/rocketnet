@@ -257,6 +257,10 @@ endif()
 function(rocketnet_use_sodium target)
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_link_libraries(${target} PRIVATE RocketNet::Sodium)
+        # every source of the target then takes the system <sodium.h> and its
+        # unprefixed names (the vendored header prefixes them for the bundled
+        # build): the test, tool and fuzz sources test this macro
+        target_compile_definitions(${target} PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
     else()
         # Only this build owns the privately prefixed RNG state in sodium.c.
         # The lifecycle source must never close an application's system sodium.
@@ -948,9 +952,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV)
         target_link_options(test PRIVATE "-Wl,--wrap=rocketnet_platform_time")
     endif()
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     # The key-wipe witness compiles the SDK key schedule, including <sodium.h>.
     # Give it the same selected sodium headers as the library on every OS.
     rocketnet_use_sodium(test)
@@ -981,9 +982,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(connect_token_vectors PRIVATE rocketnet_dev)
     target_compile_features(connect_token_vectors PRIVATE cxx_std_11)
     rocketnet_use_sodium(connect_token_vectors)
-    if(ROCKETNET_USE_SYSTEM_SODIUM)
-        target_compile_definitions(connect_token_vectors PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-    endif()
     rocketnet_warning_floor(connect_token_vectors)
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp,
     # which includes <sodium.h>: the vendored header, as the transport's own
@@ -1420,7 +1418,6 @@ if(ROCKETNET_BUILD_TOOLS)
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)
         target_include_directories(fuzz_replay_${harness} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
             "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests")
         rocketnet_use_sodium(fuzz_replay_${harness})
