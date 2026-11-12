@@ -240,7 +240,11 @@ def main(argv):
     elif len(argv) != 1:
         print("usage: check_tla_views.py [--self-test | --root DIR]")
         return 2
-    offences, census = check(os.path.join(root, "proofs", "tla"))
+    tla_dir = os.path.join(root, "proofs", "tla")
+    if not os.path.isdir(tla_dir) or not any(n.endswith(".cfg") for n in os.listdir(tla_dir)):
+        print("check_tla_views: 0 .cfg files under %s: nothing was checked" % tla_dir)
+        return 1
+    offences, census = check(tla_dir)
     for o in offences:
         print(o)
     print(census)

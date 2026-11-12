@@ -253,7 +253,14 @@ def self_test():
 def main(argv):
     if argv[:1] == ["--self-test"]:
         return self_test()
-    paths = [Path(a) for a in argv] or workflow_files(ROOT)
+    root = ROOT
+    if argv[:1] == ["--root"]:
+        if len(argv) < 2:
+            print("usage: check_workflow_shape.py [--self-test | --root DIR | WORKFLOW...]")
+            return 2
+        root = Path(argv[1])
+        argv = argv[2:]
+    paths = [Path(a) for a in argv] or workflow_files(root)
     if not paths:
         print("check_workflow_shape: no workflows found under .github/workflows: nothing was checked")
         return 1
