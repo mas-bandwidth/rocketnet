@@ -5683,6 +5683,87 @@ static void test_message_unreliable_delivery_is_on_channel_zero()
 }
 
 REGISTER_UNIT_TEST( test_message_unreliable_delivery_is_on_channel_zero );
+
+// RNOutgoingBuild Seal, its drop branch: records packed in place while the
+// bucket could pay them, and the bucket emptied before the build is sealed
+// at send_packets. The whole build is dropped: each record counted over
+// budget (not as a failed send), nothing on the wire, nothing charged or
+// refused, a receipt's LOSS once, and the client receives none of them.
+// With the bucket left as it was, the same build goes out whole.
+static void test_message_packed_build_dropped_over_budget_at_seal()
+{
+    for ( int dropped = 1; dropped >= 0; dropped-- )
+    {
+        mo_pair_t pair;
+        mo_refund_setup( &pair );
+        rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+        const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+        const uint64_t over = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+        const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        const mo_refund_mark_t mark = mo_refund_mark( &pair );
+        const size_t logged = pair.net->server->sent_log.size();
+
+        const int types[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED };
+        uint32_t receipt_serial = 0;
+        for ( int i = 0; i < 3; i++ )
+        {
+            uint8_t * p = rocketnet_message_server_start( pair.server, 0, 1, types[i], 200 );
+            check( p != NULL );
+            check( pair.server->object.in_place == 2 );                      // packed into the open build
+            if ( p )
+            {
+                mo_fill( p, (uint32_t) ( 110 + i ), 200 );
+                const uint32_t serial = rocketnet_message_server_finish( pair.server, 0, 200 );
+                check( serial != 0 );
+                receipt_serial = i == 1 ? serial : receipt_serial;
+            }
+        }
+        check( slot->unreliable_build.writer.records == 3 );
+
+        if ( dropped )
+        {
+            slot->budget.tokens = 0.0;
+        }
+        rocketnet_message_server_send_packets( pair.server );
+
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == over + ( dropped ? 3 : 0 ) );
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed );
+        check( pair.net->server->sent_log.size() == logged + ( dropped ? 0 : 1 ) );
+        check( slot->budget.refusals == mark.refusals );
+        if ( dropped )
+        {
+            check( slot->budget.tokens == 0.0 );
+            check( slot->budget.bytes_spent == mark.bytes_spent );
+        }
+        else if ( pair.net->server->sent_log.size() == logged + 1 )
+        {
+            const int wire = rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, pair.net->server->sent_log[logged].bytes );
+            check( slot->budget.bytes_spent == mark.bytes_spent + (uint64_t) wire );
+        }
+
+        std::vector<mo_received_t> client_got;
+        int acked = 0;
+        int lost = 0;
+        for ( int i = 0; i < 4; i++ )
+        {
+            mo_step( &pair, NULL, &client_got );
+            rocketnet_message_receipt_t receipts[8];
+            const int n = rocketnet_message_server_receipts( pair.server, 0, receipts, 8 );
+            for ( int r = 0; r < n && r < 8; r++ )
+            {
+                check( receipts[r].serial == receipt_serial );
+                acked += receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ? 1 : 0;
+                lost += receipts[r].status == ROCKETNET_RECEIPT_STATUS_LOSS ? 1 : 0;
+            }
+        }
+        check( acked == ( dropped ? 0 : 1 ) );
+        check( lost == ( dropped ? 1 : 0 ) );
+        check( client_got.size() == ( dropped ? 0u : 3u ) );
+        mo_pair_teardown( &pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_message_packed_build_dropped_over_budget_at_seal );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
