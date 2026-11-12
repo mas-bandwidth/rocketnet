@@ -200,6 +200,7 @@ static const allowlist_row_t allowlist[] = {
     { F_S, "packet_failed", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "write_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "packet_sent", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
+    { F_S, "packet_started", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "abort_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "finish_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },
     { F_S, "start_packet", "PACKET BUILDER AND ENDPOINT PACKET PLANNING" },

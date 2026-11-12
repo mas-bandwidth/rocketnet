@@ -85,7 +85,7 @@ struct rn_endpoint_config_t
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
     X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \
-    X( packet_written, int packet_written ) /* 1 between write_packet and packet_sent or packet_failed */                                             \
+    X( packet_written, int packet_written ) /* 1 between write_packet and packet_sent or packet_failed; 2: written first, records queued */                                       \
     X( large_bytes, int large_bytes ) /* SEQUENCED_LARGE: the payload bytes */                                                                        \
     X( large_admitted, int large_admitted ) /* SEQUENCED_LARGE: the wire bytes charged to the budget */                                               \
     X( large_descriptor, uint32_t large_descriptor ) /* SEQUENCED_LARGE: its send descriptor */                                                       \
@@ -252,12 +252,33 @@ bool rn_endpoint_write_may_be_refused( const struct rn_endpoint_t * endpoint );
 // bytes written, or 0 when nothing was written.
 int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now );
 
+// The unreliable records a packet written before its frame carries. They stay
+// queued until a frame takes the packet, so a start the transport refuses
+// leaves them queued, as when no packet was written.
+struct rn_endpoint_taken_t
+{
+    uint32_t index[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+    uint32_t generation[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+    int count;
+};
+
+// write_packet for a packet written before its frame is started (packet id
+// 0): an unreliable packet's records are named in *taken and left queued.
+// Then packet_started once a frame is started, or packet_failed when the
+// start is refused.
+int rn_endpoint_write_packet_first( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, double now, struct rn_endpoint_taken_t * taken );
+
+// A frame was started for the packet write_packet_first wrote: its unreliable
+// records leave the queue.
+void rn_endpoint_packet_started( struct rn_endpoint_t * endpoint, const struct rn_endpoint_taken_t * taken );
+
 // The written packet left: wire_bytes is the sealed size the transport
 // reported. Commits the packet to the sent map and settles the budget.
 void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_id, int wire_bytes, double now );
 
 // The planned packet did not leave: either no frame was started for it
-// (nothing written), or the transport refused the written packet.
+// (nothing written, or an unreliable packet written first whose records are
+// still queued), or the transport refused the written packet.
 void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now );
 
 int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct rocketnet_message_receipt_t * out, int capacity );

@@ -1636,6 +1636,8 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     const double now = object->time;
 
     alignas( 16 ) uint8_t scratch[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_taken_t taken;                                  // unreliable records written first, still queued
+    taken.count = 0;
 
     for ( ;; )
     {
@@ -1649,7 +1651,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
         int payload_bytes = 0;
         if ( write_first )
         {
-            payload_bytes = rn_endpoint_write_packet( connection, scratch, request, 0, now );
+            payload_bytes = rn_endpoint_write_packet_first( connection, scratch, request, now, &taken );
             if ( payload_bytes == 0 )
             {
                 continue;                                       // refused before any frame was taken
@@ -1660,7 +1662,10 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
         uint8_t * frame = link->start_packet( link->transport, index, request, &context );
         if ( !frame )
         {
-            rn_endpoint_packet_failed( connection, 0, now );    // no frame: a packet written first is due again, its charge refunded
+            // no frame: reliable messages written first are due again,
+            // unreliable records stay queued and end the pass, as with
+            // nothing written; either charge is refunded
+            rn_endpoint_packet_failed( connection, 0, now );
             continue;
         }
 
@@ -1676,6 +1681,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
 
         if ( write_first )
         {
+            rn_endpoint_packet_started( connection, &taken );
             memcpy( frame + context.payload_index, scratch, (size_t) payload_bytes );
         }
         else
