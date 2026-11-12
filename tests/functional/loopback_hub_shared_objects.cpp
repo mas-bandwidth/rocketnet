@@ -166,8 +166,17 @@ static uint64_t loopback_hub_modules_debug_crt_bytes()
     server_config.max_clients = 1;
     server_config.transport = "loopback";
     client_config.transport = "loopback";
+
+    // a loopback config plans only with a hub set: a host hub of the modules'
+    // size, for the plan only
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_loopback_hub_t * plan_hub = rocketnet_loopback_hub_create( NULL, 1, &status );
+    rocketnet_check( plan_hub != NULL && status == ROCKETNET_STATUS_OK );
+    server_config.loopback_hub = plan_hub;
+    client_config.loopback_hub = plan_hub;
     const size_t server_bytes = rocketnet_server_required_memory( &server_config );
     const size_t client_bytes = rocketnet_client_required_memory( &client_config );
+    rocketnet_check( rocketnet_loopback_hub_destroy( plan_hub ) == ROCKETNET_STATUS_OK );
     rocketnet_check( server_bytes > 0 && client_bytes > 0 );
     printf( "loopback hub modules: debug CRT, counting server %zu + client %zu planned bytes\n", server_bytes, client_bytes );
     return (uint64_t) server_bytes + (uint64_t) client_bytes;
