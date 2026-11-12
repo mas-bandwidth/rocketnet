@@ -22,6 +22,10 @@ nightly_debt() refuses a row whose config is not declared timeout debt with a
 FAIL/124 record, a budget_s under twice measured_s, or a malformed number;
 tools/check_tla_records.py runs the same check on every commit.
 
+Declared budgets (proofs/tla/BUDGETS.tsv: config, budget_s, measured_s,
+slowest_s, slowest_host) are PASS cases whose record is over MARGIN of its budget: the re-run
+runs each under its budget_s (see margin() and declared_budgets()).
+
 Emit group, full group cardinality, and zero-based shard index (and, for
 rerun, the config and the budget in seconds, 0 for none). Pinned tlacheck 0c97d595 preserves CASES.tsv order in
 ParseCases and Select; filtering to just selected cases before assigning
@@ -172,6 +176,113 @@ def read_nightly_debt(path, cases, runs):
         return nightly_debt(rows, cases, runs, reader.fieldnames)
 
 
+# The budget margin. A PASS record over MARGIN of its budget (66 s of the
+# pinned tlacheck's 110 s) is one slower or busier host away from a red gate
+# when its module is next edited and the case is recorded again. Such a case
+# declares its own larger budget in proofs/tla/BUDGETS.tsv (config, budget_s,
+# measured_s, slowest_s, slowest_host): budget_s at least twice the record's
+# seconds, which measured_s repeats (so recording the case again re-opens its
+# declaration), and at least twice the slowest complete run seen (slowest_s,
+# on slowest_host: a machine, or `record` when the committed record is the
+# slowest; a run its deadline stopped counts at that deadline, a lower bound);
+# the nightly re-run runs it
+# under that budget_s. Or it becomes timeout debt
+# (gate bench, a debt reason, a FAIL/124 record) and moves to the nightly-debt
+# list. tools/check_tla_records.py refuses, on every commit, a PASS record
+# over the margin with neither, and prints the declared ones.
+MARGIN = 0.6
+BUDGETS_COLUMNS = ("config", "budget_s", "measured_s", "slowest_s", "slowest_host")
+
+
+def over_margin(runs):
+    """(config, seconds, budget) of each PASS record over MARGIN of its
+    budget, and the problems: a PASS record whose seconds or budget is not a
+    positive number cannot be measured against its budget."""
+    over, problems = [], []
+    for row in runs:
+        if row.get("result") != "PASS":
+            continue
+        seconds, budget = positive(row.get("seconds"), float), positive(row.get("budget"), float)
+        if seconds is None or budget is None:
+            problems.append(f"{row['config']}: PASS record seconds {row.get('seconds')!r} and budget "
+                            f"{row.get('budget')!r} must be positive numbers of seconds")
+        elif seconds > MARGIN * budget:
+            over.append((row["config"], seconds, budget))
+    return over, problems
+
+
+def declared_budgets(rows, runs, columns=BUDGETS_COLUMNS):
+    """The BUDGETS.tsv rows by config, after refusing (every problem at once)
+    a row whose config has no PASS record, a duplicate, a measured_s that is
+    not its record's seconds, a budget_s under twice measured_s or twice
+    slowest_s, a record within the margin (nothing to declare), a malformed
+    number or no slowest_host."""
+    if tuple(columns or ()) != BUDGETS_COLUMNS:
+        raise ValueError(f"BUDGETS.tsv columns {tuple(columns or ())} != {BUDGETS_COLUMNS}")
+    records = keyed(runs, "RUNS.tsv")
+    over = {config for config, _, _ in over_margin(runs)[0]}
+    problems, out = [], {}
+    for row in rows:
+        config = row["config"]
+        if config in out:
+            problems.append(f"{config}: listed twice")
+            continue
+        out[config] = row
+        record = records.get(config, {})
+        if record.get("result") != "PASS":
+            problems.append(f"{config}: has no PASS record in RUNS.tsv (result={record.get('result')!r}); "
+                            "timeout debt goes in NIGHTLY-DEBT.tsv")
+            continue
+        budget, measured = positive(row["budget_s"], float), positive(row["measured_s"], float)
+        slowest = positive(row["slowest_s"], float)
+        if budget is None or measured is None or slowest is None:
+            problems.append(f"{config}: budget_s {row['budget_s']!r}, measured_s {row['measured_s']!r} and "
+                            f"slowest_s {row['slowest_s']!r} must be positive numbers of seconds")
+            continue
+        if measured != positive(record.get("seconds"), float):
+            problems.append(f"{config}: measured_s {row['measured_s']} is not its RUNS.tsv record's seconds "
+                            f"{record.get('seconds')}; declare the budget of the record committed")
+        if budget < 2 * measured:
+            problems.append(f"{config}: budget_s {row['budget_s']} is under twice measured_s {row['measured_s']}")
+        if budget < 2 * slowest:
+            problems.append(f"{config}: budget_s {row['budget_s']} is under twice slowest_s {row['slowest_s']}")
+        if config not in over:
+            problems.append(f"{config}: its record ({record.get('seconds')} s of {record.get('budget')} s) is "
+                            f"within {MARGIN:.0%} of its budget: remove the declaration")
+        if not row["slowest_host"].strip() or row["slowest_host"] == "-":
+            problems.append(f"{config}: slowest_host must name the machine of the slowest run")
+    if problems:
+        raise ValueError("BUDGETS.tsv: " + "; ".join(problems))
+    return out
+
+
+def read_budgets(path, runs):
+    """BUDGETS.tsv checked against the records; no file is no declared budget."""
+    if not path.exists():
+        return {}
+    with path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream, delimiter="\t")
+        rows = list(reader)
+        return declared_budgets(rows, runs, reader.fieldnames)
+
+
+def margin(runs, budgets):
+    """The flagged lines (each PASS record over the margin that declares its
+    budget) and the problems (each that declares none, and each malformed
+    PASS record)."""
+    over, problems = over_margin(runs)
+    flagged = []
+    for config, seconds, budget in over:
+        if config in budgets:
+            flagged.append(f"TLC-MARGIN {config} PASS in {seconds:g} s of its {budget:g} s budget (over "
+                           f"{MARGIN:.0%}): declared budget {budgets[config]['budget_s']} s in BUDGETS.tsv")
+        else:
+            problems.append(f"{config}: PASS in {seconds:g} s, over {MARGIN:.0%} of its {budget:g} s budget "
+                            f"({MARGIN * budget:g} s): record it again under the line, declare a budget of at "
+                            "least twice its seconds in BUDGETS.tsv, or make it timeout debt in NIGHTLY-DEBT.tsv")
+    return flagged, problems
+
+
 def slice_key(group, config):
     """The case's stable slice key: its group and config file name, never its
     position in CASES.tsv, so adding or moving a row moves no other case."""
@@ -185,19 +296,22 @@ def day_slice(day, slices=SLICES):
     return day % slices
 
 
-def rerun(cases, runs, index=None, slices=SLICES, nightly=None):
+def rerun(cases, runs, index=None, slices=SLICES, nightly=None, budgets=None):
     """Every nightly-debt case first (in every slice, each under its
     budget_s), then the non-debt cases of slice index/slices (all of them
-    when index is None, budget 0: none), as (group, cardinality, shard,
-    config, budget). An empty selection is an error: a night that re-runs
-    nothing must never be green."""
+    when index is None), each under its BUDGETS.tsv budget_s when it declares
+    one and budget 0 (none) when not, as (group, cardinality, shard, config,
+    budget). An empty selection is an error: a night that re-runs nothing
+    must never be green."""
     if index is not None and not 0 <= index < slices:
         raise ValueError(f"slice {index} is outside 0..{slices - 1}")
     nightly = nightly or {}
+    budgets = budgets or {}
     every, _ = entries(cases, runs)
     picked = [(group, count, shard, config, nightly[config]["budget_s"])
               for group, count, shard, config, debt in every if debt and config in nightly]
-    picked += [(group, count, shard, config, "0") for group, count, shard, config, debt in every
+    picked += [(group, count, shard, config, budgets[config]["budget_s"] if config in budgets else "0")
+               for group, count, shard, config, debt in every
                if not debt and (index is None or slice_key(group, config) % slices == index)]
     if not picked:
         where = "full" if index is None else f"slice {index}/{slices}"
@@ -236,6 +350,8 @@ def main():
     parser.add_argument("--runs", type=Path, default=Path("proofs/tla/RUNS.tsv"))
     parser.add_argument("--nightly-debt", type=Path, default=Path("proofs/tla/NIGHTLY-DEBT.tsv"),
                         help="the timeout debt run every night under its own budget (rerun) and left out of debt")
+    parser.add_argument("--budgets", type=Path, default=Path("proofs/tla/BUDGETS.tsv"),
+                        help="the PASS cases over the budget margin that run under their declared budget (rerun)")
     parser.add_argument("--stale", type=Path, help="tlacheck groups --stale JSON (stale, debt)")
     parser.add_argument("--select", choices=("stale", "debt", "rerun"), required=True)
     parser.add_argument("--day", type=int, help="rerun: UTC day number; the slice is day mod SLICES")
@@ -250,6 +366,7 @@ def main():
     try:
         cases, runs = read_tsv(args.cases), read_tsv(args.runs)
         nightly = read_nightly_debt(args.nightly_debt, cases, runs)
+        budgets = read_budgets(args.budgets, runs) if args.select == "rerun" else {}
         if args.slice_report:
             for line in slice_report(cases, runs, [int(n) for n in args.slice_report.split(",")]):
                 print(line)
@@ -258,8 +375,8 @@ def main():
             if args.full == (args.day is not None):
                 raise ValueError("rerun needs exactly one of --day or --full")
             index = None if args.full else day_slice(args.day)
-            picked = rerun(cases, runs, index, nightly=nightly)
-            total = len(rerun(cases, runs, nightly=nightly))
+            picked = rerun(cases, runs, index, nightly=nightly, budgets=budgets)
+            total = len(rerun(cases, runs, nightly=nightly, budgets=budgets))
             name = "full" if index is None else f"slice {index}/{SLICES}"
             if args.only:
                 if not args.full:
@@ -279,9 +396,10 @@ def main():
                     limit = f" budget {budget} s" if budget != "0" else ""
                     print(f"TLC-PLAN rerun {config} ({group} shard {shard}/{count}){limit}", file=sys.stderr)
             day = "" if args.day is None else f" day={args.day}"
-            debts = sum(1 for entry in picked if entry[4] != "0")
-            print(f"TLC-RERUN {name}{day} cases={len(picked)} ({debts} nightly debt) of {total} re-run cases",
-                  file=sys.stderr)
+            debts = sum(1 for entry in picked if entry[3] in nightly)
+            declared = sum(1 for entry in picked if entry[3] in budgets)
+            print(f"TLC-RERUN {name}{day} cases={len(picked)} ({debts} nightly debt, {declared} declared budget) "
+                  f"of {total} re-run cases", file=sys.stderr)
             return
         if args.stale is None:
             raise ValueError(f"--select {args.select} needs --stale")
