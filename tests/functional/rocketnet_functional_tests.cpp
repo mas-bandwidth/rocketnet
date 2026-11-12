@@ -3685,8 +3685,9 @@ void rocketnet_test_transport_ipv6_loopback()
 void rocketnet_test_transport_dual_stack_ipv4_client()
 {
     // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
-    // well, so a connect token naming its IPv4 loopback is accepted and the
-    // handshake completes over the v4-mapped path, on every transport
+    // well, so a connect token naming the IPv4 loopback it advertises is
+    // accepted and the handshake completes over the v4-mapped path, on every
+    // transport
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -3694,6 +3695,12 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     // the hub is read only when a pin names loopback, as the CI transport
     // matrix's loopback cell does
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    // the server advertises the IPv4 loopback the token names beside the
+    // IPv6 wildcard: an IPv6-wildcard server alone advertises the IPv4
+    // wildcard, and a token for 127.0.0.1 names an address it does not
+    // (t12 rule 6)
+    snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", "127.0.0.1" );
 
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
 
@@ -12671,6 +12678,13 @@ static void msgx_client_pair_create( struct msgx_client_pair_t * pair, const cha
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), server_transport ) == 0 );
@@ -13028,6 +13042,13 @@ static void iocp_client_pair_create( struct iocp_client_pair_t * pair, const cha
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
+    // a server created at the IPv6 wildcard advertises the IPv4 wildcard;
+    // an IPv4 token names an address the server advertises only when the
+    // server is created naming it too (t12 rule 6)
+    if ( server_bind[0] == '[' && token_host[0] != '[' )
+    {
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "%s", token_host );
+    }
     pair->server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
     rocketnet_check( pair->server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( pair->server ), "portable" ) == 0 );

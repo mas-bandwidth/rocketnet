@@ -245,23 +245,15 @@ int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_
     return (int) ( value & ( (uint64_t) words * 64 - 1 ) );
 }
 
-// whether an address is one this server advertises. on a dual-stack server
-// -- bound to the IPv6 wildcard, so it also advertises its IPv4 wildcard --
-// a v4-mapped token address normalises to native IPv4 and matches as the
-// loopback or wildcard the IPv4 client addressed.
+// whether an address is one this server advertises: equal, port included,
+// to the advertised address of its family. A v4-mapped token address
+// normalises to native IPv4 first. There is no other match: a server created
+// at a wildcard advertises the wildcard, so a token naming the loopback is
+// accepted only by a server that advertises the loopback (t12 rule 6).
 
 static int rocketnet_server_address_is_advertised( const struct rocketnet_server_protocol_t * server,
                                                    struct rocketnet_address_t * addr )
 {
-    // dual_stack: a server bound at the IPv6 wildcard ("[::]"), which
-    // advertises the IPv6 wildcard beside the IPv4 wildcard. A server that
-    // names an address of either family is not dual_stack here.
-    static const uint16_t ipv6_wildcard[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    static const uint8_t ipv4_wildcard[4] = { 0, 0, 0, 0 };
-    const int dual_stack = server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 && memcmp( server->advertised_ipv4.data.ipv4, ipv4_wildcard, 4 ) == 0 &&
-                           server->advertised_ipv6.type == ROCKETNET_ADDRESS_IPV6 &&
-                           memcmp( server->advertised_ipv6.data.ipv6, ipv6_wildcard, sizeof( ipv6_wildcard ) ) == 0;
-
     if ( addr->type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( addr ) )
     {
         rocketnet_address_convert_ipv6_to_ipv4( addr );
@@ -273,23 +265,8 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
                rocketnet_address_equal( addr, &server->advertised_ipv6 );
     }
 
-    if ( server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
-         rocketnet_address_equal( addr, &server->advertised_ipv4 ) )
-    {
-        return 1;
-    }
-
-    // on a dual-stack server the loopback is an IPv4 address the socket
-    // serves too
-
-    if ( dual_stack && addr->data.ipv4[0] == 127 && addr->data.ipv4[1] == 0 &&
-         addr->data.ipv4[2] == 0 && addr->data.ipv4[3] == 1 &&
-         addr->port == server->advertised_ipv4.port )
-    {
-        return 1;
-    }
-
-    return 0;
+    return server->advertised_ipv4.type == ROCKETNET_ADDRESS_IPV4 &&
+           rocketnet_address_equal( addr, &server->advertised_ipv4 );
 }
 
 // The arrival family's token address (proofs/tla/ServerConnection.tla

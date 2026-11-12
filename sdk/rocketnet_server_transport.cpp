@@ -2510,8 +2510,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
         protocol->advertised_ipv6 = public_address;
 
         // a server created at the IPv6 wildcard is dual-stack: it serves
-        // IPv4 as well, so it also advertises its IPv4 wildcard and IPv4
-        // tokens for the loopback are accepted
+        // IPv4 as well, so it also advertises its IPv4 wildcard; a token for
+        // the IPv4 loopback is accepted only when 127.0.0.1 is advertised too
 
         int wildcard = 1;
         for ( int i = 0; i < 8 && wildcard; i++ )
