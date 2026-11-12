@@ -2938,7 +2938,37 @@ static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket
     }
 }
 
-static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
+// At a watchdog timeout: print the accounting and what the queue holds,
+// counted by draining it with plain recv (zero-length chaff included). The
+// socket is not used again after this.
+
+static void rocketnet_test_queue_report( rocketnet_platform_socket_t * socket, int target_accounting, const char * phase )
+{
+    const int accounting = rocketnet_test_queue_accounting( socket );
+    int datagrams = 0;
+    int chaff = 0;
+    uint8_t scratch[ROCKETNET_TEST_PUMP_STRIDE];
+    for ( ;; )
+    {
+        const ssize_t bytes = recv( socket->handle, scratch, sizeof( scratch ), MSG_DONTWAIT );
+        if ( bytes < 0 )
+        {
+            break;
+        }
+        datagrams++;
+        if ( bytes == 0 )
+        {
+            chaff++;
+        }
+    }
+    fprintf( stderr, "harness timeout: %s: queued accounting %d, waiting to exceed %d; %d datagrams in the queue (%d zero-length)\n",
+             phase, accounting, target_accounting, datagrams, chaff );
+}
+
+// false only at the 30 s watchdog, after the queue state is printed: an
+// injected datagram the kernel accepted never reached the queue.
+
+static bool rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
 {
     const int target_accounting = wait->accounting;
     for ( ;; )
@@ -2948,12 +2978,12 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
         {
             fprintf( stderr, "harness error: %s could not read the queue accounting (errno=%d)\n", phase, errno );
             rocketnet_check( 0 );
-            return;
+            return false;
         }
         if ( queued > target_accounting )
         {
             wait->accounting = queued;
-            return;
+            return true;
         }
         fd_set readable;
         FD_ZERO( &readable );
@@ -2973,16 +3003,64 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
         {
             fprintf( stderr, "harness error: %s select failed (errno=%d)\n", phase, errno );
             rocketnet_check( 0 );
-            return;
+            return false;
         }
 
         if ( rocketnet_platform_time() >= wait->deadline )
         {
             fprintf( stderr, "harness timeout: %s did not complete within the 30 s watchdog; this is a hung harness, not a transport performance failure\n", phase );
-            rocketnet_check( 0 );
-            return;
+            rocketnet_test_queue_report( socket, target_accounting, phase );
+            return false;
         }
     }
+}
+
+// The batch phase's injection: 74 datagrams from one plain socket, each
+// observed queued before the next is sent. false when one never arrived.
+
+static bool rocketnet_test_chaff_inject_batch( rocketnet_platform_socket_t * socket, int injector, const struct sockaddr_in * to,
+                                               uint8_t * real_packet, int num_real, int * sent_real )
+{
+    const char * phase = "batch chaff exchange";
+    *sent_real = 0;
+
+    rocketnet_test_queue_wait_t batch_wait;
+    rocketnet_test_queue_wait_init( socket, &batch_wait, phase );
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+    if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+    {
+        return false;
+    }
+
+    for ( int i = 0; i < num_real; i++ )
+    {
+        const int bytes = 24 + i;
+
+        real_packet[0] = (uint8_t) i;
+        for ( int j = 1; j < bytes; j++ )
+        {
+            real_packet[j] = (uint8_t) ( 3 * i + j );
+        }
+
+        rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (const struct sockaddr *) to, sizeof( *to ) ) == bytes );
+        if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+        {
+            return false;
+        }
+        ( *sent_real )++;
+
+        if ( ( i % 2 ) == 1 )
+        {
+            rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+            if ( !rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase ) )
+            {
+                return false;
+            }
+        }
+    }
+
+    rocketnet_check( sendto( injector, real_packet, 0, 0, (const struct sockaddr *) to, sizeof( *to ) ) == 0 );
+    return rocketnet_test_queue_wait_datagram( socket, &batch_wait, phase );
 }
 
 static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NULL )
@@ -3010,34 +3088,23 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     const int num_real = 48;
     uint8_t real_packet[256];
     int sent_real = 0;
-    rocketnet_test_queue_wait_t batch_wait;
-    rocketnet_test_queue_wait_init( socket, &batch_wait, "batch chaff exchange" );
-    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
-    for ( int i = 0; i < num_real; i++ )
+    // A datagram the kernel accepted but never queued is the machine, not the
+    // library (nothing below the batch receive touches it): the queue state is
+    // printed, and the injection runs once more on a fresh pump socket. A
+    // second loss fails. The one-call batch oracle below is unchanged.
+
+    if ( !rocketnet_test_chaff_inject_batch( socket, injector, &to, real_packet, num_real, &sent_real ) )
     {
-        const int bytes = 24 + i;
-
-        real_packet[0] = (uint8_t) i;
-        for ( int j = 1; j < bytes; j++ )
-        {
-            real_packet[j] = (uint8_t) ( 3 * i + j );
-        }
-
-        rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr *) &to, sizeof( to ) ) == bytes );
-        rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
-        sent_real++;
-
-        if ( ( i % 2 ) == 1 )
-        {
-            rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-            rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
-        }
+        fprintf( stderr, "batch chaff exchange: an injected datagram never reached the queue; injecting once more on a fresh socket\n" );
+        rocketnet_platform_socket_destroy( socket );
+        rocketnet_address_parse( &bind_address, "127.0.0.1" );
+        socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024 * 1024, 1024 * 1024, requested_pump );
+        rocketnet_check( socket );
+        pump_at_create = rocketnet_platform_socket_pump( socket );
+        to.sin_port = htons( bind_address.port );
+        rocketnet_check( rocketnet_test_chaff_inject_batch( socket, injector, &to, real_packet, num_real, &sent_real ) );
     }
-
-    rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
     // drain through the batch pump: every real packet, in order, intact --
     // and in ONE receive_packets call, because a retry loop here greens
@@ -3086,12 +3153,12 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     rocketnet_test_queue_wait_t single_wait;
     rocketnet_test_queue_wait_init( socket, &single_wait, "single-packet chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
+    rocketnet_check( rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" ) );
 
     uint8_t single[64];
     memset( single, 0x5a, sizeof( single ) );
     rocketnet_check( sendto( injector, single, sizeof( single ), 0, (struct sockaddr *) &to, sizeof( to ) ) == (ssize_t) sizeof( single ) );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
+    rocketnet_check( rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" ) );
 
     // completion-driven arrival for the per-packet call: each datagram
     // above was observed queued before the next was sent, so the chaff
