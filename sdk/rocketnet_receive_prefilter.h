@@ -194,7 +194,14 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
 struct alignas( 64 ) rocketnet_receive_drop_tally_t
 {
     std::atomic<uint64_t> values[ROCKETNET_RECEIVE_NUM_DROPS];
+    // the rest of the last cache line, explicit so the compiler adds no
+    // padding (MSVC C4324 refuses implicit padding from an alignment)
+    uint8_t padding[64 - ( ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) ) % 64];
 };
+
+
+static_assert( sizeof( std::atomic<uint64_t> ) == sizeof( uint64_t ), "the padding counts each value as eight bytes" );
+static_assert( sizeof( struct rocketnet_receive_drop_tally_t ) % 64 == 0, "a tally is whole cache lines" );
 
 static inline void rocketnet_receive_drop_tally_reset( struct rocketnet_receive_drop_tally_t * tally )
 {
