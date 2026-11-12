@@ -430,11 +430,6 @@ static int run_server( const char * address, int expect_timeout )
         failure = "the end is not TIMED_OUT";
     }
 
-    if ( !failure )
-    {
-        failure = silence_failure( &side, expect_timeout );
-    }
-
     if ( !failure && !expect_timeout )
     {
         if ( end_reason != ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED )
@@ -449,6 +444,13 @@ static int run_server( const char * address, int expect_timeout )
         {
             failure = "the client's reliable messages were not delivered exactly once in order";
         }
+    }
+
+    // after the end checks, so an early end is named as one and not as an
+    // outage that never reached its length
+    if ( !failure )
+    {
+        failure = silence_failure( &side, expect_timeout );
     }
 
     if ( failure )
@@ -707,11 +709,6 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
         failure = "the end is not CONNECTION_TIMED_OUT";
     }
 
-    if ( !failure )
-    {
-        failure = silence_failure( &side, expect_timeout );
-    }
-
     if ( !failure && !expect_timeout )
     {
         if ( end_state != 0 )
@@ -722,6 +719,13 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
         {
             failure = "the server's reliable messages were not delivered exactly once in order";
         }
+    }
+
+    // after the end checks, so an early end is named as one and not as an
+    // outage that never reached its length
+    if ( !failure )
+    {
+        failure = silence_failure( &side, expect_timeout );
     }
 
     const char * end_name = end_state ? rocketnet_client_state_name( (enum rocketnet_client_state_t) end_state ) : "none";
