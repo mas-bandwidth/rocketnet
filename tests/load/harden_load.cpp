@@ -109,6 +109,8 @@
 #if defined( _WIN32 )
 #include <winsock2.h>
 #include <ws2tcpip.h>
+// the RIO transport's lane probe, where the build has it (ROCKETNET_SERVER_RIO_TEST_LANES_MADE)
+#include "rocketnet_server_rio.h"
 typedef SOCKET harden_socket_t;
 #define HARDEN_INVALID_SOCKET INVALID_SOCKET
 #else
@@ -1248,6 +1250,9 @@ static int harden_server_main( const harden_options_t & o )
     }
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+#if defined( _WIN32 ) && defined( ROCKETNET_SERVER_RIO_TEST_LANES_MADE )
+    const uint64_t rio_lanes_before = rocketnet_server_rio_test_lanes_made();
+#endif // #if defined( _WIN32 ) && defined( ROCKETNET_SERVER_RIO_TEST_LANES_MADE )
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, o.address.c_str(), NULL, &config, &status );
     if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
@@ -1255,6 +1260,21 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_verdict: role=server verdict=FAIL reason=create\n" );
         return 1;
     }
+#if defined( _WIN32 ) && defined( ROCKETNET_SERVER_RIO_TEST_LANES_MADE )
+    // the lanes a rio server really made: the probe's delta across start
+    // must be the lanes asked for (--xdp-queues, at least one)
+    if ( strcmp( rocketnet_server_transport_name( server ), "rio" ) == 0 )
+    {
+        const uint64_t made = rocketnet_server_rio_test_lanes_made() - rio_lanes_before;
+        const int asked = o.num_xdp_queues > 0 ? o.num_xdp_queues : 1;
+        printf( "harden_rio_lanes: asked=%d made=%" PRIu64 "\n", asked, made );
+        if ( made != (uint64_t) asked )
+        {
+            printf( "harden_verdict: role=server verdict=FAIL reason=rio_lanes asked=%d made=%" PRIu64 "\n", asked, made );
+            return 1;
+        }
+    }
+#endif // #if defined( _WIN32 ) && defined( ROCKETNET_SERVER_RIO_TEST_LANES_MADE )
     const char * granted = rocketnet_server_transport_name( server );
     if ( !o.transport.empty() && strcmp( granted, o.transport.c_str() ) != 0 )
     {
