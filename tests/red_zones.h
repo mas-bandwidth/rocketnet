@@ -18,11 +18,12 @@
 // scan finds nothing in them. In every other build they are a plain loop.
 
 #if ROCKETNET_RED_ZONES
-#if defined( _MSC_VER )
+#if defined( _MSC_VER ) && !defined( __clang__ )
 #define ROCKETNET_TEST_RAW_ACCESS __declspec( no_sanitize_address )
 #else
+// clang-cl defines _MSC_VER but refuses the __declspec form (-Wignored-attributes)
 #define ROCKETNET_TEST_RAW_ACCESS __attribute__( ( no_sanitize( "address" ) ) )
-#endif // #if defined( _MSC_VER )
+#endif // #if defined( _MSC_VER ) && !defined( __clang__ )
 #else
 #define ROCKETNET_TEST_RAW_ACCESS
 #endif // #if ROCKETNET_RED_ZONES
