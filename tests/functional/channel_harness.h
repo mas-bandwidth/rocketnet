@@ -1060,7 +1060,7 @@ static inline void rocketnet_channel_seed_record( uint64_t seed )
     {
         return;
     }
-    FILE * record = fopen( path, "a" );
+    FILE * record = rocketnet_test_fopen( path, "a" );
     if ( !record )
     {
         printf( "channel seed record: cannot open %s\n", path );
