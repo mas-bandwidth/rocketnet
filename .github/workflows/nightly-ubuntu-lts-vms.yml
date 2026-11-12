@@ -1,3 +1,9 @@
+# MOVED TO MAIN (2026-11-12): this branch copy never reached main, and a cron on
+# a branch never fires, so its schedule (and any temporary push trigger) is
+# removed here. The working version, against today's tree, is the file of the
+# same path on branch fixa/branches (fix-verify-a item 7), which carries the
+# cron once it is on main. This copy is kept for its history only.
+#
 # Nightly Ubuntu LTS virtual machines: 22.04, 24.04 and 26.04.
 #
 # ci.yml builds and runs the suites on the fleet hosts themselves, so it
@@ -59,8 +65,6 @@
 name: nightly ubuntu lts vms
 
 on:
-  schedule:
-    - cron: "30 4 * * *"
   workflow_dispatch:
 
 permissions:
