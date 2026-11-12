@@ -76,7 +76,7 @@
 (* no timing property; an end in error is inert, so the silence end adds  *)
 (* no state those cases' invariants read).                                *)
 (***************************************************************************)
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
     N,              \* messages each application sends, 1..N
