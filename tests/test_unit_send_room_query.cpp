@@ -1436,6 +1436,7 @@ struct hammer_t
 {
     bool open;
     int open_bytes;
+    int open_slot;              // the server slot the open message is on
     uint64_t room_refusals;
     uint64_t given;
     uint64_t records;         // refusing calls whose before and after were compared
@@ -1566,7 +1567,8 @@ static void hammer_snap_expect( const hammer_snap_t * before, const hammer_snap_
 
 // an abort, or a finish whose size is refused, releases the open message.
 // While it was open every room answer of its handle was no (a start would be
-// refused: one message open per client, one per server); after, they are as
+// refused: one message open per client, and on the server one per client
+// index, so only the open slot's answers); after, they are as
 // before the start (nothing could take that room meanwhile: no other start
 // succeeds and no frame runs while a message is open) and everything else is
 // as it was before this call. `client` names the client whose message was
@@ -1585,14 +1587,13 @@ static void hammer_snap_expect_released( const hammer_t * h, const hammer_snap_t
     }
     else
     {
-        for ( int s = 0; s < HAMMER_SLOTS; s++ )
+        const int s = h->open_slot;
+        check( s >= 0 && s < HAMMER_SLOTS );
+        for ( int k = 0; k < HAMMER_ASKS; k++ )
         {
-            for ( int k = 0; k < HAMMER_ASKS; k++ )
-            {
-                check( !before->slot_can[s][k] );
-            }
+            check( !before->slot_can[s][k] );
         }
-        memcpy( expect.slot_can, h->at_open.slot_can, sizeof( expect.slot_can ) );
+        memcpy( expect.slot_can[s], h->at_open.slot_can[s], sizeof( expect.slot_can[s] ) );
     }
     hammer_snap_expect( &expect, after, -1, -1, 0, 0 );
 }
@@ -1769,6 +1770,7 @@ static void hammer_server_step( const refuse_world_t * w, int connected_slot, ha
             memset( p, 0x6E, (size_t) a.bytes );
             h->open = true;
             h->open_bytes = a.bytes;
+            h->open_slot = index;
             h->given++;
             h->at_open = before;
             return;
