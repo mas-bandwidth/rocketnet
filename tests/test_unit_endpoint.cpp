@@ -1868,12 +1868,22 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
             check( busy_hashes[p] == fresh_hashes[p] );
         }
 
-        rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update, now + 0.05 );
-        rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update, now + 0.05 );
+        // every packet of the update acked, then the update's end publishes
+        // its receipts (rn_endpoint_tick): both receipt sends of each update
+        // come back, so the comparison below compares something
+
+        for ( int p = 0; p < busy_count; p++ )
+        {
+            rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+            rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+        }
+        rn_endpoint_tick( &busy, now + 0.05 );
+        rn_endpoint_tick( &fresh, now + 0.05 );
         rocketnet_message_receipt_t busy_receipts[16];
         rocketnet_message_receipt_t fresh_receipts[16];
         const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
         const int fresh_taken = rn_endpoint_take_receipts( &fresh, fresh_receipts, 16 );
+        check( busy_taken > 0 );
         check( busy_taken == fresh_taken );
         for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
         {
