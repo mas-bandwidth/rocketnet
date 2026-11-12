@@ -60,7 +60,9 @@ In a `ROCKETNET_DEV=0` build:
 ## 2. Provision the backend signing keypair and keep key boundaries
 
 Generate a fresh Ed25519 backend signing keypair with the Go backend, the C#
-backend, or `./bin/keygen`:
+backend, or `./bin/keygen`. The Go backend's `go.mod` requires
+`golang.org/x/crypto`, so its first `go run .` downloads that module: it needs
+access to a Go module proxy, or a module cache that already holds it.
 
 ```sh
 umask 077
@@ -185,7 +187,10 @@ The minted 768-byte connect token (encoded as 1024 base64 characters, the
 - `create_timestamp` and `expire_timestamp`: 64-bit Unix timestamps in seconds
   (default 30-second lifetime via `ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS`);
 - `timeout_seconds`: 32-bit handshake and keepalive timeout in seconds (default
-  `10` via `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS`);
+  `10` via `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS`); the client uses it as
+  given and the server caps it at its `max_timeout_seconds`, so keep it at or
+  below every server's cap
+  ([surviving an outage](USAGE.md#surviving-a-network-outage));
 - `addresses` and `address_flags`: 1 or 2 literal UDP server endpoints (`IPv4`,
   `IPv6`, or one of each);
 - `server_public_key`: the selected server's 32-byte X25519 public key, to which

@@ -160,9 +160,14 @@ own production minter, legal in a production build (`ROCKETNET_DEV=0`):
 - `rocketnet_create_connect_token( &config, connect_token )` writes the token
   string from a `struct rocketnet_connect_token_config_t`, initialized with
   `rocketnet_connect_token_default_config`: the backend secret key, the server
-  addresses (IPv4 and/or IPv6 strings, as the development call takes them),
+  addresses (`server_address_ipv4` and/or `server_address_ipv6`, strings as the
+  development call takes them),
   the server public key, the client id, the protocol id, the user data,
   `expire_seconds`, `timeout_seconds` and `unix_timestamp`, the creation time.
+  The client runs the token's `timeout_seconds` as its connection timeout,
+  while the server caps it at its own `max_timeout_seconds`; mint it at or
+  below every named server's cap so both ends run the same timeout
+  ([surviving an outage](USAGE.md#surviving-a-network-outage)).
   It reads no clock and allocates nothing; it refuses a bad argument with the
   existing statuses and leaves the output unchanged, and a production build
   refuses the published development keys with

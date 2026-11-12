@@ -12,6 +12,8 @@ valid token identifies one client and permits one live connection. The
 used-token history binds it to the source address whose response completes the
 handshake, so another source address cannot reuse the active token. A second
 connection for the same client id is refused while its slot remains live.
+Both refusals are silent: the server sends no denial, so the refused client
+reports a handshake timeout after the token's `timeout_seconds`.
 
 The session keys derive from the token keys, fresh endpoint ephemeral keys and
 the connection salt. Handshake secrets are wiped when their lifetime ends.

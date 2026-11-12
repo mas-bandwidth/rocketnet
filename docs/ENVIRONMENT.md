@@ -24,24 +24,31 @@ either an environment form of a public config field (`token_epoch_unix_seconds`,
 | `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once at the first update after start and subtracts that update's time to establish the epoch. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
 | `ROCKETNET_DEV_SESSION_SEQUENCE_START` | Development libraries only: the first session-phase sequence every session in this process sends, in place of 1, so a run reaches the wire's 32-bit sequence wrap in seconds. Read once per process, at the first create that asks, and fixed from then on. Decimal, or hex with `0x`; range `1 .. 2^62`. Unset or empty is 1; any other value is refused with one error line and 1 is used. Production libraries do not read it. |
-| `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development only: outgoing client loss, 0 .. 100; 0 is off. |
-| `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` | Development only: outgoing server loss, 0 .. 100; 0 is off. |
-| `ROCKETNET_DEV_CLIENT_LATENCY_MS` | Development only: outgoing client latency, 0 .. 60000 milliseconds; 0 is off. |
-| `ROCKETNET_DEV_SERVER_LATENCY_MS` | Development only: outgoing server latency, 0 .. 60000 milliseconds; 0 is off. |
-| `ROCKETNET_DEV_CLIENT_JITTER_MS` | Development only: outgoing client jitter, 0 .. 60000 milliseconds; 0 is off. |
-| `ROCKETNET_DEV_SERVER_JITTER_MS` | Development only: outgoing server jitter, 0 .. 60000 milliseconds; 0 is off. |
-| `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` | Development only: outgoing client duplication, 0 .. 100; 0 is off. |
-| `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` | Development only: outgoing server duplication, 0 .. 100; 0 is off. |
-| `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` | Development only: drop every Nth outgoing client datagram, 2 .. 1000000; 0 is off. |
-| `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | Development only: drop every Nth outgoing server datagram, 2 .. 1000000; 0 is off. |
-| `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` | Development only: reverse each window of W outgoing client datagrams, 2 .. 64; 0 is off. |
-| `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | Development only: reverse each window of W outgoing server datagrams, 2 .. 64; 0 is off. |
+| `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development libraries only: outgoing client loss, 0 .. 100; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` | Development libraries only: outgoing server loss, 0 .. 100; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_CLIENT_LATENCY_MS` | Development libraries only: outgoing client latency, 0 .. 60000 milliseconds; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_SERVER_LATENCY_MS` | Development libraries only: outgoing server latency, 0 .. 60000 milliseconds; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_CLIENT_JITTER_MS` | Development libraries only: outgoing client jitter, 0 .. 60000 milliseconds; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_SERVER_JITTER_MS` | Development libraries only: outgoing server jitter, 0 .. 60000 milliseconds; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` | Development libraries only: outgoing client duplication, 0 .. 100; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` | Development libraries only: outgoing server duplication, 0 .. 100; 0 is off. A production library does not read it: a value there is ignored, with no log line and no refusal. |
+| `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` | Development use: drop every Nth outgoing client datagram, 2 .. 1000000; 0 is off. A value outside that range is refused as out of range in either build. A production library reads it and refuses any other nonzero value at create with `CONFIG_OUT_OF_RANGE`. |
+| `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | Development use: drop every Nth outgoing server datagram, 2 .. 1000000; 0 is off. A value outside that range is refused as out of range in either build. A production library reads it and refuses any other nonzero value at create with `CONFIG_OUT_OF_RANGE`. |
+| `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` | Development use: reverse each window of W outgoing client datagrams, 2 .. 64; 0 is off. A value outside that range is refused as out of range in either build. A production library reads it and refuses any other nonzero value at create with `CONFIG_OUT_OF_RANGE`. |
+| `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | Development use: reverse each window of W outgoing server datagrams, 2 .. 64; 0 is off. A value outside that range is refused as out of range in either build. A production library reads it and refuses any other nonzero value at create with `CONFIG_OUT_OF_RANGE`. |
 | `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` | Maximum bytes for each client transport candidate's plan, excluding the create-time endpoint/message block; 0 is no budget. See below. |
 | `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | Maximum bytes for each server transport candidate's plan, including UMEM but excluding the create-time endpoint/message block; 0 is no budget. See below. |
 
-The `ROCKETNET_DEV_` network simulator variables exist in a development
-library only and are read at create; in code, the same settings are
-`rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`.
+The two simulator families behave oppositely in a production library. The
+`ROCKETNET_DEV_` network simulator variables are read at create by a
+development library only; a production library never reads them, so one left
+in a host's environment silently does nothing. In code, the same settings are
+`rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`,
+which a production header does not declare. The
+`ROCKETNET_CLIENT_SIMULATED_` and `ROCKETNET_SERVER_SIMULATED_` variables are
+read by every library, and a production library refuses a nonzero value: one
+left in a host's environment stops every create there with
+`CONFIG_OUT_OF_RANGE` and an `ERROR` line naming the field.
 In code, the step-driven client and the receive stamp clock are the public
 client config's `step_driven` and `time_callback`, development builds only; a
 production build refuses either at create, and production client I/O remains
