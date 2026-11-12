@@ -2979,7 +2979,7 @@ bool rocketnet_server_gso_test_send_full_keeps_rest()
     {
         rocketnet_server_gso_stop( gso );
         gso->queues[0].stopped.store( true, std::memory_order_release );
-            rocketnet_server_gso_test_destroy( gso );
+        rocketnet_server_gso_test_destroy( gso );
         return false;
     }
 
