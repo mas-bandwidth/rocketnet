@@ -3800,14 +3800,7 @@ uint8_t * rocketnet_client_transport_packet_payload( rocketnet_client_transport_
     {
         return NULL;
     }
-    if ( capacity )
-    {
-        *capacity = 0;
-    }
-    if ( !transport || !context || !capacity )
-    {
-        return NULL;
-    }
+    *capacity = 0;
 
     rocketnet_packet_context_t trusted;
     uint64_t backend_id = 0;
