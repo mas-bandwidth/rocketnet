@@ -793,6 +793,7 @@ MCRNCryptoSourceBrokenNoClear.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource
 MCRNCryptoSourceBrokenNoStir.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
 MCRNServerMaintenanceSweep.cfg	MCRNServerMaintenanceSweep.tla	pass	-	check	rnservermaintenancesweep	required	-
 MCRNServerMaintenanceSweepBrokenBreak.cfg	MCRNServerMaintenanceSweep.tla	invariant	BoundedWait	check	rnservermaintenancesweep	required	-
+MCRNServerMaintenanceSweepBrokenRefused.cfg	MCRNServerMaintenanceSweep.tla	invariant	BoundedWait	check	rnservermaintenancesweep	required	-
 MCRNUringReapLayout.cfg	MCRNUringReapLayout.tla	pass	-	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutCoalesced.cfg	MCRNUringReapLayout.tla	pass	-	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutBrokenStopAtRoom.cfg	MCRNUringReapLayout.tla	action	SendsNotBehindRoom	check	rnuringreaplayout	required	-

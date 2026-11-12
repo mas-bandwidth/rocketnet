@@ -169,7 +169,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `serversession` | Server lifecycle, slot reuse, stopping and public connection identity. |
 | `rnclientreceivequit` | The client receive thread's quit-and-wake handshake with destroy. |
 | `rnserversendfair` | The server send pass under a payload-frame cap. |
-| `rnservermaintenancesweep` | The server maintenance sweep at the cursor's layout (README-RNServerMaintenanceSweep.md), four slots with two unreachable. |
+| `rnservermaintenancesweep` | The server maintenance sweep at the cursor's layout (README-RNServerMaintenanceSweep.md), four slots, one unreachable and one refused with room left. |
 | `splitstart` | The load_split start barrier (docs/LOAD_SPLIT.md). |
 | `rnmsgxpause` | Shared macOS msgx pause expiry (README-RNMsgxPause.md). |
 | `rnportablerx` | The portable/msgx server receive worker (README-RNPortableRx.md). |

@@ -3332,12 +3332,12 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         if ( !frame_data )
         {
             // proofs/tla/RNServerMaintenanceSweep.tla SweepStep: a full staging
-            // ends the sweep with the cursor on this slot. A refusal for want of
-            // a link-layer destination is this address's alone and does not
-            // clear by the next update: it is counted SEND_NO_LINK_ADDRESS, the
-            // slot's keep-alive stays due, and the sweep serves the rest.
+            // ends the sweep with the cursor on this slot. A refusal with room
+            // left (SEND_NO_LINK_ADDRESS, or SEND_FAILED for an address the
+            // transport cannot carry) is this address's alone: its keep-alive
+            // stays due, and the sweep serves the rest, as the drain does.
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
             {
                 break;
             }
