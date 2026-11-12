@@ -171,11 +171,15 @@ FillBegin(f, c) ==
 \* the claim refuses a client another filler is inside, or claimed in this epoch
 Taken(f, w) == w.th \notin {NoOwner, f} /\ (w.in \/ w.ep = fepoch[f])
 
-\* the ghost of a claim: a second filler on a client in one phase breaks the contract
+\* the contract is broken by a second filler on a client in one phase,
+\* whether its claim lands or is refused
+Second(f) == (phaseFillers[fclient[f]] \ {f}) # {}
+
+\* the ghost of a claim that lands
 Claimed(f) ==
     LET c == fclient[f] IN
     /\ phaseFillers' = [phaseFillers EXCEPT ![c] = @ \cup {f}]
-    /\ violated' = (violated \/ (phaseFillers[c] \ {f}) # {} \/ MainBusy)
+    /\ violated' = (violated \/ Second(f) \/ MainBusy)
 
 Refuse(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "idle"]
@@ -192,7 +196,7 @@ FillClaim(f) ==
     /\ ReadyToClaim(f)
     /\ IF Taken(f, word[c])
           THEN /\ Refuse(f)
-               /\ violated' = (violated \/ MainBusy)
+               /\ violated' = (violated \/ MainBusy \/ Second(f))
                /\ UNCHANGED <<word, phaseFillers>>
           ELSE /\ word' = [word EXCEPT ![c] = [ep |-> fepoch[f], th |-> f, in |-> TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = IF LookFirst THEN "in" ELSE "claimed"]
@@ -213,7 +217,7 @@ FillStore(f) ==
     /\ fpc[f] = "loaded"
     /\ IF Taken(f, seen[f])
           THEN /\ Refuse(f)
-               /\ violated' = (violated \/ MainBusy)
+               /\ violated' = (violated \/ MainBusy \/ Second(f))
                /\ UNCHANGED <<word, phaseFillers>>
           ELSE /\ word' = [word EXCEPT ![c] = [ep |-> fepoch[f], th |-> f, in |-> TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "claimed"]
