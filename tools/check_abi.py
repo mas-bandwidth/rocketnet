@@ -77,7 +77,7 @@ def measured_lines(header, exports, compiler):
         source = Path(tmp) / "abi.c"
         binary = Path(tmp) / "abi"
         source.write_text(layout_program(structs))
-        subprocess.run([compiler, "-std=c11", "-I", str(Path(header).parent), "-o", str(binary), str(source)],
+        subprocess.run([compiler, "-std=c11", "-ffp-contract=off", "-I", str(Path(header).parent), "-o", str(binary), str(source)],
                        check=True)
         layout = subprocess.run([str(binary)], check=True, capture_output=True, text=True).stdout.splitlines()
     return ["export %s" % name for name in read_exports(exports)] + layout

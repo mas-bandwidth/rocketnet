@@ -457,7 +457,7 @@ def self_test():
                 database.write_text(json.dumps([{
                     "directory": str(root),
                     "file": file_name,
-                    "arguments": [compiler] + language + ["-DROCKETNET_DEV=1", "-c", file_name, "-o", file_name + ".o"],
+                    "arguments": [compiler] + language + ["-ffp-contract=off", "-DROCKETNET_DEV=1", "-c", file_name, "-o", file_name + ".o"],
                 }]))
                 findings = preprocess_check(str(database))
                 got = len([f for f in findings if "names no library translation unit" not in f])
@@ -473,7 +473,7 @@ def self_test():
             ]:
                 (sdk / file_name).write_text(text)
                 obj = sdk / (file_name + ".o")
-                built = subprocess.run([compiler, "-std=c++17", "-O2", "-c", str(sdk / file_name), "-o", str(obj)],
+                built = subprocess.run([compiler, "-std=c++17", "-ffp-contract=off", "-O2", "-c", str(sdk / file_name), "-o", str(obj)],
                                        capture_output=True, text=True)
                 if built.returncode != 0:
                     print("self-test objects %s: the compiler failed: %s" % (file_name, built.stderr.strip()))
