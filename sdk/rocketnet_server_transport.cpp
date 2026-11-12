@@ -928,26 +928,22 @@ static bool rocketnet_server_link_active( rocketnet_server_transport_t * transpo
            rocketnet_network_simulator_patterns_active( transport->link_simulator );
 }
 
-// Returns true when the datagram went to the platform send or the simulator
-// took it (a simulated loss inside the simulator is still a datagram sent and
-// lost on the wire), and false when the simulator's lock was busy and the
-// datagram was dropped here. A datagram is counted sent only once the link
-// took it, so the callers charge the sent statistics on true alone.
+// Gives the datagram to an active link simulator. The caller read the setting
+// active, once, for this operation, and the send acts on that read: a second
+// read here could apply a setting handed over since and answer inactive, and
+// a staged transport has no send_batch to take the datagram then.
+//
+// Returns true when the simulator took the datagram (a simulated loss inside
+// the simulator is still a datagram sent and lost on the wire), and false when
+// the simulator's lock was busy and the datagram was dropped here. A datagram
+// is counted sent only once the link took it, so the callers charge the sent
+// statistics on true alone.
 static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport,
                                         const rocketnet_address_t * to,
                                         const uint8_t * packet_data, int packet_bytes )
 {
     // Datagram staging is best effort. In particular, a shutdown burst must
     // never wait for a producer that still owns the simulator lock.
-    if ( !rocketnet_server_link_active( transport ) )
-    {
-        rocketnet_platform_send_t send;
-        send.to = to;
-        send.packet_data = packet_data;
-        send.packet_bytes = packet_bytes;
-        transport->io.operations->send_batch( transport->io.instance, &send, 1 );
-        return true;
-    }
 #if ROCKETNET_DEV
     if ( transport->link_busy_sends_for_test > 0 )
     {
