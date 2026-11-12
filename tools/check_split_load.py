@@ -244,7 +244,7 @@ def validate_timing(text, receipt, run_id):
     return timing_pass
 
 
-def validate_allocation(manifest, server_text, shard_texts, run_id, total, shards):
+def validate_allocation(manifest, server_text, shard_texts, run_id, total, shards, same_host_smoke=False):
     if not isinstance(manifest, dict) or manifest.get("schema") != "split_allocation_v1" or manifest.get("run_id") != run_id:
         raise ValueError("missing or mismatched allocation manifest")
     server = manifest.get("server")
@@ -258,8 +258,15 @@ def validate_allocation(manifest, server_text, shard_texts, run_id, total, shard
             if not isinstance(entry.get(key), str) or not entry[key].strip():
                 raise ValueError(f"allocation lacks {key}")
     check_role(server, server_text, "server")
-    if server.get("allocation_type") != "dedicated_server":
-        raise ValueError("server lacks dedicated allocation")
+    # A same-host smoke (every role on one machine, docs/LOAD_SPLIT.md "Same-host
+    # smoke") proves protocol and receipt correctness only. Its manifest says so
+    # in every role's allocation_type, it needs --same-host-smoke, and a
+    # qualification manifest is refused under that flag: neither can pass for
+    # the other.
+    server_type = "same_host_smoke" if same_host_smoke else "dedicated_server"
+    shard_type = "same_host_smoke" if same_host_smoke else "client_host"
+    if server.get("allocation_type") != server_type:
+        raise ValueError("server lacks dedicated allocation" if not same_host_smoke else "server allocation is not a same-host smoke")
     if server.get("total") != total:
         raise ValueError("server allocation population mismatch")
     seen = set()
@@ -267,7 +274,10 @@ def validate_allocation(manifest, server_text, shard_texts, run_id, total, shard
         if not isinstance(entry, dict):
             raise ValueError("malformed shard allocation")
         check_role(entry, text, "client-shard")
-        if entry.get("allocation_type") != "client_host" or entry.get("host_id") == server["host_id"] or entry.get("allocation_id") == server["allocation_id"]:
+        if same_host_smoke:
+            if entry.get("allocation_type") != shard_type or entry.get("host_id") != server["host_id"] or entry.get("allocation_id") == server["allocation_id"]:
+                raise ValueError("same-host smoke shard is not a separate allocation on the server's host")
+        elif entry.get("allocation_type") != shard_type or entry.get("host_id") == server["host_id"] or entry.get("allocation_id") == server["allocation_id"]:
             raise ValueError("client shard is not allocated away from server")
         key = (entry.get("first"), entry.get("count"))
         if key != (integer(shard, "first"), integer(shard, "count")) or key in seen:
@@ -311,7 +321,9 @@ def expected_combo_offers(client, combo, duration):
 
 def validate(server_text, shard_texts, run_id, total, duration, limit,
              server_transport=None, client_transport=None, allocation_manifest=None,
-             load="rate_1hz"):
+             load="rate_1hz", same_host_smoke=False):
+    if same_host_smoke and load != "proof":
+        raise ValueError("a same-host smoke is judged in the proof mode only")
     if load not in LOAD_RATES:
         raise ValueError("unknown load mode")
     offers = duration * LOAD_RATES[load]
@@ -337,7 +349,7 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("server receipt has client-role counters")
     if load == "proof":
         return validate_proof(server_text, shard_texts, run_id, total, duration, limit, ready, server,
-                              server_transport, client_transport, allocation_manifest)
+                              server_transport, client_transport, allocation_manifest, same_host_smoke)
     server_streams = stream_map(server_text, "server", run_id)
     validate_streams(server_streams, 0, total)
     shards, client_streams = [], {}
@@ -532,7 +544,7 @@ def proof_stream(key, sender, receiver, offers):
 
 
 def validate_proof(server_text, shard_texts, run_id, total, duration, limit, ready, server,
-                   server_transport, client_transport, allocation_manifest):
+                   server_transport, client_transport, allocation_manifest, same_host_smoke=False):
     """The proof cell: every stream of every client in both directions, both
     ends, the receipts, the wire floor and the pinned transport."""
     offers = duration * LOAD_RATES["proof"]
@@ -579,7 +591,7 @@ def validate_proof(server_text, shard_texts, run_id, total, duration, limit, rea
         shards.append(shard)
     if covered != set(range(total)):
         raise ValueError("missing client shard range")
-    validate_allocation(allocation_manifest, server_text, shard_texts, run_id, total, shards)
+    validate_allocation(allocation_manifest, server_text, shard_texts, run_id, total, shards, same_host_smoke)
     delivered = sum(integer(fields, "delivered") for key, fields in server_streams.items() if key[1] == "c2s")
     if delivered != integer(server, "c2s_received"):
         raise ValueError("server summary and its streams disagree")
@@ -600,22 +612,28 @@ def validate_proof(server_text, shard_texts, run_id, total, duration, limit, rea
     # The proof cell is the delivery proof. The server API timing budget is
     # still validated as evidence and reported beside it, not folded in.
     timing_pass = validate_timing(server_text, server, run_id)
-    return {"schema": "split_merge_v2", "verdict": "PASS",
-            "overall_verdict": "PASS" if timing_pass else "FAIL",
-            "non_timing_verdict": "PASS", "timing_verdict": "PASS" if timing_pass else "FAIL",
-            "reason": "none", "load": "proof", "run_id": run_id, "total": total,
-            "transport": granted, "streams": len(server_streams), "messages_sent": sent,
-            "messages_delivered": delivered_all, "unreliable_lost": lost, "sequenced_skipped": skipped,
-            "combined_client_up_kbps_upper": aggregate_up,
-            "combined_client_down_kbps_upper": aggregate_down}
+    result = {"schema": "split_merge_v2", "verdict": "PASS",
+              "overall_verdict": "PASS" if timing_pass else "FAIL",
+              "non_timing_verdict": "PASS", "timing_verdict": "PASS" if timing_pass else "FAIL",
+              "reason": "none", "load": "proof", "run_id": run_id, "total": total,
+              "transport": granted, "streams": len(server_streams), "messages_sent": sent,
+              "messages_delivered": delivered_all, "unreliable_lost": lost, "sequenced_skipped": skipped,
+              "combined_client_up_kbps_upper": aggregate_up,
+              "combined_client_down_kbps_upper": aggregate_down}
+    if same_host_smoke:
+        result["qualification"] = "same_host_smoke"
+    return result
 
 
-def proof_cell_line(result, reason=None):
+def proof_cell_line(result, reason=None, same_host_smoke=False):
+    # a same-host smoke prints its own line, so no reader can take it for a
+    # proof cell of the LAN qualification
+    prefix = "split_smoke_cell" if same_host_smoke else "split_proof_cell"
     if reason is not None:
-        return f"split_proof_cell: verdict=FAIL reason={reason}"
+        return f"{prefix}: verdict=FAIL reason={reason}"
     keys = ("transport", "total", "streams", "messages_sent", "messages_delivered",
             "unreliable_lost", "sequenced_skipped", "timing_verdict")
-    return "split_proof_cell: verdict=PASS " + " ".join(f"{key}={result[key]}" for key in keys)
+    return f"{prefix}: verdict=PASS " + " ".join(f"{key}={result[key]}" for key in keys)
 
 
 def main():
@@ -632,6 +650,9 @@ def main():
     parser.add_argument("--load", choices=sorted(LOAD_RATES), default="rate_1hz",
                         help="the load mode both roles ran (full: 10 offers per client per second; "
                              "proof: every reliability mode, small and fragmented, at 256 kbps)")
+    parser.add_argument("--same-host-smoke", action="store_true",
+                        help="every role ran on one machine (proof load only): the manifest must say "
+                             "same_host_smoke for every role; proves delivery and receipts, never a qualification")
     args = parser.parse_args()
     try:
         if not (1 <= args.total <= 1000 and 1 <= args.duration <= 3600 and
@@ -643,18 +664,18 @@ def main():
                           args.server_transport, args.client_transport,
                           json.loads(args.allocation_manifest.read_bytes().decode("utf-8"),
                                      object_pairs_hook=strict_object),
-                          args.load)
+                          args.load, args.same_host_smoke)
     except (OSError, ValueError, OverflowError) as error:
         print("split_merge_json: " + json.dumps({"schema": "split_merge_v2", "verdict": "FAIL",
               "overall_verdict": "FAIL", "non_timing_verdict": "FAIL",
               "timing_verdict": "UNKNOWN", "reason": "invalid_evidence"}, sort_keys=True))
         print(f"split_merge: verdict=FAIL reason={error}", file=sys.stderr)
         if args.load == "proof":
-            print(proof_cell_line(None, str(error).replace(" ", "_")))
+            print(proof_cell_line(None, str(error).replace(" ", "_"), args.same_host_smoke))
         return 1
     print("split_merge_json: " + json.dumps(result, sort_keys=True))
     if args.load == "proof":
-        print(proof_cell_line(result))
+        print(proof_cell_line(result, None, args.same_host_smoke))
     print("split_merge: " + " ".join(f"{key}={value}" for key, value in result.items()),
           file=sys.stdout if result["verdict"] == "PASS" else sys.stderr)
     return 0 if result["verdict"] == "PASS" else 1
