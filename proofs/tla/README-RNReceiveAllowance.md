@@ -103,19 +103,21 @@ refuses nothing.
 
 ## Reading the counterexamples against the code
 
-Run on amd-3, 2026-11-11, pinned tlacheck 0c97d595 and the pinned JAR, one
-110 s shard per case, two workers. The control passes with 5,199,712 distinct
-states in 43 s; each witness exits 12 on its declared invariant. Each trace was
-read by hand against the C:
+Run on vision, 2026-11-12, pinned tlacheck 0c97d595 and the pinned JAR, one
+110 s shard per case, two workers. The byte control passes with 4,704,496
+distinct states in 87 s, the credit control with 684,870 in 13 s, the flood
+control with 264,738 in 10 s; each witness exits 12 on its declared
+invariant. Each trace was read by hand against the C:
 
-- **BrokenNoRefill** (`UnderRateNeverRefused`, 411,384 distinct). The correct
-  client sends its bucket and then one byte a tick; the allowance starts at 6
-  and is never refilled, so at tick 5 its sixth byte arrives over an empty
-  allowance and is refused. In the C the refill is the `time > allowance->time`
-  block of `rocketnet_server_receive_allowance_take`; with it removed the unit
-  tests `at_the_rate_never_refused`, `burst_after_silence_not_refused` and the
-  public `correct_client_never_refused` go red.
-- **BrokenSmallCap** (`UnderRateNeverRefused`, 1,331 distinct). The client
+- **BrokenNoRefill** (`UnderRateNeverRefused`, 385,422 distinct). The correct
+  client sends its bucket and then its budget each tick; the allowance starts
+  at 6 and is never refilled, so at tick 5 a 2-byte packet arrives over the
+  1 byte left and is refused. In the C the refill is the
+  `time > allowance->time` block of `rocketnet_server_receive_allowance_take`;
+  with it removed the unit tests `at_the_rate_never_refused`,
+  `burst_after_silence_not_refused` and the public
+  `correct_client_never_refused` go red.
+- **BrokenSmallCap** (`UnderRateNeverRefused`, 1,323 distinct). The client
   sends 1 byte at tick 0 and 2 at tick 1, both delivered at tick 1; a cap of
   one tick (2) holds the first and refuses the second. The C capacity is
   `rocketnet_server_receive_allowance_capacity`, the rate times the timeout
@@ -125,9 +127,34 @@ read by hand against the C:
   allowance and the correct client's allowance is no longer what its own
   packets made it. The C indexes `receive_allowances[client_index]`; indexed
   at 0, `refused_packet_does_nothing` goes red.
-- **BrokenTimeBack** (`NoMint`, 107,189 distinct). The flooder drains, the
+- **BrokenTimeBack** (`NoMint`, 104,683 distinct). The flooder drains, the
   time argument steps back from 1 to 0 and the refill credits the distance,
   then the clock moves on to 2 and credits 0 to 2 again: 11 bytes accepted
   against a bound of 6 + 2 x 2. The C adds only when `time > allowance->time`
   and leaves the refill time otherwise; refilling on a step back turns
   `time_back_and_jump_mint_nothing` red.
+- **BrokenNoAckCredit** (`UnderRateNeverRefused`, 138,228 distinct). The
+  client sends its bucket (3 bytes); the server sends a packet, the client
+  acks it (2 bytes, paid from the bytes), the server sends a second, and the
+  second ack arrives over the 1 byte left and is refused. In the C, with the
+  ack branch of
+  `rocketnet_server_receive_allowance_take_packet` removed, standalone acks
+  fall to the bytes: `stream_4`, `_8`, `_64` and `_256` go red (4 kbps with no
+  loss: 3,393 packets refused) and `ack_credit` goes red.
+- **BrokenNoControl** (`UnderRateNeverRefused`, 42,443 distinct). Payload at
+  its budget, then a keep-alive and the disconnect, each a maximum packet,
+  in the same tick: the disconnect arrives over the bytes and is refused. In
+  the C, with the control branch removed, a keep-alive pays 41 bytes:
+  `stream_4` and `stream_8` go red at 1% loss and `control_tokens` goes red.
+- **BrokenFreeAcks** (`AcksBounded`, 5 distinct). At the connection's start
+  the flooder sends a standalone ack the server sent nothing for, and it is
+  credited. In the C the start sets the mark to `send_sequence_session`, so
+  `ack_credit_spent < sequences_sent` is false and the ack pays bytes;
+  dropping that test is the flip, and `ack_credit` (an ack with no credit is
+  refused) goes red.
+- **BrokenServerAckCredits** (`AcksBounded`, 37 distinct). The server sends
+  its own standalone ack, which takes a sequence and elicits nothing; the
+  flooder's ack is then paid from that sequence. In the C
+  `rocketnet_server_protocol_write_ack_if_due` moves `ack_credit_spent` after
+  `rocketnet_server_protocol_write_session_packet`; without that line
+  `ack_credit` goes red.
