@@ -2487,7 +2487,7 @@ static bool harden_terms_load( const std::string & path, harden_terms_t * terms 
 
 struct harden_chain_t
 {
-    int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_dropped, device_dropped;
+    int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_sent, qdisc_dropped, device_dropped;
     int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards;
     int64_t library_received;
 };
@@ -2517,6 +2517,11 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
             direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, path_gap,
             duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
     printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction, c.arrived_in, c.library_received, receive_gap );
+    // the qdisc counts each GSO segment it sends and each skb it drops: with
+    // nothing dropped it is the datagrams that left this end, so a library
+    // gap is the sender's (wire_gap > 0) or the receiver's (wire_gap 0)
+    printf( "harden_chain: %s library_sent=%" PRId64 " = qdisc_sent_segments=%" PRId64 " + qdisc_dropped=%" PRId64 " (wire_gap=%" PRId64 ")\n", direction, c.library_sent, c.qdisc_sent,
+            c.qdisc_dropped, c.library_sent - c.qdisc_sent - c.qdisc_dropped );
     printf( "harden_chain: %s verdict=%s\n", direction, ok ? "PASS" : "FAIL" );
     return ok;
 }
@@ -2545,6 +2550,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.library_sent = t.get( "clients.c2s_packets_sent" ) + t.get( "hostile.sent" );
     up.kernel_out = t.get( "clients.c2s_udp_out" );
     up.kernel_sndbuf = t.get( "clients.c2s_udp_sndbuf" );
+    up.qdisc_sent = t.get( "clients.c2s_tc_sent" );
     up.qdisc_dropped = t.get( "clients.c2s_tc_dropped" );
     up.device_dropped = t.get( "clients.c2s_dev_tx_dropped" );
     up.arrived_in = t.get( "server.c2s_udp_in" );
@@ -2557,6 +2563,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.library_sent = t.get( "server.s2c_packets_sent" );
     down.kernel_out = t.get( "server.s2c_udp_out" );
     down.kernel_sndbuf = t.get( "server.s2c_udp_sndbuf" );
+    down.qdisc_sent = t.get( "server.s2c_tc_sent" );
     down.qdisc_dropped = t.get( "server.s2c_tc_dropped" );
     down.device_dropped = t.get( "server.s2c_dev_tx_dropped" );
     down.arrived_in = t.get( "clients.s2c_udp_in" );

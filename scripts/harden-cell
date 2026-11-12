@@ -143,6 +143,11 @@ if [ -n "$netem" ]; then
     ip netns exec "$ns_s" tc qdisc add dev "$dev_s" root netem $netem
     # shellcheck disable=SC2086
     ip netns exec "$ns_c" tc qdisc add dev "$dev_c" root netem $netem
+else
+    # a plain qdisc on every row: its "Sent ... pkt" counts each GSO
+    # segment, so the wire's datagrams are counted where they leave
+    ip netns exec "$ns_s" tc qdisc add dev "$dev_s" root pfifo limit 200000
+    ip netns exec "$ns_c" tc qdisc add dev "$dev_c" root pfifo limit 200000
 fi
 
 : "${warm_seconds:=$(( seconds > 120 ? 60 : seconds / 3 ))}"
