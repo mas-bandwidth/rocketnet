@@ -22,6 +22,8 @@ are the workflows' own. It holds:
     GitHub's matrix rules (cartesian product, exclude, include merge-or-add),
     with `${{ fromJSON(inputs.full && 'A' || 'B') }}` and `${{ fromJSON('A') }}`
     values evaluated.
+    A name term is a matrix value (`${{ matrix.K }}`) or a value printed only
+    for rows that carry it (`${{ matrix.K && format(' ({0})', matrix.K) || '' }}`).
   - name_pattern(job): a regular expression any display name of the job
     matches, matrix values or not (a skipped matrix job is reported under its
     unexpanded template, which the pattern also matches).
@@ -37,6 +39,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
+
+# a job-name term that prints only for the rows that carry a key:
+# `matrix.K && format('F', matrix.K) || ''` (F a single-quoted literal, '' an escaped quote)
+OPTIONAL_TERM = re.compile(r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*&&\s*format\(\s*'((?:[^']|'')*)'\s*,\s*"
+                           r"matrix\.([A-Za-z_][A-Za-z0-9_-]*)\s*\)\s*\|\|\s*''")
 
 
 class WorkflowError(Exception):
@@ -514,6 +521,17 @@ class Job:
         if "${{" in template:
             def substitute(m):
                 expr = m.group(1).strip()
+                optional = OPTIONAL_TERM.fullmatch(expr)
+                if optional:
+                    # `matrix.K && format('F', matrix.K) || ''`: F with {0} as the row's K
+                    # when the row has a non-empty K, else nothing (GitHub: a missing
+                    # matrix key is null, and null && x is null, so the || gives '')
+                    key, form, again = optional.group(1), optional.group(2), optional.group(3)
+                    if key != again:
+                        raise WorkflowError(f"{self.workflow.name}: job {self.id}: name term {expr!r} "
+                                            f"tests matrix.{key} but formats matrix.{again}")
+                    value = row.get(key, "")
+                    return form.replace("''", "'").replace("{0}", value) if value else ""
                 if not expr.startswith("matrix.") or expr[len("matrix."):] not in row:
                     raise WorkflowError(f"{self.workflow.name}: job {self.id}: name term {expr!r} is not a matrix value")
                 return row[expr[len("matrix."):]]
@@ -524,9 +542,18 @@ class Job:
 
     def pattern(self):
         """A regex every display name of this job matches (unexpanded template included)."""
-        parts = re.split(r"\$\{\{.*?\}\}", str(self.name))
-        body = ".+".join(re.escape(p) for p in parts)
-        if "${{" not in str(self.name) and self.matrix is not None:
+        template = str(self.name)
+        pieces = re.split(r"(\$\{\{.*?\}\})", template)
+        body = ""
+        for index, piece in enumerate(pieces):
+            if index % 2 == 0:
+                body += re.escape(piece)
+            elif OPTIONAL_TERM.fullmatch(piece[3:-2].strip()):
+                # an optional term may print nothing, or the unexpanded term itself
+                body += ".*"
+            else:
+                body += ".+"
+        if "${{" not in template and self.matrix is not None:
             body += r"(?: \(.+\))?"
         return body
 
