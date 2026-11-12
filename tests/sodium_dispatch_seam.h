@@ -18,11 +18,14 @@ int sodium_dispatch_has( const char * feature );
 const char * sodium_dispatch_chacha20( void );
 const char * sodium_dispatch_poly1305( void );
 const char * sodium_dispatch_blake2b( void );
+const char * sodium_dispatch_aead( void );
 int sodium_dispatch_built( const char * primitive, const char * name );
 int sodium_dispatch_select_chacha20( const char * name );
 int sodium_dispatch_select_poly1305( const char * name );
 int sodium_dispatch_select_blake2b( const char * name );
+int sodium_dispatch_select_aead( const char * name );
 void sodium_dispatch_force_no_avx2( int no_avx2 );
+void sodium_dispatch_repick( void );
 
 #ifdef __cplusplus
 }
