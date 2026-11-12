@@ -430,5 +430,56 @@ REGISTER_UNIT_TEST( test_never_takes_a_reliable_number );
 REGISTER_UNIT_TEST( test_large_state_promotes_to_reliable_sequenced );
 REGISTER_UNIT_TEST( test_sequenced_drain_refusal_counts_stale );
 REGISTER_UNIT_TEST( test_sequenced_hold_due_on_a_full_table_returns_its_slot );
+
+// A code-1 delivery spends the update's unreliable allowance Du like a code-0
+// one: with Du = 1, whichever comes first is delivered and the other is
+// dropped and counted UNRELIABLE_DELIVERY_FULL.
+
+static void test_sequenced_delivery_spends_the_unreliable_allowance()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.unreliable_messages_per_update = 1;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
+    rocketnet_unit_check( arena != NULL );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+    const uint8_t state = 1, unreliable = 2;
+    rocketnet_message_record_t record;
+    rn_delivery_t out;
+    for ( int sequenced_first = 1; sequenced_first >= 0; sequenced_first-- )
+    {
+        const uint64_t full = counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL];
+        for ( int i = 0; i < 2; i++ )
+        {
+            if ( ( i == 0 ) == ( sequenced_first == 1 ) )
+            {
+                sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, (uint32_t) ( 2 - sequenced_first ), &state );
+            }
+            else
+            {
+                sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, &unreliable );
+            }
+
+            const int result = rn_channels_dispatch( &channels, &record, &out );
+            rocketnet_unit_check( result == ( i == 0 ? ROCKETNET_CHANNEL_DISPATCH_DELIVERED : ROCKETNET_CHANNEL_DISPATCH_NONE ) );
+        }
+
+        rocketnet_unit_check( channels.deliveries == 1 );
+        rocketnet_unit_check( channels.unreliable_delivered == 1 );
+        rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == full + 1 );
+        rocketnet_unit_check( channels.violations == 0 );
+        rn_channels_end_update( &channels );
+    }
+
+    rn_unit_arena_destroy( arena );
+}
+
+REGISTER_UNIT_TEST( test_sequenced_delivery_spends_the_unreliable_allowance );
 REGISTER_UNIT_TEST( test_rnchannel_sequenced_witness_replays );
 REGISTER_UNIT_TEST( test_sequenced_no_allocation_after_create );
