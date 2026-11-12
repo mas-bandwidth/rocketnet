@@ -9285,34 +9285,66 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
         sends[i].packet_bytes = bytes;
     }
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_client_io_linux_mmsg_batch_round_trip" );
+
     rocketnet_platform_socket_send_packets_mmsg( sender, sends, num_packets );
 
+    // loopback can drop one of the hundred (tests/kernel_drops.h): what is
+    // still missing at the deadline is sent again through the mmsg send only
+    // when the kernel counted that many receive drops; otherwise the loss is
+    // the mmsg path's and fails here. Each datagram is known by its length
+    // (20 + index) and its bytes, and must arrive exactly once.
+
+    bool seen[100] = {};
     int received = 0;
+    double wait = 5.0;
     double start_time = rocketnet_platform_time();
-    while ( received < num_packets && rocketnet_platform_time() - start_time < 5.0 )
+    while ( received < num_packets )
     {
-        const int got = rocketnet_platform_socket_receive_packets_mmsg( receiver, from + received, receive_data[received], stride, packet_bytes + received, 64 );
+        if ( rocketnet_platform_time() - start_time >= wait )
+        {
+            printf( "test_client_io_linux_mmsg_batch_round_trip: received %d of %d\n", received, num_packets );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, num_packets - received ) );
+            struct rocketnet_platform_send_t missing[100];
+            int num_missing = 0;
+            for ( int i = 0; i < num_packets; i++ )
+            {
+                if ( !seen[i] )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+            rocketnet_platform_socket_send_packets_mmsg( sender, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start_time = rocketnet_platform_time();
+        }
+
+        const int capacity = num_packets - received < 64 ? num_packets - received : 64;
+        const int got = rocketnet_platform_socket_receive_packets_mmsg( receiver, from + received, receive_data[received], stride, packet_bytes + received, capacity );
         if ( got == 0 )
         {
             rocketnet_platform_sleep( 0.001 );
+        }
+
+        for ( int k = received; k < received + got; k++ )
+        {
+            rocketnet_check( rocketnet_address_equal( &from[k], &sender_bind ) );
+
+            const int index = packet_bytes[k] - 20;
+            rocketnet_check( index >= 0 && index < num_packets );
+            rocketnet_check( !seen[index] );
+            seen[index] = true;
+            for ( int j = 0; j < packet_bytes[k]; j++ )
+            {
+                rocketnet_check( receive_data[k][j] == (uint8_t) ( index + j ) );
+            }
         }
 
         received += got;
     }
 
     rocketnet_check( received == num_packets );
-
-    for ( int i = 0; i < num_packets; i++ )
-    {
-        rocketnet_check( rocketnet_address_equal( &from[i], &sender_bind ) );
-
-        const int bytes = 20 + i;
-        rocketnet_check( packet_bytes[i] == bytes );
-        for ( int j = 0; j < bytes; j++ )
-        {
-            rocketnet_check( receive_data[i][j] == (uint8_t) ( i + j ) );
-        }
-    }
 
     rocketnet_check( rocketnet_platform_socket_receive_packets_mmsg( receiver, from, receive_data[0], stride, packet_bytes, 64 ) == 0 );
 
