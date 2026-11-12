@@ -1311,8 +1311,8 @@ static void test_secrets_wiped_token_writer_dev_config()
 
     secrets_wiped_writer_arm();
     const enum rocketnet_status_t status = rocketnet_create_dev_connect_token( "203.0.113.10:40000", NULL, rocketnet_dev_server_public_key,
-                                                                              ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
-                                                                              0x5EC12E7ULL, ROCKETNET_DEV_PROTOCOL_ID, 1000, user_data, token_string );
+                                                                               ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                                                               0x5EC12E7ULL, ROCKETNET_DEV_PROTOCOL_ID, 1000, user_data, token_string );
     rocketnet_token_writer_wipe_hook = NULL;
 
     check( status == ROCKETNET_STATUS_OK );
