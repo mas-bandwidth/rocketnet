@@ -743,7 +743,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
 // arrive on an already-exhausted region; this pins that it is refused -- the
 // connection's exhaustion already kicked it -- and the decision stays exhaustion.
 
-static void test_receive_without_room_exhausts_the_region()
+static void test_receive_on_an_exhausted_region_delivers_nothing()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -1325,7 +1325,7 @@ REGISTER_UNIT_TEST( test_user_block_is_used_and_nothing_else );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
-REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
+REGISTER_UNIT_TEST( test_receive_on_an_exhausted_region_delivers_nothing );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
 REGISTER_UNIT_TEST( test_send_refusal_leaves_the_region_as_it_was );
