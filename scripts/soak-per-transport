@@ -33,15 +33,39 @@
 # the transport configs it creates from), the values tools/macos/soak_matrix.py
 # runs: loss 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent.
 #
-# Each cell prints one line, PASS or FAIL:
+# Each cell prints one line, PASS, FAIL or UNMEASURED:
 #   SOAK cell=<name> PASS server=<granted> client=<granted> seconds=<S> verified=<n> fds=<start>/<end>/<peak> threads=... resident_bytes=... link=<impaired|clean> missing=<client to server>/<server to client> duplicates_refused=<at server>/<at client>
 #   SOAK cell=<name> FAIL <why>
+#   SOAK cell=<name> UNMEASURED stalled: <the stall and its bound>; soak exited <n>: <why>
 # A cell passes only when soak exits 0 (no verify failure, no counter
 # conservation failure, no unplanned disconnect, no refusal other than the
 # planted duplicates', and --assert-flat holding, which includes the
 # impairment leaving its trace: drops missing and duplicates refused in each
 # direction), the server transport it names is the one the cell pins, and
 # both ends' "soak link simulator:" lines show the setting the cell asked for.
+#
+# A starved host is not a measurement. A cell whose soak failed is UNMEASURED,
+# not FAIL, when its own log shows the process stalled: the largest main-loop
+# gap ("soak send: ... iteration_gap_max_ms=") reached the stall bound, and
+# every failure line is one a stall can cause: "soak: REFUSAL on a clean run",
+# "soak: client connection failed", "soak: RATE STALLED", "soak: the handshake
+# in progress at the bound did not complete". Any other failure (a payload
+# verify failure, a conservation failure, a resource that did not stay flat,
+# the link impairment not observed, the wrong transport) is FAIL whatever the
+# host did. The bound is the bank
+# arithmetic of the smallest server send ring: the gso transport holds
+# ROCKETNET_GSO_SEND_QUEUE_SIZE (4096) packets per producer bank, and the soak
+# sends about one packet per iteration, so a refusal needs the send worker held
+# for 4096 iterations, 4096 / (iterations per second) seconds (about 4.7 s at
+# the nightly's ~865 iterations/s). The main loop is a different thread from
+# the worker, so its gap is only a sample of how starved the host was: the
+# bound is a tenth of that refusal gap (about 470 ms at ~865/s). The tenth is
+# a margin chosen, not measured; a clean bench host's largest gap over 1800 s
+# was 106 ms (HARDEN-SERVER-TRANSPORTS.md F1).
+# When at least one cell was UNMEASURED and every other cell passed, the run
+# prints `::warning title=UNMEASURED::<the stalls>` (the nightly watch's
+# convention, tools/check_nightly_dispositions.py) and still exits 1; when any
+# cell FAILed it prints no such line, so the night is red.
 #
 # Options:
 #   --seconds S      seconds each cell runs (default 120)
@@ -54,9 +78,15 @@
 #   --xdp-memory M   the xdp guest's memory, as vng --memory takes it (default 4G)
 #   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r),
 #                    the runners' path; a kit may keep it as /opt/vm-kernels/<version>/vmlinuz)
+#   --judge-log LOG  run no soak: judge LOG, a soak log already written, as
+#                    the --cell in the same position (one --cell, --judge-log
+#                    and --judge-status per judged cell, in order;
+#                    scripts/soak-per-transport-selftest and
+#                    tools/planted_violations.tsv use it)
+#   --judge-status N the soak exit status that the matching log ended with
 #
-# Exit status: 0 when every cell run passed, 1 when any failed or was skipped,
-# 2 on a malformed option.
+# Exit status: 0 when every cell run passed, 1 when any failed, was skipped or
+# was unmeasured, 2 on a malformed option.
 
 set -u
 
@@ -69,6 +99,12 @@ LOG_DIR=
 XDP_MEMORY=4G
 CLEAN=0
 VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+JUDGE_LOGS=()
+JUDGE_STATUSES=()
+# ROCKETNET_GSO_SEND_QUEUE_SIZE (sdk/rocketnet_server_gso.h): the packets one
+# producer bank holds; the stall bound's arithmetic (the header above)
+SEND_BANK_PACKETS=4096
+STALL_MARGIN=10
 
 usage()
 {
@@ -90,6 +126,8 @@ while [ $# -gt 0 ]; do
         --xdp-memory) [ $# -ge 2 ] || refuse "--xdp-memory needs a value"; XDP_MEMORY=$2; shift 2 ;;
         --vm-kernel)  [ $# -ge 2 ] || refuse "--vm-kernel needs a value"; VM_KERNEL=$2; shift 2 ;;
         --clean)      CLEAN=1; shift ;;
+        --judge-log)  [ $# -ge 2 ] || refuse "--judge-log needs a value"; JUDGE_LOGS+=("$2"); shift 2 ;;
+        --judge-status) [ $# -ge 2 ] || refuse "--judge-status needs a value"; JUDGE_STATUSES+=("$2"); shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            refuse "unknown option $1" ;;
     esac
@@ -98,6 +136,22 @@ done
 case "$SECONDS_PER_CELL" in
     ''|*[!0-9]*|0) refuse "--seconds S must be a positive integer" ;;
 esac
+JUDGING=0
+if [ ${#JUDGE_LOGS[@]} -gt 0 ] || [ ${#JUDGE_STATUSES[@]} -gt 0 ]; then
+    JUDGING=1
+    # one --cell, --judge-log and --judge-status each per judged cell, in order
+    [ ${#CELLS[@]} -gt 0 ] || refuse "--judge-log needs the --cell it judges"
+    [ ${#JUDGE_LOGS[@]} -eq ${#CELLS[@]} ] && [ ${#JUDGE_STATUSES[@]} -eq ${#CELLS[@]} ] \
+        || refuse "--judge-log and --judge-status are given once per --cell"
+    for status in "${JUDGE_STATUSES[@]}"; do
+        case "$status" in
+            ''|*[!0-9]*) refuse "--judge-status N must be a non-negative integer" ;;
+        esac
+    done
+    for log in "${JUDGE_LOGS[@]}"; do
+        [ -r "$log" ] || refuse "--judge-log $log is not readable"
+    done
+fi
 [ ${#CELLS[@]} -gt 0 ] || CELLS=(portable gso gso-plain io_uring xdp)
 for cell in "${CELLS[@]}"; do
     case "$cell" in
@@ -105,11 +159,15 @@ for cell in "${CELLS[@]}"; do
         *) refuse "unknown cell $cell (portable, gso, gso-plain, io_uring, xdp)" ;;
     esac
 done
-[ "$(uname -s)" = Linux ] || { echo "$NAME: Linux only" >&2; exit 1; }
-[ -x "$SOAK" ] || { echo "$NAME: $SOAK not built -- run make first" >&2; exit 1; }
-SOAK=$(cd "$(dirname "$SOAK")" && pwd)/$(basename "$SOAK")
+if [ "$JUDGING" = 0 ]; then
+    [ "$(uname -s)" = Linux ] || { echo "$NAME: Linux only" >&2; exit 1; }
+    [ -x "$SOAK" ] || { echo "$NAME: $SOAK not built -- run make first" >&2; exit 1; }
+    SOAK=$(cd "$(dirname "$SOAK")" && pwd)/$(basename "$SOAK")
+fi
 
-if [ -z "$LOG_DIR" ]; then
+if [ "$JUDGING" = 1 ]; then
+    LOG_DIR=.
+elif [ -z "$LOG_DIR" ]; then
     LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX")
     trap 'rm -rf "$LOG_DIR"' EXIT
 else
@@ -141,6 +199,41 @@ if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-}" = 1 ]; then
 fi
 
 failures=0
+unmeasured=()
+
+stall_of()
+{
+    # stall_of <log>: "<gap ms> <at t> <iterations/s> <refusal gap ms> <bound ms>",
+    # from the largest "iteration_gap_max_ms=" of the "soak send:" lines and the
+    # last "soak: N iterations" line; nonzero when the log has neither
+    awk -v bank="$SEND_BANK_PACKETS" -v margin="$STALL_MARGIN" '
+        $1 == "soak" && $2 == "send:" {
+            t = ""; gap = ""
+            for ( i = 3; i <= NF; i++ ) {
+                if ( $i ~ /^t=/ ) { t = substr( $i, 3 ) }
+                if ( $i ~ /^iteration_gap_max_ms=/ ) { gap = substr( $i, 22 ) }
+            }
+            if ( gap != "" && ( max == "" || gap + 0 > max + 0 ) ) { max = gap; at = t }
+            if ( t != "" ) { last_t = t }
+        }
+        $1 == "soak:" && $3 == "iterations," { iterations = $2 }
+        END {
+            if ( max == "" || iterations == "" || last_t + 0 <= 0 || iterations + 0 <= 0 ) { exit 1 }
+            rate = iterations / last_t
+            refusal = bank / rate * 1000.0
+            printf "%s %s %.0f %.0f %.0f\n", max, at, rate, refusal, refusal / margin
+        }' "$1"
+}
+
+stall_can_cause()
+{
+    # stall_can_cause <log>: true when the log has a failure line and every
+    # failure line is one a starved process can cause (the header above)
+    local lines
+    lines=$(grep -E '^(soak: |PAYLOAD VERIFY FAILED)' "$1" | grep -vE '^soak: ([0-9]+ iterations|conservation ok|planted duplicates)')
+    [ -n "$lines" ] || return 1
+    ! printf '%s\n' "$lines" | grep -qvE '^soak: (REFUSAL on a clean run at |client connection failed |RATE STALLED: |the handshake in progress at the bound did not complete )'
+}
 
 resource_field()
 {
@@ -174,6 +267,17 @@ judge()
                 break
             fi
         done
+    fi
+    if [ -n "$fail_reason" ] && [ "$status" -ne 0 ] && stall_can_cause "$log"; then
+        local stall gap at rate refusal bound
+        if stall=$(stall_of "$log"); then
+            read -r gap at rate refusal bound <<< "$stall"
+            if awk -v gap="$gap" -v bound="$bound" 'BEGIN { exit !( gap + 0 >= bound + 0 ) }'; then
+                echo "SOAK cell=$cell UNMEASURED stalled: iteration_gap_max_ms=$gap at t=$at, bound $bound ms (a tenth of the $refusal ms a send bank of $SEND_BANK_PACKETS needs at $rate iterations/s); $fail_reason (log $log)"
+                unmeasured+=("$cell main loop stalled ${gap} ms at t=${at}, bound ${bound} ms, so its ${fail_reason%%;*} is not kept")
+                return 1
+            fi
+        fi
     fi
     if [ -n "$fail_reason" ]; then
         echo "SOAK cell=$cell FAIL $fail_reason (log $log)"
@@ -252,21 +356,41 @@ run_xdp_cell()
     judge xdp xdp "$log" "$status"
 }
 
-for cell in "${CELLS[@]}"; do
-    case "$cell" in
-        portable)  run_host_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
-        gso)       run_host_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ;;
-        gso-plain) run_host_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1 ;;
-        io_uring)
-            if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
-                run_host_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
-            else
-                echo "SOAK cell=io_uring SKIP this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled is not 0)"
-                failures=$(( failures + 1 ))
-            fi
-            ;;
-        xdp)       run_xdp_cell ;;
-    esac
-done
+if [ "$JUDGING" = 1 ]; then
+    for index in "${!CELLS[@]}"; do
+        cell=${CELLS[$index]}
+        want=$cell
+        [ "$cell" != gso-plain ] || want=gso
+        judge "$cell" "$want" "${JUDGE_LOGS[$index]}" "${JUDGE_STATUSES[$index]}"
+    done
+else
+    for cell in "${CELLS[@]}"; do
+        case "$cell" in
+            portable)  run_host_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            gso)       run_host_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            gso-plain) run_host_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1 ;;
+            io_uring)
+                if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
+                    run_host_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
+                else
+                    echo "SOAK cell=io_uring SKIP this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled is not 0)"
+                    failures=$(( failures + 1 ))
+                fi
+                ;;
+            xdp)       run_xdp_cell ;;
+        esac
+    done
+fi
 
+if [ ${#unmeasured[@]} -gt 0 ]; then
+    if [ "$failures" -eq 0 ]; then
+        # every cell that did not pass was starved: the night measured nothing
+        # it can keep, which the nightly watch reads as UNMEASURED, never green
+        why=$(printf '%s; ' "${unmeasured[@]}")
+        echo "::warning title=UNMEASURED::soak per transport: ${why%; }"
+    else
+        echo "$NAME: ${#unmeasured[@]} cell(s) UNMEASURED and $failures FAILED: the FAILED cells make the run red"
+    fi
+    exit 1
+fi
 [ "$failures" -eq 0 ]

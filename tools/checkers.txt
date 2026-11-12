@@ -8,6 +8,7 @@
 scripts/check-fleet-runners-selftest	bash scripts/check-fleet-runners-selftest	-	static.yml	static	Fleet-runner lint selftest
 scripts/lan-proof-selftest	bash scripts/lan-proof-selftest	-	ci.yml	lint	Self-tests of the registered checkers
 scripts/soak-args-selftest	bash scripts/soak-args-selftest	-	ci.yml	platform-selftests	soak argument and summary selftest
+scripts/soak-per-transport-selftest	bash scripts/soak-per-transport-selftest	-	ci.yml	platform-selftests	soak per transport verdict selftest
 scripts/soak-sim-selftest	bash scripts/soak-sim-selftest	-	ci.yml	platform-selftests	soak_sim instrument selftest
 scripts/vm-boot-guard-selftest	bash scripts/vm-boot-guard-selftest	-	ci.yml	platform-selftests	VM boot deadline selftest
 tools/check_abi.py	python3 tools/test_check_abi.py	python3 tools/check_abi.py --header {emptyfile} --exports {emptyfile} --baseline {emptyfile}	ci.yml	build-and-test	Check the 1.x ABI baseline
