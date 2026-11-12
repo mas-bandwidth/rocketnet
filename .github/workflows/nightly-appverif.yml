@@ -159,6 +159,14 @@ jobs:
           python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml logs/appverif-unit.xml -- "$BIN/test.exe" 2>&1 | tr -d '\r' | tee unit.log
           grep -q '^appverif_run: PASS' unit.log
 
+      # The one documented form of a functional run under the verifier (also in
+      # appverif_run.py's usage): one run per shard, --shard K/8, with the job's
+      # ROCKETNET_TEST_JOBS=4 and ROCKETNET_TEST_MAX_CASE_RSS_MB=2048. At the
+      # default job count a whole-suite run beside other work pushed
+      # test_portable_transport_windows_server_restart_1000 (54 s alone, with
+      # or without the verifier) past its 120 s case limit. One case is
+      # `functional.exe --run NAME`: a bare case name is not read, and the
+      # whole suite runs instead.
       - name: Functional suite under Application Verifier, eight shards
         if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
         run: |

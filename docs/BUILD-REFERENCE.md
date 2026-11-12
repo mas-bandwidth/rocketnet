@@ -419,7 +419,10 @@ The functional binary is verified in shards, one run per shard:
     ...
     py -3 tools\windows\appverif_run.py --self-check-passed-at stamp.json -- build-prod\bin\Debug\functional.exe --shard 7/8
 
-with `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048` set, as CI's Debug leg does. Shards 0/8 to 7/8 together are the whole
+with `ROCKETNET_TEST_JOBS=4` and `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048` set, as the nightly Application Verifier
+job runs it; this is the only supported form. At the default job count a whole-suite run beside other work
+pushed `test_portable_transport_windows_server_restart_1000` (54 s alone) past its 120 s case limit. One case
+is `functional.exe --run <case>`; a bare case name is not read, and the whole suite runs. Shards 0/8 to 7/8 together are the whole
 suite, and a case that fails stops only its own shard, where a single whole-suite run stops at its first failure.
 The Windows lifecycle stress cases are where such a run used to stop: they held the process's private bytes
 flat, and under the verifier its page heap and stack-trace bookkeeping grow private bytes by 3 to 6 MB over

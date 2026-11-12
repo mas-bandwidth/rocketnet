@@ -49,6 +49,15 @@ usage: python tools/windows/appverif_run.py [--xml FILE] [--timeout SECONDS]
 --plants defaults to the directory of EXE. --self-check with no EXE runs the
 self-check alone.
 
+The functional suite is run the way .github/workflows/nightly-appverif.yml
+runs it, and only that way: one run per shard, `functional.exe --shard K/8`
+for K = 0..7, with ROCKETNET_TEST_JOBS=4 and ROCKETNET_TEST_MAX_CASE_RSS_MB=2048
+in the environment. At the default job count a whole-suite run beside other
+work pushed test_portable_transport_windows_server_restart_1000 (54 s alone,
+with or without the verifier) past its 120 s case limit (2026-11-12, captain).
+One case is `functional.exe --run NAME`; a bare case name is not an argument
+the suite reads, and the whole suite runs instead.
+
 Application Verifier settings live in the registry, so the script runs from an
 elevated prompt. appverif.exe ships with the Windows SDK (Application Verifier
 for x64).
