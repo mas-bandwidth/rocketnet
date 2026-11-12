@@ -443,6 +443,23 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
     except (ValueError, KeyError, OSError) as error:
         errors.append(f"{nightly_debt_path}: {error}")
 
+    # The budget margin (plan_tlc_nightly.margin): a PASS record over 60% of
+    # its budget is refused unless BUDGETS.tsv beside CASES.tsv declares its
+    # larger budget (at least twice its seconds; the nightly re-run runs it
+    # under that) or it becomes nightly timeout debt. The declared ones are
+    # printed. No file is no declared budget.
+    from plan_tlc_nightly import margin, read_budgets  # pylint: disable=import-outside-toplevel
+    budgets_path = Path(cases_path).parent / "BUDGETS.tsv"
+    try:
+        budgets = read_budgets(budgets_path, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{budgets_path}: {error}")
+        budgets = {}
+    flagged, problems = margin(runs, budgets)
+    errors.extend(problems)
+    for line in flagged:
+        print(line, file=out)
+
     for cfg in plan:
         if cfg not in seen_runs:
             errors.append(f"{cfg}: present in CASES.tsv but missing from RUNS.tsv")
