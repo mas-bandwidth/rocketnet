@@ -129,6 +129,49 @@ passed in three chunks with no FAIL line, 1273.25 s in all (0.21 s/seed):
 Each leg's `timeout-minutes: 50` covers the sweep, the fixed range 1-2050
 and the build with room to spare.
 
+## Outage scenarios
+
+`./bin/dst --outage <set> [--seeds a-b]` runs a second, smaller world
+(`tests/dst_outage.h`, sets in `tests/dst_outage_grid.h`): one client and one
+server through the public API on the loopback transport, each direction
+through the development link simulator, a test clock from 1000.0 in 10 ms
+steps. Both ends offer, every 100 ms, a small message cycling the eight
+reliability modes and a two-piece message cycling the reliable ones, on their
+own channels, checking `can_send_message` against every start; a 64 KiB
+reliable-ordered message starts 50 ms before the outage on each end. Then
+one direction, the other or both go dark (loss 100) for `D` seconds, where
+`T` is the token's timeout. The seed sets the outage's start within the
+second (`(seed - 1) % 50` steps of 20 ms) and the simulator's draws.
+
+A surviving row requires: both ends still connected; every accepted reliable
+message delivered once, intact and in order (ordered modes) or never older
+(sequenced modes), and each channel's last reliable-sequenced message
+delivered; every receipt-mode reliable send resolved ACKED; each end's
+`send_refused` equal to the starts it refused; and the drain after the
+outage inside a bound: a keep-alive, two round trips, a step, one initial
+resend delay, the backlog (every reliable byte sent from the last
+acknowledged round trip before the outage, and anything older still owed)
+over the budget the offers leave, and one probe round, plus two more resend
+rounds on a row with residual loss (the harness's allowance, not the
+standard's). A row past `T` requires both ends to end by the timeout and
+nothing else: the deaf end `T` after its last packet, the other `T` after the
+deaf end went quiet (a timeout sends no notice), each within a keep-alive
+below and a one-way trip and three steps above.
+
+| set | rows per seed | what |
+|---|---|---|
+| `grid` | 120 | `D = T - 1` for `T` 2, 10, 30, 60; round trip 1, 150, 300, 600, 900 ms; loss 0 and 2%; each direction and both: survives |
+| `complement` | 36 | `D = T + 2` for `T` 2, 10, 30, 60; round trip 1, 150, 600 ms: ends by the timeout only |
+| `handshake` | 162 | `D = T - 1` for `T` 10, 30, 60, round trip 150, 600, 900 ms, a 30 s token, starting as the client enters states 1, 2 and 3, half a round trip into state 3, and when the server and the client first report connected: survives; states 1 and 2 at a longer round trip or `T` may instead fail as those states allow (COOKIE_REQUEST or CONNECTION_REQUEST timed out, or the token expired), never with the server holding the client; state 3 with the client's direction dark fails with CONNECTION_RESPONSE_TIMED_OUT at `T`, unless the first response left in the update that entered the state, when it survives |
+| `opted-in` | 27 | `reliable_message_timeout_ms` at half of `T` (at least 8000): an end with RELIABLE_TIMED_OUT at that time, as in v1.0.0 |
+| `refusal` | 3 | `T = 60`, `D = 59` at the default buffers: refusals begin (about 42 s into the outage on the client) and nothing accepted is lost |
+| `largest` | 1 | `T = 3600`, `D = 3599`, both directions: survives |
+
+`all` runs every set: seeds 1-50 are 17450 rows, all PASS, in 365 s on
+macOS (Release). The nightly runs `--outage all --seeds 1-50` on each leg
+after the schedules. Five cases in `tests/test_unit_dst_outage.cpp` run a
+few rows on every commit, each under 0.2 s.
+
 ## Fault kinds
 
 `--faults` takes `all`, `none` or a comma list of `loss`, `dup` and
@@ -224,8 +267,8 @@ schedule; a failure prints its seed and the replay command, which carries
     for a second or more) resends only its oldest unacknowledged number, at
     its resend delay, but may still send numbers it never sent. Over each
     second it is held it starts at most `floor(1 / delay) + 1` frames, plus
-    the first sends it made in that second, plus `floor(1 / peer_delay) + 1`
-    when a one-way outage leaves its peer held and answering through the
+    the first sends it made in that second, plus `floor(1 / remote_delay) + 1`
+    when a one-way outage leaves its remote endpoint held and answering through the
     bright direction. Frames started and then aborted because the send budget
     could not pay for the due reliable packet are counted apart
     (`budget_aborts` in the verbose line) and not judged. Reverting the

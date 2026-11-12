@@ -475,7 +475,7 @@ struct rocketnet_dst_schedule_t
     uint64_t held_steps[ROCKETNET_DST_MAX_CLIENTS][2];
     uint64_t frames[ROCKETNET_DST_MAX_CLIENTS][2];
     double resend_delay_low[ROCKETNET_DST_MAX_CLIENTS][2];
-    double peer_delay_low[ROCKETNET_DST_MAX_CLIENTS][2];   // the peer's, while it reaches the sender
+    double remote_delay_low[ROCKETNET_DST_MAX_CLIENTS][2];   // the remote endpoint's, while it reaches the sender
     uint64_t first_sends[ROCKETNET_DST_MAX_CLIENTS][2];    // numbers first sent in the counted steps
     uint64_t numbers_sent[ROCKETNET_DST_MAX_CLIENTS][2];   // each side's numbers written at least once, at the last step
     uint64_t frames_max;                    // the most frames one sender started in a judged second
@@ -677,7 +677,7 @@ static inline int rocketnet_dst_outage_open( const rocketnet_dst_world_t * w )
 }
 
 // outage: whether a dark session's side (0 the client, 1 the server) still
-// receives its peer's packets in the window: a one-way outage leaves the
+// receives its remote endpoint's packets in the window: a one-way outage leaves the
 // other direction bright.
 
 static inline int rocketnet_dst_outage_reaches( const struct rocketnet_dst_schedule_t * s, int side )
@@ -2301,8 +2301,8 @@ static inline void rocketnet_dst_outage_open_window( rocketnet_dst_world_t * w )
             s->dark_server_heard[i] = entry ? entry->control->last_receive_time : w->now;
             s->resend_delay_low[i][0] = 1.0e9;
             s->resend_delay_low[i][1] = 1.0e9;
-            s->peer_delay_low[i][0] = 1.0e9;
-            s->peer_delay_low[i][1] = 1.0e9;
+            s->remote_delay_low[i][0] = 1.0e9;
+            s->remote_delay_low[i][1] = 1.0e9;
             if ( s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST )
             {
                 client->explained_generation = client->generation;
@@ -2423,8 +2423,8 @@ static inline void rocketnet_dst_outage_observe( rocketnet_dst_world_t * w )
         // judged second. A held sender may still send numbers it never sent
         // (m9.3), so those first sends are counted beside the frames. In a
         // one-way outage the side the bright direction reaches also answers
-        // its peer's packets: it is counted only while the peer is held too,
-        // and the peer's shortest resend delay and first sends bound the
+        // its remote endpoint's packets: it is counted only while the remote endpoint is held too,
+        // and the remote endpoint's shortest resend delay and first sends bound the
         // answers.
         uint64_t sent[2] = { 0, 0 };
         int has_sent[2] = { 0, 0 };
@@ -2469,12 +2469,12 @@ static inline void rocketnet_dst_outage_observe( rocketnet_dst_world_t * w )
                         s->frames_max = s->frames[i][side];
                     }
                     rocketnet_dst_check_probe_paced( &w->check, i, side, s->frames[i][side], s->resend_delay_low[i][side],
-                                                     reaches ? s->peer_delay_low[i][side] : 0.0, s->first_sends[i][side] );
+                                                     reaches ? s->remote_delay_low[i][side] : 0.0, s->first_sends[i][side] );
                     s->held_steps[i][side] = 0;
                     s->frames[i][side] = 0;
                     s->first_sends[i][side] = 0;
                     s->resend_delay_low[i][side] = 1.0e9;
-                    s->peer_delay_low[i][side] = 1.0e9;
+                    s->remote_delay_low[i][side] = 1.0e9;
                 }
             }
         }
@@ -2492,9 +2492,9 @@ static inline void rocketnet_dst_outage_observe( rocketnet_dst_world_t * w )
                 {
                     s->resend_delay_low[i][side] = delay[side];
                 }
-                if ( reaches && delay[1 - side] < s->peer_delay_low[i][side] )
+                if ( reaches && delay[1 - side] < s->remote_delay_low[i][side] )
                 {
-                    s->peer_delay_low[i][side] = delay[1 - side];
+                    s->remote_delay_low[i][side] = delay[1 - side];
                 }
             }
         }

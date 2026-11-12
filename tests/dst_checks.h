@@ -967,7 +967,7 @@ static inline void rocketnet_dst_check_client_state( struct rocketnet_dst_check_
 }
 
 // no_unscheduled_end (proofs/tla/ClientSession.tla and ServerSession.tla:
-// a session ends by the silence timeout, the peer's goodbye or a cause; the
+// a session ends by the silence timeout, the remote endpoint's goodbye or a cause; the
 // DST wire's loss and duplication leave no cause): a client session ends only
 // where a script ends it, a drawn churn, an opted-in reliable timeout or the
 // outage-past schedule, each of which names the generation it ends
@@ -1462,28 +1462,28 @@ static inline void rocketnet_dst_check_send_floor( struct rocketnet_dst_check_st
 // each 100 steps (one second) in which a dark session's sender (side 0 the
 // client, 1 the server's slot) was held, the frames it started are at most
 // one per its shortest resend delay in them, plus one for alignment, plus
-// one per number first sent in them. A sender whose peer's packets still
-// reach it (one-way outage) also answers each of the peer's packets, so the
-// peer's shortest resend delay adds its own term, and first_sends counts the
-// peer's first sends too; peer_delay 0 means nothing reaches the sender.
+// one per number first sent in them. A sender whose remote endpoint's packets still
+// reach it (one-way outage) also answers each of the remote endpoint's packets, so the
+// remote endpoint's shortest resend delay adds its own term, and first_sends counts the
+// remote endpoint's first sends too; remote_delay 0 means nothing reaches the sender.
 
 static inline void rocketnet_dst_check_probe_paced( struct rocketnet_dst_check_state_t * st, int client, int side,
-                                                    uint64_t frames, double resend_delay, double peer_delay,
+                                                    uint64_t frames, double resend_delay, double remote_delay,
                                                     uint64_t first_sends )
 {
     const double delay = resend_delay > 0.010 ? resend_delay : 0.010;
     uint64_t bound = (uint64_t) ( 1.0 / delay ) + 1 + first_sends;
-    if ( peer_delay > 0.0 )
+    if ( remote_delay > 0.0 )
     {
-        const double peer = peer_delay > 0.010 ? peer_delay : 0.010;
-        bound += (uint64_t) ( 1.0 / peer ) + 1;
+        const double remote = remote_delay > 0.010 ? remote_delay : 0.010;
+        bound += (uint64_t) ( 1.0 / remote ) + 1;
     }
     if ( frames > bound )
     {
         char what[224];
         snprintf( what, sizeof( what ),
-                  "client=%d %s started %llu frames in a held second, resend delay %.3f s (peer %.3f s) and %llu first sends allow %llu",
-                  client, side ? "server" : "client", (unsigned long long) frames, resend_delay, peer_delay,
+                  "client=%d %s started %llu frames in a held second, resend delay %.3f s (remote %.3f s) and %llu first sends allow %llu",
+                  client, side ? "server" : "client", (unsigned long long) frames, resend_delay, remote_delay,
                   (unsigned long long) first_sends, (unsigned long long) bound );
         rocketnet_dst_check_fail( st, "probe_paced", what );
     }

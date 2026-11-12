@@ -605,7 +605,7 @@ static void test_dst_check_refusals_agree_and_floor()
 REGISTER_UNIT_TEST( test_dst_check_refusals_agree_and_floor );
 
 // probe_paced: a held second allows one frame per resend delay plus one,
-// plus one per first send, plus the peer's term when its packets reach the
+// plus one per first send, plus the remote endpoint's term when its packets reach the
 // sender; one frame more fails.
 
 static void test_dst_check_probe_paced_bound()
