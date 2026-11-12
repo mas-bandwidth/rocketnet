@@ -6876,7 +6876,12 @@ void rocketnet_test_server_gso_wire_dual_stack()
 #if ROCKETNET_DEV
 #include "rocketnet_client_gso.h"
 
-static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
+// simulated_latency_ms > 0 turns the link simulator on at both ends: the
+// client then has no I/O thread and its update reads the socket one datagram
+// at a time (the transport's single receive), the path a GRO socket must
+// still split
+static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable",
+                                                     int simulated_latency_ms = 0 )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -6885,6 +6890,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
+    server_config.simulated_latency_ms = simulated_latency_ms;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", server_transport );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, server_bind, &server_config );
@@ -6900,6 +6906,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "gso" );
+    client_config.simulated_latency_ms = simulated_latency_ms;
 
     rocketnet_client_gso_test_disable_segment.store( !segment );
     rocketnet_client_gso_test_disable_gro.store( !segment );
@@ -6910,7 +6917,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "gso" ) == 0 );
-    rocketnet_check( rocketnet_client_transport_client_io( client ) != NULL );
+    rocketnet_check( ( rocketnet_client_transport_client_io( client ) != NULL ) == ( simulated_latency_ms == 0 ) );
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
@@ -7037,7 +7044,9 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             client_received++;
         }
 
-        rocketnet_platform_sleep( 0.001 );
+        // with the simulator on, a pass every 10 ms keeps the packets it
+        // holds for the latency inside the client's 512 simulator slots
+        rocketnet_platform_sleep( simulated_latency_ms > 0 ? 0.01 : 0.001 );
     }
 
     rocketnet_check( server_received == TOTAL );
@@ -7045,11 +7054,13 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
 
     const uint64_t segment_messages = rocketnet_client_gso_test_segment_messages_sent.load() - segment_messages_before;
 
-    if ( segment )
+    // with the simulator on the client's held packets leave one send each,
+    // so only the server's sends are segmented then
+    if ( segment && simulated_latency_ms == 0 )
     {
         rocketnet_check( segment_messages > 0 );
     }
-    else
+    if ( !segment )
     {
         rocketnet_check( segment_messages == 0 );
     }
@@ -7103,6 +7114,17 @@ void rocketnet_test_gso_client_wire_gro()
     // as UDP_SEGMENT runs: the client receives them coalesced and splits them
 
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso" );
+}
+
+void rocketnet_test_gso_client_wire_gro_simulated()
+{
+    // the same exchange, gso at both ends, with the link simulator on at both
+    // ends: the client reads through the transport's single receive, which
+    // must split a GRO-coalesced message as the batch receive does. Every
+    // payload arrives once, whole, and no refusal counter moves (no
+    // PREFILTER_TOO_LARGE, no PAYLOAD or ACK that did not open).
+
+    rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso", 30 );
 }
 #endif // production excludes gso client wire cases that read SEND_ERROR hooks
 
@@ -14111,6 +14133,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
     { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
+    { "test_gso_client_transport_wire_gro_simulated", rocketnet_test_gso_client_wire_gro_simulated, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
 #if ROCKETNET_DEV
