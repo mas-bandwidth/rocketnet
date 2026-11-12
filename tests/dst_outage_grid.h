@@ -118,8 +118,8 @@ static inline void dst_outage_set_handshake( dst_outage_tally_t * tally, struct 
 {
     static const int timeouts[3] = { 10, 30, 60 };
     static const int rtts[3] = { 150, 600, 900 };
-    static const int starts[6] = { DST_OUTAGE_START_STATE_1,          DST_OUTAGE_START_STATE_2,          DST_OUTAGE_START_STATE_3,
-                                   DST_OUTAGE_START_TRUE_X1,          DST_OUTAGE_START_SERVER_CONNECTED, DST_OUTAGE_START_CLIENT_CONNECTED };
+    static const int starts[6] = { DST_OUTAGE_START_STATE_1, DST_OUTAGE_START_STATE_2, DST_OUTAGE_START_STATE_3,
+                                   DST_OUTAGE_START_TRUE_X1, DST_OUTAGE_START_SERVER_CONNECTED, DST_OUTAGE_START_CLIENT_CONNECTED };
     for ( int t = 0; t < 3; t++ )
     {
         for ( int r = 0; r < 3; r++ )

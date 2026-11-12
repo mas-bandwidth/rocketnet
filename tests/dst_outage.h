@@ -62,7 +62,7 @@
 #define DST_OUTAGE_START_STATE_1           1    // the client enters REQUESTING_COOKIE
 #define DST_OUTAGE_START_STATE_2           2    // the client enters SENDING_CONNECTION_REQUEST
 #define DST_OUTAGE_START_STATE_3           3    // the client enters SENDING_CONNECTION_RESPONSE
-#define DST_OUTAGE_START_TRUE_X1           4    // state 3 plus half a round trip plus 25 ms: the server has
+#define DST_OUTAGE_START_TRUE_X1           4    // state 3 plus half a round trip plus 25 ms: the server has \
                                                 // accepted the response, the client does not yet know
 #define DST_OUTAGE_START_SERVER_CONNECTED  5    // the server reports the client connected
 #define DST_OUTAGE_START_CLIENT_CONNECTED  6    // the client reports CONNECTED
@@ -1071,7 +1071,9 @@ static inline void dst_outage_print( const char * label, const dst_outage_option
     printf( "%s %s T=%d D=%.1f dark=%s rtt=%d loss=%d start=%d: c2s %llu/%llu s2c %llu/%llu refused %llu/%llu first_refusal %.2f "
             "backlog %.0f/%.0f recovery %.2f/%.2f (bound %.2f/%.2f) ends client %d at %.2f server %d at %.2f steps %llu%s%s%s\n",
             r->passed ? "PASS" : "FAIL", label, o->timeout_seconds, o->outage_seconds,
-            o->dark == DST_OUTAGE_BOTH ? "both" : o->dark == DST_OUTAGE_C2S ? "c2s" : "s2c", o->rtt_ms, o->loss_percent, o->start,
+            o->dark == DST_OUTAGE_BOTH ? "both" : o->dark == DST_OUTAGE_C2S ? "c2s"
+                                                                            : "s2c",
+            o->rtt_ms, o->loss_percent, o->start,
             (unsigned long long) r->delivered[0], (unsigned long long) r->accepted[0], (unsigned long long) r->delivered[1],
             (unsigned long long) r->accepted[1], (unsigned long long) r->refused[0], (unsigned long long) r->refused[1],
             r->first_refusal_after, r->backlog_bytes[0], r->backlog_bytes[1], r->recovery[0], r->recovery[1], r->recovery_bound[0], r->recovery_bound[1], r->client_state,
