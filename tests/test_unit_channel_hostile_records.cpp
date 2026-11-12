@@ -209,6 +209,10 @@ static void hostile_span_edges( hostile_t * h, int code )
     const uint32_t ring = h->region->ring_bytes;
     rocketnet_message_record_t record;
 
+    // a block at the ring's start, base 0
+    hostile_chunk( &record, code, 0, 0, 2, 0, (int) F );
+    hostile_expect_taken( h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
+
     // fragment 0 of 2: the block ends at base * 16 + F + 16
     const uint32_t base = ( ring - F - 16 ) / 16;
     hostile_chunk( &record, code, 0, 0, 2, base, (int) F );
@@ -325,7 +329,32 @@ static void test_hostile_sequenced_gaps_at_half_range()
     hostile_record( &record, sequenced, 0, 0, HOSTILE_HALF - 1, 1 );
     hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
 
-    // the sequencing against a held future state at the same ordering
+    // the sequencing against a held future state at the same ordering: the
+    // same sequencing is stale and the hold keeps its own bytes, one newer
+    // replaces it
+    {
+        hostile_reset( &h, 0 );
+        hostile_payload[0] = 0x11;
+        hostile_record( &record, sequenced, 0, 1, 5, 1 );
+        check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        const uint32_t held = h.region->channel_receive[0].held_sequenced;
+
+        hostile_payload[0] = 0x22;
+        hostile_expect_stale( &h, &record, superseded );
+        check( h.region->channel_receive[0].held_sequenced == held );
+        check( h.region->sequenced_message_payloads[held].data[0] == 0x11 );
+
+        hostile_record( &record, sequenced, 0, 1, 6, 1 );
+        check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        check( h.counters.values[superseded] == 2 );
+        const uint32_t newer = h.region->channel_receive[0].held_sequenced;
+        check( newer != RN_DESCRIPTOR_NONE );
+        check( h.region->sequenced_messages_held[newer].sequencing == 6 );
+        check( h.region->sequenced_message_payloads[newer].data[0] == 0x22 );
+        hostile_payload[0] = 0;
+    }
+
+    // the sequencing against a held future state at the same ordering, half the range away
     {
         hostile_reset( &h, 0 );
         hostile_record( &record, sequenced, 0, 1, 5, 1 );
@@ -403,6 +432,66 @@ static void test_hostile_chunk_past_a_complete_held_block()
     rn_unit_arena_destroy( h.arena );
 }
 
+// A code-4 record held as a future state is copied into the ring at its own
+// span, its size rounded up to 16: 1 byte anywhere, 16 bytes in the ring's
+// last unit and 18 in its last two are taken; 17 bytes in the last unit would
+// write one byte past the ring and are BAD_RING.
+
+static void test_hostile_held_reliable_sequenced_span_at_the_ring_end()
+{
+    hostile_t h;
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    const uint32_t units = h.region->ring_bytes / 16;
+    rocketnet_message_record_t record;
+
+    hostile_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 0, 1 );
+    hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+    record.ring = units - 1;
+    record.bytes = 16;
+    hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+    record.ring = units - 2;
+    record.bytes = 18;
+    hostile_expect_taken( &h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+    record.ring = units - 1;
+    record.bytes = 17;
+    hostile_expect_refused( &h, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
+    check( h.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+
+    rn_unit_arena_destroy( h.arena );
+}
+
+// A code-1 future state two orderings ahead waits through the ordered
+// delivery that opens the epoch before it, and is delivered by the next one.
+
+static void test_hostile_held_state_waits_for_its_epoch()
+{
+    hostile_t h;
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    rocketnet_message_record_t record;
+
+    hostile_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 2, 0, 1 );
+    check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+    hostile_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, 1 );
+    check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( h.channels.deliveries == 1 );
+    check( h.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+
+    hostile_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, 0, 1 );
+    check( hostile_take( &h, &record ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( h.channels.deliveries == 3 );
+    check( h.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( h.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == 0 );
+    check( h.channels.violations == 0 );
+
+    rn_unit_arena_destroy( h.arena );
+}
+
+REGISTER_UNIT_TEST( test_hostile_held_reliable_sequenced_span_at_the_ring_end );
+REGISTER_UNIT_TEST( test_hostile_held_state_waits_for_its_epoch );
 REGISTER_UNIT_TEST( test_hostile_block_shape_at_each_bound );
 REGISTER_UNIT_TEST( test_hostile_block_span_ends_at_the_ring_end );
 REGISTER_UNIT_TEST( test_hostile_record_fields_at_their_bounds );
