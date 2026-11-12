@@ -49,6 +49,7 @@ ALL_TARGETS=(
     rocketnet_fuzz_server_transport
     rocketnet_fuzz_client_transport
     rocketnet_fuzz_session
+    rocketnet_fuzz_session_raw
     rocketnet_fuzz_xdp_frame
     rocketnet_fuzz_uring_recvmsg
     rocketnet_fuzz_gateway_netlink
