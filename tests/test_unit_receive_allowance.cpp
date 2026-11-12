@@ -1111,28 +1111,45 @@ static void test_receive_allowance_stream_64_kbps() { allowance_public_stream_ma
 static void test_receive_allowance_stream_256_kbps() { allowance_public_stream_matrix( 256 ); }
 static void test_receive_allowance_stream_1000_kbps() { allowance_public_stream_matrix( 1000 ); }
 
-// A client sending 2.5 times the setting in payload, the server streaming to
-// it: refused and counted, never disconnected.
+// A client sending 2.5 times the setting in payload over a one-second
+// timeout for 60 seconds: refused and counted, never disconnected, and what
+// the server took of its bytes is bounded by the capacity plus twice the
+// setting times the time, with 32 KB on top for what the credits paid (its
+// acks of the server's keep-alives and acks, at most ten a second, and the
+// handshake). The exact bound is test_receive_allowance_flooder_bounded's.
 
 static void test_receive_allowance_two_and_a_half_times_refused()
 {
     const int kbps = 64;
     struct allowance_public_t pair;
     allowance_public_create( &pair, kbps );
+    pair.timeout_seconds = 1;
     allowance_public_connect( &pair, 0, kbps * 5 / 2 );
 
-    for ( int i = 0; i < 3000; i++ )
+    struct rocketnet_client_stats_t before;
+    rocketnet_client_stats( pair.clients[0], &before );
+
+    for ( int i = 0; i < 6000; i++ )
     {
         allowance_public_queue( &pair, 0, 2, 1000 );
-        allowance_public_server_stream( &pair, 0 );
         allowance_public_pump( &pair );
     }
+
+    struct rocketnet_client_stats_t after;
+    rocketnet_client_stats( pair.clients[0], &after );
 
     uint64_t packets = 0, bytes = 0;
     allowance_public_refused( &pair, 0, &packets, &bytes );
     check( packets > 0 );
     check( rocketnet_server_client_connected( pair.server, 0 ) );
     check( rocketnet_client_state( pair.clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    // it sent about 2.5 x 64 kbps for 60 s; the server took at most 2 x of it
+    const double rate = rocketnet_server_receive_allowance_rate( kbps );
+    const double sent = (double) ( after.bytes_sent - before.bytes_sent );
+    printf( "receive allowance: 2.5x: sent %.0f, refused %" PRIu64 " packets %" PRIu64 " bytes\n", sent, packets, bytes );
+    check( sent > 2.3 * (double) kbps * 125.0 * 60.0 );
+    check( sent - (double) bytes <= rocketnet_server_receive_allowance_capacity( rate, 1 ) + rate * 60.0 + 32768.0 );
 
     allowance_public_destroy( &pair );
 }
