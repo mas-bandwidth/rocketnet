@@ -18,10 +18,12 @@
 // per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
 // with zero shared state between queues, recvmmsg/sendmmsg batching on both
 // sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
-// traverses the kernel's UDP path once instead of per packet. A dedicated
-// transmit worker consumes owned packet banks and rotates batches across the
-// group's sockets. Caller/worker handoffs exchange only bank ownership under
-// short mutexes; batching, copying and socket calls stay outside the locks.
+// traverses the kernel's UDP path once instead of per packet. Sends are per
+// queue as well: a destination maps to one queue by the XDP transport's hash,
+// is staged in that queue's banks, and leaves on that queue's socket from that
+// queue's worker, which also drains the socket's receives. Caller/worker
+// handoffs exchange only bank ownership under short mutexes; batching, copying
+// and socket calls stay outside the locks.
 //
 // Every kernel feature is probed at create and degrades gracefully: no
 // UDP_SEGMENT means plain sendmmsg batching, no UDP_GRO means plain recvmmsg,
@@ -61,11 +63,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
-// the send staging is one server-wide producer bank whatever the queue
-// count, and does not derive from ROCKETNET_MAX_CLIENTS: it stages two
-// packets for every client of the default configuration. A server whose
-// sends need more in one update spreads them across updates, as the
-// transport's send room reports (rocketnet_server_gso_send_room;
+// the send staging is one producer bank per queue, and does not derive from
+// ROCKETNET_MAX_CLIENTS: one queue's bank stages two packets for every client
+// of the default configuration. A server whose sends need more in one update
+// adds queues, or spreads them across updates, as the transport's send room
+// reports (rocketnet_server_gso_send_room, the fullest queue's room;
 // proofs/tla/ServerStopSpread.tla Room).
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAULT_MAX_CLIENTS,
@@ -109,7 +111,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_GSO_MAX_SEGMENTS                                          64
 #define ROCKETNET_GSO_MAX_SUPER_BYTES                                    65000
 
-// a full socket keeps the TX worker's bank for the next update; this is how
+// a full socket keeps the queue worker's bank for the next update; this is how
 // long the worker waits for main's wake before it tries the socket again.
 // before shutdown the worker retries without limit and drops nothing.
 
@@ -145,7 +147,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 #define ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD                  8
 
 // The refused destinations, a direct-mapped table of this many entries owned
-// by the thread that sends (the gso TX worker, the io_uring main thread). A
+// by the thread that sends (each gso queue worker, the io_uring main thread). A
 // destination maps to one entry by its address and is matched on the whole
 // address, so a destination that never refused is never sent plain by it. A
 // refusing destination that maps to an occupied entry takes it, and the one
@@ -242,11 +244,15 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
 
 // send packets. the phase contract is the transport's: start, finish and
 // abort may run on any number of game threads strictly between one
-// send_packets call and the next; send_packets try-publishes the main-owned
-// bank to a dedicated transmit worker. The worker coalesces same-destination
-// equal-size runs and sends outside the handoff lock. A full/contended FIFO
-// retains the producer for a later send/receive call; stop transfers the final
-// producer after earlier ready banks and completion waits for the worker.
+// send_packets call and the next. start stages the packet in the producer bank
+// of the queue its destination maps to (rocketnet_server_gso_send_queue) with
+// one compare-and-swap on that queue's count; the packet id names the queue
+// and the slot. send_packets try-publishes each queue's main-owned bank to
+// that queue's worker and wakes it. The worker coalesces same-destination
+// equal-size runs and sends on its own socket outside the handoff lock. A
+// full/contended FIFO retains the producer for a later send/receive call; stop
+// transfers each queue's final producer after its earlier ready banks and
+// completion waits for every worker.
 // The frame handed back is a ROCKETNET_FRAME_STRIDE slot: wire
 // bytes begin at ROCKETNET_FRAME_WIRE_OFFSET, exactly as the other transports.
 
@@ -258,13 +264,18 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
 
 void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
 
-// the slots start_packet may still take in the producer bank: the one bank
-// producers fill, whatever the queue count. Main thread.
+// the queue a destination's packets are staged on and sent from: the XDP
+// transport's FNV-1a hash of the address bytes and port, modulo num_queues.
+// Pure; any thread.
+int rocketnet_server_gso_send_queue( const struct rocketnet_address_t * to, int num_queues );
+
+// the slots start_packet may still take in the fullest queue's producer bank:
+// what any destination is sure to find. Main thread.
 int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 
-// true once the producer is empty, no bank waits for the transmit worker and
-// the worker has returned every bank it took, its sends finished. Main
-// thread; a send mutex held by the worker reads as not idle.
+// true once every queue's producer is empty, no bank waits for its worker and
+// each worker has returned every bank it took, its sends finished. Main
+// thread; a lane mutex held by a worker reads as not idle.
 bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
 
 // Receive workers stage into per-queue producer/ready/main banks off main.
@@ -287,7 +298,7 @@ void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gs
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
 // Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
-// Main thread: no staged packet, no ready bank, no bank held by the TX worker.
+// Main thread: no staged packet, no ready bank, no bank held by a queue worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
@@ -298,9 +309,13 @@ bool rocketnet_server_gso_test_send_refusals();
 // unsent message, drops nothing, and the next attempt sends the rest in
 // order without counting an earlier dropped run twice.
 bool rocketnet_server_gso_test_send_full_keeps_rest();
-// A full socket after stop. The TX worker's EAGAIN retry must notice
-// send_quit and leave, so the transport reports stopped. No socket, no sleep.
+// A full socket after stop. The queue worker's EAGAIN retry must notice quit
+// and leave, so the transport reports stopped. No socket, no sleep.
 bool rocketnet_server_gso_test_send_retry_quit();
+// Per-queue staging on four queues: each packet on its destination's queue,
+// the id naming queue and slot, foreign and unaligned pointers refused, ids
+// distinct across a turn-over, every queue's bank sent.
+bool rocketnet_server_gso_test_send_queues();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
@@ -311,7 +326,8 @@ struct mmsghdr;
 // No socket, no thread and no clock. num_queues receive queues and the real
 // per-update budget. NULL when the fixture cannot be built. set_send is the
 // sendmmsg seam. set_features installs the probe bits. flush_staged publishes
-// the staged bank and sends it on this thread.
+// every queue's staged bank and sends each on this thread, in queue order;
+// false when no queue had a bank or one was not sent whole.
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,

@@ -54,8 +54,8 @@ static void test_server_gso_send_full_keeps_rest()
 
 REGISTER_UNIT_TEST( test_server_gso_send_full_keeps_rest );
 
-// A full socket after stop: the TX worker must leave its EAGAIN retry once
-// send_quit is set, or the transport never reports stopped.
+// A full socket after stop: the queue worker must leave its EAGAIN retry once
+// quit is set, or the transport never reports stopped.
 static void test_server_gso_send_retry_quit()
 {
     check( rocketnet_server_gso_test_send_retry_quit() );
@@ -63,9 +63,76 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// Per-queue staging (proofs/tla/RNGsoQueueBankLayout.tla): a destination's
+// packets are staged on, and sent from, the queue its address hashes to.
+static void test_server_gso_send_queues()
+{
+    check( rocketnet_server_gso_test_send_queues() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_queues );
+
+#if ROCKETNET_XDP
+// sdk/rocketnet_server_socket_linux.cpp, built with XDP only
+int rocketnet_server_socket_send_queue( const struct rocketnet_address_t * to, int num_queues );
+#endif // #if ROCKETNET_XDP
+
+// The gso queue hash is the XDP transport's, so a client keeps its queue
+// whichever of the two serves it: each answer is in range, one destination
+// always maps to one queue, one queue means queue 0, and with XDP built the
+// two functions agree on every destination tried.
+static void test_server_gso_send_queue_hash()
+{
+    struct rocketnet_address_t client;
+    memset( &client, 0, sizeof( client ) );
+    client.type = ROCKETNET_ADDRESS_IPV4;
+    client.data.ipv4[0] = 198;
+    client.data.ipv4[1] = 51;
+    client.data.ipv4[2] = 100;
+    client.data.ipv4[3] = 7;
+    client.port = 50000;
+
+    check( rocketnet_server_gso_send_queue( &client, 1 ) == 0 );
+    const int queue = rocketnet_server_gso_send_queue( &client, 4 );
+    check( queue >= 0 && queue < 4 );
+    check( rocketnet_server_gso_send_queue( &client, 4 ) == queue );
+
+    bool seen[4] = { false, false, false, false };
+    for ( int family = 0; family < 2; family++ )
+    {
+        memset( &client, 0, sizeof( client ) );
+        client.type = family == 0 ? ROCKETNET_ADDRESS_IPV4 : ROCKETNET_ADDRESS_IPV6;
+        client.data.ipv4[0] = 10;
+        if ( family == 1 )
+        {
+            client.data.ipv6[0] = 0x2001;
+            client.data.ipv6[7] = 9;
+        }
+        for ( int i = 0; i < 256; i++ )
+        {
+            client.port = (uint16_t) ( 1000 + i * 251 );
+            for ( int queues = 1; queues <= ROCKETNET_GSO_MAX_QUEUES; queues++ )
+            {
+                const int q = rocketnet_server_gso_send_queue( &client, queues );
+                check( q >= 0 && q < queues );
+                if ( queues == 4 && q >= 0 && q < 4 )
+                {
+                    seen[q] = true;
+                }
+#if ROCKETNET_XDP
+                check( q == rocketnet_server_socket_send_queue( &client, queues ) );
+#endif // #if ROCKETNET_XDP
+            }
+        }
+    }
+    check( seen[0] && seen[1] && seen[2] && seen[3] );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_send_queue_hash );
+
 // A full socket once shutdown has begun, before stop: the server asks for
-// stop only when send_idle is true, so the TX worker must give up on the
-// full socket without send_quit and go on to the next bank.
+// stop only when send_idle is true, so the queue worker must give up on the
+// full socket without quit and go on to the next bank.
 bool rocketnet_server_gso_test_send_shutdown_full();
 
 static void test_server_gso_send_shutdown_full()
