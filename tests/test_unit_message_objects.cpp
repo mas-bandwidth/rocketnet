@@ -5280,6 +5280,296 @@ REGISTER_UNIT_TEST( test_unreliable_past_limit_promotes_counted_and_not_wedged )
 REGISTER_UNIT_TEST( test_unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( test_unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( test_unreliable_over_a_lossy_link_arrives_intact_at_most_once );
+
+// RNOutgoingBuild FinishInPlace, the whole-frame case, to the end. No frame
+// for a whole packet (the transport gives none above 1000 bytes), so each
+// unreliable type is written in a frame of its own: 900 bytes reserved, 850
+// written. The frame goes at finish in its own form (SINGLE for code 0, one
+// record otherwise), the bucket and bytes_spent move by exactly the wire
+// bytes it took, the client receives it once, byte for byte, on its channel
+// (sequenced) or on channel 0 (the two types that carry no channel field,
+// sdk/rocketnet.h),
+// and the receipt type's serial is ACKED once; refused by the transport, the
+// same send is counted, refunded, and its receipt is LOSS once.
+static void test_message_whole_frame_in_place_send_each_type()
+{
+    const int types[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    const int headers[3] = { 0, 10, ROCKETNET_MESSAGE_RECORD_FIXED_BYTES };     // the form byte follows each
+    for ( int k = 0; k < 6; k++ )
+    {
+        const int t = k % 3;
+        const bool refused = k >= 3;
+        const int channel = 1 + t;
+        mo_pair_t pair;
+        mo_refund_setup( &pair );
+
+        const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+        const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        const mo_refund_mark_t mark = mo_refund_mark( &pair );
+        const size_t logged = pair.net->server->sent_log.size();
+
+        pair.net->start_limit_bytes = 1000;
+        uint8_t * p = rocketnet_message_server_start( pair.server, 0, channel, types[t], 900 );
+        check( p != NULL );
+        check( pair.server->object.in_place == 1 );
+        uint32_t serial = 0;
+        if ( p )
+        {
+            mo_fill( p, (uint32_t) ( 70 + k ), 850 );
+            pair.net->fail_finish = refused ? 1 : 0;
+            serial = rocketnet_message_server_finish( pair.server, 0, 850 );
+        }
+        pair.net->start_limit_bytes = 0;
+        check( serial != 0 );
+        check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+        check( pair.net->fail_finish == 0 );
+
+        const rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+        check( slot->in_place_admitted == 0 && slot->in_place_receipt == 0 );
+        if ( refused )
+        {
+            check( pair.net->server->sent_log.size() == logged );
+            check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed + 1 );
+            check( fabs( slot->budget.tokens - mark.tokens ) < 1e-6 );
+            check( slot->budget.bytes_spent == mark.bytes_spent );
+        }
+        else
+        {
+            check( pair.net->server->sent_log.size() == logged + 1 );
+            if ( pair.net->server->sent_log.size() == logged + 1 )
+            {
+                const int payload = pair.net->server->sent_log[logged].bytes;
+                check( payload == headers[t] + 850 + 1 );
+                const int wire = rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload );
+                check( slot->budget.bytes_spent == mark.bytes_spent + (uint64_t) wire );
+                check( fabs( slot->budget.tokens - ( mark.tokens - (double) wire ) ) < 1e-6 );
+            }
+            check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed );
+        }
+        check( slot->budget.refusals == mark.refusals );
+
+        std::vector<mo_received_t> client_got;
+        int acked = 0;
+        int lost = 0;
+        for ( int i = 0; i < 4; i++ )
+        {
+            mo_step( &pair, NULL, &client_got );
+            rocketnet_message_receipt_t receipts[8];
+            const int n = rocketnet_message_server_receipts( pair.server, 0, receipts, 8 );
+            for ( int r = 0; r < n && r < 8; r++ )
+            {
+                check( receipts[r].serial == serial );
+                acked += receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ? 1 : 0;
+                lost += receipts[r].status == ROCKETNET_RECEIPT_STATUS_LOSS ? 1 : 0;
+            }
+        }
+
+        const bool receipt = types[t] == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+        check( acked == ( receipt && !refused ? 1 : 0 ) );
+        check( lost == ( receipt && refused ? 1 : 0 ) );
+        check( client_got.size() == ( refused ? 0u : 1u ) );
+        if ( client_got.size() == 1 )
+        {
+            uint32_t id = 0;
+            check( client_got[0].channel == ( types[t] == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? channel : 0 ) );
+            check( client_got[0].bytes.size() == 850 );
+            check( mo_verify( client_got[0].bytes, &id ) && id == (uint32_t) ( 70 + k ) );
+        }
+        mo_pair_teardown( &pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_message_whole_frame_in_place_send_each_type );
+
+// One whole-frame in-place start on the server's slot 0, as above: no frame
+// above 1000 bytes, `reserve` bytes reserved; returns the payload pointer.
+
+static uint8_t * mo_whole_frame_start( mo_pair_t * pair, int reliability, int reserve )
+{
+    pair->net->start_limit_bytes = 1000;
+    uint8_t * p = rocketnet_message_server_start( pair->server, 0, 1, reliability, reserve );
+    pair->net->start_limit_bytes = 0;
+    check( p != NULL );
+    check( pair->server->object.in_place == 1 );
+    return p;
+}
+
+// The whole-frame finish at its edges, each type: written to exactly the
+// reservation, the frame is the header, the bytes and the form byte; one
+// byte past it, or none, refuses the finish and aborts the start, and the
+// next start goes as before. Serials count up from the endpoint's and wrap
+// past 0 to 1; one byte is a whole message. Each sent or failed frame counts
+// one packet of the update. Uncapped, the send charges no bucket and
+// nothing is refused; capped, a bucket emptied between start and finish
+// drops the message at finish: counted over budget, nothing on the wire, no
+// packet charged, and a receipt's LOSS once; a bucket holding exactly the
+// charge pays it.
+static void test_message_whole_frame_in_place_finish_edges()
+{
+    const int types[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    const int headers[3] = { 0, 10, ROCKETNET_MESSAGE_RECORD_FIXED_BYTES };
+    rocketnet_quiet( 1 );
+    for ( int k = 0; k < 6; k++ )
+    {
+        const int t = k % 3;
+        const bool capped = k < 3;
+        mo_pair_t pair;
+        if ( capped )
+        {
+            mo_refund_setup( &pair );
+        }
+        else
+        {
+            mo_pair_setup( &pair, 1 );
+            for ( int i = 0; i < 3; i++ )
+            {
+                mo_step( &pair );
+            }
+            check( rocketnet_message_server_set_send_kbps( pair.server, 0, 0 ) == 1 );
+        }
+        rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+        check( slot->send_budget_enabled == ( capped ? 1 : 0 ) );
+        const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+        const mo_refund_mark_t mark = mo_refund_mark( &pair );
+        const size_t logged = pair.net->server->sent_log.size();
+
+        // past the reservation, and nothing written: refused, the start aborted
+
+        const int refused_sizes[2] = { 901, 0 };
+        for ( int r = 0; r < 2; r++ )
+        {
+            check( mo_whole_frame_start( &pair, types[t], 900 ) != NULL );
+            check( rocketnet_message_server_finish( pair.server, 0, refused_sizes[r] ) == 0 );
+            check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+            check( slot->pending_type == -1 && slot->pending_in_place == 0 && slot->pending_bytes == 0 );
+        }
+        check( pair.net->server->sent_log.size() == logged );
+
+        // exactly the reservation, then a second send: serials count up, and
+        // each sent frame is one packet of the update
+
+        const uint32_t serial_before = slot->serial;
+        const int written_before = (int) slot->written;
+        uint32_t serials[2] = { 0, 0 };
+        for ( int n = 0; n < 2; n++ )
+        {
+            uint8_t * p = mo_whole_frame_start( &pair, types[t], 900 );
+            if ( p )
+            {
+                mo_fill( p, (uint32_t) ( 80 + n ), 900 );
+                serials[n] = rocketnet_message_server_finish( pair.server, 0, 900 );
+            }
+            check( slot->pending_type == -1 && slot->pending_in_place == 0 && slot->pending_bytes == 0 );
+        }
+        check( serials[0] == serial_before + 1 && serials[1] == serial_before + 2 );
+        check( slot->serial == serials[1] );
+        check( (int) slot->written == written_before + 2 );
+        check( pair.net->server->sent_log.size() == logged + 2 );
+        for ( size_t i = logged; i < pair.net->server->sent_log.size(); i++ )
+        {
+            check( pair.net->server->sent_log[i].bytes == headers[t] + 900 + 1 );
+        }
+        check( slot->budget.refusals == mark.refusals );
+        if ( !capped )
+        {
+            check( slot->budget.bytes_spent == mark.bytes_spent );
+        }
+
+        // the serial after the last one wraps to 1; one byte is a whole message
+
+        slot->serial = 0xFFFFFFFFu;
+        uint8_t * p = mo_whole_frame_start( &pair, types[t], 100 );
+        if ( p )
+        {
+            p[0] = 0x52;                                               // one byte written: the least a finish takes
+            check( rocketnet_message_server_finish( pair.server, 0, 1 ) == 1 );
+        }
+        check( slot->serial == 1 );
+
+        // a failed frame counts its packet too
+
+        const int written_mid = (int) slot->written;
+        p = mo_whole_frame_start( &pair, types[t], 100 );
+        if ( p )
+        {
+            mo_fill( p, 83, 100 );
+            pair.net->fail_finish = 1;
+            check( rocketnet_message_server_finish( pair.server, 0, 100 ) == 2 );
+        }
+        check( pair.net->fail_finish == 0 );
+        check( (int) slot->written == written_mid + 1 );
+
+        // capped: the bucket emptied between start and finish
+
+        uint32_t dropped_serial = 0;
+        if ( capped )
+        {
+            const uint64_t over = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET );
+            const size_t sent = pair.net->server->sent_log.size();
+            const int written_drop = (int) slot->written;
+            p = mo_whole_frame_start( &pair, types[t], 100 );
+            if ( p )
+            {
+                mo_fill( p, 84, 100 );
+                slot->budget.tokens = 0.0;
+                dropped_serial = rocketnet_message_server_finish( pair.server, 0, 100 );
+            }
+            check( dropped_serial == 3 );
+            check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ) == over + 1 );
+            check( pair.net->server->sent_log.size() == sent );
+            check( (int) slot->written == written_drop );
+            check( slot->in_place_admitted == 0 && slot->in_place_receipt == 0 );
+            check( slot->budget.tokens == 0.0 );
+            check( pair.server->object.in_place == 0 && pair.server->object.pending_connection == -1 );
+
+            // a bucket holding exactly the charge pays it
+
+            slot->budget.tokens = slot->budget.depth;
+            p = mo_whole_frame_start( &pair, types[t], 100 );
+            if ( p )
+            {
+                mo_fill( p, 85, 100 );
+                slot->budget.tokens = (double) rocketnet_send_budget_max_wire_bytes( headers[t] + 100 + 1 );
+                check( rocketnet_message_server_finish( pair.server, 0, 100 ) == 4 );
+            }
+            check( pair.net->server->sent_log.size() == sent + 1 );
+            check( slot->in_place_admitted == 0 && slot->budget.refusals == mark.refusals );
+        }
+
+        // the receipts: the sent ones ACKED once each, the failed and the
+        // dropped one LOSS once each, nothing else
+
+        int acked = 0;
+        int lost = 0;
+        for ( int i = 0; i < 4; i++ )
+        {
+            mo_step( &pair );
+            rocketnet_message_receipt_t receipts[8];
+            const int n = rocketnet_message_server_receipts( pair.server, 0, receipts, 8 );
+            for ( int r = 0; r < n && r < 8; r++ )
+            {
+                if ( receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                {
+                    check( receipts[r].serial == serials[0] || receipts[r].serial == serials[1] || receipts[r].serial == 1 || ( capped && receipts[r].serial == 4 ) );
+                    acked++;
+                }
+                else
+                {
+                    check( receipts[r].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+                    check( receipts[r].serial == 2 || ( capped && receipts[r].serial == dropped_serial ) );
+                    lost++;
+                }
+            }
+        }
+        const bool receipt = types[t] == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+        check( acked == ( receipt ? ( capped ? 4 : 3 ) : 0 ) );
+        check( lost == ( receipt ? ( capped ? 2 : 1 ) : 0 ) );
+        mo_pair_teardown( &pair );
+    }
+    rocketnet_quiet( 0 );
+}
+
+REGISTER_UNIT_TEST( test_message_whole_frame_in_place_finish_edges );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
