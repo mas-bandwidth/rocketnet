@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Same-host smoke of the split load harness's proof mode: one load_split
+# server and two client shards on loopback, a same_host_smoke allocation
+# manifest over the collected logs, and the merger with --same-host-smoke
+# --load proof. It proves delivery and receipts end to end on one machine; it
+# is never a qualification (docs/LOAD_SPLIT.md, "Same-host smoke").
+#
+# usage: split-smoke --bin BIN/load_split --dir RUN_DIR [--clients N]
+#                    [--duration SECONDS] [--port PORT]
+# Exit 0 only when the merger exits 0 and prints split_smoke_cell: verdict=PASS.
+set -u
+
+bin=""
+run_dir=""
+clients=8
+duration=20
+port=40800
+run_id=5a0e5a0e5a0e5a0e
+cap_kbps=600000
+
+fail()
+{
+    echo "split-smoke: FAIL: $*" >&2
+    exit 1
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bin) bin="${2:-}"; shift 2 ;;
+        --dir) run_dir="${2:-}"; shift 2 ;;
+        --clients) clients="${2:-}"; shift 2 ;;
+        --duration) duration="${2:-}"; shift 2 ;;
+        --port) port="${2:-}"; shift 2 ;;
+        *) fail "unknown argument $1" ;;
+    esac
+done
+[ -x "$bin" ] || fail "usage: split-smoke --bin BIN/load_split --dir RUN_DIR (no executable at '$bin')"
+[ -n "$run_dir" ] || fail "usage: split-smoke --bin BIN/load_split --dir RUN_DIR"
+[ "$clients" -ge 2 ] || fail "--clients must be at least 2 (one per shard)"
+here=$( cd "$( dirname "$0" )" && pwd )
+root=$( cd "$here/.." && pwd )
+mkdir -p "$run_dir" || fail "cannot create $run_dir"
+
+pids=()
+cleanup()
+{
+    local pid
+    for pid in "${pids[@]}"; do
+        kill -KILL "$pid" 2>/dev/null
+    done
+}
+trap cleanup EXIT
+
+endpoint="127.0.0.1:$port"
+ROCKETNET_SERVER_TRANSPORT=portable timeout "$(( duration + 120 ))" \
+    "$bin" server "$clients" "$duration" "$run_id" "$endpoint" 127.0.0.1 "$cap_kbps" proof \
+    > "$run_dir/server.log" 2>&1 &
+server_pid=$!
+pids+=("$server_pid")
+
+# The server prints split_ready: with the connect key once it listens; a
+# server that never gets there is a failure, never a wait for ever.
+ready=""
+waited=0
+while [ -z "$ready" ]; do
+    kill -0 "$server_pid" 2>/dev/null || fail "the server exited before split_ready; see $run_dir/server.log"
+    [ "$waited" -lt 300 ] || fail "no split_ready within 30 s; see $run_dir/server.log"
+    sleep 0.1
+    waited=$(( waited + 1 ))
+    ready=$( grep '^split_ready: ' "$run_dir/server.log" | tail -n 1 )
+done
+key=$( printf '%s\n' "$ready" | sed -n 's/.* key=\([0-9a-fA-F]*\).*/\1/p' )
+[ -n "$key" ] || fail "split_ready names no key: $ready"
+
+first_count=$(( clients / 2 ))
+second_count=$(( clients - first_count ))
+ROCKETNET_CLIENT_TRANSPORT=portable timeout "$(( duration + 120 ))" \
+    "$bin" client-shard "$clients" "$duration" "$run_id" 0 "$first_count" "$endpoint" "$key" "$cap_kbps" proof \
+    > "$run_dir/shard0.log" 2>&1 &
+shard0_pid=$!
+pids+=("$shard0_pid")
+ROCKETNET_CLIENT_TRANSPORT=portable timeout "$(( duration + 120 ))" \
+    "$bin" client-shard "$clients" "$duration" "$run_id" "$first_count" "$second_count" "$endpoint" "$key" "$cap_kbps" proof \
+    > "$run_dir/shard1.log" 2>&1 &
+shard1_pid=$!
+pids+=("$shard1_pid")
+
+wait "$shard0_pid"
+shard0_status=$?
+wait "$shard1_pid"
+shard1_status=$?
+wait "$server_pid"
+server_status=$?
+pids=()
+echo "split-smoke: exit server=$server_status shard0=$shard0_status shard1=$shard1_status"
+# A shard exits 0 or the smoke fails. The server's exit 1 is its timing
+# verdict (the server API budget, judged at full load and not by this cell);
+# anything else from it (2 refused, 124 timed out, a signal) fails the smoke.
+# The merger still runs over the logs so its own verdict is on record.
+role_failure=""
+[ "$shard0_status" -eq 0 ] || role_failure="shard0 exited $shard0_status; see $run_dir/shard0.log"
+[ "$shard1_status" -eq 0 ] || role_failure="shard1 exited $shard1_status; see $run_dir/shard1.log"
+case "$server_status" in
+    0|1) ;;
+    *) role_failure="the server exited $server_status; see $run_dir/server.log" ;;
+esac
+
+# The same_host_smoke manifest: every role on this host, each shard its own
+# allocation. The merger refuses it without --same-host-smoke, and refuses a
+# qualification manifest with it.
+python3 - "$run_dir" "$run_id" "$clients" "$first_count" "$second_count" "$( hostname )" <<'PYEOF'
+import hashlib, json, pathlib, sys
+run_dir, run_id, total = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+counts, host = [int(sys.argv[4]), int(sys.argv[5])], sys.argv[6]
+def sha(name):
+    return hashlib.sha256((run_dir / name).read_bytes()).hexdigest()
+shards, first = [], 0
+for s, count in enumerate(counts):
+    shards.append({"role": "client-shard", "first": first, "count": count,
+                   "host_id": host, "allocation_id": f"smoke-shard{s}-{run_id}",
+                   "allocation_ref": f"split-smoke/{run_id}/shard{s}", "runner_id": "split-smoke",
+                   "allocation_type": "same_host_smoke", "log_sha256": sha(f"shard{s}.log")})
+    first += count
+manifest = {"schema": "split_allocation_v1", "run_id": run_id,
+            "server": {"role": "server", "total": total, "host_id": host,
+                       "allocation_id": f"smoke-server-{run_id}", "allocation_ref": f"split-smoke/{run_id}/server",
+                       "runner_id": "split-smoke", "allocation_type": "same_host_smoke",
+                       "log_sha256": sha("server.log")},
+            "shards": shards}
+(run_dir / "allocation.json").write_text(json.dumps(manifest, indent=2) + "\n")
+PYEOF
+[ -f "$run_dir/allocation.json" ] || fail "no allocation manifest written"
+
+python3 "$root/tools/check_split_load.py" --server "$run_dir/server.log" \
+    --shard "$run_dir/shard0.log" --shard "$run_dir/shard1.log" \
+    --run-id "$run_id" --total "$clients" --duration "$duration" \
+    --aggregate-limit-kbps "$cap_kbps" --server-transport portable \
+    --client-transport portable --allocation-manifest "$run_dir/allocation.json" \
+    --load proof --same-host-smoke > "$run_dir/merge.log" 2>&1
+merge_status=$?
+cat "$run_dir/merge.log"
+[ -z "$role_failure" ] || fail "$role_failure"
+[ "$merge_status" -eq 0 ] || fail "the merger refused the smoke (exit $merge_status); see $run_dir/merge.log"
+grep -q '^split_smoke_cell: verdict=PASS' "$run_dir/merge.log" || fail "the smoke verdict is not PASS"
+echo "split-smoke: PASS ($clients clients, $duration s, logs in $run_dir)"
