@@ -135,34 +135,46 @@ EXTENDS Integers
 
 \* Revision 1.1 (standard/MESSAGES.md m9.2, m9.3, m1.9).  Everything above
 \* holds with the reliable timeout configured (TimeoutOn, every case named
-\* above).  With it off, the default of v1.1.0, no unacknowledged number
-\* ends the connection (OffMeansNoStallEnd; NoEndBeforeT for a silence
-\* timeout T of 3, 4 or 5 ticks), the chunk waits rto uncapped, and two
-\* mechanisms act on a stalled path:
-\*   probe pacing (rn_window_ack_probing, the skip in rn_ordered_walk):
-\*     once Probe ticks pass with no reliable number newly acknowledged,
-\*     counted from the later of that progress and U's first send, the walk
-\*     resends only U among the numbers on the wire; numbers never sent
-\*     are still sent; only progress releases it (ProbeOnlyU,
-\*     NoDueRecordHeld with the hold as its exception, EveryReliableAcked);
-\*   the RTT filter (rn_window_ack_on_acks, rn_window_ack_on_ack): an ack
-\*     ends a silence when, for Probe ticks before it, U was on the wire
-\*     unacknowledged and no ack came (from the later of the last ack and
-\*     U's first send), and an ack of a packet sent before
-\*     silence_end - srtt gives no RTT sample (NoSampleAcrossSilence).  A
-\*     gap between acks with nothing owed is not a silence, so a sample is
-\*     refused only after an owed silence (RefuseOnlyAfterOwedSilence).
+\* above).  With it off, the default of v1.1.0, the chunk waits rto
+\* uncapped, and probe pacing acts on a stalled path
+\* (rn_window_ack_probing, the skip in rn_ordered_walk): once Probe ticks
+\* pass with no reliable number newly acknowledged, counted from the later
+\* of that progress and U's first send, the walk resends only U among the
+\* numbers on the wire; numbers never sent are still sent; only progress
+\* releases it (ProbeOnlyU, NoDueRecordHeld with the hold as its
+\* exception, EveryReliableAcked).  Probe pacing does not act with the
+\* timeout configured.
+\*
+\* The ends (revision 1.2, design (S) and (K)).  With TrackQuiet the
+\* transport's silence timeout is in the model: quiet counts the ticks
+\* since anything was heard from the other side (an ack of any packet, or
+\* any other packet: KeepAlive), and an update that begins with quiet at
+\* SilenceT ends the connection (SilenceEnd: TIMED_OUT, the transport's
+\* own clock).  So an end is reachable with the timeout off, and
+\* NoEndBeforeT states that every end there is, of either kind, comes
+\* after SilenceT ticks with nothing heard; SilenceEndsAtT that a live
+\* connection never passes SilenceT ticks of silence.  The reliable
+\* timeout (TimedOut) still fires when configured; with it off it fires
+\* only under the reversed witness TimeoutWhenOff (the code before
+\* v1.1.0), which ends a connection whose other side was heard inside T.
+\*
 \* The endpoint's due test (rn_endpoint_ordered_due) decides whether a
 \* frame is started for the walk at all; it reads each class's FIFO head
 \* and asks the walk's own hold (rn_window_ack_held), so a held head stands
-\* for U, the one number the walk may resend (FifoDue).  It reports work
-\* exactly when the walk writes some number (DueMeansWritten): a frame
-\* started for a held connection with nothing to write would be aborted and
-\* cost the transport's per-update send capacity (MESSAGES.md m1.8).
-\* Neither acts with the timeout configured.  The new state is gated so
-\* the cases above carry none of it: sinceProgress moves only with the
-\* timeout off, and quiet, sinceAck and sinceEnd only in the cases that
-\* track them.
+\* for U, the one number the walk may resend (FifoDue), and a never-sent
+\* number at the head (a block's pending chunk) is due at once.  It
+\* reports work exactly when the walk writes some number (DueMeansWritten,
+\* for Walk and for each paced call): a frame started for a held
+\* connection with nothing to write would be aborted and cost the
+\* transport's per-update send capacity (MESSAGES.md m1.8; the capacity
+\* itself is RNServerSendFair).
+\*
+\* The RTT filter of revision 1.1 (rn_window_ack_on_acks,
+\* rn_window_ack_on_ack) is RNRttFilter, with send records and a moving
+\* estimate; here an ack of another packet moves rto freely (Sample).
+\* The state of revision 1.1 is gated so the cases above carry none of
+\* it: sinceProgress moves only with the timeout off, and quiet only in
+\* the cases that track it.
 
 CONSTANTS
     RtoInitial,     \* message_resend_delay_initial, in ticks
@@ -255,8 +267,7 @@ RefuseResendsOn == TRUE
 RefusedOffWireOn == TRUE
 
 \* Revision 1.1 (MESSAGES.md m9.2, m9.3, m1.9): the reliable timeout is
-\* optional, and with it off a stalled path gets probe pacing and the RTT
-\* filter.
+\* optional, and with it off a stalled path gets probe pacing.
 \*   TimeoutOn: reliable_message_timeout_ms is nonzero (the cases before
 \*            revision 1.1 all run TRUE).  FALSE is the default of v1.1.0,
 \*            zero: no end for an unacknowledged number, no chunk cap, and
@@ -302,48 +313,29 @@ ThirdOn == TRUE
 DueRule == TRUE
 DueRuleOff == FALSE
 
-\*   Filter:  track the RTT filter (m9.2): an ack after Probe ticks in
-\*            which an ack was owed and none came sets silence_end, and no
-\*            RTT sample comes from a packet sent before silence_end - srtt.
-\*            Off (FALSE) by default so the instances that do not check it
-\*            carry no extra state.
-\*   FilterRule: TRUE is the rule; FALSE samples every ack (the reversed
-\*            witness SampleAcrossSilence).
-\*   SilenceOnGap: FALSE ends a silence only after an ack was owed for
-\*            Probe ticks (the rule); TRUE ends one after any Probe ticks
-\*            with no ack, the code of v1.1.0 (the reversed witness
-\*            SilenceOnGap: a sparse sender's sample above srtt is refused).
-\*   PriorAck: the connection's previous message was acknowledged some
-\*            ticks (0..Probe) before the small record's first send, with
-\*            nothing in flight since, and gave the estimator its sample: a
-\*            sparse sender.  FALSE (no ack yet) by default.
-\*   Srtt, AgeMax: srtt in ticks, and the oldest packet an ack names.
-\* (Filter <- FilterOn, FilterRule <- FilterRuleOff, SilenceOnGap <- SilenceOnGapOn,
-\*  PriorAck <- PriorAckOn, Srtt <- SrttUnderTick)
-Filter == FALSE
-FilterRule == TRUE
-SilenceOnGap == FALSE
-PriorAck == FALSE
-Srtt == 1
-AgeMax == 3
-FilterOn == TRUE
-FilterRuleOff == FALSE
-SilenceOnGapOn == TRUE
-PriorAckOn == TRUE
-SrttUnderTick == 0
-
-\*   TrackQuiet: track the ticks since anything was last heard from the
-\*            other side of the connection (any ack), saturating at the
-\*            largest silence timeout T of SilenceTs, for NoEndBeforeT.  Off (FALSE) by default.
+\*   TrackQuiet: the transport's silence timeout is in the model: quiet
+\*            counts the ticks since anything was last heard from the other
+\*            side (an ack of any packet, or KeepAlive), and an update that
+\*            begins with quiet at SilenceT ends the connection
+\*            (SilenceEnd).  Off (FALSE) by default.
+\*   SilenceT: the connection timeout T in ticks (3, 4 or 5 in the cases).
+\*   SilenceAt: the quiet at which the transport ends the connection;
+\*            SilenceT is the rule; SilenceEarly (T - 1) and SilenceLate
+\*            (T + 1) are the reversed witnesses.
 \*   GoodFrom: the tick the last bad interval ends: a copy sent from then
 \*            on is acknowledged (the liveness fairness, GoodAck); past the
 \*            horizon (never) by default.
-\* (TrackQuiet <- TrackQuietOn, GoodFrom <- GoodFromMid)
+\* (TrackQuiet <- TrackQuietOn, SilenceT <- ..., SilenceAt <- SilenceEarly or
+\*  SilenceLate, GoodFrom <- GoodFromMid)
 TrackQuiet == FALSE
+SilenceT == 3
+SilenceAt == SilenceT
 GoodFrom == ChunkFirst + RefuseFor + Timeout + 1
-SilenceTs == {3, 4, 5}
-QuietMax == 5
+QuietMax == SilenceAt
 TrackQuietOn == TRUE
+SilenceEarly == SilenceT - 1
+SilenceLate == SilenceT + 1
+SilenceFive == 5
 GoodFromMid == 4
 
 Min(a, b) == IF a < b THEN a ELSE b
@@ -390,20 +382,11 @@ VARIABLES
                 \* (ack->last_progress), saturating at Probe; Probe at the
                 \* start, so U's first send alone times the first hold
     quiet,      \* TrackQuiet: ticks since the other side was last heard, saturating
-    sinceAck,   \* Filter: ticks since the last ack (ack->last_ack), saturating
-                \* at Probe; -1 before the first (has_last_ack = 0)
-    sinceEnd,   \* Filter: ticks since silence_end, saturating at AgeMax
-                \* (AgeMax at the start: silence_end is 0, long ago)
-    badSample,  \* ghost: an RTT sample came from a packet sent before
-                \* silence_end - srtt
-    sinceOwedEnd, \* ghost: ticks since the last ack that ended an owed
-                \* silence (OwedSilence), saturating at AgeMax; equal to
-                \* sinceEnd under the rule
-    badRefusal  \* ghost: a sample was refused that no owed silence refuses
+    silenced    \* TrackQuiet: the transport ended the connection (TIMED_OUT)
 
 vars == <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls,
-          sinceProgress, quiet, sinceAck, sinceEnd, badSample, sinceOwedEnd, badRefusal>>
-probeVars == <<sinceProgress, quiet, sinceAck, sinceEnd, badSample, sinceOwedEnd, badRefusal>>
+          sinceProgress, quiet, silenced>>
+probeVars == <<sinceProgress, quiet, silenced>>
 
 \* A small record waits the resend delay alone; a chunk waits it capped,
 \* when the timeout is configured (m9.3; rn_window_ack_chunk_resend_delay).
@@ -426,7 +409,10 @@ TimedOut == Timed /\ \E r \in Records : ~acked[r] /\ OnWire(r) /\ t >= Deadline(
 
 Due(r) == ~acked[r] /\ ~TimedOut /\ Started(r) /\ (attempts[r] = 0 \/ t >= lastSend[r] + Delay(r))
 
-Live == ~TimedOut /\ \E r \in Records : ~acked[r]
+Live == ~TimedOut /\ ~silenced /\ \E r \in Records : ~acked[r]
+
+\* The connection has ended, by either clock.
+Ended == TimedOut \/ silenced
 
 \* U, the oldest unacknowledged number: the records are numbered s, c, s2.
 U == IF ~acked["s"] THEN "s" ELSE IF ~acked["c"] THEN "c" ELSE "s2"
@@ -464,7 +450,14 @@ FifoDue(k) ==
     /\ LET h == FifoHead(k)
            x == IF DueRule /\ OnWire(h) /\ WalkHeld(h) THEN U ELSE h
        IN ClassOf(x) = k /\ Due(x)
-ReportedDue == FifoDue("s") \/ FifoDue("c")
+\* rn_endpoint_ordered_due: either class's FIFO.  A block's pending chunks
+\* are numbered and never sent, so they lead the chunk FIFO (its never-sent
+\* part, ahead of the sent mark) and its head is due at once
+\* (rn_send_number_unsent_due).
+ReportedDue ==
+    \/ FifoDue("s")
+    \/ FifoDue("c")
+    \/ pending > 0 /\ ~TimedOut /\ Started("c")
 
 \* rn_window_ack_seed_rtt is owed this update: the transport has a round
 \* trip and the estimator no sample (has_rtt = 0).
@@ -488,11 +481,7 @@ TypeOK ==
     /\ calls \in 0..Room
     /\ sinceProgress \in 0..Probe
     /\ quiet \in 0..QuietMax
-    /\ sinceAck \in -1..Probe
-    /\ sinceEnd \in 0..AgeMax
-    /\ badSample \in BOOLEAN
-    /\ sinceOwedEnd \in 0..AgeMax
-    /\ badRefusal \in BOOLEAN
+    /\ silenced \in BOOLEAN
 
 Init ==
     /\ t = 0
@@ -505,13 +494,9 @@ Init ==
     /\ head \in (IF Chunk THEN {"s", "c"} ELSE {"s"})
     /\ sinceProgress = Probe
     /\ quiet = 0
-    /\ sinceAck \in (IF PriorAck THEN 0..Probe ELSE {-1})
-    /\ sinceEnd = AgeMax
-    /\ badSample = FALSE
-    /\ sinceOwedEnd = AgeMax
-    /\ badRefusal = FALSE
+    /\ silenced = FALSE
     /\ phase = "walk"
-    /\ sampled = PriorAck
+    /\ sampled = FALSE
     /\ seeded = FALSE
     /\ refused = [r \in Records |-> FALSE]
     /\ pending = Pending
@@ -542,6 +527,7 @@ Walk ==
     /\ Room = 0
     /\ phase = "walk"
     /\ Live
+    /\ ~SilenceDue
     /\ ~SeedOwed
     /\ lastSend' = [r \in Records |-> IF Sent(r) THEN t ELSE lastSend[r]]
     /\ attempts' = [r \in Records |-> IF Sent(r) THEN Min(attempts[r] + 1, MinAttempts) ELSE attempts[r]]
@@ -565,6 +551,7 @@ WalkRefused(F) ==
     /\ Room = 0
     /\ phase = "walk"
     /\ Live
+    /\ ~SilenceDue
     /\ ~SeedOwed
     /\ F # {}
     /\ \A r \in F : Refusable(r)
@@ -625,6 +612,7 @@ WriteOne(x) ==
     /\ Room > 0
     /\ phase = "walk"
     /\ Live
+    /\ ~SilenceDue
     /\ ~SeedOwed
     /\ calls < Room
     /\ x \in Picks
@@ -649,6 +637,7 @@ WriteRefused(x) ==
     /\ RefuseResends
     /\ phase = "walk"
     /\ Live
+    /\ ~SilenceDue
     /\ ~SeedOwed
     /\ calls < Room
     /\ x \in Picks
@@ -665,53 +654,57 @@ EndWrites ==
     /\ Room > 0
     /\ phase = "walk"
     /\ Live
+    /\ ~SilenceDue
     /\ ~SeedOwed
     /\ calls = Room \/ Planned = {}
     /\ calls' = 0
     /\ phase' = "tick"
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, refused, pending, probeVars>>
 
-\* Anything acknowledged is the other side heard (quiet), and with the filter
-\* tracked it is an ack: rn_window_ack_on_acks sets silence_end when an ack
-\* was owed for Probe ticks and none came: the last ack is Probe ticks or
-\* more ago (has_last_ack) and so is the first send of U, on the wire
-\* (has_oldest), all before this update's acks (the timeout off).
-\* SilenceOnGap drops the owed test: any Probe ticks without an ack.
-FilterTracked == Filter /\ ~TimeoutOn
-OwedSilence == FilterTracked /\ sinceAck >= Probe /\ Live /\ OnWire(U) /\ t - firstSend[U] >= Probe
-EndsSilence == IF SilenceOnGap THEN FilterTracked /\ sinceAck >= Probe ELSE OwedSilence
-SinceEndNow == IF EndsSilence THEN 0 ELSE sinceEnd
-SinceOwedEndNow == IF OwedSilence THEN 0 ELSE sinceOwedEnd
-Heard ==
-    /\ quiet' = 0
-    /\ sinceAck' = IF FilterTracked THEN 0 ELSE sinceAck
-    /\ sinceEnd' = SinceEndNow
-    /\ sinceOwedEnd' = SinceOwedEndNow
+\* Anything acknowledged, or any other packet that arrives, is the other
+\* side heard: the transport's last receive time moves (quiet).
+Heard == quiet' = 0
 
-\* rn_window_ack_on_ack of another packet, sent age ticks ago: one RTT
-\* sample, unless the filter refuses it.  The estimator's first sample is
-\* always taken (has_rtt = 0; the seed counts as one); after it a packet
-\* sent before silence_end - srtt gives none: t - age < t - SinceEndNow -
-\* Srtt.  A sinceEnd saturated at AgeMax is long enough ago that every age
-\* the model offers passes.  FilterRule = FALSE is the reversed witness.
-Ages == IF Filter THEN 0..AgeMax ELSE {0}
-Stale(age) == (sampled \/ seeded) /\ age > SinceEndNow + Srtt
-OwedStale(age) == (sampled \/ seeded) /\ age > SinceOwedEndNow + Srtt
-Sample(x, age) ==
+\* The transport's silence timeout is due: the update begins with SilenceAt
+\* ticks in which nothing was heard.  Nothing but a packet heard in this
+\* update (Ack, Sample, KeepAlive) or the end (SilenceEnd) may happen.
+SilenceDue == TrackQuiet /\ quiet >= SilenceAt
+
+\* Any packet from the other side that acknowledges nothing here (a
+\* keep-alive, a packet of another layer): heard, nothing else.
+KeepAlive ==
+    /\ TrackQuiet
     /\ phase = "walk"
     /\ calls = 0
     /\ Live
     /\ Heard
-    /\ IF Stale(age) /\ FilterRule
-       THEN /\ badRefusal' = (badRefusal \/ ~OwedStale(age))
-            /\ UNCHANGED <<rto, backoff, sampled, badSample>>
-       ELSE /\ rto' = x
-            /\ backoff' = [r \in Records |-> 1]
-            /\ sampled' = TRUE
-            /\ badSample' = (badSample \/ Stale(age))
-            /\ UNCHANGED badRefusal
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls,
+                   sinceProgress, silenced>>
+
+\* The transport's silence timeout (TIMED_OUT on the server,
+\* CONNECTION_TIMED_OUT on the client): an update that begins with nothing
+\* heard for SilenceAt ticks ends the connection.
+SilenceEnd ==
+    /\ SilenceDue
+    /\ phase = "walk"
+    /\ calls = 0
+    /\ Live
+    /\ silenced' = TRUE
+    /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls,
+                   sinceProgress, quiet>>
+
+\* rn_window_ack_on_ack of another packet: one RTT sample moves rto to any
+\* value of the range (the filter that may refuse it is RNRttFilter).
+Sample(x) ==
+    /\ phase = "walk"
+    /\ calls = 0
+    /\ Live
+    /\ Heard
+    /\ rto' = x
+    /\ backoff' = [r \in Records |-> 1]
+    /\ sampled' = TRUE
     /\ UNCHANGED <<t, lastSend, attempts, acked, head, phase, seeded, firstSend, refused, pending, calls,
-                   sinceProgress>>
+                   sinceProgress, silenced>>
 
 \* rn_window_ack_seed_rtt from the message object's update: the transport's
 \* round trip taken as the first sample, after the update's acks and before
@@ -720,6 +713,7 @@ Seed ==
     /\ phase = "walk"
     /\ calls = 0
     /\ Live
+    /\ ~SilenceDue
     /\ SeedOwed
     /\ rto' = SeedRto
     /\ backoff' = [r \in Records |-> 1]
@@ -734,12 +728,13 @@ Ack(r) ==
     /\ calls = 0
     /\ ~acked[r]
     /\ ~TimedOut
+    /\ ~silenced
     /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
     /\ sinceProgress' = IF TimeoutOn THEN sinceProgress ELSE 0
     /\ Heard
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, head, phase, sampled, seeded, firstSend, refused, pending, calls,
-                   badSample, badRefusal>>
+                   silenced>>
 
 \* The update ends and time moves on one tick; its refusals are over.  Past
 \* the horizon (only reached with the timeout off) time stands still.
@@ -752,14 +747,10 @@ Tick ==
        THEN /\ t' = t + 1
             /\ sinceProgress' = IF TimeoutOn THEN sinceProgress ELSE Min(sinceProgress + 1, Probe)
             /\ quiet' = IF TrackQuiet THEN Min(quiet + 1, QuietMax) ELSE quiet
-            /\ sinceAck' = IF FilterTracked /\ sinceAck >= 0 THEN Min(sinceAck + 1, Probe) ELSE sinceAck
-            /\ sinceEnd' = IF FilterTracked THEN Min(sinceEnd + 1, AgeMax) ELSE sinceEnd
-            /\ sinceOwedEnd' = IF FilterTracked THEN Min(sinceOwedEnd + 1, AgeMax) ELSE sinceOwedEnd
-       ELSE UNCHANGED <<t, sinceProgress, quiet, sinceAck, sinceEnd, sinceOwedEnd>>
-    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending, calls,
-                   badSample, badRefusal>>
+       ELSE UNCHANGED <<t, sinceProgress, quiet>>
+    /\ UNCHANGED <<lastSend, rto, backoff, attempts, acked, head, sampled, seeded, firstSend, pending, calls, silenced>>
 
-\* Every record acked, or the timeout fired: nothing more happens.
+\* Every record acked, or the connection ended: nothing more happens.
 Done ==
     /\ ~Live
     /\ UNCHANGED vars
@@ -770,9 +761,11 @@ Next ==
     \/ \E x \in {"s", "c", "u"} : WriteOne(x)
     \/ \E x \in Records : WriteRefused(x)
     \/ EndWrites
-    \/ \E x \in RtoMin..RtoMax, age \in Ages : Sample(x, age)
+    \/ \E x \in RtoMin..RtoMax : Sample(x)
     \/ Seed
     \/ \E r \in Records : Ack(r)
+    \/ KeepAlive
+    \/ SilenceEnd
     \/ Tick
     \/ Done
 
@@ -803,44 +796,48 @@ ResendGapBounded ==
     \A r \in Records :
         (TimeoutOn /\ ~acked[r] /\ ~TimedOut /\ attempts[r] > 0) => t - lastSend[r] <= Min(RtoMax, Cap(r)) * MaxBackoff
 
-\* With the timeout off nothing here ends the connection (m9.3: zero turns
-\* the reliable timeout off).
-OffMeansNoStallEnd == ~TimeoutOn => ~TimedOut
+\* With the timeout off (m9.3: zero turns the reliable timeout off) every
+\* end is the transport's silence end.  Where the silence end is in the
+\* model (TrackQuiet) an end is reachable and this is checked over it;
+\* without it, this is the gate of rn_window_ack_check_timeout
+\* (reliable_timeout > 0.0) and the reversed witness TimeoutWhenOff.
+OffMeansNoStallEnd == ~TimeoutOn => (Ended => silenced)
 
-\* No end before T, for each small silence timeout T: whatever ends the
-\* connection here does so only after T ticks in which nothing was heard
-\* from the other side.  With the timeout off nothing ends it; the reversed
-\* witness TimeoutWhenOff (the timeout from the first send, the code before
-\* v1.1.0) ends a connection whose other side acknowledged within the last
-\* tick.
-NoEndBeforeT == \A T \in SilenceTs : TimedOut => quiet >= T
+\* (S) No end before T, the default: every end the connection has, by
+\* either clock, comes after SilenceT ticks with nothing heard from the
+\* other side, so an outage shorter than T never ends it.  An end is
+\* reachable (SilenceEnd), so the bound is checked over real ends: with
+\* the bound replaced by FALSE the passing case fails.  Reversed
+\* witnesses: TimeoutWhenOff (the reliable clock from the first send, the
+\* code before v1.1.0) ends a connection heard inside T; SilenceEarly ends
+\* it at T - 1.
+NoEndBeforeT == (TrackQuiet /\ ~TimeoutOn) => (Ended => quiet >= SilenceT)
+
+\* (K) The end at T: a live connection never has more than SilenceT ticks
+\* with nothing heard, so an outage of T ends it at its first update at or
+\* after T.  Reversed witness SilenceLate.
+SilenceEndsAtT == TrackQuiet => (Live => quiet <= SilenceT)
 
 \* Probe pacing (m9.3): while the path has acknowledged no reliable number
 \* for Probe ticks, no number on the wire but U is resent.
 ProbeOnlyU ==
     [][Probing => \A r \in Records : (OnWire(r) /\ r # U) => lastSend'[r] = lastSend[r]]_vars
 
-\* The RTT filter (m9.2): no sample from a packet sent before
-\* silence_end - srtt, once the estimator has one.
-NoSampleAcrossSilence == ~badSample
-
-\* The RTT filter's silence (m9.2): a sample is refused only when a silence
-\* in which an ack was owed (U on the wire unacknowledged, no ack, for
-\* Probe ticks) ended after the packet was sent, less srtt.  A gap between
-\* acks with nothing in flight is no silence: a sparse sender's sample above
-\* srtt is taken, so its estimate can rise (the reversed witness
-\* SilenceOnGap refuses it).
-RefuseOnlyAfterOwedSilence == ~badRefusal
-
-\* A frame is started only for work, and never withheld from it: at the
-\* walk, the due test reports work exactly when the walk writes a number.
-\* Checked for Walk (Room = 0) with one FIFO per class.  Under probe pacing
-\* a head the walk holds is the case this exists for: the due test blind
-\* to the hold (DueRule = FALSE) reports a held chunk or s2 past its delay
-\* due in every update while U is not, and the walk writes nothing.
+\* A frame is started only for work, and never withheld from it: at each
+\* point the endpoint asks rn_endpoint_next_packet_bytes, the due test
+\* reports work exactly when the walk that follows writes a number.  For
+\* Walk (Room = 0, one FIFO per class), the due test against the numbers
+\* the walk sends; for each paced call (Room > 0), against the call's plan
+\* (an empty plan is a frame started and aborted, EndWrites with calls
+\* left).  Under probe pacing a head the walk holds is the case this
+\* exists for: the due test blind to the hold (DueRule = FALSE) reports a
+\* held chunk or s2 past its delay due in every update while U is not,
+\* and the walk writes nothing.
 DueMeansWritten ==
-    (Room = 0 /\ ~OneFifo /\ phase = "walk" /\ Live /\ ~SeedOwed) =>
-        (ReportedDue <=> \E r \in Records : Sent(r))
+    /\ (Room = 0 /\ ~OneFifo /\ phase = "walk" /\ Live /\ ~SilenceDue /\ ~SeedOwed) =>
+          (ReportedDue <=> \E r \in Records : Sent(r))
+    /\ (Room > 0 /\ phase = "walk" /\ Live /\ ~SilenceDue /\ ~SeedOwed /\ calls < Room) =>
+          (ReportedDue <=> Planned # {})
 
 \* After the last bad interval every reliable number is acknowledged:
 \* probe pacing never keeps a delivering path from progress.
