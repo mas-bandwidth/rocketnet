@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 
+#include "portable_crt.h"
+
 inline std::string tla_int( int64_t value )
 {
     char text[32];
@@ -103,7 +105,7 @@ inline bool tla_write_trace( const char * dir, const std::string & name, const c
     const std::string module_path = std::string( dir ) + "/" + name + ".tla";
     const std::string cfg_path = std::string( dir ) + "/" + name + ".cfg";
 
-    FILE * module = fopen( module_path.c_str(), "w" );
+    FILE * module = rocketnet_test_fopen( module_path.c_str(), "w" );
     if ( !module )
     {
         fprintf( stderr, "tla_trace: could not write %s\n", module_path.c_str() );
@@ -123,7 +125,7 @@ inline bool tla_write_trace( const char * dir, const std::string & name, const c
     fprintf( module, ">>\n\n====\n" );
     fclose( module );
 
-    FILE * cfg = fopen( cfg_path.c_str(), "w" );
+    FILE * cfg = rocketnet_test_fopen( cfg_path.c_str(), "w" );
     if ( !cfg )
     {
         fprintf( stderr, "tla_trace: could not write %s\n", cfg_path.c_str() );
