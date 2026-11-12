@@ -507,6 +507,14 @@ def runner_temp(tree):
     return tree.with_name(tree.name + ".runner-temp")
 
 
+def keep_output(tree, row_id, output):
+    """Write a GREEN or BROKEN row's whole output beside the scratch checkouts, where it outlives
+    the checkout, and return its path: the verdict line holds only the last lines."""
+    kept = Path(tree).parent / (re.sub(r"[^A-Za-z0-9_.-]", "_", row_id) + ".output.txt")
+    kept.write_text(output, encoding="utf-8", errors="replace")
+    return kept
+
+
 def remove_checkout(root, path):
     shutil.rmtree(runner_temp(Path(path).resolve()), ignore_errors=True)
     if Path(path).exists():
@@ -603,7 +611,8 @@ def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout
             return "HUNG", f"no verdict within {timeout} s"
         if MARKER not in output:
             tail = " | ".join(output.strip().splitlines()[-3:])
-            return "BROKEN", f"setup failed (exit {status}): {tail[:300]}"
+            kept = keep_output(tree, row["id"], output)
+            return "BROKEN", f"setup failed (exit {status}): {tail[:300]} (whole output: {kept})"
         after = output.split(MARKER, 1)[1]
         match = re.search(row["red"], after, re.M)
         if status != 0 and match:
@@ -611,7 +620,8 @@ def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout
             return "RED", line.strip()[:300]
         tail = " | ".join(after.strip().splitlines()[-3:])
         why = "exit 0" if status == 0 else f"exit {status} but no line matches {row['red']!r}"
-        return "GREEN", f"the check did not catch its plant: {why}; last lines: {tail[:300]}"
+        kept = keep_output(tree, row["id"], output)
+        return "GREEN", f"the check did not catch its plant: {why}; last lines: {tail[:300]} (whole output: {kept})"
     finally:
         if not keep:
             remove_checkout(root, tree)
@@ -737,7 +747,13 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout, need_probes=None):
             verdict, detail = "BROKEN", f"scratch checkout failed: {error}"
         report(row, verdict, detail)
     if not args.keep and not args.scratch:
-        shutil.rmtree(base, ignore_errors=True)
+        if counts["GREEN"] or counts["BROKEN"]:
+            # the slots go; the GREEN and BROKEN rows' whole outputs stay for reading
+            for slot in base.glob("slot-*"):
+                shutil.rmtree(slot, ignore_errors=True)
+            out(f"planted-violations: whole outputs of the GREEN and BROKEN rows kept under {base}")
+        else:
+            shutil.rmtree(base, ignore_errors=True)
     ran = sum(counts.values())
     out(f"planted-violations: os={want_os} rows run={ran} red={counts['RED']} green={counts['GREEN']} "
         f"broken={counts['BROKEN']} hung={counts['HUNG']} unmet={counts['UNMET']} skipped={len(skipped)} "
@@ -873,9 +889,14 @@ def self_test(out=say):
         expect("all red, complete table exits 0", code == 0)
         expect("the plant did not touch the real tree", (repo / "data.txt").read_text() == "fine\n")
         # a check that does not catch its plant
-        code, lines = go(complete, "--only", "w/lazy")
+        kept_dir = Path(tmp) / "kept"
+        code, lines = go(complete, "--only", "w/lazy", "--scratch", str(kept_dir))
         expect("lazy check is PLANT-GREEN", has(lines, "PLANT-GREEN w/lazy (the check did not catch its plant"))
         expect("a GREEN row exits 1", code == 1)
+        kept = kept_dir.resolve() / "w_lazy.output.txt"
+        expect("a GREEN row's whole output is kept and named",
+               kept.is_file() and MARKER in kept.read_text()
+               and any(f"whole output: {kept}" in line for line in lines))
         # needs: a row whose need is not met is UNMET, never run, and the run exits 1; met, it runs
         needy = list(good) + ["env:PLANTED_VIOLATIONS_NEVER_SET"]
         needy[0] = "w/needy"
