@@ -391,6 +391,18 @@ endif()
 function(rocketnet_warning_floor target)
 endfunction()
 
+# The suites' stack. A case keeps internal objects on its stack: the client
+# protocol is 1.4 MB at ROCKETNET_HISTORY_PACKETS=32768, and some 150 test
+# frames hold one or more. MSVC links an executable with a 1 MB stack, where
+# Linux and macOS start the main thread on 8 MB, so the suites link with the
+# same 8 MB on Windows. The library's own frames stay small (none over 64 KB
+# at that history), so nothing outside the suites is given more.
+function(rocketnet_suite_stack target)
+    if(MSVC)
+        target_link_options(${target} PRIVATE /STACK:8388608)
+    endif()
+endfunction()
+
 # The public include directory: rocketnet.h alone, copied from sdk/ at
 # configure time (an edit to sdk/rocketnet.h reconfigures). A parent project's
 # add_subdirectory(rocketnet) and RocketNet::rocketnet hand it this directory
@@ -875,6 +887,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_link_libraries(test PRIVATE rocketnet_test_support Threads::Threads)
     target_compile_features(test PRIVATE cxx_std_11)
     rocketnet_warning_floor(test)
+    rocketnet_suite_stack(test)
     # The promotion case exercises the WIDE channel header (an index of 256 or
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
@@ -894,6 +907,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_options(test_wide PRIVATE $<TARGET_PROPERTY:rocketnet,COMPILE_OPTIONS>)
     rocketnet_use_sodium(test_wide)
     rocketnet_warning_floor(test_wide)
+    rocketnet_suite_stack(test_wide)
     target_link_libraries(test_wide PRIVATE Threads::Threads)
     # The SDK sources link their platform libraries, as the library targets do.
     if(APPLE)
@@ -1173,6 +1187,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
+    rocketnet_suite_stack(functional)
     add_dependencies(functional rocketnet_shared rocketnet_shared_dev)
     target_compile_definitions(functional PRIVATE
         "ROCKETNET_DEV_LIBRARY_PATH=\"$<TARGET_FILE:rocketnet_shared_dev>\""
@@ -1307,6 +1322,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)
+        rocketnet_suite_stack(functional_production)
         target_compile_features(functional_production PRIVATE cxx_std_11)
         if(MSVC)
             target_compile_options(functional_production PRIVATE "/FI${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}")
