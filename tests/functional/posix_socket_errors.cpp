@@ -3835,6 +3835,18 @@ static void posix_xdp_weather( int ipv6 )
             posix_xdp_sub( &deficit, &now );
             const int valid_missing = all_valid ? valid_sent - valid_seen : 0;
             const uint64_t missing = posix_xdp_total( &deficit ) + (uint64_t) valid_missing;
+            if ( missing == 0 )
+            {
+                // every frame reached the filter and was counted: what is
+                // missing is the other port's datagram, lost after the filter
+                // passed its fragments (the near stack's reassembly), which no
+                // resend from here can fill without counting its fragments twice
+                printf( "%s: round %d: every frame was counted at the filter, but the other port's socket has not read its datagram: lost after the filter, in the near stack's reassembly, not on the veth\n",
+                        case_name, round );
+                fflush( stdout );
+            }
+            posix_check( missing > 0 );
+
             const uint64_t veth_now = posix_xdp_veth_drops();
             const uint64_t drops = veth_now >= veth_drops_start ? veth_now - veth_drops_start : 0;
             const uint64_t unused = drops >= veth_drops_used ? drops - veth_drops_used : 0;
