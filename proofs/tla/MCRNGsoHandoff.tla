@@ -12,7 +12,8 @@
 (* behind newer banks and must fail TxInOrder;                            *)
 (* MCRNGsoHandoffBrokenNoBackoff.cfg sets NoBackoff <- NoBackoffBroken    *)
 (* (a stalled pass goes straight back to poll, the full-buffer spin) and  *)
-(* must fail RxBacksOff.                                                  *)
+(* must fail RxBacksOff.  MCRNGsoHandoffBrokenMainBlocks.cfg sets         *)
+(* MainBlocks (main waits on the TX mutex) and must fail MainNeverWaits.  *)
 (***************************************************************************)
 EXTENDS RNGsoHandoff
 
