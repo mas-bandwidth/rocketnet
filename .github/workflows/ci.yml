@@ -1716,6 +1716,24 @@ jobs:
           done
           exit "$missing"
 
+      # macOS: Go's build and module caches on the boot volume, under the
+      # runner user's home, for every later step of this job. The fleet login's
+      # go env puts them on an external volume, where a headless runner's first
+      # open can wait forever on a macOS privacy approval nobody answers (the
+      # v1.1.5 nightly: go test blocked 55 minutes in open() of the build cache
+      # before compiling anything). The tool is standard library only, so a
+      # cold module cache downloads nothing; a cold build cache compiles the
+      # standard library once per host.
+      - name: Go caches on the boot volume (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_root="$HOME/Library/Caches/rocketnet-ci"
+          mkdir -p "$cache_root/go-build" "$cache_root/go-mod"
+          echo "GOCACHE=$cache_root/go-build" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$cache_root/go-mod" >> "$GITHUB_ENV"
+
       - name: Check the fleet's Go is on PATH
         shell: bash
         run: |
@@ -1727,6 +1745,7 @@ jobs:
           fi
           got="$(go version)"
           echo "$got"
+          echo "GOCACHE=$(go env GOCACHE) GOMODCACHE=$(go env GOMODCACHE)"
           minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
           if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
             echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
