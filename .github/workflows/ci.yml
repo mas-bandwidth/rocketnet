@@ -2233,6 +2233,7 @@ jobs:
         run: >
           cmake -B build-fuzz
           -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           -DCMAKE_C_COMPILER=clang
           -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
