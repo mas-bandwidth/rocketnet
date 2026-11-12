@@ -1744,7 +1744,11 @@ static void hammer_server_step( const refuse_world_t * w, int connected_slot, ha
         // one start in eight goes to the slot's index with ROCKETNET_FLOW_ID_BIT
         // set: a reserved destination, refused as misuse and counted nowhere else
         const bool flow = in_range && hammer_rand() % 8 == 0;
-        const uint64_t destination = flow ? ( ROCKETNET_FLOW_ID_BIT | (uint64_t) index ) : (uint64_t) (int64_t) index;
+        uint64_t destination = (uint64_t) (int64_t) index;
+        if ( flow )
+        {
+            destination |= (uint64_t) ROCKETNET_FLOW_ID_BIT;
+        }
         bool room = false;
         HAMMER_CALL( in_range ? 0 : 1, 0, room = rocketnet_server_can_send_message( w->server, index, a.channel, a.reliability, a.bytes ) );
         const uint64_t refused_before = in_range ? refuse_slot_refused( w->server, index ) : 0;
