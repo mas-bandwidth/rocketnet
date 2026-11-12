@@ -31,6 +31,14 @@ deleted in the same pull request that removes the finding. A translation
 unit the analyzer cannot parse fails the job too: a file that is not
 analyzed must never read as a clean file.
 
+Both analyzers read the preprocessed text, so a file's lines inside another
+platform's #if are never looked at. The gate prints, for every file, how
+many of its own lines this platform's preprocessor keeps, and a file that
+keeps none fails unless NOT_ANALYSED_HERE names it with a reason for this
+platform (each listed file is printed on every run, and a listed file that
+keeps lines again fails), so "analyzed N files" never counts a file nothing
+of which was read.
+
 Every in-source suppression in sdk/ (NOLINT, cppcheck-suppress, a diagnostic
 pragma) must be listed in tools/suppressions_reviewed.txt with a reason
 (tools/check_suppressions.py, run first): a suppression the list does not
@@ -53,6 +61,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -273,6 +282,91 @@ def write_tidy_db(by_file, files):
     with open(os.path.join(TIDY_DB_DIR, "compile_commands.json"), "w", encoding="utf-8") as handle:
         json.dump(entries, handle, indent=1)
     return TIDY_DB_DIR
+
+
+# Files this platform's preprocessor keeps no line of, with the reason: the
+# analyzers read the preprocessed text, so such a file is compiled and
+# "analyzed" and yet nothing in it is ever looked at. Each is printed on
+# every run; a file that keeps no line and is not listed fails the gate, and
+# so does a listed file that keeps lines again (the list never outlives the
+# code). Keyed by platform.system().
+NOT_ANALYSED_HERE = {
+    "Linux": {
+        "sdk/rocketnet_server_rio_windows.cpp": "the RIO server transport, wholly inside ROCKETNET_PLATFORM_WINDOWS",
+    },
+}
+
+# A platform file's translation-unit placeholder, kept so the unit is never
+# empty (sdk/rocketnet_server_rio_windows.cpp: `int
+# rocketnet_server_rio_windows_cpp_dummy = 0;`): not code to analyse.
+PLACEHOLDER = re.compile(r"^\s*int\s+rocketnet_\w+_cpp_dummy\s*=\s*0\s*;\s*$")
+LINE_MARKER = re.compile(r'^#\s*(\d+)\s+"((?:[^"\\]|\\.)*)"')
+
+
+def kept_lines(entry, path):
+    """Lines of the file itself that its compile command's preprocessor keeps, or None.
+
+    Runs the entry's compiler with -E instead of -c and counts the non-blank
+    lines attributed to `path` by the line markers, less the file's
+    placeholder definition (PLACEHOLDER).
+    """
+    arguments = entry_arguments(entry)
+    command = [arguments[0], "-E"]
+    skip = False
+    for argument in arguments[1:]:
+        if skip:
+            skip = False
+            continue
+        if argument == "-o":
+            skip = True
+            continue
+        if argument == "-c" or argument.startswith("-o"):
+            continue
+        command.append(argument)
+    try:
+        result = subprocess.run(command, cwd=entry["directory"], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, errors="replace")
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    target = os.path.realpath(path)
+    current = None
+    count = 0
+    for line in result.stdout.splitlines():
+        marker = LINE_MARKER.match(line)
+        if marker:
+            name = marker.group(2)
+            current = os.path.realpath(os.path.join(entry["directory"], name))
+            continue
+        if current == target and line.strip() and not PLACEHOLDER.match(line):
+            count += 1
+    return count
+
+
+def coverage_problems(kept, listed):
+    """Judge each file's kept-line count against the platform's NOT_ANALYSED_HERE list.
+
+    kept: {relative path: kept lines or None}. Returns (problems, report lines).
+    """
+    problems = []
+    report = []
+    for rel in sorted(kept):
+        lines = kept[rel]
+        if lines is None:
+            problems.append("%s: its compile command does not preprocess, so what is analyzed is unknown" % rel)
+        elif lines == 0 and rel not in listed:
+            problems.append("%s: the preprocessor keeps no line of it on this platform, so it is not "
+                            "analyzed here; list it in NOT_ANALYSED_HERE with its reason" % rel)
+        elif lines > 0 and rel in listed:
+            problems.append("%s: listed in NOT_ANALYSED_HERE but %d of its lines are kept here: "
+                            "remove it from the list" % (rel, lines))
+    for rel in sorted(listed):
+        if rel not in kept:
+            problems.append("%s: listed in NOT_ANALYSED_HERE but not an sdk file with a compile command here" % rel)
+        else:
+            report.append("NOT ANALYSED on this platform: %s (%s)" % (rel, listed[rel]))
+    return problems, report
 
 
 def run_clang_tidy_file(tidy, db_dir, path):
@@ -618,10 +712,25 @@ def main():
 
     tidy_findings = finding_lines("clang-tidy", tidy_raw)
     cppcheck_findings = finding_lines("cppcheck", cppcheck_raw)
-    print("analyzed %d files with %d jobs in one pool: clang-tidy done at %.0f s, both tools done at %.0f s" % (
-        len(files), args.jobs, tidy_seconds, total_seconds))
 
-    errors = tidy_errors + cppcheck_errors
+    # what the analyzers actually read: each file's lines the preprocessor
+    # keeps on this platform, so a file wholly inside another platform's #if
+    # is never counted as analyzed
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        kept = dict(zip([relpath(path) for path in files],
+                        executor.map(lambda path: kept_lines(by_file[path], path), files)))
+    listed = NOT_ANALYSED_HERE.get(platform.system(), {})
+    coverage_errors, coverage_report = coverage_problems(kept, listed)
+    for rel in sorted(kept):
+        print("  kept %6s lines  %s" % (kept[rel] if kept[rel] is not None else "?", rel))
+    for line in coverage_report:
+        print(line)
+    analysed = sum(1 for rel in kept if kept[rel])
+    print("analyzed %d files (%d with lines kept on %s, %d listed as not analysed here) with %d jobs "
+          "in one pool: clang-tidy done at %.0f s, both tools done at %.0f s" % (
+              len(files), analysed, platform.system(), len(listed), args.jobs, tidy_seconds, total_seconds))
+
+    errors = tidy_errors + cppcheck_errors + coverage_errors
     if errors:
         print("ANALYZER ERRORS (a file that does not parse is not analyzed):")
         for line in errors:

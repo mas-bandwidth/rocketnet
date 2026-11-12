@@ -79,7 +79,9 @@ jobs:
       - name: Run the static gate
         run: python3 tools/run_static.py
 
-  # clang-tidy (checks from .clang-tidy) and cppcheck over every sdk/*.cpp,
+  # clang-tidy (checks from .clang-tidy) and cppcheck over every sdk/*.cpp (each
+  # file's kept-line count printed, a file wholly inside another platform's #if
+  # named as not analysed here: run_tidy.py NOT_ANALYSED_HERE),
   # rocketnet_tests.cpp included, compared with tools/tidy_baseline.txt and
   # tools/cppcheck_baseline.txt by tools/run_tidy.py. The same baseline rules
   # as the gcc job: a new finding fails, and a baselined finding that is gone
