@@ -54,4 +54,10 @@ S6Bad == [S6 EXCEPT !.head = 1]
 
 BadLog == << S1, S2, S3, S4, S5, S6Bad >>
 
+\* an under-logged harness: record 3 leaves out torn, so it is no state of
+\* the model, however right its other fields
+S3Short == [f \in DOMAIN S3 \ {"torn"} |-> S3[f]]
+
+ShortLog == << S1, S2, S3Short, S4, S5, S6, S7 >>
+
 =============================================================================

@@ -77,6 +77,7 @@ Each witness changes one rule switch and must break one claim.
 | MCRNUringQueueReceiveLayoutBrokenNarrowCounter.cfg | CounterWrap 4 | InOrder |
 | MCRNUringQueueReceiveLayoutBrokenRingNotPow2.cfg | B = 3 | NoDoubleTake |
 | MCTraceRNUringQueueReceiveLayoutSelfBrokenRelease.cfg | BadLog: head = 1 at record 6 | TraceConsistent |
+| MCTraceRNUringQueueReceiveLayoutSelfBrokenShort.cfg | ShortLog: record 3 leaves out torn | TraceConsistent |
 
 `MCTraceRNUringQueueReceiveLayoutSelf.cfg` must accept every record of GoodLog.
 

@@ -30,20 +30,18 @@ VarsRec ==
      view |-> view, banked |-> banked, delivered |-> delivered, named |-> named,
      full |-> full, spurious |-> spurious, dup |-> dup, torn |-> torn]
 
-\* a record names exactly the model's variables, each equal to the state's
-Matches(r) == DOMAIN r = DOMAIN VarsRec /\ \A f \in DOMAIN r : VarsRec[f] = r[f]
-
+\* a record is compared whole: it names exactly the model's variables, each
+\* equal to the state's (a record with a field missing is a different record)
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = ~Matches(TraceLog[1])
+    /\ rejected = ( VarsRec # TraceLog[1] )
 
 TraceStep ==
     /\ ~rejected
     /\ ti < Len(TraceLog)
     /\ Next
-    /\ DOMAIN TraceLog[ti + 1] = DOMAIN VarsRec
-    /\ \A f \in DOMAIN TraceLog[ti + 1] : VarsRec'[f] = TraceLog[ti + 1][f]
+    /\ VarsRec' = TraceLog[ti + 1]
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 
