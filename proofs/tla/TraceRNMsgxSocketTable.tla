@@ -1,34 +1,37 @@
 ------------------------ MODULE TraceRNMsgxSocketTable ------------------------
 (***************************************************************************)
-(* The trace check of RNMsgxSocketTable: a record of the code's state      *)
-(* after each call, written by tests/tla_trace_msgx.cpp's seeded random    *)
-(* walk over the real sdk/rocketnet_msgx_socket_table.h with a fake kernel *)
-(* and fake holders, is a behaviour of the spec.  TraceLog is that record  *)
-(* sequence.  Each record carries every model variable and the call the    *)
-(* code made (op), and nothing else: a record that names fewer fields is   *)
-(* rejected, so an under-logged harness fails red, never green.            *)
+(* The trace check of RNMsgxSocketTable (README-TraceCheck.md): the        *)
+(* records tests/tla_trace_msgx.cpp's seeded random walk writes over the   *)
+(* real sdk/rocketnet_msgx_socket_table.h, with a fake kernel and fake     *)
+(* holders, are a behaviour of the spec.  TraceLog is that record          *)
+(* sequence, one record of every model variable after each call and        *)
+(* nothing else: a record with a field more or less never equals VarsRec, *)
+(* so an under-logged harness fails red, never green.                      *)
 (*                                                                         *)
-(* One code call can be several model steps: main's forget is the         *)
-(* retire's two steps and the caller's deregistration, and the sweep is   *)
-(* one step per slot of its dead-report loop and per entry of its close   *)
-(* loop, so the model lets holders interleave with them.  The harness is   *)
-(* one thread and logs between calls, where main is idle.  So a step from *)
-(* an idle state is the action the record's op names; while main is       *)
-(* inside a call only main's next step (MainCont, deterministic) is taken, *)
-(* and the state main returns to idle in must match the record.  The op   *)
-(* pins every choice, so no branch dead-ends on a choice the record does  *)
-(* not show, and TraceReject fires only when the code's call is no model   *)
-(* step.  TraceInit matches the first record against Init; at the last    *)
-(* record the trace stutters (TraceDone).  README-TraceCheck.md has the    *)
-(* mechanism.                                                              *)
+(* TraceOps is the call the walk made before each record (the first is     *)
+(* "init"): the walk's own choice, logged like any environment choice.     *)
+(* One code call can be several model steps: forget is the retire's two    *)
+(* steps and the caller's deregistration, and the sweep is one step per    *)
+(* slot of its dead-report loop and per entry of its close loop, so the    *)
+(* model lets holders interleave with them.  The walk is one thread and    *)
+(* logs between calls, where main is idle.  So a step from an idle state   *)
+(* is the action the call names; while main is inside a call only main's   *)
+(* next step (MainCont, deterministic) is taken, and the state main        *)
+(* returns to idle in must equal the record.  The call pins every choice,  *)
+(* so no branch dead-ends on a choice the record does not show, and        *)
+(* TraceReject fires only when the code's call is no model step.           *)
+(* TraceInit matches the first record against Init; at the last record the *)
+(* trace stutters (TraceDone).                                             *)
 (***************************************************************************)
 EXTENDS RNMsgxSocketTable, Sequences
 
-CONSTANT TraceLog
+CONSTANTS TraceLog, TraceOps
 
-\* the trace as one value: TLC evaluates a constant definition once, where a
-\* substituted constant (TraceLog <- Log) is evaluated again at each use
+\* the trace and the calls as values: TLC evaluates a constant definition
+\* once, where a substituted constant (TraceLog <- Log) is evaluated again
+\* at each use
 Trace == TraceLog
+Ops == TraceOps
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
@@ -49,18 +52,6 @@ VarsRec ==
      kdead |-> kdead, poller |-> poller, pkts |-> pkts, cur |-> cur, rep |-> rep, rxEv |-> rxEv,
      rxFd |-> rxFd, crossed |-> crossed, onClosed |-> onClosed, attempts |-> attempts]
 
-\* the record's variables, each read once (a LET value is evaluated once)
-VarNames == {"word", "deadRep", "state", "fd", "gen", "addr", "snap", "pass", "deadReports",
-             "freeSlots", "numFree", "retired", "numRetired", "numOpen", "index", "cool",
-             "counters", "update", "opensLeft", "mpc", "ms", "mi", "mk", "kfd", "kdead",
-             "poller", "pkts", "cur", "rep", "rxEv", "rxFd", "crossed", "onClosed", "attempts"}
-
-Fields == VarNames \cup {"op"}
-
-\* a record names exactly the model's variables and the op, each variable
-\* equal to the state's
-Matches(r) == DOMAIN r = Fields /\ VarsRec = [f \in VarNames |-> r[f]]
-
 \* the model action a code call starts with
 Do(op) ==
     CASE op.n = "mark" -> Mark(op.a)
@@ -80,21 +71,21 @@ Do(op) ==
       [] op.n = "envclose" -> EnvClose(op.f)
       [] op.n = "disconnect" -> Disconnect(op.f)
 
+\* a record is the model's variables exactly (whole-record equality), and
+\* there is one call per record
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = ~Matches(Trace[1])
+    /\ rejected = (Len(Ops) # Len(Trace) \/ VarsRec # Trace[1])
 
 TraceStep ==
     /\ ~rejected
     /\ ti < Len(Trace)
-    /\ LET r == Trace[ti + 1] IN
-       /\ IF Idle THEN Do(r.op) ELSE MainCont
-       /\ IF mpc' = "idle"
-             THEN /\ DOMAIN r = Fields
-                  /\ VarsRec' = [f \in VarNames |-> r[f]]
-                  /\ ti' = ti + 1
-             ELSE ti' = ti
+    /\ IF Idle THEN Do(Ops[ti + 1]) ELSE MainCont
+    /\ IF mpc' = "idle"
+          THEN /\ VarsRec' = Trace[ti + 1]
+               /\ ti' = ti + 1
+          ELSE ti' = ti
     /\ UNCHANGED rejected
 
 TraceReject ==

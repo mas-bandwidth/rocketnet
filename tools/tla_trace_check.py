@@ -39,6 +39,10 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
+    "msgx": {
+        "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

@@ -9,7 +9,7 @@ The macOS batched server transport's per-client socket table,
 - `RNMsgxAddressIndex.tla`: the address index alone (linear probing with the
   backward-shift delete), with every assignment of homes to its keys.
 
-`TraceRNMsgxSocketTable.tla` binds the code to the first module: the walk in
+`TraceRNMsgxSocketTable.tla` binds the code to the first module: the msgx walk in
 `tests/tla_trace_msgx.cpp` runs the real header over a fake kernel and its
 records must be a behaviour of the spec ([README-TraceCheck.md](README-TraceCheck.md)
 has the mechanism).
@@ -186,29 +186,40 @@ passing case, 1 for a counterexample), linux-amd64 bench; the records are in
 | `MCRNMsgxSocketTableBrokenGenWrap2.cfg` | `NoCrossClient` | 7,950 | 41,353 | 4.8 |
 | `MCRNMsgxAddressIndex.cfg` | pass | 640 | 1,984 | 1.6 |
 | `MCRNMsgxAddressIndexBrokenDeleteWithoutShift.cfg` | `LookupFindsOpen` | 497 | 833 | 1.3 |
-| `MCTraceRNMsgxSocketTableSelf.cfg` | pass | 14 | 15 | 1.4 |
-| `MCTraceRNMsgxSocketTableSelfBrokenClose.cfg` | `TraceConsistent` | 10 | 10 | 1.5 |
+| `MCTraceRNMsgxSocketTableSelf.cfg` | pass | 14 | 15 | 0.7 |
+| `MCTraceRNMsgxSocketTableSelfBrokenClose.cfg` | `TraceConsistent` | 10 | 10 | 0.7 |
 
 ## The trace check
 
-`tests/tla_trace_msgx.cpp` (`tla_trace_msgx`, and `tla_trace_msgx_plant`
-built with `ROCKETNET_MSGX_SOCKET_TABLE_PLANT`) walks the real header for 400
+The `msgx` layer of the shared trace check ([README-TraceCheck.md](README-TraceCheck.md)):
+`tests/tla_trace_msgx.cpp` registers its walk with `TLA_TRACE_LAYER( "msgx", ... )`,
+and `tools/tla_trace_check.py` has its row (`RNMsgxSocketTable.tla`,
+`TraceRNMsgxSocketTable.tla`, quiet). The walk drives the real header for 400
 calls per seed over a fake kernel of three descriptors, two transmit holders,
 one receive holder, a budget of two opens and one other descriptor of the
 process, with four addresses whose real hashes give homes 2046, 2046, 2047
-and 0 in the code's 2048-entry index (a collision and a wrap). Each record
-carries every model variable and the call made; `TraceRNMsgxSocketTable.tla`
-requires the records to be a behaviour of `Spec`.
+and 0 in the code's 2048-entry index (a collision and a wrap).
+
+Each record is every model variable and nothing else. The call the walk made
+before each record goes out as its own sequence, `TraceOps`: it names the
+action a step from an idle main starts with, so no branch dead-ends on a
+choice the record does not show. One call can be several model steps (forget
+is the retire's two steps and the caller's deregistration; the sweep is one
+step per slot and per retired entry), and the state main returns to idle in
+must equal the record.
+
+The table is a header of inline functions that the transport also includes,
+so the walk compiles its own copy inside a namespace; under
+`ROCKETNET_TLA_PLANT` that copy has `ROCKETNET_MSGX_SOCKET_TABLE_PLANT`. The
+plant is the close at the retire, the same change as
+`MCRNMsgxSocketTableBrokenCloseAtRetire.cfg`, in
+`rocketnet_msgx_socket_table_retire` and never defined outside the plant
+build. `PLANT-FIRED` counts closes of a slot still open, the plant's own act.
 
 - The self-test (`MCTraceRNMsgxSocketTableSelf.tla`) accepts its hand-written
   good trace and rejects the one with a single wrong step (a sweep that
   closes while holder 1 is still inside its pass).
-- Seeds 1 to 16: every clean trace passes (453 to 546 distinct states, 4 to 13
-  seconds each), every plant trace fails `TraceConsistent` (8 to 76 distinct
-  states). The plant fired 8 to 19 times per seed (`EARLY-CLOSES`); the clean
-  build never did.
-
-The plant is the close at the retire, the same change as
-`MCRNMsgxSocketTableBrokenCloseAtRetire.cfg`: it sits in
-`rocketnet_msgx_socket_table_retire` behind the flag and is never defined
-outside the plant build.
+- `tools/tla_trace_check.py --layer all --seeds 1-16`: every msgx clean trace
+  passes (453 to 546 distinct states, 3 to 4 seconds each) with
+  `PLANT-FIRED 0`, and every plant trace fails `TraceConsistent` (8 to 76
+  distinct states) with the plant fired 8 to 19 times.
