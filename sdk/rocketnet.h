@@ -825,7 +825,10 @@ struct rocketnet_server_stats_t
     uint64_t connections_accepted;
 
     /// Connection requests refused because every client slot was taken. A
-    /// client that retries counts once per request.
+    /// client that retries counts once per request. Since v1.1.2 it also
+    /// counts a connection response ignored, not denied, because the only free
+    /// slots were freed in that same update; that client's resend connects in
+    /// the next update.
 
     uint64_t connections_denied_full;
 
