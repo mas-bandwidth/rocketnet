@@ -245,10 +245,12 @@ jobs:
           fi
           # cloud-init must have finished (it writes the user and its key);
           # its status is printed, and a guest whose cloud-init is not done
-          # fails here by name
+          # fails here by name. `--wait` prints a dot per second while it
+          # waits, with no newline, so a guest that answers ssh before
+          # cloud-init ends reads `....status: done` on one line.
           "$WORK/g" 'cloud-init status --wait --long' > "$WORK/cloud-init.txt" 2>&1 || echo "cloud-init status exit $? (judged by its status line below)"
           cat "$WORK/cloud-init.txt"
-          if ! grep -qE '^status: done' "$WORK/cloud-init.txt"; then
+          if ! grep -qE '^\.*status: done' "$WORK/cloud-init.txt"; then
             echo "GUEST-CLOUD-INIT-NOT-DONE"
             exit 1
           fi
