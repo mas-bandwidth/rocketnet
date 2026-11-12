@@ -87,6 +87,9 @@
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
+// defined in tests/functional/rocketnet_functional_tests.cpp: prints the SDK log lines the suite captured
+void rocketnet_functional_log_ring_dump();
+
 static void windows_lifecycle_check_line( bool condition, const char * expression, int line )
 {
     if ( condition )
@@ -94,6 +97,7 @@ static void windows_lifecycle_check_line( bool condition, const char * expressio
         return;
     }
     printf( "windows lifecycle stress check failed: %s:%d: %s\n", __FILE__, line, expression );
+    rocketnet_functional_log_ring_dump();
     fflush( stdout );
     exit( 1 );
 }
