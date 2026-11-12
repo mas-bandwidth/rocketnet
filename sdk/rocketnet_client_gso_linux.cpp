@@ -211,6 +211,14 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
 
         const int error = errno;
 
+        // a signal interrupted the call before it sent anything: call again,
+        // as the platform batch does
+
+        if ( error == EINTR )
+        {
+            continue;
+        }
+
         if ( gso->message_num_packets[sent] > 1 && ( error == EINVAL || error == EIO || error == EOPNOTSUPP ) )
         {
             // the kernel accepted the UDP_SEGMENT probe but refused a live

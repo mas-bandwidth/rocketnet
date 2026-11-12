@@ -80,6 +80,7 @@ struct fake_gso_socket_t
     int sendmmsg_calls;
     int max_messages_per_call;          // 0: take every message offered
     int refuse_segment_errno;           // nonzero: a call whose first message is segmented fails with it
+    int interrupts;                     // the next this many sendmmsg calls fail with EINTR, sending nothing
     int num_messages;
     fake_gso_message_t messages[FAKE_GSO_MAX_MESSAGES];
     uint8_t packet_data[FAKE_GSO_MAX_PACKETS][512];
@@ -111,6 +112,13 @@ static int fake_gso_sendmmsg( void * context, int socket, struct mmsghdr * messa
     fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
     rocketnet_unit_check( socket == 7 );
     fake->sendmmsg_calls++;
+
+    if ( fake->interrupts > 0 )
+    {
+        fake->interrupts--;
+        errno = EINTR;
+        return -1;
+    }
 
     if ( fake->refuse_segment_errno != 0 && fake_gso_stride( &messages[0].msg_hdr ) != 0 )
     {
@@ -487,6 +495,30 @@ static void test_client_gso_send_falls_back_on_live_refusal()
     rocketnet_unit_check( test_gso.packet_send_failures.load() == 2 );
 }
 REGISTER_UNIT_TEST( test_client_gso_send_falls_back_on_live_refusal );
+
+// a sendmmsg a signal interrupted sent nothing: it is called again, as the
+// platform batch does, and no datagram is counted a failure
+
+static void test_client_gso_send_retries_an_interrupted_call()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    const int packet_bytes[] = { 100, 100, 100, 300 };
+    fake_gso_batch( &test_batch, packet_bytes, 4, 40 );
+    test_socket.interrupts = 1;
+    rocketnet_client_gso_send_batch( &test_gso, test_batch.sends, 4 );
+
+    rocketnet_unit_check( test_socket.sendmmsg_calls == 2 );
+    rocketnet_unit_check( test_socket.num_messages == 2 );
+    rocketnet_unit_check( test_socket.messages[0].num_packets == 3 );
+    rocketnet_unit_check( test_socket.messages[0].first_byte[0] == 40 );
+    rocketnet_unit_check( test_socket.messages[1].num_packets == 1 );
+    rocketnet_unit_check( test_socket.messages[1].first_byte[0] == 43 );
+    rocketnet_unit_check( test_gso.packets_sent == 4 );
+    rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
+}
+REGISTER_UNIT_TEST( test_client_gso_send_retries_an_interrupted_call );
 
 // the receive slots the I/O thread hands receive_batch: ROCKETNET_FRAME_SIZE
 // apart, as the client I/O step lays them out
