@@ -43,17 +43,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # the harnesses whose inputs reach the open path: a whole session over the
 # loopback (session), the server and client transports fed raw datagrams,
-# and the seal/open round trip
-OPEN_PATH_HARNESSES = ("rocketnet_fuzz_session", "rocketnet_fuzz_server_transport",
+# and the seal/open round trip; session_raw is the session with the client
+# off its I/O-thread decrypt copy, so the client protocol's own replay check
+# and open refusal (the RAW verdict) are reached
+OPEN_PATH_HARNESSES = ("rocketnet_fuzz_session", "rocketnet_fuzz_session_raw", "rocketnet_fuzz_server_transport",
                        "rocketnet_fuzz_client_transport", "rocketnet_fuzz_round_trip")
-
-# The client protocol opens a session datagram itself (the RAW verdict) only
-# while its I/O-thread decrypt copy is not live; in every fuzz pair the copy
-# is live and its own window and open refuse first, so no committed input
-# reaches these checks (a trap planted on that path survived every corpus,
-# 2026-11-12). Covering them needs a pair with the I/O core off.
-CLIENT_RAW_PATH_UNCOVERED = ("the fuzz pair's client always has its I/O-thread decrypt copy live, which refuses "
-                             "first; no committed input reaches the RAW path")
 
 
 MUTANTS = [
@@ -72,7 +66,9 @@ MUTANTS = [
         "replace": "         sequence <= replay->highest_opened - ROCKETNET_REPLAY_WINDOW_BITS )\n    {\n        return 0;\n    }",
         "uncovered": ("a datagram held back while more than ROCKETNET_HISTORY_PACKETS (4096) newer ones open; the "
                       "session harness runs at most 1024 ops and its rings release or drop every update, and 180 s "
-                      "of libFuzzer found no input (2026-11-12, hetzner1)"),
+                      "of libFuzzer found no input; covered by the unit cases test_replay_protection, "
+                      "test_standard_replay_vectors, test_replay_window_model_trace and "
+                      "test_witness_replay_retained_depth_exact, each red with this mutant (2026-11-12, hetzner1)"),
     },
     {
         "id": "aead-tag-ignored",
@@ -135,7 +131,6 @@ MUTANTS = [
         "what": "the client does not ask the replay window before it opens a session datagram",
         "find": "        if ( rocketnet_replay_already_received( &client->replay_session, sequence ) )\n        {\n            rocketnet_spam( \"client ignored session packet. already received\" );\n            counters[type_counters->already_received]++;\n            return -1;\n        }\n    }",
         "replace": "        if ( 0 * rocketnet_replay_already_received( &client->replay_session, sequence ) )\n        {\n            rocketnet_spam( \"client ignored session packet. already received\" );\n            counters[type_counters->already_received]++;\n            return -1;\n        }\n    }",
-        "uncovered": CLIENT_RAW_PATH_UNCOVERED,
     },
     {
         "id": "client-did-not-open",
@@ -143,7 +138,6 @@ MUTANTS = [
         "what": "the client goes on with a session datagram that did not open",
         "find": "            if ( opened_bytes < 0 )\n            {\n                rocketnet_spam( \"client ignored session packet. did not open\" );",
         "replace": "            if ( opened_bytes < 0 && 0 )\n            {\n                rocketnet_spam( \"client ignored session packet. did not open\" );",
-        "uncovered": CLIENT_RAW_PATH_UNCOVERED,
     },
 ]
 
@@ -288,7 +282,7 @@ def run_all(build, only, jobs):
                           (mutant["id"], kills[0]))
                     problems += 1
                 elif uncovered:
-                    print("UNCOVERED %s: %s (%s)" % (mutant["id"], mutant["what"], uncovered))
+                    print("UNCOVERED BY FUZZ %s: %s (%s)" % (mutant["id"], mutant["what"], uncovered))
                 elif kills and not equivalent:
                     print("KILLED %s by %s" % (mutant["id"], kills[0]))
                 elif not kills and equivalent:
