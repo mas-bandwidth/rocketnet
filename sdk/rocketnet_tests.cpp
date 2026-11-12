@@ -9797,7 +9797,13 @@ void rocketnet_test_ack_endpoint_processing()
     block.largest = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2;
     block.first_range_length = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4;       // the newer quarter of the older half
 
-    for ( int drain = 0; drain < 100; drain++ )
+    // a batch admits at most 64 of the ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4
+    // acknowledged sequences: one drain per sequence is room at any history,
+    // and the block is drained before the bound
+
+    const int max_drains = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4 + 1;
+    int drain = 0;
+    for ( ; drain < max_drains; drain++ )
     {
         acked_count = 0;                    // each drained batch admits more; overflow defers to the next
         if ( rocketnet_ack_endpoint_process_block( endpoint, &block, 110.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 )
@@ -9805,6 +9811,7 @@ void rocketnet_test_ack_endpoint_processing()
             break;
         }
     }
+    rocketnet_check( drain < max_drains );
 
     rocketnet_ack_endpoint_update_stats( endpoint );
     rocketnet_check( endpoint->packet_loss > 40.0f );           // half the older half unacknowledged
@@ -10747,12 +10754,18 @@ void rocketnet_test_send_history_lossy_long_path()
     rocketnet_check( path );
     rocketnet_test_lossy_path_setup( path, 0x11057ULL );
 
-    const int total_payloads = 12000;
-    const int burst_start = 6000;
+    // about three laps of the history: 12000 payloads, every 100th lost, at
+    // the default 4096; a larger history spaces both by the same factor, so
+    // the losses and the laps stay the same
+
+    const int lap_scale = ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4096;
+    const int total_payloads = 12000 * lap_scale;
+    const int burst_start = 6000 * lap_scale;
+    const int loss_period = 100 * lap_scale;
 
     for ( int i = 0; i < total_payloads; i++ )
     {
-        const int lose = ( i % 100 ) == 99 || ( i >= burst_start && i < burst_start + 3 );
+        const int lose = ( i % loss_period ) == loss_period - 1 || ( i >= burst_start && i < burst_start + 3 );
         rocketnet_test_lossy_path_step( path, 1, lose ? ROCKETNET_TEST_PATH_LOSE : ROCKETNET_TEST_PATH_CARRY );
     }
 
