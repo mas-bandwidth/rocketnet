@@ -18,7 +18,7 @@ functions named below are the design's, and the code will cite this model.
 ## The small instance (MCRNUringQueueBankLayout.tla)
 
 - 2 queues, each with 2 banks of 3 slots; stride 2.
-- 2 fill threads, each making 4 starts per fill, so claims run past a bank and are
+- 2 fill threads, each making 3 starts per fill, so claims run past a bank and are
   refused.
 - 3 destinations: two hash to queue 0 and one to queue 1.
 - A caller may hand finish a pointer 1 byte early, exact, or 1 byte late.
