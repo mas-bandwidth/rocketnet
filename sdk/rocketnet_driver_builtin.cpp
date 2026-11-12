@@ -2710,11 +2710,18 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         plan.worker_threads = 0;
         plan.sockets = 0;
     }
-    else if ( strcmp( transport, "portable" ) == 0
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-              || strcmp( transport, "msgx" ) == 0
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    )
+#if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    else if ( strcmp( transport, "msgx" ) == 0 )
+    {
+        // the staged msgx server: its workers' banks, the receive banks and
+        // the socket table; a shared socket, a kqueue and a socket per client
+        const int workers = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_MSGX_DEFAULT_WORKERS;
+        plan.transport_io_bytes = rocketnet_server_msgx_allocation_bytes( workers, config->max_clients );
+        plan.worker_threads = workers + 1;
+        plan.sockets = 1 + config->max_clients;
+    }
+#endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    else if ( strcmp( transport, "portable" ) == 0 )
     {
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
         return false;

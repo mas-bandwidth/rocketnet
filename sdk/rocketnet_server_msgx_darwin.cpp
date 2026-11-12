@@ -1031,9 +1031,10 @@ static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *,
             const uintptr_t udata = (uintptr_t) event->udata;
             const int slot = (int) (uint32_t) ( udata & 0xFFFFFFFFu ) - 1;
             const uint32_t generation = (uint32_t) ( (uint64_t) udata >> 32 );
-            const int budget = event->data > 0 ? (int) event->data + ROCKETNET_MSGX_RECV_BATCH : ROCKETNET_MSGX_RECV_BATCH;
-            rocketnet_server_msgx_drain( msgx, receiver, (int) event->ident, slot, generation,
-                                         budget < ROCKETNET_MSGX_RECV_QUEUE_SIZE ? budget : ROCKETNET_MSGX_RECV_QUEUE_SIZE );
+            // a bounded read per socket per round, so one flooded socket
+            // (the shared one under a blast) cannot hold the others back;
+            // what it leaves stays readable for the next round
+            rocketnet_server_msgx_drain( msgx, receiver, (int) event->ident, slot, generation, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
         }
 
         rocketnet_msgx_socket_table_holder_end( msgx->table, holder );
@@ -1206,6 +1207,25 @@ static bool rocketnet_server_msgx_descriptors( int max_clients )
     rocketnet_info( "msgx transport: descriptor limit raised from %llu to %llu for a socket per client",
                     (unsigned long long) limit.rlim_cur, (unsigned long long) need );
     return true;
+}
+
+uint64_t rocketnet_server_msgx_allocation_bytes( int num_workers, int max_clients )
+{
+    if ( num_workers < 1 || num_workers > ROCKETNET_MSGX_MAX_WORKERS || max_clients < 1 || max_clients > ROCKETNET_MSGX_TABLE_MAX_SLOTS )
+    {
+        return 0;
+    }
+    uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_msgx_t ), sizeof( rocketnet_msgx_socket_table_t ),
+                                                     sizeof( rocketnet_server_msgx_receiver_t ) } );
+    const uint64_t view = rocketnet_server_process_packets_allocation_bytes( rocketnet_server_receive_packets_per_update( max_clients ) );
+    const uint64_t worker = rocketnet_memory_allocations( { sizeof( rocketnet_server_msgx_worker_t ) } );
+    if ( !bytes || !view || !worker || !rocketnet_memory_add( bytes, 1, view ) || !rocketnet_memory_add( bytes, (uint64_t) num_workers, worker ) ||
+         !rocketnet_memory_add( bytes, (uint64_t) num_workers + 1, rocketnet_platform_thread_allocation_bytes() ) ||
+         !rocketnet_memory_add( bytes, (uint64_t) num_workers, rocketnet_platform_wake_allocation_bytes() ) )
+    {
+        return 0;
+    }
+    return bytes;
 }
 
 static void rocketnet_server_msgx_free( struct rocketnet_server_msgx_t * msgx )

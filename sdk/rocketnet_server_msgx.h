@@ -58,6 +58,7 @@ struct rocketnet_server_msgx_t;
 #define ROCKETNET_MSGX_RECV_QUEUE_SIZE                                8192
 #define ROCKETNET_MSGX_RECV_BATCH                                       32
 #define ROCKETNET_MSGX_RECV_EVENTS                                     256
+#define ROCKETNET_MSGX_RECV_SOCKET_BUDGET                              256
 
 // sockets opened in one update at most: a connect storm of 1000 clients
 // opens over 16 updates instead of one long frame. Chosen, not measured.
@@ -111,6 +112,9 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
 void rocketnet_server_msgx_stop( struct rocketnet_server_msgx_t * msgx );
 bool rocketnet_server_msgx_stopped( struct rocketnet_server_msgx_t * msgx );
 void rocketnet_server_msgx_begin_shutdown( struct rocketnet_server_msgx_t * msgx );
+
+// every allocator byte create requests, overhead included; 0 out of range
+uint64_t rocketnet_server_msgx_allocation_bytes( int num_workers, int max_clients );
 
 // requires stopped; joins and frees
 void rocketnet_server_msgx_destroy( struct rocketnet_server_msgx_t * msgx );
