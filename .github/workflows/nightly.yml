@@ -1014,6 +1014,17 @@ jobs:
   # (run_mutants.py --check-baseline), and --rejudge re-judges a night's
   # results.json against an edited list.
   #
+  # The oracle (run_mutants.py ORACLE) is every test executable whose checks
+  # can kill a library mutant: ./bin/test, test_transport,
+  # test_transport_control, test_lifecycle, test_platform_primitives,
+  # test_sodium and test_wide, in that order, stopping at the first that
+  # fails; each must pass unmutated first. ./bin/test alone missed the other
+  # six (mutation-everything, 2026-11-12: about 20 s a mutant on top of
+  # ./bin/test's 77 s, so every mutant runs all seven). The canaries in
+  # tools/mutation/canaries.tsv run every night: a mutant only the executable
+  # each names can kill, which fails the night if it survives or dies to
+  # another; the per-commit lint checks each is still generated.
+  #
   # Over every SDK source at 45eb05364 less test code and the Windows sources
   # (37617 mutants) a slice holds 357 to 494, mean 418: 52 to 72 minutes, mean 61,
   # at the measured rate, plus the four workers' first build; the 90 slices
@@ -1091,8 +1102,8 @@ jobs:
           fi
           # every survivor must be in the reviewed baseline; the gap count
           # (MUTATION-GAPS) must equal its recorded ratchet and only goes down
-          rule="every survivor is in tools/mutation/survivors.tsv as equivalent or gap; new survivors, stale or killed entries, gone entries and a broken gap-ratchet fail"
-          rule_args=(--platform linux --baseline tools/mutation/survivors.tsv)
+          rule="every survivor is in tools/mutation/survivors.tsv as equivalent or gap; new survivors, stale or killed entries, gone entries and a broken gap-ratchet fail; the oracle is all seven test executables, and every canary in tools/mutation/canaries.tsv must die to the executable it names"
+          rule_args=(--platform linux --baseline tools/mutation/survivors.tsv --canaries tools/mutation/canaries.tsv)
           core=(
             sdk/rocketnet_token_tables.cpp
             sdk/rocketnet_encryption_map.cpp

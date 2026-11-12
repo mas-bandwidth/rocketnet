@@ -507,7 +507,8 @@ def rejudge(results_path, baseline_path):
             sys.exit(f"{m['id']} is not generated from this tree: check out the run's head {run.get('head')}")
         chosen.append(dict(m, occurrence=generated[m["id"]]["occurrence"]))
     failures = judge_with_baseline(chosen, {baseline_key(m) for m in generated.values()}, set(run["files"]), entries)
-    lines = baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet) + judgement_errors(chosen)
+    lines = (baseline_failure_lines(failures, entries) + ratchet_errors(entries, ratchet) + judgement_errors(chosen)
+             + canary_errors(chosen))
     for line in lines:
         print(f"FAILING: {line}")
     known = {v: sum(m.get("verdict") == v for m in chosen) for v in ("known_equivalent", "known_gap")}
@@ -824,6 +825,92 @@ def run(cmd, cwd, timeout, env=None):
     return code, time.monotonic() - start, tail
 
 
+# The oracle: every test executable whose checks can kill a library mutant, run in
+# this order for each mutant (cheapest verdict first). ./bin/test alone missed the
+# checks of the other six (tests/test_driver.cpp in test_transport, for one); they
+# add about 20 s to ./bin/test's 77 s a mutant (mutation-everything, 2026-11-12), so
+# every mutant runs all seven and no case map is needed for them. Each must pass
+# unmutated (the control) before any mutant runs.
+ORACLE = ("test", "test_transport", "test_transport_control", "test_lifecycle", "test_platform_primitives",
+          "test_sodium", "test_wide")
+
+
+def run_oracle(oracle, run_one, timeout, into):
+    """Run run_one(exe, seconds_left) for each executable of the oracle within timeout
+    seconds in all, stopping at the first that fails or times out. Sets into.killed_by to
+    that executable (None when all pass); returns (code or None, seconds, tail)."""
+    into.killed_by, spent = None, 0.0
+    for exe in oracle:
+        left = timeout - spent
+        if left <= 0:
+            into.killed_by = exe
+            return None, spent, f"{exe}: not started, the oracle's {timeout:.1f} s were spent"
+        code, seconds, tail = run_one(exe, left)
+        spent += seconds
+        if code != 0:
+            into.killed_by = exe
+            return code, spent, f"{exe}: {tail}"
+    return 0, spent, ""
+
+
+CANARIES = ROOT / "tools" / "mutation" / "canaries.tsv"
+
+
+def read_canaries(text):
+    """Parse tools/mutation/canaries.tsv -> [{file, original, mutated, killer, reason}].
+
+    One canary a line, tab-separated: file, the line's text, the mutated line's
+    text, the oracle executable that must kill it, the reason (the check that
+    does). '#' lines and blank lines are comments. Raises ValueError naming the
+    line on a wrong column count or an empty column."""
+    canaries = []
+    for number, line in enumerate(text.split("\n"), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        cols = [c.strip() for c in line.split("\t")]
+        if len(cols) != 5 or not all(cols):
+            raise ValueError(f"line {number}: want 5 non-empty tab-separated columns (file, line, mutated line, "
+                             f"executable, reason), not {len(cols)}")
+        canaries.append(dict(zip(("file", "original", "mutated", "killer", "reason"), cols)))
+    return canaries
+
+
+def find_canaries(canaries, generate_file):
+    """(mutants, errors): each canary's one generated mutant, marked with its killer;
+    an error line for a canary the generator emits no longer or more than once."""
+    found, errors, by_file = [], [], {}
+    for c in canaries:
+        if c["file"] not in by_file:
+            by_file[c["file"]] = generate_file(c["file"])
+        hits = [m for m in by_file[c["file"]]
+                if m["original"].strip() == c["original"] and m["mutated"].strip() == c["mutated"]]
+        if len(hits) != 1:
+            errors.append(f"CANARY GONE: {c['file']} `{c['original']}` -> `{c['mutated']}` is generated "
+                          f"{len(hits)} times, not once (rewrite tools/mutation/canaries.tsv)")
+            continue
+        found.append(dict(hits[0], canary=c["killer"], canary_reason=c["reason"]))
+    return found, errors
+
+
+def canary_errors(chosen):
+    """A canary fails unless the executable it names killed it: a canary that survives
+    says that executable is not in the oracle or its check is gone."""
+    lines = []
+    for m in chosen:
+        killer = m.get("canary")
+        if not killer:
+            continue
+        where = f"{m['file']}:{m['line']} `{m['original'].strip()}` -> `{m['mutated'].strip()}`"
+        if m["status"] == "survived":
+            lines.append(f"CANARY survived: {where}: {killer} must kill it ({m['canary_reason']})")
+        elif m["status"] in ("detected", "timed_out") and m.get("killed_by") != killer:
+            lines.append(f"CANARY killed by {m.get('killed_by')}, not {killer}: {where} (a canary names a mutant "
+                         f"only {killer} kills; choose another)")
+        elif m["status"] not in ("detected", "timed_out"):
+            lines.append(f"CANARY not judged ({m['status']}): {where}")
+    return lines
+
+
 class Worker:
     def __init__(self, index, args, files):
         self.dir = Path(args.work_dir).resolve() / f"w{index}"
@@ -843,12 +930,16 @@ class Worker:
         code, seconds, tail = run(cfg, self.dir, self.args.build_timeout)
         if code != 0:
             return code, seconds, tail
-        code, more, tail = run(["cmake", "--build", "build", "--target", "test", "--", f"-j{self.args.build_jobs}"],
-                               self.dir, self.args.build_timeout)
+        code, more, tail = run(["cmake", "--build", "build", "--target", *self.args.oracle,
+                                "--", f"-j{self.args.build_jobs}"], self.dir, self.args.build_timeout)
         return code, seconds + more, tail
 
     def test(self, timeout):
-        return run([str(self.dir / "bin" / "test")], self.dir, timeout, self.env)
+        """Run the oracle's executables in order within timeout seconds in all; stop at the
+        first that fails. (code or None on timeout, seconds, tail); self.killed_by names the
+        executable that failed, None when every one passed."""
+        return run_oracle(self.args.oracle, lambda exe, left: run([str(self.dir / "bin" / exe)], self.dir, left,
+                                                                   self.env), timeout, self)
 
     def mutant(self, m, timeout):
         path = self.dir / m["file"]
@@ -865,6 +956,8 @@ class Worker:
             code, m["test_seconds"], tail = self.test(timeout)
             m["status"] = "timed_out" if code is None else "survived" if code == 0 else "detected"
             m["detail"] = tail if code else ""
+            if code != 0:
+                m["killed_by"] = self.killed_by
         finally:
             path.write_text(original)
 
@@ -979,6 +1072,49 @@ def self_test():
     if last_green_night(lambda p: {"workflow_runs": []} if "workflows" in p else {"jobs": []}, "o/r", "main") is not None:
         print("self-test FAILED: --last-green-night named a night when none passed")
         return 1
+    # the oracle: every executable runs in order; the first that fails names the
+    # kill and the rest do not run; the time is the whole oracle's
+    class Into:
+        killed_by = "unset"
+    ran, into = [], Into()
+
+    def fake(codes):
+        def run_one(exe, left):
+            ran.append(exe)
+            return codes.get(exe, 0), 1.0, f"{exe} out"
+        return run_one
+    if run_oracle(ORACLE, fake({}), 100, into) != (0, 7.0, "") or into.killed_by is not None or ran != list(ORACLE):
+        print(f"self-test FAILED: a passing oracle ran {ran}, killed_by {into.killed_by}")
+        return 1
+    ran.clear()
+    code, _, tail = run_oracle(ORACLE, fake({"test_transport": 1}), 100, into)
+    if code != 1 or into.killed_by != "test_transport" or ran != ["test", "test_transport"] or "test_transport" not in tail:
+        print(f"self-test FAILED: a mutant only test_transport kills read {code} by {into.killed_by}, ran {ran}")
+        return 1
+    ran.clear()
+    if run_oracle(ORACLE, fake({}), 2.5, into)[0] is not None or into.killed_by != "test_lifecycle":
+        print(f"self-test FAILED: an oracle past its time was not timed out at the next executable ({into.killed_by})")
+        return 1
+    # canaries: found by their text, run, and failing unless their executable killed them
+    m0 = first[0]
+    row = f"plant.cpp\t{m0['original'].strip()}\t{m0['mutated'].strip()}\ttest_transport\tthe driver check"
+    canaries = read_canaries(f"# comment\n{row}\nplant.cpp\tno such line\tx\ttest\tgone\n")
+    found, gone = find_canaries(canaries, lambda rel: generate(rel, text))
+    if len(found) != 1 or found[0]["id"] != m0["id"] or found[0]["canary"] != "test_transport" or len(gone) != 1:
+        print(f"self-test FAILED: canaries found {[m['id'] for m in found]}, errors {gone}")
+        return 1
+    try:
+        read_canaries("plant.cpp\tonly two")
+        print("self-test FAILED: a canary row of two columns was accepted")
+        return 1
+    except ValueError:
+        pass
+    for status, by, want in (("survived", None, "CANARY survived"), ("detected", "test", "CANARY killed by test"),
+                             ("did_not_compile", None, "CANARY not judged"), ("detected", "test_transport", None)):
+        lines = canary_errors([dict(found[0], status=status, killed_by=by), dict(first[1], status="survived")])
+        if (want is None and lines) or (want is not None and (len(lines) != 1 or not lines[0].startswith(want))):
+            print(f"self-test FAILED: a canary {status} by {by} gave {lines}, want {want}")
+            return 1
     # --platform linux: Windows and Apple sources and the headers only they
     # include are left out; AF_XDP files stay but are not judged; the rest stay
     cmake = ("set(ROCKETNET_SDK_SOURCES_LINUX\n    sdk/a_uring_linux.cpp)\n"
@@ -1170,6 +1306,12 @@ def main():
                    help="also run every mutant on a line new or modified in git diff REF HEAD, whatever its slice, "
                         "under the same rule (the nightly: --last-green-night, so a line is tested the night it "
                         "lands)")
+    p.add_argument("--oracle", default=",".join(ORACLE),
+                   help="comma-separated test executables under bin/ run for every mutant, in order, stopping at the "
+                        f"first that fails; each must pass unmutated (default {','.join(ORACLE)})")
+    p.add_argument("--canaries", default="", metavar="PATH",
+                   help="PATH (the nightly: tools/mutation/canaries.tsv): mutants run every night that only the "
+                        "executable each names can kill; one that survives or dies to another fails the run")
     p.add_argument("--last-green-night", default="", metavar="REF",
                    help="print the head commit of the newest nightly whose `linux / mutation (REF)` job passed "
                         "(GITHUB_TOKEN, GITHUB_REPOSITORY), nothing when none did, then exit; exit 2 on an API error. "
@@ -1181,6 +1323,7 @@ def main():
                         "at the run's head), then exit: to review a night's artifact after editing the baseline")
     p.add_argument("--summary-md", default="", help="write a Markdown summary of the verdicts here")
     args = p.parse_args()
+    args.oracle = [exe for exe in args.oracle.split(",") if exe]
     if args.self_test:
         return self_test()
     if args.last_green_night:
@@ -1198,6 +1341,15 @@ def main():
         return rejudge(args.rejudge, args.baseline)
     if args.check_baseline:
         errors = check_baseline(args.check_baseline, ROOT)
+        # the canaries beside it: each parses and is still generated exactly once
+        try:
+            canaries = read_canaries(CANARIES.read_text())
+            errors += find_canaries(canaries, lambda rel: generate(rel, (ROOT / rel).read_text()))[1]
+            errors += [f"CANARY {c['killer']} is not in the oracle ({', '.join(args.oracle)})"
+                       for c in canaries if c["killer"] not in args.oracle]
+        except (OSError, ValueError) as error:
+            errors.append(f"{CANARIES}: {error}")
+            canaries = []
         for line in errors:
             print(line)
         if errors:
@@ -1206,7 +1358,8 @@ def main():
         entries, ratchet = read_baseline(Path(args.check_baseline).read_text())
         print(f"ok baseline {args.check_baseline}: {len(entries)} entries, "
               f"{sum(1 for label, _ in entries.values() if label == 'equivalent')} equivalent, "
-              f"{ratchet} gap (gap-ratchet {ratchet}), every entry still generated")
+              f"{ratchet} gap (gap-ratchet {ratchet}), every entry still generated; {len(canaries)} canaries in "
+              f"{CANARIES.relative_to(ROOT)}, each generated once")
         return 0
     survivors = None
     if args.baseline:
@@ -1289,6 +1442,24 @@ def main():
         room = len(rest) if args.max_mutants <= 0 else max(0, args.max_mutants - len(chosen))
         chosen += random.Random(args.seed).sample(rest, min(room, len(rest)))
         chosen.sort(key=lambda m: order[id(m)])
+    canary_lines = []
+    if args.canaries:
+        try:
+            canaries = read_canaries(Path(args.canaries).read_text())
+        except (OSError, ValueError) as error:
+            sys.exit(f"--canaries {args.canaries}: {error}")
+        wrong = sorted({c["killer"] for c in canaries} - set(args.oracle))
+        if wrong:
+            sys.exit(f"--canaries {args.canaries}: {', '.join(wrong)} not in the oracle ({', '.join(args.oracle)})")
+        found, canary_lines = find_canaries(canaries, lambda rel: generate(rel, (ROOT / rel).read_text()))
+        by_chosen = {m["id"]: m for m in chosen}
+        for c in found:
+            if c["id"] in by_chosen:
+                by_chosen[c["id"]].update(canary=c["canary"], canary_reason=c["canary_reason"])
+            else:
+                chosen.append(c)
+        print(f"canaries: {len(found)} of {len(canaries)} run every night, each killed only by the executable it "
+              f"names ({args.canaries})", flush=True)
     print(f"{generated} mutants generated, {len(mutants)} in the slice, {len(chosen)} chosen, {args.workers} workers"
           if slice_of else f"{generated} mutants generated, {len(chosen)} chosen, {args.workers} workers", flush=True)
     if not chosen:
@@ -1308,7 +1479,7 @@ def main():
             setup[i] = f"unmutated build failed in {workers[i].dir}:\n{tail}"
             return
         code, seconds, tail = workers[i].test(args.build_timeout)
-        setup[i] = seconds if code == 0 else f"unmutated ./bin/test failed in {workers[i].dir}:\n{tail}"
+        setup[i] = seconds if code == 0 else f"unmutated oracle failed in {workers[i].dir}: {tail}"
 
     threads = [threading.Thread(target=prepare, args=(i,)) for i in range(len(workers))]
     for t in threads:
@@ -1320,7 +1491,8 @@ def main():
             sys.exit(s)
     baseline = max(setup)
     timeout = args.timeout_factor * baseline
-    print(f"unmutated ./bin/test {baseline:.1f} s (slowest worker); timeout {timeout:.1f} s", flush=True)
+    print(f"unmutated oracle ({' '.join(args.oracle)}) {baseline:.1f} s (slowest worker); timeout {timeout:.1f} s",
+          flush=True)
 
     deadline = started + args.time_budget_minutes * 60 if args.time_budget_minutes > 0 else None
     todo, lock, done = queue.Queue(), threading.Lock(), [0]
@@ -1353,7 +1525,7 @@ def main():
     score = (counts["detected"] + counts["timed_out"]) / judged if judged else 0.0
     wall = time.monotonic() - started
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    run_lines = judgement_errors(chosen)
+    run_lines = judgement_errors(chosen) + canary_lines + canary_errors(chosen)
     baseline_lines, gaps = None, None
     if survivors:
         entries, ratchet = survivors

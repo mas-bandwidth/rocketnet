@@ -1,0 +1,5 @@
+# tools/mutation/canaries.tsv: mutants the nightly runs every night (run_mutants.py --canaries) that only one
+# oracle executable can kill. A canary that survives, or dies to another executable, fails the night: it
+# says that executable has left the oracle or the check that kills it is gone. Columns, tab-separated:
+# file, the line's text, the mutated line's text, the executable that must kill it, the check that does.
+sdk/rocketnet_driver.cpp	const int previous = list[index - 1];	const int previous = list[index - 2];	test_transport	tests/test_driver.cpp checks the server list is sorted by preference (the servers[i - 1] check and, with io_uring, the exact order); ./bin/test has no such check
