@@ -28,7 +28,7 @@
 // (producer: the game thread filling payload rings; consumer: the I/O thread
 // sending them) and receive (producer: the I/O thread reading datagrams;
 // consumer: update processing them). The portable server's TX banks
-// (sdk/rocketnet_driver_builtin.cpp) are the same pattern.
+// (sdk/rocketnet_driver_builtin.cpp) run on it too.
 
 template <int NumBuffers> struct rocketnet_buffer_handoff_t
 {
@@ -68,6 +68,18 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_b
     handoff->ready_head = 0;
     handoff->ready_count = 0;
     handoff->owed = false;
+}
+
+// the same start as a value, for a default member initializer: an owner built
+// by placement new holds a started handoff before any code runs. The unused
+// positions are zero, so at three buffers the free queue reads { 1, 2, 0 }, the
+// literal of proofs/tla/MCRNBankFifoLayout.cfg.
+
+template <int NumBuffers> inline rocketnet_buffer_handoff_t<NumBuffers> rocketnet_buffer_handoff_started( int producer )
+{
+    rocketnet_buffer_handoff_t<NumBuffers> handoff = {};
+    rocketnet_buffer_handoff_init( &handoff, producer );
+    return handoff;
 }
 
 // RNBufferHandoff ProducerExchange: the producer gives its buffer to the ready queue

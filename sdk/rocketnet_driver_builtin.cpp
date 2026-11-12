@@ -3,6 +3,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_buffer_handoff.h"
 #include <new>
 #include <atomic>
 #include <errno.h>
@@ -29,7 +30,8 @@ static const int PORTABLE_RX_BANKS = 3;
 
 // the TX handoff is modelled with these fields and this arithmetic in
 // proofs/tla/RNPortableTx.tla (README-RNPortableTx.md): the free and ready
-// queues are arrays of PORTABLE_TX_BANKS entries with a head and a count, the
+// queues (rocketnet_buffer_handoff_t, sdk/rocketnet_buffer_handoff.h) are
+// arrays of PORTABLE_TX_BANKS entries with a head and a count, the
 // tail position is ( head + count ) % PORTABLE_TX_BANKS, and the banks' arrays
 // lie end to end in one allocation, so a write one past a bank's capacity
 // lands in the next bank (portable_tx_storage_create).
@@ -133,14 +135,9 @@ struct portable_server_t
 #endif // #if ROCKETNET_DEV
 
     int producer = 0; // main thread only
-    // proofs/tla/RNBankFifoLayout.tla Init: this literal holds banks 1 and 2, right for three banks only;
-    // MCRNBankFifoLayoutBrokenLiteralFour.cfg is the same literal at four.
-    int free_index[PORTABLE_TX_BANKS] = { 1, 2, 0 };
-    int free_head = 0;
-    int free_count = PORTABLE_TX_BANKS - 1;
-    int ready_index[PORTABLE_TX_BANKS] = {};
-    int ready_head = 0;
-    int ready_count = 0;
+    // the free and ready queues (sdk/rocketnet_buffer_handoff.h), under mutex.
+    // proofs/tla/RNBankFifoLayout.tla Init: banks 1 and 2 free, bank 0 the producer.
+    rocketnet_buffer_handoff_t<PORTABLE_TX_BANKS> tx_handoff = rocketnet_buffer_handoff_started<PORTABLE_TX_BANKS>( 0 );
     int tx_consumer = -1; // TX worker writes it under the mutex, main reads it there: retained until its complete prefix is consumed
     int tx_cursor = 0;   // TX worker only: first unconsumed entry of that bank
     portable_tx_bank_t bank[PORTABLE_TX_BANKS];
@@ -313,10 +310,13 @@ static bool portable_tx_publish( portable_server_t * server )
     // ( ready_head + ready_count ) % PORTABLE_TX_BANKS and the oldest free bank
     // becomes the producer (HeadMod and TailMod in the model are these moduli).
     // proofs/tla/RNBankFifoLayout.tla Publish: the same exchange with every bank in exactly one place.
+    // Main always holds the producer, so at most PORTABLE_TX_BANKS - 1 banks
+    // are ready and only an empty free queue refuses.
 
-    if ( server->free_count == 0 )
+    const int next = rocketnet_buffer_handoff_publish( &server->tx_handoff, server->producer, PORTABLE_TX_BANKS - 1 );
+    if ( next < 0 )
     {
-        const bool retained = server->tx_consumer >= 0 || server->ready_count > 0;
+        const bool retained = server->tx_consumer >= 0 || server->tx_handoff.ready_count > 0;
         rocketnet_platform_mutex_release( &server->mutex );
         server->publish_refusal = PORTABLE_TX_DROP_NO_FREE_BANK;
         if ( retained )
@@ -326,12 +326,7 @@ static bool portable_tx_publish( portable_server_t * server )
         return false;
     }
 
-    const int old = server->producer;
-    server->producer = server->free_index[server->free_head];
-    server->free_head = ( server->free_head + 1 ) % PORTABLE_TX_BANKS;
-    server->free_count--;
-    server->ready_index[( server->ready_head + server->ready_count ) % PORTABLE_TX_BANKS] = old;
-    server->ready_count++;
+    server->producer = next;
 
     rocketnet_platform_mutex_release( &server->mutex );
 
@@ -369,12 +364,10 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
         // proofs/tla/RNPortableTx.tla WTake: take the oldest ready bank, or
         // observe empty and quit together under the mutex. A retained bank
         // never re-enters this exchange until its suffix is consumed.
-        if ( server->ready_count > 0 )
+        // proofs/tla/RNBankFifoLayout.tla Take: advance the ready head modulo the bank count.
+        index = rocketnet_buffer_handoff_take( &server->tx_handoff );
+        if ( index >= 0 )
         {
-            index = server->ready_index[server->ready_head];
-            // proofs/tla/RNBankFifoLayout.tla Take: advance the ready head modulo the bank count.
-            server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-            server->ready_count--;
             server->tx_consumer = index;
             server->tx_cursor = 0;
         }
@@ -471,8 +464,7 @@ static portable_tx_step_t portable_tx_step( portable_server_t * server )
     // bank, so it is cleared under the mutex, as WTake sets it
     server->tx_consumer = -1;
     // proofs/tla/RNBankFifoLayout.tla Release: the bank returns at the free tail.
-    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = index;
-    server->free_count++;
+    rocketnet_buffer_handoff_release( &server->tx_handoff, index );
     rocketnet_platform_mutex_release( &server->mutex );
 
     return PORTABLE_TX_SENT;
@@ -1082,7 +1074,7 @@ bool rocketnet_portable_tx_test_drained( void * transport )
 
     rocketnet_platform_mutex_acquire( &server->mutex );
 
-    const bool drained = server->free_count == PORTABLE_TX_BANKS - 1;
+    const bool drained = server->tx_handoff.free_count == PORTABLE_TX_BANKS - 1;
     rocketnet_platform_mutex_release( &server->mutex );
 
     return drained;
@@ -1169,7 +1161,7 @@ bool rocketnet_portable_tx_test_handoff()
     bytes[0] = 99;
     to.port = 5678;
 
-    bool valid = server->ready_count == 1 && server->bank[0].count == 1 &&
+    bool valid = server->tx_handoff.ready_count == 1 && server->bank[0].count == 1 &&
                  server->bank[0].data[0][0] == 1 && server->bank[0].to[0].port == 1234;
 
     // a contended publish retains the complete producer; a later try moves
@@ -1179,12 +1171,12 @@ bool rocketnet_portable_tx_test_handoff()
     portable_send( server, &send, 1 );
     valid &= server->producer == 1 && server->bank[1].count == 1;
     server->force_publish_busy = false;
-    valid &= portable_tx_publish( server ) && server->ready_count == 2;
+    valid &= portable_tx_publish( server ) && server->tx_handoff.ready_count == 2;
 
     // stop must expose the last bank before quit permits an empty-ready exit
 
     portable_send( server, &send, 1 );
-    valid &= server->bank[2].count == 1 && server->ready_count == 2;
+    valid &= server->bank[2].count == 1 && server->tx_handoff.ready_count == 2;
 
     for ( int i = 1; i < server->tx_capacity; ++i )
     {
@@ -1199,19 +1191,16 @@ bool rocketnet_portable_tx_test_handoff()
 
     portable_stop( server );
     valid &= server->stop_publish_owed && !server->quit.load() &&
-             server->ready_count == 2 && server->bank[2].count == server->tx_capacity &&
+             server->tx_handoff.ready_count == 2 && server->bank[2].count == server->tx_capacity &&
              server->dropped.load() == 1;
 
-    const int returned = server->ready_index[server->ready_head];
-    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-    server->ready_count--;
+    const int returned = rocketnet_buffer_handoff_take( &server->tx_handoff );
     server->bank[returned].count = 0;
-    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = returned;
-    server->free_count++;
+    rocketnet_buffer_handoff_release( &server->tx_handoff, returned );
 
     (void) portable_stopped( server );
     valid &= !server->stop_publish_owed && !server->stop_publish_saw_quit && server->quit.load() &&
-             server->ready_count == 2 && server->producer == returned &&
+             server->tx_handoff.ready_count == 2 && server->producer == returned &&
              server->dropped.load() == 1;
     portable_server_cleanup( server );
 
@@ -1312,8 +1301,7 @@ static uint64_t portable_tx_test_burst( portable_server_t * server, int updates 
     // the worker takes the first published bank and keeps it in flight
 
     portable_send( server, sends, 1 );
-    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-    server->ready_count--;
+    (void) rocketnet_buffer_handoff_take( &server->tx_handoff );
 
     for ( int update = 0; update < updates; ++update )
     {
@@ -1408,14 +1396,12 @@ bool rocketnet_portable_tx_test_stop_publishes_across_polls()
     // the producer, keeps two packets no free bank can take
 
     portable_send( server, &send, 1 );
-    const int in_flight = server->ready_index[server->ready_head];
-    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-    server->ready_count--;
+    const int in_flight = rocketnet_buffer_handoff_take( &server->tx_handoff );
     portable_send( server, &send, 1 );
     portable_send( server, &send, 1 );
     portable_send( server, &send, 1 );
 
-    bool valid = server->free_count == 0 && server->ready_count == 1 && server->bank[server->producer].count == 2;
+    bool valid = server->tx_handoff.free_count == 0 && server->tx_handoff.ready_count == 1 && server->bank[server->producer].count == 2;
 
     portable_stop( server );
     valid &= server->stop_publish_owed && !server->quit.load() && server->bank[server->producer].count == 2;
@@ -1430,10 +1416,9 @@ bool rocketnet_portable_tx_test_stop_publishes_across_polls()
     // the producer, then quit
 
     server->bank[in_flight].count = 0;
-    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = in_flight;
-    server->free_count++;
+    rocketnet_buffer_handoff_release( &server->tx_handoff, in_flight );
     (void) portable_stopped( server );
-    valid &= !server->stop_publish_owed && server->quit.load() && server->ready_count == 2;
+    valid &= !server->stop_publish_owed && server->quit.load() && server->tx_handoff.ready_count == 2;
     valid &= server->bank[server->producer].count == 0 && server->dropped.load() == 0;
 
     portable_server_cleanup( server );
@@ -1471,8 +1456,7 @@ bool rocketnet_portable_tx_test_drop_paths()
     // one bank in flight, one ready, and a full producer: no free bank
 
     portable_send( server, &send, 1 );
-    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-    server->ready_count--;
+    const int in_flight = rocketnet_buffer_handoff_take( &server->tx_handoff );
     portable_send( server, &send, 1 );
 
     for ( int i = 0; i < server->tx_capacity; ++i )
@@ -1487,8 +1471,7 @@ bool rocketnet_portable_tx_test_drop_paths()
 
     // the worker returns a bank, but the handoff lock is held: handoff busy
 
-    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = 0;
-    server->free_count++;
+    rocketnet_buffer_handoff_release( &server->tx_handoff, in_flight );
     server->force_publish_busy = true;
     portable_send( server, &send, 1 );
     valid &= server->dropped_by_path[PORTABLE_TX_DROP_HANDOFF_BUSY].load() == 1;
@@ -1789,7 +1772,7 @@ static bool portable_send_idle( void * transport )
     {
         return false;
     }
-    const bool idle = server->ready_count == 0 && server->free_count == PORTABLE_TX_BANKS - 1;
+    const bool idle = server->tx_handoff.ready_count == 0 && server->tx_handoff.free_count == PORTABLE_TX_BANKS - 1;
     rocketnet_platform_mutex_release( &server->mutex );
 
     return idle;
@@ -1864,9 +1847,9 @@ bool rocketnet_portable_tx_test_carry()
     }
     portable_send( server, sends, 3 );
     portable_send( server, sends + 3, 1 );
-    bool valid = server->ready_count == 2 && server->free_count == 0;
+    bool valid = server->tx_handoff.ready_count == 2 && server->tx_handoff.free_count == 0;
     valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
-    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && server->free_count == 0;
+    valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && server->tx_handoff.free_count == 0;
     valid &= portable_carry_count == 1 && portable_carry_sent[0] == 10;
     portable_carry_allow = 0;
     valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
@@ -1875,7 +1858,7 @@ bool rocketnet_portable_tx_test_carry()
     portable_begin_shutdown( server );
     valid &= !server->stopping.load( std::memory_order_acquire ) && !server->quit.load( std::memory_order_acquire );
     valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
-    valid &= server->free_count == 1 && portable_carry_terminal_count == 2;
+    valid &= server->tx_handoff.free_count == 1 && portable_carry_terminal_count == 2;
     valid &= portable_carry_sent[1] == 20 && portable_carry_sent[2] == 30;
     valid &= portable_tx_step( server ) == PORTABLE_TX_SENT;
     valid &= portable_carry_count == 4 && portable_carry_sent[3] == 40 && portable_send_idle( server );
@@ -1924,7 +1907,7 @@ bool rocketnet_portable_tx_test_carry_wake()
     }
     portable_send( server, sends, 3 );
     portable_send( server, sends + 3, 1 );
-    bool valid = server->ready_count == 2 && server->free_count == 0;
+    bool valid = server->tx_handoff.ready_count == 2 && server->tx_handoff.free_count == 0;
     // EAGAIN retains the bank: the step is the carry wait, not the idle wait
     valid &= portable_tx_step( server ) == PORTABLE_TX_WAIT_CARRY;
     valid &= server->tx_consumer == 0 && server->tx_cursor == 1 && portable_carry_count == 1;
@@ -2019,15 +2002,11 @@ uint64_t rocketnet_portable_tx_test_sweep_drain( void * transport )
     portable_tx_publish( server );
     server->force_publish_busy = true;
     uint64_t sent = 0;
-    while ( server->ready_count > 0 )
+    for ( int bank = rocketnet_buffer_handoff_take( &server->tx_handoff ); bank >= 0; bank = rocketnet_buffer_handoff_take( &server->tx_handoff ) )
     {
-        const int bank = server->ready_index[server->ready_head];
-        server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
-        server->ready_count--;
         sent += (uint64_t) server->bank[bank].count;
         server->bank[bank].count = 0;
-        server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = bank;
-        server->free_count++;
+        rocketnet_buffer_handoff_release( &server->tx_handoff, bank );
     }
     return sent;
 }
