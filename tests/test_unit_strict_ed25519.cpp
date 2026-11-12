@@ -155,9 +155,13 @@ static void test_strict_ed25519_small_order_r_refused()
     // the judgement's witness: key B (secret scalar 1), R = the identity,
     // S = k: the equation holds and only the small-order R check refuses
 
-    check( strict_verify( 0, "01000000000000000000000000000000000000000000000000000000000000004e68490ddf770a0960616671416709fc29b743db4d754865521bb8d5d3ef820b", strict_base_point ) == 0 );
-
     int admitted = 0;
+    if ( strict_verify( 0, "01000000000000000000000000000000000000000000000000000000000000004e68490ddf770a0960616671416709fc29b743db4d754865521bb8d5d3ef820b", strict_base_point ) )
+    {
+        printf( "strict ed25519: a signature whose R is of small order verified: the identity under the base point\n" );
+        admitted++;
+    }
+
     int equation_rows = 0;
     for ( int i = 0; i < strict_num_r_vectors; i++ )
     {
