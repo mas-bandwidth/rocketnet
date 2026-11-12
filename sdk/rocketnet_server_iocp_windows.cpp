@@ -1253,6 +1253,11 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
         {
             ++batch->tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
         }
+        else
+        {
+            // an error completion or a source it cannot read
+            rocketnet_receive_drop_tally_count( batch->drops, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
+        }
         return;
     }
 
@@ -1494,6 +1499,11 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
                 {
                     ++batch.tally[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+                }
+                else
+                {
+                    // an error completion or a source it cannot read
+                    rocketnet_receive_drop_tally_count( batch.drops, ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED );
                 }
             }
 
