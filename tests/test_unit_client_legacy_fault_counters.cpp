@@ -100,6 +100,61 @@ static void test_client_legacy_receive_counts_too_large_at_update()
 }
 REGISTER_UNIT_TEST( test_client_legacy_receive_counts_too_large_at_update );
 
+// A byte count of exactly the UDP size limit is a datagram, not a fault: the
+// receive keeps it, the update's prefilter refuses it as too large, and it
+// counts PREFILTER_TOO_LARGE once, never also as a count past the limit. It
+// comes from the token's server (127.0.0.1:40000), so the source check
+// passes it to the prefilter.
+
+static int client_legacy_server_receive( void *, rocketnet_address_t * from, uint8_t *, int )
+{
+    if ( client_legacy_fault_calls++ > 0 )
+    {
+        return 0;
+    }
+    memset( from, 0, sizeof( *from ) );
+    from->type = ROCKETNET_ADDRESS_IPV4;
+    from->data.ipv4[0] = 127;
+    from->data.ipv4[3] = 1;
+    from->port = 40000;
+    return client_legacy_fault_bytes;
+}
+
+static void test_client_legacy_receive_keeps_a_datagram_at_the_size_limit()
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+    operations.receive = client_legacy_server_receive;
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_legacy_fault_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_legacy_fault_time;
+    client_legacy_fault_now = 1000.0;
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &operations, &fake );
+    rocketnet_unit_check( transport != NULL );
+
+    const uint64_t * values = rocketnet_client_transport_counters( transport )->values;
+    const uint64_t too_large = values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+
+    client_legacy_fault_bytes = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES;
+    client_legacy_fault_calls = 0;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
+    rocketnet_unit_check( client_legacy_fault_calls == 2 );
+    rocketnet_client_transport_update( transport, 1000.0 );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
+
+    rocketnet_client_transport_update( transport, 1000.1 );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large + 1 );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+}
+
+REGISTER_UNIT_TEST( test_client_legacy_receive_keeps_a_datagram_at_the_size_limit );
+
 // receive answers client_legacy_budget_left one-byte datagrams, then nothing
 static int client_legacy_budget_left;
 
