@@ -3492,6 +3492,10 @@ jobs:
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
           python3 tools/check_tla_records.py
 
+      - name: Every TLC view is used where its justification holds
+        if: ${{ !cancelled() }}
+        run: python3 tools/check_tla_views.py --self-test && python3 tools/check_tla_views.py
+
       - name: Test and check the fuzz regression corpus
         if: ${{ !cancelled() }}
         run: |
