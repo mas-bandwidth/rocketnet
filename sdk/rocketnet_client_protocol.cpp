@@ -718,9 +718,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     sodium_memzero( &temporary_keys, sizeof( temporary_keys ) );
 
-    // commit: the nonce, the keys, the erasure of the ephemeral secret -- from this moment the client holds only the four derived keys, exactly as the server does
-
-    memcpy( client->session_nonce, session_nonce, ROCKETNET_SESSION_NONCE_BYTES );
+    // commit: the keys derived above, the erasure of the ephemeral secret -- from this moment the client holds only the four derived keys, exactly as the server does
 
     sodium_memzero( client->client_ephemeral_secret_key, sizeof( client->client_ephemeral_secret_key ) );
 

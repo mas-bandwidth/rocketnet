@@ -37,8 +37,15 @@ and the jobs of the newest completed one. It is red on:
               date is more than ROW_MAX_AGE_DAYS old while the job is still red
               (re-confirm the cause and owner, or fix it), or its workflow is
               not scheduled.
-  API-ERROR   a GET failed three times (each try waits a little longer). The
-              failure is counted and the listing continues.
+  API-ERROR   could not read run state: a GET failed, printed as
+                API-ERROR could not read run state: GET <url>: <why>
+              A transient failure (HTTP 5xx, 429, a rate-limit 403, a failure
+              before any status) is tried TRIES times, BACKOFF seconds apart or
+              as long as GitHub asks (up to MAX_WAIT); any other status is not
+              retried. After a request runs out of tries, later requests get
+              one try each until one is answered. The failure is counted, the
+              listing continues, and the watch exits 1: an unreadable API is
+              never a pass.
   BAD-ROW     a disposition row that does not parse (exit 2).
 
 A run still going and younger than its next firing plus GRACE is reported as
@@ -70,6 +77,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -84,17 +92,29 @@ GRACE = datetime.timedelta(hours=3)
 # fix to land and short enough that a forgotten row surfaces before it hides a
 # second cause behind the same job name.
 ROW_MAX_AGE_DAYS = 14
-TRIES = 3
+# A transient GitHub failure (5xx, a rate limit, a dropped connection) is tried four
+# times, 5 + 10 + 20 s apart; a wait GitHub names (Retry-After, X-RateLimit-Reset) is
+# honoured up to MAX_WAIT. The job's 15-minute deadline bounds the rest.
+TRIES = 4
+BACKOFF = (5, 10, 20)
+MAX_WAIT = 120
 WATCH_FILE = "nightly-watch.yml"
 DISPOSITIONS = os.path.join("tools", "nightly_dispositions.txt")
 
 UTC = datetime.timezone.utc
 
 
+def api_base():
+    """The REST API root: GITHUB_API_URL as the runner sets it, else github.com's."""
+    return os.environ.get("GITHUB_API_URL") or API
+
+
 class ApiError(Exception):
-    def __init__(self, url):
-        super().__init__(url)
+    def __init__(self, url, why="failed", status=None):
+        super().__init__(f"{url}: {why}")
         self.url = url
+        self.why = why
+        self.status = status
 
 
 # ---------------------------------------------------------------- cron
@@ -244,32 +264,106 @@ def parse_time(text):
 def http_fetch(url):
     request = urllib.request.Request(url)
     request.add_header("Accept", "application/vnd.github+json")
-    request.add_header("Authorization", "Bearer " + os.environ["GITHUB_TOKEN"])
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        request.add_header("Authorization", "Bearer " + token)
     request.add_header("X-GitHub-Api-Version", "2022-11-28")
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)
 
 
+def _header(error, name):
+    headers = getattr(error, "headers", None)
+    if headers is None:
+        return None
+    value = headers.get(name)
+    return None if value is None else str(value)
+
+
+def retry_after(error, now_epoch):
+    """Seconds GitHub asked the client to wait (Retry-After, or X-RateLimit-Reset when the
+    remaining count is 0), or None when it named none."""
+    value = _header(error, "Retry-After")
+    if value is not None and value.strip().isdigit():
+        return int(value.strip())
+    if _header(error, "X-RateLimit-Remaining") == "0":
+        reset = _header(error, "X-RateLimit-Reset")
+        if reset is not None and reset.strip().isdigit():
+            return max(0, int(reset.strip()) - int(now_epoch))
+    return None
+
+
+def transient(error):
+    """True for a failure a later try can fix: HTTP 5xx, 429, a 403 that is a rate limit
+    (GitHub's primary limit says X-RateLimit-Remaining: 0; its secondary limit sends
+    Retry-After), and a failure before any HTTP status (connection refused or reset, DNS,
+    timeout, a truncated or non-JSON body). Any other HTTP status (401, 404, 422, ...) is not
+    transient: trying again reads the same answer."""
+    if isinstance(error, urllib.error.HTTPError):
+        code = error.code
+        if code >= 500 or code == 429:
+            return True
+        if code == 403:
+            return (_header(error, "X-RateLimit-Remaining") == "0"
+                    or _header(error, "Retry-After") is not None)
+        return False
+    return isinstance(error, (OSError, ValueError))
+
+
+def describe(error):
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    return f"{type(error).__name__}: {error}"
+
+
 class Api:
-    def __init__(self, fetch, sleep):
+    """GETs with bounded retries. A transient failure is tried TRIES times in all, waiting
+    BACKOFF[i] seconds (or what GitHub asked, up to MAX_WAIT) between tries; any other failure
+    is not retried. While the API is down (the last request ran out of tries on a transient
+    failure) a request is tried once, so an API that stays down costs one backoff, not one per
+    request; the first answer clears it."""
+
+    def __init__(self, fetch, sleep, clock=time.time):
         self.fetch = fetch
         self.sleep = sleep
+        self.clock = clock
+        self.down = False
 
     def get(self, path, params=None):
-        url = API + path
+        url = api_base() + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        for attempt in range(TRIES):
+        tries = 1 if self.down else TRIES
+        for attempt in range(tries):
             try:
-                return self.fetch(url)
-            except Exception:  # noqa: BLE001 -- any failure of a GET is retried, then reported
-                if attempt + 1 < TRIES:
-                    self.sleep(5 * (attempt + 1))
-        raise ApiError(url)
+                answer = self.fetch(url)
+            except Exception as error:  # noqa: BLE001 -- every failure is classified and reported
+                if not transient(error):
+                    raise ApiError(url, f"{describe(error)}, not retried",
+                                   status=getattr(error, "code", None)) from error
+                if attempt + 1 < tries:
+                    asked = retry_after(error, self.clock())
+                    wait = BACKOFF[attempt] if asked is None else min(max(asked, BACKOFF[attempt]), MAX_WAIT)
+                    self.sleep(wait)
+                    continue
+                self.down = True
+                what = f"{tries} tries" if tries > 1 else "1 try (the API was down for the request before)"
+                raise ApiError(url, f"{describe(error)} after {what}") from error
+            self.down = False
+            return answer
+        raise AssertionError("unreachable")
 
     def scheduled_runs(self, repo, workflow, count):
-        data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
-                        {"event": "schedule", "branch": "main", "per_page": count})
+        try:
+            data = self.get(f"/repos/{repo}/actions/workflows/{workflow}/runs",
+                            {"event": "schedule", "branch": "main", "per_page": count})
+        except ApiError as error:
+            # GitHub knows no workflow at that path until the file has been on the default
+            # branch (or run somewhere): it has no runs, and the watch's NO-RUN / PENDING
+            # rule, from the file's age on main, gives the verdict
+            if error.status == 404:
+                return []
+            raise
         return data.get("workflow_runs", [])
 
     def run_jobs(self, repo, run_id):
@@ -353,7 +447,7 @@ class Watch:
         self.red("NO-VERDICT", f"{workflow} :: {what} {why}")
 
     def api_error(self, error):
-        self.red("API-ERROR", error.url)
+        self.red("API-ERROR", f"could not read run state: GET {error.url}: {error.why}")
 
     def owner_of(self, workflow, job_name, skip=None):
         for row in self.rows:
@@ -554,7 +648,8 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     rows = read_dispositions(dispositions, now.date(), out)
     if rows is None:
         return 2
-    api = Api(fetch or http_fetch, sleep or time.sleep)
+    # the watch's own "now" is the clock a rate-limit reset is measured against
+    api = Api(fetch or http_fetch, sleep or time.sleep, clock=now.timestamp)
     repo = os.environ.get("GITHUB_REPOSITORY", "mas-bandwidth/rocketnet")
     watch = Watch(api, repo, rows, now, out, DISPOSITIONS)
     for name, crons in workflows:
@@ -568,6 +663,9 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
           f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}", file=out)
     print(f"nightly watch: {'RED' if failures else 'green'}: {failures} unowned, no-verdict, stale or api-error",
           file=out)
+    if c["API-ERROR"]:
+        print(f"nightly watch: RED: could not read run state for {c['API-ERROR']} request(s); "
+              "what those requests cover has no verdict tonight", file=out)
     return 1 if failures else 0
 
 
