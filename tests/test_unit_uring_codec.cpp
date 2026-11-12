@@ -949,3 +949,63 @@ REGISTER_UNIT_TEST( test_uring_segment_many_refusing_destinations_cost );
 #endif // #if ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
 #endif // #if ROCKETNET_URING_CODEC_ACTIVE
+
+// the refused-destination table (sdk/rocketnet_server_gso.h), driven in the
+// flush's order: a destination's segmented run is refused and added only
+// when the table does not hold it. A kernel that refuses every segmented
+// send, ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD distinct
+// destinations, two of them sharing one entry: the fallback fires once all
+// of them have refused (proofs/tla/RNSegmentRefusal.tla KernelFallback,
+// MCRNSegmentRefusalShared.cfg). Counting only refusals that filled an empty
+// entry, the shared pair kept the count one short and it never fired.
+
+static void segment_refused_address( struct rocketnet_address_t * address, int port )
+{
+    rocketnet_unit_check( rocketnet_address_parse( address, "10.0.0.1:0" ) );
+    address->port = (uint16_t) port;
+}
+
+static void test_segment_refused_shared_entry_still_reaches_the_fallback()
+{
+    const int threshold = ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    struct rocketnet_address_t destinations[ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD];
+    bool used_entry[ROCKETNET_SEGMENT_REFUSED_ENTRIES] = {};
+
+    // the first two share an entry; the rest each have their own
+
+    segment_refused_address( &destinations[0], 40000 );
+    const int shared = rocketnet_segment_refused_entry( &destinations[0] );
+    used_entry[shared] = true;
+    int found = 1;
+    for ( int port = 40001; port < 60000 && found < threshold; port++ )
+    {
+        struct rocketnet_address_t candidate;
+        segment_refused_address( &candidate, port );
+        const int entry = rocketnet_segment_refused_entry( &candidate );
+        if ( found == 1 ? entry == shared : !used_entry[entry] )
+        {
+            destinations[found++] = candidate;
+            used_entry[entry] = true;
+        }
+    }
+    rocketnet_unit_check( found == threshold );
+
+    struct rocketnet_segment_refused_t refused;
+    memset( &refused, 0, sizeof( refused ) );
+
+    bool fallback = false;
+    for ( int round = 0; round < 4 && !fallback; round++ )
+    {
+        for ( int i = 0; i < threshold && !fallback; i++ )
+        {
+            if ( !rocketnet_segment_refused_contains( &refused, &destinations[i] ) )
+            {
+                fallback = rocketnet_segment_refused_add( &refused, &destinations[i] );
+            }
+        }
+    }
+
+    rocketnet_unit_check( fallback );
+}
+
+REGISTER_UNIT_TEST( test_segment_refused_shared_entry_still_reaches_the_fallback );

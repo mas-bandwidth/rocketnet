@@ -836,6 +836,8 @@ MCRNSegmentRefusal.cfg	MCRNSegmentRefusal.tla	pass	-	check	rnsegmentrefusal	requ
 MCRNSegmentRefusalKernel.cfg	MCRNSegmentRefusal.tla	pass	-	check	rnsegmentrefusal	required	-
 MCRNSegmentRefusalBrokenTransport.cfg	MCRNSegmentRefusal.tla	invariant	OtherDestinationUnaffected	check	rnsegmentrefusal	required	-
 MCRNSegmentRefusalBrokenConsecutive.cfg	MCRNSegmentRefusal.tla	invariant	OtherDestinationUnaffected	check	rnsegmentrefusal	required	-
+MCRNSegmentRefusalShared.cfg	MCRNSegmentRefusal.tla	pass	-	check	rnsegmentrefusal	required	-
+MCRNSegmentRefusalBrokenFillCount.cfg	MCRNSegmentRefusal.tla	invariant	KernelFallback	check	rnsegmentrefusal	required	-
 MCServerSessionBrokenMessageEnd.cfg	MCServerSession.tla	invariant	MessageEndOnlyConnected	ignore-terminal	serversession	required	-
 MCRNSequencingWrap.cfg	MCRNSequencingWrap.tla	pass	-	check	rnsequencingwrap	required	-
 MCRNSequencingWrapBrokenDeltaUnmasked.cfg	MCRNSequencingWrap.tla	invariant	NewerNeverDiscarded	check	rnsequencingwrap	required	-

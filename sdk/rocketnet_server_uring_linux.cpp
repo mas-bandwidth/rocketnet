@@ -1222,7 +1222,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
                 {
                     uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
                     uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
-                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d destinations refused and none accepted, degrading to one SENDMSG per packet", reason, uring->segment_refused.destinations );
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d refusals from destinations not yet remembered and none accepted, degrading to one SENDMSG per packet", reason, uring->segment_refused.destinations );
                 }
                 else if ( !uring->segment_refusal_warned )
                 {

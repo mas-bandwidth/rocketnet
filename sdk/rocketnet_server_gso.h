@@ -157,7 +157,7 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
 struct rocketnet_segment_refused_t
 {
     struct rocketnet_address_t destination[ROCKETNET_SEGMENT_REFUSED_ENTRIES];     // type ROCKETNET_ADDRESS_NONE: empty
-    int destinations;               // refusals that filled an empty entry: distinct refusing destinations, up to the table size
+    int destinations;               // refusals of a destination the table did not hold, up to the threshold: never fewer than the distinct refusing destinations
     bool accepted;                  // a segmented send was accepted since create
 };
 
@@ -179,13 +179,16 @@ static inline bool rocketnet_segment_refused_contains( const struct rocketnet_se
     return entry->type != ROCKETNET_ADDRESS_NONE && rocketnet_address_equal( entry, address );
 }
 
-// remembers a refusing destination. true when segmentation should now turn
-// off for the transport: the threshold of distinct destinations reached with
-// no segmented send ever accepted
+// remembers a refusing destination the table did not hold. true when
+// segmentation should now turn off for the transport: the threshold reached
+// with no segmented send ever accepted. Every such refusal counts, a
+// displaced destination's again included, so two refusers sharing an entry
+// cannot keep the count below the distinct destinations that refused
+// (proofs/tla/RNSegmentRefusal.tla Counted, KernelFallback)
 static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refused_t * refused, const struct rocketnet_address_t * address )
 {
     struct rocketnet_address_t * entry = &refused->destination[rocketnet_segment_refused_entry( address )];
-    if ( entry->type == ROCKETNET_ADDRESS_NONE )
+    if ( refused->destinations < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
     {
         refused->destinations++;
     }

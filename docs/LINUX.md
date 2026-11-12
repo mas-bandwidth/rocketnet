@@ -222,9 +222,10 @@ policy say) logs
 (once; later refusals are spam), resends that one run as plain packets, and
 is remembered so its later runs leave plain; every other destination keeps
 segmenting. Only when `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8)
-destinations have refused and no segmented send was ever accepted (a kernel
+refusals have come from destinations the table did not hold (a destination
+displaced from its entry counts again) and no segmented send was ever accepted (a kernel
 that cannot segment) it logs
-`gso transport: live GSO send refused (...). <n> destinations refused and none accepted, degrading to plain sendmmsg`,
+`gso transport: live GSO send refused (...). <n> refusals from destinations not yet remembered and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
