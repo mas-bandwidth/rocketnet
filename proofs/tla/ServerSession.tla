@@ -485,9 +485,9 @@ ServerSend(i) ==
 \* on a region the receive side already exhausted; a start with no room is
 \* only refused (standard/MESSAGES.md m1.7). rn_message_object_kick
 \* records the reason and calls link.disconnect
-\* (sdk/rocketnet_message_server.cpp:784), which on the server is
+\* (sdk/rocketnet_message_server.cpp:789), which on the server is
 \* rocketnet_server_transport_disconnect_client
-\* (sdk/rocketnet_server_transport.cpp:4553): a connected slot is sent its
+\* (sdk/rocketnet_server_transport.cpp:4674): a connected slot is sent its
 \* disconnect burst, so sendDisc is TRUE. The kick is enabled only while the
 \* server is RUNNING and the slot CONNECTED: the update returns before the
 \* message layer while stopped or stopping (rocketnet_server_update,
