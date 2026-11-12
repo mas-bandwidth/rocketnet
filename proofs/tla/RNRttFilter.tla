@@ -10,8 +10,8 @@
 (* last update that acknowledged a packet (last_ack, has_last_ack), the end *)
 (* of the latest acknowledgement silence (silence_end), and the oldest      *)
 (* unacknowledged number's first send (has_oldest, oldest_number,           *)
-(* oldest_first_send).  Times are kept as ages in ticks, saturating at Cap, *)
-(* past every comparison the model makes.                                   *)
+(* oldest_first_send).  Times are kept as ages in ticks, saturating past   *)
+(* every comparison the model makes (Cap, or Probe).                        *)
 (*                                                                          *)
 (* The sender: reliable numbers U..next-1, each sent when numbered (Send),  *)
 (* resent at any time (Resend; the resend timing is RNResendTiming), at     *)
@@ -20,7 +20,7 @@
 (* number.  The path: a round trip of RttLow ticks that may slow once to    *)
 (* RttHigh (both under Probe: the guarantee is stated for round trips under *)
 (* one second), outages of up to OutageMax ticks in which nothing is        *)
-(* delivered, and loss.  A packet's acknowledgement arrives in the update   *)
+(* delivered, each followed by an update that delivers, and loss.  A packet's acknowledgement arrives in the update   *)
 (* its round trip ends, unless the path is dark then, when it arrives in the *)
 (* first update after the outage, or never (lost).  After Good the path    *)
 (* neither loses nor goes dark (the liveness instance).                     *)
@@ -72,13 +72,18 @@ ASSUME /\ Probe \in Nat \ {0}
        /\ Rule \in {"owed", "gap", "none"}
        /\ FirstAck \in BOOLEAN
 
-Cap == Probe + RttHigh + OutageMax + 1
+\* Ages saturate where no comparison can tell them apart: a packet is never
+\* older than RttHigh + OutageMax (outages are separated by an update that
+\* delivers), so the ages compared with a packet's saturate one past that;
+\* the ages compared only with Probe saturate at Probe.
+Cap == RttHigh + OutageMax + 1
 SrttMax == RttHigh + OutageMax
 Mod == M + 1            \* numbers modulo: U..next-1 never wraps onto itself
 
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
 Age(a) == Min(a + 1, Cap)
+PAge(a) == Min(a + 1, Probe)
 
 VARIABLES
     \* the code's state (rn_window_ack_t)
@@ -115,9 +120,9 @@ Put(p) == [pkts EXCEPT ![CHOOSE s \in Free : \A o \in Free : s <= o] = p]
 Init ==
     /\ srtt = RttLow /\ hasRtt = TRUE
     /\ hasLastAck = ~FirstAck
-    /\ lastAckAge \in (IF FirstAck THEN {Cap} ELSE 0..Probe)
+    /\ lastAckAge \in (IF FirstAck THEN {Probe} ELSE 0..Probe)
     /\ silenceEndAge = Cap
-    /\ hasOldest = FALSE /\ oldestNum = 0 /\ oldestFirstAge = Cap
+    /\ hasOldest = FALSE /\ oldestNum = 0 /\ oldestFirstAge = Probe
     /\ ubase = 0 /\ nums = << >> /\ pkts = [s \in Slots |-> NoPkt]
     /\ rttNow = RttLow /\ dark = FALSE /\ darkLeft = 0 /\ good = FALSE
     /\ owedQuiet = 0 /\ realEndAge = Cap
@@ -209,7 +214,7 @@ Ack(s) ==
        \* rn_window_ack_refresh_oldest when U moved
        /\ IF k > 0
           THEN IF rest = << >>
-               THEN hasOldest' = FALSE /\ oldestNum' = ub /\ oldestFirstAge' = Cap
+               THEN hasOldest' = FALSE /\ oldestNum' = ub /\ oldestFirstAge' = Probe
                ELSE hasOldest' = TRUE /\ oldestNum' = ub /\ oldestFirstAge' = rest[1].first
           ELSE UNCHANGED <<hasOldest, oldestNum, oldestFirstAge>>
        /\ pkts' = [o \in Slots |->
@@ -228,15 +233,17 @@ Ack(s) ==
 Tick ==
     /\ dark \/ \A s \in InFlight : pkts[s].age < pkts[s].prtt
     /\ pkts' = [s \in Slots |-> IF pkts[s].used THEN [pkts[s] EXCEPT !.age = Age(@)] ELSE NoPkt]
-    /\ nums' = [i \in 1..Len(nums) |-> [nums[i] EXCEPT !.first = Age(@)]]
-    /\ lastAckAge' = Age(lastAckAge)
+    /\ nums' = [i \in 1..Len(nums) |-> [nums[i] EXCEPT !.first = PAge(@)]]
+    /\ lastAckAge' = PAge(lastAckAge)
     /\ silenceEndAge' = Age(silenceEndAge)
-    /\ oldestFirstAge' = Age(oldestFirstAge)
+    /\ oldestFirstAge' = PAge(oldestFirstAge)
     /\ realEndAge' = Age(realEndAge)
     /\ owedQuiet' = IF nums # << >> THEN Min(owedQuiet + 1, Probe) ELSE 0
     /\ rttNow' \in (IF rttNow = RttLow THEN {RttLow, RttHigh} ELSE {RttHigh})
     /\ IF dark /\ darkLeft > 1
        THEN dark' = TRUE /\ darkLeft' = darkLeft - 1 /\ good' = good
+       ELSE IF dark
+       THEN dark' = FALSE /\ darkLeft' = 0 /\ good' = good
        ELSE \/ dark' = FALSE /\ darkLeft' = 0 /\ good' \in (IF good THEN {TRUE} ELSE BOOLEAN)
             \/ ~good /\ OutageMax > 0 /\ dark' = TRUE /\ darkLeft' \in 1..OutageMax /\ good' = FALSE
     /\ UNCHANGED <<srtt, hasRtt, hasLastAck, hasOldest, oldestNum, ubase, badSample, badRefusal>>
@@ -265,9 +272,9 @@ LiveSpec == Spec /\ Fairness
 
 TypeOK ==
     /\ srtt \in 0..SrttMax /\ hasRtt \in BOOLEAN
-    /\ lastAckAge \in 0..Cap /\ hasLastAck \in BOOLEAN
+    /\ lastAckAge \in 0..Probe /\ hasLastAck \in BOOLEAN
     /\ silenceEndAge \in 0..Cap
-    /\ hasOldest \in BOOLEAN /\ oldestNum \in 0..Mod - 1 /\ oldestFirstAge \in 0..Cap
+    /\ hasOldest \in BOOLEAN /\ oldestNum \in 0..Mod - 1 /\ oldestFirstAge \in 0..Probe
     /\ ubase \in 0..Mod - 1 /\ Len(nums) <= M
     /\ pkts \in [Slots -> [used : BOOLEAN, age : 0..Cap, prtt : 0..RttHigh, num : -1..Mod - 1]]
     /\ owedQuiet \in 0..Probe /\ realEndAge \in 0..Cap
