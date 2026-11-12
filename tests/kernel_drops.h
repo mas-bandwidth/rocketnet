@@ -158,6 +158,17 @@ static inline uint64_t rocketnet_kernel_udp_receive_drops()
 #endif
 }
 
+// what the count covers, printed with every gate decision
+
+#if defined( __APPLE__ )
+#define ROCKETNET_LOSS_GATE_SCOPE \
+    "WEAK: a machine-wide count (macOS keeps no per-socket drop count), so another process's drops can permit a resend the case did not need"
+#elif defined( __linux__ )
+#define ROCKETNET_LOSS_GATE_SCOPE "the drops of this process's own sockets"
+#else
+#define ROCKETNET_LOSS_GATE_SCOPE "no drop count is read on this platform"
+#endif
+
 struct rocketnet_loss_gate_t
 {
     const char * name;
@@ -194,24 +205,24 @@ static inline bool rocketnet_loss_gate_resend( struct rocketnet_loss_gate_t * ga
     if ( unused < (uint64_t) missing )
     {
         printf( "%s: %d datagrams missing at the deadline, and the kernel counted %llu receive drops since the case began (%llu used by earlier resends): "
-                "the loss is not the kernel's\n",
-                gate->name, missing, (unsigned long long) drops, (unsigned long long) gate->drops_used );
+                "the loss is not the kernel's [%s]\n",
+                gate->name, missing, (unsigned long long) drops, (unsigned long long) gate->drops_used, ROCKETNET_LOSS_GATE_SCOPE );
         fflush( stdout );
         return false;
     }
 
     if ( gate->resends >= ROCKETNET_LOSS_GATE_RESENDS )
     {
-        printf( "%s: %d datagrams still missing after %d resends (kernel receive drops %llu since the case began)\n", gate->name, missing,
-                gate->resends, (unsigned long long) drops );
+        printf( "%s: %d datagrams still missing after %d resends (kernel receive drops %llu since the case began) [%s]\n", gate->name, missing,
+                gate->resends, (unsigned long long) drops, ROCKETNET_LOSS_GATE_SCOPE );
         fflush( stdout );
         return false;
     }
 
     gate->resends++;
     gate->drops_used += (uint64_t) missing;
-    printf( "%s: %d datagrams missing at the deadline; the kernel counted %llu receive drops since the case began: resend %d of %d\n", gate->name,
-            missing, (unsigned long long) drops, gate->resends, ROCKETNET_LOSS_GATE_RESENDS );
+    printf( "%s: %d datagrams missing at the deadline; the kernel counted %llu receive drops since the case began: resend %d of %d [%s]\n",
+            gate->name, missing, (unsigned long long) drops, gate->resends, ROCKETNET_LOSS_GATE_RESENDS, ROCKETNET_LOSS_GATE_SCOPE );
     fflush( stdout );
     return true;
 }
