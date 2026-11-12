@@ -247,13 +247,6 @@ static void test_loopback_hub_null_refused()
     check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
     check( rocketnet_client_required_memory( &client_config ) == 0 );
 
-    // a list with loopback as a later candidate is refused the same way
-
-    client_config.transport = "portable,loopback";
-    status = ROCKETNET_STATUS_OK;
-    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
-
     // the transport layer refuses a loopback endpoint with no hub too
 
     rocketnet_server_transport_config_t transport_config;

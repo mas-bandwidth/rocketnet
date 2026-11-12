@@ -388,11 +388,6 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
     const int allocations = transport_oom_walk_server( &state, "loopback" );
     check( allocations > 0 );
 
-    // two candidates: the same walk, the same count. A failed transport
-    // allocation in the first candidate never falls to the second
-
-    check( transport_oom_walk_server( &state, "loopback, loopback" ) == allocations );
-
     transport_oom_end( &state );
 #if ROCKETNET_DEV
     transport_oom_env_put_back( "ROCKETNET_SERVER_TRANSPORT", &pin );
@@ -470,7 +465,6 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
 
     const int allocations = transport_oom_walk_client( &state, token, "loopback" );
     check( allocations > 0 );
-    check( transport_oom_walk_client( &state, token, "loopback, loopback" ) == allocations );
 
     transport_oom_end( &state );
 #if ROCKETNET_DEV

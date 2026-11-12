@@ -7,13 +7,13 @@
 // libbpf or libxdp, or ROCKETNET_XDP=OFF) compiles the XDP transport out. The
 // xdp row stays in the registry, so a transport list naming xdp refuses it at
 // create with TRANSPORT_NOT_BUILT, never falling silently to another
-// transport, and a list that goes on past xdp is granted the next candidate.
+// transport.
 // That the library carries no XDP code is checked on the built archive by
 // tools/check_xdp_compiled_out.py.
 //
 // The cases register only in a Linux build without XDP; an XDP build's suite
-// is unchanged. Every case runs in memory: the xdp refusal opens nothing and
-// the loopback transport opens no socket, with no clock or network.
+// is unchanged. Every case runs in memory: the xdp refusal opens nothing,
+// with no clock or network.
 
 #include "test_unit_registry.h"
 #include "test_env_source.h"
@@ -103,7 +103,11 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
 
 REGISTER_UNIT_TEST( test_xdp_compiled_out_pin_refuses_not_built );
 
-static void test_xdp_compiled_out_list_takes_the_next_candidate()
+// loopback is pin-only, applicable only as the sole name of a list
+// (standard/TRANSPORT.md t2.4): after xdp it is skipped, so the list's one
+// candidate refuses and the create fails naming it
+
+static void test_xdp_compiled_out_list_skips_pin_only_loopback()
 {
 #if ROCKETNET_DEV
     xdp_compiled_out_env_pin pin;
@@ -115,23 +119,15 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
-    check( server != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-
-    if ( server )
-    {
-        check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
-
-        rn_test_server_transport_stop_and_destroy( server );
-    }
+    check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
 
 #if ROCKETNET_DEV
     xdp_compiled_out_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
 }
 
-REGISTER_UNIT_TEST( test_xdp_compiled_out_list_takes_the_next_candidate );
+REGISTER_UNIT_TEST( test_xdp_compiled_out_list_skips_pin_only_loopback );
 
 static void test_xdp_compiled_out_has_no_memory_plan()
 {

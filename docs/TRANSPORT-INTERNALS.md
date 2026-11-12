@@ -41,8 +41,9 @@ in a build without XDP) is not skipped: its pin refuses at start with
 `auto` inside a list refuses the create.
 
 A transport with a preference rank at or above `ROCKETNET_TRANSPORT_PIN_ONLY`
-(1000) is pin-only: it stays in the availability list, so an explicit name
-always selects it, but `auto` never chooses it. The loopback transport is the
+(1000) is pin-only: it stays in the availability list, so a list of that one
+name selects it, but `auto` never chooses it, and in a longer list it is
+skipped with one log line (standard/TRANSPORT.md t2.4). The loopback transport is the
 one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no

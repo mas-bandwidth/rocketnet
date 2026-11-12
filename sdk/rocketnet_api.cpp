@@ -1092,9 +1092,9 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
     return ROCKETNET_STATUS_OK;
 }
 
-// A list naming loopback needs a hub this library can use: present, and made
-// by this build (rocketnet_loopback_hub_check). A list that does not name
-// loopback never reads the hub.
+// A loopback pin needs a hub this library can use: present, and made by this
+// build (rocketnet_loopback_hub_check). Any other list never reads the hub:
+// loopback in a longer list is skipped at the parse.
 
 static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_ladder_t & ladder, const struct rocketnet_loopback_hub_t * hub )
 {
@@ -1108,7 +1108,7 @@ static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, con
         const enum rocketnet_status_t status = rocketnet_loopback_hub_check( hub );
         if ( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING )
         {
-            rocketnet_error( "%s create refused: the transport list names loopback and loopback_hub is NULL; create a hub with rocketnet_loopback_hub_create and set loopback_hub", endpoint );
+            rocketnet_error( "%s create refused: the transport is loopback and loopback_hub is NULL; create a hub with rocketnet_loopback_hub_create and set loopback_hub", endpoint );
         }
         else if ( status != ROCKETNET_STATUS_OK )
         {

@@ -1059,6 +1059,10 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
         return true;
     }
 
+    // a pin-only transport is applicable only as the sole name of a list
+    // (standard/TRANSPORT.md t2.4); in a longer list it is skipped (rule 4)
+
+    const bool sole_name = strchr( value, ',' ) == NULL;
     const char * cursor = value;
 
     while ( true )
@@ -1109,6 +1113,12 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
             }
         }
 
+        const bool pin_only_in_list = transport_available && !sole_name && rocketnet_transport_pin_only( transport, server );
+        if ( pin_only_in_list )
+        {
+            transport_available = false;
+        }
+
         if ( transport_available )
         {
             if ( ladder->num_candidates >= ROCKETNET_MAX_TRANSPORT_CANDIDATES )
@@ -1133,7 +1143,14 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
             }
 
             ladder->skipped[ladder->num_skipped++] = transport;
-            rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
+            if ( pin_only_in_list )
+            {
+                rocketnet_info( "transport %.*s is pin-only: applicable only as the sole name of a list, not in \"%s\". skipped", name_length, name, value );
+            }
+            else
+            {
+                rocketnet_info( "transport %.*s is not available here. skipped", name_length, name );
+            }
         }
 
         if ( !comma )
