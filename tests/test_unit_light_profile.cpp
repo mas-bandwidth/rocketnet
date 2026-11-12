@@ -160,8 +160,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
+// The protocol send reserve, the worker receive drop totals and three
+// appended counters (the Linux note below) add 3776 bytes to the server
+// and two 64-byte roundings to the client (measured on the studio, Apple
+// clang, Release, DEV=ON); the probe's actual= lines are 1469504927 and
+// 15036554.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456351 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
