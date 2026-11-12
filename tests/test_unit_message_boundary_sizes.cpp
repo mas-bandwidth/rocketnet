@@ -239,6 +239,12 @@ struct boundary_received_t
     int channel;
     std::vector<uint8_t> data;
 };
+// The reliable timeout boundary_config gives: 0, the shipped default (no
+// reliable timeout; probe pacing and the round-trip filter on);
+// test_message_boundary_cases_opted_in reruns the cases at 120000, the
+// opted-in rule (every due number resent, as in v1.0).
+static int g_boundary_reliable_timeout_ms = 0;
+
 static void boundary_config( rocketnet_message_config_t * c, int max_message_bytes )
 {
     rocketnet_message_default_config( c );
@@ -254,7 +260,7 @@ static void boundary_config( rocketnet_message_config_t * c, int max_message_byt
     c->message_resend_delay_initial_ms = 100;
     c->message_resend_delay_min_ms = 20;
     c->message_resend_delay_max_ms = 400;
-    c->reliable_message_timeout_ms = 120000;
+    c->reliable_message_timeout_ms = g_boundary_reliable_timeout_ms;
 }
 static void boundary_setup_max( boundary_pair_t * pair, int max_message_bytes )
 {
@@ -601,3 +607,24 @@ static void test_message_boundary_every_mode_refuses_over_max_message_bytes()
     }
 }
 REGISTER_UNIT_TEST( test_message_boundary_every_mode_refuses_over_max_message_bytes );
+
+// The cases above, rerun with boundary_config opted in at 120000 (no probe
+// pacing, no round-trip filter: the v1.0 resend rule), in one process. The
+// registered cases run them at the default.
+static void test_message_boundary_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_message_boundary_sizes_every_mode_every_channel,
+        test_message_boundary_code1_full_record_beside_other_traffic,
+        test_message_boundary_oversize_unreliable_counts_failed_not_refused,
+        test_message_boundary_every_mode_refuses_over_max_message_bytes,
+    };
+    g_boundary_reliable_timeout_ms = 120000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_boundary_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_message_boundary_cases_opted_in );

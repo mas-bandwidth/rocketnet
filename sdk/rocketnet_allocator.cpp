@@ -653,6 +653,7 @@ void rn_region_carve( rn_region_t * region )
 
     region->span_head = 0;
     region->span_tail = 0;
+    region->span_tail_undo = 0xFFFFFFFFu;
     region->span_first = RN_DESCRIPTOR_NONE;
     region->span_last = RN_DESCRIPTOR_NONE;
 
@@ -1016,6 +1017,8 @@ static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint
 
     region->span_last = d;
 
+    region->span_tail_undo = region->span_tail;              // RNSendSpans Alloc: kept for Free of this span while it is the newest
+
     const uint64_t end = (uint64_t) start + len16;
     region->span_tail = end == region->span_bytes ? 0 : (uint32_t) end;
 }
@@ -1063,6 +1066,15 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
     {
         region->span_head = 0;                              // empty: the floor is the start
         region->span_tail = 0;
+    }
+    else if ( next == RN_DESCRIPTOR_NONE && region->span_tail_undo != 0xFFFFFFFFu )
+    {
+        // the newest span, freed before anything was linked after it (an
+        // aborted start): its bytes are the ring's again, as if never taken
+        // (RNSendSpans Free, TailUndo)
+
+        region->span_tail = region->span_tail_undo;
+        region->span_tail_undo = 0xFFFFFFFFu;
     }
     else if ( prev == RN_DESCRIPTOR_NONE )
     {

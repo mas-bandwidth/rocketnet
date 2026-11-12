@@ -18,6 +18,8 @@
       3. reliable_delivery
       4. unreliable_integrity
       5. counters_agree
+    and fails by name (sends_refused_whole_run) when any client offered
+    sends in a direction and every one was refused for the whole run.
 
     Configuration:
     LOAD_PROFILE=default (the default) keeps the SDK's default message and
@@ -923,6 +925,7 @@ static int combo_is_unreliable_family( uint32_t combo )
 
 struct load_stream_state_t
 {
+    uint32_t offered_count;     /* starts asked for; sent_count is those accepted */
     uint32_t sent_count;
     uint32_t recv_count;
     uint32_t max_seq_seen;
@@ -1828,6 +1831,7 @@ int main( int argc, char ** argv )
                         const uint32_t next_seq = cst->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, next_seq );
                         c2s_offered_total++;
+                        cst->offered_count++;
 
                         uint8_t * out = timed_client_start_message( &timing, clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
                         if ( out )
@@ -1849,6 +1853,7 @@ int main( int argc, char ** argv )
                         const uint32_t next_seq = sv_st->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
                         s2c_offered_total++;
+                        sv_st->offered_count++;
 
                         uint8_t * out = timed_server_start_message( &timing, server, (uint64_t) sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
                         if ( out )
@@ -2166,6 +2171,33 @@ int main( int argc, char ** argv )
     const int application_offers_accepted = !fixed_message_rate ||
                                             ( c2s_offered_total == c2s_sent_total && s2c_offered_total == s2c_sent_total );
 
+    /* A client whose sends in a direction were offered and every one refused,
+       for the whole run, fails the run by name: in the default per-update
+       profile nothing else counts a refused start, so a run whose sends never
+       left would otherwise pass on what little did. */
+    int clients_c2s_refused_whole_run = 0;
+    int clients_s2c_refused_whole_run = 0;
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        uint64_t offered = 0;
+        uint64_t accepted = 0;
+        for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
+        {
+            offered += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].offered_count;
+            accepted += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].sent_count;
+        }
+        const int c2s_refused = offered > 0 && accepted == 0;
+        const int s2c_refused = s2c_streams[i].offered_count > 0 && s2c_streams[i].sent_count == 0;
+        if ( ( c2s_refused || s2c_refused ) && clients_c2s_refused_whole_run + clients_s2c_refused_whole_run < 8 )
+        {
+            fprintf( stderr, "load: client %d had every send refused for the whole run: c2s offered=%" PRIu64 " accepted=%" PRIu64 "%s, s2c offered=%u accepted=%u%s\n",
+                     i, offered, accepted, c2s_refused ? " (REFUSED)" : "", s2c_streams[i].offered_count, s2c_streams[i].sent_count, s2c_refused ? " (REFUSED)" : "" );
+        }
+        clients_c2s_refused_whole_run += c2s_refused;
+        clients_s2c_refused_whole_run += s2c_refused;
+    }
+    const int sends_accepted = ( clients_c2s_refused_whole_run == 0 && clients_s2c_refused_whole_run == 0 ) ? 1 : 0;
+
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
     const int crit1_connect_within_10s = ( all_connected && connect_elapsed <= LOAD_CONNECT_DEADLINE_S ) ? 1 : 0;
     const int crit2_no_unexpected_disconnect = ( unexpected_disconnects == 0 ) ? 1 : 0;
@@ -2288,6 +2320,10 @@ int main( int argc, char ** argv )
     {
         failed_criterion = "connect_within_10s";
     }
+    else if ( !sends_accepted )
+    {
+        failed_criterion = "sends_refused_whole_run";
+    }
     else if ( !crit3_reliable_delivery )
     {
         failed_criterion = "reliable_delivery";
@@ -2325,6 +2361,7 @@ int main( int argc, char ** argv )
                wire_metrics_valid &&
                client_wire_under_100kbps &&
                application_offers_accepted &&
+               sends_accepted &&
                !quit;
 
     char server_transport_io[32];
@@ -2495,7 +2532,7 @@ int main( int argc, char ** argv )
             "application_payload_bytes=%d application_rate_window_seconds=%.3f "
             "offered_c2s_messages=%" PRIu64 " offered_s2c_messages=%" PRIu64 " "
             "accepted_c2s_messages=%" PRIu64 " accepted_s2c_messages=%" PRIu64 " "
-            "application_offers_accepted=%s "
+            "application_offers_accepted=%s sends_accepted=%s clients_c2s_refused_whole_run=%d clients_s2c_refused_whole_run=%d "
             "offered_c2s_messages_per_client_second=%.6f offered_s2c_messages_per_client_second=%.6f "
             "accepted_c2s_messages_per_client_second=%.6f "
             "accepted_s2c_messages_per_client_second=%.6f wire_window=%s wire_window_complete=%s "
@@ -2515,6 +2552,7 @@ int main( int argc, char ** argv )
             c2s_offered_total, s2c_offered_total,
             c2s_sent_total, s2c_sent_total,
             fixed_message_rate ? ( application_offers_accepted ? "PASS" : "FAIL" ) : "UNMEASURED",
+            sends_accepted ? "PASS" : "FAIL", clients_c2s_refused_whole_run, clients_s2c_refused_whole_run,
             offered_c2s_messages_per_client_second, offered_s2c_messages_per_client_second,
             actual_c2s_messages_per_client_second,
             actual_s2c_messages_per_client_second,

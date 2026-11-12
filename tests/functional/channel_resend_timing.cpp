@@ -134,13 +134,13 @@ static double resend_timing_resend_delay_bound( const rn_window_ack_t * ack )
     return std::max( ack->resend_delay_min, std::min( 2.0 * ack->srtt + 4.0 * ack->rttvar + 0.030, ack->resend_delay_max ) );
 }
 
-static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_ms, int loss_percent, resend_timing_row_t * row )
+static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_ms, int loss_percent, int reliable_timeout_ms, resend_timing_row_t * row )
 {
     const double tick = 1.0 / 60.0;
     rocketnet_channel_harness_t h;
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.reliable_message_timeout_ms = 10000;                 // the table checks resends against a reliable timeout: set one
+    config.reliable_message_timeout_ms = reliable_timeout_ms;   // the opted-in table checks resends against the reliable timeout
     resend_timing_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
 
@@ -337,7 +337,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     rocketnet_channel_harness_destroy( &h );
 }
 
-void resend_timing_table_over_lossy_links()
+static void resend_timing_table_over_lossy_links_leg( int reliable_timeout_ms )
 {
     static const int rtts[] = { 20, 50, 100, 200 };
     static const int losses[] = { 10, 20 };
@@ -354,7 +354,7 @@ void resend_timing_table_over_lossy_links()
         {
             for ( int l = 0; l < 2; l++ )
             {
-                resend_timing_run( s == 0 ? "rule" : "fixed", s, rtts[r], losses[l], &rows[s][r][l] );
+                resend_timing_run( s == 0 ? "rule" : "fixed", s, rtts[r], losses[l], reliable_timeout_ms, &rows[s][r][l] );
             }
         }
     }
@@ -400,9 +400,14 @@ void resend_timing_table_over_lossy_links()
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
                 resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
 
-                // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
+                // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit
+                // inside reliable_timeout; at the default there is none
 
-                resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_message_timeout_ms );
+                resend_timing_check( row->reliable_message_timeout_ms == (double) reliable_timeout_ms );
+                if ( reliable_timeout_ms > 0 )
+                {
+                    resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_message_timeout_ms );
+                }
 
                 // the rule, per message: within its own ceiling
 
@@ -410,6 +415,19 @@ void resend_timing_table_over_lossy_links()
             }
         }
     }
+}
+
+// The table opted in to the 10 s reliable timeout, and at the default (0:
+// no reliable timeout, probe pacing and the round-trip filter on). Every row
+// delivers each message once with every resend at its delay either way.
+void resend_timing_table_over_lossy_links()
+{
+    resend_timing_table_over_lossy_links_leg( 10000 );
+}
+
+void resend_timing_table_over_lossy_links_default()
+{
+    resend_timing_table_over_lossy_links_leg( 0 );
 }
 
 /*

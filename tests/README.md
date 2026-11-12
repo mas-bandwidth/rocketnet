@@ -86,6 +86,9 @@ not `./bin/test`.
 Functional cases run in parallel, one job per core (`ROCKETNET_TEST_JOBS` to
 change it); a case that cannot share the host is fixed or moved to the
 nightly tier (`ROCKETNET_TEST_NIGHTLY=1`).
+The unit suite has a nightly tier too (`rocketnet_unit_nightly_cases` in
+`tests/test.cpp`): a unit case over a second whose smaller size runs on every
+commit, such as the per-client isolation case at `ROCKETNET_MAX_CLIENTS`.
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See

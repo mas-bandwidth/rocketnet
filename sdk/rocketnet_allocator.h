@@ -418,6 +418,7 @@ struct rn_region_t
     uint32_t span_bytes;                // SR, the spans' size
     uint32_t span_head;                 // the byte offset of the oldest live span's start (the reclaim floor)
     uint32_t span_tail;                 // the byte offset the next span is placed at
+    uint32_t span_tail_undo;            // the tail before the newest span was linked, 0xFFFFFFFF once spent: freeing that span while older ones live puts the tail back
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     uint32_t schedule_ticket_wrapped;   // 1 once the ticket counter wraps, until the unreliable queue's next push renumbers its entries
