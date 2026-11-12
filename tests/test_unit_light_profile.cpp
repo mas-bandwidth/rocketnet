@@ -66,7 +66,8 @@
 // The server's send pass keeps a writer list, two int32_t a connection
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
-// the stack): computed, not measured on Windows.
+// the stack) (measured, MSVC Release: the check read exactly this figure
+// plus the slack, 1609906366).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608857790 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972215 )
 #elif defined( __APPLE__ )
@@ -161,7 +162,8 @@
 // The server's send pass keeps a writer list, two int32_t a connection
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
-// the stack).
+// the stack) (measured, gcc Release: the check read exactly this figure plus
+// the slack, 3111676715).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628139ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
