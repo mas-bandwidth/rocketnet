@@ -232,6 +232,7 @@ struct rocketnet_server_gso_t
     uint64_t counter_receive_dropped_source;
     uint64_t counter_receive_errors;
     uint64_t counter_gro_batches;
+    uint64_t counter_gro_cmsg_faults;
 
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
@@ -1504,6 +1505,7 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
+    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
 }
 
 // the builtin transport's receive_drops hook: the size pass's drops
@@ -2054,6 +2056,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         gso->counter_receive_dropped_source += buffer->dropped_source;
         gso->counter_receive_errors += buffer->receive_errors;
         gso->counter_gro_batches += buffer->gro_batches;
+        gso->counter_gro_cmsg_faults += buffer->gro_cmsg_faults;
         buffer->receive_errors = 0;
         buffer->dropped_size = 0;
         buffer->dropped_too_large = 0;
