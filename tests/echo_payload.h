@@ -30,9 +30,8 @@ extern "C"
 {
 #endif
 
-// NULL when the payload may be echoed; otherwise what makes it a payload
-// only its sender's peer could answer, for the server to print
-// (tests/echo_payload.cpp).
+// NULL when the payload may be echoed; otherwise why the server must not
+// echo it, which the server prints (tests/echo_payload.cpp).
 
 const char * rocketnet_echo_payload_refusal( const uint8_t * payload, int bytes );
 
