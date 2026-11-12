@@ -1483,6 +1483,47 @@ static void test_rtt_filter_silence_starts_at_exactly_the_probe_interval()
 }
 
 REGISTER_UNIT_TEST( test_rtt_filter_silence_starts_at_exactly_the_probe_interval );
+
+// The sample boundary: a packet sent exactly one srtt before the silence ended
+// is sampled, and one sent a quarter second earlier is not
+// (proofs/tla/RNRttFilter.tla Ack, ">=" on send time against silence_end - srtt).
+// Times are exact in binary, so the boundary is met exactly.
+static void test_rtt_filter_samples_a_packet_sent_exactly_one_srtt_before_the_silence_ended()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+
+    const double t0 = resend_timing_start;
+    const uint64_t pa = resend_timing_send( &f, t0, NULL );
+    check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.25 ) == 1 );
+    check( f.ack.srtt == 0.25 );
+
+    // pb is owed from t0 + 0.5; its ack a probe interval later ends a silence at t0 + 1.5
+    const double silence_end = t0 + 0.5 + RN_PROBE_SECONDS;
+    const uint64_t pb = resend_timing_send( &f, t0 + 0.5, NULL );
+    const uint64_t early = resend_timing_send( &f, silence_end - 0.5, NULL );
+    const uint64_t edge = resend_timing_send( &f, silence_end - 0.25, NULL );
+    check( rn_ordered_acks( &f.ordered, &pb, 1, silence_end ) == 1 );
+    check( f.ack.silence_end == silence_end );
+    check( f.ack.srtt == 0.25 );
+
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    check( rn_ordered_acks( &f.ordered, &early, 1, silence_end ) == 1 );
+    check( f.ack.srtt == srtt && f.ack.rttvar == rttvar );
+
+    check( silence_end - 0.25 == f.ack.silence_end - f.ack.srtt );
+    check( rn_ordered_acks( &f.ordered, &edge, 1, silence_end ) == 1 );
+    check( f.ack.silence_end == silence_end );
+    check( fabs( f.ack.srtt - ( 0.95 * srtt + 0.05 * 0.25 ) ) < 1e-12 );
+    check( fabs( f.ack.rttvar - ( 0.95 * rttvar + 0.05 * fabs( srtt - 0.25 ) ) ) < 1e-12 );
+    check( f.ack.rttvar < rttvar );                                         // the sample moved the deviation
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_samples_a_packet_sent_exactly_one_srtt_before_the_silence_ended );
 #endif // #if ROCKETNET_DEV
 
 // The first acknowledgement of a connection after an outage (m9.2): the
