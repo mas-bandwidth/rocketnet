@@ -310,6 +310,60 @@ static void test_sequenced_drain_refusal_counts_stale()
     rn_region_reset( region );
 }
 
+static void test_sequenced_hold_due_on_a_full_table_returns_its_slot()
+{
+    // A held code-1 record comes due (its ordered epoch opens) in an update
+    // whose unreliable deliveries are already used up: it is dropped and
+    // counted UNRELIABLE_DELIVERY_FULL, and its hold slot goes back to the
+    // free stack. One hold slot and more rounds than slots, so a slot kept
+    // by the drop shows as HOLD_FULL on the next round's hold.
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.sequenced_messages_held = 1;
+    config.unreliable_messages_per_update = 1;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
+    rocketnet_unit_check( arena != NULL );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    rocketnet_unit_check( region->sequenced_hold_free_count == 1 );
+
+    const uint8_t state = 1, unreliable = 2, ordered = 3;
+    rocketnet_message_record_t record;
+    rn_delivery_t out;
+    for ( uint32_t round = 0; round < 3; round++ )
+    {
+        sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, round + 1, 0, &state );
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        rocketnet_unit_check( region->sequenced_hold_free_count == 0 );
+
+        sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, &unreliable );
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+
+        const uint64_t full = counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL];
+        sequenced_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, round, 0, &ordered );
+        record.number = round;
+        rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+
+        rocketnet_unit_check( channels.deliveries == 2 );
+        rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == full + 1 );
+        rocketnet_unit_check( region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+        rocketnet_unit_check( region->sequenced_hold_free_count == 1 );
+        rocketnet_unit_check( region->sequenced_holds_delivered_count == 0 );
+        rocketnet_unit_check( channels.violations == 0 );
+
+        rn_channels_end_update( &channels );
+    }
+
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == 0 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == 0 );
+    rn_unit_arena_destroy( arena );
+}
+
 static void test_rnchannel_sequenced_witness_replays()
 {
     // The reversed traces in README-RNChannelTypes: reject backwards state,
@@ -375,5 +429,6 @@ REGISTER_UNIT_TEST( test_large_future_state_drops_without_violation );
 REGISTER_UNIT_TEST( test_never_takes_a_reliable_number );
 REGISTER_UNIT_TEST( test_large_state_promotes_to_reliable_sequenced );
 REGISTER_UNIT_TEST( test_sequenced_drain_refusal_counts_stale );
+REGISTER_UNIT_TEST( test_sequenced_hold_due_on_a_full_table_returns_its_slot );
 REGISTER_UNIT_TEST( test_rnchannel_sequenced_witness_replays );
 REGISTER_UNIT_TEST( test_sequenced_no_allocation_after_create );
