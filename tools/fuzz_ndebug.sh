@@ -234,6 +234,12 @@ for t in "${TARGETS[@]}"; do
     reproducers=$(find "$OUT/crashes/$t" -type f 2>/dev/null | sort)
     if [ -n "$done_line" ] && [ -z "$reproducers" ]; then
         echo "PASS $t: $done_line (executed units ${execs:-?})"
+        # a clean finish is not enough: the run must reach its target's floor
+        # of coverage and executed units (tools/fuzz_floors.tsv)
+        if ! python3 "$ROOT/tools/check_fuzz_stats.py" --target "$t" --seconds "$SECONDS_PER_TARGET" "$log"; then
+            failed=1
+            echo "FAIL $t: under its floor; log $log"
+        fi
     else
         failed=1
         echo "FAIL $t: no clean finish; log $log"

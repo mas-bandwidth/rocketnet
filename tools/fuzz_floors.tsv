@@ -1,0 +1,30 @@
+# tools/fuzz_floors.tsv: the floor each fuzz target's run must reach (tools/check_fuzz_stats.py).
+# Columns (tab-separated): target, min_cov, min_units_per_second.
+#   min_cov: half the lowest libFuzzer "INITED cov" seen for the target on any leg that fuzzed real
+#     code. A harness that reaches nothing (a no-op build prints "INITED cov: 1") is under it.
+#   min_units_per_second: a tenth of the lowest executed-units rate seen on any leg; times the
+#     seconds the leg asked for, it is the least stat::number_of_executed_units a run may report.
+# Measured 2026-11-12: fuzz-nightly run 43174481713 (Linux asan+ubsan, MSan, macOS and Windows legs,
+# 900 s each; the macOS and Windows uring_recvmsg and gateway_netlink legs at cov 1 left out, as
+# no-ops) and tools/fuzz_ndebug.sh --seconds 30 on hetzner2 (NDEBUG, every target but xdp_filter).
+# The halving and the tenth are margins, not measurements: a leg that lands under a floor is either
+# broken or slower than anything seen; read its log before moving the floor.
+# A new target needs a row: a target with no row is refused.
+rocketnet_fuzz	95	3881.72
+rocketnet_fuzz_client_transport	1326	6.67
+rocketnet_fuzz_config	108	451.24
+rocketnet_fuzz_connect_token	167	78.70
+rocketnet_fuzz_differential	463	8.23
+rocketnet_fuzz_endpoint	597	102.84
+rocketnet_fuzz_gateway_netlink	33	4386.71
+rocketnet_fuzz_message	125	1544.27
+rocketnet_fuzz_receive_structured	555	2.33
+rocketnet_fuzz_round_trip	163	1826.43
+rocketnet_fuzz_server_transport	1328	10.00
+rocketnet_fuzz_session	1826	0.63
+rocketnet_fuzz_token_private	306	18.62
+rocketnet_fuzz_uring_recvmsg	39	10673.67
+rocketnet_fuzz_xdp_frame	31	17294.79
+# xdp_filter: no nightly leg had run it; measured by replaying fuzz-nightly.yml's fuzz job for it on
+# hetzner2 (asan+ubsan, 60 s): INITED cov 143 (final 301), 186806 units/s
+rocketnet_fuzz_xdp_filter	71	18680.60
