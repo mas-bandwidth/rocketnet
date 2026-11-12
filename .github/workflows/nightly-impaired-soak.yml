@@ -1,3 +1,12 @@
+# SUPERSEDED (2026-11-12): this file never reached main, and a cron on a
+# branch never fires, so its schedule is removed. What covers it on main:
+# nightly-soak.yml `soak per transport` (bin/soak --assert-flat, 1800 s per
+# Linux cell portable, gso, gso plain, io_uring, xdp, under loss 5, latency 30,
+# jitter 20, duplicate 2 at both ends), `soak (macos)` and `soak (windows)`
+# (the same impairment per transport, iocp and rio included), and `Many-client
+# load` (bin/load 1000 clients per Linux cell). Not carried over: 1000 clients
+# under impairment in one run; scripts/load-impaired-soak is not on main.
+#
 # The impaired soak: 1000 clients for ten minutes per server transport,
 # under loss, latency, jitter and duplication. scripts/load-impaired-soak runs
 # bin/load 1000 600 once per cell with the development link simulator at both
@@ -32,13 +41,7 @@
 name: nightly-impaired-soak
 
 on:
-  schedule:
-    - cron: "0 12 */2 * *"
   workflow_dispatch:
-  # TEMPORARY: the first run of a new workflow file, which workflow_dispatch
-  # cannot start until the file is on the default branch; removed before merge
-  push:
-    branches: [nightly/impaired-soak]
 
 jobs:
   impaired-soak-linux:
