@@ -399,17 +399,25 @@ default, `ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS` (1000), and
 `ROCKETNET_SEND_KBPS_UNLIMITED` turns the refusal off. The environment
 variable is `ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS`.
 
-A client's send budget counts its payload packets only: its keep-alives
-(at most ten a second, 41 bytes, only while it sends nothing else) and its
-standalone acks (at most one per client update while it owes one, larger
-when the server's packets to it are being lost) are outside it and use the
-second share. A client that sends little while it receives a large, lossy
-stream can send more in acks than its own `send_kbps`: measured on the
-loopback transport, a client updated at 100 Hz receiving the server's
-default 10 Mbps with 10% loss sent about 680 kbps of acks, and a setting of
-64 kbps refused most of them. Size the setting for what the client sends,
-acks included; below about 8 kbps a client's keep-alives and acks alone
-can exceed it.
+A client's send budget counts its payload packets only. Its keep-alives
+and disconnect, and its standalone acks, are outside it, and the server
+pays for them first from credits of their own, so they never count
+against the setting while the client behaves. A standalone ack is sent
+only while the client owes one for a packet the server sent it, so the
+server credits one standalone ack for each packet it sent that client
+(its own standalone acks excepted); a keep-alive goes at most once per
+client send tick (ten a second), so the server holds control tokens
+refilled at twice that rate. Only past those credits does a packet pay
+bytes. A correct client is never refused at any setting, even one of a
+few kbps under the server's default 10 Mbps stream with heavy loss; a
+client that floods acks or keep-alives past its credits, or payload past
+twice the setting, is refused.
+
+The refusal is on by default, at twice
+`ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS`. A deployment whose clients send
+more than about 1000 kbps of payload (a raised client `send_kbps`) must
+raise `per_client_receive_kbps` to match, or set
+`ROCKETNET_SEND_KBPS_UNLIMITED` to turn the refusal off.
 
 ## Receiving messages
 

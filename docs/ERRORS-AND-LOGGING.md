@@ -274,8 +274,10 @@ refusals is the game's decision:
      and write zeroes when that connection is not connected.
    - `receive_refused_packets` and `receive_refused_bytes` (server only;
      the client reads 0) count the packets from that client the server
-     dropped this connection for exceeding twice `per_client_receive_kbps`,
-     and their wire bytes. Each dropped packet authenticated (a forged or
+     dropped this connection for exceeding twice `per_client_receive_kbps`
+     (standalone acks past one for each packet the server sent it, and
+     keep-alives and disconnects past its control tokens, count too), and
+     their wire bytes. Each dropped packet authenticated (a forged or
      damaged one never counts) and was dropped before the server acted on
      it: to the client it is a lost packet. The first refusal of a
      connection logs one `WARN` line, `server refused packets from client

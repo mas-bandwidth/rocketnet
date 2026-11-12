@@ -2109,7 +2109,17 @@ a row marked server or client applies only at that end.
     connected slot, a byte allowance refilled at twice that rate from the
     receive time, capped at the rate times the connection's timeout in
     seconds plus one maximum packet (`ROCKETNET_SEND_BUDGET` wire bytes), and
-    full when the slot is assigned; only time past the last refill adds. A
+    full when the slot is assigned; only time past the last refill adds.
+    Two kinds of packet a client sends outside its send budget pay first
+    from a credit of their own, and from the bytes only when it is empty.
+    A standalone ack spends one ack credit: the session sequences the
+    server has taken for the connection since its first, less the
+    server's own standalone acks and the client's acks already credited,
+    so each eliciting packet the server sent pays for one. A keep-alive or
+    a disconnect spends one control token, refilled like the bytes at twice
+    the client send rate (`ROCKETNET_DEFAULT_SEND_RATE` a second) up to
+    twice that rate times the timeout in seconds plus two, and full when
+    the slot is assigned. A
     session packet whose wire bytes the allowance does not hold MUST be
     dropped here, after the open and the mark of step 14 and before
     anything else acts on it: no ack block applied, no receive-time

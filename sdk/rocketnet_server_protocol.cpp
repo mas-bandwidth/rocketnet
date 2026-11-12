@@ -133,7 +133,7 @@ void rocketnet_server_receive_allowance_start( struct rocketnet_server_receive_a
     allowance->ack_credit_spent = sequences_sent;
 }
 
-// proofs/tla/RNReceiveAllowance.tla TakeAck and TakeControl: the credit of
+// proofs/tla/RNReceiveAllowance.tla AckPays and CtlPays: the credit of
 // the packet's own kind first, then the bytes
 
 bool rocketnet_server_receive_allowance_take_packet( struct rocketnet_server_receive_allowance_t * allowance, double bytes_per_second, int timeout_seconds,
@@ -141,7 +141,7 @@ bool rocketnet_server_receive_allowance_take_packet( struct rocketnet_server_rec
 {
     rocketnet_assert( allowance );
 
-    // proofs/tla/RNReceiveAllowance.tla TakeAck: every session sequence the
+    // proofs/tla/RNReceiveAllowance.tla AckPays: every session sequence the
     // server took before sequences_sent and past the connection's first is
     // a packet it sent; its standalone acks were added to the spent mark as
     // it sent them, so the rest elicited, and each pays for one standalone
@@ -153,7 +153,7 @@ bool rocketnet_server_receive_allowance_take_packet( struct rocketnet_server_rec
         return true;
     }
 
-    // proofs/tla/RNReceiveAllowance.tla TakeControl: Refilled, as the bytes
+    // proofs/tla/RNReceiveAllowance.tla CtlPays: Refilled, as the bytes
 
     if ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET )
     {

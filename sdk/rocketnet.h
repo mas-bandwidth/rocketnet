@@ -211,8 +211,8 @@
 
 /// The server processes at most this many times a client's allowed
 /// client-to-server rate (rocketnet_server_config_t per_client_receive_kbps).
-/// The second share is for what a client sends outside its send budget:
-/// keep-alives, and acknowledgements of what the server sends it.
+/// The second share is headroom over the client's payload; its keep-alives
+/// and standalone acks pay first from credits of their own.
 
 #define ROCKETNET_RECEIVE_ALLOWANCE_FACTOR                 2
 
@@ -1812,8 +1812,13 @@ struct rocketnet_server_config_t
     /// counted in the same wire bytes as the client's send budget, with an
     /// allowance that accrues while the client is quiet up to the
     /// connection's timeout in seconds, so traffic held up by an outage
-    /// shorter than the timeout is processed when it arrives. Size it for
-    /// everything the client sends, its acks included.
+    /// shorter than the timeout is processed when it arrives. Standalone
+    /// acks and keep-alives and the disconnect pay first from credits of
+    /// their own (one ack for each packet the server sent the client, and
+    /// keep-alive tokens at twice the client send rate), so a correct
+    /// client is never refused at any setting; size it for the client's
+    /// payload. On by default: a deployment whose clients send more than
+    /// the default must raise it.
     /// Traffic over the allowance authenticates and is then dropped
     /// unprocessed (to the client, a loss) and counted in the connection's
     /// rocketnet_conditions_t receive_refused_packets and

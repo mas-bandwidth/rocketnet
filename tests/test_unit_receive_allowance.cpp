@@ -453,7 +453,7 @@ static void test_receive_allowance_off_refuses_nothing()
     allowance_fixture_teardown( &fixture );
 }
 
-// The ack credit (proofs/tla/RNReceiveAllowance.tla TakeAck, ServerAck): a
+// The ack credit (proofs/tla/RNReceiveAllowance.tla AckPays, ServerAck): a
 // standalone ack is paid by an eliciting packet the server sent that client,
 // whatever the bytes hold; past the credit it is the bytes', here none, so
 // refused. The server's own standalone acks give no credit, and one client's
@@ -520,7 +520,7 @@ static void test_receive_allowance_ack_credit()
     allowance_fixture_teardown( &fixture );
 }
 
-// The control tokens (proofs/tla/RNReceiveAllowance.tla TakeControl): with no
+// The control tokens (proofs/tla/RNReceiveAllowance.tla CtlPays): with no
 // bytes at all, a client's keep-alives on its send tick for a minute, the
 // tick's worth of a whole timeout arriving at once, and its disconnect are
 // never refused; keep-alives past the tokens are, and a disconnect then

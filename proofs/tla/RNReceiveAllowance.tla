@@ -120,7 +120,6 @@ VARIABLES
     ctlLast,    \* their last refill time
     spent,      \* the ack credit mark per key
     seq,        \* the server's session sequences taken per client (its next)
-    pend,       \* each correct client's eliciting packets in flight to it
     debt,       \* each correct client's ack debt
     kaAt,       \* one past the tick of each correct client's last keep-alive (0: none)
     bye,        \* each correct client has sent its disconnect
@@ -133,7 +132,7 @@ VARIABLES
     start       \* the time argument at which the connection started
 
 vars == << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq,
-          pend, debt, kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
+          debt, kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 TypeOK ==
     /\ now \in 0..Horizon /\ srv \in 0..Horizon /\ hi \in 0..Horizon
@@ -142,7 +141,7 @@ TypeOK ==
     /\ allow \in [Keys -> 0..Cap] /\ last \in [Keys -> 0..Horizon]
     /\ ctl \in [Keys -> 0..CtlCap] /\ ctlLast \in [Keys -> 0..Horizon]
     /\ spent \in [Keys -> Nat] /\ seq \in [Clients -> Nat]
-    /\ pend \in [Correct -> Nat] /\ debt \in [Correct -> Nat]
+    /\ debt \in [Correct -> Nat]
     /\ kaAt \in [Correct -> 0..Horizon + 1] /\ bye \in [Correct -> BOOLEAN]
     /\ elicited \in [Clients -> Nat] /\ credited \in [Clients -> Nat] /\ tokens \in [Clients -> Nat]
     /\ shadow \in [Clients -> [a : 0..Cap, l : 0..Horizon, k : 0..CtlCap, kl : 0..Horizon, s : Nat]]
@@ -158,7 +157,6 @@ Init ==
     /\ ctlLast = [k \in Keys |-> 0]
     /\ spent = [k \in Keys |-> 1]
     /\ seq = [c \in Clients |-> 1]
-    /\ pend = [c \in Correct |-> 0]
     /\ debt = [c \in Correct |-> 0]
     /\ kaAt = [c \in Correct |-> 0]
     /\ bye = [c \in Correct |-> FALSE]
@@ -217,23 +215,25 @@ Tick ==
     /\ \A c \in Correct : \A i \in 1..Len(net[c]) : now + 1 - net[c][i].st <= T - 1
     /\ now' = now + 1 /\ srv' = now + 1 /\ hi' = now + 1 /\ fl' = 0
     /\ sb' = [c \in Correct |-> Min(MaxPkt, sb[c] + B)]
-    /\ UNCHANGED << backs, reconnects, net, allow, last, ctl, ctlLast, spent, seq, pend, debt, kaAt, bye,
+    /\ UNCHANGED << backs, reconnects, net, allow, last, ctl, ctlLast, spent, seq, debt, kaAt, bye,
                     elicited, credited, tokens, shadow, refused, acc, start >>
 
 StepBack ==
     /\ backs < MaxBack /\ srv > 0
     /\ srv' = srv - 1 /\ backs' = backs + 1
-    /\ UNCHANGED << now, hi, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq, pend, debt,
+    /\ UNCHANGED << now, hi, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq, debt,
                     kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 \* the server sends c an eliciting packet (keep-alive, payload, disconnect):
-\* one session sequence; a correct client receives it or loses it later
-Elicit(c) ==
+\* one session sequence. A correct client receives it (its debt grows) or
+\* loses it, at once: receiving later only delays the ack it owes, and the
+\* server's credit was taken when it sent, so at once is the worst case.
+Elicit(c, got) ==
     /\ seq[c] - 1 < MaxElicit
     /\ seq' = [seq EXCEPT ![c] = seq[c] + 1]
     /\ elicited' = [elicited EXCEPT ![c] = elicited[c] + 1]
-    /\ pend' = IF c \in Correct THEN [pend EXCEPT ![c] = pend[c] + 1] ELSE pend
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, debt,
+    /\ debt' = IF c \in Correct /\ got THEN [debt EXCEPT ![c] = debt[c] + 1] ELSE debt
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent,
                     kaAt, bye, credited, tokens, shadow, refused, acc, start >>
 
 \* the server's own standalone ack: a sequence that elicits nothing
@@ -243,16 +243,8 @@ ServerAck(c) ==
     /\ seq' = [seq EXCEPT ![c] = seq[c] + 1]
     /\ spent' = IF ServerAckSpends THEN [spent EXCEPT ![Key(c)] = spent[Key(c)] + 1] ELSE spent
     /\ shadow' = IF ServerAckSpends THEN [shadow EXCEPT ![c].s = shadow[c].s + 1] ELSE shadow
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, pend, debt,
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, debt,
                     kaAt, bye, elicited, credited, tokens, refused, acc, start >>
-
-\* a correct client receives (or loses) one eliciting packet: its debt grows
-Receive(c, got) ==
-    /\ pend[c] > 0
-    /\ pend' = [pend EXCEPT ![c] = pend[c] - 1]
-    /\ debt' = IF got THEN [debt EXCEPT ![c] = debt[c] + 1] ELSE debt
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq,
-                    kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 \* a correct client's send of kind k and n bytes: every send pays its debt
 CanSend(c) == ~bye[c] /\ Len(net[c]) < MaxNet
@@ -264,40 +256,40 @@ Send(c, n) ==
     /\ CanSend(c) /\ n <= sb[c]
     /\ sb' = [sb EXCEPT ![c] = sb[c] - n]
     /\ Sent(c, n, "pay")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, allow, last, ctl, ctlLast, spent, seq, pend,
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, allow, last, ctl, ctlLast, spent, seq,
                     kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 SendAck(c) ==
     /\ "ack" \in Kinds /\ CanSend(c) /\ debt[c] >= 1
     /\ Sent(c, MaxPkt, "ack")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq, pend,
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
                     kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 SendKeepAlive(c) ==
     /\ "ka" \in Kinds /\ CanSend(c) /\ kaAt[c] # now + 1
     /\ kaAt' = [kaAt EXCEPT ![c] = now + 1]
     /\ Sent(c, MaxPkt, "ka")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq, pend,
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
                     bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 SendDisconnect(c) ==
     /\ "dc" \in Kinds /\ CanSend(c)
     /\ bye' = [bye EXCEPT ![c] = TRUE]
     /\ Sent(c, MaxPkt, "dc")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq, pend,
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
                     kaAt, elicited, credited, tokens, shadow, refused, acc, start >>
 
 Deliver(c) ==
     /\ net[c] # << >>
     /\ Take(c, Head(net[c]).n, Head(net[c]).k)
     /\ net' = [net EXCEPT ![c] = Tail(net[c])]
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, seq, pend, debt, kaAt, bye, elicited, start >>
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, seq, debt, kaAt, bye, elicited, start >>
 
 Flood(c, n, k) ==
     /\ fl < FloodPerTick
     /\ Take(c, n, k)
     /\ fl' = fl + 1
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, sb, net, seq, pend, debt, kaAt, bye, elicited, start >>
+    /\ UNCHANGED << now, srv, hi, backs, reconnects, sb, net, seq, debt, kaAt, bye, elicited, start >>
 
 \* the connection ends and a new one takes the slot: the slot's allowance is
 \* zeroed by the reset and started full at the connection's start
@@ -321,7 +313,6 @@ Reconnect(c) ==
     /\ start' = [start EXCEPT ![c] = srv]
     /\ sb' = IF c \in Correct THEN [sb EXCEPT ![c] = MaxPkt] ELSE sb
     /\ net' = IF c \in Correct THEN [net EXCEPT ![c] = << >>] ELSE net
-    /\ pend' = IF c \in Correct THEN [pend EXCEPT ![c] = 0] ELSE pend
     /\ debt' = IF c \in Correct THEN [debt EXCEPT ![c] = 0] ELSE debt
     /\ kaAt' = IF c \in Correct THEN [kaAt EXCEPT ![c] = 0] ELSE kaAt
     /\ bye' = IF c \in Correct THEN [bye EXCEPT ![c] = FALSE] ELSE bye
@@ -334,8 +325,8 @@ Next ==
     \/ Tick
     \/ Done
     \/ StepBack
-    \/ \E c \in Clients : Elicit(c) \/ ServerAck(c)
-    \/ \E c \in Correct, got \in BOOLEAN : Receive(c, got)
+    \/ \E c \in Clients, got \in BOOLEAN : Elicit(c, got)
+    \/ \E c \in Clients : ServerAck(c)
     \/ \E c \in Correct, n \in 1..MaxPkt : Send(c, n)
     \/ \E c \in Correct : SendAck(c) \/ SendKeepAlive(c) \/ SendDisconnect(c)
     \/ \E c \in Correct : Deliver(c)
