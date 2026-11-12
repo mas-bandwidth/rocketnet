@@ -37,6 +37,12 @@
 #                          failure is the coverage line. (soak 100 assumed the
 #                          handshake outlasts 100 iterations, which a fast host
 #                          does not: it connected and verified payloads.)
+#   6  flat, impaired   -- --assert-flat over an impaired 8 s run exits 0.
+#   7  impairment fault -- ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates the ends
+#                          unimpaired: --assert-flat must fail "link impairment
+#                          not observed".
+#   8  leak fault       -- ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one file open
+#                          past the end sample: --assert-flat must fail on fds.
 
 set -u
 
@@ -197,6 +203,42 @@ elif ! grep -q '^soak finished: 1 iterations, 1 connects, 0 payloads verified, 1
     fail "soak 1 did not finish its first handshake with coverage its only failure: $( grep -m1 '^soak finished' "$WORK/handshake.txt" )"
 else
     echo "leg 5  soak 1: the handshake at the bound completed before teardown, no refusal, exit $status (coverage only)"
+fi
+
+# ---------------------------------------------------------------------------
+# 6-8. --assert-flat: an impaired clean run passes; with the impairment not
+#      applied (ROCKETNET_SOAK_FAULT_IMPAIRMENT=1) it must fail "link impairment
+#      not observed"; with one file leaked (ROCKETNET_SOAK_FAULT_LEAK_FD=1) it
+#      must fail on the fd (handle) count.
+
+IMPAIR="ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=10 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=10 ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=5 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=5"
+
+env $IMPAIR "$SOAK" --seconds 8 --assert-flat > "$WORK/flat_clean.txt" 2>&1
+status=$?
+if [ "$status" -ne 0 ]; then
+    fail "an impaired --assert-flat run exited $status: $( grep -m1 -- '--assert-flat FAILED\|FAILED' "$WORK/flat_clean.txt" )"
+else
+    echo "leg 6  --assert-flat over an impaired clean run: exit 0"
+fi
+
+env $IMPAIR ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 "$SOAK" --seconds 8 --assert-flat > "$WORK/flat_impairment.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "the impairment was not applied on purpose and --assert-flat still passed -- the impairment witness is decoration"
+elif ! grep -q 'link impairment not observed' "$WORK/flat_impairment.txt"; then
+    fail "the unimpaired run failed (exit $status) but never said the impairment was not observed"
+else
+    echo "leg 7  --assert-flat against an impairment not applied: red, exit $status, $( grep -m1 'link impairment not observed' "$WORK/flat_impairment.txt" | cut -c1-90 )"
+fi
+
+env $IMPAIR ROCKETNET_SOAK_FAULT_LEAK_FD=1 "$SOAK" --seconds 8 --assert-flat > "$WORK/flat_leak.txt" 2>&1
+status=$?
+if [ "$status" -eq 0 ]; then
+    fail "a file was leaked on purpose and --assert-flat still passed -- the flat check is decoration"
+elif ! grep -q -- '--assert-flat FAILED: \(fds\|handles\)' "$WORK/flat_leak.txt"; then
+    fail "the leaking run failed (exit $status) but never named the fd or handle count"
+else
+    echo "leg 8  --assert-flat against a leaked file: red, exit $status, $( grep -m1 -- '--assert-flat FAILED' "$WORK/flat_leak.txt" | cut -c1-90 )"
 fi
 
 # ---------------------------------------------------------------------------
