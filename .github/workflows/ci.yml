@@ -3224,6 +3224,15 @@ jobs:
       - name: soak argument and summary selftest
         run: bash scripts/soak-args-selftest
 
+      # scripts/soak-per-transport's verdicts on logs it did not run (the
+      # nightly gso red of 2026-11-12, cut and edited): a failure a stall can
+      # cause on a stalled run is UNMEASURED with the watch's annotation; a
+      # refusal with no stall, a verify or conservation failure, or a mixed
+      # run stays red. Under a second, no build.
+
+      - name: soak per transport verdict selftest
+        run: bash scripts/soak-per-transport-selftest
+
       # scripts/vm-boot-guard on fake guests: a guest that never writes its
       # started marker is killed at a 2 s deadline with its whole process
       # group and booted again, three attempts, then fails by name; a guest

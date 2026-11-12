@@ -338,13 +338,17 @@ jobs:
   # with loss, latency, jitter and duplication at both ends of the link
   # simulator (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, written into
   # the transport configs soak creates from, and a cell fails when they leave
-  # no drops or refused duplicates), and prints one PASS or FAIL line per cell. Five
+  # no drops or refused duplicates), and prints one PASS, FAIL or UNMEASURED line per cell (UNMEASURED: the
+  # cell failed as a stall can make it, on a run its own log shows stalled). Five
   # cells of 30 minutes are about 152 minutes, past the two-minute rule as
   # every nightly is. A runner with no VM tier fails the xdp cell by name.
   soak-per-transport:
     name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a night whose only non-passing cells stalled annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host that does not stall the soak process; a cell whose main loop stalled past the send-bank bound and failed only as a stall can make it is UNMEASURED (scripts/soak-per-transport)'
     strategy:
       fail-fast: false
       matrix:
