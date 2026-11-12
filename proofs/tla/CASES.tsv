@@ -861,3 +861,5 @@ MCRNRttFilterBrokenGapNeverRises.cfg	MCRNRttFilter.tla	temporal	SlowPathRaisesEs
 MCRNRttFilterBrokenNoFilter.cfg	MCRNRttFilter.tla	invariant	NoSampleAcrossSilence	check	rnrttfilter	required	-
 MCRNRttFilterFirstAck.cfg	MCRNRttFilter.tla	invariant	NoSampleAcrossSilence	check	rnrttfilter	required	-
 MCRNRttFilterUnowed.cfg	MCRNRttFilter.tla	invariant	OutageNeverPoisons	check	rnrttfilter	required	-
+MCRNRttFilterStandard.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
+MCRNRttFilterBrokenNoFilterPoisons.cfg	MCRNRttFilter.tla	invariant	OutageNeverPoisons	check	rnrttfilter	required	-
