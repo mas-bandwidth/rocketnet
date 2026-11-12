@@ -16,32 +16,33 @@ EXTENDS RNSendGatherLayout
 
 CONSTANT TraceLog
 
-\* a case the model cannot start from is an error, never a case skipped
+CaseFields == {"dest", "size", "order", "runs"}
+
+\* every case names every field, and a case the model cannot start from is
+\* an error, never a case skipped: checked once, when TLC starts (a
+\* quantifier over TraceLog in a state formula costs the whole log per state)
 ASSUME \A n \in DOMAIN TraceLog :
+    /\ DOMAIN TraceLog[n] = CaseFields
     /\ DOMAIN TraceLog[n].dest = 0..(S - 1) /\ DOMAIN TraceLog[n].size = 0..(S - 1)
     /\ \A s \in 0..(S - 1) : TraceLog[n].dest[s] \in Dests /\ TraceLog[n].size[s] \in Sizes
 
 VARIABLE ci          \* the case this behaviour runs
 
-CaseFields == {"dest", "size", "order", "runs"}
-
 \* the case's bank first, so TLC takes it rather than enumerating every bank
 TraceInit ==
     /\ ci \in DOMAIN TraceLog
-    /\ DOMAIN TraceLog[ci] = CaseFields
     /\ dest = TraceLog[ci].dest
     /\ size = TraceLog[ci].size
     /\ Init
 
 TraceSpec == TraceInit /\ [][Next /\ UNCHANGED ci]_<<vars, ci>> /\ WF_<<vars, ci>>(Next /\ UNCHANGED ci)
 
-\* every case names every field, and the model ends where the code did
+\* the model ends where the code did
 TraceConsistent ==
-    /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = CaseFields
-    /\ (pc = "done" =>
-           /\ ~oob
-           /\ order = TraceLog[ci].order
-           /\ runs = TraceLog[ci].runs)
+    pc = "done" =>
+        /\ ~oob
+        /\ order = TraceLog[ci].order
+        /\ runs = TraceLog[ci].runs
 
 \* every case reaches the end, so TraceConsistent is checked on it
 TraceEnds == <>(pc = "done")
