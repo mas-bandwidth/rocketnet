@@ -206,7 +206,7 @@ static void test_held_index_chain_wraps_past_the_last_cell()
     held_map( &h, held_homes );
     const uint32_t last = h.region->held_entries - 1;
 
-    held_key_t key[4];
+    held_key_t key[4] = {};          // zeroed: gcc at -Os cannot see held_pick reads only the keys picked so far
     check( held_pick( held_homes, last, key, 0, &key[0] ) );
     check( held_pick( held_homes, last, key, 1, &key[1] ) );
     check( held_pick( held_homes, 0, key, 2, &key[2] ) );
@@ -266,7 +266,7 @@ static void test_held_index_finds_entries_past_their_home()
     held_map( &h, held_homes );
     const uint32_t last = h.region->held_entries - 1;
 
-    held_key_t key[4];
+    held_key_t key[4] = {};          // zeroed: gcc at -Os cannot see held_pick reads only the keys picked so far
     check( held_pick( held_homes, last, key, 0, &key[0] ) );
     check( held_pick( held_homes, last, key, 1, &key[1] ) );
     check( held_pick( held_homes, 0, key, 2, &key[2] ) );
@@ -310,7 +310,7 @@ static void test_held_index_entry_at_its_home_stays()
     held_create( &h );
     held_map( &h, held_homes );
 
-    held_key_t key[3];
+    held_key_t key[3] = {};          // zeroed: gcc at -Os cannot see held_pick reads only the keys picked so far
     uint32_t home = 0;
     bool found = false;
     for ( ; home + 2 < h.region->held_entries && !found; home++ )
