@@ -674,7 +674,7 @@ jobs:
         run: |
           set +e -uo pipefail
           case "$RUNNER_OS" in
-            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional ;;
+            Linux)   matrix=$TRANSPORT_MATRIX_LINUX;   functional=./bin/functional; functional_production=./bin/functional_production ;;
             macOS)   matrix=$TRANSPORT_MATRIX_MACOS;   functional=./bin/functional ;;
             Windows) matrix=$TRANSPORT_MATRIX_WINDOWS; functional=./bin/Release/functional.exe ;;
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
@@ -694,6 +694,21 @@ jobs:
             xdp_root_cases="$xdp_root_cases test_xdp_transport_posix_server_create_destroy_1000 test_xdp_transport_posix_server_restart_same_port_100 test_xdp_transport_posix_destroy_under_traffic_100"
           fi
           xdp_cases_run="$xdp_cases $xdp_root_cases"
+          # The Release row builds the production library (ROCKETNET_DEV=OFF):
+          # its own suite, functional_production, runs the xdp rows it
+          # registers in the same guests (prod:<case>), so the library users
+          # link is the one tested under root on a veth pair (inside the guest
+          # the production suite leaves its XDP commit barrier down,
+          # tests/functional/rocketnet_functional_tests.cpp). xdp_dev_only
+          # names the rows only the development suite registers (the posix
+          # client-fault cases: functional_production answers "unknown functional
+          # test"); a row production stops registering fails by name (exit 2).
+          xdp_dev_only="test_posix_hard_killed_client_xdp_ipv4_client_portable test_posix_hard_killed_client_xdp_ipv6_client_portable test_posix_send_to_closed_port_xdp_ipv4_client_portable test_posix_send_to_closed_port_xdp_ipv6_client_portable test_posix_client_server_gone_xdp_ipv4_client_portable test_posix_client_server_gone_xdp_ipv6_client_portable"
+          if [ "${XDP_DEV:-OFF}" = OFF ]; then
+            for case in $xdp_cases $xdp_root_cases; do
+              case " $xdp_dev_only " in *" $case "*) ;; *) xdp_cases_run="$xdp_cases_run prod:$case" ;; esac
+            done
+          fi
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
@@ -760,7 +775,9 @@ jobs:
                   {
                     printf ': > %q\n' "$marker"
                     printf 'for case in %s; do\n' "$guest_cases"
-                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s %q --run "$case" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$functional" "$logs/$server.$client"
+                    printf '  suite=%q; name=$case\n' "$functional"
+                    printf '  case "$name" in prod:*) suite=%q; name=${name#prod:} ;; esac\n' "$functional_production"
+                    printf '  sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=%s "$suite" --run "$name" > %q.$case.log 2>&1\n' "$nightly_no_timeout" "$logs/$server.$client"
                     printf '  echo $? > %q.$case.rc\n' "$logs/$server.$client"
                     printf 'done\n'
                   } > "$script"
@@ -812,7 +829,7 @@ jobs:
               card=""
               for x in $expected; do [ "${x%%=*}" = "$case" ] && card=${x#*=}; done
               ok=1
-              [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
+              [ "$rc" = 0 ] && grep -qx "${case#prod:}" "$log" && ! grep -q '\[SKIPPED' "$log" || ok=0
               if [ -n "$card" ] && { [ "$ok" = 1 ] || grep -q 'remove the marker' "$log"; }; then
                 echo "XPASS server=$server client=$client $case: $card has landed; remove its expected-fail mark"
                 failed=1
