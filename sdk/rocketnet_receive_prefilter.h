@@ -25,7 +25,7 @@
 // config's packet_filter, which the transport receives at create in
 // rocketnet_server_transport_io_config_t.transport->packet_filter. A
 // transport copies those ROCKETNET_FILTER_VALUE_BYTES bytes into its own
-// state at create and passes them to every call. No snapshot, no lock, no
+// state at create and passes them to every call. No published copy, no lock, no
 // main-thread state: any number of workers may call it at once.
 //
 // A datagram it accepts still runs the whole ladder on main, which repeats
