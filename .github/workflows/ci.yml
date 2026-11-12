@@ -2289,6 +2289,21 @@ jobs:
   # sealed packet's construction and opening, base64 and
   # the config parses, all in memory.
   #
+  # SINCE v1.1.2 IT ALSO RUNS, under qemu-user and still with no socket, the
+  # unit cases that judge bytes (tools/bigendian/run_byte_cases.sh): every
+  # case of the standard's byte vectors (tests/test_unit_standard_*.cpp and
+  # the connect token vectors), so a field written in host order fails here
+  # rather than only in the nightly guest, and every case of the XDP filter
+  # compiled as host C for s390x (tests/xdp_host/ takes the target's byte
+  # order from the s390x kernel headers), so a conversion in the XDP program
+  # that swaps whatever the byte order is fails here. The XDP program itself
+  # is compiled for bpfeb against the s390x headers, and the object the
+  # library embeds must be big-endian (cmake/CheckXdpObjectByteOrder.cmake
+  # fails the build otherwise). These went in after the XDP program's three
+  # length fields were found swapped unconditionally on a big-endian host,
+  # which no leg could see: the filter cases were built on little-endian
+  # hosts only, and this leg embedded a little-endian object.
+  #
   # SO THE BIG-ENDIAN ASSERTIONS THAT GATE ARE THE WIRE CHECK'S. The matching
   # #if ROCKETNET_BIG_ENDIAN block in rocketnet_test_endian is compiled out on
   # every leg that runs the suite and never executed on the leg that builds it
@@ -2326,7 +2341,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for tool in cmake xxd pkg-config readelf s390x-linux-gnu-gcc s390x-linux-gnu-g++; do
+          for tool in cmake xxd pkg-config readelf clang s390x-linux-gnu-gcc s390x-linux-gnu-g++; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
               missing=1
@@ -2387,6 +2402,28 @@ jobs:
       - name: Build the library and the suite for s390x
         run: cmake --build build --target rocketnet test test_sodium --parallel
 
+      # The real XDP program for bpfeb, against the s390x kernel headers, the
+      # way a big-endian build embeds it: a header or macro that only one byte
+      # order has fails to compile here. Its ELF byte order is then read by
+      # the same script the build runs on the embedded object, and the
+      # negative control proves that script refuses an object in the build
+      # machine's byte order (what the bare bpf target produces here).
+
+      - name: Compile the XDP program for big-endian BPF and check its byte order
+        run: |
+          set -euo pipefail
+          clang -D__linux__ -D__BPF__ -ffreestanding -O2 -g -I/usr/include/s390x-linux-gnu -Isdk \
+            -target bpfeb -c sdk/xdp/server_xdp.c -o build/server_xdp_bpfeb.o
+          cmake -DOBJECT=build/server_xdp_bpfeb.o -DHEADER=build/server_xdp_bpfeb.h -DBYTE_ORDER=BIG_ENDIAN \
+            -P cmake/CheckXdpObjectByteOrder.cmake
+          clang -D__linux__ -D__BPF__ -ffreestanding -O2 -I/usr/include/x86_64-linux-gnu -Isdk \
+            -target bpf -c sdk/xdp/server_xdp.c -o build/server_xdp_build_machine.o
+          if cmake -DOBJECT=build/server_xdp_build_machine.o -DHEADER=build/server_xdp_build_machine.h \
+            -DBYTE_ORDER=BIG_ENDIAN -P cmake/CheckXdpObjectByteOrder.cmake; then
+            echo "check failed: the byte-order check accepted a little-endian object for a big-endian library"
+            exit 1
+          fi
+
       - name: Build the big-endian wire check
         run: |
           s390x-linux-gnu-g++ -std=c++11 -Wall -ffp-contract=off -Isdk \
@@ -2409,6 +2446,10 @@ jobs:
             readelf -h "$binary" | grep -q "2's complement, big endian"
             readelf -h "$binary" | grep -qi "s/390"
           done
+          # the XDP object the library embeds: built (the leg provides clang,
+          # libbpf and libxdp, so XDP is never compiled out here) and big-endian
+          readelf -h build/generated/server_xdp.o | grep -E "Data|Machine"
+          readelf -h build/generated/server_xdp.o | grep -q "2's complement, big endian"
 
       # QEMU_LD_PREFIX=/ points the emulated loader at the host filesystem,
       # where the multiarch tree already holds every s390x library these
@@ -2427,6 +2468,14 @@ jobs:
         run: |
           "$QEMU_S390X" ./bin/wire_check
           "$QEMU_S390X" ./bin/test_sodium
+
+      # the standard's byte vectors and the XDP filter cases, one process per
+      # case; a case named in their sources but not built fails the step
+      - name: Run the byte vectors and the XDP filter cases on big-endian
+        env:
+          QEMU_LD_PREFIX: /
+          LD_LIBRARY_PATH: /usr/lib/s390x-linux-gnu:/usr/s390x-linux-gnu/lib
+        run: tools/bigendian/run_byte_cases.sh bin/test "$QEMU_S390X"
 
       - name: Enforce combined unit and functional timing
         shell: bash
@@ -3130,6 +3179,20 @@ jobs:
         run: |
           python3 tools/check_no_owned_linked_lists.py --self-test
           python3 tools/check_no_owned_linked_lists.py
+
+      # tools/check_byte_order.py exits 1 when the library (sdk/, the XDP
+      # program included) swaps bytes whatever the host's byte order is
+      # (__builtin_bswap*, bswap_*, _byteswap_*, a function named as a swap,
+      # a hand-written shift swap) outside a byte-order preprocessor branch,
+      # reads wire bytes through an integer pointer cast or a one-integer
+      # memcpy outside its reasoned allow list, or converts netlink data
+      # (host order) to network order. Such a swap is right on little-endian
+      # and wrong on big-endian, where only a big-endian run sees it.
+      # --self-test holds the red and green controls.
+      - name: Check byte order in the library
+        run: |
+          python3 tools/check_byte_order.py --self-test
+          python3 tools/check_byte_order.py
 
       # The validation-tool self-test suites the repository ships
       # (tools/test_check_frame_budget.py, test_check_server_calls.py,

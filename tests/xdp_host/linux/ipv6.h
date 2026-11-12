@@ -4,7 +4,8 @@
 */
 
 // The host shim for <linux/ipv6.h>: the fixed IPv6 header (RFC 8200 section
-// 3) with the kernel's in6_addr union. Packed so a header at any frame offset
+// 3) with the kernel's in6_addr union, its bitfields in the kernel's order for
+// the target's byte order (linux/bpf.h). Packed so a header at any frame offset
 // is read safely; the layout has no padding either way.
 
 #pragma once
@@ -27,8 +28,13 @@ struct in6_addr
 
 struct ipv6hdr
 {
+#if defined( __LITTLE_ENDIAN_BITFIELD )
     __u8 priority:4,
          version:4;
+#else // #if defined( __LITTLE_ENDIAN_BITFIELD )
+    __u8 version:4,
+         priority:4;
+#endif // #if defined( __LITTLE_ENDIAN_BITFIELD )
     __u8 flow_lbl[3];
     __be16 payload_len;
     __u8 nexthdr;

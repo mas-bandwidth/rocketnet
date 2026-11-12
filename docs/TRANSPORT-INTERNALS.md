@@ -847,8 +847,11 @@ redirect decision per receive queue. It also covers the `config == NULL`
 branch, which the kernel's one-entry array never reaches. Only the kernel
 tier (`test_xdp_filter`) shows what the verifier accepts, the real helpers'
 behaviour, and the real per-CPU and XSKMAP maps. The host target is built for
-GCC or Clang on a little-endian, non-Windows host, and its cases are in the
-unit suite on Linux only. When the filter adopts
+GCC or Clang on a non-Windows host of either byte order: the shim takes the
+target's (the kernel's `<asm/byteorder.h>` where present, else
+`__BYTE_ORDER__`), so the per-commit s390x leg runs the cases on big-endian
+bytes, where a conversion that swaps whatever the byte order is fails. Its
+cases are in the unit suite on Linux only. When the filter adopts
 a new kernel header, helper or map, the shim follows in the same change, with
 the helper's kernel source cited. the counter-row check `test_xdp_transport_host_every_counter_has_a_case`
 runs in the static source-audit binary `./bin/source_audit` (which CI runs on

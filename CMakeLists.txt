@@ -267,7 +267,10 @@ endfunction()
 
 # server_xdp.o is compiled here, at build time, and embedded in the library as
 # bytes (cmake/EmbedXdp.cmake); the server host needs no compiler. Only the
-# Linux xdp server transport includes the generated header.
+# Linux xdp server transport includes the generated header. The object's ELF
+# byte order is then checked against the library's
+# (cmake/CheckXdpObjectByteOrder.cmake), so a cross build cannot embed an
+# object for the build machine's byte order.
 include(cmake/XdpSources.cmake)
 set(ROCKETNET_XDP_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_server_xdp.h")
 set(ROCKETNET_XDP_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/generated/server_xdp.o")
@@ -332,8 +335,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
             "-DHISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}"
             "-DMAX_CLIENTS=${ROCKETNET_MAX_CLIENTS}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedXdp.cmake"
+        COMMAND "${CMAKE_COMMAND}"
+            "-DOBJECT=${ROCKETNET_XDP_OBJECT}"
+            "-DHEADER=${ROCKETNET_XDP_HEADER}"
+            "-DBYTE_ORDER=${CMAKE_C_BYTE_ORDER}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckXdpObjectByteOrder.cmake"
         BYPRODUCTS "${ROCKETNET_XDP_OBJECT}"
-        DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake
+        DEPENDS ${ROCKETNET_XDP_SOURCES} cmake/XdpSources.cmake cmake/EmbedXdp.cmake cmake/CheckXdpObjectByteOrder.cmake
             "${CMAKE_CURRENT_BINARY_DIR}/generated/xdp-build-settings.txt"
         VERBATIM)
     add_custom_target(rocketnet_xdp_header DEPENDS "${ROCKETNET_XDP_HEADER}")
@@ -582,6 +590,11 @@ if(ROCKETNET_BUILD_EXAMPLES)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
     add_executable(happy_client tools/happy_path/happy_client.c)
     target_link_libraries(happy_client PRIVATE rocketnet_dev)
+    # the cross-endian interoperability check (tools/bigendian/interop.c):
+    # one end of a real connection, run against the other byte order by
+    # .github/workflows/nightly-bigendian-system.yml
+    add_executable(bigendian_interop tools/bigendian/interop.c)
+    target_link_libraries(bigendian_interop PRIVATE rocketnet_dev)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
@@ -972,9 +985,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # directory of minimal kernel and libbpf headers, so the unit suite judges
     # its decisions with no kernel, no root and no BPF syscall
     # (test_unit_xdp_filter_host.cpp). The shim directory is on this one C
-    # target's include path only. The filter is GNU C and the shim models a
-    # little-endian host, so the target is built for GCC or Clang on a
-    # little-endian, non-Windows host; elsewhere the cases print SKIPPED.
+    # target's include path only. The filter is GNU C, so the target is built
+    # for GCC or Clang on a non-Windows host; elsewhere the cases print
+    # SKIPPED. It is built for either byte order: the shim takes the target's
+    # (the kernel's <asm/byteorder.h> where present, else __BYTE_ORDER__), so
+    # the big-endian legs run the filter cases on big-endian bytes.
     # ROCKETNET_XDP_FILTER_HOST_SOURCE names the filter source to compile; the
     # default is the shipped file, and another value is for reproducing a
     # historical filter.
@@ -985,7 +1000,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/xdp/server_xdp.c" CACHE FILEPATH
         "XDP filter source the host-C unit target compiles")
-    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN" AND NOT WIN32)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT WIN32)
         get_filename_component(ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH "${ROCKETNET_XDP_FILTER_HOST_SOURCE}" ABSOLUTE)
         add_library(rocketnet_xdp_filter_host STATIC tests/xdp_host/server_xdp_host.c)
         set_source_files_properties(tests/xdp_host/server_xdp_host.c PROPERTIES
@@ -999,7 +1014,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_link_libraries(test PRIVATE rocketnet_xdp_filter_host)
         target_compile_definitions(test PRIVATE ROCKETNET_XDP_FILTER_HOST=1)
     else()
-        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
+        message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a non-Windows host")
     endif()
     # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,

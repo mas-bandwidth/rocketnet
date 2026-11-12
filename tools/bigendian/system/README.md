@@ -16,9 +16,10 @@ Create an 8G qcow2 overlay whose backing file is the verified image, so the veri
 
 - machine `s390-ccw-virtio`, accelerator TCG, 4G RAM, 4 vCPUs
 - virtio-blk for the overlay (boot index 1) and for the seed
-- virtio-net, user mode, with a host forward onto the guest ssh port
+- virtio-net, user mode, with a host forward onto the guest ssh port and one
+  udp port for the cross-endian run
 
-Copy the source in over ssh. On the guest, install a compiler, cmake, pkg-config, libbpf, libxdp, and xxd. Configure a Release build with `-ffp-contract=off` on the C flags and the C++ flags. The CMake targets apply that same floor. Build the `test` and `functional` targets.
+Copy the source in over ssh. On the guest, install a compiler, cmake, pkg-config, libbpf, libxdp, and xxd. Configure a Release build with `-ffp-contract=off` on the C flags and the C++ flags. The CMake targets apply that same floor. Build the `test`, `functional` and `bigendian_interop` targets.
 
 Before the suite, `readelf -h bin/test` must report a big-endian IBM S/390 binary. The functional binary is checked the same way.
 
@@ -35,6 +36,28 @@ One TCG run at 4 vCPUs and 4G RAM:
 - `./bin/functional` with the portable transport pin takes 126 seconds
 
 The functional suite kills a single test at 120 seconds on a native Release host. The guest build sets `ROCKETNET_TEST_EMULATED`, so the same cap is scaled five times, to 600 seconds, by `tests/time_scale.h`; the Release workloads themselves are unchanged. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+
+## The cross-endian run
+
+After the suites, the job runs `tools/bigendian/run_interop.sh`: `bigendian_interop`
+(`tools/bigendian/interop.c`), built in the guest and natively on the runner, over
+real sockets both ways. First a big-endian server in the guest serves three
+little-endian clients on the runner, through a udp port that QEMU user
+networking forwards from the runner's `127.0.0.1` to the guest; then a
+little-endian server on the runner serves three big-endian clients in the guest,
+which reach the runner at `10.0.2.2`. Each client sends unreliable and
+reliable-ordered messages and one 48 KiB reliable message, the server checks and
+echoes every one, and the client checks the echoes and disconnects. The job
+prints `INTEROP_BE_SERVER_LE_CLIENTS:PASS` or `FAIL`, the same for
+`INTEROP_LE_SERVER_BE_CLIENTS`, both sides' logs, and `INTEROP_EXIT` with the
+seconds it took. The suites' result does not stop this run; the step fails if
+either fails.
+
+By hand, with the guest up and the udp forward in place:
+
+```
+tools/bigendian/run_interop.sh <runner's bigendian_interop> <ssh port> <guest key> <guest udp port> <runner udp port> 3
+```
 
 ## How a failed case is replayed
 

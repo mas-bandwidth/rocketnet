@@ -15,12 +15,12 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite |
-| Ubuntu 26.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check |
+| Ubuntu 26.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | build only: portable, gso, io_uring, xdp; run: no transport (byte cases, XDP filter as host C) | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check; Run the byte vectors and the XDP filter cases on big-endian |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Run happy_path |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
-| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
+| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable (pinned), and the auto ladder's grant (gso built; io_uring and xdp not built) | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
 | Ubuntu 24.04 LTS (Linux, container) | x86_64 | GCC 13 | build and unit suite: portable, gso, io_uring, xdp (libxdp 1.4) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
 | Ubuntu 22.04 LTS (Linux, container) | x86_64 | GCC 11 | build and unit suite: portable, gso, xdp (libbpf 0.5); io_uring not built (liburing 2.1) | nightly | .github/workflows/ci.yml | Linux, X64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 | - |
@@ -48,8 +48,10 @@ Release` legs (a) to (c)) run in the nightly tier (`nightly-ci.yml`), and the
 whole suite, the Debug unit suite included, runs nightly in `nightly.yml` (the
 Debug leg under the default and IOCP transports, the Release ASan leg under the
 default, IOCP and RIO transports). The s390x row is a subset for the same
-reason in kind: per commit it runs the wire and sodium checks under qemu-user,
-and the socket-crossing suite runs in the nightly full-system guest.
+reason in kind: per commit it runs the wire and sodium checks, the standard's
+byte vectors and the XDP filter cases under qemu-user, and the socket-crossing
+suite runs in the nightly full-system guest. [Big-endian coverage](#big-endian-coverage)
+below says exactly what is built and run where.
 
 The CI runners are Ubuntu 26.04, so the per-commit Linux row is 26.04.
 Ubuntu 22.04 LTS and 24.04 LTS remain supported releases to build and deploy
@@ -95,13 +97,46 @@ A supported row promises three things, and only these three:
 It does not promise another compiler, another architecture, another runner
 image, privileged XDP attach, line-rate measurements, or a transport the row does
 not name. In particular, the per-commit `big-endian` leg in `ci.yml`
-cross-compiles the library and suite for s390x and runs the wire and sodium
-checks under qemu-user; the socket-crossing suite runs on s390x only in the
-nightly full-system guest. The nightly row is how that suite is claimed.
+cross-compiles the library and suite for s390x and runs no transport: it runs
+the wire and sodium checks and the byte cases under qemu-user. The
+socket-crossing suite runs on s390x only in the nightly full-system guest. The
+nightly row is how that suite is claimed.
 A big-endian Linux build with clang, libbpf and libxdp compiles the xdp
 transport in, its kernel program built for the target's byte order (`bpfeb`),
 but no row claims the xdp transport on big-endian: the cross leg never loads
 the program and the nightly guest builds without it.
+
+### Big-endian coverage
+
+What is built and tested on big-endian (s390x), and what is not.
+
+| Check | Where | When | What it would catch |
+| --- | --- | --- | --- |
+| The library and the whole unit suite compile for s390x, xdp included | `ci.yml`, `big-endian` | every commit | a byte-order break the compiler sees |
+| The embedded XDP object is big-endian (`cmake/CheckXdpObjectByteOrder.cmake`) | `ci.yml`, `big-endian` (any big-endian build with XDP) | every commit | a cross build embedding the build machine's object |
+| The XDP program compiles for `bpfeb` against the s390x kernel headers | `ci.yml`, `big-endian` | every commit | a header or macro only one byte order has |
+| `tools/bigendian/wire_check.cpp` and `test_sodium` under qemu-user | `ci.yml`, `big-endian` | every commit | the endian helpers, address parses, a same-host seal and open |
+| The standard's byte vectors, 55 cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
+| The XDP filter compiled as host C for s390x, 30 cases | `ci.yml`, `big-endian`, qemu-user; and `./bin/test` in the guest | every commit; nightly | a conversion in the XDP program that swaps whatever the byte order is |
+| `./bin/test`, `./bin/functional` (auto ladder, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
+| Cross-endian interoperability, three clients each way (`tools/bigendian/run_interop.sh`) | nightly guest against the x86-64 runner | nightly | a wire field in host order that has no vector |
+| `tools/check_byte_order.py` over sdk/ | `ci.yml`, lint | every commit | a fixed-direction swap or a host-order read of wire bytes, at review |
+
+Not built or not run on big-endian:
+
+- The XDP data plane. No big-endian host attaches the XDP program or runs the
+  AF_XDP frame path: the nightly guest installs no clang, so XDP is compiled
+  out there, and the per-commit leg runs no transport. The filter's decisions
+  run big-endian only as host C, with the kernel's byte-order macros for
+  s390x; the verifier, the real helpers and the real maps are not exercised
+  big-endian.
+- The io_uring rung: the guest installs no liburing, so it is not built there,
+  and no transport runs under qemu-user (it reports on the emulator, not the
+  platform). gso runs only if the guest's auto ladder grants it.
+- A physical big-endian machine. Every big-endian run is emulated.
+- Local table hashes (never on the wire) pick different buckets on
+  big-endian; nothing checks that a seeded IPv6 simulator run is identical
+  across byte orders.
 
 A row's memory bounds follow the same split as its suites: the unit suite
 reports memory, printing each case's peak resident set against its bound
