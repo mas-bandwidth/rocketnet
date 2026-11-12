@@ -51,7 +51,7 @@
 (*               "stuck" hands them back but leaves the run pending        *)
 (*               (Drains).                                                 *)
 (***************************************************************************)
-EXTENDS Naturals, Sequences, FiniteSets
+EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS NB,         \* banks per queue (ROCKETNET_URING_SEND_BANKS)
           S,          \* slots per bank (ROCKETNET_URING_SEND_QUEUE_SIZE)
