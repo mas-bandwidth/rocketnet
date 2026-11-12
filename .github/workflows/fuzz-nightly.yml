@@ -189,7 +189,9 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # The two bounded mutation passes that used to run per commit live here,
       # on the nightly tier: a copy of the committed seed corpus, a fixed seed
@@ -449,7 +451,9 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
@@ -619,7 +623,9 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}.exe" \
             "corpus/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref
@@ -847,7 +853,9 @@ jobs:
           ./"bin/${{ fromJSON(matrix.leg).target }}" \
             "corpus-msan/${{ fromJSON(matrix.leg).target }}" "${{ fromJSON(matrix.leg).seeds }}" \
             -dict="${{ fromJSON(matrix.leg).dict }}" \
-            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25
+            -max_total_time="$T" -print_final_stats=1 -rss_limit_mb=4096 -timeout=25 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          # the run must reach its target's floor (tools/fuzz_floors.tsv): coverage and executed units
+          python3 tools/check_fuzz_stats.py --target "${{ fromJSON(matrix.leg).target }}" --seconds "$T" "$RUNNER_TEMP/fuzz.log"
 
       - name: Artifact name for the ref
         id: refslug
