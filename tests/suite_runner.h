@@ -54,6 +54,10 @@
 #include <sys/sysctl.h>
 #endif // #if defined( __APPLE__ )
 
+#if defined( __linux__ )
+#include <sched.h>
+#endif // #if defined( __linux__ )
+
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -645,6 +649,61 @@ inline uint64_t suite_memory_budget_bytes()
 // array of this size. On Windows the job count stops here; elsewhere it has
 // no ceiling.
 #define SUITE_WAIT_HANDLES 64
+
+// The cpus a mask holds: one bit a cpu, in 64-bit words.
+inline unsigned suite_cpus_in_mask( const uint64_t * words, size_t count )
+{
+    unsigned cpus = 0;
+    for ( size_t i = 0; i < count; i++ )
+    {
+        for ( uint64_t word = words[i]; word != 0; word &= word - 1 )
+        {
+            cpus++;
+        }
+    }
+    return cpus;
+}
+
+// The cpus this process may run on, never 0: the host's count when the mask
+// cannot be read. std::thread::hardware_concurrency() counts the host's
+// online cpus, not the process's:
+// on glibc 2.43 a run held to 5 cpus (nova-reserve, taskset, a cgroup cpuset)
+// read 48 on a 48-cpu bench and ran 48 jobs on 5 cpus. Linux reads the
+// affinity mask. Windows reads the process affinity mask, which covers one
+// processor group: it is the count on a one-group host (at most 64 logical
+// processors), and on a host with more groups when it is narrower than its
+// group's system mask (start /affinity, a job held to some processors). An
+// unrestricted process on a many-group host may run in every group, and
+// GetProcessAffinityMask reports zero for a process with threads in several
+// groups, so there the count stays the host's. macOS has no affinity mask to
+// read (thread affinity there is only a hint), so its count is the host's.
+inline unsigned suite_usable_cpus()
+{
+#if defined( __linux__ )
+    cpu_set_t set;
+    CPU_ZERO( &set );
+    if ( sched_getaffinity( 0, sizeof( set ), &set ) == 0 )
+    {
+        uint64_t words[sizeof( set ) / sizeof( uint64_t )];
+        std::memcpy( words, &set, sizeof( words ) );
+        const unsigned cpus = suite_cpus_in_mask( words, sizeof( words ) / sizeof( words[0] ) );
+        if ( cpus > 0 )
+        {
+            return cpus;
+        }
+    }
+#elif defined( _WIN32 )
+    DWORD_PTR process_mask = 0;
+    DWORD_PTR system_mask = 0;
+    if ( GetProcessAffinityMask( GetCurrentProcess(), &process_mask, &system_mask ) && process_mask != 0 &&
+         ( GetActiveProcessorGroupCount() == 1 || process_mask != system_mask ) )
+    {
+        const uint64_t word = (uint64_t) process_mask;
+        return suite_cpus_in_mask( &word, 1 );
+    }
+#endif // #if defined( __linux__ )
+    return std::thread::hardware_concurrency();
+}
 
 // One job per core, as many as the memory budget holds; a requested count
 // (ROCKETNET_TEST_JOBS) sets it outright. A ceiling above zero caps the result.

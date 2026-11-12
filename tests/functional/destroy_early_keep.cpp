@@ -344,6 +344,13 @@ void test_server_destroy_early_threaded_frees()
 }
 
 // the keep path: with no budget the destroy makes one pass and does not sleep
+//
+// The client case needs a second cpu the process may use: on one cpu the
+// disconnect wakes the client's worker, the worker runs to its exit before
+// the destroy's pass looks, and every attempt frees (a guest booted with
+// isolcpus=1: 20 of 20 attempts, 5 of 5 runs). It is registered with the
+// predicate rocketnet_test_two_usable_cpus, so on one cpu it is skipped,
+// printed and counted.
 
 void test_client_destroy_early_threaded_keeps_then_frees()
 {

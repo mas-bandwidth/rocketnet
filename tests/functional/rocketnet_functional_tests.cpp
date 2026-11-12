@@ -13255,6 +13255,9 @@ static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_ser
 // overrides that, the pair connects over another transport, and nothing
 // registers on the hub, so the case is taken out of the suite under a pin
 static bool rocketnet_test_no_transport_pin_is_set() { return !rocketnet_test_a_transport_pin_is_set(); }
+
+// a case that needs a second cpu this process may run on (destroy_early_keep.cpp)
+static bool rocketnet_test_two_usable_cpus() { return suite_usable_cpus() >= 2; }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -13424,7 +13427,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_frees", test_client_destroy_early_threaded_frees, NULL },
     { "test_server_destroy_early_threaded_frees", test_server_destroy_early_threaded_frees, NULL },
-    { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
+    { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, rocketnet_test_two_usable_cpus },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
     { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
@@ -13976,6 +13979,10 @@ static int rocketnet_functional_here[rocketnet_functional_num_tests];
 // the name a SKIPPED line prints for a row's runs_here predicate
 static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
 {
+    if ( predicate == rocketnet_test_two_usable_cpus )
+    {
+        return "rocketnet_test_two_usable_cpus";
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( predicate == rocketnet_server_uring_available )
     {
