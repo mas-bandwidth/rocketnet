@@ -18,7 +18,9 @@ ANCHOR='ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t f
 # scratch copy never downloads its own
 MRDOCS_BIN="${MRDOCS:-}"
 if [ -z "$MRDOCS_BIN" ]; then
-    MRDOCS_BIN="$(command -v mrdocs 2>/dev/null || true)"
+    if command -v mrdocs > /dev/null 2>&1; then
+        MRDOCS_BIN="$(command -v mrdocs)"
+    fi
 fi
 if [ -z "$MRDOCS_BIN" ]; then
     MRDOCS_BIN="$ROOT/build/mrdocs-2026.9.29/bin/mrdocs"
@@ -52,9 +54,10 @@ fi
 set +e
 rows="$(sh "$SCRATCH/tools/docs/undocumented.sh" "$SCRATCH/build/docs/mrdocs.log" 2>"$SCRATCH/undocumented.err")"
 status=$?
+# grep -c prints 0 and exits 1 on no match: the count is the verdict here
+count="$(printf '%s\n' "$rows" | grep -c .)"
+planted="$(printf '%s\n' "$rows" | grep -c "	rocketnet_planted_undocumented	function	")"
 set -e
-count="$(printf '%s\n' "$rows" | grep -c . || true)"
-planted="$(printf '%s\n' "$rows" | grep -c "	rocketnet_planted_undocumented	function	" || true)"
 printf '%s\n' "$rows"
 if [ "$planted" != 1 ] || [ "$count" != 1 ] || [ "$status" -eq 0 ]; then
     cat "$SCRATCH/undocumented.err" >&2
