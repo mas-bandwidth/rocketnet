@@ -50,6 +50,17 @@ static void test_suite_job_count_fits_the_windows_wait_set()
 #if defined( _WIN32 )
     check( suite_job_count() >= 1 );
     check( suite_job_count() <= SUITE_WAIT_HANDLES );
+
+    // and the live count is wired to the ceiling: a requested count far past
+    // it reads exactly the ceiling on any host (VERIFY-4 W10: no CI host asks
+    // for more than 64 jobs, so the two checks above could not go red)
+
+    char saved[256] = {};
+    const bool had = rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", saved, sizeof( saved ) ) != 0;
+    check( _putenv_s( "ROCKETNET_TEST_JOBS", "1000" ) == 0 );
+    const int asked_past = suite_job_count();
+    check( _putenv_s( "ROCKETNET_TEST_JOBS", had ? saved : "" ) == 0 );
+    check( asked_past == SUITE_WAIT_HANDLES );
 #endif // #if defined( _WIN32 )
 }
 
