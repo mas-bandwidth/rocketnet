@@ -3797,6 +3797,47 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # tools/check_msvc_crt.py: no bare call MSVC deprecates (C4996, an error
+      # under /WX) in a test, tool or example source MSVC compiles; three
+      # reached Windows CI on 2026-11-12. --self-test plants each of the 218
+      # names, the guard forms and an empty tree.
+      - name: No CRT call MSVC deprecates where MSVC compiles it
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_msvc_crt.py --self-test
+          python3 tools/check_msvc_crt.py
+
+      # tools/check_fuzz_stats.py and tools/check_fuzz_coverage.py hold
+      # fuzz-nightly.yml's legs and coverage jobs to their floor tables; their
+      # self-tests plant each refusal and check the committed tables give
+      # every harness a row, so a new harness without one fails here, per
+      # commit, not on the night.
+      - name: Test the fuzz floor checkers' verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/check_fuzz_stats.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_stats self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+          output="$(python3 tools/check_fuzz_coverage.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_coverage self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+
+      # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
+      # a case list of blanks, a skipped io_uring cell and a failing case must
+      # each fail it (fake ci.yml, fake functional binary, fake io_uring switch)
+      - name: Test the transport cells repeat's verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(bash tools/test_transport_cells_repeat.sh 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^ok: transport-cells-repeat self-test, [1-9][0-9]* cases$' <<<"$output"
+
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
       # Python and Go file names its job count (a bare one is unbounded under
@@ -3859,6 +3900,17 @@ jobs:
           output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      # The nightly tier runs its suites with ROCKETNET_TEST_KEEP_GOING=1
+      # (nightly.yml): a failure no longer stops the run, so the summary must
+      # name every failed case and the run must still exit 1.
+      - name: Test the suite runner's keep-going mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_suite_keep_going.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran 3 tests' <<<"$output"
 
       - if: always()
         uses: ./.github/actions/ccache-stats

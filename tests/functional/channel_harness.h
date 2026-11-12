@@ -1048,6 +1048,28 @@ static inline uint64_t rocketnet_channel_seed_from_environment( void )
     return rocketnet_channel_pinned_seed;
 }
 
+// ROCKETNET_CHANNEL_SEED_RECORD names a file; each create appends the seed it
+// took, in decimal, one per line. scripts/channel-seed-sweep sets it per run
+// and counts a green run only when the file holds the seed it asked for: a case
+// that never reaches create, or a build that ignores the variable, would
+// otherwise pass every seed of the sweep with the one pinned link.
+static inline void rocketnet_channel_seed_record( uint64_t seed )
+{
+    char path[1024];
+    if ( !rocketnet_test_getenv( "ROCKETNET_CHANNEL_SEED_RECORD", path, sizeof( path ) ) || !path[0] )
+    {
+        return;
+    }
+    FILE * record = rocketnet_test_fopen( path, "a" );
+    if ( !record )
+    {
+        printf( "channel seed record: cannot open %s\n", path );
+        return;
+    }
+    fprintf( record, "%llu\n", (unsigned long long) seed );
+    fclose( record );
+}
+
 static inline void rocketnet_channel_seed_exit_hook( void )
 {
     if ( rocketnet_channel_seed_state().live )
@@ -1124,6 +1146,7 @@ static inline int rocketnet_channel_harness_create_with_config( rocketnet_channe
     // seed when unset) so a failing run replays
 
     h->seed = rocketnet_channel_seed_from_environment();
+    rocketnet_channel_seed_record( h->seed );
     rocketnet_channel_seed_state().seed = h->seed;
     rocketnet_channel_seed_state().live = 1;
     if ( !rocketnet_channel_seed_state().hook_installed )
