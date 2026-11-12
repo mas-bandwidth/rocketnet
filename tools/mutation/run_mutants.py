@@ -51,8 +51,8 @@ the original one.
 modified in git diff REF HEAD, whatever its slice, under the same rule: a
 line is mutation-tested the night it lands, not only on the one night in N
 its slice comes round, so an untested new line is a NEW survivor that night.
-The nightly passes the first-parent commit of 26 hours before (one night
-plus grace).
+The nightly passes the head of the last night its mutation job passed
+(--last-green-night), so a night that did not run or was red hands its lines on.
 
 Python 3 standard library only. Example:
 
@@ -311,6 +311,40 @@ def git_changed_lines(ref, files):
 def on_lines(mutants, lines):
     """The mutants on the lines of {path: set of line numbers}."""
     return [m for m in mutants if m["line"] in lines.get(m["file"], ())]
+
+
+NIGHTLY_MUTATION_JOB = "linux / mutation"
+
+
+def last_green_night(fetch, repo, ref, max_runs=60):
+    """The head commit of the newest nightly.yml run (schedule or dispatch) whose
+    `linux / mutation (<ref>)` job concluded success, or None in max_runs runs.
+
+    The anchor for --new-since: every line changed after the last night that
+    passed is mutated tonight, so a night that did not run, was cancelled or was
+    red leaves its lines to the next night instead of to their slice (1 in 90).
+    fetch(path) returns the decoded JSON of a GitHub REST path; it raises on an
+    API error, which the caller reports (never read as "no green night")."""
+    want = f"{NIGHTLY_MUTATION_JOB} ({ref})"
+    runs = fetch(f"/repos/{repo}/actions/workflows/nightly.yml/runs?per_page={max_runs}")["workflow_runs"]
+    for run in runs:
+        if run.get("event") not in ("schedule", "workflow_dispatch"):
+            continue
+        jobs = fetch(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
+        for job in jobs:
+            if job.get("name") == want and job.get("conclusion") == "success":
+                return job["head_sha"]
+    return None
+
+
+def github_fetch(path):
+    """GET a GitHub REST path with GITHUB_TOKEN; the decoded JSON."""
+    import urllib.request
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    request = urllib.request.Request(api + path, headers={"Accept": "application/vnd.github+json",
+                                                          "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}"})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.load(response)
 
 
 BASELINE = ROOT / "tools" / "mutation" / "survivors.tsv"
@@ -922,6 +956,29 @@ def self_test():
     if not fresh or any(m["line"] != 3 for m in fresh) or len(fresh) != sum(m["line"] == 3 for m in first):
         print("self-test FAILED: --new-since did not pick exactly the mutants of the new line")
         return 1
+    # --last-green-night: the newest run whose mutation job for the ref passed;
+    # cancelled, failed, other refs' and push runs are passed over
+    api = {
+        "/repos/o/r/actions/workflows/nightly.yml/runs?per_page=60": {"workflow_runs": [
+            {"id": 5, "event": "schedule"}, {"id": 4, "event": "push"}, {"id": 3, "event": "workflow_dispatch"},
+            {"id": 2, "event": "schedule"}, {"id": 1, "event": "schedule"}]},
+        "/repos/o/r/actions/runs/5/jobs?per_page=100": {"jobs": [
+            {"name": "linux / mutation (main)", "conclusion": "cancelled", "head_sha": "e5"},
+            {"name": "linux / mutation (dev)", "conclusion": "success", "head_sha": "d5"}]},
+        "/repos/o/r/actions/runs/4/jobs?per_page=100": {"jobs": [
+            {"name": "linux / mutation (main)", "conclusion": "success", "head_sha": "push4"}]},
+        "/repos/o/r/actions/runs/3/jobs?per_page=100": {"jobs": [
+            {"name": "linux / mutation (main)", "conclusion": "failure", "head_sha": "f3"}]},
+        "/repos/o/r/actions/runs/2/jobs?per_page=100": {"jobs": [
+            {"name": "linux / tsan (main)", "conclusion": "success", "head_sha": "t2"},
+            {"name": "linux / mutation (main)", "conclusion": "success", "head_sha": "green2"}]},
+    }
+    if last_green_night(api.__getitem__, "o/r", "main") != "green2":
+        print("self-test FAILED: --last-green-night did not find the newest passing mutation night")
+        return 1
+    if last_green_night(lambda p: {"workflow_runs": []} if "workflows" in p else {"jobs": []}, "o/r", "main") is not None:
+        print("self-test FAILED: --last-green-night named a night when none passed")
+        return 1
     # --platform linux: Windows and Apple sources and the headers only they
     # include are left out; AF_XDP files stay but are not judged; the rest stay
     cmake = ("set(ROCKETNET_SDK_SOURCES_LINUX\n    sdk/a_uring_linux.cpp)\n"
@@ -1111,8 +1168,12 @@ def main():
                         "risk-class survivor fails")
     p.add_argument("--new-since", default="", metavar="REF",
                    help="also run every mutant on a line new or modified in git diff REF HEAD, whatever its slice, "
-                        "under the same rule (the nightly: the commit of 26 hours before, so a line is tested the "
-                        "night it lands)")
+                        "under the same rule (the nightly: --last-green-night, so a line is tested the night it "
+                        "lands)")
+    p.add_argument("--last-green-night", default="", metavar="REF",
+                   help="print the head commit of the newest nightly whose `linux / mutation (REF)` job passed "
+                        "(GITHUB_TOKEN, GITHUB_REPOSITORY), nothing when none did, then exit; exit 2 on an API error. "
+                        "The nightly's --new-since anchor")
     p.add_argument("--check-baseline", default="", metavar="PATH",
                    help="check the baseline without a build (format, ratchet, every entry still generated), then exit")
     p.add_argument("--rejudge", default="", metavar="RESULTS",
@@ -1122,6 +1183,15 @@ def main():
     args = p.parse_args()
     if args.self_test:
         return self_test()
+    if args.last_green_night:
+        try:
+            sha = last_green_night(github_fetch, os.environ["GITHUB_REPOSITORY"], args.last_green_night)
+        except (KeyError, OSError, ValueError) as error:
+            print(f"--last-green-night: {type(error).__name__}: {error}", file=sys.stderr)
+            return 2
+        if sha:
+            print(sha)
+        return 0
     if args.rejudge:
         if not args.baseline:
             p.error("--rejudge needs --baseline")

@@ -1039,6 +1039,9 @@ jobs:
       fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    permissions:
+      contents: read
+      actions: read
     concurrency:
       group: nightly-mutation-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
@@ -1055,6 +1058,8 @@ jobs:
           MUTATION_FULL: ${{ inputs.mutation_full && '1' || '0' }}
           MUTATION_WORKERS: ${{ inputs.mutation_workers || '4' }}
           MUTATION_REF: ${{ matrix.ref }}
+          # --last-green-night reads the nightly's own runs (actions: read)
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           slices=90
@@ -1066,14 +1071,23 @@ jobs:
           else
             slice_args=(--slice "$((day % slices))/$slices")
             slice="$((day % slices))/$slices"
-            # a line that landed since the night before is mutated tonight,
-            # whatever its slice, under the same baseline rule: an untested
-            # new line is a NEW survivor the night it lands, not 1 night in 90
-            new_since="$(git rev-list -1 --first-parent --before='26 hours ago' HEAD)"
-            if [[ -n "$new_since" ]]; then
-              slice_args+=(--new-since "$new_since")
-              slice="$slice, and every mutant on a line new since $new_since"
+            # every line changed since the last night this job passed is
+            # mutated tonight, whatever its slice, under the same baseline
+            # rule: an untested new line is a NEW survivor the night it lands,
+            # and a night that did not run, was cancelled or was red hands its
+            # lines on to the next night, not to their slice (1 night in 90).
+            # With no passing night found (or the API down) the anchor is the
+            # last release tag: more mutants, never fewer.
+            if new_since="$(python3 tools/mutation/run_mutants.py --last-green-night "$MUTATION_REF")" \
+                && [[ -n "$new_since" ]] && git merge-base --is-ancestor "$new_since" HEAD; then
+              anchor="the last night linux / mutation ($MUTATION_REF) passed"
+            else
+              new_since="$(git describe --tags --abbrev=0 --match 'v*' HEAD)"
+              anchor="the last release tag: no passing mutation night found that HEAD contains"
+              echo "::warning title=MUTATION-NEW-SINCE::new lines are counted from $new_since, $anchor"
             fi
+            slice_args+=(--new-since "$new_since")
+            slice="$slice, and every mutant on a line changed since $new_since ($anchor)"
           fi
           # every survivor must be in the reviewed baseline; the gap count
           # (MUTATION-GAPS) must equal its recorded ratchet and only goes down
