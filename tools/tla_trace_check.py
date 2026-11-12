@@ -104,6 +104,11 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-replay-marks": {
+        "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 STEPS = 400
