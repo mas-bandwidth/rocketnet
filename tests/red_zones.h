@@ -9,12 +9,12 @@
 
 #include "../sdk/rocketnet_memory.h"
 
-// A case that reads or writes a whole block byte for byte (a snapshot of a
+// A case that reads or writes a whole block byte for byte (a copy of a
 // region to compare after a refused call, a scan for a planted secret, a
 // pattern written over a part) crosses the red zones an AddressSanitizer
 // build leaves between carved arrays (sdk/rocketnet_memory.h). These helpers
 // do that copy, fill and scan outside ASan's checks: a red zone's bytes are
-// never written by the library, so a snapshot of them compares equal and a
+// never written by the library, so a copy of them compares equal and a
 // scan finds nothing in them. In every other build they are a plain loop.
 
 #if ROCKETNET_RED_ZONES
@@ -69,4 +69,4 @@ ROCKETNET_TEST_RAW_ACCESS static inline uint8_t rocketnet_test_raw_byte( const v
     return ( (const volatile uint8_t *) p )[index];
 }
 
-#endif // #ifndef ROCKETNET_TESTS_RED_ZONES_H
+#endif // ROCKETNET_TESTS_RED_ZONES_H
