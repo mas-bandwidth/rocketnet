@@ -704,8 +704,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_window_sequences.cpp
             tests/test_unit_xdp_replay_marks.cpp
             tests/test_unit_ack_block_walk.cpp
-            tests/test_unit_echo_payload.cpp
-            tests/echo_payload.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
             tests/test_unit_api_polish.cpp
@@ -804,7 +802,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             COMMAND test_fp_contract_fma
             VERBATIM)
     endif()
-    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/echo_payload.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
