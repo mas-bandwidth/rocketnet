@@ -81,6 +81,16 @@ static void fz_put16( uint8_t * p, uint32_t v )
     p[1] = (uint8_t) v;
 }
 
+// libFuzzer calls this when the harness defines it; the corpus replay driver
+// (tests/fuzz/replay_main.cpp) always calls it, so every harness defines it.
+// This harness has no seed generator and nothing to set up.
+extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
+{
+    (void) argc;
+    (void) argv;
+    return 0;
+}
+
 extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 {
     if ( size < 7 )
