@@ -1919,9 +1919,9 @@ int main( int argc, char ** argv )
     if ( resources_started && rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_LEAK_FD", fault_leak_env, sizeof( fault_leak_env ) ) && fault_leak_env[0] != '\0' && strcmp( fault_leak_env, "0" ) != 0 )
     {
 #if defined( _WIN32 )
-        soak_fault_leaked_file = fopen( "NUL", "r" );
+        soak_fault_leaked_file = rocketnet_test_fopen( "NUL", "r" );
 #else
-        soak_fault_leaked_file = fopen( "/dev/null", "r" );
+        soak_fault_leaked_file = rocketnet_test_fopen( "/dev/null", "r" );
 #endif
         printf( "soak: fd leak fault ARMED -- one file held open past the end sample (%s); --assert-flat must go red\n", soak_fault_leaked_file ? "opened" : "open failed" );
     }
