@@ -57,6 +57,13 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-gateway-refresh": {
+        "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
+        "kind": "steps",
+        "untraced": {
+            "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
+        },
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
