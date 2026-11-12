@@ -1437,7 +1437,9 @@ jobs:
       - name: Windows sockets set don't-fragment (real sockets)
         if: matrix.leg == 'a'
         shell: bash
-        run: ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
 
       # MSVC Debug with ROCKETNET_DEV=ON: the only MSVC build with the library's
       # asserts and the debug CRT's heap checks on for the DEV-only Windows
@@ -1450,6 +1452,7 @@ jobs:
         env:
           ROCKETNET_TEST_NIGHTLY: '1'
         run: |
+          set -euo pipefail
           cmake --build build --config Debug --target test --parallel
           ./bin/Debug/test.exe
 
