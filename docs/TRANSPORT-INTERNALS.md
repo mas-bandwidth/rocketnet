@@ -575,7 +575,8 @@ returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
 segment is size-checked and copied into the fill bank before the buffer goes
 back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
 receive is copied only while the fill bank has room for a whole coalesced
-receive; otherwise it is held with its buffer, in arrival order, until a swap
+receive (64 datagrams; of a longer one, the first 64 are copied and each
+datagram past them is counted in `RECEIVE_DROPPED_OVERFLOW`); otherwise it is held with its buffer, in arrival order, until a swap
 brings room, and the completions behind it, sends among them, are reaped in
 the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
 regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than

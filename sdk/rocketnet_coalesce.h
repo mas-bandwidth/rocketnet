@@ -67,6 +67,33 @@ static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes
     return count;
 }
 
+// The split of a coalesced receive for a transport that takes at most
+// max_segments of one: rocketnet_coalesce_split, and when the message has more
+// segments, its first max_segments, with the datagrams past them in *beyond
+// for the caller to count one by one (0 when every segment is written). A
+// local sender's segmented send can coalesce more than 64 on recent kernels
+// (sdk/rocketnet_server_gso.h).
+
+static inline int rocketnet_coalesce_split_prefix( int message_bytes, int segment_bytes, int * offsets, int * lengths, int max_segments, int * beyond )
+{
+    *beyond = 0;
+
+    const int count = rocketnet_coalesce_split( message_bytes, segment_bytes, offsets, lengths, max_segments );
+    if ( count >= 0 )
+    {
+        return count;
+    }
+
+    // past max_segments, so segment_bytes is a stride shorter than the
+    // message and the window below it
+
+    const int window = segment_bytes * max_segments;
+    const int rest = message_bytes - window;
+    *beyond = rest / segment_bytes + ( rest % segment_bytes != 0 ? 1 : 0 );
+
+    return rocketnet_coalesce_split( window, segment_bytes, offsets, lengths, max_segments );
+}
+
 // The length of the send run starting at index 0 of a queue of count packets.
 // packet_bytes[0] sets the segment size; the run extends over the following
 // packets while each is not larger than the first, has positive bytes (zero

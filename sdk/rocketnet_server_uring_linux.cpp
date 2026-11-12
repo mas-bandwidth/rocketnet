@@ -943,6 +943,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     int offsets[ROCKETNET_URING_MAX_SEGMENTS];
     int lengths[ROCKETNET_URING_MAX_SEGMENTS];
     int segments = 0;
+    int beyond = 0;
 
     if ( verdict == ROCKETNET_URING_RECV_OK )
     {
@@ -952,7 +953,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
 
         source_ok = rocketnet_uring_sockaddr_to_address( &source, name_bytes, uring->ipv6, &from );
 
-        segments = rocketnet_coalesce_split( payload_bytes, segment_bytes, offsets, lengths, ROCKETNET_URING_MAX_SEGMENTS );
+        segments = rocketnet_coalesce_split_prefix( payload_bytes, segment_bytes, offsets, lengths, ROCKETNET_URING_MAX_SEGMENTS, &beyond );
     }
 
     if ( verdict == ROCKETNET_URING_RECV_NAME_TRUNCATED )
@@ -971,15 +972,6 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE]++;
     }
-    else if ( segments < 0 )
-    {
-        // more segments than the kernel coalesces: a cmsg the stride cannot
-        // be trusted from, one fault, and the buffer dropped by size
-
-        uring->counters[ROCKETNET_SERVER_URING_COUNTER_GRO_CMSG_FAULTS]++;
-        uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
-        uring->receive_dropped_too_large++;
-    }
     else if ( segments == 0 )
     {
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE]++;
@@ -990,6 +982,13 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
         {
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_GRO_BATCHES]++;
         }
+
+        // a local sender's segmented send can coalesce more than the bank's
+        // room for one receive: the first ROCKETNET_URING_MAX_SEGMENTS are
+        // staged and each datagram past them is counted, as the gso server
+        // counts what its queue cannot take
+
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW] += (uint64_t) beyond;
 
         struct rocketnet_server_uring_bank_t * fill = &uring->banks[uring->fill_bank];
 
