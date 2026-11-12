@@ -2634,13 +2634,20 @@ struct harden_chain_t
     int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_sent, qdisc_dropped, device_dropped;
     int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards, arrived_device_dropped;
     int64_t library_received;
+    // refused by the receiving server transport before its protocol counts the
+    // packet received: a server transport's own receive drops (too short or
+    // too large) land in PREFILTER_TOO_SHORT and PREFILTER_TOO_LARGE, outside
+    // PACKETS_RECEIVED; the protocol's prefilter counts into the same two
+    // inside it, so a transport that passes short datagrams up makes this
+    // term too large and the chain red (library_gap < 0), never green
+    int64_t library_refused_before_received = 0;
 };
 
 static bool harden_chain_print( const char * direction, const harden_chain_t & c, int duplicates_expected )
 {
     const int64_t send_gap = c.library_sent - ( c.kernel_out + c.kernel_sndbuf );
     const int64_t path_gap = c.kernel_out - ( c.arrived_in + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped );
-    const int64_t receive_gap = c.arrived_in - c.library_received;
+    const int64_t receive_gap = c.arrived_in - ( c.library_received + c.library_refused_before_received );
     // netem's duplicates are not counted anywhere: they are the path's
     // excess of arrivals, and must be zero unless the row duplicates
     // the judged equation is the libraries': every packet the sender's
@@ -2649,7 +2656,7 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     // printed beside it: they count an skb, so a GSO send of N datagrams is
     // one in them (and in qdisc drops), and a step gap there names where a
     // library gap went
-    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped;
+    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped + c.library_refused_before_received;
     const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
     const bool ok = duplicates_expected ? library_gap <= 0 : library_gap == 0;
     printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s)\n", direction, c.library_sent,
@@ -2660,7 +2667,8 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
             " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
             direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
             duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
-    printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction, c.arrived_in, c.library_received, receive_gap );
+    printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " + library_refused_before_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction,
+            c.arrived_in, c.library_received, c.library_refused_before_received, receive_gap );
     // the qdisc counts each GSO segment it sends and each skb it drops: with
     // nothing dropped it is the datagrams that left this end, so a library
     // gap is the sender's (wire_gap > 0) or the receiver's (wire_gap 0)
@@ -2703,6 +2711,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
     up.library_received = t.get( "server.c2s_packets_received" );
+    up.library_refused_before_received = t.get( "server.c2s_transport_PREFILTER_TOO_SHORT" ) + t.get( "server.c2s_transport_PREFILTER_TOO_LARGE" );
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );
