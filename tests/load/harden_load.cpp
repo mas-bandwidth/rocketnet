@@ -1275,9 +1275,31 @@ static int harden_server_main( const harden_options_t & o )
         fflush( stdout );
     }
     // the clients read their own cut now; the server's stop (its disconnects)
-    // waits until they have
-    rocketnet_sleep( o.quiet_seconds );
-    harden_print_settle( role );
+    // waits until they have. Half way, before the clients' cleanup sends
+    // anything, the server's library and kernel counts are read again with
+    // the frame still running (update and receive, no sends): a library count
+    // that grows here was held across the quiet, not lost
+    const double settle_at = harden_now() + 0.5 * o.quiet_seconds;
+    uint64_t settle_messages = 0;
+    while ( harden_now() < settle_at )
+    {
+        rocketnet_server_update( server, harden_now() );
+        const struct rocketnet_message_batch_t * held;
+        while ( ( held = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            settle_messages += (uint64_t) held->num_messages;
+        }
+        rocketnet_sleep( 1.0 / o.hz );
+    }
+    {
+        struct rocketnet_server_stats_t settle;
+        rocketnet_server_stats( server, &settle );
+        harden_print_term( role, "settle_packets_received", (int64_t) settle.packets_received );
+        harden_print_term( role, "settle_packets_sent", (int64_t) settle.packets_sent );
+        harden_print_term( role, "settle_messages", (int64_t) settle_messages );
+        harden_print_settle( role );
+    }
+    rocketnet_sleep( 0.5 * o.quiet_seconds );
 
     rocketnet_server_stop( server );
     const double stop_deadline = harden_now() + 10.0;
