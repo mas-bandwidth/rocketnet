@@ -39,8 +39,8 @@ examples|windows|x86_64|msvc|Release|devON|none|-~-|default	nightly-examples.yml
 frame_budget|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-frame-budget.yml	linux-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
 frame_budget|macos|arm64|appleclang|Release|devON|none|-~-|default	nightly-frame-budget.yml	macos-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
 frame_budget|windows|x86_64|msvc|Release|devON|none|-~-|default	nightly-frame-budget.yml	windows-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
-framework|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-framework.yml	linux	*	framework	nightly	framework nightly
-framework|windows|x86_64|msvc|Release|devON|none|-~-|default	nightly-framework.yml	windows	*	framework	nightly	framework nightly
+framework|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	framework	owed:2026-11-19	needs FRAMEWORK_READ_TOKEN, an owner credential not yet provided
+framework|windows|x86_64|msvc|Release|devON|none|-~-|default	-	-	-	framework	owed:2026-11-19	needs FRAMEWORK_READ_TOKEN, an owner credential not yet provided
 functional_production|linux|x86_64|gcc|Debug|devOFF|none|auto~auto|default	-	-	-	functional_production	owed:2026-11-19	a Debug production build is a supported CMake combination (no refusal in CMakeLists); asserts in production-only code paths
 functional_production|linux|x86_64|gcc|Release|devOFF|none|auto~auto|default	ci.yml	build-and-test	Run functional_production suite (auto ladder	functional_production	per-commit	each server and each client transport is its own code path under every functional case; cells = ci.yml TRANSPORT_MATRIX_<OS> pairs plus auto/auto (and on Windows the server-only pins iocp/auto, rio/auto the nightly steps use, client auto = iocp); the production library (ROCKETNET_DEV=OFF) is what customers ship
 functional_production|linux|x86_64|gcc|Release|devOFF|none|gso~gso|default	-	-	-	functional_production && gso	owed:2026-11-19	each server and each client transport is its own code path under every functional case; cells = ci.yml TRANSPORT_MATRIX_<OS> pairs plus auto/auto (and on Windows the server-only pins iocp/auto, rio/auto the nightly steps use, client auto = iocp); the production library (ROCKETNET_DEV=OFF) is what customers ship
@@ -257,7 +257,7 @@ happy_path|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	happy-path	
 instruction_count|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	instruction-gate	*	instruction_count	per-commit	instruction-count gate
 internal_header_probe|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	internal_header_probe	inside:build+consumer	probe built by tools/check_package.py
 keygen|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-bigendian-system.yml	bigendian-system	*	keygen	nightly	keygen in the s390x guest
-load_split|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-real-load.yml	real-load	*	tools/test_real_load_report.py	nightly	load split
+load_split|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	load_split	owed:2026-11-19	needs a real-load inventory and a remote-root design; off by decision until designed
 load|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-soak.yml	soak	*	load	nightly	load
 mutation|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly.yml	mutation	*	mutation	nightly	mutation slice
 nightly-watch|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-watch.yml	watch	*	nightly-watch	nightly	nightly watch
@@ -272,7 +272,7 @@ scripts/check-fleet-runners|linux|x86_64|gcc|Release|devON|none|-~-|default	stat
 scripts/distro-container-build|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	distro-container	Build and test in an Ubuntu ${{ matrix.release }} container	scripts/distro-container-build	per-commit	user/releaser script (scripts/)
 scripts/lan-proof-remote|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/lan-proof-remote	manual	the per-host half of scripts/lan-proof (LAN 1000-client proof over two hosts), run by it over ssh
 scripts/lan-proof-selftest|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Self-tests of the registered checkers	scripts/lan-proof-selftest	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
-scripts/lan-proof|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-real-load.yml	real-load	Run the cells	scripts/lan-proof	nightly	user/releaser script (scripts/)
+scripts/lan-proof|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/lan-proof	owed:2026-11-19	needs a real-load inventory and a remote-root design; off by decision until designed
 scripts/live-xdp-fleet-merge|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/live-xdp-fleet-merge	manual	merges live-xdp-fleet results: scripts/live-xdp-fleet-merge <dirs>
 scripts/live-xdp-fleet-remote|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/live-xdp-fleet-remote	manual	the per-host half of live-xdp-fleet, run by it over ssh
 scripts/live-xdp-fleet|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/live-xdp-fleet	manual	multi-host XDP over the fleet's physical NIC pairs: scripts/live-xdp-fleet --inventory <file> (see scripts/live-xdp-fleet.inventory.example)
