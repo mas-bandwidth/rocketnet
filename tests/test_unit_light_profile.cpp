@@ -176,8 +176,15 @@
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
+// Each client slot holds its receive allowance (struct
+// rocketnet_server_receive_allowance_t, 32 bytes, one allocation of
+// max_clients of them, sdk/rocketnet_server_protocol.h), the server protocol
+// its pointer and rate (16 bytes), and the counter registry grows by four
+// counters: the server adds 32215 bytes at 1000 clients and the client 128
+// (measured on amd-3, gcc Release: the probe's actual= lines are 3111708930
+// and 15186210). The client pin moves by the same 128, as before.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110660362ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147378 )
 #endif // #if defined( _WIN32 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
