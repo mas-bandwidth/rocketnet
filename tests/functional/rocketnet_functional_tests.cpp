@@ -1744,7 +1744,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( false );
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
 
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
@@ -1757,7 +1757,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( client );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
 
     // the same connect and payload exchange as the udp loopback, over IPv4
     // while the host reports no IPv6 stack
@@ -1850,7 +1850,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     int create_status = ROCKETNET_STATUS_OK;
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
@@ -1861,7 +1861,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_check( refused == NULL );
     rocketnet_check( create_status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "ipv6 is unavailable on this host" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "ipv6 is unavailable on this host" ) != NULL );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
     rocketnet_test_env_restore( &client_pin_guard );
@@ -5626,7 +5626,7 @@ void rocketnet_test_server_port_zero_transport()
         config.max_clients = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", name );
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
 
         const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
 
@@ -5639,7 +5639,7 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "cannot discover the port it was granted and hand it back" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "cannot discover the port it was granted and hand it back" ) != NULL );
 
         // and at a level that shows warns, the RUNG's own refusal names
         // the rule and the transport together -- matched as one phrase, since
@@ -5649,7 +5649,7 @@ void rocketnet_test_server_port_zero_transport()
         char expected_rung_refusal[128];
         snprintf( expected_rung_refusal, sizeof( expected_rung_refusal ), "server transport %s refused: a port-zero public address", name );
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
         rocketnet_log_function( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
@@ -5659,7 +5659,7 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, expected_rung_refusal ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), expected_rung_refusal ) != NULL );
 
         // SCOPE, the other half of correct: the rule is about port ZERO
         // and nothing else. the same pin with a real port never meets it
@@ -5670,7 +5670,7 @@ void rocketnet_test_server_port_zero_transport()
         // it is what keeps the BARRIER exercised, since the rule
         // short-circuits the port-zero pins that would otherwise reach it.
 
-        rocketnet_test_captured_log[0] = '\0';
+        rocketnet_test_captured_log_reset();
         rocketnet_log_function( rocketnet_test_capture_log, NULL );
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
 
@@ -5680,15 +5680,15 @@ void rocketnet_test_server_port_zero_transport()
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
         rocketnet_check( server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "port-zero public address" ) == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "port-zero public address" ) == NULL );
 #if ROCKETNET_XDP
-        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
 #else
         // a build with XDP compiled out (no BPF-capable clang, libbpf or
         // AF_XDP provider at configure) is supported: the rung refuses
         // cleanly at its own create and never reaches the commit barrier
 
-        rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "XDP is compiled out of this build" ) != NULL );
 #endif // #if ROCKETNET_XDP
 
         // and the rung refusal is a RUNG refusal, not a create refusal:
@@ -5775,7 +5775,7 @@ void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroy
 
 static enum rocketnet_log_level_t rocketnet_test_xdp_capture_begin()
 {
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
 
     const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
 
@@ -5827,8 +5827,8 @@ static void rocketnet_test_xdp_ladder_port_zero( const struct rocketnet_server_t
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "a port-zero public address asks the kernel for an ephemeral port" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "a port-zero public address asks the kernel for an ephemeral port" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 }
 #endif // #if ROCKETNET_XDP
@@ -5885,9 +5885,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_server_socket_forbid_commit();
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight: development control selects unavailable" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight: development control selects unavailable" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 
     // FORCED AVAILABLE: the direct pre-flight says yes, while the barrier
     // stays installed, so the production pin is refused by the barrier
@@ -5902,8 +5902,8 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_test_xdp_capture_end( saved_level );
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 
     rocketnet_server_socket_clear_preflight_test_result();
 #endif // ROCKETNET_DEV
@@ -5927,8 +5927,8 @@ void rocketnet_test_server_transport_io_pin_xdp()
         rocketnet_test_xdp_capture_end( natural_saved_level );
 
         rocketnet_check( natural_server == NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
     }
     else
     {
@@ -5949,11 +5949,11 @@ void rocketnet_test_server_transport_io_pin_xdp()
         // there the barrier's refusal is the one named; the pre-flight's own
         // answer is checked directly below
 #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
 #else
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
 #endif // #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
     }
 
 #if ROCKETNET_DEV
@@ -5966,8 +5966,8 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_test_xdp_capture_end( saved_level );
 
     rocketnet_check( server == NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "XDP is compiled out of this build" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "XDP is compiled out of this build" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "refused: xdp" ) != NULL );
 #endif // #if ROCKETNET_XDP
 
     rocketnet_test_env_restore( &transport_guard );
@@ -6022,8 +6022,8 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 
     // FORCED AVAILABLE: the direct answer is yes, the barrier stays
@@ -6040,8 +6040,8 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "gso" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "forbids committing an XDP data plane" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "forbids committing an XDP data plane" ) != NULL );
+    rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
     rocketnet_test_xdp_server_destroy( server );
 
     rocketnet_server_socket_clear_preflight_test_result();
@@ -6086,11 +6086,11 @@ void rocketnet_test_server_transport_io_ladder_fall()
         // there the barrier's refusal is the one named; the pre-flight's own
         // answer is checked directly below
 #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
 #else
-        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
 #endif // #if ROCKETNET_DEV
-        rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log_read(), "server transport ladder granted gso after refusals: xdp" ) != NULL );
         rocketnet_test_xdp_server_destroy( natural_server );
     }
 
@@ -10203,7 +10203,7 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
           "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
     };
 
-    rocketnet_test_captured_log[0] = '\0';
+    rocketnet_test_captured_log_reset();
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
     rocketnet_log_function( rocketnet_test_capture_log, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
@@ -10223,7 +10223,7 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
             const double took = rocketnet_platform_time() - before;
             longest = took > longest ? took : longest;
             updates++;
-            taken[change] = strstr( rocketnet_test_captured_log, changes[change][1] ) != NULL;
+            taken[change] = strstr( rocketnet_test_captured_log_read(), changes[change][1] ) != NULL;
             rocketnet_platform_sleep( 0.001 );
         }
     }
