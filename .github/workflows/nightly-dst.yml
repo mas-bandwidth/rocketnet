@@ -507,7 +507,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Release)
-        run: cmake --build build --config Release --target dst test --parallel
+        run: cmake --build build --config Release --target dst test --parallel 8
 
       - name: The test_dst_ unit cases
         shell: bash

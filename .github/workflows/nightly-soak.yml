@@ -490,7 +490,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Windows)
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 8
 
       - name: Tests (Windows)
         shell: bash
@@ -676,7 +676,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build soak_sim
-        run: cmake --build build --target soak_sim --parallel
+        run: cmake --build build --target soak_sim --parallel 8
 
       # bounded, seed-pinned. the sim's own iteration bound is the clock, not
       # wall time, so the run tries the same inputs on a slow morning as on a

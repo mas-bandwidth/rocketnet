@@ -139,7 +139,7 @@ jobs:
         run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build static and shared libraries, unit suite and functional suite (clang)
-        run: cmake --build build-clang --parallel
+        run: cmake --build build-clang --parallel 8
 
       - name: Unit suite (clang)
         run: ./bin/test
@@ -296,10 +296,10 @@ jobs:
         run: cmake -B build-production -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-production/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-production/bin"
 
       - name: Build (Release)
-        run: cmake --build build --config Release --target functional --parallel
+        run: cmake --build build --config Release --target functional --parallel 8
 
       - name: Build the production functional suite (Release)
-        run: cmake --build build-production --config Release --target functional_production --parallel
+        run: cmake --build build-production --config Release --target functional_production --parallel 8
 
       - name: Functional suite, nightly tier
         shell: bash
@@ -387,7 +387,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
-        run: cmake --build build --target test functional --parallel
+        run: cmake --build build --target test functional --parallel 8
 
       - name: Run the unit suite under tsan
         env:
@@ -635,7 +635,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Debug --parallel
+        run: cmake --build build --config Debug --parallel 8
 
       - name: Run tests (RSS telemetry, deterministic verdict)
         shell: bash
@@ -735,7 +735,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 8
 
       - name: External transport backend
         run: python tools/check_driver_extension.py build --config Release
