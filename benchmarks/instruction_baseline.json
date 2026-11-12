@@ -3,19 +3,19 @@
   "compiler_id": "GNU-15.2.0",
   "valgrind_version": "valgrind-3.26.0",
   "build_type": "Release",
-  "commit": "182347fcec7eddcd92f116a74beaf91c84cfe66c",
-  "reason": "Rebaselined on the gate's own pinned toolchain build (tools/build_pinned_toolchain.sh: gcc 15.2.0 and valgrind 3.26.0 built from source), replacing the Ubuntu-packaged gcc 15.2 measurement (commit 78b0d06a: client_frame 787980 Ir, server_tick 114119350 Ir). Glenn approved 2026-10-31.",
+  "commit": "697433d438386d3090dbd06449fab7e60ad2dc9d",
+  "reason": "server_tick 90429054 -> about 70.1M: 4f97ad1a4 (Received ACK stats: constant work per in-order receive) made a receive merge into one summary instead of rebuilding a 32-slot block, found by bisecting main between 38ef0b902 (90.4M) and 3e910760f (69.9M) on the pinned toolchain. client_frame 777592 -> about 757k: the same commit measures 777528 on the retired hetzner2-rocketnet runners and 756280 on the fleet image, so this is the measuring environment, not code. The old pin recorded 182347fc, a pull request merge ref that never landed; this pin records a branch commit. Measured on hetzner2 (fleet image) with the pinned toolchain; it agrees with CI run 43253911468 on hetzner1-2 at e6855c875.",
   "threshold_pct": 2.0,
   "regions": {
     "client_frame": {
-      "ir": 777592,
+      "ir": 757176,
       "units": 64,
-      "per_unit": 12149.88
+      "per_unit": 11830.88
     },
     "server_tick": {
-      "ir": 90429054,
+      "ir": 70141144,
       "units": 64,
-      "per_unit": 1412953.97
+      "per_unit": 1095955.38
     }
   }
 }
