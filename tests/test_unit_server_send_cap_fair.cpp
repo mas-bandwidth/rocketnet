@@ -1275,6 +1275,45 @@ REGISTER_UNIT_TEST( test_server_per_client_flooding_subset_changes_nothing_for_t
 REGISTER_UNIT_TEST( test_server_per_client_mixed_subset_changes_nothing_for_the_others );
 REGISTER_UNIT_TEST( test_server_per_client_mixed_subset_at_max_clients );
 
+// The nightly case's footprint is set by the memory plan, not the suite-wide
+// bound: a ROCKETNET_MAX_CLIENTS server and as many clients, each allocated
+// up front. The bound is rocketnet_server_required_memory for the case's
+// server configuration, plus rocketnet_client_required_memory for each client,
+// both planned with the portable transport because the plans have no row for
+// the loopback transport, plus the case's loopback hub at PC_MAX_CLIENTS, plus
+// a stated 64 MiB margin for the process itself. A regression above the plan
+// fails the case.
+static long pc_max_clients_rss_bound_mb()
+{
+    rocketnet_server_config_t server_config;
+    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK )
+    {
+        return 0;
+    }
+    server_config.protocol_id = FAIR_PROTOCOL;
+    server_config.max_clients = PC_MAX_CLIENTS;
+    server_config.transport = "portable";
+    server_config.message_resend_delay_min_ms = 2000;
+    const uint64_t server = (uint64_t) rocketnet_server_required_memory( &server_config );
+
+    rocketnet_client_config_t client_config;
+    if ( rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
+    {
+        return 0;
+    }
+    client_config.transport = "portable";
+    const uint64_t client = (uint64_t) rocketnet_client_required_memory( &client_config );
+    if ( server == 0 || client == 0 )
+    {
+        return 0;
+    }
+
+    const uint64_t hub = rocketnet_loopback_hub_bytes( PC_MAX_CLIENTS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( server + (uint64_t) PC_MAX_CLIENTS * client + hub, 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_server_per_client_mixed_subset_at_max_clients, pc_max_clients_rss_bound_mb );
+
 // A freed slot is clean (property X): a one-slot server whose client A builds
 // up history (reliable messages with receipts unacknowledged, a send side
 // filled until refused, messages of its own, then 1.5 s dark so it is held by
