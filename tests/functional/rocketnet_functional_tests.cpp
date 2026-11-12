@@ -58,6 +58,7 @@ extern std::atomic<unsigned long long> g_client_ack_stats_count;
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../counters_expect.h"
 #include "../loopback_hub.h"
+#include "../kernel_drops.h"
 
 // The clean-run rule rides along: every refusal reads 0 on a run that injects
 // no fault. A test that provokes a refusal on purpose ends with the _EXCEPT
@@ -121,25 +122,30 @@ struct rocketnet_test_hammer_args_t
     int packets;
 };
 
+static void rocketnet_test_hammer_send( struct rocketnet_server_transport_t * server, int thread_id, int i )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+
+    uint8_t * payload = frame + context.payload_index;
+    payload[0] = (uint8_t) thread_id;
+    payload[1] = (uint8_t) i;
+
+    for ( int j = 2; j < 16; j++ )
+    {
+        payload[j] = (uint8_t) ( thread_id * 31 + i * 7 + j );
+    }
+
+    rocketnet_server_transport_finish_packet( server, &context, 16 );
+}
+
 static void rocketnet_test_hammer_thread( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_test_hammer_args_t * args = (struct rocketnet_test_hammer_args_t *) data;
     for ( int i = 0; i < args->packets; i++ )
     {
-        struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( args->server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-        rocketnet_check( frame );
-
-        uint8_t * payload = frame + context.payload_index;
-        payload[0] = (uint8_t) args->thread_id;
-        payload[1] = (uint8_t) i;
-
-        for ( int j = 2; j < 16; j++ )
-        {
-            payload[j] = (uint8_t) ( args->thread_id * 31 + i * 7 + j );
-        }
-
-        rocketnet_server_transport_finish_packet( args->server, &context, 16 );
+        rocketnet_test_hammer_send( args->server, args->thread_id, i );
     }
 }
 
@@ -422,6 +428,7 @@ void rocketnet_test_client_disconnect_reports_state_change()
 
 // the hand-off round trip on one client transport; name is the case's name for
 // its report line
+
 static void rocketnet_test_client_io_handoff_round_trip( const char * transport, const char * name )
 {
     // docs/CLIENT-IO.md Per-platform cards: a client transport on a platform
@@ -494,6 +501,9 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
 
     int received = 0;
     int start_refusals = 0;
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, name );
 
     for ( int frame = 0; frame < FRAMES; frame++ )
     {
@@ -594,11 +604,63 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     }
 
     // the last ring leaves while the transports keep updating; a deferred
-    // hand-off is retried every update (docs/CLIENT-IO.md Reuse only after sent)
+    // hand-off is retried every update (docs/CLIENT-IO.md Reuse only after sent).
+    // Loopback can drop a datagram of this burst (tests/kernel_drops.h): a tag
+    // still missing at the deadline is sent again, through the same client
+    // transport, only when the kernel counted that many receive drops. A loss
+    // the kernel did not count is the library's and fails here; a tag that
+    // arrives twice fails at !seen[tag].
 
+    double wait = 5.0;
     start = rocketnet_platform_time();
-    while ( received < TOTAL && rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
+        if ( received == TOTAL )
+        {
+            break;
+        }
+
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s received %d of %d payloads\n", name, received, TOTAL );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, TOTAL - received ) );
+
+            for ( int tag = 0; tag < TOTAL; tag++ )
+            {
+                if ( seen[tag] )
+                {
+                    continue;
+                }
+
+                struct rocketnet_packet_context_t context = {};
+                uint8_t * payload = NULL;
+                const double fill_deadline = rocketnet_platform_time() + 5.0;
+                while ( !payload && rocketnet_platform_time() < fill_deadline )
+                {
+                    payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
+                    if ( !payload )
+                    {
+                        start_refusals++;
+                        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+                        rocketnet_platform_sleep( 0.001 );
+                    }
+                }
+
+                rocketnet_check( payload );
+                payload[context.payload_index + 0] = (uint8_t) ( tag & 0xFF );
+                payload[context.payload_index + 1] = (uint8_t) ( tag >> 8 );
+                for ( int j = 2; j < PAYLOAD_BYTES; j++ )
+                {
+                    payload[context.payload_index + j] = (uint8_t) ( tag * 31 + j );
+                }
+                rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
+            }
+
+            rocketnet_client_transport_send_packets( client );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
@@ -893,19 +955,24 @@ struct rocketnet_test_client_hammer_args_t
     int packets;
 };
 
+static void rocketnet_test_client_hammer_send( struct rocketnet_client_transport_t * client, int thread_id, int i )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
+    rocketnet_check( frame );
+
+    uint8_t * payload = frame + context.payload_index;
+    payload[0] = (uint8_t) thread_id;
+    payload[1] = (uint8_t) i;
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, 2 ) > 0 );
+}
+
 static void rocketnet_test_client_hammer_thread( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_test_client_hammer_args_t * args = (struct rocketnet_test_client_hammer_args_t *) data;
     for ( int i = 0; i < args->packets; i++ )
     {
-        struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_client_transport_start_packet( args->client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-        rocketnet_check( frame );
-
-        uint8_t * payload = frame + context.payload_index;
-        payload[0] = (uint8_t) args->thread_id;
-        payload[1] = (uint8_t) i;
-        rocketnet_check( rocketnet_client_transport_finish_packet( args->client, &context, 2 ) > 0 );
+        rocketnet_test_client_hammer_send( args->client, args->thread_id, i );
     }
 }
 
@@ -957,6 +1024,9 @@ void rocketnet_test_transport_client_concurrent_fill()
     struct rocketnet_test_client_hammer_args_t args[NUM_THREADS];
     rocketnet_platform_thread_t * threads[NUM_THREADS];
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_transport_client_concurrent_fill" );
+
     for ( int t = 0; t < NUM_THREADS; t++ )
     {
         args[t].client = client;
@@ -979,9 +1049,35 @@ void rocketnet_test_transport_client_concurrent_fill()
 
     int received = 0;
 
+    // loopback can drop a datagram of the flush (tests/kernel_drops.h): one
+    // still missing at the deadline is sent again, from this thread through the
+    // same client transport, only when the kernel counted that many receive
+    // drops; otherwise the loss is the library's and fails here. A packet that
+    // arrives twice fails at !seen.
+
+    double wait = 5.0;
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && received < NUM_THREADS * PACKETS_PER_THREAD )
+    while ( received < NUM_THREADS * PACKETS_PER_THREAD )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "test_transport_client_concurrent_fill received %d of %d\n", received, NUM_THREADS * PACKETS_PER_THREAD );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, NUM_THREADS * PACKETS_PER_THREAD - received ) );
+            for ( int t = 0; t < NUM_THREADS; t++ )
+            {
+                for ( int i = 0; i < PACKETS_PER_THREAD; i++ )
+                {
+                    if ( !seen[t][i] )
+                    {
+                        rocketnet_test_client_hammer_send( client, t, i );
+                    }
+                }
+            }
+            rocketnet_client_transport_send_packets( client );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
@@ -1063,6 +1159,9 @@ void rocketnet_test_transport_concurrent_fill()
     struct rocketnet_test_hammer_args_t args[NUM_THREADS];
     rocketnet_platform_thread_t * threads[NUM_THREADS];
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_transport_concurrent_fill" );
+
     for ( int t = 0; t < NUM_THREADS; t++ )
     {
         args[t].server = server;
@@ -1087,9 +1186,35 @@ void rocketnet_test_transport_concurrent_fill()
 
     int received = 0;
 
+    // loopback can drop a datagram of the flush (tests/kernel_drops.h): one
+    // still missing at the deadline is sent again, from this thread through the
+    // same server transport, only when the kernel counted that many receive
+    // drops; otherwise the loss is the library's and fails here. A packet that
+    // arrives twice fails at !seen.
+
+    double wait = 5.0;
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && received < NUM_THREADS * PACKETS_PER_THREAD )
+    while ( received < NUM_THREADS * PACKETS_PER_THREAD )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "test_transport_concurrent_fill received %d of %d\n", received, NUM_THREADS * PACKETS_PER_THREAD );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, NUM_THREADS * PACKETS_PER_THREAD - received ) );
+            for ( int t = 0; t < NUM_THREADS; t++ )
+            {
+                for ( int i = 0; i < PACKETS_PER_THREAD; i++ )
+                {
+                    if ( !seen[t][i] )
+                    {
+                        rocketnet_test_hammer_send( server, t, i );
+                    }
+                }
+            }
+            rocketnet_server_transport_send_packets( server );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
@@ -1785,16 +1910,39 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     int sent_to_server = 0;
     int sent_to_client = 0;
 
+    // loopback can drop one (tests/kernel_drops.h): what either side is still
+    // short of at the deadline is sent again, by the same transports, only when
+    // the kernel counted that many receive drops; a count above ten (a late
+    // original after a resend, or a duplicate) fails by name
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_client_ipv4_without_ipv6_stack" );
+    int quota_to_server = 10;
+    int quota_to_client = 10;
+    double wait = 5.0;
+
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
-        if ( sent_to_server < 10 )
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "test_client_ipv4_without_ipv6_stack: server received %d of 10, client received %d of 10\n", server_received, client_received );
+            const int missing_at_server = 10 - server_received;
+            const int missing_at_client = 10 - client_received;
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
+            quota_to_server += missing_at_server;
+            quota_to_client += missing_at_client;
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        if ( sent_to_server < quota_to_server )
         {
             rocketnet_client_transport_send_packet( client, (const uint8_t *) "hello", 5 );
             sent_to_server++;
         }
 
-        if ( sent_to_client < 10 )
+        if ( sent_to_client < quota_to_client )
         {
             rocketnet_server_transport_send_packet( server, 0, (const uint8_t *) "world", 5 );
             sent_to_client++;
@@ -1825,7 +1973,10 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
             client_received++;
         }
 
-        if ( server_received >= 10 && client_received >= 10 )
+        rocketnet_check( server_received <= 10 );
+        rocketnet_check( client_received <= 10 );
+
+        if ( server_received == 10 && client_received == 10 && sent_to_server == quota_to_server && sent_to_client == quota_to_client )
         {
             break;
         }
@@ -1833,8 +1984,8 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( sent_to_server == 10 );
-    rocketnet_check( sent_to_client == 10 );
+    rocketnet_check( sent_to_server == quota_to_server );
+    rocketnet_check( sent_to_client == quota_to_client );
     rocketnet_check( server_received == 10 );
     rocketnet_check( client_received == 10 );
 
@@ -2750,6 +2901,65 @@ void rocketnet_test_receive_drops_oversize_datagram()
 #define ROCKETNET_TEST_EXPECTED_PUMP "portable"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+
+// receive `count` datagrams of sends[] (each carries its index in byte 0)
+// into the arrays from slot 0, asking for up to `capacity`. Loopback can drop one
+// (tests/kernel_drops.h): what is still missing at the deadline is sent again
+// through the batch pump only when the kernel counted that many receive drops;
+// otherwise the loss is the pump's and the case fails. Returns the count
+// received; a late original after a resend lands twice and fails the caller's
+// exactly-once check.
+
+static int rocketnet_test_pump_receive( rocketnet_platform_socket_t * socket, struct rocketnet_loss_gate_t * gate, const struct rocketnet_platform_send_t * sends,
+                                        int count, int capacity, rocketnet_address_t * from, uint8_t * receive_data, int * packet_bytes )
+{
+    int received = 0;
+    double wait = 5.0;
+    double start_time = rocketnet_platform_time();
+    while ( received < count )
+    {
+        if ( rocketnet_platform_time() - start_time >= wait )
+        {
+            printf( "%s: received %d of %d\n", gate->name, received, count );
+            rocketnet_check( rocketnet_loss_gate_resend( gate, count - received ) );
+
+            bool arrived[ROCKETNET_TEST_PUMP_PACKETS];
+            memset( arrived, 0, sizeof( arrived ) );
+            for ( int i = 0; i < received; i++ )
+            {
+                const int index = receive_data[(size_t) i * ROCKETNET_TEST_PUMP_STRIDE];
+                if ( index < count )
+                {
+                    arrived[index] = true;
+                }
+            }
+
+            struct rocketnet_platform_send_t missing[ROCKETNET_TEST_PUMP_PACKETS];
+            int num_missing = 0;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( !arrived[i] )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+
+            rocketnet_platform_socket_send_packets( socket, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start_time = rocketnet_platform_time();
+        }
+
+        received += rocketnet_platform_socket_receive_packets( socket,
+                                                               from + received,
+                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
+                                                               ROCKETNET_TEST_PUMP_STRIDE,
+                                                               packet_bytes + received,
+                                                               capacity - received );
+    }
+
+    return received;
+}
+
 static void rocketnet_test_pump_exchange( const char * bind_string, const char * local_string, const char * expected_pump, const char * requested_pump = NULL )
 {
     rocketnet_address_t bind_address;
@@ -2782,6 +2992,9 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
         sends[i].packet_bytes = bytes;
     }
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "pump exchange" );
+
     rocketnet_platform_socket_send_packets( socket, sends, ROCKETNET_TEST_PUMP_PACKETS );
 
     // batch receive: drain until everything sent has arrived. loopback
@@ -2792,17 +3005,7 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
     static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
     static uint8_t receive_data[ROCKETNET_TEST_PUMP_PACKETS * ROCKETNET_TEST_PUMP_STRIDE];
 
-    int received = 0;
-    double start_time = rocketnet_platform_time();
-    while ( received < ROCKETNET_TEST_PUMP_PACKETS && rocketnet_platform_time() - start_time < 5.0 )
-    {
-        received += rocketnet_platform_socket_receive_packets( socket,
-                                                               from + received,
-                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
-                                                               ROCKETNET_TEST_PUMP_STRIDE,
-                                                               packet_bytes + received,
-                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
-    }
+    int received = rocketnet_test_pump_receive( socket, &gate, sends, ROCKETNET_TEST_PUMP_PACKETS, ROCKETNET_TEST_PUMP_PACKETS, from, receive_data, packet_bytes );
 
     rocketnet_check( received == ROCKETNET_TEST_PUMP_PACKETS );
 
@@ -2838,17 +3041,7 @@ static void rocketnet_test_pump_exchange( const char * bind_string, const char *
         rocketnet_platform_socket_send_packet( socket, &local_address, send_data[i], 32 + i * 4 );
     }
 
-    received = 0;
-    start_time = rocketnet_platform_time();
-    while ( received < 3 && rocketnet_platform_time() - start_time < 5.0 )
-    {
-        received += rocketnet_platform_socket_receive_packets( socket,
-                                                               from + received,
-                                                               receive_data + (size_t) received * ROCKETNET_TEST_PUMP_STRIDE,
-                                                               ROCKETNET_TEST_PUMP_STRIDE,
-                                                               packet_bytes + received,
-                                                               ROCKETNET_TEST_PUMP_PACKETS - received );
-    }
+    received = rocketnet_test_pump_receive( socket, &gate, sends, 3, ROCKETNET_TEST_PUMP_PACKETS, from, receive_data, packet_bytes );
 
     rocketnet_check( received == 3 );
 
