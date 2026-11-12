@@ -1,3 +1,12 @@
+# SUPERSEDED (2026-11-12): this file never reached main, and a cron on a
+# branch never fires, so its schedule is removed. What covers its checks on
+# main: ci.yml `instruction count gate` (tools/check_instructions.py against
+# benchmarks/instruction_baseline.json on the pinned toolchain, every commit,
+# building it on the nightly tier), and ci.yml `platform selftests` (nightly
+# tier through nightly-ci.yml: benchmarks/selftest.sh and
+# benchmarks/test_campaign.py, the harness-honesty plants). Not carried over: the wall-clock pps trend, which was report-only
+# by design and never failed a night; tools/perf_trend.py is not on main.
+#
 # Nightly performance trend.
 #
 # Runs the two measurements the repository already has, on fixed hardware,
@@ -55,8 +64,6 @@
 name: Nightly Perf Trend
 
 on:
-  schedule:
-    - cron: "10 3 * * *"
   workflow_dispatch:
 
 permissions:
