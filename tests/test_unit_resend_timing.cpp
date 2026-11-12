@@ -1251,6 +1251,39 @@ static void test_rtt_filter_idle_connection_is_not_a_silence()
 }
 
 REGISTER_UNIT_TEST( test_rtt_filter_idle_connection_is_not_a_silence );
+
+// The silence boundary: a number owed an acknowledgement for exactly
+// RN_PROBE_SECONDS ends a silence when that acknowledgement arrives, and one
+// owed for less does not (proofs/tla/RNRttFilter.tla EndsSilence, ">=").
+// Times are exact in binary, so the boundary is met exactly.
+static void test_rtt_filter_silence_starts_at_exactly_the_probe_interval()
+{
+    for ( int leg = 0; leg < 2; leg++ )
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+
+        const double t0 = resend_timing_start;
+        const double owed = leg == 0 ? RN_PROBE_SECONDS : RN_PROBE_SECONDS - 0.25;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        check( f.send.U < f.send.next );
+        check( t0 + owed - t0 == owed );
+        check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + owed ) == 1 );
+        if ( leg == 0 )
+        {
+            check( f.ack.silence_end == t0 + owed );
+        }
+        else
+        {
+            check( f.ack.silence_end == 0.0 );
+        }
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_silence_starts_at_exactly_the_probe_interval );
 #endif // #if ROCKETNET_DEV
 
 // The first acknowledgement of a connection after an outage (m9.2): the

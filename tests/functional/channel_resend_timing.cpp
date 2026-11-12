@@ -101,6 +101,9 @@ struct resend_timing_row_t
     double reliable_message_timeout_ms;
     double ceiling_slack_ms;        // max over messages of latency - its own ceiling
     int max_sends;                  // most sends of one message before its delivery
+    uint64_t seen_resends;          // resends this case saw itself (a subset of the record's: undelivered messages only)
+    double seen_gap_min_ms;         // the smallest and largest of those gaps
+    double seen_gap_max_ms;
 };
 
 static double resend_timing_percentile( const double * sorted, int count, double fraction )
@@ -195,6 +198,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     double resend_delay_bound_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
     double ceiling_slack_ms = -1.0e30;
     int max_sends = 0;
+    uint64_t seen_resends = 0;
+    double seen_gap_min_ms = 1.0e30;
+    double seen_gap_max_ms = 0.0;
 
     int sent = 0;
     int delivered = 0;
@@ -255,6 +261,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
                 const double gap_ms = ( h.now - sends_at[i][n - 1] ) * 1000.0;
                 resend_timing_check( gap_ms >= current_resend_delay_ms - 1e-6 );
                 resend_timing_check( gap_ms <= previous_resend_delay_ms + tick_ms + 1e-6 );
+                seen_resends++;
+                seen_gap_min_ms = std::min( seen_gap_min_ms, gap_ms );
+                seen_gap_max_ms = std::max( seen_gap_max_ms, gap_ms );
             }
 
             resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_resend_delay_ms + tick_ms;
@@ -332,6 +341,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->reliable_message_timeout_ms = ack->reliable_timeout * 1000.0;
     row->ceiling_slack_ms = ceiling_slack_ms;
     row->max_sends = max_sends;
+    row->seen_resends = seen_resends;
+    row->seen_gap_min_ms = seen_gap_min_ms;
+    row->seen_gap_max_ms = seen_gap_max_ms;
     resend_timing_check( gaps->count[1] == 0 );         // no chunks in this case
 
     rocketnet_channel_harness_destroy( &h );
@@ -396,6 +408,20 @@ void resend_timing_table_over_lossy_links()
                 // the rule, per resend: delay at the resend <= gap <= delay at the update before + a tick
 
                 resend_timing_check( row->gaps > 0 );
+
+                // the record was updated, not left at its sentinels (gap_min 1e30, gap_max 0,
+                // early_min 1e30, late_max -1e30), which pass every bound below: it holds every
+                // resend this case saw itself, so its count is at least theirs and its extremes
+                // enclose theirs; early_min is a gap less a positive delay, so at most gap_max,
+                // and late_max a positive gap less a delay at most the largest, so above -that
+
+                resend_timing_check( row->seen_resends > 0 && row->gaps >= row->seen_resends );
+                resend_timing_check( row->gap_min_ms > 0.0 && row->gap_min_ms <= row->gap_max_ms );
+                resend_timing_check( row->gap_min_ms <= row->seen_gap_min_ms + eps_ms );
+                resend_timing_check( row->gap_max_ms >= row->seen_gap_max_ms - eps_ms );
+                resend_timing_check( row->early_min_ms < row->gap_max_ms );
+                resend_timing_check( row->late_max_ms > -row->resend_delay_bound_ms );
+
                 resend_timing_check( row->early_min_ms >= -eps_ms );
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
                 resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
