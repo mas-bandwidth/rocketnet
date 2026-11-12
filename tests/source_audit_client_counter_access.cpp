@@ -28,6 +28,10 @@
 #include <string>
 #include <vector>
 
+#ifndef ROCKETNET_PUBLIC_PROGRAM_SOURCES
+#error "the build passes ROCKETNET_PUBLIC_PROGRAM_SOURCES to this file"
+#endif // #ifndef ROCKETNET_PUBLIC_PROGRAM_SOURCES
+
 static bool client_cast_read_file( const char * relative, std::string & text )
 {
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative;
@@ -240,17 +244,45 @@ static void test_tools_never_cast_public_client_to_internal()
         }
     }
 
-    static const char * const files[] = { "tests/client_server/client.c", "tests/client_server/server.c", "tests/load/load.c", "tests/soak/soak.c" };
-    for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
+    // every C/C++ source the build compiles into a program (CMakeLists.txt,
+    // ROCKETNET_PUBLIC_PROGRAM_SOURCES): not a list of directories, so a new
+    // tool, example or benchmark is read the day it is added (VERIFY-3 W16)
+    std::vector<std::string> files;
+    {
+        std::string item;
+        for ( const char * c = ROCKETNET_PUBLIC_PROGRAM_SOURCES;; c++ )
+        {
+            if ( *c == '|' || *c == '\0' )
+            {
+                if ( !item.empty() )
+                {
+                    files.push_back( item );
+                }
+                item.clear();
+                if ( *c == '\0' )
+                {
+                    break;
+                }
+                continue;
+            }
+            item.push_back( *c );
+        }
+    }
+    if ( files.size() < 4 )
+    {
+        failures.push_back( "the build named fewer than 4 program sources to read" );
+    }
+    for ( size_t f = 0; f < files.size(); f++ )
     {
         std::string text;
-        if ( !client_cast_read_file( files[f], text ) )
+        if ( !client_cast_read_file( files[f].c_str(), text ) )
         {
-            failures.push_back( std::string( "cannot read " ) + files[f] );
+            failures.push_back( "cannot read " + files[f] );
             continue;
         }
-        client_cast_find_casts( files[f], source_audit_code_only( text ), failures );
+        client_cast_find_casts( files[f].c_str(), source_audit_code_only( text ), failures );
     }
+    printf( "test_tools_never_cast_public_client_to_internal: %zu program sources read\n", files.size() );
 
     if ( !failures.empty() )
     {
