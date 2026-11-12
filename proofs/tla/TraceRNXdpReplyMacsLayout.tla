@@ -28,9 +28,16 @@ EXTENDS RNXdpReplyMacsLayout, Sequences
 
 CONSTANT TraceLog
 
+\* the log through a definition of this module's own: TLC evaluates a
+\* constant definition once, when it starts, but the constant TraceLog,
+\* overridden by the trace module's Log, again at every reference. Every use
+\* below reads Records; a 41-record log of this layer took 6 minutes
+\* through TraceLog and 1 s through Records.
+Records == TraceLog
+
 \* checked once, when TLC starts
-ASSUME /\ Len(TraceLog) >= 2
-       /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = {"op", "act", "args", "state"}
+ASSUME /\ Len(Records) >= 2
+       /\ \A n \in DOMAIN Records : DOMAIN Records[n] = {"op", "act", "args", "state"}
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
@@ -58,15 +65,15 @@ Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
 \* home is the code's hash of each address: taken from record 1 before Init
 \* checks it, so TLC never enumerates every map of addresses to slots
 TraceInit ==
-    /\ home = TraceLog[1].state.home
+    /\ home = Records[1].state.home
     /\ Init
     /\ ti = 1
-    /\ rejected = (TraceLog[1].op # "init" \/ TraceLog[1].act # "init" \/ VarsRec # TraceLog[1].state)
+    /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
 
 TraceStep ==
     /\ ~rejected
-    /\ ti < Len(TraceLog)
-    /\ LET r == TraceLog[ti + 1]
+    /\ ti < Len(Records)
+    /\ LET r == Records[ti + 1]
        IN /\ r.op \in DOMAIN OpActs
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
@@ -76,13 +83,13 @@ TraceStep ==
 
 TraceReject ==
     /\ ~rejected
-    /\ ti < Len(TraceLog)
+    /\ ti < Len(Records)
     /\ ~ENABLED TraceStep
     /\ rejected' = TRUE
     /\ UNCHANGED <<vars, ti>>
 
 TraceDone ==
-    /\ rejected \/ ti = Len(TraceLog)
+    /\ rejected \/ ti = Len(Records)
     /\ UNCHANGED <<vars, ti, rejected>>
 
 TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
