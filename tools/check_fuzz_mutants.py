@@ -237,6 +237,9 @@ def replay(binary, files):
         if "fuzz oracle failed" in line or "ERROR: AddressSanitizer" in line or "runtime error:" in line or "check failed" in line:
             reason = line.strip()
             break
+    if not reason and result.returncode != 0:
+        lines = [l.strip() for l in (result.stderr + result.stdout).splitlines() if l.strip()]
+        reason = "(no oracle line; last output: %s)" % (lines[-1][:200] if lines else "none")
     return result.returncode, reason
 
 
