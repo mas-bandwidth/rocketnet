@@ -111,8 +111,10 @@ Cold, on a fresh box, as root:
     #    On a kernel before 6.12 (Ubuntu 22.04 and 24.04) this also turns
     #    off the real-time throttle (R8), which otherwise stops every
     #    spinning XDP worker about 50 ms in every second, and 0.2 to 1 s at
-    #    a time on nohz_full cpus. Keep it across reboots (LINUX.md
-    #    section 6 says why and what it costs):
+    #    a time on nohz_full cpus. Only on such a kernel (before 6.12, or a
+    #    later one built with CONFIG_RT_GROUP_SCHED; on any other kernel the
+    #    provision run reports R8 passing and this line is not needed), keep it across reboots
+    #    (LINUX.md section 6 says why and what it costs):
     echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf
 
     # 3. Check without changing anything (what the library's pre-flight will say):

@@ -3,7 +3,10 @@
 Use [Getting started](GETTING-STARTED.md) to build and run the examples already
 in the repository. This page is for a reader who wants a complete C program to
 copy into a separate project. Build and link against the same public header
-and library as described in [Building](BUILDING.md).
+and library as described in [Building](BUILDING.md). Both programs are C
+(C99 or later) only: their `goto cleanup` jumps past initialized declarations,
+which C allows and C++ refuses, and which `-Wjump-misses-init` (part of
+`-Weverything`) warns about.
 
 ## Connect, exchange a message, and shut down
 

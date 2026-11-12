@@ -7,8 +7,14 @@ features. A Release build with `ROCKETNET_DEV=ON` still uses development feature
 
 All commands run from the repository root. Output goes to `bin/`; Visual
 Studio and other multi-config generators add a configuration directory such
-as `bin/Release/`. RocketNet vendors libsodium, so the default build needs no
-external libsodium package.
+as `bin/Release/`. That is the repository's one `bin/`, whatever build tree
+(`build`, `build-sdk`, ...) is used, so the last tree built replaces the
+shared libraries and programs of every other tree there, development and
+production alike. To keep a tree's output apart, configure it with
+`-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=bin -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=bin`,
+which a relative path places under that tree (`build-sdk/bin/`), as the
+[install commands](#installing-and-embedding-the-sdk) below do. RocketNet
+vendors libsodium, so the default build needs no external libsodium package.
 
 ## Prerequisites
 
@@ -113,11 +119,14 @@ environment variables (`ROCKETNET_SERVER_PACKET_FILTER`,
 ## Installing and embedding the SDK
 
 Build and install both production libraries without examples, tests, tools,
-or the separate development libraries:
+or the separate development libraries. The two output settings keep the
+production shared library in `build-sdk/bin/`, so it does not replace a
+development tree's library in the repository's `bin/`:
 
     cmake -S . -B build-sdk -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF \
       -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
-      -DROCKETNET_BUILD_DEV_LIBRARIES=OFF
+      -DROCKETNET_BUILD_DEV_LIBRARIES=OFF \
+      -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=bin -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=bin
     cmake --build build-sdk --parallel
     cmake --install build-sdk --prefix /your/sdk/prefix
 
@@ -127,7 +136,7 @@ build and the install. The Visual Studio generator is multi-config: it ignores
 fails with `file INSTALL cannot find ".../build-sdk/Release/rocketnet.lib"`. In
 PowerShell or cmd.exe:
 
-    cmake -S . -B build-sdk -A x64 -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_DEV_LIBRARIES=OFF
+    cmake -S . -B build-sdk -A x64 -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_DEV_LIBRARIES=OFF -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=bin -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=bin
     cmake --build build-sdk --config Release --parallel 4
     cmake --install build-sdk --config Release --prefix C:\your\sdk\prefix
 
@@ -139,6 +148,10 @@ find_package(RocketNet 1.0 CONFIG REQUIRED)
 target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 # Or: target_link_libraries(game PRIVATE RocketNet::rocketnet_shared)
 ```
+
+`sdk/rocketnet.h` needs C99 or later, or C++11 or later (`tools/check_public_header.py`
+compiles it alone under `-std=c99`, `-std=c11` and `-std=c++11` with
+`-Wall -Wextra -pedantic -Werror`); C89 refuses its `//` comments.
 
 When linking the static archive (`librocketnet.a`) directly in a C project
 without CMake, compile with `-DROCKETNET_DEV=0` for a production archive (and
@@ -385,10 +398,10 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS
 * Environment: ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS
 * Environment: ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS
-* Environment: ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT
-* Environment: ROCKETNET_DEV_CLIENT_LATENCY_MS
-* Environment: ROCKETNET_DEV_CLIENT_JITTER_MS
-* Environment: ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT
+* Environment: ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_CLIENT_LATENCY_MS (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_CLIENT_JITTER_MS (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT (development only; a production library ignores it)
 * Environment: ROCKETNET_SERVER_PROTOCOL_ID
 * Environment: ROCKETNET_SERVER_MAX_CLIENTS
 * Environment: ROCKETNET_SERVER_PACKET_FILTER
@@ -418,18 +431,18 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS
 * Environment: ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS
 * Environment: ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS
-* Environment: ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT
-* Environment: ROCKETNET_DEV_SERVER_LATENCY_MS
-* Environment: ROCKETNET_DEV_SERVER_JITTER_MS
-* Environment: ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT
+* Environment: ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_SERVER_LATENCY_MS (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_SERVER_JITTER_MS (development only; a production library ignores it)
+* Environment: ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT (development only; a production library ignores it)
 * Environment: ROCKETNET_DEV_SESSION_SEQUENCE_START (development only)
 * Environment: ROCKETNET_LOG_LEVEL
 * Environment: ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS
 * Environment: ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS
-* Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH
-* Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH
-* Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW
-* Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW
+* Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH (development use; a production library refuses a nonzero value)
+* Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH (development use; a production library refuses a nonzero value)
+* Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW (development use; a production library refuses a nonzero value)
+* Environment: ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW (development use; a production library refuses a nonzero value)
 * Environment: ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES
 * Environment: ROCKETNET_SERVER_MEMORY_BUDGET_BYTES
 * Environment: ROCKETNET_GATEWAY_ETHERNET_ADDRESS

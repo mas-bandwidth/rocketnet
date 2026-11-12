@@ -1849,7 +1849,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         {
             *status = ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
         }
-        rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        rocketnet_error( "server config protocol_id 0 is refused: set the title's non-zero protocol_id" );
         return false;
     }
 
