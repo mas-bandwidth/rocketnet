@@ -330,7 +330,7 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
 
     // the token lifetime bounds the attempt until the connection response is
     // sent; from then the server may already report this client connected, so
-    // only the silence timeout below (T) ends the wait
+    // only the silence timeout below (T, proofs/tla/RNEndpoint.tla Elapse) ends the wait
 
     if ( client->state < ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE &&
          current_time - client->attempt_start_time >= (double) client->total_deadline_seconds )

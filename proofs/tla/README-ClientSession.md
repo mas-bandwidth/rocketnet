@@ -250,3 +250,35 @@ did this: a start whose send allocation failed exhausted the region and the
 client ended the connection. The code now refuses the start and the
 connection goes on; only a start on a region the receive side exhausted
 ends it.
+
+## Revision 1.1.2: SendNeverEnds read on the resulting state
+
+Revision 1.1's `SendNeverEnds` was the invariant `~sendEnded`, and the ghost
+was written only on a branch the guard of `MessageEnd("send", ...)` already
+excluded (a probe `[][sendEnded' = sendEnded]_vars` passed on
+`MCClientSession.cfg`, 33,765 distinct). The ghost is removed. The property is
+now an action property over every step of a start (`SendCall`: `Send`,
+`DropSend`, `MessageEnd("send", "MESSAGE_MEMORY_EXHAUSTED")`): a start that
+takes a CONNECTED session out of CONNECTED does so only on a region the
+receive side exhausted in this session (`rxEx = cur`). It reads `st'`, so
+any start step that changes the state is held to it, not only the one
+action that was written to end.
+
+| Property | Fails when | Witness |
+|---|---|---|
+| `SendNeverEnds` | a start ends a connection whose receive side had not exhausted its region (`Defect = "sendkick"`) | `MCClientSessionSendKick.cfg` |
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
+|---|---|---:|---:|---:|
+| `MCClientSession.cfg` | pass | 0 | 33765 | 4.6 |
+| `MCClientSessionSendKick.cfg` | `SendNeverEnds` | 13 | 109 | 1.0 |
+| `MCClientSessionSilentExhaust.cfg` | `CallbackReportsPublicState` | 12 | 109 | 0.9 |
+
+SendKick's trace (7 states), checked by hand against the code: create,
+connect, three handshake steps to CONNECTED with `cur = 1`, `rxEx = 0`, then
+`MessageEnd("send", "MESSAGE_MEMORY_EXHAUSTED")`. In the code
+`rocketnet_client_start_message` (`sdk/rocketnet_api.cpp:1938`) ends nothing
+itself; the start below it sets `send_error` to MESSAGE_MEMORY_EXHAUSTED only
+when `rn_region_exhausted` (`sdk/rocketnet_endpoint.cpp:459` and 478), which
+only the receive side sets; a start with no room counts `send_refused` (466,
+491) and returns NULL.

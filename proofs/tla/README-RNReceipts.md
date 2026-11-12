@@ -224,7 +224,9 @@ is off; a receipt whose packets keep being lost then waits for ACKED until the
 transport's silence timeout, outside this module. `ReceiptProgress` (the
 liveness that a reliable receipt resolves) is checked only with the timeout
 configured, since with it off and persistent loss nothing in this module
-resolves the receipt.
+resolves the receipt. (`NoTimeoutEndWhenOff` was vacuous and is replaced in
+revision 1.1.2 by `NoEndBeforeSilenceT`; see below. The table and trace here
+are the revision 1.1 records.)
 
 | Case | Expected | Exit | Distinct |
 |---|---|---:|---:|
@@ -237,3 +239,50 @@ acked; its number reaches age 2 (`ReliableTimeout`) and `Disconnect` ends the
 connection with the timeout off. The code before revision 1.1 did the same:
 `rn_window_ack_check_timeout` ran whatever `reliable_timeout` was; the code
 now returns early when it is 0.
+
+## Revision 1.1.2: the silence clock, and the timeout-off property given its T
+
+`NoTimeoutEndWhenOff` (`~TimeoutConfigured => live`) could not fail in its
+passing case: `Disconnect`, the only action that writes `live' = FALSE`, is
+guarded by `TimeoutConfigured \/ BrokenTimeoutWhenOff`, both `FALSE` there.
+Checked: in `MCRNReceiptsTimeoutOff.cfg` at revision 1.1.1, the invariant
+`~ENABLED Disconnect` holds over all 18,500 distinct states.
+
+Revision 1.1.2 adds the transport's silence clock (`Clocked`, a constant;
+the unclocked cases, `ReceiptProgress`'s among them, keep Tick as before and
+their state counts are unchanged). `quiet` counts the ticks since anything
+was heard from the other side: `ReceiveAck` resets it (the ack came in a
+packet from the other side), and each `Tick` either heard a packet (a
+keep-alive or any packet carrying no tracked ack) or counts one more silent
+tick; the tick that brings the silence to `SilenceT` ends the connection,
+the server's `current_time >= last_receive_time + timeout_seconds` and the
+client's `CONNECTION_TIMED_OUT`. `Disconnect` now compares the age with the
+configured value, `TimeoutAge` (`ReliableTimeout`, or 0 when off), as
+`rn_window_ack_check_timeout` compares `now - oldest_first_send` with
+`reliable_timeout`; the configured behaviour is unchanged.
+
+| Property | Statement | Fails when (checked) |
+|---|---|---|
+| `NoEndBeforeSilenceT` | (S) timeout off: the connection ends only once nothing has been heard for `SilenceT` ticks | `MCRNReceiptsBrokenTimeoutWhenOff.cfg` (the reliable timeout compared with 0 ends at quiet 0, right after the first send of a promoted reliable receipt); `MCRNReceiptsBrokenSilenceEarly.cfg` (the end at quiet 2); the bound replaced by `FALSE` (fails at quiet 3 by the silence end) |
+| `SilenceEndsAtT` | (K) a live connection has heard something within `SilenceT` ticks | the silence end one tick late, or never (probes; both fail at quiet 3, live) |
+| `EndsNeedSilenceT` | the bound without the gate; opted in it fails | `MCRNReceiptsBrokenOptedInInsideT.cfg`: `ReliableTimeout` 2 < T = 3, `Disconnect` at age 2, quiet 2 |
+
+| Case | Expected | Exit | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|---:|
+| `MCRNReceipts.cfg` | pass | 0 | 67144 | 23800 | 9.827 |
+| `MCRNReceiptsMid.cfg` | pass | 0 | 3602016 | 792811 | 19.517 |
+| `MCRNReceiptsTimeoutOff.cfg` (Clocked, T = 3, every safety invariant, `NoEndBeforeSilenceT`, `SilenceEndsAtT`) | pass | 0 | 240597 | 67064 | 2.987 |
+| `MCRNReceiptsOptedIn.cfg` (the same with the timeout configured, `SilenceEndsAtT`) | pass | 0 | 260301 | 82964 | 3.195 |
+| `MCRNReceiptsBrokenTimeoutWhenOff.cfg` | `NoEndBeforeSilenceT` | 12 | 217 | 84 | 0.919 |
+| `MCRNReceiptsBrokenSilenceEarly.cfg` | `NoEndBeforeSilenceT` | 12 | 57 | 21 | 0.897 |
+| `MCRNReceiptsBrokenOptedInInsideT.cfg` | `EndsNeedSilenceT` | 12 | 858 | 470 | 0.986 |
+
+Witness trace for `MCRNReceiptsBrokenTimeoutWhenOff.cfg`, read by hand: a
+type-5 receipt in two fragments is promoted to its reliable twin (type 6);
+its first number is written (first send), and `Disconnect` ends the
+connection at age 0 with nothing yet silent (quiet 0). The code before
+v1.1.0 (`rn_window_ack_check_timeout`, sdk/rocketnet_window_ack.cpp, the
+test `ack->has_oldest && ( now - ack->oldest_first_send ) >=
+ack->reliable_timeout` without `ack->reliable_timeout > 0.0`, commit
+55daea990) with a timeout of 0 does the same at the first check after the
+first send.

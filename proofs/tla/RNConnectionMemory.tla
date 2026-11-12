@@ -17,9 +17,10 @@
 (*   UseSpan(s, n)  a large send takes n records of room at once (a span)  *)
 (*   Release(s)     an acked send, an abort or a released delivery gives   *)
 (*                  room back; also while exhausted, since it takes none   *)
-(*   Refuse(s)      a send finds no room for what it asks: the start is    *)
-(*                  refused and counted, and the region and the connection *)
-(*                  are as they were (standard/MESSAGES.md m1.7)           *)
+(*   Refuse(s, n)   a send of n records finds no room, or a region the     *)
+(*                  receive side exhausted: the start is refused and       *)
+(*                  counted, and the region and the connection are as they *)
+(*                  were (standard/MESSAGES.md m1.7)                       *)
 (*   Exhaust(s)     a receive placement finds no room, which only a broken *)
 (*                  invariant of the receiver reaches: the region's sticky *)
 (*                  exhausted state, reason MESSAGE_MEMORY_EXHAUSTED       *)
@@ -29,11 +30,21 @@
 (*   Leave(s)       an ordinary disconnect, not from exhaustion            *)
 (*   Reuse(s)       the slot is freed and its region reset                 *)
 (*                                                                         *)
+(* A start runs the code's steps in the code's order: the fit              *)
+(* (rn_region_send_fit_store or rn_region_send_fit_span, a const region)   *)
+(* decides before any take, then the take (Use, UseSpan) or the count      *)
+(* (Refuse: rn_region_send_refuse, and the connection's send_refused in    *)
+(* rn_endpoint_start).  refused[s] is that count for the slot's            *)
+(* connection, modulo CountMod as the code's counters wrap, zeroed with    *)
+(* the connection (rn_endpoint_init, rn_endpoint_reset); CountMod = 1      *)
+(* drops it.                                                               *)
+(*                                                                         *)
 (* Reset = FALSE makes Reuse skip the reset; CarryOn = TRUE lets an        *)
 (* exhausted connection keep taking room (Use, UseSpan); SendExhausts =    *)
 (* TRUE makes a refused send exhaust the region, the send-side kick of     *)
-(* v1.0.  Each must fail; those are the reversed witnesses.  The ghost     *)
-(* cause records which side exhausted a region.                            *)
+(* v1.0; TakeBeforeFit = TRUE makes a span start take its descriptor (one  *)
+(* record) before the span's room is known and return NULL without giving  *)
+(* it back.  Each must fail; those are the reversed witnesses.             *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -42,17 +53,19 @@ CONSTANTS Slots,        \* the server's client slots (one for a client)
           Capacity,     \* the region's room, in abstract records
           Reset,        \* Reuse runs rn_region_carve
           CarryOn,      \* an exhausted connection keeps working (broken)
-          SendExhausts  \* a send with no room exhausts the region (broken)
+          SendExhausts, \* a send with no room exhausts the region (broken)
+          TakeBeforeFit,\* a span start takes its descriptor before its room is known (broken)
+          CountMod      \* the refusal count runs 0..CountMod-1
 
 ASSUME Slots # {} /\ Clients # {} /\ Capacity \in Nat \ {0}
 ASSUME Reset \in BOOLEAN /\ CarryOn \in BOOLEAN /\ SendExhausts \in BOOLEAN
+ASSUME TakeBeforeFit \in BOOLEAN /\ CountMod \in Nat \ {0}
 
 NoClient == "none"
 Exhausted == "MESSAGE_MEMORY_EXHAUSTED"
 Left == "LEFT"
 Reasons == {"none", Exhausted, Left}
 States == {"Free", "Connected", "Disconnected"}
-Causes == {"none", "send", "receive"}
 
 VARIABLES state,        \* state[s]: the slot's connection state
           owner,        \* owner[s]: the client on the slot, or NoClient
@@ -60,11 +73,12 @@ VARIABLES state,        \* state[s]: the slot's connection state
           exhausted,    \* exhausted[s]: the region's sticky exhausted state
           reason,       \* reason[s]: why the slot's connection ended
           records,      \* records[s]: clients whose records the region still holds
-          cause         \* ghost: cause[s], the side that exhausted the region
+          refused       \* refused[s]: the connection's refused starts, modulo CountMod
 
-vars == <<state, owner, used, exhausted, reason, records, cause>>
+vars == <<state, owner, used, exhausted, reason, records, refused>>
 
-Slot(s) == <<state[s], owner[s], used[s], exhausted[s], reason[s], records[s], cause[s]>>
+\* the slot and its region; the refusal count is apart (a refused start moves it)
+Slot(s) == <<state[s], owner[s], used[s], exhausted[s], reason[s], records[s]>>
 
 OnSlot == { owner[s] : s \in { t \in Slots : state[t] # "Free" } }
 
@@ -75,7 +89,7 @@ TypeOK ==
     /\ exhausted \in [Slots -> BOOLEAN]
     /\ reason \in [Slots -> Reasons]
     /\ records \in [Slots -> SUBSET Clients]
-    /\ cause \in [Slots -> Causes]
+    /\ refused \in [Slots -> 0..(CountMod - 1)]
 
 Init ==
     /\ state = [s \in Slots |-> "Free"]
@@ -84,7 +98,7 @@ Init ==
     /\ exhausted = [s \in Slots |-> FALSE]
     /\ reason = [s \in Slots |-> "none"]
     /\ records = [s \in Slots |-> {}]
-    /\ cause = [s \in Slots |-> "none"]
+    /\ refused = [s \in Slots |-> 0]
 
 \* the transport admits a client to a free slot; the region is as Reuse left it
 Connect(s, c) ==
@@ -92,7 +106,12 @@ Connect(s, c) ==
     /\ c \notin OnSlot
     /\ state' = [state EXCEPT ![s] = "Connected"]
     /\ owner' = [owner EXCEPT ![s] = c]
-    /\ UNCHANGED <<used, exhausted, reason, records, cause>>
+    /\ UNCHANGED <<used, exhausted, reason, records, refused>>
+
+\* rn_region_send_fit_store's and rn_region_send_fit_span's decision for a
+\* send of n records, read off a const region before any take: not
+\* exhausted, and room for all n
+FitOK(s, n) == ~exhausted[s] /\ used[s] + n <= Capacity
 
 \* rn_region_send_alloc (or a receive placement) finding room
 Use(s) ==
@@ -101,7 +120,7 @@ Use(s) ==
     /\ used[s] < Capacity
     /\ used' = [used EXCEPT ![s] = @ + 1]
     /\ records' = [records EXCEPT ![s] = @ \cup {owner[s]}]
-    /\ UNCHANGED <<state, owner, exhausted, reason, cause>>
+    /\ UNCHANGED <<state, owner, exhausted, reason, refused>>
 
 \* rn_region_send_alloc_span finding room: one large send takes n records
 \* (a descriptor and a span), under the same guard as Use
@@ -111,7 +130,7 @@ UseSpan(s, n) ==
     /\ used[s] + n <= Capacity
     /\ used' = [used EXCEPT ![s] = @ + n]
     /\ records' = [records EXCEPT ![s] = @ \cup {owner[s]}]
-    /\ UNCHANGED <<state, owner, exhausted, reason, cause>>
+    /\ UNCHANGED <<state, owner, exhausted, reason, refused>>
 
 \* rn_region_send_free (an ack or an abort) or a delivery released by the
 \* application. Not guarded by ~exhausted: an ack that arrives between
@@ -122,24 +141,31 @@ Release(s) ==
     /\ state[s] = "Connected"
     /\ used[s] > 0
     /\ used' = [used EXCEPT ![s] = @ - 1]
-    /\ UNCHANGED <<state, owner, exhausted, reason, records, cause>>
+    /\ UNCHANGED <<state, owner, exhausted, reason, records, refused>>
 
-\* rn_region_send_refuse: a send (one record, or a span of n) that finds no
-\* room is refused and counted (MESSAGE_SEND_QUEUE_FULL or
-\* MESSAGE_SEND_STORE_FULL, and the connection's send_refused); nothing of the
-\* region or the connection changes, so a later start that fits succeeds
-\* (standard/MESSAGES.md m1.7). A start on a region the receive side already
-\* exhausted is refused the same way. SendExhausts (broken) is the v1.0
-\* refusal, which exhausted the region and so kicked the connection.
-Refuse(s) ==
+\* rn_region_send_refuse: a send of n records (one, or a span) that the fit
+\* refuses (no room, or a region the receive side already exhausted) is
+\* refused and counted (MESSAGE_SEND_QUEUE_FULL, MESSAGE_SEND_STORE_FULL or
+\* MESSAGE_MEMORY_EXHAUSTED, and the connection's send_refused); in the code
+\* the fit only reads, so nothing of the region or the connection changes
+\* and a later start that fits succeeds (standard/MESSAGES.md m1.7).
+\* SendExhausts (broken) is the v1.0 refusal, which exhausted the region and
+\* so kicked the connection. TakeBeforeFit (broken): a span start takes its
+\* descriptor first and, finding no room for the span, returns NULL with the
+\* descriptor still taken.
+Refuse(s, n) ==
     /\ state[s] = "Connected"
-    /\ \E n \in 1..Capacity : used[s] + n > Capacity
+    /\ ~FitOK(s, n)
+    /\ IF TakeBeforeFit /\ ~exhausted[s] /\ n >= 2 /\ used[s] < Capacity
+         THEN /\ used' = [used EXCEPT ![s] = @ + 1]
+              /\ records' = [records EXCEPT ![s] = @ \cup {owner[s]}]
+         ELSE UNCHANGED <<used, records>>
     /\ IF SendExhausts /\ ~exhausted[s]
          THEN /\ exhausted' = [exhausted EXCEPT ![s] = TRUE]
               /\ reason' = [reason EXCEPT ![s] = Exhausted]
-              /\ cause' = [cause EXCEPT ![s] = "send"]
-         ELSE UNCHANGED <<exhausted, reason, cause>>
-    /\ UNCHANGED <<state, owner, used, records>>
+         ELSE UNCHANGED <<exhausted, reason>>
+    /\ refused' = [refused EXCEPT ![s] = (@ + 1) % CountMod]
+    /\ UNCHANGED <<state, owner>>
 
 \* rn_region_exhaust from the receive side: a receive placement that cannot
 \* get the room it asks for (one record, or a span of n) sets the sticky
@@ -152,8 +178,7 @@ Exhaust(s) ==
     /\ \E n \in 1..Capacity : used[s] + n > Capacity
     /\ exhausted' = [exhausted EXCEPT ![s] = TRUE]
     /\ reason' = [reason EXCEPT ![s] = Exhausted]
-    /\ cause' = [cause EXCEPT ![s] = "receive"]
-    /\ UNCHANGED <<state, owner, used, records>>
+    /\ UNCHANGED <<state, owner, used, records, refused>>
 
 \* rn_connection_memory_decide says kick: the server disconnects the slot
 \* (rocketnet_server_transport_disconnect_client); a client disconnects itself
@@ -161,7 +186,7 @@ Kick(s) ==
     /\ state[s] = "Connected"
     /\ exhausted[s]
     /\ state' = [state EXCEPT ![s] = "Disconnected"]
-    /\ UNCHANGED <<owner, used, exhausted, reason, records, cause>>
+    /\ UNCHANGED <<owner, used, exhausted, reason, records, refused>>
 
 \* an ordinary disconnect: the client leaves, times out or is disconnected
 Leave(s) ==
@@ -169,7 +194,7 @@ Leave(s) ==
     /\ ~exhausted[s]
     /\ state' = [state EXCEPT ![s] = "Disconnected"]
     /\ reason' = [reason EXCEPT ![s] = Left]
-    /\ UNCHANGED <<owner, used, exhausted, records, cause>>
+    /\ UNCHANGED <<owner, used, exhausted, records, refused>>
 
 \* rn_region_reset: the slot is freed and its region carved before reuse
 Reuse(s) ==
@@ -181,8 +206,8 @@ Reuse(s) ==
               /\ exhausted' = [exhausted EXCEPT ![s] = FALSE]
               /\ reason' = [reason EXCEPT ![s] = "none"]
               /\ records' = [records EXCEPT ![s] = {}]
-              /\ cause' = [cause EXCEPT ![s] = "none"]
-         ELSE UNCHANGED <<used, exhausted, reason, records, cause>>
+              /\ refused' = [refused EXCEPT ![s] = 0]
+         ELSE UNCHANGED <<used, exhausted, reason, records, refused>>
 
 Next ==
     \E s \in Slots :
@@ -190,7 +215,7 @@ Next ==
         \/ Use(s)
         \/ \E n \in 2..Capacity : UseSpan(s, n)
         \/ Release(s)
-        \/ Refuse(s)
+        \/ \E n \in 1..Capacity : Refuse(s, n)
         \/ Exhaust(s)
         \/ Kick(s)
         \/ Leave(s)
@@ -218,18 +243,39 @@ ReusedSlotStartsClean ==
                                 /\ ~exhausted[s]
                                 /\ reason[s] = "none"
                                 /\ records[s] = {}
+                                /\ refused[s] = 0
         /\ state[s] = "Connected" => records[s] \subseteq {owner[s]}
 
-\* (N) no send ends its connection: a slot never ends with a region the send
-\* side exhausted, because a send with no room is a refusal, never an
-\* exhaustion (standard/MESSAGES.md m1.7). Reversed by SendExhausts.
-SendNeverEnds ==
-    \A s \in Slots : state[s] = "Disconnected" => cause[s] # "send"
+\* A send start of n records: the take with room (Use for one record,
+\* UseSpan for a span), or the start the region refuses.
+StartStep(s, n) ==
+    \/ n = 1 /\ Use(s)
+    \/ n >= 2 /\ UseSpan(s, n)
+    \/ Refuse(s, n)
 
-\* a refused send leaves its slot exactly as it was: state, owner, room,
-\* exhaustion, reason and records (standard/MESSAGES.md m1.7, rule 2)
+\* (N) No send ends its connection: no start step, refused or not, changes
+\* its slot's connection state, exhausted flag or reason, read on the state
+\* the step leaves (standard/MESSAGES.md m1.7). Only the receive side
+\* exhausts a region (Exhaust), and an exhausted region is what the owner
+\* kicks (Kick), so a slot's end never follows from a send. Reversed by
+\* SendExhausts.
+SendNeverEnds ==
+    [][\A s \in Slots, n \in 1..Capacity :
+          StartStep(s, n) => /\ state'[s] = state[s]
+                             /\ exhausted'[s] = exhausted[s]
+                             /\ reason'[s] = reason[s]]_vars
+
+\* A start the fit refuses, by its decision on the state before the step
+\* (exhausted, or no room for n), leaves its slot exactly as it was: state,
+\* owner, room, exhaustion, reason and records (standard/MESSAGES.md m1.7,
+\* rule 2), whatever the start did on the way; the slot's refusal count
+\* alone moves, by one (design (L)1). Reversed by TakeBeforeFit (room),
+\* SendExhausts (exhaustion) and CarryOn (room taken while exhausted).
 RefusalLeavesStateUnchanged ==
-    [][\A s \in Slots : Refuse(s) => Slot(s)' = Slot(s)]_vars
+    [][\A s \in Slots, n \in 1..Capacity :
+          StartStep(s, n) /\ ~FitOK(s, n) =>
+              /\ Slot(s)' = Slot(s)
+              /\ refused'[s] = (refused[s] + 1) % CountMod]_vars
 
 \* the receive side's exhaustion (the only one there is): from exhausted, the
 \* slot takes no further room: the steps that change it
@@ -254,7 +300,7 @@ ExhaustionOnlyLeadsToDisconnect ==
 \* every step changes at most one slot: one slot's use or exhaustion never
 \* changes another slot's state or region
 NoCrossSlotEffect ==
-    [][\E s \in Slots : \A t \in Slots \ {s} : Slot(t)' = Slot(t)]_vars
+    [][\E s \in Slots : \A t \in Slots \ {s} : Slot(t)' = Slot(t) /\ refused'[t] = refused[t]]_vars
 
 \* Liveness: an exhausted slot is eventually Free (kicked, then reset)
 ExhaustedEventuallyFree ==

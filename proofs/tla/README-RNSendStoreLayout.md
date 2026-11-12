@@ -184,3 +184,85 @@ Witness traces, read by hand. RNSendStoreLayout (both, 5 states): three
 `rn_send_store` and the span allocator in `sdk/rocketnet_allocator.cpp`
 called `rn_region_exhaust` on a failed fit. The code now calls
 `rn_region_send_refuse`, which counts the refusal and leaves the region.
+
+## Revision 1.1.2: the refused start in the code's order, in both modules
+
+Revision 1.1's properties read the definitions back: `Refuse` was `UNCHANGED`
+the layout (or the ring) and `exhausted`, so `RefuseLeavesLayout`,
+`StoreNeverExhausts`, `RefuseLeavesRing` and `SpansNeverExhaust` held of any
+code (probes `[][Refuse => UNCHANGED vars]_vars` passed on
+`MCRNSendStoreLayout.cfg`, 118,621 distinct, and `MCRNSendSpansRefuse.cfg`,
+735 distinct).
+
+- **RNSendStoreLayout.** `Refuse(kind, spanRoom)` is a store or span start that
+  the fit refuses (`FitOK`: not exhausted, a free descriptor, and the store's
+  find or the span's room), written as the code's steps in order:
+  `rn_region_send_fit_store` (`sdk/rocketnet_allocator.cpp:821`, a const
+  region: exhausted, then the descriptors, then `rn_send_store_find` at 345)
+  and `rn_region_send_refuse` (871), which counts. The counter `refused`
+  (mod `CountMod`) and the ghost `calls` (every application start, so a
+  refused start is never a stutter) are the variables a refusal may change.
+  `Exhaust` is the receive side's `rn_region_exhaust` (709), so `exhausted`
+  is reachable and the properties read it.
+- **RNSendSpans.** `Refuse(l)` is a span start of `l` bytes that
+  `rn_region_send_fit_span` (1075) refuses, then `rn_region_send_refuse`;
+  `refused` and `calls` as above. `Ring` is the ring with its links, the live
+  spans' starts and lengths, and `exhausted`.
+- A refused start is named by the fit's decision on the state before the
+  step (`StartStep /\ ~FitOK`), never by the action, so a start that takes
+  before it fits is caught. `RefuseLeavesLayout` and `RefuseLeavesRing`: such
+  a start leaves `Layout` (`Ring`) as it was and moves `refused` by one.
+  `StoreNeverExhausts` is now an action property: no start changes
+  `exhausted`. `SpansNeverExhaust` stays the invariant `~exhausted` (the span
+  module has no receive side).
+- Reversed witnesses, each a start order the code could have had:
+  `StartOrder = "descfirst"` takes a descriptor (`rn_region_descriptor_take`,
+  760) and, refused, releases it (809); `"chunkfirst"` takes the chunk
+  (`rn_send_store_take`, 376) and frees it (`rn_send_store_free_checked`,
+  414); `CountQueueFull = FALSE` leaves a full descriptor table uncounted;
+  RNSendSpans' `LinkFirst = TRUE` links the span (`rn_span_link`, 999) and
+  unlinks it (`rn_span_unlink`, 1025).
+
+| Property | Fails when | Witness |
+|---|---|---|
+| `RefuseLeavesLayout` | a refused start takes a descriptor first and releases it; takes a chunk first and frees it; leaves a full descriptor table uncounted; or exhausts the region | `...BrokenDescFirst`, `...BrokenChunkFirst`, `...BrokenUncountedQueueFull`, `...BrokenRefuseExhausts` |
+| `StoreNeverExhausts` | a refused start sets `exhausted` | `MCRNSendStoreLayoutBrokenRefuseSticky.cfg` |
+| `RefuseLeavesRing` | a refused span start links and unlinks its span, or changes the ring | `MCRNSendSpansBrokenLinkFirst.cfg`, `MCRNSendSpansBrokenRefuseChanges.cfg` |
+| `SpansNeverExhaust` | a refused span start sets `exhausted` | `MCRNSendSpansBrokenRefuseExhausts.cfg` |
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
+|---|---|---:|---:|---:|
+| `MCRNSendStoreLayout.cfg` (`CountMod = 1`; now with `Exhaust`) | pass | 0 | 237242 | 36.7 |
+| `MCRNSendStoreLayoutRefuse.cfg` (N = 2, Q = 3, `CountMod = 3`) | pass | 0 | 58410 | 9.2 |
+| `MCRNSendStoreLayoutBrokenRefuseExhausts.cfg` | `RefuseLeavesLayout` | 13 | 4 | 0.9 |
+| `MCRNSendStoreLayoutBrokenRefuseSticky.cfg` | `StoreNeverExhausts` | 13 | 4 | 0.9 |
+| `MCRNSendStoreLayoutBrokenDescFirst.cfg` | `RefuseLeavesLayout` | 13 | 4 | 0.9 |
+| `MCRNSendStoreLayoutBrokenChunkFirst.cfg` | `RefuseLeavesLayout` | 13 | 151 | 1.0 |
+| `MCRNSendStoreLayoutBrokenUncountedQueueFull.cfg` | `RefuseLeavesLayout` | 13 | 60 | 1.0 |
+| `MCRNSendSpans.cfg` (`CountMod = 1`) | pass | 0 | 1327995 | 59.8 |
+| `MCRNSendSpansRefuse.cfg` (`CountMod = 3`) | pass | 0 | 6615 | 1.8 |
+| `MCRNSendSpansBrokenRefuseExhausts.cfg` | `SpansNeverExhaust` | 12 | 27 | 0.9 |
+| `MCRNSendSpansBrokenRefuseChanges.cfg` | `RefuseLeavesRing` | 13 | 27 | 0.9 |
+| `MCRNSendSpansBrokenLinkFirst.cfg` | `RefuseLeavesRing` | 13 | 10 | 0.9 |
+
+Witness traces, checked by hand against the code:
+
+- DescFirst (2 states): a span start at the initial state with no span room
+  takes descriptor 0 fresh and releases it: `dFresh` 0 to 1, `dTop` 0 to 1,
+  descriptor 0 left at generation 1, not in use. In the code the fit
+  (`rn_region_send_alloc_span`, 1139) reads a const region and the refusal
+  returns at 1142; the descriptor is taken only at 1148.
+- ChunkFirst: two `Alloc` and an `AllocSpan` use the descriptors; a store
+  start with no descriptor free takes chunk 2 and frees it, which bumps the
+  chunk's generation and raises the fresh cursor. In the code
+  `rn_region_send_alloc` fits at 901, refuses at 904, and takes the chunk only
+  at 908.
+- UncountedQueueFull: a start refused for a full descriptor table leaves
+  `refused` where it was. In the code `rn_region_send_refuse` counts
+  `RN_SEND_FIT_QUEUE_FULL` (871 to 886).
+- LinkFirst (3 states): `Alloc(32)` leaves the tail at 32; `Refuse(96)` links
+  at 0 and unlinks, and the tail is left at 0, so a non-empty ring has
+  `tail = head` and reads as full. `rn_span_unlink` restores the floor only
+  when the ring empties (1062 to 1066); unlinking the newest span leaves the
+  tail where the link put it. In the code the span is linked only at 1155,
+  after the fit at 1139 and the descriptor at 1148.
