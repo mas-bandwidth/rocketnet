@@ -12,6 +12,9 @@ EXTENDS RNUringQueueBankLayout
 \* destinations 1 and 2 hash to queue 0, destination 3 to queue 1
 MCQueueOf(d) == IF d = 3 THEN 1 ELSE 0
 
+\* a caller's pointer one byte before, at or after the one start returned
+MCSkew == {-1, 0, 1}
+
 MCSpec == Spec
 
 =============================================================================
