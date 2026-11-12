@@ -382,6 +382,37 @@ static void test_ack_stats_client_uses_outbound_history()
 
 REGISTER_UNIT_TEST( test_ack_stats_client_uses_outbound_history );
 
+// An update's time may jump by any finite amount (rocketnet.h). A first ack
+// whose elapsed time is at or past ROCKETNET_ACK_RTT_NONE (1e9 ms) is no
+// round-trip sample anywhere: not in the minimum, which already ignored it,
+// nor in the jitter sum, which it once made infinite and then NaN. A later
+// ordinary sample is the rtt, with no jitter.
+
+static void test_ack_stats_huge_elapsed_time_is_no_sample()
+{
+    auto * endpoint = stats_endpoint();
+
+    stats_sent( endpoint, 1, 1000.0 );
+    stats_ack( endpoint, 1, 1000.0 + 1e36 );
+    rocketnet_unit_check( isfinite( endpoint->jitter ) && endpoint->jitter == 0.0f && endpoint->rtt == 0.0f );
+    stats_update_and_compare_history( endpoint );
+    rocketnet_unit_check( endpoint->jitter == 0.0f && endpoint->rtt == 0.0f );
+
+    stats_sent( endpoint, 2, 1000.0 );
+    stats_ack( endpoint, 2, 1000.0 + 2e6 );
+    rocketnet_unit_check( endpoint->jitter == 0.0f && endpoint->rtt == 0.0f );
+
+    stats_sent( endpoint, 3, 1000.0 );
+    stats_ack( endpoint, 3, 1000.020 );
+    rocketnet_unit_check( fabsf( endpoint->rtt - 20.0f ) < 0.001f && endpoint->jitter == 0.0f );
+    stats_update_and_compare_history( endpoint );
+    rocketnet_unit_check( fabsf( endpoint->rtt - 20.0f ) < 0.001f && endpoint->jitter == 0.0f );
+
+    rocketnet_free( NULL, endpoint );
+}
+
+REGISTER_UNIT_TEST( test_ack_stats_huge_elapsed_time_is_no_sample );
+
 // The getter copies the ACK recompute, checked against the test-local oracle
 // the other tests in this file compare against.
 
