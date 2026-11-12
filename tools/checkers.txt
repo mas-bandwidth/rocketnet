@@ -28,6 +28,7 @@ tools/check_fp_contract.sh	bash tools/check_fp_contract.sh --self-test	bash tool
 tools/check_frame_budget.py	python3 tools/test_check_frame_budget.py -v	python3 tools/check_frame_budget.py --bin {emptyfile} --runs 0	ci.yml	lint	Test the frame-budget checker's verdicts
 tools/check_fuzz_oracle.py	python3 tools/test_check_fuzz_oracle.py -v	python3 tools/check_fuzz_oracle.py {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_fuzz_coverage.py	python3 tools/check_fuzz_coverage.py --self-test	python3 tools/check_fuzz_coverage.py --os Linux {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
+tools/check_fuzz_mutants.py	python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4	python3 tools/check_fuzz_mutants.py --build {empty}	ci.yml	fuzz-smoke	The committed corpora kill the replay and AEAD mutants
 tools/check_fuzz_stats.py	python3 tools/check_fuzz_stats.py --self-test	python3 tools/check_fuzz_stats.py --target fuzz_header --seconds 1 {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
 tools/check_fuzz_regressions.py	python3 tools/check_fuzz_regressions.py --selftest	python3 tools/check_fuzz_regressions.py --root {empty}	ci.yml	lint	Test and check the fuzz regression corpus
 tools/check_hardening.py	python3 tools/test_check_hardening.py	python3 tools/check_hardening.py {empty}	ci.yml	build-and-test	Test the hardening checker's verdicts
@@ -48,6 +49,7 @@ tools/check_package.py	python3 tools/test_check_package.py -v	python3 tools/chec
 tools/check_platform_policy.py	python3 tools/test_check_platform_policy.py -v	python3 tools/check_platform_policy.py --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_printed_compared.py	python3 tools/check_printed_compared.py --self-test	python3 tools/check_printed_compared.py --root {empty}	ci.yml	lint	Every printed trace or hash is compared
 tools/check_public_header.py	python3 tools/test_check_public_header.py -v	python3 tools/check_public_header.py --header {emptyfile} --no-run --cc true --cxx true	ci.yml	lint	Self-tests of the registered checkers
+tools/check_refusal_mutants.py	python3 tools/check_refusal_mutants.py --self-test	python3 tools/check_refusal_mutants.py {emptyfile} {emptyfile}	ci.yml	lint	Every split-load refusal is tested
 tools/check_release_doc.py	python3 tools/test_check_release_doc.py -v	python3 tools/check_release_doc.py --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_release_gates.py	python3 tools/check_release_gates.py --self-test	python3 tools/check_release_gates.py tools/release_gates.txt {empty}	ci.yml	lint	Test the release and landing tools; check the release gates list
 tools/check_release_tsan.py	python3 tools/test_check_release_tsan.py -v	python3 -c "import sys; sys.path.insert(0, 'tools'); import check_release_tsan as c; from release_testkit import NOW, REPO, SHA, VERSION, FakeApi, green_release; sys.exit(c.check(green_release(FakeApi()), REPO, SHA, VERSION, sys.stdout, gates=[], now=NOW))"	ci.yml	lint	Test the release nightly-gates check
