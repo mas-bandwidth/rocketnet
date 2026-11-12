@@ -14,7 +14,6 @@ rocketnet_fuzz	95	3881.72
 rocketnet_fuzz_client_transport	1326	6.67
 rocketnet_fuzz_config	108	451.24
 rocketnet_fuzz_connect_token	167	78.70
-rocketnet_fuzz_differential	463	8.23
 rocketnet_fuzz_endpoint	597	102.84
 rocketnet_fuzz_gateway_netlink	33	4386.71
 rocketnet_fuzz_message	125	1544.27
