@@ -2723,6 +2723,19 @@ static void rn_blaster_worker_run( rn_blaster_shared_t * shared, rn_blaster_work
     }
     sodium_memzero( scratch_packet.data(), scratch_packet.size() );
     sodium_memzero( case_valid.data(), case_valid.size() );
+    if ( !worker->error.empty() )
+    {
+        // name the message-layer refusal behind a failed endpoint
+        for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; ++counter )
+        {
+            const char * name = rocketnet_counter_name( counter );
+            if ( message_counters.values[counter] != 0 && name && strncmp( name, "MESSAGE_", 8 ) == 0 )
+            {
+                fprintf( stderr, "xdp_packet_blaster: thread %u: counter %s %" PRIu64 "\n", worker->index, name,
+                         message_counters.values[counter] );
+            }
+        }
+    }
     if ( message_arena )
     {
         rn_arena_destroy( message_arena );

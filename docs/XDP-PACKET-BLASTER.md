@@ -224,15 +224,23 @@ rate at 64 B payload is about 7.49 Mpps.
 | 64 B | 152 kpps, 0.27 Gb/s (2% of line pps) | 28 kpps | both | server |
 | 1200 B | 165 kpps, 1.69 Gb/s (17%) | 157 kpps, 1.64 Gb/s | hulk only | server |
 
-The sender is not the limit. At the server, the echo server's main thread
-(CPU 7) does all packet AEAD work, about 28% of the profile in
-chacha20/poly1305. Its update is bimodal: p50 8 us, with runs of about 40 ms.
-The XDP workers sit at 100%, mostly in the kernel. During the long updates
-the server's NIC sends pause frames. The library's server transport has not
-been changed for throughput.
+The sender is not the limit; the server's main thread is. It is the only
+thread that opens and seals packets, and at 1.7 Gb/s it is busy on CPU 7 back
+to back in loops of about 85 ms, two thirds of that in chacha20 and poly1305.
+Nothing else runs on that CPU. While it is busy, the XDP workers' handoff
+fills, the workers stop draining the NIC, and the server's NIC sends pause
+frames. Turning off the fair server on the worker CPUs (0.19 Gb/s) or setting
+`kernel.sched_rt_runtime_us=-1` (0.94 Gb/s) made it worse: on kernel 7.0
+the NIC's softirq work on a worker CPU runs in `ksoftirqd`, which gets that
+CPU only through the fair server's 50 ms a second. The library's server
+transport has not been changed for throughput.
 
 With the echo loop at its default 60 Hz, the same placement gave 0.94 Gb/s
-at 1200 B. A 1412-byte payload (a 1449-byte packet) connects, but the test
-server echoes the client's own records back. The client endpoint then refuses
-some of them (`payload_errors`) and ends the run with disconnect reason -2.
-Large-payload runs therefore use 1200 B.
+at 1200 B. At 1412 B an unreliable message no longer fits one record and is
+promoted to a numbered message (`MESSAGE_PROMOTED_UNRELIABLE`). The test
+server echoes the client's packet payload back raw, so the client receives
+its own send numbers. Once those run a window ahead of its receive window,
+the client refuses them as `NUMBER_OUTSIDE_WINDOW` and ends with disconnect
+reason -2 (`PROTOCOL_VIOLATION`). It happens only under load, and it comes
+from the echo, not from the library. Large-payload runs therefore use 1200 B.
+A failed endpoint now prints its nonzero `MESSAGE_*` counters.
