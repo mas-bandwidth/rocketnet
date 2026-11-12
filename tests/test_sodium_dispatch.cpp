@@ -196,6 +196,7 @@ static const char * best( const char * primitive, const cpu_t & cpu )
 // that silently drops it would otherwise pass every comparison above by
 // comparing the reference with itself. Fails by name.
 
+#if defined( __aarch64__ ) && ( defined( __linux__ ) || defined( __APPLE__ ) ) && !defined( __ARM_BIG_ENDIAN ) && !defined( _WIN32 )
 static void require( bool ok, const char * what, const char * got )
 {
     if ( !ok )
@@ -205,9 +206,12 @@ static void require( bool ok, const char * what, const char * got )
     }
 }
 
+#define SODIUM_DISPATCH_AARCH64_REQUIRED 1
+#endif
+
 static void aarch64_is_built_and_picked( const char * chacha, const char * poly, const char * aead )
 {
-#if defined( __aarch64__ ) && ( defined( __linux__ ) || defined( __APPLE__ ) ) && !defined( __ARM_BIG_ENDIAN ) && !defined( _WIN32 )
+#if defined( SODIUM_DISPATCH_AARCH64_REQUIRED )
     require( sodium_dispatch_built( "aead", "neon-fused" ) != 0, "the neon-fused AEAD is built on this arm64 build", "not built" );
     require( sodium_dispatch_built( "chacha20", "neon" ) != 0, "the neon ChaCha20 is built on this arm64 build", "not built" );
     require( sodium_dispatch_built( "poly1305", "mul64" ) != 0, "the mul64 Poly1305 is built on this arm64 build", "not built" );
@@ -728,6 +732,29 @@ static void protect_output( bool read_only )
 {
     CHECK( mprotect( read_only_pages, read_only_bytes, read_only ? PROT_READ : PROT_READ | PROT_WRITE ) == 0 );
 }
+
+static bool read_only_supported()
+{
+    return true;
+}
+#else
+static uint8_t plain_output[MAX_BYTES + 16 + 32];
+
+static uint8_t * guarded_output( size_t bytes )
+{
+    CHECK( bytes <= sizeof( plain_output ) );
+    return plain_output;
+}
+
+static void protect_output( bool read_only )
+{
+    CHECK( !read_only );
+}
+
+static bool read_only_supported()
+{
+    return false;
+}
 #endif
 
 // out[0, 8) and everything past out[8 + length) still poison; the output
@@ -752,16 +779,9 @@ static void refused_output( const uint8_t * out, size_t out_bytes, int length, b
 static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length, const uint8_t * ad, unsigned long long ad_bytes, const uint8_t * nonce, const uint8_t * key )
 {
     const bool untouched = strcmp( sodium_dispatch_aead(), "composed" ) != 0;
-#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
-    const bool read_only = untouched;
+    const bool read_only = untouched && read_only_supported();
     uint8_t * out = guarded_output( MAX_BYTES + 16 + 32 );
     uint8_t * in_place = guarded_output( MAX_BYTES + 16 + 32 );
-#else
-    const bool read_only = false;
-    static uint8_t out_buffer[MAX_BYTES + 16 + 32];
-    uint8_t * out = out_buffer;
-    uint8_t * in_place = out_buffer;
-#endif
     const size_t out_bytes = MAX_BYTES + 16 + 32;
     const bool counted = !untouched;
     unsigned long long out_length = 12345;
@@ -769,9 +789,7 @@ static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length,
     memset( out, 0xA5, out_bytes );
     if ( read_only )
     {
-#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
         protect_output( true );
-#endif
     }
     if ( counted )
     {
@@ -796,9 +814,7 @@ static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length,
     }
     if ( read_only )
     {
-#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
         protect_output( false );
-#endif
     }
 
     // in place: the ciphertext buffer is the output
@@ -806,9 +822,7 @@ static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length,
     memcpy( in_place + 3, sealed, (size_t) length + 16 );
     if ( read_only )
     {
-#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
         protect_output( true );
-#endif
     }
     if ( counted )
     {
@@ -824,9 +838,7 @@ static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length,
     }
     if ( read_only )
     {
-#if defined( SODIUM_DISPATCH_READ_ONLY_OUTPUT )
         protect_output( false );
-#endif
     }
     CHECK( in_place[0] == 0xA5 && in_place[1] == 0xA5 && in_place[2] == 0xA5 );
     for ( int i = 0; i < length; i++ )
