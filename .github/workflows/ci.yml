@@ -3399,12 +3399,14 @@ jobs:
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
     steps:
 
-      # the whole commit graph without trees or blobs past HEAD: the gate
-      # refuses a baseline whose recorded commit is not an ancestor of HEAD
+      # the whole commit graph: the gate refuses a baseline whose recorded
+      # commit is not an ancestor of HEAD. A plain full clone, no partial-clone
+      # filter: with filter: tree:0 the checkout's unshallow fetch died in
+      # pack-objects (signal 6) on hetzner2 runner 3 and amd-3 runner 2 and
+      # left the runner's clone damaged.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0
-          filter: tree:0
 
       - name: Check the fleet's build dependencies are present
         run: |
