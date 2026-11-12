@@ -1330,14 +1330,16 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(dst PRIVATE cxx_std_11)
     # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
     # of a layer's code writes its trace for TLC. tla_trace_plant compiles the
-    # layer's code again with its plant define, in place of the library's.
+    # layer's code again with its plant define, in place of the library's (the
+    # gso layer compiles the transport's source into tests/tla_trace_gso.cpp in
+    # both binaries; its plant define swaps finish and abort there).
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
     target_link_libraries(tla_trace PRIVATE rocketnet_dev)
     rocketnet_use_sodium(tla_trace)
     target_compile_features(tla_trace PRIVATE cxx_std_11)
     add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS} sdk/rocketnet_uring_send_queue.cpp)
-    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_URING_SEND_QUEUE_PLANT=1)
+    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_URING_SEND_QUEUE_PLANT=1 ROCKETNET_GSO_SEND_SLOT_PLANT=1)
     target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
     rocketnet_use_sodium(tla_trace_plant)
     target_compile_features(tla_trace_plant PRIVATE cxx_std_11)

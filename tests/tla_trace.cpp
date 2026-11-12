@@ -12,7 +12,7 @@
 // spec. No socket, no clock, no thread: the walk interleaves the fill
 // threads' calls itself, one call per step.
 //
-//   tla_trace --layer bank --seed N --out DIR [--steps K]
+//   tla_trace --layer bank|gso --seed N --out DIR [--steps K]
 //
 // writes DIR/MCTraceBankSeed<seed>.tla and .cfg (MCTraceBankPlantSeed<seed> from the
 // plant build). The plant build (tla_trace_plant) compiles the layer's code
@@ -36,7 +36,9 @@
 
 // ---------------------------------------------------------------------------
 // layer L0: the per-queue send banks (proofs/tla/RNUringQueueBankLayout.tla),
-// checked by proofs/tla/TraceRNUringQueueBankLayout.tla
+// checked by proofs/tla/TraceRNUringQueueBankLayout.tla: each record the walk
+// appends must be one TraceStep from the one before, and TraceReject is TLC's
+// verdict on the first that is not
 // ---------------------------------------------------------------------------
 
 // the instance: small enough for TLC to check each trace in seconds, with
@@ -421,7 +423,7 @@ TLA_TRACE_LAYER( "bank", trace_bank );
 
 static void usage()
 {
-    fprintf( stderr, "usage: tla_trace --layer bank --seed N --out DIR [--steps K]\n" );
+    fprintf( stderr, "usage: tla_trace --layer bank|gso --seed N --out DIR [--steps K]\n" );
 }
 
 int main( int argc, char ** argv )

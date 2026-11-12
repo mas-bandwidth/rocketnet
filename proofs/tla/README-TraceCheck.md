@@ -26,6 +26,14 @@ without this check. The first layer to use it is the io_uring per-queue send (L1
    - `TraceConsistent == ~rejected` is the invariant TLC checks.
    - `TraceDone` stutters once the last record is reached, so an accepted trace
      never deadlocks.
+   - `TraceNext == TraceStep \/ TraceReject \/ TraceDone` is the module's own
+     next-state action (it cannot define `Next` again), and the per-action
+     citation check follows it (README.md); the harness cites `TraceStep` and
+     `TraceReject`, and the row declares `TraceDone` an environment action.
+   - Compare the whole record, `VarsRec' = TraceLog[ti + 1]`, not field by
+     field: TLC evaluates the harness's `Log` at every reference to `TraceLog`,
+     so a comparison per field costs a pass over the trace per field. For
+     `TraceRNGsoQueueBankLayout` that was 40 s against 6 s on a 171-record trace.
 3. **The record format.** The harness writes `TraceRNX_<seed>.tla`, which defines
    `TraceLog` as a sequence of TLA records, one field per variable, named as
    `VarsRec` names them. It also writes a cfg that substitutes that definition for

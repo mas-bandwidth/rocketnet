@@ -33,6 +33,12 @@ LAYERS = {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
         "fired": re.compile(r"^STALE-TURNS ([0-9]+)$", re.M),
     },
+    "gso": {
+        "clean": "MCTraceGsoSeed",
+        "plant": "MCTraceGsoPlantSeed",
+        "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
+        "fired": re.compile(r"^FOREIGN-WRITES ([0-9]+)$", re.M),
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"

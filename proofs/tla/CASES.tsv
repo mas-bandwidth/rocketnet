@@ -924,3 +924,5 @@ MCRNGsoQueueBankLayoutBrokenBlindStore.cfg	MCRNGsoQueueBankLayout.tla	invariant	
 MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg	MCRNGsoQueueBankLayout.tla	invariant	NoForeignWrite	check	rngsoqueuebanklayout	required	-
 MCRNGsoQueueBankLayoutBrokenIdAdd.cfg	MCRNGsoQueueBankLayout.tla	invariant	RouteMatches	check	rngsoqueuebanklayout	required	-
 MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg	MCRNGsoQueueBankLayout.tla	invariant	NoWorkerWrite	check	rngsoqueuebanklayout	required	-
+MCTraceRNGsoQueueBankLayoutSelf.cfg	MCTraceRNGsoQueueBankLayoutSelf.tla	pass	-	check	tracerngsoqueuebanklayout	required	-
+MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg	MCTraceRNGsoQueueBankLayoutSelf.tla	invariant	TraceConsistent	check	tracerngsoqueuebanklayout	required	-

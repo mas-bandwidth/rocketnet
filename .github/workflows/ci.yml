@@ -1284,6 +1284,8 @@ jobs:
           set -euo pipefail
           python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
             --layer bank --seeds 1-4 --jobs 4 --dir "$TRACE_JOB/bank"
+          python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
+            --layer gso --seeds 1-4 --jobs 4 --dir "$TRACE_JOB/gso"
 
       - name: Remove the trace work
         if: always() && env.TRACE_JOB != ''
