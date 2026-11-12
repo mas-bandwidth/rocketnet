@@ -33,6 +33,9 @@
 (*   RefuseExhausts = TRUE  a span with no room exhausts the region, the   *)
 (*                          v1.0 send-side kick (standard/MESSAGES.md      *)
 (*                          m1.7 makes it a refusal that changes nothing). *)
+(*   UndoTail       = FALSE  freeing the newest span leaves the tail where  *)
+(*                          it was (v1.0.0 to v1.1.3): an aborted start's  *)
+(*                          bytes stay taken until the older spans go.     *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -43,7 +46,8 @@ CONSTANTS
     FloorAtOldest,  \* TRUE in the code
     PadOnWrap,      \* TRUE in the code
     SpliceBoth,     \* TRUE in the code
-    RefuseExhausts  \* FALSE in the code (TRUE: v1.0's send-side kick)
+    RefuseExhausts, \* FALSE in the code (TRUE: v1.0's send-side kick)
+    UndoTail        \* TRUE in the code (FALSE: v1.0.0 to v1.1.3)
 
 ASSUME SR > 0 /\ SR % 16 = 0
 ASSUME Lengths \subseteq 1..SR
@@ -51,6 +55,7 @@ ASSUME Q \in Nat \ {0}
 
 NONE == 0
 D == 1..Q
+NoUndo == 2 * SR + 1   \* region->span_tail_undo spent (0xFFFFFFFF in the code)
 
 VARIABLES
     head,       \* region->span_head
@@ -63,11 +68,14 @@ VARIABLES
     nxt,        \* descriptor->span_next: the next newer live span, NONE at last
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
-    exhausted   \* the region's sticky exhausted flag (sticky until Reset); only
+    exhausted,  \* the region's sticky exhausted flag (sticky until Reset); only
                 \* the receive side sets it in the code, so here only the broken
                 \* RefuseExhausts does
+    tailUndo,   \* region->span_tail_undo: the tail before the newest span was linked
+    fresh,      \* ghost: the last step was an Alloc (a start not yet finished or aborted)
+    admitted    \* ghost: the lengths Place admitted just before that Alloc
 
-vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted>>
+vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted, tailUndo, fresh, admitted>>
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -97,6 +105,9 @@ Init ==
     /\ live = {}
     /\ order = <<>>
     /\ exhausted = FALSE
+    /\ tailUndo = NoUndo
+    /\ fresh = FALSE
+    /\ admitted = {}
 
 \* rn_region_send_alloc_span with room: rn_span_place then rn_span_link
 Alloc(l, d) ==
@@ -119,6 +130,9 @@ Alloc(l, d) ==
     /\ tail'  = IF e = SR THEN 0 ELSE e
     /\ live'  = live \cup {d}
     /\ order' = Append(order, d)
+    /\ tailUndo' = tail
+    /\ fresh' = TRUE
+    /\ admitted' = {x \in Lengths : Place(Round16(x)).ok}
     /\ UNCHANGED exhausted
 
 \* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, counted
@@ -130,7 +144,7 @@ Refuse(l) ==
     /\ \/ D \ live = {}
        \/ ~Place(Round16(l)).ok
     /\ exhausted' = RefuseExhausts
-    /\ UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order>>
+    /\ UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order, tailUndo, fresh, admitted>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
 \* rn_region_send_free_fragment; any live span, in any order.  The span
@@ -149,12 +163,19 @@ Free(d) ==
           /\ IF f2 = NONE
                THEN /\ head' = 0                                   \* empty: the floor is the start
                     /\ tail' = 0
+                    /\ UNCHANGED tailUndo
                ELSE /\ head' = IF ~FloorAtOldest THEN start[l2]
                                ELSE IF p = NONE THEN start[f2] ELSE head
-                    /\ UNCHANGED tail
+                    \* TailUndo: the newest span, freed before anything was
+                    \* linked after it, gives its bytes back (an aborted start)
+                    /\ IF UndoTail /\ n = NONE /\ tailUndo # NoUndo
+                         THEN /\ tail' = tailUndo
+                              /\ tailUndo' = NoUndo
+                         ELSE UNCHANGED <<tail, tailUndo>>
           /\ live' = live \ {d}
           /\ order' = SelectSeq(order, LAMBDA x : x # d)
-          /\ UNCHANGED <<start, len, exhausted>>
+          /\ fresh' = FALSE
+          /\ UNCHANGED <<start, len, exhausted, admitted>>
 
 \* the region reset (rocketnet_allocator.cpp, "the send spans: empty")
 Reset ==
@@ -169,6 +190,9 @@ Reset ==
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
+    /\ tailUndo' = NoUndo
+    /\ fresh' = FALSE
+    /\ admitted' = {}
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
@@ -192,6 +216,9 @@ TypeOK ==
     /\ nxt \in [D -> D \cup {NONE}]
     /\ live \subseteq D
     /\ exhausted \in BOOLEAN
+    /\ tailUndo \in 0..(2 * SR + 1)
+    /\ fresh \in BOOLEAN
+    /\ admitted \subseteq Lengths
 
 Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
 
@@ -203,6 +230,13 @@ SpansNeverExhaust == ~exhausted
 \* (standard/MESSAGES.md m1.7, rule 2). Reversed by RefuseExhausts.
 RefuseLeavesRing ==
     [][\A l \in Lengths : Refuse(l) => UNCHANGED vars]_vars
+
+\* An aborted start gives back what it took (rocketnet_client_abort_message,
+\* rocketnet_server_abort_message: "releases its memory"): freeing the span
+\* the last step allocated leaves the ring admitting every length it admitted
+\* before that Alloc. Reversed by UndoTail.
+AbortReturnsRoom ==
+    [][\A d \in D : (fresh /\ d = last /\ Free(d)) => \A l \in admitted : (Place(Round16(l)).ok)']_vars
 
 \* No two live spans share a byte.
 LiveSpansDisjoint ==
