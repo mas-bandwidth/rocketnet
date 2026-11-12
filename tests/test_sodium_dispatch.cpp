@@ -238,15 +238,35 @@ static void known_answers()
     }
 }
 
+static int nibble( char c )
+{
+    if ( c >= '0' && c <= '9' )
+    {
+        return c - '0';
+    }
+    if ( c >= 'a' && c <= 'f' )
+    {
+        return c - 'a' + 10;
+    }
+    if ( c >= 'A' && c <= 'F' )
+    {
+        return c - 'A' + 10;
+    }
+    return -1;
+}
+
 static size_t unhex( const char * text, uint8_t * out, size_t capacity )
 {
-    const size_t bytes = strlen( text ) / 2;
+    const size_t length = strlen( text );
+    CHECK( length % 2 == 0 );
+    const size_t bytes = length / 2;
     CHECK( bytes <= capacity );
     for ( size_t i = 0; i < bytes; i++ )
     {
-        unsigned int value = 0;
-        CHECK( sscanf( text + 2 * i, "%2x", &value ) == 1 );
-        out[i] = (uint8_t) value;
+        const int high = nibble( text[2 * i] );
+        const int low = nibble( text[2 * i + 1] );
+        CHECK( high >= 0 && low >= 0 );
+        out[i] = (uint8_t) ( high * 16 + low );
     }
     return bytes;
 }
