@@ -21,8 +21,9 @@
 //   * test_token_history_create_at_the_capacity_bounds: through a counting
 //     allocator, create refuses 0, -1 and INT_MAX / 2 + 1 before allocating,
 //     reaches the allocator at INT_MAX / 2 (whose index the allocator
-//     refuses) with nothing left live, and a table's allocations are exactly
-//     its plan;
+//     refuses) with nothing left live, a table's allocations are exactly
+//     its plan, and churn through both tables writes nothing past any array
+//     (each block's tail after the carved array is a guard checked at free);
 //   * test_token_index_cell_at_capacity_is_never_a_hit: by fault injection, an
 //     index cell naming the slot one past the last (slot == capacity) is
 //     skipped by every lookup. The slack after each allocation is filled with
@@ -497,12 +498,21 @@ struct tt_allocator_t
     int live;
     int calls;
     int refused;
+    int overwritten;
     uint64_t requested;
     int traced;
     uint8_t * pointer[TT_TRACE_MAX];
     size_t bytes[TT_TRACE_MAX];
 };
 
+// the pointer rocketnet_malloc hands out from the block the allocator returned
+static uint8_t * tt_handed_out( const uint8_t * block )
+{
+    const uintptr_t overhead = (uintptr_t) rocketnet_allocation_overhead();
+    return (uint8_t *) ( ( (uintptr_t) block + overhead ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+}
+
+// the block's base and its requested size sit in the 16 bytes before it
 static void * tt_allocate( void * context, size_t bytes )
 {
     tt_allocator_t * state = (tt_allocator_t *) context;
@@ -521,6 +531,7 @@ static void * tt_allocate( void * context, size_t bytes )
 
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    memcpy( (void *) ( address - 2 * sizeof( void * ) ), &bytes, sizeof( bytes ) );
     memset( (void *) address, TT_GUARD, bytes + TT_GUARD_BYTES );
     ++state->live;
     state->requested += bytes;
@@ -534,11 +545,27 @@ static void * tt_allocate( void * context, size_t bytes )
     return (void *) address;
 }
 
+// every byte from the end of the array the library carved to the end of the
+// guard must still be the guard: a write one past an array lands there
 static void tt_release( void * context, void * pointer )
 {
     tt_allocator_t * state = (tt_allocator_t *) context;
     void * base = NULL;
+    size_t bytes = 0;
     memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
+    memcpy( &bytes, (uint8_t *) pointer - 2 * sizeof( void * ), sizeof( bytes ) );
+
+    const uint8_t * end = tt_handed_out( (const uint8_t *) pointer ) + ( bytes - (size_t) rocketnet_allocation_overhead() );
+    const uint8_t * guard_end = (const uint8_t *) pointer + bytes + TT_GUARD_BYTES;
+    for ( const uint8_t * p = end; p < guard_end; ++p )
+    {
+        if ( *p != TT_GUARD )
+        {
+            ++state->overwritten;
+            break;
+        }
+    }
+
     --state->live;
     free( base );
 }
@@ -572,13 +599,6 @@ static void tt_allocator_mark( tt_allocator_t * state )
     state->traced = 0;
 }
 
-// the pointer rocketnet_malloc hands out from the block the allocator returned
-static uint8_t * tt_handed_out( const uint8_t * block )
-{
-    const uintptr_t overhead = (uintptr_t) rocketnet_allocation_overhead();
-    return (uint8_t *) ( ( (uintptr_t) block + overhead ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
-}
-
 static void test_token_history_create_at_the_capacity_bounds()
 {
     tt_allocator_t state;
@@ -603,16 +623,36 @@ static void test_token_history_create_at_the_capacity_bounds()
     check( state.refused > 0 );
     check( state.live == live );
 
-    // a table in range allocates exactly its plan, and returns it all
-    const int capacities[] = { 1, 2, 7 };
+    // a table in range allocates exactly its plan and returns it all; churn
+    // through both tables (evictions, releases, expiries, the insertion ring
+    // compacting) writes nothing past any of its arrays
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+    const int capacities[] = { 1, 2, 3, 7 };
     for ( int i = 0; i < (int) ( sizeof( capacities ) / sizeof( capacities[0] ) ); ++i )
     {
+        const int capacity = capacities[i];
         tt_allocator_mark( &state );
-        struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( &state, capacities[i] );
+        struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( &state, capacity );
         check( history );
-        check( state.requested == rocketnet_token_table_allocation_bytes( capacities[i] ) );
+        check( state.requested == rocketnet_token_table_allocation_bytes( capacity ) );
+
+        uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        for ( int k = 0; k < 8 * capacity + 4; ++k )
+        {
+            tt_id( id, k );
+            const uint64_t now = 1000 + (uint64_t) k;
+            rocketnet_used_token_history_record( history, id, &address[k % 2], now + ( k % 3 == 0 ? 1 : 50 ), now );
+            rocketnet_used_token_history_claim_record( history, id, &address[k % 2], (double) now + ( k % 4 == 0 ? 0.5 : 3.0 ), (double) now );
+            if ( k % 5 == 0 )
+            {
+                rocketnet_used_token_history_claim_release( history, id, &address[k % 2] );
+            }
+        }
+
         rocketnet_used_token_history_destroy( history );
         check( state.live == live );
+        check( state.overwritten == 0 );
     }
 
     tt_allocator_end( &state );
@@ -709,6 +749,7 @@ static void test_token_index_cell_at_capacity_is_never_a_hit()
 
     rocketnet_used_token_history_destroy( history );
     check( state.live == live );
+    check( state.overwritten == 0 );
 
     tt_allocator_end( &state );
 }

@@ -237,5 +237,83 @@ void test_rocketnet_test_server_address_match_two_address_token()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
+// The arrival family's address is the only one checked, so each family
+// mismatch is refused even when the token's other bytes name this server: a
+// request over IPv4 with a token naming only an IPv6 address the server
+// advertises; a request over IPv6 with a token whose IPv6 flag is clear,
+// although its IPv6 bytes name the server; a request over IPv6 with a token
+// whose IPv6 address is v4-mapped (that is an IPv4 address) naming the
+// server's IPv4 loopback. Each is ADDRESS_NOT_ADVERTISED once, IGNORED, and
+// sends nothing; the same server accepts the matching family.
+
+static void rocketnet_server_address_match_refused( struct rocketnet_server_address_match_server_t * test, const uint8_t * request, bool refused )
+{
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
+    const uint64_t before = test->counters.values[addr_counter];
+    const int result = rocketnet_server_protocol_process_connection_request( &test->server, &test->client_address, request,
+                                                                             ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, ROCKETNET_TEST_CREATE_TS,
+                                                                             1000.0, response, &response_bytes );
+    if ( refused )
+    {
+        rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( test->counters.values[addr_counter] == before + 1 );
+        rocketnet_unit_check( response_bytes == 0 );
+    }
+    else
+    {
+        rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( test->counters.values[addr_counter] == before );
+        rocketnet_unit_check( response_bytes > 0 && response_bytes <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    }
+}
+
+void test_rocketnet_test_server_address_match_family_mismatch_refused()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    const uint8_t loopback_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
+    const uint8_t mapped_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x00, 0x7F, 0x01, 0x00, 0x40, 0x9c };
+
+    // a server naming both families, 127.0.0.1:40000 and [::1]:40000
+
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
+
+    // over IPv4: a token naming only [::1]:40000 is refused, one naming
+    // 127.0.0.1:40000 accepted
+
+    rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "198.51.100.7:56789" ) );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, loopback_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, true );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+    rocketnet_server_address_match_refused( &test, request, false );
+
+    // over IPv6: a token with only the IPv4 flag is refused although its IPv6
+    // bytes are [::1]:40000; with the IPv6 flag it is accepted
+
+    rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, loopback_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, true );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, loopback_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, false );
+
+    // over IPv6 to a dual-stack server ([::]:40000 beside 0.0.0.0:40000): a
+    // v4-mapped ::ffff:127.0.0.1:40000, which over IPv4 is the loopback the
+    // socket serves, is refused
+
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "0.0.0.0:40000" ) );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, mapped_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, true );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_family_mismatch_refused );
