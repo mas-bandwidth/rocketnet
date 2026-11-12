@@ -120,7 +120,10 @@ In outline, from v1.1.8:
   `Model records are current`; the TLC re-run evidence (a `TLC re-run full`
   job on the exact commit, or every `TLC re-run slice K/N` of the last N days'
   scheduled runs on ancestors of the commit); nightly.yml's
-  `tsan (threaded transport) (<ref>)`; msan.yml's `MemorySanitizer`;
+  `tsan (threaded transport) (<ref>)` and its three `Release functional
+  nightly tier` jobs (linux, macos, windows); msan.yml's `MemorySanitizer`;
+  and every job of nightly-soak.yml, nightly-leaks.yml,
+  nightly-macos-sanitizers.yml and nightly-channels-stress.yml;
 - on the tag push: Release Check's `threaded tsan run on the release commit`
   (the second check) and `release gates passed on the tag` (the tag run's
   final job, red unless the second check and the version check succeeded).
@@ -129,10 +132,16 @@ A version is judged by the gates in force for it: the gates that were the
 release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly
 CI, CBMC, TLC records and the threaded TSan leg green) and the gates added on
 2026-11-12, in force from v1.1.8 (every job `success`, Nightly CI every job,
-the TLC re-run evidence, MemorySanitizer, the tag run's final job). The tool
-prints each gate not in force for the version it judges. v1.0.0 (9904027045)
-is refused by the gates in force for it: its CI push run failed and its
-Nightly CI, CBMC and TLC records runs are not green.
+the TLC re-run evidence, MemorySanitizer, the nightly functional tiers, soak,
+leaks, macOS sanitizers and channel stress, the tag run's final job). The tool
+prints each gate not in force for the version it judges; `--dry-run
+--gates-as-of VERSION` judges a commit by another version's gates. v1.0.0
+(9904027045) is refused by the gates in force for it: its CI push run failed
+and its Nightly CI, CBMC and TLC records runs are not green. v1.1.7
+(76edea48e) passes the gates in force for it and is refused by v1.1.8's: no
+TLC re-run, MemorySanitizer, soak, leaks, macOS sanitizers or channel stress
+run exists on that commit (it was tagged 2.5 hours after soak per transport
+went red).
 
 One policy change for the owner to confirm: MSan, called advisory until
 v1.1.7, is a release gate from v1.1.8; it stays out of the per-PR set.
