@@ -1229,35 +1229,6 @@ struct rocketnet_portable_io_client_layout_t
     void * socket;
     void * wake;
 };
-#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) )
-struct rocketnet_platform_wake_layout_t
-{
-    void * context;
-    int socket_fd;
-    int event_fd;
-};
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-struct rocketnet_platform_wake_layout_t
-{
-    void * context;
-    int kq;
-    int socket_fd;
-    bool read_enabled;
-};
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-struct rocketnet_platform_wake_layout_t
-{
-    void * context;
-    void * socket_handle;
-    void * read_event;
-    void * wake_event;
-};
-#else
-struct rocketnet_platform_wake_layout_t
-{
-    void * context;
-};
-#endif // #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) )
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // Mirrors of the native client I/O records, member for member, so the plan
@@ -1457,8 +1428,11 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         if ( strcmp( transport, "gso" ) == 0 )
         {
             plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
-                                                                      sizeof( rocketnet_client_gso_io_layout_t ),
-                                                                      sizeof( rocketnet_platform_wake_layout_t ) } );
+                                                                      sizeof( rocketnet_client_gso_io_layout_t ) } );
+            if ( !plan.transport_io_bytes || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+            {
+                return false;
+            }
         }
         else
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -1473,8 +1447,11 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
         {
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
             plan.transport_io_bytes = rocketnet_memory_allocations( { sizeof( rocketnet_platform_socket_t ),
-                                                                      sizeof( rocketnet_portable_io_client_layout_t ),
-                                                                      sizeof( rocketnet_platform_wake_layout_t ) } );
+                                                                      sizeof( rocketnet_portable_io_client_layout_t ) } );
+            if ( !plan.transport_io_bytes || !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+            {
+                return false;
+            }
 #else
             plan.transport_io_bytes = rocketnet_platform_socket_allocation_bytes();
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
@@ -2330,7 +2307,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
 
             seam_client->context = client_transport->context;
             seam_client->socket = rocketnet_malloc( client_transport->context, sizeof( rocketnet_platform_socket_t ) );
-            seam_client->wake = rocketnet_malloc( client_transport->context, sizeof( rocketnet_platform_wake_layout_t ) );
+            seam_client->wake = rocketnet_malloc( client_transport->context, (size_t) ( rocketnet_platform_wake_allocation_bytes() - rocketnet_allocation_overhead() ) );
             if ( !seam_client->socket || !seam_client->wake )
             {
                 if ( seam_client->socket )
