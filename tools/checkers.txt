@@ -18,7 +18,7 @@ tools/check_cbmc_bounds.py	python3 tools/check_cbmc_bounds.py --self-test	python
 tools/check_checkers.py	python3 tools/check_checkers.py --self-test	python3 tools/check_checkers.py --root {empty} --no-run	ci.yml	lint	Every checker is registered, its self-test runs, zero inputs are red
 tools/check_ci_budget.py	python3 tools/check_ci_budget.py --self-test	python3 tools/check_ci_budget.py {emptyfile}	ci.yml	lint	Every per-commit job is bounded to two minutes
 tools/check_client_frame_time.py	python3 tools/check_client_frame_time.py --self-test	python3 tools/check_client_frame_time.py --bin {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
-tools/check_client_server_words.pypython3 tools/test_check_client_server_words.py	python3 tools/check_client_server_words.py --root {empty}	ci.yml	lint	Check client/server words
+tools/check_client_server_words.py	python3 tools/test_check_client_server_words.py	python3 tools/check_client_server_words.py --root {empty}	ci.yml	lint	Check client/server words
 tools/check_continue_on_error.py	python3 tools/check_continue_on_error.py --self-test	python3 tools/check_continue_on_error.py --root {empty}	ci.yml	lint	No continue-on-error hides a result
 tools/check_dll_consumer.py	python3 tools/test_check_dll_consumer.py -v	python3 tools/check_dll_consumer.py --build {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_driver_extension.py	python3 tools/test_check_driver_extension.py -v	python3 tools/check_driver_extension.py {empty}	ci.yml	lint	Self-tests of the registered checkers
