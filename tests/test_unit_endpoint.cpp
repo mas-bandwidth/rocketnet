@@ -1445,6 +1445,308 @@ static void test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap()
     rn_arena_destroy( arena );
 }
 
+// The unreliable records of one written packet, by their first byte (the
+// fill each case writes), in wire order; -1 for an unparsable payload.
+static int ep_record_fills( const uint8_t * payload, int bytes, const rocketnet_message_config_t * config, uint8_t * fills, int capacity )
+{
+    rocketnet_message_limits_t limits = {};
+    limits.num_channels = config->num_channels;
+    limits.enabled_codes = 0x1F;
+    limits.reliable_messages_in_flight = config->reliable_messages_in_flight;
+    limits.max_message_bytes = config->max_message_bytes;
+    limits.receive_message_buffer_bytes = config->receive_message_buffer_bytes;
+
+    rocketnet_message_reader_t reader;
+    if ( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
+    {
+        return -1;
+    }
+
+    int count = 0;
+    rocketnet_message_record_t record;
+    while ( rocketnet_message_reader_next( &reader, &record ) )
+    {
+        if ( record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE && record.bytes > 0 && count < capacity )
+        {
+            fills[count++] = record.data[0];
+        }
+    }
+
+    return count;
+}
+
+// The ring after the renumber at the first push past a ticket wrap
+// (rn_unreliable_renumber; proofs/tla/RNUnreliableRingLayout.tla Push): the
+// tombstones are gone, the live entries are kept in queue order from the
+// head, each with a new ticket of the new lap that its descriptor carries,
+// and the pushed descriptor follows with the next ticket. Two shapes: a
+// tombstone whose descriptor was reused by a live message before the wrap
+// (stale, not naming the pushed descriptor), and the tombstone of the
+// descriptor the push takes (naming it).
+
+static void ep_ring_expect( const rn_endpoint_t * endpoint, const uint32_t * descriptors, uint32_t count )
+{
+    const rn_region_t * region = endpoint->region;
+    check( endpoint->unreliable_ring_used == count );
+    check( region->schedule_ticket_wrapped == 0 );
+    uint32_t previous = 0;
+    for ( uint32_t i = 0; i < count && i < endpoint->unreliable_ring_used; i++ )
+    {
+        const rn_unreliable_entry_t * entry = &region->unreliable_ring[( endpoint->unreliable_ring_head + i ) % region->unreliable_ring_entries];
+        check( entry->descriptor == descriptors[i] );
+        check( entry->ticket == region->send_descriptors[entry->descriptor].enqueue_ticket );
+        check( entry->ticket >= 1 && entry->ticket < 16 );                     // the new lap
+        check( i == 0 || entry->ticket == previous + 1 );                       // queue order, one ticket each
+        previous = entry->ticket;
+    }
+    check( endpoint->unreliable_head == descriptors[0] );
+}
+
+static void test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order()
+{
+    for ( int shape = 0; shape < 2; shape++ )
+    {
+        rocketnet_message_config_t config;
+        ep_config( &config );
+        config.packets_per_update = 1;
+
+        rocketnet_counters_t counters = {};
+        rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+        check( arena != NULL );
+
+        rn_endpoint_config_t endpoint_config = {};
+        endpoint_config.config = &config;
+        endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+        rn_endpoint_t endpoint;
+        rn_region_t * region = rn_arena_region( arena, 0 );
+        rn_endpoint_init( &endpoint, region, &endpoint_config );
+        rn_endpoint_reset( &endpoint, 1000.0 );
+
+        // a packet carries a (channel 0) and c (channel 1); b stays queued at
+        // the head, c's entry is a tombstone behind it
+
+        region->schedule_ticket_next = UINT32_MAX - 8;
+        ep_send_unreliable( &endpoint, 0, 800, 0x11 );
+        const uint32_t b = ep_send_unreliable( &endpoint, 0, 800, 0x22 );
+        const uint32_t c = ep_send_unreliable( &endpoint, 1, 300, 0x33 );
+
+        uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        rn_endpoint_begin_update( &endpoint );
+        rn_endpoint_begin_flush( &endpoint );
+        check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+        const int first = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+        check( first > 0 );
+        rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, first ), 1000.0 );
+        check( endpoint.unreliable_count == 1 && endpoint.unreliable_head == b );
+        check( endpoint.unreliable_ring_used == 2 );
+
+        uint32_t expect[4];
+        uint32_t d = RN_DESCRIPTOR_NONE;
+        if ( shape == 0 )
+        {
+            // f takes c's descriptor before the wrap: c's entry is now stale
+            // for a live descriptor; the wrap; then d takes the other free one
+
+            const uint32_t f = ep_send_unreliable( &endpoint, 1, 100, 0x66 );
+            check( f == c );
+            check( endpoint.unreliable_ring_used == 3 );
+            while ( !region->schedule_ticket_wrapped )
+            {
+                rn_region_schedule_ticket( region );
+            }
+            d = ep_send_unreliable( &endpoint, 0, 150, 0x77 );
+            check( d != c && d != b );
+            expect[0] = b;
+            expect[1] = f;
+            expect[2] = d;
+            ep_ring_expect( &endpoint, expect, 3 );
+        }
+        else
+        {
+            // the wrap; then d takes c's descriptor back: c's tombstone names it
+
+            while ( !region->schedule_ticket_wrapped )
+            {
+                rn_region_schedule_ticket( region );
+            }
+            d = ep_send_unreliable( &endpoint, 1, 150, 0x77 );
+            check( d == c );
+            expect[0] = b;
+            expect[1] = d;
+            ep_ring_expect( &endpoint, expect, 2 );
+        }
+
+        // the queued messages go out once each
+
+        int seen[256] = {};
+        for ( int p = 0; p < 4 && endpoint.unreliable_count > 0; p++ )
+        {
+            rn_endpoint_begin_update( &endpoint );
+            rn_endpoint_begin_flush( &endpoint );
+            const double now = 1000.1 + 0.1 * p;
+            check( rn_endpoint_next_packet_bytes( &endpoint, now ) > 0 );
+            const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), (uint64_t) ( 2 + p ), now );
+            check( bytes > 0 );
+            uint8_t fills[8];
+            const int count = ep_record_fills( frame, bytes, &config, fills, 8 );
+            check( count >= 0 );
+            for ( int k = 0; k < count; k++ )
+            {
+                seen[fills[k]]++;
+            }
+            rn_endpoint_packet_sent( &endpoint, (uint64_t) ( 2 + p ), rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
+        }
+        check( endpoint.unreliable_count == 0 );
+        check( seen[0x22] == 1 && seen[0x77] == 1 && seen[0x66] == ( shape == 0 ? 1 : 0 ) );
+        check( seen[0x11] == 0 && seen[0x33] == 0 );
+
+        rn_arena_destroy( arena );
+    }
+}
+
+// The ring filled to its last entry (rn_unreliable_push's full-ring pass):
+// the ring holds two entries per send descriptor, so it fills only with
+// tombstones. Live messages queued behind a live head, the rest of the ring
+// stale entries (descriptors reused since, as a sent message leaves them),
+// then one push more: the pass closes the live entries up from the head in
+// order before the push, and every live message is written once.
+static void test_endpoint_unreliable_ring_full_push_keeps_every_live_message()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 1;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_endpoint_init( &endpoint, region, &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    const uint32_t entries = region->unreliable_ring_entries;
+    check( entries >= 8 );
+
+    // four live messages, then stale entries naming their descriptors with
+    // an old ticket fill the ring to its last entry
+
+    uint32_t live[5];
+    for ( int i = 0; i < 4; i++ )
+    {
+        live[i] = ep_send_unreliable( &endpoint, 0, 100, (uint8_t) ( 0xA0 + i ) );
+    }
+    check( endpoint.unreliable_ring_used == 4 );
+    const uint32_t head = endpoint.unreliable_ring_head;
+    for ( uint32_t i = 4; i < entries; i++ )
+    {
+        rn_unreliable_entry_t * entry = &region->unreliable_ring[( head + i ) % entries];
+        entry->descriptor = live[i % 4];
+        entry->ticket = region->send_descriptors[live[i % 4]].enqueue_ticket - 1;     // an older lap's: stale
+    }
+    endpoint.unreliable_ring_used = entries;
+
+    // the push at a full ring
+
+    live[4] = ep_send_unreliable( &endpoint, 0, 100, 0xA4 );
+    check( endpoint.unreliable_ring_used == 5 );
+    check( endpoint.unreliable_ring_head == head );
+    for ( uint32_t i = 0; i < 5; i++ )
+    {
+        const rn_unreliable_entry_t * entry = &region->unreliable_ring[( head + i ) % entries];
+        check( entry->descriptor == live[i] );
+        check( entry->ticket == region->send_descriptors[live[i]].enqueue_ticket );
+    }
+
+    // all five go out once each, in order
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( bytes > 0 );
+    uint8_t fills[8];
+    check( ep_record_fills( frame, bytes, &config, fills, 8 ) == 5 );
+    for ( int i = 0; i < 5; i++ )
+    {
+        check( fills[i] == 0xA0 + i );
+    }
+    rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), 1000.0 );
+    check( endpoint.unreliable_count == 0 );
+
+    rn_arena_destroy( arena );
+}
+
+// The renumber at a ticket wrap over a full ring: it reads exactly the used
+// entries, so the live head is renumbered once, not read again past the end.
+static void test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 1;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_endpoint_init( &endpoint, region, &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    const uint32_t entries = region->unreliable_ring_entries;
+    check( entries >= 8 );
+
+    region->schedule_ticket_next = UINT32_MAX - 8;
+    uint32_t live[5];
+    for ( int i = 0; i < 4; i++ )
+    {
+        live[i] = ep_send_unreliable( &endpoint, 0, 100, (uint8_t) ( 0xA0 + i ) );
+    }
+    check( endpoint.unreliable_ring_used == 4 );
+    const uint32_t head = endpoint.unreliable_ring_head;
+    for ( uint32_t i = 4; i < entries; i++ )
+    {
+        rn_unreliable_entry_t * entry = &region->unreliable_ring[( head + i ) % entries];
+        entry->descriptor = live[i % 4];
+        entry->ticket = region->send_descriptors[live[i % 4]].enqueue_ticket - 1;     // an older lap's: stale
+    }
+    endpoint.unreliable_ring_used = entries;
+
+    while ( !region->schedule_ticket_wrapped )
+    {
+        rn_region_schedule_ticket( region );
+    }
+
+    live[4] = ep_send_unreliable( &endpoint, 0, 100, 0xA4 );
+    ep_ring_expect( &endpoint, live, 5 );
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( bytes > 0 );
+    uint8_t fills[8];
+    check( ep_record_fills( frame, bytes, &config, fills, 8 ) == 5 );
+    for ( int i = 0; i < 5; i++ )
+    {
+        check( fills[i] == 0xA0 + i );
+    }
+
+    rn_arena_destroy( arena );
+}
+
 // ---------------------------------------------------------------------------
 // the reliable timeout off by default (standard/MESSAGES.md m9.3, 10.3): a
 // heard connection whose reliable stream never progresses never ends, and
@@ -1606,6 +1908,9 @@ REGISTER_UNIT_TEST( test_endpoint_partial_ack_stall_requests_no_frame );
 REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );
+REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order );
+REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_message );
+REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
