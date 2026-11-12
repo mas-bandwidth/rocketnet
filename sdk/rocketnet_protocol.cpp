@@ -377,6 +377,15 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
                                                     associated_data, (unsigned long long) associated_data_bytes,
                                                     nonce, key ) != 0 )
     {
+#if ROCKETNET_DEV
+        // a failed open's output is defined as zeros, and no caller reads it
+        // (rocketnet_protocol.h): check the first, then poison for the second
+        for ( int i = 0; i < plaintext_bytes; i++ )
+        {
+            rocketnet_assert( out_data[i] == 0 );
+        }
+        memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
+#endif // #if ROCKETNET_DEV
         return -1;
     }
 

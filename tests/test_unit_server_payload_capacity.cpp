@@ -172,6 +172,42 @@ static void test_server_payload_capacity_uses_live_session_path()
     rocketnet_unit_check( mapping->accepted_session.highest_opened == 2 );
     rocketnet_unit_check( server.acks->endpoints[client_index].ack_debt == 1 );
 
+    // a forged payload (one ciphertext bit) opens into the same buffer and is
+    // refused: nothing is handed out, and the bytes it wrote are not the
+    // payload. A DEV build poisons a failed open's output
+    // (rocketnet_open_sealed_packet), so the buffer shows the open ran and
+    // its result was dropped.
+
+    packet_bytes = seal_payload( packet, 3, expected, (int) sizeof( expected ) );
+    rocketnet_unit_check( packet_bytes > 0 );
+    packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + 40] ^= 0x10;
+    memset( opened, 0x11, sizeof( opened ) );
+    payload = response;
+    payload_bytes = 777;
+    payload_client_index = 777;
+    const struct rocketnet_counters_t before_forged = counters;
+    rocketnet_unit_check( rocketnet_server_protocol_process_received( &server, &from, mapping_index,
+                                                                      packet, packet_bytes,
+                                                                      ROCKETNET_TEST_CREATE_TS, 100.2,
+                                                                      response, &response_bytes,
+                                                                      opened, (int) sizeof( expected ),
+                                                                      &payload, &payload_bytes,
+                                                                      &payload_client_index ) != ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_unit_check( payload == NULL );
+    rocketnet_unit_check( payload_bytes == 0 );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( server.payload_sequence == 2 );
+    rocketnet_unit_check( mapping->replay_session.highest_opened == 2 );
+    rocketnet_unit_check( mapping->accepted_session.highest_opened == 2 );
+    rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] == before_forged.values[ROCKETNET_COUNTER_PAYLOAD_DELIVERED] );
+#if ROCKETNET_DEV
+    const int forged_plaintext_bytes = packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    for ( int i = 0; i < forged_plaintext_bytes; i++ )
+    {
+        rocketnet_unit_check( opened[i] == ROCKETNET_OPEN_POISON_BYTE );
+    }
+#endif // #if ROCKETNET_DEV
+
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_encryption_map_destroy( server.encryption_map );
