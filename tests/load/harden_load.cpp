@@ -89,6 +89,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_read_write.h"
+#include "tests/portable_crt.h"
 #include "tests/process_resources.h"
 
 #include <algorithm>
@@ -1012,12 +1013,31 @@ static bool harden_parse_key( const std::string & hex, uint8_t * key )
     {
         return false;
     }
+    // two hex digits a byte, read by hand: no CRT scan, which MSVC deprecates
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
     {
-        unsigned value = 0;
-        if ( sscanf( hex.c_str() + 2 * i, "%2x", &value ) != 1 )
+        int value = 0;
+        for ( int j = 0; j < 2; j++ )
         {
-            return false;
+            const char c = hex[(size_t) ( 2 * i + j )];
+            int digit = -1;
+            if ( c >= '0' && c <= '9' )
+            {
+                digit = c - '0';
+            }
+            else if ( c >= 'a' && c <= 'f' )
+            {
+                digit = c - 'a' + 10;
+            }
+            else if ( c >= 'A' && c <= 'F' )
+            {
+                digit = c - 'A' + 10;
+            }
+            if ( digit < 0 )
+            {
+                return false;
+            }
+            value = value * 16 + digit;
         }
         key[i] = (uint8_t) value;
     }
@@ -2824,9 +2844,51 @@ struct harden_terms_t
     }
 };
 
+// "harden_term: role=<role> <name>=<integer>", read by hand (no CRT scan,
+// which MSVC deprecates): the role runs to the first space, the name from the
+// next non-space to the first '=', and the value is a decimal integer
+static bool harden_parse_term( const char * line, std::string * role, std::string * name, int64_t * value )
+{
+    static const char prefix[] = "harden_term: role=";
+    if ( strncmp( line, prefix, sizeof( prefix ) - 1 ) != 0 )
+    {
+        return false;
+    }
+    const char * cursor = line + sizeof( prefix ) - 1;
+    const char * role_end = cursor;
+    while ( *role_end && *role_end != ' ' && *role_end != '\t' && *role_end != '\n' )
+    {
+        role_end++;
+    }
+    if ( role_end == cursor || ( *role_end != ' ' && *role_end != '\t' ) )
+    {
+        return false;
+    }
+    role->assign( cursor, (size_t) ( role_end - cursor ) );
+    cursor = role_end;
+    while ( *cursor == ' ' || *cursor == '\t' )
+    {
+        cursor++;
+    }
+    const char * equals = strchr( cursor, '=' );
+    if ( !equals || equals == cursor )
+    {
+        return false;
+    }
+    name->assign( cursor, (size_t) ( equals - cursor ) );
+    char * end = NULL;
+    const long long parsed = strtoll( equals + 1, &end, 10 );
+    if ( end == equals + 1 )
+    {
+        return false;
+    }
+    *value = (int64_t) parsed;
+    return true;
+}
+
 static bool harden_terms_load( const std::string & path, harden_terms_t * terms )
 {
-    FILE * file = fopen( path.c_str(), "r" );
+    FILE * file = rocketnet_test_fopen( path.c_str(), "r" );
     if ( !file )
     {
         fprintf( stderr, "harden_load reconcile: cannot read %s\n", path.c_str() );
@@ -2835,12 +2897,12 @@ static bool harden_terms_load( const std::string & path, harden_terms_t * terms 
     char line[1024];
     while ( fgets( line, sizeof( line ), file ) )
     {
-        char role[64], name[256];
-        long long value = 0;
-        if ( sscanf( line, "harden_term: role=%63s %255[^=]=%lld", role, name, &value ) == 3 )
+        std::string role, name;
+        int64_t value = 0;
+        if ( harden_parse_term( line, &role, &name, &value ) )
         {
-            terms->names.push_back( std::string( role ) + "." + name );
-            terms->values.push_back( (int64_t) value );
+            terms->names.push_back( role + "." + name );
+            terms->values.push_back( value );
         }
     }
     fclose( file );
