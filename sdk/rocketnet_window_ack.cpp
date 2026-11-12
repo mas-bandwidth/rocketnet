@@ -694,7 +694,8 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t total = count + receipt_count;
 
     // 1. Update each referenced number's last_send (and first_send on its
-    //    first send) and link/move it to the tail of the resend FIFO.
+    //    first send) and link/move it to the tail of the resend FIFO
+    //    (proofs/tla/RNRttFilter.tla Send and Resend: a first send stamps U's oldest, a resend keeps it).
 
     for ( uint32_t i = 0; i < count; i++ )
     {
@@ -814,7 +815,7 @@ int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
 
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
-// proofs/tla/RNResendTiming.tla Sample).
+// proofs/tla/RNRttFilter.tla Ack).
 // proofs/tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
 // proofs/tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
 // proofs/tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
@@ -842,7 +843,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     // 1. One unambiguous RTT sample per acked packet_id, except from a packet
     //    sent before the latest ack silence ended less one srtt: its ack
     //    waited out the silence, so it measures the outage, not the path (m9.2;
-    //    proofs/tla/RNResendTiming.tla Sample, NoSampleAcrossSilence)
+    //    proofs/tla/RNRttFilter.tla Ack, NoSampleAcrossSilence)
 
     const double rtt = now >= entry->send_time ? ( now - entry->send_time ) : 0.0;
     if ( !ack->has_rtt )
@@ -860,7 +861,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 
     // The resend delay is min(2*RTT + 4*deviation + 30 ms, configured max).
     // The first deviation is the first sample; the optional configured floor applies
-    // (standard/MESSAGES.md m9.2).
+    // (standard/MESSAGES.md m9.2; proofs/tla/RNResendTiming.tla Sample).
 
     ack->resend_delay = rn_window_ack_compute_resend_delay( ack->srtt, ack->rttvar, ack->resend_delay_min, ack->resend_delay_max );
 
@@ -1033,7 +1034,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
     // before it, a reliable number was on the wire unacknowledged and no ack arrived: from the later of
     // the last ack and U's first send. A sender with nothing on the wire owed no ack, so a gap with
     // nothing sent is not a silence. Like probe pacing it is off when the game opted in, so an opted-in
-    // connection samples as v1.0 does (proofs/tla/RNResendTiming.tla Ack, EndsSilence)
+    // connection samples as v1.0 does (proofs/tla/RNRttFilter.tla Ack, EndsSilence)
     if ( ack->reliable_timeout <= 0.0 && ack->has_last_ack && ack->has_oldest && ack->send->U < ack->send->next )
     {
         const double owed = ack->last_ack > ack->oldest_first_send ? ack->last_ack : ack->oldest_first_send;
@@ -1143,7 +1144,8 @@ const rn_send_number_t * rn_window_ack_probe_slot( const rn_window_ack_t * ack, 
     return slot;
 }
 
-// Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3).
+// Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3); off, it ends nothing and only
+// the silence timeout ends the connection (proofs/tla/RNResendTiming.tla SilenceEnd, NoEndBeforeT).
 // proofs/tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {

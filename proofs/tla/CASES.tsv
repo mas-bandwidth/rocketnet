@@ -840,3 +840,10 @@ MCRNXdpSendDrainBrokenNoRelease.cfg	MCRNXdpSendDrain.tla	temporal	StopFinishes	c
 MCRNXdpSendDrainBrokenNoReset.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenNoRing.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenShortBound.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
+MCRNRttFilter.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
+MCRNRttFilterLive.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
+MCRNRttFilterBrokenSilenceOnGap.cfg	MCRNRttFilter.tla	invariant	RefuseOnlyAfterOwedSilence	check	rnrttfilter	required	-
+MCRNRttFilterBrokenGapNeverRises.cfg	MCRNRttFilter.tla	temporal	SlowPathRaisesEstimate	check	rnrttfilter	required	-
+MCRNRttFilterBrokenNoFilter.cfg	MCRNRttFilter.tla	invariant	NoSampleAcrossSilence	check	rnrttfilter	required	-
+MCRNRttFilterFirstAck.cfg	MCRNRttFilter.tla	invariant	NoSampleAcrossSilence	check	rnrttfilter	required	-
+MCRNRttFilterUnowed.cfg	MCRNRttFilter.tla	invariant	OutageNeverPoisons	check	rnrttfilter	required	-
