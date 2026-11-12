@@ -376,8 +376,31 @@ static int in_tree_i40e( const char * nic )
 // same rule; its i40e-guard-selftest holds both to one case list.
 static int kernel_release_before_i40e_soak( const char * release )
 {
+    // up to four numbers, "major.minor.patch-abi": each starts with a digit,
+    // and the next is read only after its separator. strtol, not sscanf,
+    // which MSVC refuses (C4996) under warnings as errors.
+    static const char separator[3] = { '.', '.', '-' };
     int v[4] = { 0, 0, 0, 0 };
-    if ( sscanf( release, "%d.%d.%d-%d", &v[0], &v[1], &v[2], &v[3] ) < 3 )
+    int fields = 0;
+    const char * p = release;
+    while ( fields < 4 && *p >= '0' && *p <= '9' )
+    {
+        char * end = NULL;
+        long value = strtol( p, &end, 10 );
+        if ( value > 1000000L )
+        {
+            value = 1000000L;
+        }
+        v[fields] = (int) value;
+        fields++;
+        p = end;
+        if ( fields == 4 || *p != separator[fields - 1] )
+        {
+            break;
+        }
+        p++;
+    }
+    if ( fields < 3 )
     {
         return 1;
     }
