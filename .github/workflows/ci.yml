@@ -2412,11 +2412,11 @@ jobs:
       - name: Compile the XDP program for big-endian BPF and check its byte order
         run: |
           set -euo pipefail
-          clang -D__linux__ -D__BPF__ -ffreestanding -O2 -g -I/usr/include/s390x-linux-gnu -Isdk \
+          clang -D__linux__ -D__BPF__ -ffreestanding -ffp-contract=off -O2 -g -I/usr/include/s390x-linux-gnu -Isdk \
             -target bpfeb -c sdk/xdp/server_xdp.c -o build/server_xdp_bpfeb.o
           cmake -DOBJECT=build/server_xdp_bpfeb.o -DHEADER=build/server_xdp_bpfeb.h -DBYTE_ORDER=BIG_ENDIAN \
             -P cmake/CheckXdpObjectByteOrder.cmake
-          clang -D__linux__ -D__BPF__ -ffreestanding -O2 -I/usr/include/x86_64-linux-gnu -Isdk \
+          clang -D__linux__ -D__BPF__ -ffreestanding -ffp-contract=off -O2 -I/usr/include/x86_64-linux-gnu -Isdk \
             -target bpf -c sdk/xdp/server_xdp.c -o build/server_xdp_build_machine.o
           if cmake -DOBJECT=build/server_xdp_build_machine.o -DHEADER=build/server_xdp_build_machine.h \
             -DBYTE_ORDER=BIG_ENDIAN -P cmake/CheckXdpObjectByteOrder.cmake; then
