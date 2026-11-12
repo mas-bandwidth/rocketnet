@@ -12,6 +12,27 @@ static uint64_t rn_window_send_round16( uint32_t bytes )
     return ( (uint64_t) bytes + 15 ) & ~(uint64_t) 15;
 }
 
+// The ring span a one-number message takes: code 2 holds no ring bytes, the
+// holdable codes their bytes rounded to 16 (standard/MESSAGES.md m5.1).
+static uint64_t rn_window_send_single_span( int holdable, uint32_t bytes )
+{
+    return holdable ? rn_window_send_round16( bytes ) : 0;
+}
+
+// A block's numbers and its one contiguous span, fragment i at p + i * F; the
+// final fragment's rounded actual bytes (standard/MESSAGES.md m4, m8).
+static uint32_t rn_window_send_block_count( uint32_t bytes )
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    return ( bytes + F - 1 ) / F;
+}
+
+static uint64_t rn_window_send_block_span( uint32_t bytes, uint32_t count )
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    return (uint64_t) ( count - 1 ) * F + rn_window_send_round16( bytes - ( count - 1 ) * F );
+}
+
 // standard/MESSAGES.md m5.1 boundary padding; proofs/tla/RNRing.tla Pos, PlaceSingle and PlaceBlock.
 static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t span )
 {
@@ -25,8 +46,8 @@ static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t
 // proofs/tla/RNRing.tla Admits, PlaceSingle and PlaceBlock. Subtraction avoids overflowing U'+W or
 // p+span. A failed first write counts once until U' moves or one succeeds.
 // proofs/tla/RNWindow.tla NumberRecord
-static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
-                                 uint64_t span, int holdable, uint64_t * position )
+static int rn_window_send_fits( const rn_window_send_t * send, uint32_t count,
+                                uint64_t span, int holdable, uint64_t * position )
 {
     const uint64_t W = send->region->window;
     const uint64_t B = send->region->ring_bytes;
@@ -58,19 +79,33 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
         fits = fits && span <= B && p >= floor && p - floor <= B - span;
     }
 
-    if ( !fits )
-    {
-        if ( !send->stalled )
-        {
-            if ( send->region->counters )
-            {
-                rocketnet_platform_atomic_add_u64(
-                    (volatile uint64_t *) &send->region->counters->values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL], 1 );
-            }
+    *position = p;
+    return fits;
+}
 
-            send->stalled = 1;
+// a refused first write: the stall is counted once until U' moves or a
+// first write succeeds
+static void rn_window_send_stall( rn_window_send_t * send )
+{
+    if ( !send->stalled )
+    {
+        if ( send->region->counters )
+        {
+            rocketnet_platform_atomic_add_u64(
+                (volatile uint64_t *) &send->region->counters->values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL], 1 );
         }
 
+        send->stalled = 1;
+    }
+}
+
+static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
+                                 uint64_t span, int holdable, uint64_t * position )
+{
+    uint64_t p;
+    if ( !rn_window_send_fits( send, count, span, holdable, &p ) )
+    {
+        rn_window_send_stall( send );
         return 0;
     }
 
@@ -133,7 +168,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
     rocketnet_assert( bytes <= send->region->max_message_bytes );
 
     const int holdable = code != ROCKETNET_MESSAGE_CODE_RELIABLE;
-    const uint64_t span = holdable ? rn_window_send_round16( bytes ) : 0;
+    const uint64_t span = rn_window_send_single_span( holdable, bytes );
 
     uint64_t p;
     if ( !rn_window_send_admit( send, 1, span, holdable, &p ) )
@@ -172,12 +207,10 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     rocketnet_assert( bytes > F && bytes <= send->region->max_message_bytes );
 
-    const uint32_t count = ( bytes + F - 1 ) / F;
+    const uint32_t count = rn_window_send_block_count( bytes );
     rocketnet_assert( count >= 2 && count <= send->region->window );
 
-    const uint32_t last = bytes - ( count - 1 ) * F;
-    const uint64_t last16 = rn_window_send_round16( last );
-    const uint64_t span = (uint64_t) ( count - 1 ) * F + last16;
+    const uint64_t span = rn_window_send_block_span( bytes, count );
     rocketnet_assert( span <= send->region->ring_bytes );
 
     uint64_t p;
@@ -199,6 +232,42 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
     *ring_start = p;
 
     return count;
+}
+
+// proofs/tla/RNWindow.tla WouldNumber: the admit test of first_write and
+// first_write_block, with their own count and span, and no side effect: no
+// number, no stall mark, no counter. The endpoint's due test asks it of the
+// head the walk numbers first, so a frame is never started for a message the
+// window cannot number.
+int rn_window_send_would_number( const rn_window_send_t * send, int code, uint32_t bytes, int fragments )
+{
+    uint64_t p;
+
+    if ( fragments > 1 )
+    {
+        const uint32_t count = rn_window_send_block_count( bytes );
+        return rn_window_send_fits( send, count, rn_window_send_block_span( bytes, count ), 1, &p );
+    }
+
+    if ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
+    {
+        return 1;
+    }
+
+    const int holdable = code != ROCKETNET_MESSAGE_CODE_RELIABLE;
+    return rn_window_send_fits( send, 1, rn_window_send_single_span( holdable, bytes ), holdable, &p );
+}
+
+// proofs/tla/RNWindow.tla WouldNumber, and the stall NumberRecord's refusal marks
+int rn_window_send_stall_unless_numbered( rn_window_send_t * send, int code, uint32_t bytes, int fragments )
+{
+    if ( rn_window_send_would_number( send, code, bytes, fragments ) )
+    {
+        return 1;
+    }
+
+    rn_window_send_stall( send );
+    return 0;
 }
 
 // standard/MESSAGES.md m5.1, m9 (R7); RNWindow ReceiveAck and RNRing Ack. U advances

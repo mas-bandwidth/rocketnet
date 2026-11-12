@@ -18,11 +18,24 @@
 static rocketnet_sendmsg_x_fn real_send;
 static rocketnet_recvmsg_x_fn real_receive;
 static int send_calls, receive_calls;
-static bool refuse_send, refuse_receive, interrupt_send;
+static bool refuse_send, refuse_receive, interrupt_send, refuse_names;
 
 static ssize_t controlled_send( int s, const rocketnet_msghdr_x_t * messages, u_int count, int flags )
 {
     ++send_calls;
+
+    // an xnu that takes no destination per message: EINVAL for any msg_name
+    if ( refuse_names )
+    {
+        for ( u_int i = 0; i < count; ++i )
+        {
+            if ( messages[i].msg_name != NULL )
+            {
+                errno = EINVAL;
+                return -1;
+            }
+        }
+    }
 
     if ( interrupt_send )
     {
@@ -229,6 +242,29 @@ int main()
     drain( socket, address, 4 );
     CHECK( rocketnet_platform_socket_send_failures( socket ) == failures_before_interrupt + 1 );
     printf( "test_msgx_transport_send_eintr_bounded\n" );
+
+    // sendmsg_x refuses a destination per message (EINVAL) while sendto takes
+    // every one: the chunk goes per packet, nothing is counted as failed, the
+    // pump does not pause, and no later send on the unconnected socket probes
+    // again, however long after; receives stay batched. Last: the refusal is
+    // final for the process.
+
+    refuse_names = true;
+    const int calls_before_names = send_calls;
+    const uint64_t failures_before_names = rocketnet_platform_socket_send_failures( socket );
+    const uint64_t replay_before_names = rocketnet_platform_socket_send_replay_failures( socket );
+    rocketnet_platform_socket_send_packets( socket, sends, 40 );
+    CHECK( send_calls == calls_before_names + 1 );
+    CHECK( socket->msgx_down_until == 0.0 );
+    drain( socket, address, 40 );
+    CHECK( rocketnet_platform_socket_send_failures( socket ) == failures_before_names );
+    CHECK( rocketnet_platform_socket_send_replay_failures( socket ) == replay_before_names );
+    rocketnet_platform_socket_send_packets( socket, sends, 4 );
+    drain( socket, address, 4 );
+    CHECK( send_calls == calls_before_names + 1 );
+    CHECK( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
+    refuse_names = false;
+    printf( "test_msgx_transport_send_names_refused_is_final\n" );
 
     rocketnet_sendmsg_x = real_send;
     rocketnet_recvmsg_x = real_receive;

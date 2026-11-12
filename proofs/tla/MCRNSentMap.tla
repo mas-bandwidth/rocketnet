@@ -6,7 +6,9 @@
 (* with P = W and RTO = RTT, the tightest sizes the rule allows.           *)
 (* MCRNSentMapBrokenSmallMap.cfg (P = W - 1) and                           *)
 (* MCRNSentMapBrokenEarlyResend.cfg (RTO < RTT) are the reversed           *)
-(* witnesses, each the committed file with one constant changed.           *)
+(* witnesses, and MCRNSentMapReceiptEviction.cfg (one receipt-only packet *)
+(* an update) the open risk, each the committed file with one constant  *)
+(* changed.                                                                *)
 (***************************************************************************)
 EXTENDS RNSentMap
 =============================================================================

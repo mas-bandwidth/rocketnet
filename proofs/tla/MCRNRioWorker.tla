@@ -21,11 +21,23 @@
 (*                                            StopCompletes                *)
 (*   MCRNRioWorkerBrokenOneBatchPerPass.cfg   (DrainLoop and               *)
 (*                                            CountStalledOnly)            *)
-(*                                            LeakOnlyAfterRefusal         *)
+(*                                            LeakOnlyAfterStalls          *)
 (* MCRNRioWorkerInlineStopBatchPerPass.cfg is that witness with            *)
 (* CountStalledOnly on: the passes that make progress are not counted and  *)
 (* the drain finishes.                                                     *)
+(* MCRNRioWorkerReachRefusedPost.cfg must fail                             *)
+(* NotReachedRefusedPostAtExit: the worker can exit with a send of the     *)
+(* stop burst refused at its post and counted.                             *)
+(*   MCRNRioWorkerBrokenUncountedPost.cfg     (CountRefusedPost)           *)
+(*                                            StopSendsFinished            *)
+(* MCRNRioWorkerReachLateCancelLeak.cfg must fail                          *)
+(* NotReachedLateCancelLeak: the inline drain can leak after a close that  *)
+(* succeeded when the cancellations arrive late, as the code can.          *)
 (* README-RNRioWorker.md gives each trace and its check against the code.  *)
 (***************************************************************************)
 EXTENDS RNRioWorker
+
+\* MCRNRioWorkerBrokenUncountedPost.cfg: a refused send post is lost
+\* uncounted; must fail StopSendsFinished.
+CountRefusedPostBroken == FALSE
 =============================================================================

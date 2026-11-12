@@ -53,7 +53,7 @@ struct rocketnet_client_transport_io_operations_t;
 #define ROCKETNET_CLIENT_IOCP_RECEIVES                                      64
 // bytes in one receive buffer: the largest datagram the client accepts
 #define ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES                ROCKETNET_RECEIVE_CEILING
-// a destroy that has not drained after this many dequeues of
+// a destroy that has not drained after this many stalled dequeues of
 // ROCKETNET_CLIENT_IOCP_DRAIN_SECONDS leaks its buffers rather than free
 // memory the kernel may still write
 #define ROCKETNET_CLIENT_IOCP_DRAIN_WAITS                                   10

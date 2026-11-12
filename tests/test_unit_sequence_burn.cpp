@@ -1087,4 +1087,175 @@ static void test_sequence_burn_server_reliable_and_resend_delay_unchanged() { se
 REGISTER_UNIT_TEST( test_sequence_burn_server_reliable_and_resend_delay_unchanged );
 static void test_sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
 REGISTER_UNIT_TEST( test_sequence_burn_client_reliable_and_resend_delay_unchanged );
+
+// ---- a packet the send budget refuses takes no frame ---------------------------------
+//
+// standard/MESSAGES.md m1.8 and m9.4: a packet a connection's own send budget
+// refuses must take none of the update's send capacity, so the refusal is
+// decided before a frame is started. On the client every frame start takes a
+// session sequence (rocketnet_client_protocol_start_payload), so a frame
+// started and then aborted for a refused packet is a sequence never sent: a
+// gap the server sees on the wire. The client here is capped at 16 kbps and
+// offered a 1000-byte reliable message every 10 ms round, far over its budget,
+// so most flushes its budget refuses the packet it has due. The seam on the
+// client's link records every frame the message layer aborts, by the session
+// sequence it spent. None may be aborted, and once the cap is lifted every
+// message arrives, in order.
+
+static int budget_refusal_aborted;
+static void ( *budget_refusal_abort_next )( void * transport, struct rocketnet_packet_context_t * context );
+
+static void budget_refusal_abort( void * transport, struct rocketnet_packet_context_t * context )
+{
+    if ( context->frame )
+    {
+        budget_refusal_aborted++;
+        printf( "    aborted a frame that spent session sequence %llu\n", (unsigned long long) context->sequence );
+    }
+    budget_refusal_abort_next( transport, context );
+}
+
+static void test_client_budget_refusal_skips_no_session_sequence()
+{
+    struct sequence_burn_message_pair_t pair;
+    rocketnet_unit_check( sequence_burn_message_pair_setup( &pair ) );
+
+    for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
+    {
+        sequence_burn_message_step( &pair, BURN_SIDE_CLIENT, -1, false, NULL );
+    }
+    rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
+
+    struct rn_message_object_t * client = &pair.client->object;
+    rocketnet_unit_check( rocketnet_message_client_set_send_kbps( pair.client, 16 ) );
+
+    budget_refusal_aborted = 0;
+    budget_refusal_abort_next = client->link.abort_packet;
+    client->link.abort_packet = budget_refusal_abort;
+
+    struct sequence_burn_message_measures_t m;
+    memset( &m, 0, sizeof( m ) );
+    m.reliable_in_order = 1;
+
+    int refused_flushes = 0;
+    static uint8_t large[1000];
+    for ( int round = 0; round < 100; round++ )
+    {
+        memset( large, 0x33, sizeof( large ) );
+        rocketnet_unit_check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, large, (int) sizeof( large ) ) != 0 );
+        const uint64_t before = client->connections[0].budget.bytes_spent;
+        sequence_burn_message_step( &pair, BURN_SIDE_CLIENT, -1, false, &m );
+        refused_flushes += client->connections[0].budget.bytes_spent == before ? 1 : 0;
+    }
+
+    // the budget refused the due packet in most flushes, and no frame was aborted
+
+    rocketnet_unit_check( refused_flushes > 50 );
+    rocketnet_unit_check( budget_refusal_aborted == 0 );
+
+    client->link.abort_packet = budget_refusal_abort_next;
+    sequence_burn_message_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_client_budget_refusal_skips_no_session_sequence );
+
+// ---- a packet written first whose frame the transport then refuses -----------------
+//
+// While a connection's bucket holds less than one maximum packet, its packet
+// is written into a stack payload before a frame is started
+// (rn_message_connection_write). If the transport then refuses the start, the
+// written packet takes the refused-send path (rn_endpoint_packet_failed, as
+// for a refused finish): its reliable records are due again, its unreliable
+// records are counted UNRELIABLE_SEND_FAILED, and its charge is refunded. The
+// server's connection is capped at 16 kbps; one flush queues a small reliable
+// and a small unreliable message while the bucket is short, and the seam has
+// the transport refuse every start of that flush for real (SEND_RING_FULL).
+// The reliable message still arrives, once and in order.
+
+static void test_server_written_first_packet_refused_start_is_due_again()
+{
+    struct sequence_burn_message_pair_t pair;
+    rocketnet_unit_check( sequence_burn_message_pair_setup( &pair ) );
+
+    for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
+    {
+        sequence_burn_message_step( &pair, BURN_SIDE_SERVER, -1, false, NULL );
+    }
+    rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
+
+    struct rn_message_object_t * server = &pair.server->object;
+    rn_message_connection_t * connection = &server->connections[0];
+    rocketnet_unit_check( rocketnet_message_server_set_send_kbps( pair.server, 0, 16 ) );
+
+    struct sequence_burn_message_measures_t m;
+    memset( &m, 0, sizeof( m ) );
+    m.reliable_in_order = 1;
+
+    // ten rounds of one small reliable message each: the bucket is short
+    // after them, and still pays a small packet
+
+    for ( int round = 0; round < 10; round++ )
+    {
+        sequence_burn_message_step( &pair, BURN_SIDE_SERVER, 0, false, &m );
+    }
+    rocketnet_unit_check( m.reliable_sent == 10 );
+    rocketnet_unit_check( connection->budget.tokens < (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES - 200.0 );
+
+    // the refused flush: a reliable and an unreliable message, every start refused
+
+    uint8_t reliable[8] = { 0xE1, 0, 0, 0, 0, 0, 0, 0 };
+    const uint32_t index = (uint32_t) m.reliable_sent;
+    memcpy( reliable + 4, &index, sizeof( index ) );
+    rocketnet_unit_check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable, (int) sizeof( reliable ) ) != 0 );
+    m.reliable_sent++;
+    const uint8_t unreliable[8] = { 0xE3, 0, 0, 0, 0, 0, 0, 0 };
+    rocketnet_unit_check( rocketnet_message_server_send( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, unreliable, (int) sizeof( unreliable ) ) != 0 );
+
+    pair.time += 0.01;
+    sequence_burn_clock = pair.time;
+    rocketnet_unit_check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    const uint64_t spent = connection->budget.bytes_spent;
+    const uint64_t send_failed = server->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED];
+    const uint64_t ring_full = rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    sequence_burn_seam_side = BURN_SIDE_SERVER;
+    sequence_burn_seam_refused = 0;
+    sequence_burn_seam_next = server->link.start_packet;
+    server->link.start_packet = sequence_burn_seam_start;
+    sequence_burn_seam_armed = 1;
+    rn_send_pass_cost_reset();
+    rocketnet_message_server_send_packets( pair.server );
+    const rn_send_pass_cost_t pass = rn_send_pass_cost_read();
+    server->link.start_packet = sequence_burn_seam_next;
+
+    // both packets were written first and refused a frame: the reliable one is
+    // due again, the unreliable one counted, both charges refunded
+
+    rocketnet_unit_check( sequence_burn_seam_refused == 1 );
+    rocketnet_unit_check( rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) )->values[ROCKETNET_COUNTER_SEND_RING_FULL] >= ring_full + 2 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == send_failed + 1 );
+    rocketnet_unit_check( connection->budget.bytes_spent == spent );
+    rocketnet_unit_check( pass.frames_aborted == 0 );
+
+    // the reliable message goes out at a later flush, once
+
+    rocketnet_unit_check( rocketnet_message_server_set_send_kbps( pair.server, 0, 0 ) );
+    for ( int round = 0; round < BURN_MESSAGE_SETTLE; round++ )
+    {
+        sequence_burn_message_step( &pair, BURN_SIDE_SERVER, -1, false, &m );
+    }
+
+    rocketnet_unit_check( m.reliable_received == m.reliable_sent );
+    rocketnet_unit_check( m.reliable_in_order == 1 );
+    rocketnet_unit_check( server->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED] == send_failed + 1 );
+
+    sequence_burn_message_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_server_written_first_packet_refused_start_is_due_again );
 #endif // #if ROCKETNET_DEV

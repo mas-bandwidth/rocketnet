@@ -1123,16 +1123,40 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
     return 0;
 }
 
+// The message the ordered walk numbers first: the head of the first ready
+// channel's FIFO, or NULL when no channel is ready or the ready channel has
+// nothing queued (the walk then takes that channel off the turns). A ready
+// channel always has a message queued (proofs/tla/RNChannelQueuesLayout.tla
+// ReadyNonEmpty), so NULL is no channel ready.
+static const rn_send_descriptor_t * rn_endpoint_ready_message( const rn_endpoint_t * endpoint )
+{
+    const rn_ordered_t * ordered = &endpoint->ordered;
+    if ( ordered->channels.ready_head == RN_DESCRIPTOR_NONE )
+    {
+        return NULL;
+    }
+
+    const uint32_t d = endpoint->region->channel_send[ordered->channels.ready_head].queue_head;
+    return d == RN_DESCRIPTOR_NONE ? NULL : &endpoint->region->send_descriptors[d];
+}
+
 static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now )
 {
-    // New messages are due while the window can number them: a stalled
-    // window numbers nothing until an ack moves U' and clears the stall
-    // (rn_window_send_mark_acked), so a frame is never started for them.
+    // New messages are due while the window can number the one the walk
+    // numbers first (proofs/tla/RNWindow.tla WouldNumber, the walk's own admit
+    // test): a stalled window numbers nothing until an ack moves U' and
+    // clears the stall (rn_window_send_mark_acked), and an ack that moves U'
+    // by less than that message needs clears the stall without making room.
+    // Either way a frame is never started for it (standard/MESSAGES.md m1.8).
 
     const rn_ordered_t * ordered = &endpoint->ordered;
     if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE && !ordered->send.stalled )
     {
-        return true;
+        const rn_send_descriptor_t * head = rn_endpoint_ready_message( endpoint );
+        if ( !head || rn_window_send_would_number( &ordered->send, head->reliability, head->bytes, head->fragments ) )
+        {
+            return true;
+        }
     }
 
     const rn_window_ack_t * ack = &ordered->ack;
@@ -1294,6 +1318,17 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_RELIABLE )
     {
+        // a message the window cannot number stalls here, before a frame is
+        // started, marked and counted as the walk's first write would
+        // (proofs/tla/RNWindow.tla WouldNumber)
+
+        rn_ordered_t * ordered = &endpoint->ordered;
+        const rn_send_descriptor_t * head = rn_endpoint_ready_message( endpoint );
+        if ( head && !ordered->send.stalled )
+        {
+            rn_window_send_stall_unless_numbered( &ordered->send, head->reliability, head->bytes, head->fragments );
+        }
+
         if ( endpoint->written < max_packets && rn_endpoint_ordered_due( endpoint, now ) )
         {
             endpoint->packet_kind = RN_ENDPOINT_PACKET_ORDERED;
@@ -1345,6 +1380,27 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
 
     return 0;
+}
+
+// proofs/tla/RNSendRotation.tla MayBeRefused
+bool rn_endpoint_write_may_be_refused( const struct rn_endpoint_t * endpoint )
+{
+    // Whether the budget can refuse the packet next_packet_bytes planned, so
+    // that write_packet may write nothing. A packet is admitted at
+    // rocketnet_send_budget_max_wire_bytes of its payload, never more than
+    // ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES, so a bucket holding that
+    // much admits any one packet: rn_ordered_write opens the class order
+    // afresh for its one packet, and an unreliable packet is planned only
+    // when no reliable item waits (rn_endpoint_end_reliable). A large
+    // sequenced state is admitted before it is planned
+    // (rn_endpoint_plan_large_sequenced).
+
+    if ( !endpoint->send_budget_enabled || endpoint->packet_kind == RN_ENDPOINT_PACKET_SEQUENCED_LARGE )
+    {
+        return false;
+    }
+
+    return endpoint->budget.reliable_waiting || endpoint->budget.tokens < (double) ROCKETNET_SEND_BUDGET_MAX_PACKET_WIRE_BYTES;
 }
 
 // proofs/tla/RNSendRotation.tla BeginFlush: an ended pass stays ended until here or the next update.

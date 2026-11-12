@@ -280,16 +280,17 @@ the create log line names each feature as yes or no.
   thread's receive slots, in arrival order. Segments past the receive
   buffer's room are dropped and counted; a truncated control area or a
   short `UDP_GRO` cmsg is one counted fault and the message one datagram.
-- **IOCP (Windows 11, Server 2022 or later):** USO on send through the
-  `UDP_SEND_MSG_SIZE` socket option, URO on receive through
+- **IOCP (Windows 11, Server 2022 or later):** USO on send through
+  `UDP_SEND_MSG_SIZE`, URO on receive through
   `UDP_RECV_MAX_COALESCED_SIZE` with `WSARecvMsg` reading the
   `UDP_COALESCED_INFO` stride. `rocketnet_server_iocp_features` reports
   `ROCKETNET_IOCP_FEATURE_USO` and `ROCKETNET_IOCP_FEATURE_URO`. In a DEV build,
   the test-only create flags `ROCKETNET_IOCP_DISABLE_USO` and
   `ROCKETNET_IOCP_DISABLE_URO` skip each probe; production always probes both.
-  The Winsock reference documents the segment size as a socket option, not a
-  per-send control message, so a run of more than one frame sets the option to
-  the run's stride and posts one `WSASendMsg` with one buffer per frame. Every
+  The create probe sets the socket option to zero; a run of more than one frame
+  posts one `WSASendMsg` with one buffer per frame and the run's stride as its
+  own `IPPROTO_UDP` / `UDP_SEND_MSG_SIZE` control message, so a send still
+  pending when the next run posts keeps the stride it was posted with. Every
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
   resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.

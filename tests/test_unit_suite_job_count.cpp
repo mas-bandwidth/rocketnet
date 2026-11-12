@@ -54,3 +54,15 @@ static void test_suite_job_count_fits_the_windows_wait_set()
 }
 
 REGISTER_UNIT_TEST( test_suite_job_count_fits_the_windows_wait_set );
+
+// A run that collected no case, a suite or a shard with nothing registered
+// for it, fails: an empty suite is a lost registration, not a pass. The
+// failure line is printed instead of the pass banner.
+static void test_suite_finish_fails_when_no_case_ran()
+{
+    std::vector<suite_result> results;
+    check( suite_finish( results, true ) == 1 );
+    check( suite_finish( results, false ) == 1 );
+}
+
+REGISTER_UNIT_TEST( test_suite_finish_fails_when_no_case_ran );

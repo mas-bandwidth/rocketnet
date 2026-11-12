@@ -61,20 +61,48 @@ the clock once no ack is due; `Done` is the bounded run's end. The ghost
 Invariants: `TypeOK`, `MapBounded` (`Len(smap) <= P`), `WindowBounded`
 (`next - U <= W`) and `NoLiveEviction`.
 
-Not modelled: blocks (`U'` only narrows the window, so it cannot add packets),
-the 16P reference ring (each packet holds at most 16 references, so it never
-binds before the packet ring), and unreliable receipt records. A receipt-only
-packet carries no reliable number, so `W` does not bound those packets; an
-evicted receipt-only entry resolves its receipts as LOSS early. Sizing for
-receipt traffic is a separate question, not this rule.
+Not modelled: blocks (`U'` only narrows the window, so it cannot add packets)
+and the 16P reference ring (each packet holds at most 16 references, so it
+never binds before the packet ring).
+
+## Receipt-only packets: the rule does not hold with them (open risk)
+
+A packet of unreliable records with receipts and no reliable number takes a
+ring entry too (`rn_window_ack_commit_receipt_packet`), and `W` does not bound
+those packets, so step 3 above fails once they share the ring.
+`WriteReceipt(lost)` writes one, at most `ReceiptsPerUpdate` an update;
+`NoLiveEviction` is about entries that carry numbers (an evicted receipt-only
+entry resolves its receipts as LOSS, RNReceipts `EvictMap`). The committed run
+holds `ReceiptsPerUpdate = 0`; `MCRNSentMapReceiptEviction.cfg` (one a update,
+`P = W`) fails `NoLiveEviction`.
+
+Its counterexample, checked against the code by hand: at t = 0 three packets
+of one number each (ids 0, 1, 2 carrying 0, 1, 2), all opened, acks due at
+t = 2, then a receipt-only packet (id 3) at t = 0. The ring spans `P = 3`
+entries, so `rn_window_ack_commit`'s eviction loop drops packet 0 and counts
+`MESSAGE_SENT_MAP_EVICTED`; at t = 2 `rn_window_ack_on_ack` does not find id 0,
+and number 0 waits for its resend. Measured on the code's window harness
+(`rn_ordered_init` on a unit arena, `P = W = 64`, 64 single-number reliable
+packets in one 200 ms round trip, all acks landing one round trip later):
+with no receipt-only packets 64 of 64 acks are found and nothing is evicted;
+with one receipt-only packet 63 are found and one entry is evicted; with 32,
+48 are found and 32 evicted.
+
+No point-release repair keeps receipts as they are: a receipt-only packet
+that refuses to evict a reliable entry still leaves its entry in the ring for
+the next reliable write to pass `P` on; reserving `W` entries for numbered
+packets makes every receipt LOSS at the default `P = W = 1024`; and a budget
+or ring of their own changes the map's layout and memory. The repair is a
+design change for a minor release.
 
 ## Cases
 
 | Config | Constants | Expected | Result |
 |---|---|---|---|
-| `MCRNSentMap.cfg` | W = 3, P = 3, RTT = 2, RTO = 2, numbers 0..4, clock 0..6, two numbers a packet | pass | PASS, 409,730 distinct states, 9.7 s |
+| `MCRNSentMap.cfg` | W = 3, P = 3, RTT = 2, RTO = 2, numbers 0..4, clock 0..6, two numbers a packet, no receipt-only packets | pass | PASS, 409,730 distinct states, 6.7 s |
 | `MCRNSentMapBrokenSmallMap.cfg` | P = 2 | `NoLiveEviction` | exit 12 at depth 4 |
 | `MCRNSentMapBrokenEarlyResend.cfg` | RTO = 1 | `NoLiveEviction` | exit 12 |
+| `MCRNSentMapReceiptEviction.cfg` | ReceiptsPerUpdate = 1 | `NoLiveEviction` | exit 12 at depth 5 |
 
 The control runs at the tightest sizes the rule allows (`P = W`, `RTO = RTT`).
 

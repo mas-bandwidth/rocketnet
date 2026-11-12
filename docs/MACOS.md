@@ -108,7 +108,7 @@ portable per-packet loop (`rocketnet_msgx_pause`, the receive block in
 bind and that first batch call, checks that create left it queued, and requires
 the batch call to deliver it with the pump still `msgx`.
 
-At runtime a send errno that is ordinary UDP weather (`EAGAIN`, `EWOULDBLOCK`,
+At runtime a send errno that is ordinary UDP weather (`EINTR`, `EAGAIN`, `EWOULDBLOCK`,
 `ENOBUFS`, `ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`,
 `EADDRNOTAVAIL`, `EPERM`, `EACCES`, `EHOSTDOWN`, `ENETDOWN`) finishes that
 chunk per packet and does not pause the pump; any other refusal pauses the
@@ -117,6 +117,14 @@ pause is the re-probe (`rocketnet_msgx_send_weather`, `rocketnet_msgx_pause`,
 `ROCKETNET_MSGX_RETRY_SECONDS`). The pump is per socket, so one socket can be
 paused while another batches. `rocketnet_platform_socket_pump` reports the live
 pump, so a paused socket reads as `portable`.
+
+One refusal is final instead of a pause: `EINVAL` from `sendmsg_x` on an
+unconnected socket (a server's) whose per-packet replay then sends every
+message of the chunk. That is a kernel that takes no destination per message
+(older macOS releases), so for the rest of the process unconnected sockets
+send per packet, receives stay batched, one warning says so, and the chunk
+counts no send failure, since nothing was dropped. A refusal whose replay also
+fails is a refused destination and pauses as above.
 
 **portable** uses per-packet `sendto` / `recvmsg` calls
 (`rocketnet_platform_socket_send_packet` and

@@ -743,7 +743,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
 // arrive on an already-exhausted region; this pins that it is refused -- the
 // connection's exhaustion already kicked it -- and the decision stays exhaustion.
 
-static void test_receive_without_room_exhausts_the_region()
+static void test_receive_on_an_exhausted_region_delivers_nothing()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -795,6 +795,44 @@ static void test_receive_without_room_exhausts_the_region()
     check( rn_ordered_deliveries( &ordered ) == 0 );            // refused: nothing is delivered
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == exhausted_before );
+
+    rn_unit_arena_destroy( arena );
+}
+
+// The CONFIG announce is the one send the region owes room for: an
+// announce into a store with no room for it is the region failing its own
+// bound, so the region is exhausted (sdk/rocketnet_channel.cpp,
+// rn_ordered_announce_config) and the connection ends with
+// MESSAGE_MEMORY_EXHAUSTED, where an application send into the same store is
+// only refused.
+
+static void test_announce_config_without_room_exhausts_the_region()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &counters );
+    check( arena );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+
+    rn_ordered_t ordered;
+    check( rn_ordered_init( &ordered, region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+
+    // CONFIG-sized sends until the store has no room for one more: a refusal
+
+    const int n = cm_fill( region, ROCKETNET_MESSAGE_CONFIG_BYTES, NULL, 0 );
+    check( n > 0 );
+    check( !rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    check( !rn_ordered_announce_config( &ordered, &config ) );
+    check( rn_region_exhausted( region ) );
+    check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     rn_unit_arena_destroy( arena );
 }
@@ -1325,7 +1363,8 @@ REGISTER_UNIT_TEST( test_user_block_is_used_and_nothing_else );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
-REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
+REGISTER_UNIT_TEST( test_receive_on_an_exhausted_region_delivers_nothing );
+REGISTER_UNIT_TEST( test_announce_config_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
 REGISTER_UNIT_TEST( test_send_refusal_leaves_the_region_as_it_was );

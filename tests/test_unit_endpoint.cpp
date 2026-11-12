@@ -1050,6 +1050,88 @@ static void test_endpoint_stalled_window_requests_no_frame()
     rn_arena_destroy( arena );
 }
 
+// An ack that moves U' clears the stall, but by less room than the next
+// message needs (a block of three numbers behind a full window with one
+// number acknowledged), so the window still cannot number it. The endpoint
+// asks for no frame: a remote endpoint that acknowledges one number per
+// update must not make the server start and abort a frame every update. The
+// stall is still marked and counted, as the walk's first write would.
+
+static void test_endpoint_partial_ack_stall_requests_no_frame()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 8;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    // W singles of 1200 bytes, one number and one packet each, then a block
+    // of three numbers
+
+    const int W = config.reliable_messages_in_flight;
+    for ( int i = 0; i <= W; i++ )
+    {
+        const int bytes = i < W ? 1200 : 3000;
+        uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, bytes, endpoint_config.max_payload_bytes );
+        check( message != NULL );
+        if ( message )
+        {
+            memset( message, i, (size_t) bytes );
+            check( rn_endpoint_finish( &endpoint, bytes, 0 ) != 0 );
+        }
+    }
+
+    // updates at one time, before any resend is due, send the W singles and
+    // stall on the block
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint64_t packet_id = 1;
+    for ( int update = 0; update < W && !endpoint.ordered.send.stalled; update++ )
+    {
+        rn_endpoint_begin_update( &endpoint );
+        rn_endpoint_begin_flush( &endpoint );
+        while ( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 )
+        {
+            const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), packet_id, 1000.0 );
+            if ( bytes > 0 )
+            {
+                rn_endpoint_packet_sent( &endpoint, packet_id++, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), 1000.0 );
+            }
+        }
+    }
+
+    check( packet_id == (uint64_t) W + 1 );
+    check( endpoint.ordered.send.stalled );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+
+    // one number acknowledged: the stall clears with one free number
+
+    rn_endpoint_on_acked( &endpoint, 1, 1000.001 );
+    check( endpoint.ordered.send.U_prime == 1 );
+    check( endpoint.ordered.send.stalled == 0 );
+
+    // the next update, before any resend is due: the block still does not
+    // fit, so no frame is asked for, and the stall is marked again
+
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.002 ) == 0 );
+    check( endpoint.ordered.send.stalled == 1 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 2 );
+
+    rn_arena_destroy( arena );
+}
+
 // The same rule under probe pacing (standard/MESSAGES.md m9.3): with the
 // reliable timeout off and nothing acknowledged for a second, only U is
 // resent, once per resend delay. The endpoint asks for a frame exactly when
@@ -1503,6 +1585,7 @@ REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
 REGISTER_UNIT_TEST( test_endpoint_stalled_window_requests_no_frame );
+REGISTER_UNIT_TEST( test_endpoint_partial_ack_stall_requests_no_frame );
 REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );

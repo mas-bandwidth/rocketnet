@@ -300,6 +300,10 @@ MembershipByTicket ==
 \* a channel with work queued takes turns
 NonEmptyIsReady == \A c \in Chans : q[c] # <<>> => InSeq(ready, c)
 
+\* and only a channel with work queued takes turns: the send pass reads the
+\* head of the first ready channel as the next message (rn_endpoint_ready_message)
+ReadyNonEmpty == \A c \in Chans : InSeq(ready, c) => q[c] # <<>>
+
 \* a queued descriptor sits in exactly one FIFO
 QueuedOwned ==
     \A d \in Descs :

@@ -804,8 +804,10 @@ uint64_t rocketnet_server_transport_required_memory( const struct rocketnet_serv
 // RX and TX descriptor rings asked of every XDP socket; thread_stack_bytes is
 // worker_threads x thread_stack_bytes_per_thread, the stack each transport thread
 // is created with (the platform default: the transport passes no stack size), as
-// reserved address space. registered_region_bytes is the RIO VirtualAlloc
-// request, outside the SDK allocator. total_bytes is the sum of the seven byte components
+// reserved address space. registered_region_bytes is the RIO registered region,
+// one SDK-allocator block, counted apart from allocator_bytes, that RIO locks
+// once registered (on Windows every block is committed when allocated, so the
+// whole plan is committed at create). total_bytes is the sum of the seven byte components
 // and is at least required_memory. exclusions names, in static strings, what
 // the library cannot know and does not count. Same config and transport rules as
 // required_memory: NULL config means defaults; false (and a zeroed estimate)
@@ -820,7 +822,7 @@ struct rocketnet_host_memory_estimate_t
     uint64_t allocator_bytes;
     /** @brief Requested XDP UMEM bytes. */
     uint64_t umem_bytes;
-    /** @brief Requested RIO VirtualAlloc registered-region bytes. */
+    /** @brief Requested RIO registered-region bytes (one SDK-allocator block, locked by registration). */
     uint64_t registered_region_bytes;
     /** @brief Sum of requested socket send-buffer bytes. */
     uint64_t socket_send_buffer_bytes;

@@ -24,7 +24,13 @@ is honest and a silent one is not. The gate fails only on a stale anchor.
 A row whose tier is `model` is witnessed by a TLA+ model check: its rule
 column states the modelled property, so the rule-text check does not apply
 to it; its invariant, model-check configuration and code anchors must all
-resolve.
+resolve. Its configuration must also be a proofs/tla/CASES.tsv case whose
+module defines the property (itself or through what it EXTENDS or
+INSTANCEs; a Module.tla citation must be in that set), must list the
+property under INVARIANT(S) or PROPERTY(IES) (directly, or inside a listed
+definition that names it), and its RUNS.tsv record must be the declared
+outcome: a reversed witness is declared and measured as a violation of
+that property, not of any other.
 
 `review` names an explicit source-review disposition in docs/audits, not an
 executed test or a timing proof. `deferred` names a boundary test for a mode
@@ -159,6 +165,110 @@ def anchor_name_exists(root, anchor):
     return None
 
 
+CFG_KEYWORDS = ("SPECIFICATION", "INIT", "NEXT", "CONSTANT", "CONSTANTS", "INVARIANT", "INVARIANTS",
+                "PROPERTY", "PROPERTIES", "CHECK_DEADLOCK", "SYMMETRY", "VIEW", "ALIAS", "POSTCONDITION",
+                "CONSTRAINT", "CONSTRAINTS", "ACTION_CONSTRAINT", "ACTION_CONSTRAINTS")
+VIOLATIONS = ("invariant", "action", "temporal")
+
+
+def read_ledger(path):
+    """Rows of a proofs/tla TSV ledger as dicts keyed by its header, by config."""
+    with open(path, "r", encoding="utf-8") as handle:
+        lines = [line.rstrip("\n").split("\t") for line in handle if line.strip()]
+    header = lines[0]
+    return {cells[0]: dict(zip(header, cells)) for cells in lines[1:]}
+
+
+def cfg_checks(path):
+    """The names a TLC configuration lists under INVARIANT(S) and PROPERTY(IES)."""
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        text = re.sub(r"\\\*.*", "", handle.read())
+    names = []
+    listing = False
+    for token in text.split():
+        if token in CFG_KEYWORDS:
+            listing = token.startswith("INVARIANT") or token.startswith("PROPERT")
+            continue
+        if listing:
+            names.append(token)
+    return names
+
+
+def module_closure(root, module_file):
+    """The proofs/tla modules a module EXTENDS or INSTANCEs, transitively, itself included."""
+    tla_dir = os.path.join(root, "proofs", "tla")
+    seen = []
+    pending = [module_file[:-len(".tla")] if module_file.endswith(".tla") else module_file]
+    while pending:
+        name = pending.pop()
+        path = os.path.join(tla_dir, name + ".tla")
+        if name in seen or not os.path.isfile(path):
+            continue
+        seen.append(name)
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            text = re.sub(r"\\\*.*", "", handle.read())
+        for match in re.finditer(r"\bEXTENDS\b([^\n]*)", text):
+            pending.extend(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", match.group(1)))
+        pending.extend(re.findall(r"\bINSTANCE\s+([A-Za-z_][A-Za-z0-9_]*)", text))
+    return seen
+
+
+def definition_body(root, modules, name):
+    """The text of name's definition in the first module of modules that defines it."""
+    pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==(.*(?:\n(?![A-Za-z_][A-Za-z0-9_]*\s*(?:\(|==)).*)*)")
+    for module in modules:
+        with open(os.path.join(root, "proofs", "tla", module + ".tla"), "r", encoding="utf-8",
+                  errors="replace") as handle:
+            match = pattern.search(re.sub(r"\\\*.*", "", handle.read()))
+        if match:
+            return match.group(1)
+    return None
+
+
+def model_row_failures(root, where, invariant, test, cases, runs):
+    """A model row's witness: its configuration is a case of a module that
+    defines the property, it lists the property (directly or in a listed
+    definition that names it), and its record is the declared outcome: for a
+    reversed witness, a violation of that property and no other."""
+    failures = []
+    if invariant == "-":
+        return ["%s: a tier model row names no property" % where]
+    cited = split_module_citation(invariant)
+    name = cited[1] if cited is not None else invariant
+    if not (test.startswith("proofs/tla/") and test.endswith(".cfg") and "/" not in test[len("proofs/tla/"):]):
+        return ["%s: a tier model row's test is a proofs/tla/*.cfg case, not %r" % (where, test)]
+    config = test[len("proofs/tla/"):]
+    if not os.path.isfile(os.path.join(root, test)):
+        return ["%s: model-check configuration %s does not exist" % (where, test)]
+    case = cases.get(config)
+    if case is None:
+        return ["%s: %s has no proofs/tla/CASES.tsv row" % (where, config)]
+    modules = module_closure(root, case["module"])
+    if cited is not None and os.path.basename(cited[0])[:-len(".tla")] not in modules:
+        failures.append("%s: %s is a case of %s, which does not extend or instance %s"
+                        % (where, config, case["module"], cited[0]))
+    if definition_body(root, modules, name) is None:
+        failures.append("%s: %s is not defined in %s or a module it extends"
+                        % (where, name, case["module"]))
+    listed = cfg_checks(os.path.join(root, test))
+    if name not in listed and not any(
+            re.search(r"\b" + re.escape(name) + r"\b", definition_body(root, modules, other) or "")
+            for other in listed):
+        failures.append("%s: %s does not list %s under INVARIANT(S) or PROPERTY(IES)"
+                        % (where, config, name))
+    if case["expected"] in VIOLATIONS and case["property"] != name:
+        failures.append("%s: %s is declared to violate %s, not %s"
+                        % (where, config, case["property"], name))
+    record = runs.get(config)
+    if record is None:
+        failures.append("%s: %s has no proofs/tla/RUNS.tsv record" % (where, config))
+    elif (record["result"], record["expected"], record["property"]) != ("PASS", case["expected"], case["property"]):
+        failures.append("%s: %s is recorded %s %s %s, not the declared %s %s"
+                        % (where, config, record["result"], record["expected"], record["property"],
+                           case["expected"], case["property"]))
+    return failures
+
+
 def load_documents(root):
     standard = os.path.join(root, "standard")
     docs = [
@@ -189,6 +299,7 @@ def run(root=None):
     gaps = []
     dispositions = {"review": [], "deferred": []}
     checked = 0
+    cases = runs = None
 
     for index, cells in enumerate(rows, start=2):
         section_id, rule, invariant, code, test, tier = cells
@@ -220,6 +331,15 @@ def run(root=None):
             elif anchor_invariant_exists(root, invariant) is None:
                 failures.append("%s: TLA+ invariant %r is in no proofs/tla/*.tla"
                                 % (where, invariant))
+
+        if tier == "model":
+            if cases is None:
+                try:
+                    cases = read_ledger(os.path.join(root, "proofs", "tla", "CASES.tsv"))
+                    runs = read_ledger(os.path.join(root, "proofs", "tla", "RUNS.tsv"))
+                except (OSError, IndexError) as error:
+                    return 1, "proofs/tla/CASES.tsv or RUNS.tsv could not be read: %s" % error
+            failures.extend(model_row_failures(root, where, invariant, test, cases, runs))
 
         if code != "-":
             if anchor_name_exists(root, code) is None:

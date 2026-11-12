@@ -188,6 +188,10 @@ memory exhausted, and only by a broken invariant of the receiver
 2. A server MUST NOT refuse a start on, end, or change the state, send memory,
    send budget or clocks of one connection because of another connection's
    packets, sends, refusals or clocks.
+3. A packet that a connection's own send budget or window refuses MUST NOT take
+   any of the update's send capacity that the server's connections share: the
+   refusal is decided before a transport frame is taken for the packet
+   ([m9.4 Send budget](#m9.4)).
 
 <a id="m1.9"></a>
 ### m1.9. Outage tolerance
@@ -2980,6 +2984,11 @@ dropped and counted as MESSAGE_UNRELIABLE_OVER_BUDGET. An item offered after a
 lower-priority class in the same update MUST be counted as an order refusal; a
 reliable item among them waits rather than spending bytes promised to the
 earlier class.
+
+The sender MUST decide that the budget refuses a packet before it takes a
+transport frame for the packet, so a refused packet takes no frame of the
+update's send capacity and, on a client, spends no sequence
+([m1.8 Per-client scope](#m1.8)).
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|

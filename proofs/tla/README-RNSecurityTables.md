@@ -118,9 +118,14 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   connection is admitted.
 - **`NoLiveHistoryEviction`**: recording never removes a history entry
   whose expiry is still ahead of the clock (the ghost `evictedLive`
-  never fires).
-- **`ExpiredNeverAdmitted`**: no slot is assigned under a token whose
-  expiry has passed (the ghost `lateAdmit` never fires).
+  never fires). Not an invariant of the code, which evicts the oldest
+  entry at capacity (the flush bound), so it is not in `SafetyInvariants`;
+  `EvictLiveHistory.cfg` records the eviction.
+- **`ExpiredAtRequestNeverAdmitted`** (TRANSPORT.md t12 rules 5 and 13):
+  a slot is assigned only under a token that was unexpired when its
+  request made the mapping, and before that mapping's handshake deadline
+  (the ghost `lateAdmit` never fires). Expiry is checked at the request
+  only, so a response that arrives after the token's expiry is admitted.
 - **`RotationWindow`** (action property): a mapping is created only
   under a cookie generation that is live at that step.
 - **`PreviousBoundedToOnePeriod`** (action property): a mapping is
@@ -146,16 +151,16 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
 - **`CanRecordMatchesScan`**: for every token, the O(1) capacity answer
   equals the answer of the scan over every slot that the code ran before.
 
-## Switches: the code and the fixed code
+## Switches: the code and the reversed positions
 
-| Switch | Code position | Fixed position |
+| Switch | Code position | Other position |
 |---|---|---|
 | `RefuseAdmittedAtResponse` | no effect since 2026-10-18 unless `HoldUntilExpire` (the code has no admitted set); `TRUE` from 2026-10-17 refused an admitted token at the response | `FALSE`: the add succeeds when present, the code before 2026-10-17 |
 | `HoldUntilExpire` | `FALSE` since 2026-10-18: no admitted-token set | reversed witness `TRUE`: the set held each token until expiry, denying churn |
 | `CheckCidAtResponse` | `TRUE`: the response refuses a connected client id | reversed witness `FALSE`: two slots hold one token |
 | `BindAtRequest` | `FALSE` since 2026-10-17: the history is recorded when a response opens | reversed witness `TRUE`: recorded at the request, the code before |
-| `AdmitExpiredAtResponse` | `TRUE`: the response rung has no expiry check | `FALSE`: it refuses an expired token |
-| `EvictLiveHistory` | `TRUE`: recording evicts the oldest, live or not | `FALSE`: it leaves a live entry in place |
+| `RequestChecksExpiry` | `TRUE`: the request rung refuses an expired token; the response rung has no expiry check (TRANSPORT.md t12 rules 5 and 13) | reversed witness `FALSE`: the request maps an expired token |
+| `EvictLiveHistory` | `TRUE`: recording evicts the oldest, live or not (every configuration) | `FALSE`: it leaves a live entry in place; no configuration uses it |
 | `DeniedConsumesToken` | `FALSE`: a denied adds nothing | mutant `TRUE` guards the ordering |
 | `CapVerifyBudget` | `TRUE`: the per-update budget caps verifies | mutant `FALSE` guards the cap |
 | `AcceptPrevious` | `TRUE`: previous generation accepted while `clock < prevUntil` | reversed witness `FALSE` drops the previous-key window |
@@ -235,8 +240,8 @@ guarded by its two reversed witnesses.
 | `OneConnectionPerToken` (retired 2026-10-18) | 6 states (`RefuseAdmittedAtResponse = FALSE`; 11 states before the binding moved) | `sdk/rocketnet_token_tables.cpp`, `rocketnet_admitted_token_set_add` (find returns success when present); response rung in `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_process_connection_response`) | `A` and `B` each request the shared token `th` (nothing binds at a request now, where before a history flush had to evict the first binding); `A`'s response admits, `A` disconnects, `B`'s response finds the client id free and the add succeeds because the entry is present, so the token admits a second connection. Closed in the code on 2026-10-17 by the admitted-set refusal on the response rung, pinned by `test_request_path_state_refusals`. |
 | `BoundOnlyToOpener` | 2 states (`BindAtRequest = TRUE`) | `rocketnet_used_token_history_record` called from `rocketnet_server_process_opened_request` at the base before 2026-10-17 | `A`'s request for `th` writes the history entry before any response has opened: the request path recorded the source address after the admitted-set check and before the challenge. The code now records in `rocketnet_server_process_connection_response`, after the open. |
 | `NoBindToNonHolder` | 2 states (`BindAtRequest = TRUE`, `BindAtRequestAttacker.cfg`) | the same record at the request; the history check at the top of the request path | `B`, which does not hold `tf`, replays `tf` and the request binds `tf` to `B`; `A`'s own request for `tf` is then refused as `TOKEN_ALREADY_USED` for the token's lifetime. `test_token_bound_at_response_open` reproduced exactly this at the base (its first check, `TOKEN_ALREADY_USED == 0`, failed) and passes with the binding at the response. |
-| `ExpiredNeverAdmitted` | 5 states | request rung expiry check in `rocketnet_server_protocol_process_connection_request`; no expiry check in `rocketnet_server_process_connection_response` | A token presented before expiry whose response arrives after expiry is admitted: the request path refuses an expired token at its top, the response path checks only the client id and the slots. Bounded by the handshake deadline. |
-| `NoLiveHistoryEviction` | 8 states (6 before the binding moved) | `rocketnet_used_token_history_record` and `rocketnet_token_table_select_slot(..., 1)` in `sdk/rocketnet_token_tables.cpp` | At capacity with no expired entry, recording a new token unlinks and reuses the oldest slot even while its entry is unexpired. This is the documented flush bound; it is what lets the first finding's second binding pass the history check. |
+| `ExpiredAtRequestNeverAdmitted` | 4 states (`RequestChecksExpiry = FALSE`) | request rung expiry check in `rocketnet_server_protocol_process_connection_request` (`token_expire_timestamp <= current_timestamp`, `CONNECTION_REQUEST_TOKEN_EXPIRED`); no expiry check in `rocketnet_server_process_connection_response` | The clock passes `te`'s expiry (0 to 4), `A` requests `te` and, with the request's expiry rung removed, gets a mapping; its response admits `te`. The code refuses that request at TRANSPORT.md t12 rule 5. A response for a token that was unexpired at its request is admitted after the expiry, as t12 rule 13 says (the response has no expiry rung, and t11 rule 6 has the client wait only on its timeout once it has sent the response): that is the code's run, not a finding. |
+| `NoLiveHistoryEviction` | 8 states (6 before the binding moved), at the code's positions | `rocketnet_used_token_history_record` and `rocketnet_token_table_select_slot(..., 1)` in `sdk/rocketnet_token_tables.cpp` | At capacity with no expired entry, recording a new token unlinks and reuses the oldest slot even while its entry is unexpired. This is the documented flush bound, the code's behaviour, so the property is not in `SafetyInvariants`; the code's run checks every other invariant with it on. |
 | `DeniedTokenStaysUsable` | 5 states (mutant) | slots check before the admitted add in `rocketnet_server_process_connection_response`; request-rung denied creates no mapping | The code holds this invariant: a denied for a full server consumes nothing, at both rungs (with `HoldUntilExpire`, it was sent before the set took its entry). The reversed witness is a mutant that consumes the token on a denied; TLC rejects it, which guards the ordering against a future edit. |
 | `VerifyBudgetRespected` | 4 states (mutant) | handshake budget check in the request path (`handshakes_per_update`, default `ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE` in `sdk/rocketnet_internal.h`); 64-slot failed-verify table in `sdk/rocketnet_server.h` | The code holds this invariant: past the cookie gate, verifies per update are counted and capped before asymmetric work runs. The reversed witness removes the cap; with no tick, three requests (a refused claim request, then `A` for `th` and `B` for `te`) reach `verifies = 3` with `VerifyBudget = 2`, and TLC rejects `VerifyBudgetRespected` by name. |
 | `InFlightCookieSurvivesRotation` | 3 states (`AcceptPrevious = FALSE`) | `sdk/rocketnet_server_protocol.cpp` (`rocketnet_server_protocol_rotate_cookie_key_if_due` and the previous-key branch of the cookie gate at `:377`) | An on-time rotation moves the outgoing key to `previous_cookie_key` with `previous_cookie_key_expire_time = cookie_key_rotation_time + period`, so a cookie minted before the rotation is accepted across it while `current_time < previous_cookie_key_expire_time`. Turning `AcceptPrevious` off drops the outgoing generation at the rotation tick (`clock = 1 -> 2`) and fails `InFlightCookieSurvivesRotation`. |
@@ -259,8 +264,8 @@ Each reversed witness has a committed configuration registered in
 | `HoldUntilExpire.cfg` | `HoldUntilExpire = TRUE` | `SafetyInvariants` (`ChurnNeverDenied`) |
 | `BindAtRequest.cfg` | `BindAtRequest = TRUE` | `SafetyInvariants` (`BoundOnlyToOpener`) |
 | `BindAtRequestAttacker.cfg` | `BindAtRequest = TRUE` | `NoBindToNonHolder` |
-| `AdmitExpired.cfg` | `AdmitExpiredAtResponse = TRUE` | `SafetyInvariants` (`ExpiredNeverAdmitted`) |
-| `EvictLiveHistory.cfg` | `EvictLiveHistory = TRUE` | `SafetyInvariants` (`NoLiveHistoryEviction`) |
+| `NoRequestExpiry.cfg` | `RequestChecksExpiry = FALSE` | `SafetyInvariants` (`ExpiredAtRequestNeverAdmitted`) |
+| `EvictLiveHistory.cfg` | none: the code's positions, with `NoLiveHistoryEviction` listed (the code evicts a live entry at capacity) | `NoLiveHistoryEviction` |
 | `DeniedConsumesToken.cfg` | `DeniedConsumesToken = TRUE` (with `HoldUntilExpire = TRUE`: only a set entry can be consumed) | `DeniedTokenStaysUsable` |
 | `NoVerifyCap.cfg` | `CapVerifyBudget = FALSE` | `VerifyBudgetRespected` |
 | `NoPrevious.cfg` | `AcceptPrevious = FALSE` | `InFlightCookieSurvivesRotation` |
@@ -276,7 +281,7 @@ Each reversed witness has a committed configuration registered in
 `FloodBudgetOne.cfg` is the same control at `VerifyBudget = 1`.
 `Charge.cfg` is ChargeSpec's passing control.
 
-Refresh all nineteen cases through the pinned `tlacheck` runner and merge with
+Refresh every case of the group through the pinned `tlacheck` runner and merge with
 `--keep proofs/tla/RUNS.tsv` as `README.md` describes. The measured ledger contains
 one row per configuration; earlier seven-column records remain in
 `RUNS-HISTORY.tsv`.
@@ -295,20 +300,23 @@ The small instance:
 | `VerifyBudget` | 2 per update |
 | `HandshakeDeadline` | 4 ticks |
 
-The fixed-code run generates 4,031,603 states and finds 903,855
-distinct states (2,609,659 and 606,181 while the admitted set held each
-token to expiry: a token may now connect again after its connection
-closes), with no error: the invariants hold and
+The code's run (every switch in the code's position, live-entry eviction
+included) generates 13,747,870 states and finds 2,868,212 distinct states
+in 71.8 s with no error: the invariants hold and
 `DeniedTokenStaysUsable`, `RotationWindow`,
 `PreviousBoundedToOnePeriod` and `InFlightCookieSurvivesRotation` hold
-as properties.
+as properties. Before v1.1.2 the passing run held `EvictLiveHistory` and the
+response-rung expiry at positions the code does not have (1,087,061 distinct
+states), so the invariants were checked on a server the library is not.
+The run reaches a live mapping of `te` at `clock = 4`, past its expiry at 3
+(made at `clock = 1`, deadline 5), so a response after the token's expiry
+is explored and admitted.
 
 ## What the model leaves out
 
-- The passing run holds `EvictLiveHistory = FALSE`, so TLC does not check
-  `OneTokenOneLiveConnection` under the code's live-entry eviction; the code
-  holds it there by the client-id check, which the model applies at the
-  response only (the code also applies it at the request after the open).
+- `OneTokenOneLiveConnection` is checked under the code's live-entry
+  eviction; the model applies the client-id check at the response only
+  (the code also applies it at the request after the open).
   `test_server_refuses_a_token_connected_now` pins the evicted case in the code.
 - `DeniedTokenStaysUsable` constrains only the admitted set, so it is
   vacuous with `HoldUntilExpire = FALSE`; its witness tests the old code.

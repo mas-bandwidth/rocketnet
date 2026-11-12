@@ -235,12 +235,21 @@ void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint );
 
 // The size of the frame payload to request for the next packet of this write
 // pass, or 0 when the pass is over. An ended pass answers 0 until the next
-// flush or update.
+// flush or update. A nonzero answer is a packet write_packet writes unless the
+// connection has ended or its send budget refuses it (write_may_be_refused).
 int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now );
 
+// After next_packet_bytes planned a packet: whether the connection's send
+// budget may refuse it, so write_packet may write nothing. The caller then
+// writes it before it starts a frame, so a refusal never holds one
+// (proofs/tla/RNSendRotation.tla MayBeRefused). False while the bucket holds
+// at least one maximum packet's charge, or the connection is uncapped.
+bool rn_endpoint_write_may_be_refused( const struct rn_endpoint_t * endpoint );
+
 // Writes the planned packet into payload (at least next_packet_bytes bytes)
-// for the transport packet packet_id. Returns the payload bytes written, or 0
-// when nothing was written (the caller aborts its frame and asks again).
+// for the transport packet packet_id (0 when it is written before its frame
+// is started; the id is used only from packet_sent). Returns the payload
+// bytes written, or 0 when nothing was written.
 int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now );
 
 // The written packet left: wire_bytes is the sealed size the transport

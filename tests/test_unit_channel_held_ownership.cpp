@@ -162,11 +162,12 @@ static void test_sequenced_block_release_spares_a_foreign_hold()
 
 REGISTER_UNIT_TEST( test_sequenced_block_release_spares_a_foreign_hold );
 
-// The same claim, then number 1 + W reuses slot 1 with a different ring span
-// whose bytes were never written for it (they stand in for an earlier
-// connection's data), then channel 1's in-turn message drains the hold. The
-// drain delivers the held message's own bytes or nothing: never the reused
-// descriptor's span.
+// The same claim, then number 1 + W tries to reuse slot 1 with a different
+// ring span whose bytes were never written for it (they stand in for an
+// earlier connection's data), then channel 1's in-turn message. The release
+// spared slot 1, so the window refuses 1 + W as a slot collision, the refusal
+// is sticky and the in-turn message is refused too: nothing is dispatched
+// and channel 1 delivers no byte of the reused span.
 
 static void test_sequenced_block_release_never_delivers_stale_ring_bytes()
 {
@@ -188,8 +189,13 @@ static void test_sequenced_block_release_never_delivers_stale_ring_bytes()
 
     memset( node.region->receive_ring + 300 * 16, 0x5A, 64 );
 
-    ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE, 1 + W, 0, 0, 0, reuse, (int) sizeof( reuse ), 300 ) );
-    ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 3, 1, 0, 0, &trigger, 1, 400 ) );
+    const uint32_t deliveries = node.ordered.channels.deliveries;
+
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE, 1 + W, 0, 0, 0, reuse, (int) sizeof( reuse ), 300 ) ) == -1 );
+    check( node.ordered.receive.violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION );
+    check( node.region->receive_descriptors[1].live != 0 && node.region->receive_descriptors[1].number == 1 );
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 3, 1, 0, 0, &trigger, 1, 400 ) ) == -1 );
+    check( node.ordered.channels.deliveries == deliveries );
 
     ho_check_channel_one( &node, &trigger, held, (int) sizeof( held ) );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
@@ -226,6 +232,14 @@ static void test_held_entry_with_a_reused_descriptor_is_refused()
 
     check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE, 1 + W, 0, 0, 0, reuse, (int) sizeof( reuse ), 300 ) ) ==
            ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+
+    // the reuser made to look like the held message in every field but its
+    // number, so only the number test refuses the entry
+
+    node.region->receive_descriptors[1].code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
+    node.region->receive_descriptors[1].channel = 1;
+    node.region->receive_descriptors[1].ordering = 1;
+    check( node.region->receive_descriptors[1].live != 0 && node.region->receive_descriptors[1].number == 1 + W );
 
     const uint64_t violations = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
 

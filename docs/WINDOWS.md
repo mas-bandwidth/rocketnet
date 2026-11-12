@@ -69,7 +69,7 @@ place of `yes`. A send offload the stack accepted at create but refuses later
 logs a warning and falls back to one send per datagram. `iocp` always runs one
 completion worker; it ignores `num_xdp_queues`.
 
-`rio` loads the Registered I/O function table from Winsock, commits and
+`rio` loads the Registered I/O function table from Winsock, allocates and
 registers one memory region for every send and receive buffer, and starts one
 I/O worker. Its create line names the region's size:
 
@@ -130,7 +130,9 @@ refusal of a name no build knows.
 No transport needs an elevated process. By default `rocketnet_init` asks
 Windows for a 1 ms timer period (`timeBeginPeriod( 1 )`) and `rocketnet_term`
 releases it (`timeEndPeriod( 1 )`), and each network thread `iocp` and `rio`
-create is set to `THREAD_PRIORITY_TIME_CRITICAL`; call
+create is set to `THREAD_PRIORITY_TIME_CRITICAL`. So is every client's own
+network thread, whatever its transport, `portable` included: a game that
+creates a client has one time-critical thread in its process. Call
 `rocketnet_thread_priority( false )` before init to skip both if the game sets
 the timer period and priorities itself (`sdk/rocketnet.h`).
 
@@ -164,8 +166,18 @@ client object can be reused, is the separate inventory in
 A server is one socket on every Windows transport, so there is no descriptor
 limit to raise. The limit that matters is memory: per-client state grows with
 `max_clients`, the send staging and receive buffers of each transport are sized
-from the same configured `max_clients` (1000 by default), and `rio` commits its
-whole registered region at create. Threads are two for
+from the same configured `max_clients` (1000 by default), and `rio` registers
+(and so locks) its whole registered region at create.
+
+Windows commits memory when it is allocated, touched or not, and every block
+the library uses comes from the caller's allocator at create, the registered
+region included. So the whole plan, `rocketnet_server_required_memory`, is
+charged against the machine's commit limit (RAM plus the page file) the moment
+the server is created: about 19.4 GB for a default 1000-client server, though
+far less of it is ever resident. A host near its commit limit refuses the
+create with `OUT_OF_MEMORY` (or, with a system-managed page file, grows the
+page file first); size the page file, or `max_clients` and the profile, so
+the plan of every server and client in the process fits. Threads are two for
 `portable` and `iocp` and one for `rio`, each with the executable's default
 stack reserve (1 MiB unless the game links with another). Ask for the numbers
 for a given config before deploying:
