@@ -1112,7 +1112,9 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
         const int left = rocketnet_server_transport_fill_budget_left( server_transport );
         return room < left ? room : left;
     }
-    const uint64_t used = server_transport->payload_ring.num_packets;
+    // num_packets is moved by fetch-add in start_packet on job threads during
+    // a wide fill: read it atomically too.
+    const uint64_t used = rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &server_transport->payload_ring.num_packets ) );
     return used >= (uint64_t) server_transport->send_capacity ? 0 : (int) ( (uint64_t) server_transport->send_capacity - used );
 }
 
