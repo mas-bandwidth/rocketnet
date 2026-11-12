@@ -4,10 +4,13 @@
 (*                                                                         *)
 (* The XDP worker (rocketnet_server_socket_xdp_thread_function,            *)
 (* sdk/rocketnet_server_socket_linux.cpp) peeks RX descriptors with        *)
-(* xsk_ring_cons__peek, takes them while the staging buffer has room,      *)
-(* cancels the ones it did not take with xsk_ring_cons__cancel and         *)
-(* releases the ones it took with xsk_ring_cons__release                   *)
-(* (rocketnet_xdp_receive_ring_finish), and returns their frames to the    *)
+(* xsk_ring_cons__peek, asking for at most receive_limit: the staging      *)
+(* buffer's room and the pending return's room, whichever is less.  It     *)
+(* reads every descriptor the peek returned (there is no room test in the  *)
+(* loop, only an assert compiled out of a release build), releases them   *)
+(* with xsk_ring_cons__release (rocketnet_xdp_receive_ring_finish, whose   *)
+(* cancel of the descriptors not read is called with zero), and returns    *)
+(* their frames to the                                                     *)
 (* fill ring through its pending return (rocketnet_pending_frames_t, an    *)
 (* all-or-zero flush).  The staging buffer holds a copy of each packet's   *)
 (* bytes, never a frame. This single-buffer frame-lifecycle abstraction   *)
@@ -46,32 +49,51 @@
 (* places it in the receive region, so a send frame is never received      *)
 (* into while it is also on the send free list.                            *)
 (*                                                                         *)
-(* Left out: the pending return's capacity (the peek is bounded by it and  *)
-(* it is ROCKETNET_XDP_RECV_QUEUE_SIZE, no fewer than the frames, so it    *)
-(* never binds), packet contents and the frame codec's drops (a dropped    *)
-(* frame is still taken and returned).                                     *)
+(* The peek's two room terms.  The staging term binds: the staging buffer *)
+(* holds copies, so it fills across passes while the frames go back to    *)
+(* the fill ring each pass, and without the term the loop writes past the  *)
+(* buffer (StagingInBounds; the reversed witness PeekPastStaging).  The   *)
+(* pending term never binds in the code: the pending return holds          *)
+(* ROCKETNET_XDP_RECV_QUEUE_SIZE frames, which equals                      *)
+(* ROCKETNET_XDP_FILL_FRAMES, and it only ever holds receive frames, so    *)
+(* its room is never less than the receive frames the RX ring can name.    *)
+(* The model carries it at the code's ratio (PendCap = the frames) and     *)
+(* checks PendingInBounds; a witness dropping it would pass, so there is   *)
+(* none.                                                                   *)
+(*                                                                         *)
+(* The cancel: rocketnet_xdp_receive_ring_finish cancels the peeked        *)
+(* descriptors the pass did not read before releasing the ones it read.   *)
+(* With the peek capped by the room, the loop reads every one, so the      *)
+(* count it cancels is always zero.  Finish keeps the code's arithmetic    *)
+(* (back = peeked - taken) and Finish runs only once taken = peeked, as    *)
+(* the loop ends; the cancel is a defence for a pass the code cannot make, *)
+(* driven only by tests/test_unit_xdp_receive_ring.cpp.                    *)
+(*                                                                         *)
+(* Left out: packet contents and the frame codec's drops (a dropped frame  *)
+(* is still read and returned; the model stages a packet for every         *)
+(* receive frame read, at least as many as the code stages).               *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
 CONSTANTS
     Frames,       \* the UMEM receive frames
     RingSize,     \* the RX ring's entries
-    PeekMax,      \* the most descriptors one peek asks for
     StageCap,     \* the staging buffer's packets (ROCKETNET_XDP_RECV_QUEUE_SIZE)
+    PendCap,      \* the pending return's frames (ROCKETNET_XDP_RECV_QUEUE_SIZE)
     FillSize      \* the fill ring's entries (ROCKETNET_XDP_FILL_RING_SIZE)
 
 ASSUME /\ Frames # {}
        /\ RingSize \in Nat \ {0}
-       /\ PeekMax \in Nat \ {0}
        /\ StageCap \in Nat \ {0}
+       /\ PendCap \in Nat \ {0}
        /\ FillSize \in Nat /\ FillSize >= Cardinality(Frames)
 
 (***************************************************************************)
 (* Rule switch, overridden by the reversed witness.                        *)
-(*   CancelUnconsumed: the pass cancels the peeked descriptors it did not  *)
-(*     take before the release (the design: TRUE).                         *)
+(*   PeekStagingRoom: the peek asks for no more than the staging buffer's  *)
+(*     room (receive_capacity in receive_limit; the design: TRUE).         *)
 (***************************************************************************)
-CancelUnconsumed == TRUE
+PeekStagingRoom == TRUE
 
 (***************************************************************************)
 (*   RefusedRefilled: a descriptor naming a frame outside the receive      *)
@@ -125,10 +147,10 @@ TypeOK ==
     /\ ahead \in 0..RingSize
     /\ phase \in {"idle", "taking"}
     /\ start \in 0..RingSize
-    /\ peeked \in 0..PeekMax
-    /\ taken \in 0..PeekMax
+    /\ peeked \in 0..RingSize
+    /\ taken \in 0..RingSize
     /\ pending \subseteq AllFrames
-    /\ staged \in 0..StageCap
+    /\ staged \in Nat
     /\ took \in BOOLEAN
     /\ defect \in BOOLEAN
 
@@ -178,10 +200,16 @@ KernelRefresh ==
     /\ kcache' = Len(fq) - kused
     /\ UNCHANGED <<ring, ahead, phase, start, peeked, taken, pending, staged, took, defect>>
 
-(* Peek: xsk_ring_cons__peek from the cached consumer, at most PeekMax;    *)
-(* begin the modeled fill pass. A peek of zero is no step.                 *)
+(* Peek: xsk_ring_cons__peek from the cached consumer, asking for          *)
+(* receive_limit, the lesser of the staging buffer's room                  *)
+(* (receive_capacity) and the pending return's room                        *)
+(* (pending_return.available()); it returns what the ring holds up to      *)
+(* that.  Begin the modeled fill pass.  A peek of zero is no step.         *)
+StageRoom == IF PeekStagingRoom THEN StageCap - staged ELSE RingSize
+PendRoom == PendCap - Cardinality(pending)
+ReceiveLimit == Min(StageRoom, PendRoom)
 Peek ==
-    LET n == Min(Len(ring) - ahead, PeekMax) IN
+    LET n == Min(Len(ring) - ahead, ReceiveLimit) IN
     /\ phase = "idle"
     /\ n > 0
     /\ start' = ahead
@@ -191,8 +219,10 @@ Peek ==
     /\ phase' = "taking"
     /\ UNCHANGED <<fq, kcache, kused, ring, pending, staged, took, defect>>
 
-(* Take: the staging buffer has room; read descriptor start + taken + 1    *)
-(* (rx_desc at the peek's index + i) and hold its frame.  A descriptor     *)
+(* Take: read descriptor start + taken + 1 (rx_desc at the peek's index   *)
+(* + i) and hold its frame; no room test, as in the loop, which reads      *)
+(* every peeked descriptor (its rocketnet_assert on the staging room is    *)
+(* compiled out of a release build).  A descriptor                         *)
 (* outside the receive region is refused: no packet is staged and its      *)
 (* frame is not held for the fill ring (rocketnet_xdp_fill_return false),  *)
 (* unless RefusedRefilled.                                                 *)
@@ -200,22 +230,22 @@ Take ==
     LET d == ring[start + taken + 1] IN
     /\ phase = "taking"
     /\ taken < peeked
-    /\ staged < StageCap
     /\ pending' = IF d \in Frames \/ RefusedRefilled THEN pending \cup {d} ELSE pending
     /\ taken' = taken + 1
     /\ staged' = IF d \in Frames THEN staged + 1 ELSE staged
     /\ took' = TRUE
     /\ UNCHANGED <<fq, kcache, kused, ring, ahead, phase, start, peeked, defect>>
 
-(* Finish: every peeked descriptor taken, or the staging buffer full.      *)
-(* Cancel the rest (CancelUnconsumed), end the fill pass, release the      *)
-(* taken count: the consumer advances over the first taken descriptors.    *)
+(* Finish: every peeked descriptor taken, as the loop ends.               *)
+(* rocketnet_xdp_receive_ring_finish cancels peeked - taken (zero) and     *)
+(* releases the taken count: the consumer advances over the first taken    *)
+(* descriptors.  End the fill pass.                                        *)
 (* Then the pass flushes its pending return into the fill ring, all of it  *)
 (* if it fits, else none (a zero reservation keeps every frame).           *)
 Finish ==
-    LET back == IF CancelUnconsumed THEN peeked - taken ELSE 0 IN
+    LET back == peeked - taken IN
     /\ phase = "taking"
-    /\ taken = peeked \/ staged = StageCap
+    /\ taken = peeked
     /\ ring' = SubSeq(ring, taken + 1, Len(ring))
     /\ ahead' = ahead - back - taken
     /\ phase' = "idle"
@@ -287,6 +317,15 @@ FrameConservation ==
     /\ Fill \cap pending = {}
     /\ InRing \cap pending = {}
     /\ Fill \cup InRing \cup pending = Frames
+
+(* The staging buffer is never written past its end: the peek asked for   *)
+(* no more than its room, and the loop stages at most one packet per       *)
+(* descriptor read.                                                        *)
+StagingInBounds == staged <= StageCap
+
+(* The pending return never holds more than its capacity (an append past   *)
+(* it is refused, and the worker stops).                                   *)
+PendingInBounds == Cardinality(pending) <= PendCap
 
 (* Between passes the cached consumer is the consumer: every peeked        *)
 (* descriptor was released or cancelled.                                   *)

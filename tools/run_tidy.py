@@ -8,10 +8,12 @@ tools/tidy_baseline.txt and tools/cppcheck_baseline.txt.
 
 The baseline shape is tools/run_static.py's: a finding is one line,
 <tool> <file> <check> <hash>, where the hash is a digest of the file, the check,
-the diagnostic text with every line and column number removed, and the
-finding's ordinal among identical messages in that file. A finding keeps its
-identity when lines move, and a second copy of an identical finding is a new
-finding.
+the diagnostic text with every line and column number removed, the text of
+the flagged source line (whitespace collapsed), and the finding's ordinal
+among identical messages on identical lines in that file. A finding keeps its
+identity when lines move; a finding on another source line, or an edited
+flagged line, is a new finding, so a reviewed site that is fixed never covers
+a new one; and a second copy of an identical finding is a new finding.
 
 A finding that is present now but not in its baseline fails the job, unless
 it is named in tools/tidy_dispositions.txt: one line per reviewed false
@@ -107,13 +109,33 @@ def strip_numbers(message):
     return message
 
 
+_site_lines = {}
+
+
+def site_text(rel, line_number):
+    """The source text of the flagged line, whitespace collapsed: the site of
+    a finding without its line number, so a finding keeps its key when lines
+    move and a finding on another line is another finding."""
+    if rel not in _site_lines:
+        try:
+            with open(os.path.join(ROOT, rel), "r", encoding="utf-8", errors="replace") as handle:
+                _site_lines[rel] = handle.read().splitlines()
+        except OSError:
+            _site_lines[rel] = []
+    lines = _site_lines[rel]
+    if 1 <= line_number <= len(lines):
+        return " ".join(lines[line_number - 1].split())
+    return ""
+
+
 def finding_lines(tool, raw):
-    """raw: (rel, check, message) tuples, duplicates kept. Identical messages
-    in one file are numbered by their order, so each copy is its own finding."""
+    """raw: (rel, check, message, site) tuples, duplicates kept. Identical
+    messages on identical source lines in one file are numbered by their
+    order, so each copy is its own finding."""
     seen = {}
     lines = []
-    for rel, check, message in sorted(raw):
-        key = "%s|%s|%s" % (rel, check, message)
+    for rel, check, message, site in sorted(raw):
+        key = "%s|%s|%s|%s" % (rel, check, message, site)
         ordinal = seen.get(key, 0)
         seen[key] = ordinal + 1
         lines.append("%s\t%s\t%s\t%s" % (tool, rel, check,
@@ -223,14 +245,14 @@ def run_clang_tidy_file(tidy, db_dir, path):
         match = DIAGNOSTIC.match(line)
         if not match:
             continue
-        file_path, _line, _col, level, message, check = match.groups()
+        file_path, line_number, _col, level, message, check = match.groups()
         rel = relpath(os.path.join(ROOT, file_path))
         if level == "error":
             errors.append("%s: %s [%s]" % (relpath(path), message, check))
             continue
         if level != "warning" or not in_sdk(rel):
             continue
-        raw.append((rel, check, strip_numbers(message)))
+        raw.append((rel, check, strip_numbers(message), site_text(rel, int(line_number))))
     if result.returncode != 0 and not raw and not errors:
         errors.append("%s: clang-tidy exited %d: %s" % (
             relpath(path), result.returncode, result.stderr.strip()[-400:]))
@@ -290,6 +312,11 @@ def cppcheck_arguments(entry):
                 out.append(arg)
                 break
         index += 1
+    # configure defines ROCKETNET_IO_URING only against a liburing that has
+    # IORING_RECV_MULTISHOT (cmake/RocketNetDependencies.cmake); cppcheck does
+    # not read the system liburing.h, so it is given the macro configure checked
+    if "-DROCKETNET_IO_URING=1" in out:
+        out.append("-DIORING_RECV_MULTISHOT=(1U<<1)")
     resolved = []
     for arg in out:
         if arg.startswith("-I") and not os.path.isabs(arg[2:]):
@@ -309,16 +336,18 @@ def run_cppcheck_file(cppcheck, entry, path):
         match = DIAGNOSTIC.match(line)
         if not match:
             continue
-        file_path, _line, _col, level, message, check = match.groups()
+        file_path, line_number, _col, level, message, check = match.groups()
         if level not in CPPCHECK_SEVERITIES:
             continue
-        if check in ("syntaxError", "internalAstError", "cppcheckError", "unknownMacro"):
+        # an #error ends the configuration: nothing after it is analyzed
+        if check in ("syntaxError", "internalAstError", "cppcheckError", "unknownMacro",
+                     "preprocessorErrorDirective"):
             errors.append("%s: %s [%s]" % (relpath(path), message, check))
             continue
         rel = relpath(os.path.join(ROOT, file_path))
         if not in_sdk(rel):
             continue
-        raw.append((rel, check, strip_numbers(message)))
+        raw.append((rel, check, strip_numbers(message), site_text(rel, int(line_number))))
     if result.returncode != 0 and not errors:
         errors.append("%s: cppcheck exited %d: %s" % (
             relpath(path), result.returncode, result.stderr.strip()[-400:]))

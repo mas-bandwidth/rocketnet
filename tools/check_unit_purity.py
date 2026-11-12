@@ -9,7 +9,11 @@ library's time(), a std::thread, or a process-environment mutation. The OS
 and standard-library forms count too: std::this_thread, usleep, nanosleep,
 std::chrono clocks, clock_gettime, gettimeofday, QueryPerformanceCounter,
 mach_absolute_time, pthread_create, std::async, and the socket(), sendto,
-recvfrom and sendmsg/recvmsg family.
+recvfrom and sendmsg/recvmsg family. The real clock or sleep handed over as
+a function value (rocketnet_time, rocketnet_sleep and their platform forms
+named without a call) counts too: that is how a bounded wait polls the real
+clock and sleeps on a thread the library started, and the call it makes is
+in examples/shutdown.h, which no unit case should reach.
 
 The scanned code is every tests/test_unit_*.cpp and sdk/rocketnet_tests.cpp
 (the unit-registered cases live there); every tests/*.h helper they include,
@@ -59,6 +63,12 @@ PATTERNS = [
     ("std::async", re.compile(r'std::async\s*\(')),
     ("socket(", re.compile(r'(?<![A-Za-z0-9_])socket\s*\(')),
     ("sendto/recvfrom", re.compile(r'(?<![A-Za-z0-9_])(?:sendto|recvfrom|sendmsg|recvmsg|sendmmsg|recvmmsg)\s*\(')),
+    # the real clock or sleep handed over as a function value: a bounded wait
+    # (rn_cli_bounded_wait) that polls the real clock and sleeps, which a
+    # unit case needs only to wait on a thread the library started
+    ("real clock or sleep passed as a value", re.compile(
+        r'(?<![A-Za-z0-9_])(?:rocketnet_time|rocketnet_sleep|rocketnet_platform_time|rocketnet_platform_sleep)'
+        r'(?![A-Za-z0-9_])(?!\s*\()')),
 ]
 
 # a wake wait is a real OS wait unless its timeout is zero (a poll)
@@ -197,7 +207,10 @@ def self_test():
                  "nanosleep( &t, NULL )", "std::chrono::steady_clock::now()", "clock_gettime( CLOCK_MONOTONIC, &t )",
                  "gettimeofday( &v, NULL )", "QueryPerformanceCounter( &c )", "mach_absolute_time()",
                  "pthread_create( &p, NULL, f, NULL )", "std::async( f )", "socket( AF_INET, SOCK_DGRAM, 0 )",
-                 "sendto( s, b, n, 0, a, l )", "recvfrom( s, b, n, 0, a, &l )", "sendmmsg( s, m, n, 0 )"):
+                 "sendto( s, b, n, 0, a, l )", "recvfrom( s, b, n, 0, a, &l )", "sendmmsg( s, m, n, 0 )",
+                 "rn_cli_bounded_wait( o, done, NULL, rocketnet_time, NULL, \"o\" )",
+                 "rn_cli_bounded_wait( o, done, NULL, NULL, rocketnet_sleep, \"o\" )",
+                 "clock_fn = &rocketnet_platform_time"):
         cases.append(("helper " + call.split("(")[0].strip(), clean_fixture,
                       "static inline int helper_value() { %s; return 1; }\n" % call, 1))
     for label, fixture, helper, expected in cases:

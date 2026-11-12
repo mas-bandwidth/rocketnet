@@ -244,6 +244,72 @@ class CheckerFixture(unittest.TestCase):
             "WITNESSES.tsv's replay refusal row names %s, which is not defined in %s" % (name, module),
         )
 
+    def build_model(self, cfg_checks="INVARIANTS TypeOK FloorHolds", declared="invariant\tFloorHolds",
+                    recorded="PASS\tinvariant\tFloorHolds", citation="FloorHolds", case_row=True):
+        """A model row whose witness MCFloorBroken.cfg is a case of MCFloor.tla,
+        which extends Floor.tla; Other.tla, which MCFloor does not extend,
+        defines a property of the same name as Floor's StrayHolds."""
+        root = self.build([
+            ["t1", "the floor holds", citation, "-", "proofs/tla/MCFloorBroken.cfg", "model"],
+        ])
+        tla = os.path.join(root, "proofs", "tla")
+        files = {
+            "Floor.tla": "---- MODULE Floor ----\nTypeOK == TRUE\nFloorHolds == TRUE\n"
+                         "Safety == TypeOK /\\ FloorHolds\n====\n",
+            "MCFloor.tla": "---- MODULE MCFloor ----\nEXTENDS Floor, Naturals\n====\n",
+            "Other.tla": "---- MODULE Other ----\nStrayHolds == TRUE\n====\n",
+            "MCFloorBroken.cfg": "\\* reversed witness\nSPECIFICATION Spec\n%s\nCHECK_DEADLOCK FALSE\n" % cfg_checks,
+            "CASES.tsv": "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
+                         + ("MCFloorBroken.cfg\tMCFloor.tla\t%s\tcheck\tfloor\trequired\t-\n" % declared
+                            if case_row else ""),
+            "RUNS.tsv": "config\tmodule\tresult\texpected\tproperty\n"
+                        "MCFloorBroken.cfg\tMCFloor.tla\t%s\n" % recorded,
+        }
+        for name, text in files.items():
+            with open(os.path.join(tla, name), "w") as handle:
+                handle.write(text)
+        return root
+
+    def test_model_witness_naming_and_violating_its_property_passes(self):
+        code, report = check_witnesses.run(self.build_model())
+        self.assertEqual(code, 0, report)
+        code, report = check_witnesses.run(self.build_model(citation="Floor.tla:FloorHolds"))
+        self.assertEqual(code, 0, report)
+        # a listed definition that names the property counts as listing it
+        code, report = check_witnesses.run(self.build_model(cfg_checks="INVARIANT Safety"))
+        self.assertEqual(code, 0, report)
+
+    def test_model_witness_whose_cfg_drops_the_property_fails(self):
+        code, report = check_witnesses.run(self.build_model(cfg_checks="INVARIANTS TypeOK"))
+        self.assertEqual(code, 1, report)
+        self.assertIn("does not list FloorHolds", report)
+
+    def test_model_property_defined_only_outside_the_case_module_fails(self):
+        code, report = check_witnesses.run(self.build_model(
+            cfg_checks="INVARIANTS StrayHolds", declared="invariant\tStrayHolds",
+            recorded="PASS\tinvariant\tStrayHolds", citation="StrayHolds"))
+        self.assertEqual(code, 1, report)
+        self.assertIn("StrayHolds is not defined in MCFloor.tla", report)
+        code, report = check_witnesses.run(self.build_model(citation="Other.tla:FloorHolds"))
+        self.assertEqual(code, 1, report)
+        self.assertIn("does not extend or instance", report)
+
+    def test_model_witness_violating_another_property_fails(self):
+        code, report = check_witnesses.run(self.build_model(
+            declared="invariant\tTypeOK", recorded="PASS\tinvariant\tTypeOK"))
+        self.assertEqual(code, 1, report)
+        self.assertIn("declared to violate TypeOK, not FloorHolds", report)
+
+    def test_model_witness_not_measured_as_declared_fails(self):
+        code, report = check_witnesses.run(self.build_model(recorded="FAIL\tinvariant\tFloorHolds"))
+        self.assertEqual(code, 1, report)
+        self.assertIn("is recorded FAIL", report)
+
+    def test_model_witness_with_no_case_row_fails(self):
+        code, report = check_witnesses.run(self.build_model(case_row=False))
+        self.assertEqual(code, 1, report)
+        self.assertIn("has no proofs/tla/CASES.tsv row", report)
+
     def test_stale_test_anchor_fails(self):
         root = self.build([
             ["t1", "a receiver MUST drop a packet below its floor",

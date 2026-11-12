@@ -12,18 +12,25 @@
 (* behind newer banks and must fail TxInOrder;                            *)
 (* MCRNGsoHandoffBrokenNoBackoff.cfg sets NoBackoff <- NoBackoffBroken    *)
 (* (a stalled pass goes straight back to poll, the full-buffer spin) and  *)
-(* must fail RxBacksOff.                                                  *)
+(* must fail RxBacksOff.  MCRNGsoHandoffBrokenMainBlocks.cfg sets         *)
+(* MainBlocks (main waits on the TX mutex) and must fail MainNeverWaits.  *)
 (***************************************************************************)
 EXTENDS RNGsoHandoff
 
 NoBackoffBroken == TRUE
 
 \* MCRNGsoHandoffBrokenDropBeforeShutdown.cfg: refusals count before
-\* shutdown too; must fail DroppedOnlyAfterShutdown.
+\* shutdown too; must fail FullSocketDropsOnlyAfterShutdown.
 DropBeforeShutdownBroken == TRUE
 
 \* MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg: refusals count only after
 \* send_quit while the stop waits for send_idle; must fail
 \* ShutdownCompletes.
 BoundOnQuitOnlyBroken == TRUE
+
+\* MCRNGsoHandoffBrokenUncountedErrorDrop.cfg: a hard send error drops a
+\* message uncounted; must fail SentOrHeld.
+\* MCRNGsoHandoffReachErrorDropRunning.cfg (the rule) must fail
+\* NotReachedErrorDropRunning: a counted error drop before shutdown.
+CountErrorDropsBroken == FALSE
 =============================================================================

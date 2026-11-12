@@ -905,6 +905,14 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
+      # the 1.x C ABI (exports, public struct sizes and field offsets) against
+      # its recorded baseline, tools/abi_v1.txt; one small C compile
+      - name: Check the 1.x ABI baseline
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: |
+          python3 tools/test_check_abi.py
+          python3 tools/check_abi.py
+
       - name: Test the hardening checker's verdicts
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_hardening.py
@@ -916,6 +924,10 @@ jobs:
       - name: Test the static gate's verdicts
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_static.py
+
+      - name: Test the tidy gate's verdicts
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        run: python3 tools/test_run_tidy.py
 
       - name: Test the Application Verifier runner's image name
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -958,6 +970,7 @@ jobs:
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out, a pin of it refuses, and functional links
         if: inputs.full && runner.os == 'Linux' && matrix.build_type == 'Release' && (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
+        shell: bash
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a

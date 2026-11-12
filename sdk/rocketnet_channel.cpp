@@ -1889,7 +1889,9 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
                         rn_ordered_walk( ordered, true, false, now, &plan, &last_unsent_chunk );
 
     // 2. New messages, numbered late (6.2) and whole (8), channels taking turns
-    // one message each (17.3 item 4), while the update has room. The channel's
+    // one message each (17.3 item 4; proofs/tla/RNScheduler.tla Number, the
+    // ready head numbered, popped and rejoined at the back, NoStarvation under
+    // a channel that keeps sending), while the update has room. The channel's
     // FIFO head is numbered first, so first writes are in ordering order (9.2).
     // A message the window cannot yet admit stops numbering until acks move U'
     // (RNWindow!NumberRecord, RNRing!PlaceSingle and PlaceBlock); a stall never

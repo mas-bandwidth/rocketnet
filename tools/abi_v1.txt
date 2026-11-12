@@ -1,0 +1,221 @@
+# The 1.x C ABI: exports, and each public struct's size and its fields'
+# offsets and sizes on 64-bit targets. Checked by tools/check_abi.py;
+# within 1.x lines are only added.
+export rocketnet_assert_function
+export rocketnet_client_abort_message
+export rocketnet_client_can_send_message
+export rocketnet_client_conditions
+export rocketnet_client_connect
+export rocketnet_client_create
+export rocketnet_client_default_config_internal
+export rocketnet_client_destroy
+export rocketnet_client_disconnect
+export rocketnet_client_disconnected
+export rocketnet_client_finish_message
+export rocketnet_client_index
+export rocketnet_client_light_config_internal
+export rocketnet_client_receipts
+export rocketnet_client_receive_messages
+export rocketnet_client_required_memory
+export rocketnet_client_send_packets
+export rocketnet_client_set_send_kbps
+export rocketnet_client_start_message
+export rocketnet_client_state
+export rocketnet_client_state_name
+export rocketnet_client_stats
+export rocketnet_client_transport_name
+export rocketnet_client_update
+export rocketnet_connect_token_default_config_internal
+export rocketnet_create_connect_token
+export rocketnet_disconnect_reason_name
+export rocketnet_generate_backend_keypair
+export rocketnet_generate_server_keypair
+export rocketnet_init
+export rocketnet_log_function
+export rocketnet_log_level
+export rocketnet_log_level_name
+export rocketnet_loopback_hub_create
+export rocketnet_loopback_hub_destroy
+export rocketnet_max_unfragmented_message_bytes
+export rocketnet_quiet
+export rocketnet_server_abort_message
+export rocketnet_server_can_send_message
+export rocketnet_server_client_conditions
+export rocketnet_server_client_connected
+export rocketnet_server_client_connection_id
+export rocketnet_server_client_id
+export rocketnet_server_client_stats
+export rocketnet_server_client_user_data
+export rocketnet_server_create
+export rocketnet_server_default_config_internal
+export rocketnet_server_destroy
+export rocketnet_server_disconnect_all_clients
+export rocketnet_server_disconnect_client
+export rocketnet_server_disconnect_reason
+export rocketnet_server_finish_message
+export rocketnet_server_ipv4_address
+export rocketnet_server_ipv6_address
+export rocketnet_server_light_config_internal
+export rocketnet_server_max_clients
+export rocketnet_server_num_connected_clients
+export rocketnet_server_port
+export rocketnet_server_public_key
+export rocketnet_server_receipts
+export rocketnet_server_receive_messages
+export rocketnet_server_required_memory
+export rocketnet_server_running
+export rocketnet_server_send_packets
+export rocketnet_server_set_send_kbps
+export rocketnet_server_start
+export rocketnet_server_start_message
+export rocketnet_server_stats
+export rocketnet_server_stop
+export rocketnet_server_stopped
+export rocketnet_server_transport_name
+export rocketnet_server_update
+export rocketnet_sleep
+export rocketnet_status_name
+export rocketnet_term
+export rocketnet_thread_priority
+export rocketnet_time
+export rocketnet_version
+pointer 8
+struct rocketnet_client_stats_t 168
+field rocketnet_client_stats_t packets_sent 0 8
+field rocketnet_client_stats_t packets_received 8 8
+field rocketnet_client_stats_t bytes_sent 16 8
+field rocketnet_client_stats_t bytes_received 24 8
+field rocketnet_client_stats_t payloads_received 32 8
+field rocketnet_client_stats_t messages_resent 40 8
+field rocketnet_client_stats_t messages_duplicated 48 8
+field rocketnet_client_stats_t receipts_acked 56 8
+field rocketnet_client_stats_t receipts_lost 64 8
+field rocketnet_client_stats_t receipts_dropped 72 8
+field rocketnet_client_stats_t messages_dropped_over_budget 80 8
+field rocketnet_client_stats_t messages_dropped_not_connected 88 8
+field rocketnet_client_stats_t api_misuses 96 8
+field rocketnet_client_stats_t thread_priority_refusals 104 8
+field rocketnet_client_stats_t rtt_ms 112 8
+field rocketnet_client_stats_t jitter_ms 120 8
+field rocketnet_client_stats_t packet_loss_percent 128 8
+field rocketnet_client_stats_t packets_sent_per_second 136 8
+field rocketnet_client_stats_t packets_received_per_second 144 8
+field rocketnet_client_stats_t bandwidth_sent_kbps 152 8
+field rocketnet_client_stats_t bandwidth_received_kbps 160 8
+struct rocketnet_server_stats_t 168
+field rocketnet_server_stats_t packets_sent 0 8
+field rocketnet_server_stats_t packets_received 8 8
+field rocketnet_server_stats_t bytes_sent 16 8
+field rocketnet_server_stats_t bytes_received 24 8
+field rocketnet_server_stats_t connections_accepted 32 8
+field rocketnet_server_stats_t connections_denied_full 40 8
+field rocketnet_server_stats_t handshakes_dropped_over_budget 48 8
+field rocketnet_server_stats_t payloads_received 56 8
+field rocketnet_server_stats_t messages_resent 64 8
+field rocketnet_server_stats_t messages_duplicated 72 8
+field rocketnet_server_stats_t receipts_acked 80 8
+field rocketnet_server_stats_t receipts_lost 88 8
+field rocketnet_server_stats_t receipts_dropped 96 8
+field rocketnet_server_stats_t messages_dropped_over_budget 104 8
+field rocketnet_server_stats_t messages_dropped_not_connected 112 8
+field rocketnet_server_stats_t api_misuses 120 8
+field rocketnet_server_stats_t thread_priority_refusals 128 8
+field rocketnet_server_stats_t packets_sent_per_second 136 8
+field rocketnet_server_stats_t packets_received_per_second 144 8
+field rocketnet_server_stats_t bandwidth_sent_kbps 152 8
+field rocketnet_server_stats_t bandwidth_received_kbps 160 8
+struct rocketnet_server_client_stats_t 80
+field rocketnet_server_client_stats_t packets_sent 0 8
+field rocketnet_server_client_stats_t packets_received 8 8
+field rocketnet_server_client_stats_t bytes_sent 16 8
+field rocketnet_server_client_stats_t bytes_received 24 8
+field rocketnet_server_client_stats_t rtt_ms 32 8
+field rocketnet_server_client_stats_t jitter_ms 40 8
+field rocketnet_server_client_stats_t packet_loss_percent 48 8
+field rocketnet_server_client_stats_t bandwidth_sent_kbps 56 8
+field rocketnet_server_client_stats_t bandwidth_received_kbps 64 8
+field rocketnet_server_client_stats_t bandwidth_acked_kbps 72 8
+struct rocketnet_conditions_t 32
+field rocketnet_conditions_t seconds_since_heard 0 8
+field rocketnet_conditions_t seconds_since_progress 8 8
+field rocketnet_conditions_t reliable_in_flight 16 8
+field rocketnet_conditions_t send_refused 24 8
+struct rocketnet_client_config_t 128
+field rocketnet_client_config_t config_bytes 0 8
+field rocketnet_client_config_t transport 8 8
+field rocketnet_client_config_t state_change_callback 16 8
+field rocketnet_client_config_t packet_filter 24 4
+field rocketnet_client_config_t send_kbps 28 4
+field rocketnet_client_config_t num_channels 32 4
+field rocketnet_client_config_t reliable_messages_in_flight 36 4
+field rocketnet_client_config_t receive_message_buffer_bytes 40 4
+field rocketnet_client_config_t max_message_bytes 44 4
+field rocketnet_client_config_t send_message_buffer_bytes 48 4
+field rocketnet_client_config_t send_queue_messages 52 4
+field rocketnet_client_config_t packets_in_flight 56 4
+field rocketnet_client_config_t packets_per_update 60 4
+field rocketnet_client_config_t unreliable_messages_per_update 64 4
+field rocketnet_client_config_t sequenced_messages_held 68 4
+field rocketnet_client_config_t max_message_receipts 72 4
+field rocketnet_client_config_t message_resend_delay_initial_ms 76 4
+field rocketnet_client_config_t message_resend_delay_min_ms 80 4
+field rocketnet_client_config_t message_resend_delay_max_ms 84 4
+field rocketnet_client_config_t reliable_message_timeout_ms 88 4
+field rocketnet_client_config_t loopback_hub 96 8
+field rocketnet_client_config_t time_callback 104 8
+field rocketnet_client_config_t step_driven 112 1
+field rocketnet_client_config_t token_epoch_unix_seconds 120 8
+struct rocketnet_server_config_t 200
+field rocketnet_server_config_t config_bytes 0 8
+field rocketnet_server_config_t protocol_id 8 8
+field rocketnet_server_config_t max_clients 16 4
+field rocketnet_server_config_t packet_filter 20 4
+field rocketnet_server_config_t backend_public_key 24 32
+field rocketnet_server_config_t num_xdp_queues 56 4
+field rocketnet_server_config_t num_os_cpus 60 4
+field rocketnet_server_config_t max_timeout_seconds 64 4
+field rocketnet_server_config_t handshake_deadline_seconds 68 4
+field rocketnet_server_config_t transport 72 8
+field rocketnet_server_config_t per_client_send_kbps 80 4
+field rocketnet_server_config_t num_channels 84 4
+field rocketnet_server_config_t reliable_messages_in_flight 88 4
+field rocketnet_server_config_t receive_message_buffer_bytes 92 4
+field rocketnet_server_config_t max_message_bytes 96 4
+field rocketnet_server_config_t send_message_buffer_bytes 100 4
+field rocketnet_server_config_t send_queue_messages 104 4
+field rocketnet_server_config_t packets_in_flight 108 4
+field rocketnet_server_config_t packets_per_update 112 4
+field rocketnet_server_config_t unreliable_messages_per_update 116 4
+field rocketnet_server_config_t sequenced_messages_held 120 4
+field rocketnet_server_config_t max_message_receipts 124 4
+field rocketnet_server_config_t message_resend_delay_initial_ms 128 4
+field rocketnet_server_config_t message_resend_delay_min_ms 132 4
+field rocketnet_server_config_t message_resend_delay_max_ms 136 4
+field rocketnet_server_config_t reliable_message_timeout_ms 140 4
+field rocketnet_server_config_t disconnect_packets_per_update 144 4
+field rocketnet_server_config_t handshakes_per_update 148 4
+field rocketnet_server_config_t loopback_hub 152 8
+field rocketnet_server_config_t server_secret_key 160 32
+field rocketnet_server_config_t token_epoch_unix_seconds 192 8
+struct rocketnet_receipt_t 8
+field rocketnet_receipt_t serial 0 4
+field rocketnet_receipt_t status 4 4
+struct rocketnet_connect_token_config_t 408
+field rocketnet_connect_token_config_t config_bytes 0 8
+field rocketnet_connect_token_config_t backend_secret_key 8 64
+field rocketnet_connect_token_config_t server_address_ipv4 72 8
+field rocketnet_connect_token_config_t server_address_ipv6 80 8
+field rocketnet_connect_token_config_t server_public_key 88 32
+field rocketnet_connect_token_config_t client_id 120 8
+field rocketnet_connect_token_config_t protocol_id 128 8
+field rocketnet_connect_token_config_t user_data 136 256
+field rocketnet_connect_token_config_t expire_seconds 392 4
+field rocketnet_connect_token_config_t timeout_seconds 396 4
+field rocketnet_connect_token_config_t unix_timestamp 400 8
+struct rocketnet_message_batch_t 1572872
+field rocketnet_message_batch_t num_messages 0 4
+field rocketnet_message_batch_t client_index 4 262144
+field rocketnet_message_batch_t channel 262148 262144
+field rocketnet_message_batch_t reliability 524292 262144
+field rocketnet_message_batch_t bytes 786436 262144
+field rocketnet_message_batch_t data 1048584 524288

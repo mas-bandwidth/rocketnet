@@ -3016,12 +3016,12 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
     }
 }
 
-// proofs/tla/ServerSession.tla Stop and proofs/tla/ServerStopSpread.tla Stop:
-// one call, every connected slot disconnected at the transport and kicked,
-// its burst waiting in the disconnect ring, the transport STOPPING, and the
-// server no longer running on return. The bursts leave across the stop
-// steps, as much as the transport has room for each step, before its I/O
-// stops; rocketnet_server_stopped is each later step.
+// proofs/tla/ServerSession.tla Stop, proofs/tla/ServerStopSpread.tla Stop and
+// proofs/tla/RNDisconnectBurstRing.tla Stop: one call, every connected slot
+// disconnected at the transport and kicked, its burst waiting in the
+// disconnect ring, the transport STOPPING, and the server no longer running
+// on return. The bursts leave across the stop steps, as much as the transport
+// has room for each step, before its I/O stops; rocketnet_server_stopped is each later step.
 
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {

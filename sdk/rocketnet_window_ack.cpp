@@ -728,8 +728,12 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry). The config keeps
     //    P >= W (rocketnet_message_validate_config_internal), so with the resend
-    //    delay above the round trip the evicted entry is never one whose ack
-    //    is still on its way (proofs/tla/RNSentMap.tla NoLiveEviction).
+    //    delay above the round trip and no receipt-only packets the evicted
+    //    entry is never one whose ack is still on its way
+    //    (proofs/tla/RNSentMap.tla NoLiveEviction). Receipt-only packets take
+    //    entries that W does not bound: with them, reliable and receipt-only
+    //    packets past P in one round trip evict a reliable entry whose ack is
+    //    on its way (MCRNSentMapReceiptEviction.cfg), an open risk.
 
     rn_window_ack_reclaim_head( ack );
 
@@ -788,6 +792,7 @@ void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, con
     rn_window_ack_commit( ack, packet_id, numbers, count, NULL, 0, now );
 }
 
+// proofs/tla/RNSentMap.tla WriteReceipt: a receipt-only packet takes a ring entry like any write
 void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint32_t * serials, uint32_t count, double now )
 {
     rn_window_ack_commit( ack, packet_id, NULL, 0, serials, count, now );

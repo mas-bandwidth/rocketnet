@@ -16,6 +16,42 @@ The instance is three buffers of two items and five items. Both controls enable
 every rule. Exact current state counts and outcomes are in `RUNS.tsv`
 (group `rnbufferhandoff`); these records include the receive return path.
 
+## Send destinations
+
+`rocketnet_client_io_hand_off` binds the Filling ring's destination
+(`io->to[ring]`, `io->to_held[ring]`) at the first attempt that finds
+committed slots, before it try-acquires the mutex; a LATE result, on a busy
+mutex or with no ring free, leaves the binding, and a later attempt for the
+same ring keeps it; a publish clears `to_held`. The I/O thread sends every
+slot of a ring to `io->to[ring]` (`rocketnet_client_io_send_ring`). The model
+carries this for the send direction:
+
+- `addr` is the address main passes; `itemTo` records the address each item
+  was committed with; `dest` and `held` are `io->to` and `io->to_held`;
+  `sentTo` is the destination each consumed item went to.
+- `MainTryLock` and `MainLate` bind (`BindDest`, `BindHeld`); `MainLate` is
+  the try-acquire that finds the mutex busy and returns LATE, a step of its
+  own because the binding it leaves is visible later. `ProducerExchange`'s
+  publish clears `held` for the published ring; its no-ring-free branch is
+  the other LATE and keeps the binding. A newly taken Filling ring's `dest`
+  is set to `none`: the code leaves a stale `io->to` there, read only after
+  an attempt binds it.
+- `Reset` is disconnect's protocol reset: the disconnect commits its burst
+  and attempts a hand-off with the saved address first, so the Filling ring
+  is empty or bound when `addr` becomes `Z`; nothing is committed after.
+  Later attempts pass `Z`. (The transport itself passes the ring's own
+  `io->to` once the server address is zero,
+  `rocketnet_client_transport_fill_destination`; the model checks the I/O
+  core's rule for the harder `to`.) `MainStop` binds an unbound ring with
+  items to `addr` while it is not `Z`, as that function does.
+- `Rebind` is the family race's commit (`rocketnet_client_race_commit` calls
+  `rocketnet_client_io_rebind_held`): `addr` goes from `A` to the kept `B`,
+  and a held ring bound to `A` is bound to `B`. Items committed while the
+  race was open were for both families, so `SentToCommitted` accepts an `A`
+  item sent to `B` (RNClientRace `PostCommitSlotsKept`).
+- `SentToCommitted`: each consumed item was sent to the address it was
+  committed with. It is in every configuration; on receive it is vacuous.
+
 ## Receive expose and return
 
 `ConsumerExchange(main, TRUE)` is expose: release a deferred consumed buffer,
@@ -90,6 +126,52 @@ TLC's, checked against the code by hand.
   before the quit store, and the exit branch of `rocketnet_client_io_step`
   sends it; `test_client_io_stop_hands_over_the_filling_ring` checks all three
   rings arrive in order.
+
+- `MCRNBufferHandoffBrokenDestinationOverwrite.cfg`, `SentToCommitted`, 10
+  states: (1) main commits item 1 with address A into ring 0; (2) the I/O
+  thread acquires the mutex at the top of `rocketnet_client_io_step`, and
+  (3) its exchange takes nothing; (4) main's hand-off binds `to[0] = A`,
+  `to_held[0] = true`, and `rocketnet_platform_mutex_try_acquire` fails:
+  LATE; (5) disconnect resets the protocol (its own attempt finds ring 0
+  bound); (6) the next attempt passes the zeroed address and, with the
+  defect, writes `to[0] = Z` (the code's `if ( !io->to_held[ring] )` keeps
+  A); (7) the I/O thread releases the mutex; (8) stop finds `to_held[0]`
+  set, records `send_final = 0` and stores quit; (9) the exit branch of
+  `rocketnet_client_io_step` sends ring 0 to `io->to[0]`, Z: item 1 was
+  committed for A. Checked by hand against `rocketnet_client_io_hand_off`,
+  `rocketnet_client_io_stop` and `rocketnet_client_io_step`. In today's
+  transport step (6) passes `io->to[0]` itself (`fill_destination`), so this
+  defect alone is masked there; the witness shows the I/O core's guard is
+  what makes the rule hold for any `to` the caller passes.
+- `MCRNBufferHandoffBrokenSkipRebind.cfg`, `SentToCommitted`, 10 states: (1)
+  main commits item 1 with A (race open); (2, 3) the I/O thread holds the
+  mutex; (4) main's hand-off binds `to[0] = A` and returns LATE on the busy
+  mutex; (5) the I/O thread releases it; (6) the race commits to B and, with
+  the defect, `rocketnet_client_io_rebind_held` is skipped, leaving
+  `to[0] = A`; (7) main commits item 2 with B into ring 0; (8) stop finds
+  `to_held[0]` set and leaves `to[0]`; (9) the I/O thread's exit sends both
+  items to A: item 2 was committed for B. In the code
+  `rocketnet_client_race_commit` calls `rocketnet_client_io_rebind_held`,
+  which moves `to[0]` from the losing to the kept server.
+
+## Cases
+
+Group `rnbufferhandoff`, bench linux-amd, 2 workers (a counterexample case
+runs with one), tlacheck r1 of this change:
+
+| config | expected | distinct | seconds | exit |
+|---|---|---:|---:|---:|
+| MCRNBufferHandoffSend.cfg | pass | 74,774 | 13.0 | 0 |
+| MCRNBufferHandoffReceive.cfg | pass | 5,590 | 3.9 | 0 |
+| MCRNBufferHandoffBrokenMainBlocks.cfg | MainNeverWaits | 12 | 1.1 | 12 |
+| MCRNBufferHandoffBrokenWorkUnderLock.cfg | NoWorkUnderLock | 13 | 2.0 | 12 |
+| MCRNBufferHandoffBrokenWriteAfterPublish.cfg | ViewStable | 74 | 2.3 | 12 |
+| MCRNBufferHandoffBrokenSkipWake.cfg | ArrivedDelivered | 4,219 | 3.1 | 13 |
+| MCRNBufferHandoffBrokenReleaseBeforeSent.cfg | FreeIsEmpty | 693 | 1.8 | 12 |
+| MCRNBufferHandoffBrokenDropFinal.cfg | ExitSentAll | 33 | 1.7 | 12 |
+| MCRNBufferHandoffBrokenDiscardOnStop.cfg | ExitSentAll | 33 | 1.3 | 12 |
+| MCRNBufferHandoffBrokenDestinationOverwrite.cfg | SentToCommitted | 780 | 2.5 | 12 |
+| MCRNBufferHandoffBrokenSkipRebind.cfg | SentToCommitted | 799 | 2.0 | 12 |
 
 ## BASE batched update refinement
 

@@ -169,6 +169,19 @@ and reports the `#error`. Configure checks the macro and leaves
 `ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
 so no CMake build reaches the directive.
 
+Corrected 2026-11-11: that disposition hid a file that was never analyzed.
+cppcheck stops a configuration at `#error`, so nothing in
+`rocketnet_server_uring_linux.cpp` after line 58 was read (an out-of-bounds
+write planted there was not reported; the same write in
+`rocketnet_server_socket_linux.cpp` was). The disposition is deleted, the gate
+now counts `preprocessorErrorDirective` as a file not analyzed, and a compile
+command that defines `ROCKETNET_IO_URING=1` gives cppcheck the
+`IORING_RECV_MULTISHOT` macro configure checked. Analyzed, the file and
+`rocketnet_uring_codec.h` report eight `dangerousTypeCast` findings and
+nothing else; each was read at its site: sockaddr_storage views and sockets
+API casts, and the receive banks carved from one allocation at their types'
+sizes. They are dispositioned under this heading.
+
 ## cppcheck 2.19 on the fleet runners
 
 Added 2026-11-09. The static-analysis job runs on the fleet's Ubuntu 26.04
@@ -219,6 +232,20 @@ baseline shrank from 43 to 40: the historical XDP frame `ctunullpointer`
 entry disappeared without a source change, and the two repaired driver NULL
 contract entries disappeared. The XDP item is recorded as a stale-baseline
 removal, not misrepresented as a source fix.
+
+## Keys name the site (2026-11-11)
+
+A key was the file, check, message without numbers, and an ordinal among
+identical messages: a count, not a site. Fixing a dispositioned cast and adding
+a new one elsewhere in the same file kept every key, and the new cast passed
+unreviewed (shown on amd-2 in `rocketnet_server_socket_linux.cpp`). The key
+now also carries the text of the flagged source line, whitespace collapsed, so
+moved lines keep their keys and a finding on another line is a new finding.
+Every baseline and disposition line was re-keyed to its site with no change
+in count (295 clang-tidy and 32 cppcheck baselined, the dispositions as
+before); where one file and message held dispositions with different reasons,
+each reason was matched to the site it describes. The baselines were
+rewritten by `run_tidy.py --generate` and match that pairing exactly.
 
 ## Build and unit gates
 

@@ -16,10 +16,21 @@
 (* here a request that passes the cookie gate, a response that opens       *)
 (* under its mapping, and a tick are the only events.                      *)
 (*                                                                         *)
-(* Switches name the code and the fixed code.  RefuseAdmittedAtResponse,   *)
-(* AdmitExpiredAtResponse, EvictLiveHistory, DeniedConsumesToken and       *)
-(* CapVerifyBudget in their code position reproduce a finding each; in     *)
-(* their fixed position the invariants hold.  HoldUntilExpire TRUE is    *)
+(* Every configuration starts from the code's switch positions and a      *)
+(* reversed witness moves one.  RefuseAdmittedAtResponse TRUE,             *)
+(* DeniedConsumesToken FALSE and CapVerifyBudget TRUE are the code, each   *)
+(* set there by an earlier finding.  EvictLiveHistory TRUE is the code:    *)
+(* at capacity with no expired entry, a record evicts the oldest entry,    *)
+(* live or not (the history's flush bound), so NoLiveHistoryEviction is    *)
+(* not an invariant of the code; its case records the eviction, and the    *)
+(* rules the history serves (OneTokenOneLiveConnection, BoundOnlyToOpener, *)
+(* NoBindToNonHolder) are checked with it on.  RequestChecksExpiry TRUE    *)
+(* is the code and TRANSPORT.md t12 rule 5: expiry is checked at the       *)
+(* request only, and the response has no expiry rung (t12 rule 13), so a   *)
+(* token unexpired at its request is admitted by a response that arrives  *)
+(* after its expiry, while the mapping lives (it is removed at its         *)
+(* handshake deadline): ExpiredAtRequestNeverAdmitted.  HoldUntilExpire    *)
+(* TRUE is                                                                 *)
 (* the code before 2026-10-18: an admitted-token set of AdmittedCap       *)
 (* entries, each held until its token expires, which denies ordinary      *)
 (* churn (ChurnNeverDenied); FALSE is the code now: no set, and a token   *)
@@ -90,7 +101,7 @@ CONSTANTS
     None, Addrs, Tokens, Expire, Cid, MaxClock, CookieLife, RotatePeriod,
     MaxClients, HistoryCap, AdmittedCap, VerifyBudget, HandshakeDeadline,
     Rotation, AcceptPrevious,
-    RefuseAdmittedAtResponse, AdmitExpiredAtResponse,
+    RefuseAdmittedAtResponse, RequestChecksExpiry,
     EvictLiveHistory, DeniedConsumesToken, CapVerifyBudget,
     PreviousOutlivesWindow, BindAtRequest, Holds,
     HoldUntilExpire, CheckCidAtResponse
@@ -99,7 +110,7 @@ ASSUME /\ MaxClock \in Nat \ {0} /\ CookieLife \in Nat \ {0} /\ RotatePeriod \in
        /\ MaxClients \in Nat \ {0} /\ HistoryCap \in Nat \ {0} /\ AdmittedCap \in Nat \ {0}
        /\ VerifyBudget \in Nat \ {0} /\ HandshakeDeadline \in Nat \ {0}
        /\ Rotation \in BOOLEAN /\ AcceptPrevious \in BOOLEAN
-       /\ RefuseAdmittedAtResponse \in BOOLEAN /\ AdmitExpiredAtResponse \in BOOLEAN
+       /\ RefuseAdmittedAtResponse \in BOOLEAN /\ RequestChecksExpiry \in BOOLEAN
        /\ EvictLiveHistory \in BOOLEAN /\ DeniedConsumesToken \in BOOLEAN
        /\ CapVerifyBudget \in BOOLEAN /\ PreviousOutlivesWindow \in BOOLEAN
        /\ BindAtRequest \in BOOLEAN /\ Holds \in [Tokens -> SUBSET Addrs]
@@ -325,7 +336,7 @@ RequestRungs(a, tok, g) ==
     \* a connected address provokes nothing from the request path
     \* (CONNECTION_REQUEST_ALREADY_CONNECTED)
     /\ ~(\E s \in slots : s.addr = a)
-    /\ IF g \notin LiveGens \/ TokExpired(tok) THEN FALSE
+    /\ IF g \notin LiveGens \/ (RequestChecksExpiry /\ TokExpired(tok)) THEN FALSE
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
        ELSE IF Used(tok) THEN FALSE
        ELSE IF tok \in ClaimTokens /\ ~ClaimCheckOk(tok, a) THEN FALSE
@@ -363,8 +374,10 @@ RequestRefused(a, tok, g) ==
 \* BindAtRequest, where the request made it).  The code then checks the
 \* admitted set (RefuseAdmittedAtResponse, with HoldUntilExpire only) and
 \* the client id (CheckCidAtResponse), both silent refusals, then the
-\* expiry, then the slots, then, with HoldUntilExpire, the add, which
-\* succeeds when the token is present.
+\* slots, then, with HoldUntilExpire, the add, which succeeds when the
+\* token is present.  There is no expiry rung here (TRANSPORT.md t12 rule
+\* 13): the request checked it, and a mapping lives no longer than its
+\* handshake deadline (Tick).
 AdmittedAddOk(tk) == AdmLive(tk) \/ AdmCount < AdmittedCap \/ admitted[tk] # 0
                     \/ \E u \in Tokens : admitted[u] # 0 /\ admitted[u] <= clock
 AdmittedAfterAdd(tk) ==
@@ -384,10 +397,6 @@ Response(a) ==
                /\ churnDenied' = (churnDenied \/ Fresh(tok))
                /\ UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
                               prevUntil, verifies, deniedPulse, admits, lateAdmit>>
-          ELSE IF TokExpired(tok) /\ ~AdmitExpiredAtResponse THEN
-               /\ churnDenied' = (churnDenied \/ Fresh(tok))
-               /\ UNCHANGED <<clock, admitted, map, mapGen, mapBorn, slots, others, gen, hasPrev,
-                              prevUntil, verifies, deniedPulse, admits, lateAdmit>>
           ELSE IF NumFree <= 0 \/ (HoldUntilExpire /\ ~AdmittedAddOk(tok)) THEN
                /\ deniedPulse' = ~deniedPulse
                /\ churnDenied' = (churnDenied \/ Fresh(tok))
@@ -402,7 +411,11 @@ Response(a) ==
                \* connect again after its connection closes, and the state
                \* stays finite
                /\ admits' = [admits EXCEPT ![tok] = 1]
-               /\ lateAdmit' = (lateAdmit \/ TokExpired(tok))
+               \* the ghost: admitted under a token already expired when
+               \* its request made the mapping, or past that mapping's
+               \* handshake deadline
+               /\ lateAdmit' = (lateAdmit \/ ExpTime(tok) <= mapBorn[a]
+                                \/ clock >= mapBorn[a] + HandshakeDeadline)
                /\ UNCHANGED <<clock, mapGen, mapBorn, others, gen, hasPrev,
                               prevUntil, verifies, deniedPulse, churnDenied>>
 
@@ -643,8 +656,15 @@ ChurnNeverDenied == ~churnDenied
 \* address outside Holds[t] is ever bound to t.
 BoundOnlyToOpener == \A t \in Tokens : history[t] # None => history[t].opened
 NoBindToNonHolder == \A t \in Tokens : history[t] # None => history[t].addr \in Holds[t]
+\* The code evicts a live entry at capacity (EvictLiveHistory TRUE, the
+\* history's flush bound), so this is not in SafetyInvariants; its case
+\* records the eviction.
 NoLiveHistoryEviction == ~evictedLive
-ExpiredNeverAdmitted == ~lateAdmit
+\* TRANSPORT.md t12 rules 5 and 13: expiry is checked at the request only.
+\* A slot is assigned only under a token that was unexpired when its
+\* request made the mapping, and before that mapping's handshake deadline;
+\* a response that arrives after the token's expiry is admitted.
+ExpiredAtRequestNeverAdmitted == ~lateAdmit
 DeniedTokenStaysUsable == [][deniedPulse' # deniedPulse => admitted' = admitted]_vars
 RotationWindow == [][\A a \in Addrs : (~Live(a) /\ Live(a)') => mapGen'[a] \in LiveGens']_vars
 PreviousBoundedToOnePeriod ==
@@ -679,8 +699,7 @@ CookieRaceResolves == \A a \in Addrs, t \in Tokens :
     (Live(a) /\ map[a] = t) ~> (admits[t] >= 1 \/ ~Live(a))
 
 SafetyInvariants == TypeOK /\ OneTokenOneLiveConnection /\ ChurnNeverDenied /\ BoundOnlyToOpener /\ NoBindToNonHolder
-                    /\ NoLiveHistoryEviction
-                    /\ ExpiredNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded
+                    /\ ExpiredAtRequestNeverAdmitted /\ VerifyBudgetRespected /\ TablesBounded
                     /\ FreeAndOrderPartitionSlots /\ OrderIsDeadlineOrder /\ LiveClaimNeverReplaced
                     /\ CanRecordMatchesScan
 =============================================================================
