@@ -87,6 +87,7 @@ struct rocketnet_server_gso_send_info_t
 static_assert( sizeof( rocketnet_server_gso_send_info_t ) == 64, "one send info per cache line" );
 
 static const int ROCKETNET_GSO_TX_BANKS = 3;
+static const int ROCKETNET_GSO_RX_BUFFERS = 3; // per queue: the worker's, one ready or free, and main's
 
 struct rocketnet_server_gso_send_buffer_t
 {
@@ -124,6 +125,23 @@ struct rocketnet_server_gso_recv_buffer_t
     uint8_t padding_1[4096];
 };
 
+// a queue's receive handoff at create: the worker holds buffer 0, main holds
+// buffer 1 and buffer 2 is free (proofs/tla/RNGsoHandoff.tla Init). Built by
+// the handoff's own steps: started with buffer 1 as the producer (buffers 0
+// and 2 free), buffer 1 published as the worker takes buffer 0, and taken by
+// main, which leaves buffer 2 the one free buffer.
+// proofs/tla/RNBankFifoLayout.tla Init, Publish and Take.
+static rocketnet_buffer_handoff_t<ROCKETNET_GSO_RX_BUFFERS> rocketnet_server_gso_receive_handoff_started()
+{
+    rocketnet_buffer_handoff_t<ROCKETNET_GSO_RX_BUFFERS> handoff = rocketnet_buffer_handoff_started<ROCKETNET_GSO_RX_BUFFERS>( 1 );
+    const int worker = rocketnet_buffer_handoff_publish( &handoff, 1, 1 );
+    const int taken = rocketnet_buffer_handoff_take( &handoff );
+    rocketnet_assert( worker == 0 && taken == 1 && handoff.free_count == 1 && handoff.ready_count == 0 );
+    (void) worker;
+    (void) taken;
+    return handoff;
+}
+
 struct rocketnet_server_gso_queue_t
 {
     uint8_t padding_0[4096];
@@ -140,15 +158,15 @@ struct rocketnet_server_gso_queue_t
 
     uint8_t padding_2[4096];
 
-    // Only ownership is protected by receive_mutex. The worker fills one
-    // buffer, can publish one ready buffer, and the main thread holds one
-    // view buffer. One of ready/free is null at each handoff.
-    struct rocketnet_server_gso_recv_buffer_t * worker_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * ready_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * main_buffer;
-    struct rocketnet_server_gso_recv_buffer_t * free_buffer;
+    // Only ownership is protected by receive_mutex: the triple buffer is the
+    // shared handoff with max_ready 1 (sdk/rocketnet_buffer_handoff.h). The
+    // worker fills one buffer and can publish one ready buffer, and the main
+    // thread holds one view buffer, so one buffer is ready or free.
+    rocketnet_buffer_handoff_t<ROCKETNET_GSO_RX_BUFFERS> receive_handoff = rocketnet_server_gso_receive_handoff_started();
+    int worker_index = 0; // the buffer the worker fills, worker thread only
+    int main_index = 1;   // the buffer main reads, main thread only
     rocketnet_platform_mutex_t receive_mutex;
-    uint32_t main_cursor = 0; // retained tail in main_buffer, main thread only
+    uint32_t main_cursor = 0; // retained tail in the main buffer, main thread only
     // Idle EAGAIN calls still count without publishing an empty ready buffer.
     std::atomic<uint64_t> receive_syscalls{ 0 };
 
@@ -165,10 +183,16 @@ struct rocketnet_server_gso_queue_t
 
     uint8_t padding_4[4096];
 
-    struct rocketnet_server_gso_recv_buffer_t buffers[3];
+    struct rocketnet_server_gso_recv_buffer_t buffers[ROCKETNET_GSO_RX_BUFFERS];
 
     uint8_t padding_5[4096];
 };
+
+// the buffer the queue's worker fills: worker thread only, or a test with no worker
+static inline struct rocketnet_server_gso_recv_buffer_t * rocketnet_server_gso_worker_buffer( struct rocketnet_server_gso_queue_t * queue )
+{
+    return &queue->buffers[queue->worker_index];
+}
 
 struct rocketnet_server_gso_t
 {
@@ -303,6 +327,21 @@ bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
     return idle;
 }
 
+// the buffer waiting in a queue's receive handoff, or -1 when none is ready;
+// the caller holds receive_mutex or plays every thread
+static int rocketnet_server_gso_test_ready_index( const struct rocketnet_server_gso_queue_t * queue )
+{
+    const rocketnet_buffer_handoff_t<ROCKETNET_GSO_RX_BUFFERS> * handoff = &queue->receive_handoff;
+    return handoff->ready_count > 0 ? handoff->ready_index[handoff->ready_head] : -1;
+}
+
+// the only free buffer of a queue's receive handoff, or -1 unless exactly one is free
+static int rocketnet_server_gso_test_free_index( const struct rocketnet_server_gso_queue_t * queue )
+{
+    const rocketnet_buffer_handoff_t<ROCKETNET_GSO_RX_BUFFERS> * handoff = &queue->receive_handoff;
+    return handoff->free_count == 1 ? handoff->free_index[handoff->free_head] : -1;
+}
+
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index )
 {
     rocketnet_assert( gso );
@@ -313,7 +352,8 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
     {
         return false;
     }
-    const bool ready = queue->ready_buffer && queue->ready_buffer->num_packets > 0;
+    const int index = rocketnet_server_gso_test_ready_index( queue );
+    const bool ready = index >= 0 && queue->buffers[index].num_packets > 0;
     rocketnet_platform_mutex_release( &queue->receive_mutex );
 
     return ready;
@@ -813,17 +853,16 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
 // defect WriteHeld has no such step: the guard below is what excludes it.
 // proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a free buffer from slot 0;
 // Done is a drained socket whose last buffer is published.
+// proofs/tla/RNBankFifoLayout.tla Publish with MaxReady 1 (MCRNBankFifoLayoutHandoff.cfg).
 static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_queue_t * queue )
 {
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
     rocketnet_platform_mutex_acquire( &queue->receive_mutex );
 
-    const bool published = !queue->ready_buffer && queue->free_buffer;
+    const int next = rocketnet_buffer_handoff_publish( &queue->receive_handoff, queue->worker_index, 1 );
+    const bool published = next >= 0;
     if ( published )
     {
-        queue->ready_buffer = buffer;
-        queue->worker_buffer = queue->free_buffer;
-        queue->free_buffer = NULL;
+        queue->worker_index = next;
     }
 
     rocketnet_platform_mutex_release( &queue->receive_mutex );
@@ -845,7 +884,7 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
 
 static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * queue, bool * full )
 {
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     const bool gro = ( queue->gso->features.load( std::memory_order_relaxed ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) != 0;
 
     int reads = 0;
@@ -1032,7 +1071,7 @@ static bool rocketnet_server_gso_worker_step( struct rocketnet_server_gso_queue_
     bool full = false;
     const bool failed = rocketnet_server_gso_drain( queue, &full );
 
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
 
     const bool has_results = buffer->num_packets || buffer->dropped_size || buffer->dropped_overflow ||
                              buffer->dropped_source || buffer->gro_batches || buffer->gro_cmsg_faults ||
@@ -1186,9 +1225,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
         gso->queues[i].stopped.store( true, std::memory_order_relaxed );
         gso->queues[i].fd = -1;
-        gso->queues[i].worker_buffer = &gso->queues[i].buffers[0];
-        gso->queues[i].main_buffer = &gso->queues[i].buffers[1];
-        gso->queues[i].free_buffer = &gso->queues[i].buffers[2];
     }
 
     // open the reuseport group. the first socket may discover an ephemeral
@@ -2017,25 +2053,29 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
     {
         return;
     }
-    if ( queue->main_cursor >= queue->main_buffer->num_packets )
+    if ( queue->main_cursor >= queue->buffers[queue->main_index].num_packets )
     {
-        queue->main_buffer->num_packets = 0;
+        queue->buffers[queue->main_index].num_packets = 0;
         queue->main_cursor = 0;
         if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
         {
             return;
         }
-        if ( !queue->ready_buffer )
+        if ( queue->receive_handoff.ready_count == 0 )
         {
             rocketnet_platform_mutex_release( &queue->receive_mutex );
             return;
         }
 
-        rocketnet_server_gso_recv_buffer_t * buffer = queue->ready_buffer;
-        queue->ready_buffer = NULL;
-        queue->free_buffer = queue->main_buffer;
-        queue->main_buffer = buffer;
+        // proofs/tla/RNBankFifoLayout.tla Release and Take: the spent buffer
+        // goes free only when a ready one replaces it, so main always holds
+        // one view buffer.
+
+        rocketnet_buffer_handoff_release( &queue->receive_handoff, queue->main_index );
+        queue->main_index = rocketnet_buffer_handoff_take( &queue->receive_handoff );
         rocketnet_platform_mutex_release( &queue->receive_mutex );
+
+        rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[queue->main_index];
 
         gso->counter_packets_received += buffer->num_packets;
         gso->counter_receive_dropped_size += buffer->dropped_size;
@@ -2053,7 +2093,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         buffer->gro_cmsg_faults = 0;
     }
 
-    rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
+    rocketnet_server_gso_recv_buffer_t * buffer = &queue->buffers[queue->main_index];
     while ( queue->main_cursor < buffer->num_packets && budget-- > 0 &&
             gso->process_packets.num_packets < gso->process_packets.capacity )
     {
@@ -2175,9 +2215,6 @@ static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
     new ( queue ) rocketnet_server_gso_queue_t();
     queue->fd = -1;
     queue->gso = gso;
-    queue->worker_buffer = &queue->buffers[0];
-    queue->main_buffer = &queue->buffers[1];
-    queue->free_buffer = &queue->buffers[2];
 
     bool valid = rocketnet_platform_mutex_create( &queue->receive_mutex ) &&
                  rocketnet_platform_mutex_create( &gso->send_mutex );
@@ -2273,9 +2310,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues )
         new ( queue ) rocketnet_server_gso_queue_t();
         queue->fd = -1;
         queue->gso = gso;
-        queue->worker_buffer = &queue->buffers[0];
-        queue->main_buffer = &queue->buffers[1];
-        queue->free_buffer = &queue->buffers[2];
         queue->stopped.store( true, std::memory_order_relaxed );
         if ( !rocketnet_platform_mutex_create( &queue->receive_mutex ) )
         {
@@ -2316,7 +2350,7 @@ bool rocketnet_server_gso_test_publish_marked( struct rocketnet_server_gso_t * g
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
-    rocketnet_server_gso_test_fill( queue->worker_buffer, marker, packets );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), marker, packets );
     return rocketnet_server_gso_publish_receive( queue );
 }
 
@@ -2332,25 +2366,28 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     bool valid = true;
 
-    // Receive: the worker publishes a filled buffer and takes the free one.
+    // Receive: the worker holds buffer 0, main buffer 1, and buffer 2 is free.
+    // The worker publishes a filled buffer and takes the free one.
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'a', 2 );
+    valid = valid && queue->worker_index == 0 && queue->main_index == 1 &&
+            rocketnet_server_gso_test_ready_index( queue ) == -1 && rocketnet_server_gso_test_free_index( queue ) == 2;
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'a', 2 );
     valid = valid && rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2] &&
-            queue->free_buffer == NULL;
+    valid = valid && rocketnet_server_gso_test_ready_index( queue ) == 0 && queue->worker_index == 2 &&
+            queue->receive_handoff.free_count == 0;
 
     // While a ready buffer waits, the worker retains its next filled buffer.
 
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'b', 1 );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'b', 1 );
     valid = valid && !rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2];
+    valid = valid && rocketnet_server_gso_test_ready_index( queue ) == 0 && queue->worker_index == 2;
 
     // Main claims the ready buffer; its previous buffer becomes free.
 
     rocketnet_server_gso_receive_packets( gso );
     valid = valid && gso->process_packets.num_packets == 2 &&
             gso->process_packets.packet_data[0] == queue->buffers[0].packet_data[0] &&
-            queue->main_buffer == &queue->buffers[0] && queue->free_buffer == &queue->buffers[1] &&
+            queue->main_index == 0 && rocketnet_server_gso_test_free_index( queue ) == 1 &&
             gso->counter_packets_received == 2;
 
     // A retained tail stays in main's buffer: with one packet consumed, the
@@ -2361,23 +2398,23 @@ bool rocketnet_server_gso_test_worker_handoff()
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
     valid = valid && gso->process_packets.num_packets == 1 &&
             gso->process_packets.packet_data[0] == queue->buffers[0].packet_data[1] &&
-            queue->main_buffer == &queue->buffers[0] && queue->main_cursor == 2;
+            queue->main_index == 0 && queue->main_cursor == 2;
 
     // Publishing while main holds that buffer lands in the ready slot only:
     // the held buffer's packets and bytes are untouched.
 
     valid = valid && rocketnet_server_gso_publish_receive( queue );
-    rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'c', 1 );
+    rocketnet_server_gso_test_fill( rocketnet_server_gso_worker_buffer( queue ), (uint8_t) 'c', 1 );
     valid = valid && !rocketnet_server_gso_publish_receive( queue );
-    valid = valid && queue->main_buffer == &queue->buffers[0] && queue->buffers[0].num_packets == 2 &&
+    valid = valid && queue->main_index == 0 && queue->buffers[0].num_packets == 2 &&
             queue->buffers[0].packet_data[0][0] == (uint8_t) 'a';
 
     // Once the held buffer is exhausted, main claims the waiting buffer.
 
     gso->process_packets.num_packets = 0;
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
-    valid = valid && gso->process_packets.num_packets == 1 && queue->main_buffer == &queue->buffers[2] &&
-            queue->free_buffer == &queue->buffers[0] && gso->counter_packets_received == 3;
+    valid = valid && gso->process_packets.num_packets == 1 && queue->main_index == 2 &&
+            rocketnet_server_gso_test_free_index( queue ) == 0 && gso->counter_packets_received == 3;
 
     // Transmit: two publishes empty the free FIFO; the third retains the
     // producer bank instead of waiting or overwriting a bank in flight.
@@ -2519,7 +2556,7 @@ bool rocketnet_server_gso_test_drain_budget()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -2579,7 +2616,7 @@ bool rocketnet_server_gso_test_drain_room()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -2644,20 +2681,23 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
     gso->test_receive = rocketnet_server_gso_test_source_receive;
-
-    bool valid = true;
 
     struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_VALID, 1000, 0, 0 };
     gso->test_receive_user = &source;
 
     // A full worker buffer with a published bank main has not claimed and no
     // free buffer cannot be published: every pass reads nothing, leaves the
-    // buffer as it is and asks the worker to sleep.
+    // buffer as it is and asks the worker to sleep. One publish gets there:
+    // buffer 0 waits (empty), main holds buffer 1, the worker buffer 2 and
+    // nothing is free.
 
-    queue->ready_buffer = &queue->buffers[2];
-    queue->free_buffer = NULL;
+    queue->worker_index = rocketnet_buffer_handoff_publish( &queue->receive_handoff, queue->worker_index, 1 );
+
+    bool valid = queue->main_index == 1 && rocketnet_server_gso_test_ready_index( queue ) == 0 &&
+                 queue->worker_index == 2 && queue->receive_handoff.free_count == 0;
+
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE;
     buffer->dropped_size = 0;
     buffer->dropped_overflow = 0;
@@ -2673,23 +2713,24 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     valid = valid && waits == 1000 && source.delivered == 0 &&
-            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && queue->ready_buffer == &queue->buffers[2];
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE && rocketnet_server_gso_test_ready_index( queue ) == 0;
 
     // Main's claim frees a buffer: the next pass publishes the full buffer and
     // does not back off, and the pass after it reads the waiting packets.
 
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
-    valid = valid && queue->main_buffer == &queue->buffers[2] && queue->free_buffer == &queue->buffers[1];
+    valid = valid && queue->main_index == 0 && rocketnet_server_gso_test_free_index( queue ) == 1;
     valid = valid && !rocketnet_server_gso_worker_step( queue );
-    valid = valid && queue->ready_buffer == buffer && queue->worker_buffer == &queue->buffers[1];
+    valid = valid && rocketnet_server_gso_test_ready_index( queue ) == 2 && buffer == &queue->buffers[2] &&
+            rocketnet_server_gso_worker_buffer( queue ) == &queue->buffers[1];
     valid = valid && !rocketnet_server_gso_worker_step( queue );
-    valid = valid && source.delivered == 1000 && queue->worker_buffer->num_packets == 1000;
+    valid = valid && source.delivered == 1000 && rocketnet_server_gso_worker_buffer( queue )->num_packets == 1000;
 
     // A failed receive backs off too, though the buffer is not full.
 
     rocketnet_server_gso_test_fail_receives( gso, 1, EIO );
     valid = valid && rocketnet_server_gso_worker_step( queue );
-    valid = valid && queue->worker_buffer->receive_errors == 1;
+    valid = valid && rocketnet_server_gso_worker_buffer( queue )->receive_errors == 1;
 
     gso->test_receive = NULL;
     gso->test_receive_user = NULL;
