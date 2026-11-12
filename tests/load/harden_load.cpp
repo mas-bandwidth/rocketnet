@@ -1768,6 +1768,12 @@ static bool harden_make_token( const harden_options_t & o, const uint8_t * key, 
 // transport has stopped (disconnected is true): the counters are the
 // connection's, and the next connect destroys it
 
+// the layer a client counter belongs to, for its printed name
+static const char * harden_counter_layer( int k )
+{
+    return strncmp( rocketnet_counter_name( k ), "MESSAGE_", 8 ) == 0 ? "message" : "transport";
+}
+
 static void harden_read_connection( harden_client_t * c, uint64_t * counters, uint64_t * read_count )
 {
     struct rocketnet_message_client_t * message = rocketnet_client_message_client( c->client );
@@ -1780,6 +1786,17 @@ static void harden_read_connection( harden_client_t * c, uint64_t * counters, ui
     for ( int k = 0; k < rocketnet_num_counters() && k < HARDEN_COUNTER_SLOTS; k++ )
     {
         counters[k] += rocketnet_counter_value( block, k );
+    }
+    // the message layer's own refusals (a wire violation ends the connection
+    // as PROTOCOL_VIOLATION): its counters share the one index space, so they
+    // add into the same slots and print as message_
+    const struct rocketnet_counters_t * message_block = rocketnet_message_client_counters( message );
+    if ( message_block && message_block != block )
+    {
+        for ( int k = 0; k < rocketnet_num_counters() && k < HARDEN_COUNTER_SLOTS; k++ )
+        {
+            counters[k] += rocketnet_counter_value( message_block, k );
+        }
     }
     struct rocketnet_client_transport_stats_t stats;
     memset( &stats, 0, sizeof( stats ) );
@@ -2284,7 +2301,7 @@ static int harden_clients_main( const harden_options_t & o )
         {
             if ( counts[k] )
             {
-                printf( "harden_term: role=clients %s_transport_%s=%" PRIu64 "\n", name, rocketnet_counter_name( k ), counts[k] );
+                printf( "harden_term: role=clients %s_%s_%s=%" PRIu64 "\n", name, harden_counter_layer( k ), rocketnet_counter_name( k ), counts[k] );
             }
         }
         harden_print_cut_network( role, name, o );
@@ -2349,7 +2366,7 @@ static int harden_clients_main( const harden_options_t & o )
     {
         if ( totals.counters[k] )
         {
-            printf( "harden_term: role=clients transport_%s=%" PRIu64 "\n", rocketnet_counter_name( k ), totals.counters[k] );
+            printf( "harden_term: role=clients %s_%s=%" PRIu64 "\n", harden_counter_layer( k ), rocketnet_counter_name( k ), totals.counters[k] );
         }
     }
     harden_print_term( role, "packets_sent", (int64_t) totals.counters[HARDEN_SLOT_PACKETS_SENT] );
