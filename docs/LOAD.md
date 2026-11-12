@@ -265,7 +265,35 @@ identity. The harness drains the endpoint-wide receive queue and checks:
 - no unexpected disconnect occurs;
 - reliable messages arrive exactly once and ordered streams stay in order;
 - every delivered unreliable message is intact and at most once;
-- receipt and drop counters reconcile with attempted sends;
+- receipt and drop counters reconcile with attempted sends (`counters_agree`).
+  After the drain the harness quiesces one direction at a time and, at each
+  cut, requires packets sent = packets received + every counted drop, with
+  nothing left in flight and the XDP ring empty. The counted drops are the
+  library's `SEND_FAILED`, `XDP_KERNEL_DROPPED_*` and
+  `XDP_RECEIVE_FRAME_DROPPED`, and the kernel's UDP `SndbufErrors` (sender's
+  namespace) and `InErrors` (receiver's namespace) from `/proc/net/snmp`;
+  Linux counts a send its device queue refused in `SndbufErrors` while
+  `sendmsg` reports success. The message check is a bound, not an exact
+  count: client-to-server messages not covered by the library's message drops
+  must be at most (client-to-server packets counted as dropped) x (the most
+  unreliable messages any one client `send_packets` call carried in the run).
+  The harness cannot tell which packets were dropped or what each carried, so
+  the bound assumes every dropped packet carried the most; it catches gross
+  loss only. In a measured run 398 dropped packets allowed 398 lost messages
+  while about 64 were really lost, and a planted loss of every 100th
+  unreliable message (about 318 more) still passed. The packet equations are
+  the exact part. When the clients share the
+  server's namespace the kernel counters are host-wide, so they bound the
+  remainder instead of naming it. Every term prints to stderr on every run.
+  Untested: the server-side send term (`SndbufErrors` in the server's
+  namespace beside the server's `SEND_FAILED`). Every recorded run had zero
+  server-side send drops, so that term has never been nonzero. Exercising it
+  needs a socket server cell whose server-side veth is constrained (a short
+  transmit queue on the server end) so that its sends overflow; that run is
+  owed;
+- in the `drop-one` mode the destroyed client's disconnect burst and the
+  server's later packets to it fall outside both packet equations, so they
+  are printed and not judged;
 - in fixed-rate runs (`fixed_message_rate`), a refused `start_message` or
   `finish_message` is counted and fails the `application_offers_accepted`
   criterion.
