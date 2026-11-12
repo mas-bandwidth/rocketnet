@@ -3503,6 +3503,18 @@ jobs:
             grep -Eq "^$checker self-test: [1-9][0-9]* cases, 0 failed\$" <<<"$output"
           done
 
+      # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
+      # a case list of blanks, a skipped io_uring cell and a failing case must
+      # each fail it (fake ci.yml, fake functional binary, fake io_uring switch)
+      - name: Test the transport cells repeat's verdicts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(bash tools/test_transport_cells_repeat.sh 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^ok: transport-cells-repeat self-test, [1-9][0-9]* cases$' <<<"$output"
+
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
       # Python and Go file names its job count (a bare one is unbounded under
