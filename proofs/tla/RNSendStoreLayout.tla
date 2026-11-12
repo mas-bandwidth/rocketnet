@@ -35,20 +35,44 @@
 (* descriptor's in the code).  Sends are the region's: Alloc is            *)
 (* rn_region_send_alloc (a chunk and a descriptor), AllocSpan the          *)
 (* descriptor take of rn_region_send_alloc_span (the span itself is        *)
-(* RNSendSpans.tla's), Refuse a refused allocation (a counted refusal     *)
-(* that leaves the store, the pool and the region as they were,            *)
-(* standard/MESSAGES.md m1.7), Free rn_region_send_free, Carve             *)
-(* rn_region_carve.  exhausted is the region's sticky flag, which only the *)
-(* receive side sets (RNConnectionMemory.tla Exhaust); here it only guards *)
-(* the takes and is cleared by Carve.                                      *)
+(* RNSendSpans.tla's, so whether the span ring has a place is an outside   *)
+(* fact here, the parameter spanRoom), Refuse the start the region has no  *)
+(* room for, Free rn_region_send_free, Carve rn_region_carve, Exhaust the  *)
+(* receive side's rn_region_exhaust (RNConnectionMemory.tla Exhaust): the  *)
+(* sticky flag, which every start then refuses.                            *)
+(*                                                                         *)
+(* A refused start (standard/MESSAGES.md m1.7) runs the code's steps in    *)
+(* the code's order.  rn_region_send_fit_store and rn_region_send_fit_span *)
+(* take a const region: exhausted, then descriptors_free, then the store's *)
+(* find (or the span's place), all reads; rn_region_send_refuse then       *)
+(* counts the refusal.  refused is the region's refusal counters summed    *)
+(* (MESSAGE_SEND_QUEUE_FULL, MESSAGE_SEND_STORE_FULL, and                  *)
+(* MESSAGE_MEMORY_EXHAUSTED for a start on an exhausted region), modulo    *)
+(* CountMod as the code's uint64_t counters wrap; the ghost calls counts   *)
+(* the application's starts the same way, so that a start is a step even  *)
+(* when it changes nothing else (a refusal left uncounted would otherwise  *)
+(* be a stutter, which no [][...]_vars property sees).  CountMod = 1 drops *)
+(* both counters (the layout-only runs).  StartOrder writes the            *)
+(* two orders the code does not have, each a take before the room is      *)
+(* known and the undo a programmer would write with the region's own      *)
+(* functions: "descfirst" takes the descriptor (rn_region_descriptor_take) *)
+(* before the store's find or the span's place and, finding no room, gives *)
+(* it back with rn_region_descriptor_release; "chunkfirst" takes the found *)
+(* chunk (rn_send_store_take) before the descriptor test and, finding no   *)
+(* descriptor, gives it back with rn_send_store_free_checked.              *)
+(* RefuseLeavesLayout compares the state after the whole start with the    *)
+(* state before it.                                                        *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
 (*   FreshGuard    the free test reads meta without the i >= fresh guard   *)
 (*   LowerCursor   a free that does not lower the cursor                   *)
 (*   ChunkSkipZero a chunk generation that wraps to 0                      *)
-(*   DescSkipZero  a descriptor generation that wraps to 0      *)
+(*   DescSkipZero  a descriptor generation that wraps to 0                 *)
 (*   KeepFreeSlot  the take clears a free_slot the stack still uses        *)
-(* and one flag TRUE is the v1.0 behaviour this model no longer has:       *)
+(*   CountQueueFull rn_region_send_refuse without its QUEUE_FULL case      *)
+(* StartOrder "descfirst" and "chunkfirst" are the two take-before-fit     *)
+(* orders above, and one flag TRUE is the v1.0 behaviour this model no     *)
+(* longer has:                                                             *)
 (*   RefuseExhausts  a refused fit exhausts the region (the send kick)     *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
@@ -62,10 +86,14 @@ CONSTANTS
     ChunkSkipZero,  \* a chunk's generation skips 0 when it wraps
     DescSkipZero,   \* a descriptor's generation skips 0 when it wraps
     KeepFreeSlot,   \* rn_region_descriptor_take keeps a free_slot below the new top
+    CountQueueFull, \* rn_region_send_refuse counts a QUEUE_FULL refusal
+    StartOrder,     \* "fit" (the code), "descfirst" or "chunkfirst" (broken)
+    CountMod,       \* the refusal counter runs 0..CountMod-1
     RefuseExhausts  \* a refused fit exhausts the region (broken: v1.0's send kick)
 
 ASSUME N \in Nat \ {0} /\ Q \in Nat \ {0} /\ GenMod \in Nat /\ GenMod >= 3
-ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot, RefuseExhausts} : f \in BOOLEAN
+ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot, CountQueueFull, RefuseExhausts} : f \in BOOLEAN
+ASSUME StartOrder \in {"fit", "descfirst", "chunkfirst"} /\ CountMod \in Nat \ {0}
 
 Chunks == 0..(N - 1)
 Descs == 0..(Q - 1)
@@ -84,11 +112,17 @@ VARIABLES
     dFree,          \* descriptors_free
     dFresh,         \* descriptors_fresh
     exhausted,      \* the region's sticky exhausted flag
+    refused,        \* the region's refusal counters, summed, modulo CountMod
+    calls,          \* ghost: the application's send starts, modulo CountMod
     touchedPast,    \* ghost: meta at or past fresh, or a descriptor at or past dFresh, read or written
     takenTwice,     \* ghost: a take handed out a chunk or a descriptor that was live
     badRefusal      \* ghost: the store refused while a chunk was free
 
-vars == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, touchedPast, takenTwice, badRefusal>>
+vars == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal>>
+
+\* everything of the region a start may touch, the refusal counter aside
+Layout == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>
+Kinds == {"store", "span"}
 
 Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 
@@ -145,17 +179,26 @@ Init ==
     /\ dFree = Q
     /\ dFresh = 0
     /\ exhausted = FALSE
+    /\ refused = 0
+    /\ calls = 0
     /\ touchedPast = FALSE
     /\ takenTwice = FALSE
     /\ badRefusal = FALSE
+
+\* rn_region_send_fit_store's decision and rn_region_send_fit_span's, read off
+\* a const region before anything is taken: the sticky flag, then
+\* descriptors_free, then the store's find (or, for a span, the ring's place,
+\* RNSendSpans.tla's, the outside fact spanRoom).
+FitOK(kind, spanRoom) ==
+    /\ ~exhausted
+    /\ dFree > 0
+    /\ IF kind = "store" THEN FindOK ELSE spanRoom
 
 \* rn_region_send_alloc with room: rn_region_send_fit_store's checks, then
 \* rn_send_store_take of the chunk rn_send_store_find returned, then
 \* rn_region_descriptor_take
 Alloc ==
-    /\ ~exhausted
-    /\ dFree > 0
-    /\ FindOK
+    /\ FitOK("store", TRUE)
     /\ DTaken < Q
     /\ LET i == Found
            g == IF i < fresh THEN NextGen(meta[i].gen, ChunkSkipZero) ELSE 1
@@ -166,30 +209,77 @@ Alloc ==
           /\ DTakeSteps(i)
           /\ touchedPast' = (touchedPast \/ ScanTouchesPast \/ DTakeTouchesPast)
           /\ takenTwice' = (takenTwice \/ i \notin FreeChunks \/ DTakeTwice)
-    /\ UNCHANGED <<exhausted, badRefusal>>
+    /\ calls' = (calls + 1) % CountMod
+    /\ UNCHANGED <<exhausted, refused, badRefusal>>
 
-\* rn_region_send_alloc_span with room: the descriptor take alone
+\* rn_region_send_alloc_span with room: rn_region_send_fit_span's checks
+\* (the ring has a place), then the descriptor take
 AllocSpan ==
-    /\ ~exhausted
-    /\ dFree > 0
+    /\ FitOK("span", TRUE)
     /\ DTaken < Q
     /\ DTakeSteps(NONE)
     /\ touchedPast' = (touchedPast \/ DTakeTouchesPast)
     /\ takenTwice' = (takenTwice \/ DTakeTwice)
-    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, exhausted, badRefusal>>
+    /\ calls' = (calls + 1) % CountMod
+    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, exhausted, refused, badRefusal>>
 
-\* rn_region_send_fit_store refuses (no descriptor, or the store's find
-\* fails) and rn_region_send_refuse counts it: the cursors, the counts, the
-\* free stack and the exhausted flag are as before the fit, so a later
-\* Alloc succeeds once a Free gives room back (standard/MESSAGES.md m1.7).
-\* RefuseExhausts is v1.0's rn_region_send_refuse, which exhausted the region.
-Refuse ==
-    /\ ~exhausted
-    /\ dFree = 0 \/ ~FindOK
-    /\ exhausted' = RefuseExhausts
-    /\ badRefusal' = (badRefusal \/ (dFree > 0 /\ FreeChunks # {}))
-    /\ touchedPast' = (touchedPast \/ (dFree > 0 /\ ScanTouchesPast))
-    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
+\* rn_region_send_refuse: the refusal counted under its fit result. A
+\* QUEUE_FULL refusal is uncounted when CountQueueFull = FALSE (broken);
+\* RefuseExhausts (broken) is v1.0's rn_region_exhaust here.
+CountRefusal(queueFull) ==
+    /\ refused' = IF queueFull /\ ~CountQueueFull THEN refused ELSE (refused + 1) % CountMod
+    /\ exhausted' = (exhausted \/ RefuseExhausts)
+
+\* "descfirst" (broken): the descriptor taken before the room is known,
+\* then given back by rn_region_descriptor_release: in_use and chunk
+\* cleared, its index pushed at the stack's top, which the take lowered.
+DescTakeThenRelease ==
+    LET d == DTaken
+        top1 == DNewTop
+        desc1 == [ desc EXCEPT ![d] = DTakeRecord(NONE) ]
+    IN /\ DTaken < Q
+       /\ desc' = [ desc1 EXCEPT ![d].inUse = FALSE, ![d].chunk = NONE, ![top1].slot = d ]
+       /\ dTop' = top1 + 1
+       /\ dFresh' = IF DFreshTake THEN dFresh + 1 ELSE dFresh
+       /\ UNCHANGED dFree
+       /\ touchedPast' = (touchedPast \/ DTakeTouchesPast \/ top1 >= dFresh')
+       /\ takenTwice' = (takenTwice \/ DTakeTwice)
+
+\* "chunkfirst" (broken): the found chunk taken by rn_send_store_take
+\* before the descriptor test, then given back by
+\* rn_send_store_free_checked: the live bit cleared, the cursor lowered.
+ChunkTakeThenFree ==
+    LET i == Found
+        g == IF i < fresh THEN NextGen(meta[i].gen, ChunkSkipZero) ELSE 1
+        head1 == i + 1
+    IN /\ meta' = [ meta EXCEPT ![i] = [ live |-> FALSE, gen |-> g ] ]
+       /\ fresh' = IF i < fresh THEN fresh ELSE i + 1
+       /\ UNCHANGED freeCount
+       /\ freeHead' = IF LowerCursor /\ i < head1 THEN i ELSE head1
+       /\ touchedPast' = (touchedPast \/ ScanTouchesPast)
+       /\ takenTwice' = (takenTwice \/ i \notin FreeChunks)
+
+\* The start the region has no room for (standard/MESSAGES.md m1.7), its
+\* steps in StartOrder's order. In the code ("fit") the fit reads a const
+\* region and refuses before any take, and rn_region_send_refuse counts.
+\* A start on an exhausted region is refused at the fit's first test, in
+\* every order. A later Alloc succeeds once a Free gives room back.
+Refuse(kind, spanRoom) ==
+    /\ ~FitOK(kind, spanRoom)
+    /\ badRefusal' = (badRefusal \/ (kind = "store" /\ ~exhausted /\ dFree > 0 /\ FreeChunks # {}))
+    /\ IF ~exhausted /\ StartOrder = "descfirst" /\ dFree > 0
+       THEN \* the descriptor first; then no chunk, or no place for the span
+            /\ DescTakeThenRelease
+            /\ UNCHANGED <<meta, freeHead, freeCount, fresh>>
+       ELSE IF ~exhausted /\ StartOrder = "chunkfirst" /\ kind = "store" /\ dFree = 0 /\ FindOK
+       THEN \* the chunk first; then no descriptor
+            /\ ChunkTakeThenFree
+            /\ UNCHANGED <<desc, dTop, dFree, dFresh>>
+       ELSE \* the code: the fit's reads, nothing taken
+            /\ touchedPast' = (touchedPast \/ (~exhausted /\ dFree > 0 /\ kind = "store" /\ ScanTouchesPast))
+            /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
+    /\ CountRefusal(~exhausted /\ dFree = 0)
+    /\ calls' = (calls + 1) % CountMod
 
 \* rn_region_send_free: rn_send_store_free_checked of the descriptor's chunk,
 \* then rn_region_descriptor_release pushes the descriptor
@@ -206,7 +296,7 @@ Free(d) ==
     /\ dTop' = dTop + 1
     /\ dFree' = dFree + 1
     /\ touchedPast' = (touchedPast \/ dTop >= dFresh)
-    /\ UNCHANGED <<fresh, dFresh, exhausted, takenTwice, badRefusal>>
+    /\ UNCHANGED <<fresh, dFresh, exhausted, refused, calls, takenTwice, badRefusal>>
 
 \* rn_region_carve (rn_send_store_init_counts for the class): both pools
 \* empty and both watermarks at zero; modeled meta/descriptor fields unchanged.
@@ -220,14 +310,25 @@ Carve ==
     /\ dFree' = Q
     /\ dFresh' = 0
     /\ exhausted' = FALSE
-    /\ UNCHANGED <<meta, desc, touchedPast, takenTwice, badRefusal>>
+    /\ UNCHANGED <<meta, desc, refused, calls, touchedPast, takenTwice, badRefusal>>
+
+\* rn_region_exhaust, from the receive side (a delivery with no room, a
+\* broken invariant of the receiver; RNConnectionMemory.tla Exhaust): the
+\* sticky flag. It counts MESSAGE_MEMORY_EXHAUSTED once, an exhaustion and
+\* not a refusal, so refused does not move.
+Exhaust ==
+    /\ ~exhausted
+    /\ exhausted' = TRUE
+    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, refused,
+                   calls, touchedPast, takenTwice, badRefusal>>
 
 Next ==
     \/ Alloc
     \/ AllocSpan
-    \/ Refuse
+    \/ \E k \in Kinds, r \in BOOLEAN : Refuse(k, r)
     \/ \E d \in Descs : Free(d)
     \/ Carve
+    \/ Exhaust
 
 Spec == Init /\ [][Next]_vars
 
@@ -243,7 +344,7 @@ View ==
        [ d \in Descs |-> IF d < dFresh
                          THEN [ desc[d] EXCEPT !.slot = IF d < dTop THEN @ ELSE 0 ]
                          ELSE "dead" ],
-       dTop, dFree, dFresh, exhausted, touchedPast, takenTwice, badRefusal >>
+       dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal >>
 
 ----------------------------------------------------------------------------
 
@@ -257,6 +358,7 @@ TypeOK ==
     /\ dFree \in 0..Q
     /\ dFresh \in 0..Q
     /\ exhausted \in BOOLEAN
+    /\ refused \in 0..(CountMod - 1) /\ calls \in 0..(CountMod - 1)
     /\ touchedPast \in BOOLEAN /\ takenTwice \in BOOLEAN /\ badRefusal \in BOOLEAN
 
 LiveDescs == { d \in 0..(dFresh - 1) : desc[d].inUse }
@@ -292,16 +394,31 @@ StackExact ==
 \* descriptors_free is the stack plus the never-taken descriptors
 DescCountExact == dFree = dTop + (Q - dFresh) /\ dFree = Q - Cardinality(LiveDescs)
 
-\* a refused fit changes nothing of the store, the descriptor pool or the
-\* region: the store's cursor, free count and watermark, every meta word,
-\* every descriptor, the free stack's top and count, and exhausted are as
-\* before it (standard/MESSAGES.md m1.7, rule 2). Reversed by RefuseExhausts.
-RefuseLeavesLayout ==
-    [][Refuse => UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>]_vars
+\* A send start: the region's alloc with room, or the start it refuses.
+StartStep(kind, spanRoom) ==
+    \/ kind = "store" /\ Alloc
+    \/ kind = "span" /\ spanRoom /\ AllocSpan
+    \/ Refuse(kind, spanRoom)
 
-\* the store never exhausts its region: only the receive side does
-\* (standard/MESSAGES.md m1.7). Reversed by RefuseExhausts.
-StoreNeverExhausts == ~exhausted
+\* A start the region has no room for, by the fit's decision on the state
+\* before it (exhausted, no descriptor, no chunk or no place), leaves every
+\* field of the store, the descriptor pool and the region exactly as it was
+\* (standard/MESSAGES.md m1.7, rule 2), whatever the start did on the way:
+\* the counter alone moves, by one (design (L)1: each refusal is counted).
+\* Reversed by StartOrder "descfirst" (the descriptor's generation and the
+\* free stack), "chunkfirst" (the chunk's generation and the cursor),
+\* CountQueueFull = FALSE (the counter) and RefuseExhausts (the flag).
+RefuseLeavesLayout ==
+    [][\A k \in Kinds, r \in BOOLEAN :
+          StartStep(k, r) /\ ~FitOK(k, r) =>
+              /\ Layout' = Layout
+              /\ refused' = (refused + 1) % CountMod]_vars
+
+\* No send start exhausts the region: only the receive side does (Exhaust,
+\* standard/MESSAGES.md m1.7). Read on every start step's resulting state.
+\* Reversed by RefuseExhausts.
+StoreNeverExhausts ==
+    [][\A k \in Kinds, r \in BOOLEAN : StartStep(k, r) => exhausted' = exhausted]_vars
 
 \* a live chunk's or descriptor's generation is never 0
 HeldGenerationPositive ==
