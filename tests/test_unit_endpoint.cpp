@@ -2161,8 +2161,10 @@ static void test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait()
 REGISTER_UNIT_TEST( test_endpoint_default_never_times_out_a_heard_stream );
 REGISTER_UNIT_TEST( test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait );
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_back_to_back_over_lossy_array, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_never_allocates_or_reads_a_clock, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
@@ -2171,10 +2173,13 @@ REGISTER_UNIT_TEST( test_endpoint_partial_ack_stall_requests_no_frame );
 REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_unreliable_renumber_at_ticket_wrap_keeps_queue_order, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_message );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
 REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
 
@@ -2206,3 +2211,4 @@ static void test_endpoint_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_endpoint_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_endpoint_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2

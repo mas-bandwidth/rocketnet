@@ -3736,6 +3736,7 @@ REGISTER_UNIT_TEST( test_resend_two_lost_chunks_in_order_one_packet_a_call );
 REGISTER_UNIT_TEST( test_resend_small_and_chunk_due_in_one_update );
 REGISTER_UNIT_TEST( test_resend_refused_first_send_beside_numbers_on_the_wire );
 REGISTER_UNIT_TEST( test_resend_marks_hold_across_window_wrap );
+UNIT_TEST_SKIPPED_UNLESS( test_resend_marks_hold_across_window_wrap, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks );
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_defaults );
 REGISTER_UNIT_TEST( test_ordered_lost_chunk_resent_ahead_of_unsent_chunks_800_kbps );
@@ -3750,24 +3751,35 @@ REGISTER_UNIT_TEST( test_ordered_refused_resends_counted_only_when_sent );
 REGISTER_UNIT_TEST( test_ordered_chunk_timeout_runs_from_its_own_first_send );
 REGISTER_UNIT_TEST( test_ordered_block_paced_past_the_timeout_completes );
 REGISTER_UNIT_TEST( test_small_in_order_exactly_once_under_loss_and_reorder );
+UNIT_TEST_SKIPPED_UNLESS( test_small_in_order_exactly_once_under_loss_and_reorder, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_small_packed_and_resent_until_packet_acked );
+UNIT_TEST_SKIPPED_UNLESS( test_small_packed_and_resent_until_packet_acked, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_large_chunked_one_per_packet_and_delivered_whole );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
+UNIT_TEST_SKIPPED_UNLESS( test_large_between_small_keeps_order, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_one_payload_per_write );
+UNIT_TEST_SKIPPED_UNLESS( test_large_between_small_keeps_order_one_payload_per_write, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_with_refused_packets );
+UNIT_TEST_SKIPPED_UNLESS( test_large_between_small_keeps_order_with_refused_packets, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_reservation_takes_a_packet_that_fits_exactly );
 REGISTER_UNIT_TEST( test_reservation_of_control_and_unordered_records );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
+UNIT_TEST_SKIPPED_UNLESS( test_chunks_placed_by_index_not_arrival, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_no_partial_delivery );
+UNIT_TEST_SKIPPED_UNLESS( test_no_partial_delivery, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_hostile_chunk_count_or_index_kicks );
 REGISTER_UNIT_TEST( test_hostile_reliable_chunks_are_refused );
 REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused );
 REGISTER_UNIT_TEST( test_hostile_small_at_held_ordering_is_refused_sim );
 REGISTER_UNIT_TEST( test_start_pointer_is_the_frame_source );
+UNIT_TEST_SKIPPED_UNLESS( test_start_pointer_is_the_frame_source, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_ordered_no_allocation_after_create );
+UNIT_TEST_SKIPPED_UNLESS( test_ordered_no_allocation_after_create, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_ordered_refused_start_keeps_accepted_messages );
+UNIT_TEST_SKIPPED_UNLESS( test_ordered_refused_start_keeps_accepted_messages, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays_ordered );
+UNIT_TEST_SKIPPED_UNLESS( test_rnchannel_witness_replays_ordered, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 
 // The cases above that take node_config's timeout, rerun opted in at 120000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
@@ -3819,3 +3831,4 @@ static void test_channel_ordered_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_channel_ordered_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_channel_ordered_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2

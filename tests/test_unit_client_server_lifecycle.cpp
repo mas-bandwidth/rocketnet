@@ -1842,6 +1842,10 @@ REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect 
 // Direct retry retains its public reason while the old generation retires,
 // then starts a fresh handshake without an explicit disconnect.
 
+// fewer channels than the server's default: 4 against 32, or one fewer than
+// the build's ROCKETNET_MAX_CHANNELS below 5
+#define LIFECYCLE_MISMATCH_CHANNELS ( ROCKETNET_MAX_CHANNELS < 5 ? ROCKETNET_MAX_CHANNELS - 1 : 4 )
+
 static void test_client_connection_ended_state_kept_until_retry()
 {
     lifecycle_world_t world;
@@ -1858,7 +1862,7 @@ static void test_client_connection_ended_state_kept_until_retry()
 
     rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
-    client_config.num_channels = 4;
+    client_config.num_channels = LIFECYCLE_MISMATCH_CHANNELS;
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     world.num_clients = 1;
 
@@ -1887,7 +1891,7 @@ static void test_client_connection_ended_state_kept_until_retry()
     // a matching server: the next connect runs a fresh handshake
 
     rn_test_server_stop_and_destroy( world.server );
-    server_config.num_channels = 4;
+    server_config.num_channels = LIFECYCLE_MISMATCH_CHANNELS;
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1D02, 300, token );
@@ -1907,6 +1911,7 @@ static void test_client_connection_ended_state_kept_until_retry()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_connection_ended_state_kept_until_retry );
+UNIT_TEST_SKIPPED_UNLESS( test_client_connection_ended_state_kept_until_retry, ROCKETNET_MAX_CHANNELS >= 2 ); // two channel counts that differ
 
 // A token-only expiry owns no transport worker, so a fresh token can retry
 // immediately. Reusing the expired token still reports its expiry.
@@ -2244,6 +2249,7 @@ static void test_message_receive_one_queue_every_type_every_channel()
     rq_check_log( &run, &run.at_client, false );
 }
 REGISTER_UNIT_TEST( test_message_receive_one_queue_every_type_every_channel );
+UNIT_TEST_SKIPPED_UNLESS( test_message_receive_one_queue_every_type_every_channel, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // The receive is pumped: each call fills the caller's batch up to
 // ROCKETNET_RECEIVE_BATCH_MESSAGES and returns true, and what one call does
@@ -3812,6 +3818,7 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+UNIT_TEST_SKIPPED_UNLESS( test_client_reconnect_same_and_other_server_isolates_generations, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 struct lifecycle_pressure_allocator_t
 {
@@ -4433,6 +4440,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack );
+UNIT_TEST_SKIPPED_UNLESS( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // rocketnet_server_client_connection_id: nonzero while a slot holds a
 // connection, 0 when it is free, distinct across slots, and never the same

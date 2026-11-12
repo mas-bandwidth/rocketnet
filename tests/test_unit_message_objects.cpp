@@ -472,7 +472,7 @@ static int g_mo_reliable_timeout_ms = 0;
 static void mo_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
-    config->num_channels = 4;
+    config->num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config->reliable_messages_in_flight = 64;
     config->receive_message_buffer_bytes = 65536;
     config->max_message_bytes = 16384;
@@ -1307,7 +1307,7 @@ static void test_message_release_after_receive_and_in_place_header()
 {
     rocketnet_message_config_t config;
     mo_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.reliable_messages_in_flight = 64;
     config.unreliable_messages_per_update = 64;
     config.packets_per_update = 64;
@@ -1348,7 +1348,7 @@ static void test_message_release_after_receive_and_in_place_header()
         pair.clients[0]->object.config.num_channels = channels[c] + 1;
 
         uint8_t * p = rocketnet_message_client_start( pair.clients[0], channels[c], ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 128 );
-        pair.clients[0]->object.config.num_channels = 4;
+        pair.clients[0]->object.config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
         check( p != NULL );
         check( connection->pending_header == header );
         check( connection->pending_channel == channels[c] );
@@ -1516,7 +1516,9 @@ static void test_receive_cursor_single_then_batch_across_connections()
 }
 
 REGISTER_UNIT_TEST( test_receive_cursor_scalar_layout_and_exact_blocks );
+UNIT_TEST_SKIPPED_UNLESS( test_receive_cursor_scalar_layout_and_exact_blocks, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_receive_cursor_single_then_batch_across_connections );
+UNIT_TEST_SKIPPED_UNLESS( test_receive_cursor_single_then_batch_across_connections, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // ---------------------------------------------------------------------------
 // both shipped types end to end over the pair, both directions, with loss:
@@ -4193,8 +4195,11 @@ static void test_pending_start_cancelled_by_slot_reset()
 }
 
 REGISTER_UNIT_TEST( test_start_finish_pointer_reaches_the_frame );
+UNIT_TEST_SKIPPED_UNLESS( test_start_finish_pointer_reaches_the_frame, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_receive_view_is_the_record );
+UNIT_TEST_SKIPPED_UNLESS( test_receive_view_is_the_record, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_release_returns_room );
+UNIT_TEST_SKIPPED_UNLESS( test_release_returns_room, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // the message object reads no environment (sdk/rocketnet_message_server.cpp:154):
 // the public budget variables are
@@ -5302,19 +5307,27 @@ static void test_message_large_sequenced_on_a_channel_past_zero()
 }
 
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_large_sequenced_finish );
+UNIT_TEST_SKIPPED_UNLESS( test_message_budget_refunded_on_failed_large_sequenced_finish, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_large_sequenced_on_a_channel_past_zero );
+UNIT_TEST_SKIPPED_UNLESS( test_message_large_sequenced_on_a_channel_past_zero, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_in_place_finish );
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_write_pass_finish );
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_unreliable_flush );
 REGISTER_UNIT_TEST( test_message_not_received_ends_the_connection );
+UNIT_TEST_SKIPPED_UNLESS( test_message_not_received_ends_the_connection, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_full_drain_delivers_every_message_once_in_order );
+UNIT_TEST_SKIPPED_UNLESS( test_message_full_drain_delivers_every_message_once_in_order, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 REGISTER_UNIT_TEST( test_ordered_and_unreliable_end_to_end_in_memory );
+UNIT_TEST_SKIPPED_UNLESS( test_ordered_and_unreliable_end_to_end_in_memory, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_server_kicks_exhausted_client_others_unaffected );
+UNIT_TEST_SKIPPED_UNLESS( test_server_kicks_exhausted_client_others_unaffected, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_client_disconnects_itself_on_exhaustion );
 REGISTER_UNIT_TEST( test_slot_reuse_starts_clean );
 REGISTER_UNIT_TEST( test_lazy_slot_reset_nothing_crosses_reuse );
+UNIT_TEST_SKIPPED_UNLESS( test_lazy_slot_reset_nothing_crosses_reuse, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_acks_only_from_transport_acked_packets );
+UNIT_TEST_SKIPPED_UNLESS( test_acks_only_from_transport_acked_packets, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_budget_set_at_create_and_runtime );
 REGISTER_UNIT_TEST( test_send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( test_send_budget_configured_value_honoured );
@@ -5322,8 +5335,11 @@ REGISTER_UNIT_TEST( test_send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( test_set_send_kbps_zero_or_negative_uncaps );
 REGISTER_UNIT_TEST( test_send_budget_message_env_is_not_read );
 REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
+UNIT_TEST_SKIPPED_UNLESS( test_message_objects_no_allocation_after_create, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_rnslots_witness_replays );
+UNIT_TEST_SKIPPED_UNLESS( test_rnslots_witness_replays, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );
+UNIT_TEST_SKIPPED_UNLESS( test_message_objects_client_clock_starts_at_first_update, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_message_send_refused_counts_bad_arguments );
 REGISTER_UNIT_TEST( test_unreliable_store_full_is_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_past_limit_promotes_counted_and_not_wedged );
@@ -5430,6 +5446,7 @@ static void test_message_whole_frame_in_place_send_each_type()
 }
 
 REGISTER_UNIT_TEST( test_message_whole_frame_in_place_send_each_type );
+UNIT_TEST_SKIPPED_UNLESS( test_message_whole_frame_in_place_send_each_type, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 
 // One whole-frame in-place start on the server's slot 0, as above: no frame
 // above 1000 bytes, `reserve` bytes reserved; returns the payload pointer.
@@ -5620,6 +5637,7 @@ static void test_message_whole_frame_in_place_finish_edges()
 }
 
 REGISTER_UNIT_TEST( test_message_whole_frame_in_place_finish_edges );
+UNIT_TEST_SKIPPED_UNLESS( test_message_whole_frame_in_place_finish_edges, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // A reliable message finished shorter than its start reserved is sent and
 // delivered at the finished length: start reserves the most the application
@@ -5685,6 +5703,7 @@ static void test_message_reliable_finished_short_delivers_the_finished_length()
 }
 
 REGISTER_UNIT_TEST( test_message_reliable_finished_short_delivers_the_finished_length );
+UNIT_TEST_SKIPPED_UNLESS( test_message_reliable_finished_short_delivers_the_finished_length, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // An unreliable delivery is on channel 0 (code 0 carries no channel field;
 // sdk/rocketnet.h), whatever channel the send named and whatever the
@@ -5733,6 +5752,7 @@ static void test_message_unreliable_delivery_is_on_channel_zero()
 }
 
 REGISTER_UNIT_TEST( test_message_unreliable_delivery_is_on_channel_zero );
+UNIT_TEST_SKIPPED_UNLESS( test_message_unreliable_delivery_is_on_channel_zero, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 
 // RNOutgoingBuild Seal, its drop branch: records packed in place while the
 // bucket could pay them, and the bucket emptied before the build is sealed
@@ -5814,6 +5834,7 @@ static void test_message_packed_build_dropped_over_budget_at_seal()
 }
 
 REGISTER_UNIT_TEST( test_message_packed_build_dropped_over_budget_at_seal );
+UNIT_TEST_SKIPPED_UNLESS( test_message_packed_build_dropped_over_budget_at_seal, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 // A received view is released once (RNMessageViews Release): releasing the
 // same pointer again is a counted misuse and holds nothing back, whether the
@@ -5896,6 +5917,7 @@ REGISTER_UNIT_TEST( test_message_release_of_a_released_view_is_misuse );
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_is_refused );
+UNIT_TEST_SKIPPED_UNLESS( test_send_room_query_says_no_exactly_when_a_start_is_refused, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 
@@ -5957,6 +5979,7 @@ REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
+UNIT_TEST_SKIPPED_UNLESS( test_previous_connection_ack_dropped_after_reconnect, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
 #endif // #if ROCKETNET_DEV
 
@@ -6159,4 +6182,5 @@ static void test_message_objects_cases_opted_in()
 }
 
 REGISTER_UNIT_TEST( test_message_objects_cases_opted_in );
+UNIT_TEST_SKIPPED_UNLESS( test_message_objects_cases_opted_in, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 #endif // #if ROCKETNET_DEV

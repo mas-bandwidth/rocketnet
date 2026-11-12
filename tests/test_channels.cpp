@@ -1273,7 +1273,7 @@ static void test_channels_allocator_layout()
 
     // odd shapes pad, and the padding is all the region adds to the formula
 
-    config.num_channels = 3;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 3 ? ROCKETNET_MAX_CHANNELS : 3;
     config.unreliable_messages_per_update = 1;
     config.sequenced_messages_held = 1;
     config.max_message_receipts = 17;
@@ -4277,7 +4277,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent, int reliabl
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.num_channels = 4;
+    config.num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     config.reliable_messages_in_flight = (int) W;
     config.receive_message_buffer_bytes = (int) B;
     config.max_message_bytes = (int) ( 3 * F );
@@ -4681,7 +4681,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent, int reliabl
 static void test_channels_window_lossy_soak_product_leg( float loss_percent, int reliable_timeout_ms )
 {
     const int total_messages = 140;
-    const int num_channels = 4;
+    const int num_channels = ROCKETNET_MAX_CHANNELS < 4 ? ROCKETNET_MAX_CHANNELS : 4;
     const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
     rocketnet_message_config_t config;
@@ -5308,6 +5308,26 @@ int rocketnet_channels_test_count()
 const char * rocketnet_channels_test_name( int index )
 {
     return channels_tests[index].name;
+}
+
+// the condition a case fails in this build, or NULL when it runs: the suite
+// leaves it out and prints SKIPPED <case>: <condition> with the skipped count
+// (tests/test.cpp), as UNIT_TEST_SKIPPED_UNLESS does for the unit files
+
+const char * rocketnet_channels_test_skipped_by( int index )
+{
+#if ROCKETNET_MAX_CHANNELS < 32
+    // docs/LOAD.md Table 3 and the sizing text are the region at the library's
+    // 32-channel default: a build with fewer channels has another default
+    if ( strcmp( channels_tests[index].name, "test_channels_allocator_layout" ) == 0 ||
+         strcmp( channels_tests[index].name, "test_channels_allocator_sizing" ) == 0 )
+    {
+        return "ROCKETNET_MAX_CHANNELS >= 32";
+    }
+#else  // #if ROCKETNET_MAX_CHANNELS < 32
+    (void) index;
+#endif // #if ROCKETNET_MAX_CHANNELS < 32
+    return NULL;
 }
 
 // the suite name for a suite name or an alias, or NULL

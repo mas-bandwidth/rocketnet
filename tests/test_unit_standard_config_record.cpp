@@ -214,3 +214,4 @@ static void test_standard_config_record_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_config_record_vectors );
+UNIT_TEST_SKIPPED_UNLESS( test_standard_config_record_vectors, ROCKETNET_MAX_CHANNELS >= 32 ); // m11.config-defaults is the 32-channel default

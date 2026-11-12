@@ -131,6 +131,7 @@ static void test_violation_malformed_ordered_record_moves_its_own_counter()
 }
 
 REGISTER_UNIT_TEST( test_violation_malformed_ordered_record_moves_its_own_counter );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_malformed_ordered_record_moves_its_own_counter, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 
 // A connection whose mask enables RELIABLE_WITH_RECEIPT and not RELIABLE takes
 // wire code 2 (rocketnet_message_enabled_codes), so the reader admits the
@@ -171,6 +172,7 @@ static void test_violation_receipt_only_reliable_connection_takes_its_records()
 }
 
 REGISTER_UNIT_TEST( test_violation_receipt_only_reliable_connection_takes_its_records );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_receipt_only_reliable_connection_takes_its_records, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 #if ROCKETNET_MAX_CHANNELS > 256
 
@@ -377,6 +379,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
 }
 
 REGISTER_UNIT_TEST( test_violation_reader_and_window_checks_move_their_own_counters );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_reader_and_window_checks_move_their_own_counters, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // A message above the receiver's max_message_bytes is a violation on every
 // path (STANDARD.md _Messages_ check 9), not only on the block path (check 7).
@@ -485,6 +488,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
 }
 
 REGISTER_UNIT_TEST( test_violation_single_message_over_max_message_bytes_is_refused );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_single_message_over_max_message_bytes_is_refused, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // Append one code 3 (RELIABLE_ORDERED) record: flags, length 1, number, ring 0,
 // ordering, channel, then its one data byte.
@@ -543,6 +547,7 @@ static void test_violation_two_ordered_records_with_one_ordering_index_get_their
 }
 
 REGISTER_UNIT_TEST( test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // SLOT_COLLISION (check 10) is reachable from the wire: a held record keeps its
 // descriptor live after the receive cursor passes its number, so a later
@@ -583,6 +588,7 @@ static void test_violation_slot_collision_is_reachable_from_the_wire()
 }
 
 REGISTER_UNIT_TEST( test_violation_slot_collision_is_reachable_from_the_wire );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_slot_collision_is_reachable_from_the_wire, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // Finding 7: the three reliable codes refuse the same malformed blocks. The
 // shared shape helper (rn_block_shape_valid) counts the shape breaches as
@@ -678,6 +684,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
 }
 
 REGISTER_UNIT_TEST( test_block_shape_refusals_match_across_reliable_codes );
+UNIT_TEST_SKIPPED_UNLESS( test_block_shape_refusals_match_across_reliable_codes, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // A valid ring span does not make a negative extended first number valid.
 // At connection start, number zero cannot be fragment one of a prior block.
@@ -703,8 +710,11 @@ static void test_block_first_number_underflow_sequenced()
 }
 
 REGISTER_UNIT_TEST( test_block_first_number_underflow_reliable );
+UNIT_TEST_SKIPPED_UNLESS( test_block_first_number_underflow_reliable, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 REGISTER_UNIT_TEST( test_block_first_number_underflow_ordered );
+UNIT_TEST_SKIPPED_UNLESS( test_block_first_number_underflow_ordered, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 REGISTER_UNIT_TEST( test_block_first_number_underflow_sequenced );
+UNIT_TEST_SKIPPED_UNLESS( test_block_first_number_underflow_sequenced, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4
 
 // The enabled-type table (rocketnet_message_enabled_codes, L2.1): types 0 to 4
 // travel as wire codes 0 to 4, and the receipt types 5, 6, 7 as codes 0, 2, 3.
@@ -836,3 +846,4 @@ static void test_violation_every_type_pair_is_taken_or_refused_by_its_wire_code(
 }
 
 REGISTER_UNIT_TEST( test_violation_every_type_pair_is_taken_or_refused_by_its_wire_code );
+UNIT_TEST_SKIPPED_UNLESS( test_violation_every_type_pair_is_taken_or_refused_by_its_wire_code, ROCKETNET_MAX_CHANNELS >= 8 ); // runs at 8 channels, not at 4

@@ -11740,6 +11740,15 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
                 memcpy( &current, (uint8_t *) config + field->offset, sizeof( current ) );
 
                 expected_int = field->min_value != (int64_t) current ? field->min_value : field->min_value + 1;
+                if ( expected_int > field->max_value )
+                {
+                    // one legal value in this build (num_channels when ROCKETNET_MAX_CHANNELS
+                    // is 1): the env carries it, and the field starts one below it, so the
+                    // read back still proves the env was applied
+                    expected_int = field->min_value;
+                    const int start = (int) ( field->min_value - 1 );
+                    memcpy( (uint8_t *) config + field->offset, &start, sizeof( start ) );
+                }
                 rocketnet_check( expected_int <= field->max_value );
 
                 snprintf( value_string, sizeof( value_string ), "%" PRId64, expected_int );
@@ -12082,7 +12091,7 @@ void rocketnet_test_public_config_resolve()
     // NULL is the defaults
 
     rocketnet_check( rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == ROCKETNET_DEFAULT_NUM_CHANNELS && strcmp( client_transport.transport, "auto" ) == 0 );
 
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
     rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) && server_transport.public_address[0] == '\0' );

@@ -440,3 +440,9 @@ REGISTER_UNIT_TEST( test_held_index_finds_entries_past_their_home );
 REGISTER_UNIT_TEST( test_held_index_entry_at_its_home_stays );
 REGISTER_UNIT_TEST( test_held_index_holds_w_minus_one_and_drains_in_order );
 REGISTER_UNIT_TEST( test_held_index_guards_refuse_a_dead_entry_and_a_full_index );
+UNIT_TEST_SKIPPED_UNLESS( test_held_index_guards_refuse_a_dead_entry_and_a_full_index, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
+
+// held_map searches HELD_CHANNELS channels for keys that share a home
+UNIT_TEST_SKIPPED_UNLESS( test_held_index_chain_wraps_past_the_last_cell, ROCKETNET_MAX_CHANNELS >= HELD_CHANNELS );
+UNIT_TEST_SKIPPED_UNLESS( test_held_index_finds_entries_past_their_home, ROCKETNET_MAX_CHANNELS >= HELD_CHANNELS );
+UNIT_TEST_SKIPPED_UNLESS( test_held_index_entry_at_its_home_stays, ROCKETNET_MAX_CHANNELS >= HELD_CHANNELS );

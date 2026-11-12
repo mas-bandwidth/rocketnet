@@ -257,6 +257,7 @@ static void test_reliable_packet_fit_boundary()
 }
 
 REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
+UNIT_TEST_SKIPPED_UNLESS( test_reliable_packet_fit_boundary, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 
 #if ROCKETNET_DEV
 static void test_rnchannel_reliable_witness_replays()

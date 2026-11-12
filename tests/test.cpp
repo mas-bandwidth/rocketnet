@@ -35,6 +35,7 @@ int rocketnet_unit_run_named( const char * name );
 
 int rocketnet_channels_test_count();
 const char * rocketnet_channels_test_name( int index );
+const char * rocketnet_channels_test_skipped_by( int index );
 const char * rocketnet_channels_test_resolve( const char * name );
 int rocketnet_channels_run_named( const char * name );
 void rocketnet_channels_prepare( const char * name, void * ( **malloc_function )( void * context, size_t bytes ), void ( **free_function )( void * context, void * p ) );
@@ -58,8 +59,9 @@ static const char * rocketnet_suite_registered_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
-// The cases the suite runs, in registration order, less the unit-file cases
-// this build cannot run (UNIT_TEST_SKIPPED_UNLESS, tests/test_unit_registry.h):
+// The cases the suite runs, in registration order, less the cases this build
+// cannot run (UNIT_TEST_SKIPPED_UNLESS, tests/test_unit_registry.h, and
+// rocketnet_channels_test_skipped_by, tests/test_channels.cpp):
 // each of those is noted, and the run prints SKIPPED <case>: <condition> and
 // the skipped count, as the functional suite does for its predicates.
 
@@ -70,11 +72,14 @@ static const std::vector<const char *> & rocketnet_suite_cases()
     if ( !collected )
     {
         collected = true;
-        const int built_in = rocketnet_unit_test_count() + rocketnet_channels_test_count();
+        const int units = rocketnet_unit_test_count();
+        const int built_in = units + rocketnet_channels_test_count();
         const int total = built_in + rocketnet_unit_tests_count();
         for ( int i = 0; i < total; i++ )
         {
-            const char * skipped_by = i < built_in ? NULL : rocketnet_unit_file_registry()->tests[i - built_in].skipped_by;
+            const char * skipped_by = i < units      ? NULL
+                                      : i < built_in ? rocketnet_channels_test_skipped_by( i - units )
+                                                     : rocketnet_unit_file_registry()->tests[i - built_in].skipped_by;
             if ( skipped_by )
             {
                 suite_note_skipped( rocketnet_suite_registered_name( i ), skipped_by );

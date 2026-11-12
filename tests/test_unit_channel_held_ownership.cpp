@@ -161,6 +161,7 @@ static void test_sequenced_block_release_spares_a_foreign_hold()
 }
 
 REGISTER_UNIT_TEST( test_sequenced_block_release_spares_a_foreign_hold );
+UNIT_TEST_SKIPPED_UNLESS( test_sequenced_block_release_spares_a_foreign_hold, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // The same claim, then number 1 + W tries to reuse slot 1 with a different
 // ring span whose bytes were never written for it (they stand in for an
@@ -205,6 +206,7 @@ static void test_sequenced_block_release_never_delivers_stale_ring_bytes()
 }
 
 REGISTER_UNIT_TEST( test_sequenced_block_release_never_delivers_stale_ring_bytes );
+UNIT_TEST_SKIPPED_UNLESS( test_sequenced_block_release_never_delivers_stale_ring_bytes, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // The drain's identity check alone: a held entry's descriptor is freed by
 // hand (an invariant broken from outside the code path above) and its slot
@@ -254,6 +256,7 @@ static void test_held_entry_with_a_reused_descriptor_is_refused()
 }
 
 REGISTER_UNIT_TEST( test_held_entry_with_a_reused_descriptor_is_refused );
+UNIT_TEST_SKIPPED_UNLESS( test_held_entry_with_a_reused_descriptor_is_refused, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // Each round claims one held code-3 number (a distinct (channel, ordering)
 // key on channels 1 to 31) inside a cancelled channel-0 block. The held index
@@ -314,6 +317,7 @@ static void test_held_index_stays_within_the_window()
 }
 
 REGISTER_UNIT_TEST( test_held_index_stays_within_the_window );
+UNIT_TEST_SKIPPED_UNLESS( test_held_index_stays_within_the_window, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // The erase's own bound: an index filled by hand to all 2W cells (an
 // invariant broken from outside; the code's W bound keeps it from filling).
@@ -360,6 +364,7 @@ static void test_held_erase_ends_on_a_full_index()
 }
 
 REGISTER_UNIT_TEST( test_held_erase_ends_on_a_full_index );
+UNIT_TEST_SKIPPED_UNLESS( test_held_erase_ends_on_a_full_index, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // The W + 1st refusal, reached by hand: the held index is filled with W entries
 // (the bound the 2W cells are sized for) and held_count says so. A code-3
@@ -401,6 +406,7 @@ static void test_held_insert_refuses_the_window_plus_first_entry()
 }
 
 REGISTER_UNIT_TEST( test_held_insert_refuses_the_window_plus_first_entry );
+UNIT_TEST_SKIPPED_UNLESS( test_held_insert_refuses_the_window_plus_first_entry, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // in-turn code-3 messages on a channel from ordering `from` up to `to`, each one its own number
 
@@ -489,6 +495,7 @@ static void test_held_erase_shifts_back_across_the_wrap()
 }
 
 REGISTER_UNIT_TEST( test_held_erase_shifts_back_across_the_wrap );
+UNIT_TEST_SKIPPED_UNLESS( test_held_erase_shifts_back_across_the_wrap, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels
 
 // A multi-fragment code-4 block superseded in the future slot: its first
 // fragment (number 1) is released when a newer future message supersedes
@@ -562,3 +569,4 @@ static void test_sequenced_orphan_fragment_after_supersede_is_stale()
 }
 
 REGISTER_UNIT_TEST( test_sequenced_orphan_fragment_after_supersede_is_stale );
+UNIT_TEST_SKIPPED_UNLESS( test_sequenced_orphan_fragment_after_supersede_is_stale, ROCKETNET_MAX_CHANNELS >= 32 ); // ho_init: its fixed keys share homes among 32 channels

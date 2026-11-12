@@ -1698,8 +1698,11 @@ static void test_server_send_capacity_spare_slots_keep_in_place()
 
 REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_two_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_two_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
+UNIT_TEST_SKIPPED_UNLESS( test_server_send_cap_one_three_clients, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 #endif // #if ROCKETNET_DEV
 
 // The configuration test_server_send_capacity_default_covers_clients creates: the
