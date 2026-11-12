@@ -2585,6 +2585,11 @@ static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const ch
     rocketnet_warn( "%s refused (%s). msgx pump pauses %g seconds", which, strerror( error ), ROCKETNET_MSGX_RETRY_SECONDS );
 }
 
+// set once, when sendmsg_x refused a destination per message on this host;
+// never cleared: from then on unconnected sockets send per packet (below)
+
+static int rocketnet_msgx_send_names_refused = 0;
+
 // errnos a routine bad destination or a full buffer also produces on the
 // per-packet path: these never pause the pump, or one forged source port
 // would be a kill switch for it
@@ -2602,7 +2607,8 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
     rocketnet_assert( sends || num_packets == 0 );
 
     int base = 0;
-    while ( base < num_packets && rocketnet_msgx_active( socket ) )
+    while ( base < num_packets && ( socket->connected || !__atomic_load_n( &rocketnet_msgx_send_names_refused, __ATOMIC_RELAXED ) ) &&
+            rocketnet_msgx_active( socket ) )
     {
         sockaddr_storage addresses[ROCKETNET_MSGX_BATCH];
         struct iovec iov[ROCKETNET_MSGX_BATCH];
@@ -2677,6 +2683,32 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             const int error = errno;
 
+            const uint64_t replay_failures_before = rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
+            for ( int i = offset; i < count; i++ )
+            {
+                const rocketnet_platform_send_t * send = &sends[map[i]];
+                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
+            }
+
+            // EINVAL on an unconnected socket whose every destination the
+            // replay then sent: sendmsg_x refuses a destination per message
+            // (xnu before it took msg_name). Final for the process: sends of
+            // unconnected sockets go per packet from here, receives stay
+            // batched, one line says so, and nothing was dropped, so no
+            // send failure is counted. A refused destination fails its replay
+            // too and takes the pause below like any other refusal.
+
+            if ( error == EINVAL && !socket->connected &&
+                 rocketnet_platform_atomic_load_u64( &socket->send_replay_failures ) == replay_failures_before )
+            {
+                if ( !__atomic_exchange_n( &rocketnet_msgx_send_names_refused, 1, __ATOMIC_RELAXED ) )
+                {
+                    rocketnet_warn( "sendmsg_x refuses a destination per message on this macOS. unconnected sockets send per packet for the life of the process; receives stay batched" );
+                }
+                offset = count;
+                break;
+            }
+
             if ( result == 0 && error == 0 )
             {
                 rocketnet_debug( "sendmsg_x accepted nothing. chunk finishes per-packet" );
@@ -2691,12 +2723,6 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             }
 
             rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, error );
-
-            for ( int i = offset; i < count; i++ )
-            {
-                const rocketnet_platform_send_t * send = &sends[map[i]];
-                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
-            }
 
             offset = count;
         }
@@ -2746,6 +2772,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
         struct iovec iov[ROCKETNET_MSGX_BATCH][2];
         struct rocketnet_msghdr_x_t msg[ROCKETNET_MSGX_BATCH];
         memset( msg, 0, sizeof( msg ) );
+
+        // a message the kernel returns without a name parses as family zero,
+        // a refused source, never as bytes an earlier chunk left here
+
+        memset( addresses, 0, sizeof( addresses ) );
 
         for ( int i = 0; i < want; i++ )
         {
@@ -3505,6 +3536,11 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 #include <mswsock.h>
 #include <stdlib.h>
 
+// Windows builds are x64 or ARM64 only, in every configuration: RIO packs a
+// request context's kind and phase in the top bits of a pointer, and the
+// 64-bit atomics read with one plain load
+static_assert( sizeof( void * ) == 8, "rocketnet on Windows needs a 64-bit build (x64 or ARM64)" );
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static_assert( sizeof( uintptr_t ) == 8 && ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2 &&
                    ATOMIC_INT_LOCK_FREE == 2,
@@ -3957,10 +3993,16 @@ static DWORD WINAPI thread_function_shim( void * data )
     return 0;
 }
 
+// 0, or the Win32 error CreateThread refused with (1 when it gives none)
 static int rocketnet_platform_real_thread_start( rocketnet_platform_thread_t * thread, void * record )
 {
     thread->handle = CreateThread( NULL, 0, thread_function_shim, record, 0, NULL );
-    return thread->handle != NULL ? 0 : 1;
+    if ( thread->handle != NULL )
+    {
+        return 0;
+    }
+    const DWORD error = GetLastError();
+    return error != 0 ? (int) error : 1;
 }
 
 static HANDLE rocketnet_platform_sleep_timer_create();
@@ -4011,8 +4053,10 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-    if ( ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record ) != 0 )
+    const int start_error = ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record );
+    if ( start_error != 0 )
     {
+        rocketnet_platform_windows_create_status( status, (unsigned long) start_error );
         rocketnet_platform_thread_sleep_timer_close( thread );
         rocketnet_free( context, thread );
         return NULL;
@@ -4309,6 +4353,22 @@ bool rocketnet_platform_receive_status_is_reset( int status )
     }
 }
 
+void rocketnet_platform_windows_create_status( int * status, unsigned long error )
+{
+    switch ( error )
+    {
+        case ERROR_NOT_ENOUGH_MEMORY:
+        case ERROR_OUTOFMEMORY:
+        case ERROR_COMMITMENT_LIMIT:
+        case ERROR_NO_SYSTEM_RESOURCES:
+        case WSAENOBUFS:
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            break;
+        default:
+            break;
+    }
+}
+
 void rocketnet_platform_count_receive_reset()
 {
     InterlockedIncrement64( &rocketnet_platform_receive_reset_count );
@@ -4375,6 +4435,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
 
     if ( s->handle == INVALID_SOCKET )
     {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         rocketnet_error( "failed to create socket" );
         rocketnet_free( context, s );
         return NULL;
@@ -4822,6 +4883,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         wake->read_event = WSACreateEvent();
         if ( wake->read_event == WSA_INVALID_EVENT )
         {
+            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
             rocketnet_free( context, wake );
             return NULL;
         }
@@ -4851,6 +4913,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // manual-reset behavior.
 
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
+    if ( wake->wake_event == NULL )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event )
     {

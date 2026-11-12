@@ -745,7 +745,7 @@ bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio )
 }
 
 // proofs/tla/RNRioWorker.tla Destroy: the registered region is freed only after stopped.
-// RIOCloseCompletionQueue, RIODeregisterBuffer and VirtualFree once every request
+// RIOCloseCompletionQueue, RIODeregisterBuffer and rocketnet_free once every request
 // is accounted for, then the transport itself is freed and nothing of it runs again.
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 {
@@ -1112,7 +1112,15 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     }
     rio->wake = CreateEventW( NULL, FALSE, FALSE, NULL );
+    if ( !rio->wake )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+    }
     rio->notify = CreateEventW( NULL, FALSE, FALSE, NULL );
+    if ( !rio->notify )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->wake )
     {
@@ -1144,14 +1152,17 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         rio->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) rio->socket, "rio socket" );
     }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( rio->socket == INVALID_SOCKET
+    if ( rio->socket == INVALID_SOCKET )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        goto failed;
+    }
 #if ROCKETNET_DEV
-         || fail_stage == 1
-#endif // #if ROCKETNET_DEV
-    )
+    if ( fail_stage == 1 )
     {
         goto failed;
     }
+#endif // #if ROCKETNET_DEV
     if ( setsockopt( rio->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         goto failed;
@@ -1228,6 +1239,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     }
     memset( rio->region, 0, (size_t) rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
+    if ( rio->buffer_id == RIO_INVALID_BUFFERID )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )
     {
@@ -1246,6 +1261,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // both completion queues notify the worker's one event after RIONotify
 
     rio->send_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->send_frames, &notification );
+    if ( rio->send_cq == RIO_INVALID_CQ )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq != RIO_INVALID_CQ )
     {
@@ -1257,6 +1276,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     }
     rio->receive_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->receives, &notification );
+    if ( rio->receive_cq == RIO_INVALID_CQ )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->receive_cq != RIO_INVALID_CQ )
     {
@@ -1276,6 +1299,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, (ULONG) rio->receives, 1, (ULONG) rio->send_frames, 1,
                                                          rio->receive_cq, rio->send_cq, NULL );
+    if ( rio->request_queue == RIO_INVALID_RQ )
+    {
+        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+    }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->request_queue != RIO_INVALID_RQ )
     {
@@ -1297,6 +1324,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     {
         if ( !rocketnet_rio_post_receive( rio, i ) )
         {
+            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
             goto failed;
         }
 #if ROCKETNET_DEV
@@ -1609,10 +1637,16 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         {
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
         }
+        else if ( bank->num_packets >= bank->capacity )
+        {
+            // the dequeue takes at most the bank's room, so this cannot
+            // happen; if it ever does, the datagram is counted and dropped,
+            // never written past the bank
+            rocketnet_assert( bank->num_packets < bank->capacity );
+            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );
+        }
         else
         {
-            rocketnet_assert( bank->num_packets < bank->capacity );     // the dequeue takes at most the bank's room
-
             const int index = bank->num_packets++;
             bank->from[index] = from;
             bank->packet_bytes[index] = bytes;

@@ -370,6 +370,16 @@ static void test_client_iocp_destroy_drains_posted_receives()
     rocketnet_unit_check( rocketnet_client_iocp_close( &test_iocp, 3, 1.0 ) );
     rocketnet_unit_check( test_iocp.num_posted == 0 );
     rocketnet_unit_check( fake_iocp.posts == 4 );
+
+    // the bound counts stalled dequeues only, as RIO's drain does: four aborts
+    // arriving one per dequeue drain under a bound of two, in four dequeues,
+    // and nothing is leaked although every completion was on its way
+
+    test_iocp_create();
+    fake_iocp.aborts_per_dequeue = 1;
+    rocketnet_unit_check( rocketnet_client_iocp_close( &test_iocp, 2, 1.0 ) );
+    rocketnet_unit_check( test_iocp.num_posted == 0 );
+    rocketnet_unit_check( fake_iocp.dequeues == 4 );
 }
 
 REGISTER_UNIT_TEST( test_client_iocp_receive_completes_into_slots );
