@@ -48,12 +48,22 @@
 #include "rocketnet_message.h"
 #include "rocketnet_send_budget.h"
 
+#include "../portable_crt.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <vector>
+
+// A switch in the environment is on when it is set (to a value of under 64
+// bytes); through rocketnet_test_getenv, since MSVC refuses getenv (C4996).
+static bool fz_env_set( const char * name )
+{
+    char value[64];
+    return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+}
 
 static void fz_require( bool condition, const char * property )
 {
@@ -401,7 +411,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     static fz_side_t sides_a[4];
     static fz_side_t sides_b[4];
     static bool made[4];
-    static const bool fresh = getenv( "FZ_EP_FRESH" ) != NULL;
+    static const bool fresh = fz_env_set( "FZ_EP_FRESH" );
 
     const int selector = fz_u8( &r ) % 4;
     if ( fresh || !made[selector] )
@@ -607,7 +617,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     const int n = rn_endpoint_take_receipts( &s->b->endpoint, receipts, 64 );
     fz_require( n >= 0 && n <= 64, "receipts are within the capacity" );
 
-    static const bool debug = getenv( "FZ_EP_DEBUG" ) != NULL;
+    static const bool debug = fz_env_set( "FZ_EP_DEBUG" );
     if ( debug )
     {
         int delivered = 0;
