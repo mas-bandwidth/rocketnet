@@ -120,6 +120,13 @@ struct node_t
     int violations;
 };
 
+// The reliable timeout node_config gives: 0, the shipped default (no reliable
+// timeout; probe pacing and the round-trip filter on), so every case states
+// its property under the shipped rule; test_channel_ordered_cases_opted_in
+// reruns the cases at 120000, the opted-in rule (every due number resent, as
+// in v1.0).
+static int g_node_reliable_timeout_ms = 0;
+
 static void node_config( rocketnet_message_config_t * config, int window, int ring, int max_message, int store )
 {
     rocketnet_message_default_config( config );
@@ -130,7 +137,7 @@ static void node_config( rocketnet_message_config_t * config, int window, int ri
     config->message_resend_delay_min_ms = 20;
     config->message_resend_delay_initial_ms = 100;
     config->message_resend_delay_max_ms = 400;
-    config->reliable_message_timeout_ms = 120000;
+    config->reliable_message_timeout_ms = g_node_reliable_timeout_ms;
 }
 
 static void node_setup( node_t * node, const rocketnet_message_config_t * config, int max_packets, bool budgeted = false, uint32_t kbps = 10000 )
@@ -1863,6 +1870,7 @@ static void test_start_pointer_is_the_frame_source()
 {
     rocketnet_message_config_t config;
     node_config( &config, 1024, 262144, 262144, 800000 );
+    config.reliable_message_timeout_ms = 120000;        // opted in: the 3 s with no ack below would hold every chunk but U (probe pacing)
 
     node_t * a = node_new( &config, 8 );
     node_t * b = node_new( &config, 8 );
@@ -3650,3 +3658,54 @@ REGISTER_UNIT_TEST( test_start_pointer_is_the_frame_source );
 REGISTER_UNIT_TEST( test_ordered_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_ordered_refused_start_keeps_accepted_messages );
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays_ordered );
+
+// The cases above that take node_config's timeout, rerun opted in at 120000
+// (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
+// process. The registered cases run them at the default. The cases that set
+// their own timeout (test_ordered_block_paced_past_the_timeout_completes,
+// test_ordered_chunk_timeout_runs_from_its_own_first_send,
+// test_ordered_lost_chunk_resent_ahead_of_unsent_chunks,
+// test_start_pointer_is_the_frame_source) run the same either way.
+static void test_channel_ordered_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_resend_refused_mark_is_retried_first,
+        test_resend_refused_only_number_on_the_wire,
+        test_resend_ack_of_the_mark,
+        test_resend_two_lost_chunks_in_order_one_packet_a_call,
+        test_resend_small_and_chunk_due_in_one_update,
+        test_resend_refused_first_send_beside_numbers_on_the_wire,
+        test_resend_marks_hold_across_window_wrap,
+        test_ordered_record_sent_at_zero_waits_for_its_resend,
+        test_ordered_record_sent_at_1000_waits_for_its_resend,
+        test_ordered_failed_send_at_zero_is_due_next_update,
+        test_ordered_refused_first_send_starts_no_clock,
+        test_ordered_failed_resend_counted_once,
+        test_ordered_refused_resend_acked_before_retry_not_counted,
+        test_ordered_refused_resends_counted_only_when_sent,
+        test_small_in_order_exactly_once_under_loss_and_reorder,
+        test_small_packed_and_resent_until_packet_acked,
+        test_large_chunked_one_per_packet_and_delivered_whole,
+        test_large_between_small_keeps_order,
+        test_large_between_small_keeps_order_one_payload_per_write,
+        test_large_between_small_keeps_order_with_refused_packets,
+        test_reservation_counts_the_held_run_past_2_to_the_24,
+        test_chunks_placed_by_index_not_arrival,
+        test_no_partial_delivery,
+        test_hostile_chunk_count_or_index_kicks,
+        test_hostile_reliable_chunks_are_refused,
+        test_hostile_small_at_held_ordering_is_refused,
+        test_hostile_small_at_held_ordering_is_refused_sim,
+        test_ordered_no_allocation_after_create,
+        test_ordered_refused_start_keeps_accepted_messages,
+        test_rnchannel_witness_replays_ordered,
+    };
+    g_node_reliable_timeout_ms = 120000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_node_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_channel_ordered_cases_opted_in );

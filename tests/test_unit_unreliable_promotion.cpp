@@ -263,6 +263,12 @@ struct boundary_received_t
     int channel;
     std::vector<uint8_t> data;
 };
+// The reliable timeout boundary_config gives: 0, the shipped default (no
+// reliable timeout; probe pacing and the round-trip filter on);
+// test_unreliable_promotion_every_mode_opted_in reruns the case at 120000,
+// the opted-in rule (every due number resent, as in v1.0).
+static int g_promotion_reliable_timeout_ms = 0;
+
 static void boundary_config( rocketnet_message_config_t * c )
 {
     rocketnet_message_default_config( c );
@@ -278,7 +284,7 @@ static void boundary_config( rocketnet_message_config_t * c )
     c->message_resend_delay_initial_ms = 100;
     c->message_resend_delay_min_ms = 20;
     c->message_resend_delay_max_ms = 400;
-    c->reliable_message_timeout_ms = 120000;
+    c->reliable_message_timeout_ms = g_promotion_reliable_timeout_ms;
 }
 
 // The default configuration's maximum message is above the u16 record length (65535),
@@ -697,3 +703,12 @@ static void test_unreliable_promotion_every_mode()
 }
 
 REGISTER_UNIT_TEST( test_unreliable_promotion_every_mode );
+
+static void test_unreliable_promotion_every_mode_opted_in()
+{
+    g_promotion_reliable_timeout_ms = 120000;
+    test_unreliable_promotion_every_mode();
+    g_promotion_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_unreliable_promotion_every_mode_opted_in );

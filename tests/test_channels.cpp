@@ -4266,7 +4266,7 @@ static void channels_lossy_soak_send_wire_packet( rocketnet_network_simulator_t 
     rocketnet_network_simulator_send( wire, from, to, frame, 8 + payload_bytes, now );
 }
 
-static void test_channels_window_lossy_soak_leg( float loss_percent )
+static void test_channels_window_lossy_soak_leg( float loss_percent, int reliable_timeout_ms )
 {
     const uint32_t W = 64;
     const uint32_t P = 64;                          // at least W (the sent-map rule of 14)
@@ -4287,7 +4287,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
     config.message_resend_delay_min_ms = 20;
     config.message_resend_delay_initial_ms = 50;
     config.message_resend_delay_max_ms = 400;
-    config.reliable_message_timeout_ms = 60000;
+    config.reliable_message_timeout_ms = reliable_timeout_ms;
 
     // the product walk resends a block from its contiguous span, so the
     // sender's span reserve (sized from the send rate and resend delay) must
@@ -4678,7 +4678,7 @@ static void test_channels_window_lossy_soak_leg( float loss_percent )
 // transport ack ids fed to rn_ordered_acks. rn_window_ack_resend is not called
 // here: this leg goes red when the product's walk stops resending a sent number.
 
-static void test_channels_window_lossy_soak_product_leg( float loss_percent )
+static void test_channels_window_lossy_soak_product_leg( float loss_percent, int reliable_timeout_ms )
 {
     const int total_messages = 140;
     const int num_channels = 4;
@@ -4696,7 +4696,7 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     config.message_resend_delay_min_ms = 20;
     config.message_resend_delay_initial_ms = 50;
     config.message_resend_delay_max_ms = 400;
-    config.reliable_message_timeout_ms = 60000;
+    config.reliable_message_timeout_ms = reliable_timeout_ms;
 
     rocketnet_counters_t counters[2];
     memset( counters, 0, sizeof( counters ) );
@@ -4902,14 +4902,27 @@ static void test_channels_window_lossy_soak_product_leg( float loss_percent )
     rn_arena_destroy( arenas[1] );
 }
 
+// At the default reliable timeout (0: probe pacing and the round-trip filter
+// on), the shipped rule.
 static void test_channels_window_lossy_soak()
 {
-    test_channels_window_lossy_soak_leg( 0.0f );
-    test_channels_window_lossy_soak_leg( 10.0f );
-    test_channels_window_lossy_soak_leg( 50.0f );
-    test_channels_window_lossy_soak_product_leg( 0.0f );
-    test_channels_window_lossy_soak_product_leg( 10.0f );
-    test_channels_window_lossy_soak_product_leg( 50.0f );
+    test_channels_window_lossy_soak_leg( 0.0f, 0 );
+    test_channels_window_lossy_soak_leg( 10.0f, 0 );
+    test_channels_window_lossy_soak_leg( 50.0f, 0 );
+    test_channels_window_lossy_soak_product_leg( 0.0f, 0 );
+    test_channels_window_lossy_soak_product_leg( 10.0f, 0 );
+    test_channels_window_lossy_soak_product_leg( 50.0f, 0 );
+}
+
+// Opted in at 60000 (no probe pacing, no round-trip filter: the v1.0 resend rule).
+static void test_channels_window_lossy_soak_opted_in()
+{
+    test_channels_window_lossy_soak_leg( 0.0f, 60000 );
+    test_channels_window_lossy_soak_leg( 10.0f, 60000 );
+    test_channels_window_lossy_soak_leg( 50.0f, 60000 );
+    test_channels_window_lossy_soak_product_leg( 0.0f, 60000 );
+    test_channels_window_lossy_soak_product_leg( 10.0f, 60000 );
+    test_channels_window_lossy_soak_product_leg( 50.0f, 60000 );
 }
 
 // -----------------------------------------
@@ -5280,6 +5293,7 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_window_failed_send_marks_due_now", "ChannelsWindowFailedSendMarksDueNow", test_channels_window_failed_send_marks_due_now },
     { "test_channels_window_reliable_timeout_enters_the_error_state", "ChannelsWindowReliableTimeoutEntersTheErrorState", test_channels_window_reliable_timeout_enters_the_error_state },
     { "test_channels_window_lossy_soak", "ChannelsWindowLossySoak", test_channels_window_lossy_soak },
+    { "test_channels_window_lossy_soak_opted_in", "ChannelsWindowLossySoakOptedIn", test_channels_window_lossy_soak_opted_in },
     { "test_channels_window_witness_u_prime_holds_at_a_partial_block", "ChannelsWindowWitnessUPrimeHoldsAtAPartialBlock", test_channels_window_witness_u_prime_holds_at_a_partial_block },
     { "test_channels_window_witness_reply_opens_next_update", "ChannelsWindowWitnessReplyOpensNextUpdate", test_channels_window_witness_reply_opens_next_update },
     { "test_channels_window_witness_floor_is_u_prime", "ChannelsWindowWitnessFloorIsUPrime", test_channels_window_witness_floor_is_u_prime },
