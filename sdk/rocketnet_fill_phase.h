@@ -146,4 +146,4 @@ static inline void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t 
 
 #endif // #if ROCKETNET_ASSERTS
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_FILL_PHASE_H
+#endif // ROCKETNET_SDK_ROCKETNET_FILL_PHASE_H
