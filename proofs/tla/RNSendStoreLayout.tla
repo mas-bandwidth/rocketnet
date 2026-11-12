@@ -48,7 +48,11 @@
 (* counts the refusal.  refused is the region's refusal counters summed    *)
 (* (MESSAGE_SEND_QUEUE_FULL, MESSAGE_SEND_STORE_FULL, and                  *)
 (* MESSAGE_MEMORY_EXHAUSTED for a start on an exhausted region), modulo    *)
-(* CountMod as the code's uint64_t counters wrap.  StartOrder writes the   *)
+(* CountMod as the code's uint64_t counters wrap; the ghost calls counts   *)
+(* the application's starts the same way, so that a start is a step even  *)
+(* when it changes nothing else (a refusal left uncounted would otherwise  *)
+(* be a stutter, which no [][...]_vars property sees).  CountMod = 1 drops *)
+(* both counters (the layout-only runs).  StartOrder writes the            *)
 (* two orders the code does not have, each a take before the room is      *)
 (* known and the undo a programmer would write with the region's own      *)
 (* functions: "descfirst" takes the descriptor (rn_region_descriptor_take) *)
@@ -89,7 +93,7 @@ CONSTANTS
 
 ASSUME N \in Nat \ {0} /\ Q \in Nat \ {0} /\ GenMod \in Nat /\ GenMod >= 3
 ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot, CountQueueFull, RefuseExhausts} : f \in BOOLEAN
-ASSUME StartOrder \in {"fit", "descfirst", "chunkfirst"} /\ CountMod \in Nat /\ CountMod >= 2
+ASSUME StartOrder \in {"fit", "descfirst", "chunkfirst"} /\ CountMod \in Nat \ {0}
 
 Chunks == 0..(N - 1)
 Descs == 0..(Q - 1)
@@ -109,11 +113,12 @@ VARIABLES
     dFresh,         \* descriptors_fresh
     exhausted,      \* the region's sticky exhausted flag
     refused,        \* the region's refusal counters, summed, modulo CountMod
+    calls,          \* ghost: the application's send starts, modulo CountMod
     touchedPast,    \* ghost: meta at or past fresh, or a descriptor at or past dFresh, read or written
     takenTwice,     \* ghost: a take handed out a chunk or a descriptor that was live
     badRefusal      \* ghost: the store refused while a chunk was free
 
-vars == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, refused, touchedPast, takenTwice, badRefusal>>
+vars == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal>>
 
 \* everything of the region a start may touch, the refusal counter aside
 Layout == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>
@@ -175,6 +180,7 @@ Init ==
     /\ dFresh = 0
     /\ exhausted = FALSE
     /\ refused = 0
+    /\ calls = 0
     /\ touchedPast = FALSE
     /\ takenTwice = FALSE
     /\ badRefusal = FALSE
@@ -203,6 +209,7 @@ Alloc ==
           /\ DTakeSteps(i)
           /\ touchedPast' = (touchedPast \/ ScanTouchesPast \/ DTakeTouchesPast)
           /\ takenTwice' = (takenTwice \/ i \notin FreeChunks \/ DTakeTwice)
+    /\ calls' = (calls + 1) % CountMod
     /\ UNCHANGED <<exhausted, refused, badRefusal>>
 
 \* rn_region_send_alloc_span with room: rn_region_send_fit_span's checks
@@ -213,6 +220,7 @@ AllocSpan ==
     /\ DTakeSteps(NONE)
     /\ touchedPast' = (touchedPast \/ DTakeTouchesPast)
     /\ takenTwice' = (takenTwice \/ DTakeTwice)
+    /\ calls' = (calls + 1) % CountMod
     /\ UNCHANGED <<meta, freeHead, freeCount, fresh, exhausted, refused, badRefusal>>
 
 \* rn_region_send_refuse: the refusal counted under its fit result. A
@@ -271,6 +279,7 @@ Refuse(kind, spanRoom) ==
             /\ touchedPast' = (touchedPast \/ (~exhausted /\ dFree > 0 /\ kind = "store" /\ ScanTouchesPast))
             /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
     /\ CountRefusal(~exhausted /\ dFree = 0)
+    /\ calls' = (calls + 1) % CountMod
 
 \* rn_region_send_free: rn_send_store_free_checked of the descriptor's chunk,
 \* then rn_region_descriptor_release pushes the descriptor
@@ -287,7 +296,7 @@ Free(d) ==
     /\ dTop' = dTop + 1
     /\ dFree' = dFree + 1
     /\ touchedPast' = (touchedPast \/ dTop >= dFresh)
-    /\ UNCHANGED <<fresh, dFresh, exhausted, refused, takenTwice, badRefusal>>
+    /\ UNCHANGED <<fresh, dFresh, exhausted, refused, calls, takenTwice, badRefusal>>
 
 \* rn_region_carve (rn_send_store_init_counts for the class): both pools
 \* empty and both watermarks at zero; modeled meta/descriptor fields unchanged.
@@ -301,7 +310,7 @@ Carve ==
     /\ dFree' = Q
     /\ dFresh' = 0
     /\ exhausted' = FALSE
-    /\ UNCHANGED <<meta, desc, refused, touchedPast, takenTwice, badRefusal>>
+    /\ UNCHANGED <<meta, desc, refused, calls, touchedPast, takenTwice, badRefusal>>
 
 \* rn_region_exhaust, from the receive side (a delivery with no room, a
 \* broken invariant of the receiver; RNConnectionMemory.tla Exhaust): the
@@ -311,7 +320,7 @@ Exhaust ==
     /\ ~exhausted
     /\ exhausted' = TRUE
     /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, refused,
-                   touchedPast, takenTwice, badRefusal>>
+                   calls, touchedPast, takenTwice, badRefusal>>
 
 Next ==
     \/ Alloc
@@ -335,7 +344,7 @@ View ==
        [ d \in Descs |-> IF d < dFresh
                          THEN [ desc[d] EXCEPT !.slot = IF d < dTop THEN @ ELSE 0 ]
                          ELSE "dead" ],
-       dTop, dFree, dFresh, exhausted, refused, touchedPast, takenTwice, badRefusal >>
+       dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal >>
 
 ----------------------------------------------------------------------------
 
@@ -349,7 +358,7 @@ TypeOK ==
     /\ dFree \in 0..Q
     /\ dFresh \in 0..Q
     /\ exhausted \in BOOLEAN
-    /\ refused \in 0..(CountMod - 1)
+    /\ refused \in 0..(CountMod - 1) /\ calls \in 0..(CountMod - 1)
     /\ touchedPast \in BOOLEAN /\ takenTwice \in BOOLEAN /\ badRefusal \in BOOLEAN
 
 LiveDescs == { d \in 0..(dFresh - 1) : desc[d].inUse }
