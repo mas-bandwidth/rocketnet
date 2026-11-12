@@ -2752,6 +2752,45 @@ jobs:
   # Explicit system-sodium integration mode against a content-verified
   # 1.0.20 reference. Ordinary jobs use the pinned two-file vendor. Keeping
   # this older backend checks interoperability across supported deployments.
+  # The bundled pair's AArch64 code (sodium/local/arm64.c.in) on every commit,
+  # in the two builds the macOS unit row does not give it: Release, the code
+  # as it ships, and asan + ubsan, its tails and buffers under the
+  # sanitizers. Only the two sodium tests are built, so each row pays one
+  # compile of the pair (sodium/ARM64-CONSTANT-TIME.md, "Checks").
+  sodium-arm64:
+    name: sodium arm64 (${{ matrix.leg }})
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: Release
+            build_type: Release
+            flags: ''
+          - leg: asan + ubsan
+            build_type: RelWithDebInfo
+            flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
+
+      - name: Configure
+        run: >
+          cmake -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DCMAKE_C_FLAGS="${{ matrix.flags }}"
+          -DCMAKE_CXX_FLAGS="${{ matrix.flags }}"
+
+      - name: Build the sodium tests
+        run: cmake --build build --target test_sodium test_sodium_dispatch --parallel
+
+      - name: Run the sodium tests
+        run: |
+          ./bin/test_sodium
+          ./bin/test_sodium_dispatch
+
   sodium-pinned:
     name: pinned libsodium (built from source)
     # nightly tier

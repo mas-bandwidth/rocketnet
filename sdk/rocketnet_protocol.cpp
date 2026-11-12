@@ -157,6 +157,21 @@ static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
     rocketnet_write_uint64( &p, sequence );
 }
 
+#if ROCKETNET_ASSERTS
+
+// The AEAD takes its input and output exactly in place or apart, never
+// partly overlapping (the bundled pair's dispatch.h.in; libsodium promises
+// no more): input [a, a + a_bytes), output [b, b + b_bytes).
+
+static bool rocketnet_aead_buffers_in_place_or_apart( const uint8_t * a, size_t a_bytes, const uint8_t * b, size_t b_bytes )
+{
+    const uintptr_t x = (uintptr_t) a;
+    const uintptr_t y = (uintptr_t) b;
+    return x == y || x + a_bytes <= y || y + b_bytes <= x;
+}
+
+#endif // #if ROCKETNET_ASSERTS
+
 // The in-place twin of rocketnet_write_sealed_packet for the payload type
 // only: the payload is ALREADY at wire_start + 10 + the 7-byte minimum ack
 // block, written there by the game through the acquire/commit surface, and
@@ -220,6 +235,8 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
 
     ROCKETNET_CRYPTO_TALLY( aead_seal );
     unsigned long long sealed_bytes = 0;
+    rocketnet_assert( rocketnet_aead_buffers_in_place_or_apart( p, (size_t) ( ack_block_bytes + payload_bytes ), p,
+                                                                (size_t) ( ack_block_bytes + payload_bytes ) + ROCKETNET_PACKET_TAG_BYTES ) );
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p,
                                                     (unsigned long long) ( ack_block_bytes + payload_bytes ),
                                                     associated_data, (unsigned long long) associated_data_bytes,
@@ -290,6 +307,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 
     ROCKETNET_CRYPTO_TALLY( aead_seal );
     unsigned long long sealed_bytes = 0;
+    rocketnet_assert( data_bytes == 0 || rocketnet_aead_buffers_in_place_or_apart( data, (size_t) data_bytes, p, (size_t) data_bytes + ROCKETNET_PACKET_TAG_BYTES ) );
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, data, (unsigned long long) data_bytes,
                                                     associated_data, (unsigned long long) associated_data_bytes,
                                                     NULL, nonce, key ) != 0 )
@@ -371,19 +389,38 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
 
     ROCKETNET_CRYPTO_TALLY( aead_open );
     unsigned long long opened_bytes = 0;
+    const uint8_t * sealed = packet_data + header_bytes;
+    rocketnet_assert( rocketnet_aead_buffers_in_place_or_apart( sealed, (size_t) ( packet_bytes - header_bytes ), out_data, (size_t) plaintext_bytes ) );
+#if ROCKETNET_DEV && defined( ROCKETNET_BUNDLED_SODIUM )
+    // the bundled pair writes no plaintext unless the tag checks (its
+    // dispatch.h.in): poisoned first, a refused open must leave only poison
+    // or the composed AEAD's zeros. Apart only: in place the output is the
+    // ciphertext. Not with a system libsodium, whose version this does not
+    // pin.
+    const bool dev_apart = out_data != sealed;
+    if ( dev_apart )
+    {
+        memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
+    }
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_BUNDLED_SODIUM )
     if ( crypto_aead_chacha20poly1305_ietf_decrypt( out_data, &opened_bytes, NULL,
-                                                    packet_data + header_bytes,
+                                                    sealed,
                                                     (unsigned long long) ( packet_bytes - header_bytes ),
                                                     associated_data, (unsigned long long) associated_data_bytes,
                                                     nonce, key ) != 0 )
     {
 #if ROCKETNET_DEV
-        // a failed open's output is defined as zeros, and no caller reads it
-        // (rocketnet_protocol.h): check the first, then poison for the second
-        for ( int i = 0; i < plaintext_bytes; i++ )
+#if defined( ROCKETNET_BUNDLED_SODIUM )
+        if ( dev_apart )
         {
-            rocketnet_assert( out_data[i] == 0 );
+            for ( int i = 0; i < plaintext_bytes; i++ )
+            {
+                rocketnet_assert( out_data[i] == ROCKETNET_OPEN_POISON_BYTE || out_data[i] == 0 );
+            }
         }
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+        // no caller reads a refused open's output (rocketnet_protocol.h): one
+        // that did would carry the poison
         memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
 #endif // #if ROCKETNET_DEV
         return -1;

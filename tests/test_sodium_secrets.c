@@ -107,17 +107,20 @@ static int run_set( const struct set_t * set )
         PUBLIC( message, (size_t) length );
         CHECK( memcmp( opened, message, (size_t) length ) == 0 );
 
-        // a forgery: one tag bit; refused, the output zero
+        // a forgery: one tag bit; refused, no plaintext written (the
+        // composed AEAD zeroes the output, the one pass leaves the poison)
         SECRET( message, sizeof( message ) );
         sealed[length] ^= 0x01;
         SECRET( sealed, sizeof( sealed ) );
+        memset( opened, 0xA5, (size_t) length );
         opened_bytes = 1;
         CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( opened, &opened_bytes, NULL, sealed, sealed_bytes, ad, ad_bytes, nonce, key ) == -1 );
         CHECK( opened_bytes == 0 );
         PUBLIC( opened, (size_t) length );
+        const unsigned char left = strcmp( sodium_dispatch_aead(), "composed" ) == 0 ? 0 : 0xA5;
         for ( int i = 0; i < length; i++ )
         {
-            CHECK( opened[i] == 0 );
+            CHECK( opened[i] == left );
         }
 
         PUBLIC( key, sizeof( key ) );

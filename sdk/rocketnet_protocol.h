@@ -120,14 +120,13 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 // opened data length, or -1 on refusal. Refusal reasons are deliberately not
 // distinguished here; the reading order counts them at its own steps.
 //
-// out_data is defined only when the call returns the length. The AEAD may
-// write plaintext there before it checks the tag (the AArch64 one pass does,
-// sodium/local/dispatch.h.in) and zeroes it when the check fails, so out_data
-// must be memory no other thread and no application code reads until this
-// returns. Every caller opens into its own stack or into the server's next
-// unpublished payload slot, published only on success
-// (sodium/ARM64-CONSTANT-TIME.md, "Where a failed open writes"). A DEV build
-// checks a failed AEAD open left zeros, then fills the bytes with
+// out_data is defined only when the call returns the length. The AEAD checks
+// the tag before it writes any plaintext (sodium/local/dispatch.h.in): on a
+// refusal out_data holds zeros or what it held before, never plaintext.
+// out_data and the sealed bytes are exactly in place or apart, never partly
+// overlapping (asserted in debug builds). A DEV build with the bundled pair
+// poisons an apart out_data before the open and checks a refusal left only
+// poison or zeros; every DEV build then fills a refused open's bytes with
 // ROCKETNET_OPEN_POISON_BYTE, so a caller that read them would carry a
 // pattern the tests look for.
 

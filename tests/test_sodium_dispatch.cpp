@@ -399,11 +399,14 @@ static int wycheproof_vectors()
         }
         else
         {
+            // refused with no plaintext written: zeroed by the composed
+            // AEAD, untouched (the 0xA5 fill) by the one pass
             CHECK( rc != 0 );
             CHECK( opened_bytes == 0 );
+            const uint8_t left = strcmp( sodium_dispatch_aead(), "composed" ) == 0 ? 0 : 0xA5;
             for ( size_t b = 0; b < ct.size(); b++ )
             {
-                CHECK( opened[b] == 0 );
+                CHECK( opened[b] == left );
             }
         }
         run++;
@@ -501,7 +504,7 @@ static void select_or_fail( const set_t & set )
     CHECK( select_set( set ) );
 }
 
-#define MAX_BYTES 2048
+#define MAX_BYTES 4096
 
 static uint8_t input[MAX_BYTES + 64];
 static uint8_t associated[64 + 16 + 64];
@@ -568,11 +571,15 @@ static int aead_agrees( const set_t & set, const uint8_t * key, const uint8_t * 
     return 1;
 }
 
-// Forgery: refused, the reported length 0, every output byte zero, nothing
-// past the output written; into a separate buffer and in place.
+// Forgery: refused, the reported length 0, and no plaintext written. The
+// output starts as a poison pattern (0xA5 apart, the ciphertext in place);
+// after the refusal the one pass has left it untouched, and the composed
+// AEAD has zeroed it as upstream does, having written nothing before its tag
+// check. Nothing past the output is written either way.
 
-static void forged_open_is_zero( const uint8_t * sealed, int length, const uint8_t * ad, unsigned long long ad_bytes, const uint8_t * nonce, const uint8_t * key )
+static void forged_open_writes_no_plaintext( const uint8_t * sealed, int length, const uint8_t * ad, unsigned long long ad_bytes, const uint8_t * nonce, const uint8_t * key )
 {
+    const bool untouched = strcmp( sodium_dispatch_aead(), "composed" ) != 0;
     static uint8_t out[MAX_BYTES + 16 + 32];
     memset( out, 0xA5, sizeof( out ) );
     unsigned long long out_length = 12345;
@@ -584,7 +591,7 @@ static void forged_open_is_zero( const uint8_t * sealed, int length, const uint8
     }
     for ( int i = 0; i < length; i++ )
     {
-        CHECK( out[8 + i] == 0 );
+        CHECK( out[8 + i] == ( untouched ? 0xA5 : 0 ) );
     }
     for ( size_t i = 8 + (size_t) length; i < sizeof( out ); i++ )
     {
@@ -600,16 +607,17 @@ static void forged_open_is_zero( const uint8_t * sealed, int length, const uint8
     CHECK( out_length == 0 );
     for ( int i = 0; i < length; i++ )
     {
-        CHECK( in_place[3 + i] == 0 );
+        CHECK( in_place[3 + i] == ( untouched ? sealed[i] : 0 ) );
     }
     CHECK( memcmp( in_place + 3 + length, sealed + length, 16 ) == 0 );
+    CHECK( in_place[3 + length + 16] == 0xA5 );
 
     // detached: the same contract
     memset( out, 0xA5, sizeof( out ) );
     CHECK( crypto_aead_chacha20poly1305_ietf_decrypt_detached( out + 8, NULL, sealed, (unsigned long long) length, sealed + length, ad, ad_bytes, nonce, key ) == -1 );
     for ( int i = 0; i < length; i++ )
     {
-        CHECK( out[8 + i] == 0 );
+        CHECK( out[8 + i] == ( untouched ? 0xA5 : 0 ) );
     }
     CHECK( out[8 + length] == 0xA5 );
 }
@@ -635,14 +643,14 @@ static int forgery_refused( const set_t & set, const uint8_t * key, const uint8_
 
         // a tag bit
         sealed[length + ( length % 16 )] ^= 0x80;
-        forged_open_is_zero( sealed, length, ad, ad_bytes, nonce, key );
+        forged_open_writes_no_plaintext( sealed, length, ad, ad_bytes, nonce, key );
         sealed[length + ( length % 16 )] ^= 0x80;
 
         // a ciphertext bit
         if ( length > 0 )
         {
             sealed[length - 1] ^= 0x01;
-            forged_open_is_zero( sealed, length, ad, ad_bytes, nonce, key );
+            forged_open_writes_no_plaintext( sealed, length, ad, ad_bytes, nonce, key );
             sealed[length - 1] ^= 0x01;
         }
 
@@ -652,7 +660,7 @@ static int forgery_refused( const set_t & set, const uint8_t * key, const uint8_
         if ( ad_bytes > 0 )
         {
             forged_ad[ad_bytes - 1] ^= 0x40;
-            forged_open_is_zero( sealed, length, forged_ad, ad_bytes, nonce, key );
+            forged_open_writes_no_plaintext( sealed, length, forged_ad, ad_bytes, nonce, key );
         }
 
         // and the untouched packet still opens
@@ -664,21 +672,26 @@ static int forgery_refused( const set_t & set, const uint8_t * key, const uint8_
     return lengths;
 }
 
-// Sweep: lengths 0..2000 against the reference, seal and open, out of place
+// Sweep: lengths 0..SWEEP_BYTES (4096: eight 512-byte NEON steps) against the reference, seal and open, out of place
 // and in place, at the given associated data lengths and alignment pairs.
 
-#define SWEEP_BYTES 2000
+#define SWEEP_BYTES 4096
 
-static long sweep( const set_t & set, const int * ad_lengths, int num_ad_lengths, const int ( *alignments )[2], int num_alignments, const uint8_t * key, const uint8_t * nonce )
+static long sweep( const set_t & set, int lo, int hi, const int * ad_lengths, int num_ad_lengths, const int ( *alignments )[2], int num_alignments, const uint8_t * key, const uint8_t * nonce )
 {
+    // each output is followed by GUARD bytes of 0xA5 that no call may touch
+    enum
+    {
+        GUARD = 16
+    };
     static uint8_t want[SWEEP_BYTES + 16];
-    static uint8_t message[SWEEP_BYTES + 16 + 16];
+    static uint8_t message[16 + SWEEP_BYTES + 16 + GUARD];
     static uint8_t ad_buffer[64 + 16];
-    static uint8_t got[SWEEP_BYTES + 16 + 16];
-    static uint8_t plain[SWEEP_BYTES + 16];
+    static uint8_t got[16 + SWEEP_BYTES + 16 + GUARD];
+    static uint8_t plain[SWEEP_BYTES + GUARD];
     long cases = 0;
 
-    for ( int length = 0; length <= SWEEP_BYTES; length++ )
+    for ( int length = lo; length <= hi; length++ )
     {
         for ( int a = 0; a < num_ad_lengths; a++ )
         {
@@ -698,17 +711,29 @@ static long sweep( const set_t & set, const int * ad_lengths, int num_ad_lengths
                 // out of place: from message + am into got + (am * 7 + 3) % 16
                 uint8_t * m = message + am;
                 memcpy( m, input, (size_t) length );
+                memset( m + length + 16, 0xA5, GUARD );
                 uint8_t * c = got + ( am * 7 + 3 ) % 16;
+                memset( c + length + 16, 0xA5, GUARD );
+                memset( plain + length, 0xA5, GUARD );
                 CHECK( crypto_aead_chacha20poly1305_ietf_encrypt( c, &n, m, (unsigned long long) length, ad, (unsigned long long) ad_bytes, NULL, nonce, key ) == 0 );
                 CHECK( n == (unsigned long long) length + 16 && memcmp( c, want, (size_t) n ) == 0 );
                 CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( plain, &n, NULL, c, (unsigned long long) length + 16, ad, (unsigned long long) ad_bytes, nonce, key ) == 0 );
                 CHECK( n == (unsigned long long) length && memcmp( plain, input, (size_t) length ) == 0 );
+                for ( int g = 0; g < GUARD; g++ )
+                {
+                    CHECK( c[length + 16 + g] == 0xA5 && plain[length + g] == 0xA5 );
+                }
 
-                // in place: message + am is sealed over itself, then opened over itself
+                // exactly in place, both ways: message + am is sealed over
+                // itself, then opened over itself
                 CHECK( crypto_aead_chacha20poly1305_ietf_encrypt( m, &n, m, (unsigned long long) length, ad, (unsigned long long) ad_bytes, NULL, nonce, key ) == 0 );
                 CHECK( memcmp( m, want, (size_t) length + 16 ) == 0 );
                 CHECK( crypto_aead_chacha20poly1305_ietf_decrypt( m, &n, NULL, m, (unsigned long long) length + 16, ad, (unsigned long long) ad_bytes, nonce, key ) == 0 );
                 CHECK( n == (unsigned long long) length && memcmp( m, input, (size_t) length ) == 0 );
+                for ( int g = 0; g < GUARD; g++ )
+                {
+                    CHECK( m[length + 16 + g] == 0xA5 );
+                }
                 cases += 2;
             }
         }
@@ -756,7 +781,7 @@ static int differential( const set_t & set, long cases, uint64_t seed )
         random_bytes( &state, key, sizeof( key ) );
         random_bytes( &state, nonce, sizeof( nonce ) );
         const uint64_t shape = next( &state );
-        // half the cases are packet sized (0..1500), half any length to 2048
+        // half the cases are packet sized (0..1500), half any length to MAX_BYTES
         const int length = ( shape & 1 ) ? (int) ( ( shape >> 1 ) % 1501 ) : (int) ( ( shape >> 1 ) % ( MAX_BYTES + 1 ) );
         const int ad_bytes = (int) ( ( shape >> 20 ) % 65 );
         const int am = (int) ( ( shape >> 28 ) % 16 );
@@ -802,6 +827,71 @@ static int differential( const set_t & set, long cases, uint64_t seed )
     return 1;
 }
 
+// The ChaCha20 entry points the AEAD does not reach, against the reference:
+// the 8-byte-nonce stream, and both counters at their tops. The original
+// construction's 64-bit counter carries from word 12 into word 13 at
+// 0xFFFFFFFF and wraps at 2^64; the IETF counter is 32 bits and the public
+// function refuses to run it past 2^32, so it is taken to its last blocks.
+
+static void chacha20_case( const char * name, int length, const uint8_t * key, int ietf, uint64_t counter )
+{
+    static uint8_t want[513];
+    static uint8_t got[513 + 16];
+    uint8_t nonce[12];
+    fill( nonce, sizeof( nonce ), 5 );
+    const uint8_t * m = input + 3;
+    for ( int keystream_only = 0; keystream_only < 2; keystream_only++ )
+    {
+        if ( keystream_only && counter != 0 )
+        {
+            continue;
+        }
+        for ( int pass = 0; pass < 2; pass++ )
+        {
+            CHECK( sodium_dispatch_select_chacha20( pass == 0 ? "ref" : name ) );
+            uint8_t * out = pass == 0 ? want : got + 1;
+            memset( got, 0xA5, sizeof( got ) );
+            if ( keystream_only )
+            {
+                CHECK( ( ietf ? crypto_stream_chacha20_ietf( out, (unsigned long long) length, nonce, key )
+                              : crypto_stream_chacha20( out, (unsigned long long) length, nonce, key ) ) == 0 );
+            }
+            else if ( ietf )
+            {
+                CHECK( crypto_stream_chacha20_ietf_xor_ic( out, m, (unsigned long long) length, nonce, (uint32_t) counter, key ) == 0 );
+            }
+            else
+            {
+                CHECK( crypto_stream_chacha20_xor_ic( out, m, (unsigned long long) length, nonce, counter, key ) == 0 );
+            }
+        }
+        CHECK( memcmp( got + 1, want, (size_t) length ) == 0 );
+        CHECK( got[0] == 0xA5 && got[1 + length] == 0xA5 );
+    }
+}
+
+static int chacha20_entry_points( const char * name, const uint8_t * key )
+{
+    if ( !sodium_dispatch_select_chacha20( name ) )
+    {
+        return 0;
+    }
+    static const int lengths[] = { 1, 64, 65, 256, 257, 512, 513 };
+    for ( int i = 0; i < 7; i++ )
+    {
+        const int length = lengths[i];
+        const uint64_t blocks = (uint64_t) ( length + 63 ) / 64;
+        chacha20_case( name, length, key, 0, 0 );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFEull );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFFull );
+        chacha20_case( name, length, key, 0, 0xFFFFFFFFFFFFFFFCull );
+        chacha20_case( name, length, key, 1, 0 );
+        chacha20_case( name, length, key, 1, 0x100000000ull - blocks );
+        chacha20_case( name, length, key, 1, 0x100000000ull - blocks - 3 );
+    }
+    return 1;
+}
+
 static int blake2b_agrees( const char * name, const uint8_t * key )
 {
     if ( !sodium_dispatch_select_blake2b( name ) )
@@ -843,7 +933,7 @@ static const set_t all_sets[] = {
     { "composed", "neon", "ref" },
     { "composed", "ref", "mul64" },
     { "composed", "neon", "mul64" },
-    { "neon-fused", "ref", "ref" },
+    { "neon-fused", "neon", "mul64" },
 };
 
 static const int num_sets = (int) ( sizeof( all_sets ) / sizeof( all_sets[0] ) );
@@ -892,10 +982,10 @@ static int sweep_full( const uint8_t * key, const uint8_t * nonce )
         {
             continue;
         }
-        const long cases = sweep( all_sets[s], ad_lengths, 65, alignments, 256, key, nonce );
+        const long cases = sweep( all_sets[s], 0, SWEEP_BYTES, ad_lengths, 65, alignments, 256, key, nonce );
         printf( "sweep aead=%s chacha20=%s poly1305=%s lengths=0-%d ad=0-64 alignments=16x16 in+out of place cases=%ld mismatch=0\n", all_sets[s].aead, all_sets[s].chacha,
                 all_sets[s].poly, SWEEP_BYTES, cases );
-        CHECK( cases == 66593280L );
+        CHECK( cases == 136345600L );
         sets++;
     }
     printf( "test_sodium_dispatch --sweep-full: %d sets\n", sets );
@@ -1012,6 +1102,16 @@ int main( int argc, char ** argv )
     CHECK( strcmp( sodium_dispatch_poly1305(), poly ) == 0 );
     CHECK( poly_edges == ( ( cpu.sse2 && sodium_dispatch_built( "poly1305", "sse2" ) ) || ( cpu.neon && sodium_dispatch_built( "poly1305", "mul64" ) ) ? 1 : 0 ) );
 
+    const char * chachas[] = { "ssse3", "avx2", "neon" };
+    int chacha_variants = 0;
+    for ( int v = 0; v < 3; v++ )
+    {
+        chacha_variants += chacha20_entry_points( chachas[v], key );
+    }
+    sodium_dispatch_repick();
+    CHECK( strcmp( sodium_dispatch_chacha20(), chacha ) == 0 );
+    CHECK( chacha_variants >= ( strcmp( chacha, "ref" ) != 0 ? 1 : 0 ) );
+
     const char * blakes[] = { "ref", "ssse3", "sse41", "avx2" };
     int blake_variants = 0;
     for ( int b = 0; b < 4; b++ )
@@ -1032,16 +1132,22 @@ int main( int argc, char ** argv )
         CHECK( aead_sets == 5 );
     }
 
-    // 5. the per-commit sweep
+    // 5. the per-commit sweep: every length to 2048 at eight associated data
+    // lengths and three alignments, then every length to SWEEP_BYTES (the
+    // 512-byte NEON steps past 2048) at three and two; --sweep-full runs
+    // them all
 
     static const int ad_lengths[] = { 0, 1, 15, 16, 17, 21, 53, 64 };
     static const int alignments[][2] = { { 0, 0 }, { 3, 5 }, { 15, 15 } };
+    static const int long_ad_lengths[] = { 0, 17, 64 };
+    static const int long_alignments[][2] = { { 0, 0 }, { 15, 15 } };
     long swept = 0;
     for ( int s = 1; s < num_sets; s++ )
     {
         if ( select_set( all_sets[s] ) )
         {
-            swept += sweep( all_sets[s], ad_lengths, 8, alignments, 3, key, nonce );
+            swept += sweep( all_sets[s], 0, 2048, ad_lengths, 8, alignments, 3, key, nonce );
+            swept += sweep( all_sets[s], 2049, SWEEP_BYTES, long_ad_lengths, 3, long_alignments, 2, key, nonce );
         }
     }
 
@@ -1050,7 +1156,7 @@ int main( int argc, char ** argv )
     every_vector();
 
     printf( "test_sodium_dispatch: chacha20=%s poly1305=%s blake2b=%s aead=%s best for this cpu; %d aead sets and %d blake2b variants identical, lengths 0-%d; "
-            "forgeries refused and zeroed in %d sets; %ld sweep cases\n",
-            chacha, poly, blake, aead, aead_sets, blake_variants, MAX_BYTES, forged_sets, swept );
+            "forgeries refused with no plaintext written in %d sets; %d chacha20 entry-point variants; %ld sweep cases\n",
+            chacha, poly, blake, aead, aead_sets, blake_variants, MAX_BYTES, forged_sets, chacha_variants, swept );
     return 0;
 }

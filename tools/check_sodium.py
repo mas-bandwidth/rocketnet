@@ -110,9 +110,15 @@ def main():
                 assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', plain, c.byref(written),
                             None, encrypted, len(encrypted), associated, len(associated), nonce, seed) == 0
                 assert written.value == length and plain.raw[:length] == message
-                assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', plain, c.byref(written),
+                # a forgery writes no plaintext: the reference (and the
+                # vendor's composed AEAD) zero the output, the vendor's one
+                # pass leaves it as it was (sodium/local/dispatch.h.in)
+                poisoned = c.create_string_buffer(b'\xa5' * max(1, length), max(1, length))
+                assert call(side, 'crypto_aead_chacha20poly1305_ietf_decrypt', poisoned, c.byref(written),
                             None, corrupt, len(corrupt), associated, len(associated), nonce, seed) == -1
-                assert written.value == 0 and plain.raw[:length] == bytes(length)
+                left = poisoned.raw[:length]
+                allowed = [bytes(length)] + ([b'\xa5' * length] if side == 0 else [])
+                assert written.value == 0 and left in allowed
         # Sealed boxes intentionally use fresh ephemeral keys. Compare by
         # opening each side's ciphertext on the other implementation.
         pk, sk = keypairs['box']
