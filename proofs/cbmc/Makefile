@@ -277,7 +277,21 @@ ack-run-negative-control: proof_ack_apply_run.c esbmc_shim.h
 	  echo "ack-run-negative-control HOLD: expected assertion did not fail (exit=$$status)"; exit 1; \
 	fi
 
-read-write: proof_read_write.c
+# rocketnet_copy_string is proved from its own text in sdk/rocketnet.cpp (a
+# C++ file the harness cannot include whole): the definition is cut out
+# verbatim, from its signature to the first closing brace in column 0, and the
+# harness includes it. A hand copy proved a body the sdk did not have
+# (VERIFY-6 A17). An extraction that finds no complete definition stops here.
+COPY_STRING_GEN = copy_string.gen.c
+
+$(COPY_STRING_GEN): $(SDK)/rocketnet.cpp
+	@awk '/^size_t rocketnet_copy_string\( char \* dest, const char \* source, size_t dest_size \)$$/ { on = 1 } on { print } on && /^}$$/ { exit }' $< > $@.tmp
+	@if [ "$$(grep -c '^size_t rocketnet_copy_string(' $@.tmp)" != 1 ] || [ "$$(tail -1 $@.tmp)" != "}" ] || [ "$$(wc -l < $@.tmp)" -lt 10 ]; then \
+		echo "read-write HOLD: no complete rocketnet_copy_string definition in $<"; rm -f $@.tmp; exit 1; \
+	fi
+	@mv $@.tmp $@
+
+read-write: proof_read_write.c $(COPY_STRING_GEN)
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(call run_cbmc_proof,read-write,--unwind 9 -I$(SDK) proof_read_write.c)
 
@@ -332,7 +346,7 @@ replay-far-reachability: proof_replay_advance.c
 reconstruct-reachability: proof_reconstruct_sequence.c
 	$(call run_reachability,reconstruct,1,$(RECONSTRUCT_FLAGS) -DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
 
-read-write-reachability: proof_read_write.c
+read-write-reachability: proof_read_write.c $(COPY_STRING_GEN)
 	$(call run_reachability,read-write,9,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_read_write.c,,read-write reachability control)
 
 message-read-reachability: proof_message_read.c
@@ -342,7 +356,7 @@ xdp-free-list-reachability: proof_xdp_free_list.c
 	$(call run_reachability,xdp-free-list,5,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_free_list.c,,xdp-free-list reachability control)
 
 clean:
-	rm -f *.goto *.output
+	rm -f *.goto *.output $(COPY_STRING_GEN)
 
 # Nightly proofs. Each reader directory holds a proof.mk that appends its
 # target to NIGHTLY, so a CBMC card adds a reader without editing a shared
