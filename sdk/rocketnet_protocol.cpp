@@ -410,7 +410,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
                                                     nonce, key ) != 0 )
     {
 #if ROCKETNET_DEV
-#if defined( ROCKETNET_BUNDLED_SODIUM )
+#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_ASSERTS
         if ( dev_apart )
         {
             const uint8_t refused_byte = strcmp( sodium_runtime_aead_chacha20poly1305_ietf_implementation(), "composed" ) == 0 ? 0 : ROCKETNET_OPEN_POISON_BYTE;
@@ -419,7 +419,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
                 rocketnet_assert( out_data[i] == refused_byte );
             }
         }
-#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_ASSERTS
 
         /* No caller reads a refused open's output (rocketnet_protocol.h); one that did would carry the poison. */
         memset( out_data, ROCKETNET_OPEN_POISON_BYTE, (size_t) plaintext_bytes );
