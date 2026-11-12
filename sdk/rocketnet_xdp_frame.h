@@ -909,7 +909,8 @@ static inline bool rocketnet_xdp_stats_publish( bool read, const struct rocketne
 // create-time allocation: open addressing over a power-of-two count of
 // slots (the index mask is the count less one), a lookup stopping at the
 // first never-used slot and probing at most ROCKETNET_XDP_REPLY_MAC_PROBES
-// slots. A learn into a full probe window replaces the entry learned longest
+// slots. A learn takes the first never-used slot of its probe window, else
+// replaces the window's oldest answered entry, else the entry learned longest
 // ago; a forget leaves the address's entry in place as its answered entry.
 // No allocation, no clock and no lock: its
 // owner serialises writes.
@@ -1060,8 +1061,8 @@ static inline bool rocketnet_xdp_reply_mac_usable( const uint8_t * mac )
 // learned entry.
 
 // proofs/tla/RNXdpReplyMacsLayout.tla Learn: the address's own entry, else the
-// first slot of the window not LIVE, else the LIVE entry learned longest ago
-// (EvictOnlyOldest)
+// first EMPTY slot of the window, else its oldest ANSWERED entry, else the
+// LIVE entry learned longest ago (EvictOnlyOldest)
 static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_macs_t * table, const rocketnet_address_t * address, const uint8_t * mac )
 {
     if ( !table || !address || !rocketnet_xdp_reply_mac_usable( mac ) )
@@ -1080,18 +1081,26 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
     if ( !entry )
     {
         const uint32_t slot = rocketnet_xdp_reply_macs_slot( table, address );
+        struct rocketnet_xdp_reply_mac_entry_t * oldest_answered = NULL;
         struct rocketnet_xdp_reply_mac_entry_t * oldest = NULL;
 
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
             struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & table->mask];
-            if ( candidate->state != ROCKETNET_XDP_REPLY_MAC_LIVE )
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             {
                 entry = candidate;
                 break;
             }
 
-            if ( !oldest || candidate->learned < oldest->learned )
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_ANSWERED )
+            {
+                if ( !oldest_answered || candidate->learned < oldest_answered->learned )
+                {
+                    oldest_answered = candidate;
+                }
+            }
+            else if ( !oldest || candidate->learned < oldest->learned )
             {
                 oldest = candidate;
             }
@@ -1099,7 +1108,7 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
 
         if ( !entry )
         {
-            entry = oldest;
+            entry = oldest_answered ? oldest_answered : oldest;
         }
 
         entry->address = *address;
