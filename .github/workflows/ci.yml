@@ -1439,6 +1439,20 @@ jobs:
         shell: bash
         run: ./bin/Release/test_iocp.exe test_platform_socket_sets_dont_fragment test_iocp_transport_socket_sets_dont_fragment test_rio_transport_socket_sets_dont_fragment
 
+      # MSVC Debug with ROCKETNET_DEV=ON: the only MSVC build with the library's
+      # asserts and the debug CRT's heap checks on for the DEV-only Windows
+      # cases (the Debug runs elsewhere here are DEV=OFF or leg (c)'s dialog
+      # cases). The whole unit suite with the nightly tier; a debug-CRT report
+      # fails its case (suite_crt_report_fails). Measured on captain: 169 s.
+      - name: Unit suite, MSVC Debug, ROCKETNET_DEV=ON (nightly tier)
+        if: matrix.leg == 'a'
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: '1'
+        run: |
+          cmake --build build --config Debug --target test --parallel
+          ./bin/Debug/test.exe
+
       # Leg (c): a Windows test child that fails exits at once and never waits
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
       # tests/windows_no_dialogs.cpp case runs alone in Release and in Debug
