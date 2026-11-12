@@ -1150,10 +1150,26 @@ jobs:
           CXX: g++
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
-          cmake --build build --target test --parallel
+          cmake --build build --target test dst --parallel
 
       - name: Run unit tests (Release, ROCKETNET_DEV=ON)
         run: ./bin/test
+
+      # The dst binary per commit: seeds 1-50 print the reference trace that
+      # nightly-dst.yml pins (DST_REFERENCE_TRACE, the one copy; docs/DST.md),
+      # about 7 s on an idle fleet host. The nightly runs the long ranges and
+      # the fault schedules.
+      - name: DST seeds 1-50 print the reference trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace=$(sed -n 's/^  DST_REFERENCE_TRACE: \([0-9a-f]*\)$/\1/p' .github/workflows/nightly-dst.yml)
+          [ -n "$trace" ] || { echo "no DST_REFERENCE_TRACE in .github/workflows/nightly-dst.yml"; exit 1; }
+          ./bin/dst --seeds 1-50 | tee dst-reference.log
+          if grep -q '^FAIL' dst-reference.log; then echo "dst printed a FAIL line"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$trace"
+          got=$(tail -n 1 dst-reference.log)
+          [ "$got" = "$want" ] || { echo "TRACE-MISMATCH: want '$want' got '$got'"; exit 1; }
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
