@@ -52,11 +52,24 @@ struct cpu_t
     bool avx2;
 };
 
+#if defined( _MSC_VER ) && ( defined( _M_X64 ) || defined( _M_AMD64 ) || defined( _M_IX86 ) )
+// clang-cl's _xgetbv needs the xsave target feature on the calling function
+#if defined( __clang__ )
+__attribute__( ( target( "xsave" ) ) )
+#endif
+static unsigned long long
+read_xcr0()
+{
+    return _xgetbv( 0 );
+}
+#endif
+
 static cpu_t cpu_oracle()
 {
     cpu_t cpu;
     memset( &cpu, 0, sizeof( cpu ) );
-#if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __x86_64__ ) || defined( __i386__ ) )
+    // MSVC and clang-cl read CPUID directly: clang-cl links no compiler-rt for __builtin_cpu_supports
+#if ( defined( __GNUC__ ) || defined( __clang__ ) ) && !defined( _MSC_VER ) && ( defined( __x86_64__ ) || defined( __i386__ ) )
     __builtin_cpu_init();
     cpu.sse2 = __builtin_cpu_supports( "sse2" ) != 0;
     cpu.ssse3 = __builtin_cpu_supports( "ssse3" ) != 0;
@@ -70,7 +83,7 @@ static cpu_t cpu_oracle()
     cpu.sse2 = ( edx >> 26 ) & 1u;
     cpu.ssse3 = ( ecx >> 9 ) & 1u;
     cpu.sse41 = ( ecx >> 19 ) & 1u;
-    const bool avx = ( ( ecx >> 28 ) & 1u ) && ( ( ecx >> 27 ) & 1u ) && ( ( ecx >> 26 ) & 1u ) && ( _xgetbv( 0 ) & 6u ) == 6u;
+    const bool avx = ( ( ecx >> 28 ) & 1u ) && ( ( ecx >> 27 ) & 1u ) && ( ( ecx >> 26 ) & 1u ) && ( read_xcr0() & 6u ) == 6u;
     int info7[4];
     __cpuidex( info7, 7, 0 );
     cpu.avx2 = avx && ( ( (unsigned int) info7[1] >> 5 ) & 1u );
