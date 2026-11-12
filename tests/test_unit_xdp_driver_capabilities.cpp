@@ -238,8 +238,8 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
 // The frames each queue's userspace receive dropped, by reason, reach the
 // transport's ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
 // counter read calls, once each queue's worker publishes them; the replay
-// writer's commit failures and held keep-alives reach XDP_REPLAY_COMMIT_FAILED
-// and XDP_REPLAY_GREETING_HELD through a second one: two synthetic queues, no
+// writer's commit failures and held keep-alives reach ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED
+// and ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD through a second one: two synthetic queues, no
 // socket, no worker, no map (sdk/rocketnet_server_socket_linux.cpp)
 bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                            uint64_t * dropped );

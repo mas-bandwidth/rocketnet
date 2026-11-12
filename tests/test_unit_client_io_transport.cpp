@@ -350,7 +350,8 @@ REGISTER_UNIT_TEST( test_client_io_destroy_hands_off_deferred_slots );
 // The final ring stop hands to the I/O thread is sent at its exit, so its
 // datagrams are counted like any other ring that leaves the main thread:
 // packets_sent after stop matches the three the fake sent, the deferred one
-// included.
+// included. A datagram that arrives after stop is read and discarded at the
+// worker's exit and reaches ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP.
 
 static void test_client_io_stop_counts_final_ring()
 {
@@ -365,8 +366,17 @@ static void test_client_io_stop_counts_final_ring()
     check( fake->num_sent == 0 );
 
     rocketnet_client_transport_stop( transport );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP ) == 0 );
+
+    const uint8_t datagram[16] = { 0 };
+    rocketnet_address_t from = {};
+    rocketnet_address_load_ipv4( &from, 0x7f000001, 9100 );
+    rocketnet_fake_client_push( fake, &from, datagram, 16 );
+
     rn_test_client_transport_wait_stopped( transport );
     check( fake->num_sent == 3 );
+    check( fake->inbound_count == 0 );
+    check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP ) == 1 );
 
     struct rocketnet_client_transport_stats_t stats;
     rocketnet_client_transport_stats( transport, &stats );
