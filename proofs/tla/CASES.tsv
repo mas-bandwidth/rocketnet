@@ -910,3 +910,10 @@ MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg	MCRNUringQueueBankLayout.tla	inva
 MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg	MCRNUringQueueBankLayout.tla	invariant	NoSharedSlot	check	rnuringqueuebanklayout	required	-
 MCRNUringQueueBankLayoutBrokenDivideFirst.cfg	MCRNUringQueueBankLayout.tla	invariant	NoForeignWrite	check	rnuringqueuebanklayout	required	-
 MCRNUringQueueBankLayoutBrokenIdAdd.cfg	MCRNUringQueueBankLayout.tla	invariant	RouteMatches	check	rnuringqueuebanklayout	required	-
+MCRNUringQueueSend.cfg	MCRNUringQueueSend.tla	pass	-	check	rnuringqueuesend	required	-
+MCRNUringQueueSendLive.cfg	MCRNUringQueueSend.tla	pass	-	check	rnuringqueuesend	required	-
+MCRNUringQueueSendBrokenRetireAtSubmit.cfg	MCRNUringQueueSend.tla	invariant	NoWriteWhileKernelOwned	check	rnuringqueuesend	required	-
+MCRNUringQueueSendBrokenEagainLost.cfg	MCRNUringQueueSend.tla	invariant	Accounted	check	rnuringqueuesend	required	-
+MCRNUringQueueSendBrokenEagainStuck.cfg	MCRNUringQueueSend.tla	temporal	Drains	check	rnuringqueuesend	required	-
+MCTraceRNUringQueueSendSelf.cfg	MCTraceRNUringQueueSendSelf.tla	pass	-	check	tracernuringqueuesend	required	-
+MCTraceRNUringQueueSendSelfBrokenRetire.cfg	MCTraceRNUringQueueSendSelf.tla	invariant	TraceConsistent	check	tracernuringqueuesend	required	-
