@@ -11793,14 +11793,22 @@ void rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4()
 #define ROCKETNET_XDP_STACK_FAR  "rnxdpstk1"
 #define ROCKETNET_XDP_STACK_DUMMY "rnxdpstkd"
 
-static void rocketnet_xdp_stack_teardown()
+static void rocketnet_xdp_stack_delete_links()
 {
     if ( system( "ip link del " ROCKETNET_XDP_STACK_LOWER " 2>/dev/null; ip link del " ROCKETNET_XDP_STACK_DUMMY " 2>/dev/null; "
                  "ip link del rnxdpbond 2>/dev/null; ip link del rnxdpbr 2>/dev/null" ) != 0 )
     {
         // already gone
     }
+}
 
+// the end of the case: the links go and committing is forbidden again. Not
+// the start: a production build has no allow, so a forbid there would refuse
+// every create at its top, before the by-name refusal the case asserts
+
+static void rocketnet_xdp_stack_teardown()
+{
+    rocketnet_xdp_stack_delete_links();
     rocketnet_server_socket_forbid_commit();
 }
 
@@ -11838,7 +11846,7 @@ void rocketnet_test_xdp_vlan_stacked_devices_refused()
 {
     atexit( rocketnet_xdp_stack_teardown );
     rocketnet_xdp_mount_bpffs();
-    rocketnet_xdp_stack_teardown();
+    rocketnet_xdp_stack_delete_links();
 
     rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_STACK_LOWER " type veth peer name " ROCKETNET_XDP_STACK_FAR );
     rocketnet_xdp_veth_run( "ip link add " ROCKETNET_XDP_STACK_DUMMY " type dummy" );
