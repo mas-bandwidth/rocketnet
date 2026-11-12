@@ -46,6 +46,9 @@
 #include <atomic>
 #include <stdint.h>
 
+struct msghdr;
+struct rocketnet_uring_queue_send_message_t;
+
 // a slot of a bank, as the worker sees it (RNUringQueueSend st)
 
 #define ROCKETNET_URING_QUEUE_SEND_SLOT_EMPTY                                0      // not claimed by the fill since the bank was last free
@@ -120,6 +123,9 @@ struct rocketnet_uring_queue_send_queue_t
     struct rocketnet_uring_queue_send_entry_t * entry;  // [banks * slots] runs at their first slot
     struct rocketnet_send_gather_run_t * runs;          // [slots] the gather's runs
     struct rocketnet_send_gather_scratch_t scratch;
+    int max_segments;                       // the packets a run may carry: 1 once the transport cannot segment
+    struct rocketnet_uring_queue_send_message_t * message;  // [banks * slots] each run's message at its tag, Linux only (NULL elsewhere)
+    void * iovecs;                          // [banks * slots] struct iovec at each order position, Linux only
     std::atomic<uint64_t> counters[ROCKETNET_URING_QUEUE_SEND_NUM_COUNTERS];
 };
 
@@ -188,6 +194,23 @@ bool rocketnet_uring_queue_send_retire( struct rocketnet_uring_queue_send_t * se
 // counted ABANDONED and its slot dropped, so the bank can retire once its
 // runs in the kernel complete. Returns the packets abandoned.
 int rocketnet_uring_queue_send_abandon( struct rocketnet_uring_queue_send_t * send, int queue );
+
+// worker: runs cut by later claims carry one packet each (the transport's
+// segmentation turned off, rocketnet_server_gso.h's refusal threshold)
+void rocketnet_uring_queue_send_plain( struct rocketnet_uring_queue_send_t * send, int queue );
+
+// Layer L2, the worker's: the one SENDMSG of a run handed out by next. Its
+// iovecs are the run's frames where they lie, scattered across the bank
+// (the iovec at each of the run's order positions: the wire bytes from
+// ROCKETNET_FRAME_WIRE_OFFSET, the slot's packet_bytes), its name the
+// destination of the run's first slot, and a run of more than one packet
+// not sent plain carries a UDP_SEGMENT cmsg of segment_bytes. The message,
+// name, control and iovecs are the run's, at its tag and its order
+// positions, which no other run in the kernel uses, and stay untouched until
+// its completion. NULL when the socket's family cannot name the destination
+// (the caller completes the run failed without a send), and on a platform
+// without the io_uring uapi.
+struct msghdr * rocketnet_uring_queue_send_message( struct rocketnet_uring_queue_send_t * send, int queue, const struct rocketnet_uring_queue_send_run_t * run, bool socket_ipv6 );
 
 // runs of the held bank in the kernel
 int rocketnet_uring_queue_send_pending( const struct rocketnet_uring_queue_send_t * send, int queue );

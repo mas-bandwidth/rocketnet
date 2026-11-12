@@ -398,3 +398,130 @@ static void test_uring_queue_send_bank_of_aborts_retires_at_once()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_send_bank_of_aborts_retires_at_once );
+
+#if defined( __linux__ )
+#include "../sdk/rocketnet_uring_codec.h"
+#if defined( IORING_RECV_MULTISHOT )
+
+// Layer L2: a run's SENDMSG over its scattered frames. A destination's
+// packets interleaved with another's go out as one message whose iovecs
+// point at each frame's wire bytes where it lies, with one UDP_SEGMENT cmsg
+// of the segment size; a run sent plain carries no cmsg; a destination the
+// socket's family cannot name has no message. Builds the message only: no
+// socket, no ring.
+
+static void test_uring_queue_send_message_over_scattered_frames()
+{
+    queue_send_test_t t( 6, 4, 1 << 16 );
+    check( t.send != NULL );
+
+    // slots: 0 A 300, 1 B 100, 2 A 300, 3 B 100, 4 A 120
+    check( t.stage( 1, 300 ) == 0 );
+    check( t.stage( 2, 100 ) == 1 );
+    check( t.stage( 1, 300 ) == 2 );
+    check( t.stage( 2, 100 ) == 3 );
+    check( t.stage( 1, 120 ) == 4 );
+    check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( rocketnet_uring_queue_send_claim( t.send, 0 ) == 0 );
+
+    struct rocketnet_uring_queue_send_run_t run;
+    check( rocketnet_uring_queue_send_next( t.send, 0, &run ) && run.count == 3 );
+    struct msghdr * message = rocketnet_uring_queue_send_message( t.send, 0, &run, false );
+    check( message != NULL );
+    check( message->msg_iovlen == 3 );
+    const int slots[3] = { 0, 2, 4 };
+    const size_t bytes[3] = { 300, 300, 120 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( message->msg_iov[i].iov_base == t.banks->queue[0].bank[0].data + slots[i] * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET );
+        check( message->msg_iov[i].iov_len == bytes[i] );
+    }
+    check( message->msg_namelen == sizeof( struct sockaddr_in ) );
+    const struct sockaddr_in * name = (const struct sockaddr_in *) message->msg_name;
+    check( name->sin_family == AF_INET && ntohs( name->sin_port ) == 50001 );
+    struct cmsghdr * cmsg = CMSG_FIRSTHDR( message );
+    check( cmsg != NULL && cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_SEGMENT );
+    uint16_t stride = 0;
+    memcpy( &stride, CMSG_DATA( cmsg ), sizeof( stride ) );
+    check( stride == 300 );
+
+    // B's run on a dual stack socket: v4-mapped
+    struct rocketnet_uring_queue_send_run_t b_run;
+    check( rocketnet_uring_queue_send_next( t.send, 0, &b_run ) && b_run.count == 2 );
+    struct msghdr * b_message = rocketnet_uring_queue_send_message( t.send, 0, &b_run, true );
+    check( b_message != NULL && b_message->msg_namelen == sizeof( struct sockaddr_in6 ) );
+    check( ( (const struct sockaddr_in6 *) b_message->msg_name )->sin6_family == AF_INET6 );
+    check( b_message->msg_iov[0].iov_base == t.banks->queue[0].bank[0].data + 1 * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET );
+
+    // A refuses: its packets go out one plain message each, no cmsg, and the
+    // first run's message is untouched while B's is in the kernel
+    check( rocketnet_uring_queue_send_complete( t.send, 0, run.tag, ROCKETNET_URING_QUEUE_SEND_REFUSED ) == 3 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        struct rocketnet_uring_queue_send_run_t plain;
+        check( rocketnet_uring_queue_send_next( t.send, 0, &plain ) && plain.plain && plain.count == 1 );
+        struct msghdr * one = rocketnet_uring_queue_send_message( t.send, 0, &plain, false );
+        check( one != NULL && one->msg_iovlen == 1 && one->msg_control == NULL && one->msg_controllen == 0 );
+        check( one->msg_iov[0].iov_len == bytes[i] );
+    }
+    check( b_message->msg_iov[1].iov_base == t.banks->queue[0].bank[0].data + 3 * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_send_message_over_scattered_frames );
+
+// an ipv6 destination on an ipv4 socket has no name: no message
+
+static void test_uring_queue_send_message_refuses_an_unnamed_destination()
+{
+    queue_send_test_t t( 2, 4, 1 << 16 );
+    check( t.send != NULL );
+
+    struct rocketnet_address_t v6;
+    memset( &v6, 0, sizeof( v6 ) );
+    v6.type = ROCKETNET_ADDRESS_IPV6;
+    v6.data.ipv6[0] = 0x2001;
+    v6.data.ipv6[1] = 0xdb8;
+    v6.data.ipv6[7] = 1;
+    v6.port = 40000;
+    uint64_t id = 0;
+    uint8_t * frame = rocketnet_uring_send_queues_start( t.banks, &v6, &id );
+    check( frame != NULL );
+    check( rocketnet_uring_send_queues_finish( t.banks, id, frame, 100 ) );
+    check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( rocketnet_uring_queue_send_claim( t.send, 0 ) == 0 );
+
+    struct rocketnet_uring_queue_send_run_t run;
+    check( rocketnet_uring_queue_send_next( t.send, 0, &run ) );
+    check( rocketnet_uring_queue_send_message( t.send, 0, &run, false ) == NULL );
+    check( rocketnet_uring_queue_send_message( t.send, 0, &run, true ) != NULL );
+    check( rocketnet_uring_queue_send_complete( t.send, 0, run.tag, ROCKETNET_URING_QUEUE_SEND_FAILED ) == 1 );
+    check( rocketnet_uring_queue_send_retire( t.send, 0 ) );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_send_message_refuses_an_unnamed_destination );
+
+// the transport's segmentation off: later claims cut one packet a run
+
+static void test_uring_queue_send_plain_cuts_single_runs()
+{
+    queue_send_test_t t( 4, 4, 1 << 16 );
+    check( t.send != NULL );
+
+    rocketnet_uring_queue_send_plain( t.send, 0 );
+    check( t.stage( 1, 200 ) == 0 );
+    check( t.stage( 1, 200 ) == 1 );
+    check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( rocketnet_uring_queue_send_claim( t.send, 0 ) == 0 );
+    for ( int i = 0; i < 2; i++ )
+    {
+        struct rocketnet_uring_queue_send_run_t run;
+        check( rocketnet_uring_queue_send_next( t.send, 0, &run ) && run.count == 1 && run.slot == i );
+        struct msghdr * message = rocketnet_uring_queue_send_message( t.send, 0, &run, false );
+        check( message != NULL && message->msg_control == NULL );
+    }
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_send_plain_cuts_single_runs );
+
+#endif // #if defined( IORING_RECV_MULTISHOT )
+#endif // #if defined( __linux__ )

@@ -25,6 +25,35 @@
 // the kernel): only tests/tla_trace_queue_send.cpp in the plant build
 // defines it, and its traces must fail TraceConsistent.
 
+#if defined( __linux__ )
+#include "rocketnet_uring_codec.h"
+#if defined( IORING_RECV_MULTISHOT )
+#define ROCKETNET_URING_QUEUE_SEND_MESSAGES 1
+#endif // #if defined( IORING_RECV_MULTISHOT )
+#endif // #if defined( __linux__ )
+
+#if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+
+// a run's SENDMSG, at its tag: the kernel reads the message, the name and
+// the control until the run's completion
+
+struct rocketnet_uring_queue_send_message_t
+{
+    struct msghdr message;
+    struct sockaddr_in6 name;
+    alignas( 8 ) uint8_t control[ROCKETNET_URING_GSO_CONTROL_BYTES];
+};
+
+#define ROCKETNET_URING_QUEUE_SEND_MESSAGE_BYTES sizeof( struct rocketnet_uring_queue_send_message_t )
+#define ROCKETNET_URING_QUEUE_SEND_IOVEC_BYTES sizeof( struct iovec )
+
+#else // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+
+#define ROCKETNET_URING_QUEUE_SEND_MESSAGE_BYTES 0
+#define ROCKETNET_URING_QUEUE_SEND_IOVEC_BYTES 0
+
+#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+
 struct rocketnet_uring_queue_send_layout_t
 {
     uint64_t queue;
@@ -34,6 +63,8 @@ struct rocketnet_uring_queue_send_layout_t
     uint64_t runs;
     uint64_t scratch;
     uint64_t scratch_bytes;
+    uint64_t message;
+    uint64_t iovecs;
     uint64_t bytes;
 };
 
@@ -49,6 +80,8 @@ static bool rocketnet_uring_queue_send_layout( int num_queues, int slots, rocket
     layout->entry = rocketnet_carve( carve, cells, sizeof( struct rocketnet_uring_queue_send_entry_t ) );
     layout->runs = rocketnet_carve( carve, (uint64_t) num_queues * (uint64_t) slots, sizeof( struct rocketnet_send_gather_run_t ) );
     layout->scratch = rocketnet_carve( carve, (uint64_t) num_queues, layout->scratch_bytes );
+    layout->message = ROCKETNET_URING_QUEUE_SEND_MESSAGE_BYTES ? rocketnet_carve( carve, cells, ROCKETNET_URING_QUEUE_SEND_MESSAGE_BYTES ) : 0;
+    layout->iovecs = ROCKETNET_URING_QUEUE_SEND_IOVEC_BYTES ? rocketnet_carve( carve, cells, ROCKETNET_URING_QUEUE_SEND_IOVEC_BYTES ) : 0;
     layout->bytes = carve.bytes;
     return !carve.failed && layout->scratch_bytes != 0 && carve.bytes <= SIZE_MAX;
 }
@@ -101,6 +134,14 @@ struct rocketnet_uring_queue_send_t * rocketnet_uring_queue_send_create( void * 
         queue->order = (int *) ( base + layout.order ) + (size_t) q * cells;
         queue->entry = (struct rocketnet_uring_queue_send_entry_t *) ( base + layout.entry ) + (size_t) q * cells;
         queue->runs = (struct rocketnet_send_gather_run_t *) ( base + layout.runs ) + (size_t) q * (size_t) send->slots;
+        queue->max_segments = max_segments;
+#if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+        queue->message = (struct rocketnet_uring_queue_send_message_t *) ( base + layout.message ) + (size_t) q * cells;
+        queue->iovecs = (struct iovec *) ( base + layout.iovecs ) + (size_t) q * cells;
+#else  // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+        queue->message = NULL;
+        queue->iovecs = NULL;
+#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
         void * scratch = base + layout.scratch + (uint64_t) q * layout.scratch_bytes;
         ok = ok && rocketnet_send_gather_scratch_init( &queue->scratch, scratch, send->slots );
         for ( int c = 0; c < ROCKETNET_URING_QUEUE_SEND_NUM_COUNTERS; c++ )
@@ -265,7 +306,7 @@ int rocketnet_uring_queue_send_claim( struct rocketnet_uring_queue_send_t * send
     int num_runs = 0;
     if ( staged > 0 )
     {
-        num_runs = rocketnet_send_gather( &bank->slot[0].to, sizeof( bank->slot[0] ), &bank->slot[0].packet_bytes, sizeof( bank->slot[0] ), staged, send->max_segments, send->max_bytes,
+        num_runs = rocketnet_send_gather( &bank->slot[0].to, sizeof( bank->slot[0] ), &bank->slot[0].packet_bytes, sizeof( bank->slot[0] ), staged, queue->max_segments, send->max_bytes,
                                           &queue->scratch, order, queue->runs );
         rocketnet_assert( num_runs >= 0 );
     }
@@ -560,6 +601,76 @@ int rocketnet_uring_queue_send_abandon( struct rocketnet_uring_queue_send_t * se
     queue->unsubmitted = 0;
     rocketnet_uring_queue_send_count( queue, ROCKETNET_URING_QUEUE_SEND_COUNTER_ABANDONED, (uint64_t) abandoned );
     return abandoned;
+}
+
+void rocketnet_uring_queue_send_plain( struct rocketnet_uring_queue_send_t * send, int queue_index )
+{
+    rocketnet_assert( send );
+    rocketnet_assert( queue_index >= 0 && queue_index < send->num_queues );
+    send->queue[queue_index].max_segments = 1;
+}
+
+// Layer L2: the run's SENDMSG over its scattered frames. The iovecs are at
+// the run's order positions of its bank and the message at its tag: a run in
+// the kernel owns its positions and its first slot, which no other run in
+// the kernel shares (the gather's runs tile the order, a refusal's single
+// runs sit at the positions and slots of the run they replace, and that run's
+// completion is taken first), so building one run never writes what the
+// kernel reads for another.
+
+struct msghdr * rocketnet_uring_queue_send_message( struct rocketnet_uring_queue_send_t * send, int queue_index, const struct rocketnet_uring_queue_send_run_t * run, bool socket_ipv6 )
+{
+    rocketnet_assert( send );
+    rocketnet_assert( run );
+    rocketnet_assert( queue_index >= 0 && queue_index < send->num_queues );
+    rocketnet_assert( run->bank >= 0 && run->bank < ROCKETNET_URING_SEND_BANKS );
+    rocketnet_assert( run->count >= 1 && run->first >= 0 && run->first + run->count <= send->slots );
+
+#if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+    struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
+    const int slots = send->slots;
+    const struct rocketnet_uring_send_bank_t * bank = &send->queues->queue[queue_index].bank[run->bank];
+    const int * order = queue->order + (size_t) run->bank * (size_t) slots;
+    struct iovec * iovecs = (struct iovec *) queue->iovecs + (size_t) run->bank * (size_t) slots;
+    struct rocketnet_uring_queue_send_message_t * message = &queue->message[run->tag];
+
+    const socklen_t namelen = rocketnet_uring_address_to_sockaddr( &bank->slot[run->slot].to, socket_ipv6, &message->name );
+    if ( namelen == 0 )
+    {
+        return NULL;
+    }
+
+    for ( int i = 0; i < run->count; i++ )
+    {
+        const int slot = order[run->first + i];
+        iovecs[run->first + i].iov_base = bank->data + (size_t) slot * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
+        iovecs[run->first + i].iov_len = (size_t) bank->slot[slot].packet_bytes;
+    }
+
+    memset( &message->message, 0, sizeof( message->message ) );
+    message->message.msg_name = &message->name;
+    message->message.msg_namelen = namelen;
+    message->message.msg_iov = &iovecs[run->first];
+    message->message.msg_iovlen = (size_t) run->count;
+
+    if ( run->count > 1 && !run->plain )
+    {
+        memset( message->control, 0, sizeof( message->control ) );
+        message->message.msg_control = message->control;
+        message->message.msg_controllen = sizeof( message->control );
+        struct cmsghdr * cmsg = CMSG_FIRSTHDR( &message->message );
+        cmsg->cmsg_level = IPPROTO_UDP;
+        cmsg->cmsg_type = UDP_SEGMENT;
+        cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
+        const uint16_t stride = (uint16_t) run->segment_bytes;
+        memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+    }
+
+    return &message->message;
+#else  // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
+    (void) socket_ipv6;
+    return NULL;
+#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_MESSAGES )
 }
 
 int rocketnet_uring_queue_send_pending( const struct rocketnet_uring_queue_send_t * send, int queue_index )
