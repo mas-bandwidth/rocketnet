@@ -100,6 +100,7 @@ struct cr_transport_t
     std::vector<int> inbound_slot;          // the payloads the next update presents, by client index
     std::vector<uint8_t *> inbound_data;
     std::vector<int> inbound_bytes;
+    std::vector<std::vector<uint8_t>> sent;     // every finished frame's payload, in finish order
 };
 
 // start_packet hands back a 16-byte aligned frame. Kept out of the transport
@@ -168,6 +169,8 @@ static int cr_finish_packet( void * transport, rocketnet_packet_context_t * cont
     }
     t->pending.push_back( context->packet_id );
     t->pending_slot.push_back( context->client_index );
+    const uint8_t * payload = context->frame + context->payload_index;
+    t->sent.push_back( std::vector<uint8_t>( payload, payload + payload_bytes ) );
     return ROCKETNET_PACKET_OVERHEAD_BYTES + ROCKETNET_ACK_BLOCK_MIN_BYTES + payload_bytes;     // the seal path's wire bytes (rocketnet_send_budget.h)
 }
 
@@ -336,7 +339,7 @@ struct cr_world_t
     cr_model_t model;
 };
 
-static void cr_world_create( cr_world_t * w, int slots, const int * bound )
+static void cr_world_create( cr_world_t * w, int slots, const int * bound, int packets_per_update = 64 )
 {
     check( slots >= 2 && slots <= CR_MAX_SLOTS );
 
@@ -349,7 +352,7 @@ static void cr_world_create( cr_world_t * w, int slots, const int * bound )
     config.max_message_bytes = 4096;
     config.send_message_buffer_bytes = 131072;
     config.send_queue_messages = 128;
-    config.packets_per_update = 64;
+    config.packets_per_update = packets_per_update;
     config.unreliable_messages_per_update = 16;
     config.max_message_receipts = 16;
     config.sequenced_messages_held = 0;
@@ -1191,3 +1194,117 @@ static void test_server_failed_frame_loses_each_receipt_once()
 }
 
 REGISTER_UNIT_TEST( test_server_failed_frame_loses_each_receipt_once );
+
+// where a run of `run` bytes of `marker` first appears on the wire this
+// world sent: frame index * 4096 + offset, or -1
+
+static int cr_wire_position( const cr_transport_t * t, uint8_t marker, int run )
+{
+    for ( size_t f = 0; f < t->sent.size(); f++ )
+    {
+        const std::vector<uint8_t> & frame = t->sent[f];
+        int length = 0;
+        for ( size_t i = 0; i < frame.size(); i++ )
+        {
+            length = frame[i] == marker ? length + 1 : 0;
+            if ( length == run )
+            {
+                return (int) f * 4096 + (int) i + 1 - run;
+            }
+        }
+    }
+    return -1;
+}
+
+// RNOutgoingBuild StartInPlace: an in-place unreliable send never goes out
+// ahead of an unreliable message already queued. One message waits in the
+// connection's queue (the transport had no frame to spare when it was
+// sent); with frames to spare again, the next unreliable start takes the
+// queued path too, and on the wire the first message comes first.
+static void test_server_in_place_send_never_overtakes_a_queued_one()
+{
+    const int bound[2] = { 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 2, bound );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+
+    w.t->capacity = w.t->started;
+    uint8_t first[100];
+    memset( first, 0xA1, sizeof( first ) );
+    check( rocketnet_message_server_send( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, first, (int) sizeof( first ) ) != 0 );
+    check( w.object->connections[0].unreliable_count == 1 );
+    const uint64_t fallback = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK];
+    w.t->sent.clear();
+
+    w.t->capacity = w.t->started + 16;
+    uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
+    check( p != NULL );
+    check( w.object->in_place == 0 );                                   // queued behind the first
+    if ( p )
+    {
+        memset( p, 0xB2, 100 );
+        check( rocketnet_message_server_finish( w.server, 0, 100 ) != 0 );
+    }
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK] == fallback + 1 );
+
+    rocketnet_message_server_send_packets( w.server );
+    const int a = cr_wire_position( w.t, 0xA1, 100 );
+    const int b = cr_wire_position( w.t, 0xB2, 100 );
+    check( a >= 0 );
+    check( b >= 0 );
+    check( a < b );
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_in_place_send_never_overtakes_a_queued_one );
+
+// RNOutgoingBuild ReliableSentWithinOneUpdate: while reliable work is due one
+// packet of the update's allowance stays for it. At two packets an update,
+// with a reliable message waiting, one whole unreliable frame goes in place;
+// the second unreliable start finds the last packet kept and takes the queued
+// path, and the reliable message goes out in this update's flush.
+static void test_server_in_place_keeps_a_packet_for_due_reliable_work()
+{
+    const int bound[2] = { 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 2, bound, 2 );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+    const uint64_t fallback = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK];
+    w.t->sent.clear();
+
+    uint8_t reliable[100];
+    memset( reliable, 0xC3, sizeof( reliable ) );
+    check( rocketnet_message_server_send( w.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, reliable, (int) sizeof( reliable ) ) != 0 );
+
+    const int bytes = 1400;
+    uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+    check( p != NULL );
+    check( w.object->in_place != 0 );                                   // the first packet of two
+    if ( p )
+    {
+        memset( p, 0xD4, (size_t) bytes );
+        check( rocketnet_message_server_finish( w.server, 0, bytes ) != 0 );
+    }
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK] == fallback );
+
+    p = rocketnet_message_server_start( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+    check( p != NULL );
+    check( w.object->in_place == 0 );                                   // the last packet is the reliable message's
+    if ( p )
+    {
+        memset( p, 0xE5, (size_t) bytes );
+        check( rocketnet_message_server_finish( w.server, 0, bytes ) != 0 );
+    }
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK] == fallback + 1 );
+
+    rocketnet_message_server_send_packets( w.server );
+    check( w.t->sent.size() == 2 );
+    check( cr_wire_position( w.t, 0xD4, 64 ) >= 0 );
+    check( cr_wire_position( w.t, 0xC3, 64 ) >= 0 );                    // the reliable message went out in this update
+    check( cr_wire_position( w.t, 0xE5, 64 ) == -1 );                   // the queued one waits: the allowance is spent
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_in_place_keeps_a_packet_for_due_reliable_work );
