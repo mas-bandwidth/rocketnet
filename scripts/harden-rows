@@ -1,0 +1,63 @@
+# shellcheck shell=bash disable=SC2034  # every setting is read by the script that sources this
+# harden-rows: the rows of the server transport hardening matrix, sourced by
+# scripts/harden-cell (one machine, two namespaces) and scripts/harden-pair
+# (two machines). harden_row <row> sets server_shape, client_shape, netem,
+# hostile, duplicates and min_delivery, reading burst_clients and fill_jobs
+# (--fill-jobs: the unreliable writes on that many job threads, 0 = main);
+# it returns 1 for a row it does not know.
+
+harden_row()
+{
+    local row=$1
+    server_shape=(--base 1 --burst 15 --burst-clients 0 --reliable-every 1 --big-every 60 --big-bytes 3000)
+    client_shape=(--messages 1 --reliable-every 1 --join-rate 100)
+    netem=""
+    hostile=0
+    duplicates=0
+    min_delivery=99.9
+    case "$row" in
+        control)
+            server_shape=(--base 1 --burst 0 --burst-clients 0 --reliable-every 0 --big-every 0)
+            ;;
+        bar)
+            # the bar: every client bursts every frame, MTU-size messages only:
+            # (1 + 16) messages x 1000 clients x 60 Hz = 1.02M pps of 1200 B
+            # (the nearest whole count to 1.04M); burst clients default to all
+            server_shape=(--base 1 --burst 16 --burst-clients "${burst_clients:-1000000}" --sizes 1200 --reliable-every 0 --big-every 0)
+            ;;
+        space)
+            # the space shape at the transport's per-frame cap: burst clients
+            # chosen by the caller from the cap (TRACER-WIDE-SEND.md)
+            server_shape=(--base 1 --burst 15 --burst-clients "${burst_clients:-3}" --reliable-every 1 --big-every 60 --big-bytes 3000)
+            ;;
+        churn)
+            client_shape=(--messages 1 --reliable-every 1 --join-rate 100 --churn-clients 200 --churn-rate 20 --token-timeout 5)
+            ;;
+        impair)
+            # each direction: 1% loss, 2% reordered (sent without the delay),
+            # 15 ms +- 5 ms of normal jitter. No duplicates here: netem counts
+            # none, so they would make the packet equation an inequality
+            netem="delay 15ms 5ms distribution normal reorder 2% loss 1% limit 200000"
+            min_delivery=97
+            ;;
+        duplicate)
+            # each direction: 1% duplicated, nothing lost; the duplicates are
+            # the equation's excess of arrivals and every one must be refused
+            netem="duplicate 1% limit 200000"
+            duplicates=1
+            ;;
+        hostile)
+            hostile=1
+            ;;
+        longrun)
+            server_shape=(--base 1 --burst 15 --burst-clients "${burst_clients:-3}" --reliable-every 1 --big-every 60 --big-bytes 3000)
+            client_shape=(--messages 1 --reliable-every 1 --join-rate 100 --churn-clients 100 --churn-rate 2 --token-timeout 5)
+            netem="delay 15ms 5ms distribution normal loss 0.5% limit 200000"
+            min_delivery=99
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    server_shape+=(--fill-jobs "${fill_jobs:-0}")
+}

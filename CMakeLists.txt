@@ -1324,6 +1324,9 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(load tests/load/load.c)
     add_executable(load_split tests/load/load_split.c)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
+    # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
+    add_executable(harden_load tests/load/harden_load.cpp)
+    target_compile_features(harden_load PRIVATE cxx_std_11)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
@@ -1458,7 +1461,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split soak_sim)
+foreach(harness client server soak load load_split harden_load soak_sim)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
