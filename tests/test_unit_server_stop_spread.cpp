@@ -855,6 +855,116 @@ static void test_server_update_ends_slot_on_ack_internal_error()
 }
 REGISTER_UNIT_TEST( test_server_update_ends_slot_on_ack_internal_error );
 
+// Every counter equals its value before the step, except SERVER_DISCONNECTED_CLIENT
+// and CLIENT_DISCONNECTED (each up by ended), DISCONNECT_BURST_DROPPED (up by
+// dropped) and SLOT_WITHOUT_MAPPING (up by missing).
+static void stop_spread_check_ended( const uint64_t * before, const uint64_t * after, uint64_t ended, uint64_t dropped,
+                                     uint64_t missing )
+{
+    rocketnet_unit_check( after[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT] - before[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT] == ended );
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        uint64_t expected = before[i];
+        if ( i == ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT || i == ROCKETNET_COUNTER_CLIENT_DISCONNECTED )
+        {
+            expected += ended;
+        }
+        else if ( i == ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED )
+        {
+            expected += dropped;
+        }
+        else if ( i == ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING )
+        {
+            expected += missing;
+        }
+        rocketnet_unit_check( after[i] == expected );
+    }
+}
+
+// SERVER_DISCONNECTED_CLIENT counts each slot the server ends, once, on each
+// of the four ways a kick ends it: the burst sealed at once
+// (rocketnet_server_protocol_disconnect_client), the burst left waiting for
+// room, the burst dropped with the ring at its steady cap, and a connected
+// slot with no mapping (the last three in
+// rocketnet_server_transport_close_client_locally). A kick of a slot that is
+// not connected counts nothing.
+static void test_server_disconnected_client_counted_on_every_path()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+    const int clients = 3;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+    const uint64_t * counters = server->protocol.counters->values;
+    uint64_t before[ROCKETNET_NUM_COUNTERS];
+
+    // sealed at once: room, allowance, and no burst waiting
+
+    memcpy( before, counters, sizeof( before ) );
+    const uint64_t seals = server->disconnect_seals;
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    rocketnet_unit_check( server->disconnect_seals == seals + ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( server->disconnect_burst_count == 0 );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( server->protocol.client_slots, 0 ) );
+    stop_spread_check_ended( before, counters, 1, 0, 0 );
+
+    // the same slot again: not connected, nothing counted
+
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    stop_spread_check_ended( before, counters, 0, 0, 0 );
+
+    // no send room: each burst waits, up to the steady cap (max_clients, 3)
+
+    f->capacity = f->used;
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, 1 );
+    rocketnet_unit_check( server->disconnect_burst_count == 1 );
+    stop_spread_check_ended( before, counters, 1, 0, 0 );
+
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, 2 );
+    rocketnet_unit_check( server->disconnect_burst_count == 2 );
+    stop_spread_check_ended( before, counters, 1, 0, 0 );
+
+    rocketnet_client_slots_publish( server->protocol.client_slots );    // as an update's end does
+    stop_spread_connect( server, 2 );
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, 2 );
+    rocketnet_unit_check( server->disconnect_burst_count == 3 );
+    stop_spread_check_ended( before, counters, 1, 0, 0 );
+
+    // the ring at its steady cap: the burst is dropped, the slot still ends
+
+    rocketnet_client_slots_publish( server->protocol.client_slots );
+    stop_spread_connect( server, 2 );
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, 2 );
+    rocketnet_unit_check( server->disconnect_burst_count == 3 );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( server->protocol.client_slots, 2 ) );
+    stop_spread_check_ended( before, counters, 1, 1, 0 );
+
+    // a connected slot with no mapping (the slot API permits it): it ends,
+    // counted once, with SLOT_WITHOUT_MAPPING
+
+    rocketnet_client_slots_publish( server->protocol.client_slots );
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    const int orphan = rocketnet_client_slots_assign( server->protocol.client_slots, 99, -1, 99, user_data );
+    rocketnet_unit_check( orphan >= 0 && orphan < clients );
+    rocketnet_unit_check( rocketnet_client_slots_connected( server->protocol.client_slots, orphan ) );
+    memcpy( before, counters, sizeof( before ) );
+    rocketnet_server_transport_disconnect_client( server, orphan );
+    rocketnet_unit_check( !rocketnet_client_slots_connected( server->protocol.client_slots, orphan ) );
+    rocketnet_unit_check( server->disconnect_burst_count == 3 );
+    stop_spread_check_ended( before, counters, 1, 0, 1 );
+
+    f->capacity = 64;
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_disconnected_client_counted_on_every_path );
+
 static rocketnet_server_transport_t * g_stop_spread_reentry_server;
 static int g_stop_spread_reentry_slot;
 static int g_stop_spread_reentry_calls;
@@ -986,3 +1096,82 @@ static void test_server_transport_misuse_refused_without_asserts()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );
+
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
+// The transport's own read of XDP_RECEIVE_FRAME_DROPPED
+// (rocketnet_server_transport_counters): the development case
+// rocketnet_server_socket_test_receive_dropped drives two synthetic xdp queues
+// through their drops by reason and the kernel's rx_dropped and rx_ring_full,
+// and asks its dispatch for the total after each step (0, 0, 31, 127, 127,
+// 127, 128, 128, 63). Here the dispatch is a server transport whose I/O is
+// the xdp table over those queues: the answer is what the transport's counter
+// read leaves in XDP_RECEIVE_FRAME_DROPPED, so the case passes only when that
+// counter holds each total exactly. A second read leaves it unchanged (the
+// count is assigned, never added), and a transport whose I/O is not xdp
+// leaves the counter as it was.
+
+typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                            uint64_t * dropped );
+bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
+                                                   const struct rocketnet_server_transport_io_operations_t * xdp );
+
+static rocketnet_server_transport_t * g_frames_dropped_server;
+static int g_frames_dropped_reads;
+
+static bool stop_spread_frames_dropped_read( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                             uint64_t * dropped )
+{
+    rocketnet_server_transport_t * server = g_frames_dropped_server;
+    const rocketnet_server_transport_io_operations_t * saved_operations = server->io.operations;
+    void * saved_instance = server->io.instance;
+    server->io.operations = operations;
+    server->io.instance = transport;
+
+    const uint64_t first = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED];
+    const uint64_t again = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED];
+    rocketnet_unit_check( again == first );
+
+    server->io.operations = saved_operations;
+    server->io.instance = saved_instance;
+    g_frames_dropped_reads++;
+    *dropped = first;
+    return true;
+}
+
+static void test_server_transport_counts_xdp_frames_dropped()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );    // the synthetic queues have no stats map: its read logs once
+
+    // not the xdp table: the counter is left as it was
+
+    server->counters.values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] = 7;
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] == 7 );
+    server->counters.values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] = 0;
+
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( xdp && xdp->backend && xdp->backend->server );
+    g_frames_dropped_server = server;
+    g_frames_dropped_reads = 0;
+    rocketnet_unit_check( rocketnet_server_socket_test_receive_dropped( stop_spread_frames_dropped_read, xdp->backend->server ) );
+    rocketnet_unit_check( g_frames_dropped_reads == 9 );
+    g_frames_dropped_server = NULL;
+
+    // the last total stays until the next xdp read: a read through the fake
+    // table assigns nothing
+
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] == 63 );
+
+    rocketnet_log_level( saved_level );
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_counts_xdp_frames_dropped );
+
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP

@@ -113,8 +113,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 1608857790 and 22972215, stood 140405631 and 8762043 bytes above what the
 // build reads; the at-most check passed them and the suite hid the actual=
 // lines, so the figures above, computed from them, were never seen to hold.
+// v1.2/dead-code removed a client field (session_nonce): the client object is
+// one 64-byte rounding smaller, and the client's actual= line is 15258684
+// (read on aws-win-1, MSVC 19.52.37029, x64, DEV=ON, Release: 15258748 at the
+// tree before that merge, 15258684 after it, same toolset). The server's
+// reading did not move.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452159 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210108 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server

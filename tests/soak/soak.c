@@ -150,7 +150,8 @@
     staged_proxy_max=<n> deferred_run_max=<n> deferred_iterations=<n>
     unacked_span_max=<n> acked_packets=<n> refused_sends=<n>
     iteration_gap_max_ms=<ms> client_lifetime_send_deferred=<n>
-    client_lifetime_send_ring_full=<n> library_bytes=<n>" line, the client
+    client_lifetime_send_ring_full=<n> server_lifetime_send_ring_full=<n>
+    library_bytes=<n>" line, the client
     send path over the interval read from what the library already keeps
     (soak_print_send). staged_proxy_max is a proxy, not the fill ring's
     occupancy, which the library does not expose: it counts only the
@@ -980,17 +981,21 @@ static void soak_send_interval_reset( struct soak_send_interval_t * send )
     send->iteration_gap_max = 0.0;
 }
 
-static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
+static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server,
+                             int counter_send_deferred, int counter_send_ring_full )
 {
     const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+    const struct rocketnet_counters_t * server_counters = server ? rocketnet_server_transport_counters( server ) : NULL;
 
     printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
-            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
+            "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu server_lifetime_send_ring_full=%llu "
+            "library_bytes=%lld\n",
             seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
             (unsigned long long) send->deferred_iterations, (unsigned long long) send->unacked_span_max,
             (unsigned long long) send->acked_packets, (unsigned long long) send->refused_sends, send->iteration_gap_max * 1000.0,
             (unsigned long long) ( counters && counter_send_deferred >= 0 ? rocketnet_counter_value( counters, counter_send_deferred ) : 0 ),
             (unsigned long long) ( counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( counters, counter_send_ring_full ) : 0 ),
+            (unsigned long long) ( server_counters && counter_send_ring_full >= 0 ? rocketnet_counter_value( server_counters, counter_send_ring_full ) : 0 ),
             (long long) soak_library_bytes_read() );
     fflush( stdout );
 }
@@ -1758,7 +1763,7 @@ int main( int argc, char ** argv )
                 }
             }
 
-            soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
+            soak_print_send( rocketnet_time() - start_time, &send_interval, client, server, counter_send_deferred, counter_send_ring_full );
             soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
                     (unsigned long long) iteration, (unsigned long long) connects,

@@ -543,6 +543,7 @@ MCRNClientGroCarry.cfg	MCRNClientGroCarry.tla	pass	-	check	clientgrocarry	requir
 MCRNClientGroCarryBrokenDropTail.cfg	MCRNClientGroCarry.tla	invariant	Conservation	check	clientgrocarry	required	-
 MCRNClientGroCarryBrokenReadOverHeld.cfg	MCRNClientGroCarry.tla	invariant	Conservation	check	clientgrocarry	required	-
 MCRNClientGroCarryBrokenPastRoom.cfg	MCRNClientGroCarry.tla	invariant	InRoom	check	clientgrocarry	required	-
+MCRNClientGroCarryBrokenSkipBudget.cfg	MCRNClientGroCarry.tla	invariant	ReadBudget	check	clientgrocarry	required	-
 MCLoopbackHub.cfg	MCLoopbackHub.tla	pass	-	check	loopbackhub	required	-
 MCLoopbackHubBrokenDestroyRegistered.cfg	MCLoopbackHub.tla	invariant	NoEndpointOutlivesHub	check	loopbackhub	required	-
 MCLoopbackHubBrokenNoHeaderCheck.cfg	MCLoopbackHub.tla	invariant	NoForeignUse	check	loopbackhub	required	-

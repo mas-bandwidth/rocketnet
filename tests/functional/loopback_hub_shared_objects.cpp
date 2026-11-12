@@ -171,6 +171,10 @@ static uint64_t loopback_hub_modules_debug_crt_bytes()
     // size, for the plan only
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_loopback_hub_t * plan_hub = rocketnet_loopback_hub_create( NULL, 1, &status );
+    if ( plan_hub == NULL || status != ROCKETNET_STATUS_OK )
+    {
+        printf( "loopback hub modules: the plan hub create failed: %s\n", rocketnet_status_name( status ) );
+    }
     rocketnet_check( plan_hub != NULL && status == ROCKETNET_STATUS_OK );
     server_config.loopback_hub = plan_hub;
     client_config.loopback_hub = plan_hub;

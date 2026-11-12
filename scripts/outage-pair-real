@@ -38,6 +38,9 @@
 #   --loss P          one-way loss on each end outside an outage, such as 1% (default 1%)
 #   --bin-dir DIR     where bin/outage_pair is (default: ../bin of this script)
 #   --log-dir DIR     write the logs here instead of a new temporary directory
+#   --neighbours M    permanent (default): each end holds a fixed ARP entry for the
+#                     other, so an outage darkens only the datagrams; dynamic: the
+#                     kernel resolves as usual and an outage also stalls ARP
 #
 # Exit status: 0 only when both cases passed; 1 names the failed check.
 
@@ -47,6 +50,7 @@ NAME=outage-pair-real
 VM=0
 DELAY_MS=50
 LOSS=1%
+NEIGHBOURS=permanent
 LOG_DIR=
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SCRIPT="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
@@ -78,6 +82,7 @@ while [ $# -gt 0 ]; do
         --loss)       [ $# -ge 2 ] || fail "--loss needs a value"; LOSS=$2; shift 2 ;;
         --bin-dir)    [ $# -ge 2 ] || fail "--bin-dir needs a value"; BIN_DIR=$2; shift 2 ;;
         --log-dir)    [ $# -ge 2 ] || fail "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
+        --neighbours) [ $# -ge 2 ] || fail "--neighbours needs a value"; NEIGHBOURS=$2; shift 2 ;;
         -h|--help)    usage; exit 0 ;;
         *)            fail "unknown option $1 (see --help)" ;;
     esac
@@ -85,6 +90,7 @@ done
 
 case "$DELAY_MS" in ''|*[!0-9]*) fail "--delay-ms must be a non-negative integer" ;; esac
 printf '%s' "$LOSS" | grep -Eq '^[0-9]+(\.[0-9]+)?%$' || fail "--loss must be a percentage such as 1%"
+case "$NEIGHBOURS" in permanent|dynamic) ;; *) fail "--neighbours must be permanent or dynamic" ;; esac
 
 [ "$(uname -s)" = Linux ] || fail "this host is $(uname -s): the run needs Linux network namespaces and tc netem"
 BIN_DIR=$(cd "$BIN_DIR" 2>/dev/null && pwd) || fail "no directory $BIN_DIR"
@@ -115,8 +121,8 @@ if [ "$VM" -eq 1 ]; then
     # once it has.
     {
         printf ': > %q\n' "$LOG_DIR/started"
-        printf 'exec sudo bash %q --bin-dir %q --log-dir %q --delay-ms %q --loss %q\n' \
-            "$SCRIPT" "$BIN_DIR" "$LOG_DIR" "$DELAY_MS" "$LOSS"
+        printf 'exec sudo bash %q --bin-dir %q --log-dir %q --delay-ms %q --loss %q --neighbours %q\n' \
+            "$SCRIPT" "$BIN_DIR" "$LOG_DIR" "$DELAY_MS" "$LOSS" "$NEIGHBOURS"
     } > "$LOG_DIR/guest.sh" || fail "cannot write $LOG_DIR/guest.sh"
     short=$(mktemp -d /tmp/rnoutage.XXXXXX) || fail "cannot create a short directory for vng"
     ( cd "$short" && "$SCRIPT_DIR/vm-boot-guard" --marker "$LOG_DIR/started" -- vng --run "$vm_kernel" --memory 1G --cpus 4 --rwdir "$LOG_DIR" -- \
@@ -197,6 +203,33 @@ netem()
     # $1 = namespace, $2 = device, $3 = add or change, $4 = loss
     ip netns exec "$1" tc qdisc "$3" dev "$2" root netem limit 100000 delay "${DELAY_MS}ms" loss "$4"
 }
+
+# An outage darkens UDP between the two programs, not address resolution.
+# netem's 100% loss drops every frame on the end, ARP included, so with
+# dynamic neighbour entries a dark end's entry goes stale and is probed into
+# the dark, and when the path comes back the first datagrams wait in the
+# neighbour queue for the next probe: up to retrans_time_ms (1 s) more of
+# silence than the outage the case claims. Run 43187852822 ended the T - 1
+# case that way (the client heard nothing for about 10.07 s around a 9.03 s
+# outage). Each end therefore holds a permanent entry for the other, so an
+# outage of T - 1 is T - 1 of silence. --neighbours dynamic keeps the kernel's
+# own resolution, to show that effect.
+if [ "$NEIGHBOURS" = permanent ]; then
+    server_mac=$(ip netns exec "$NS_SERVER" cat "/sys/class/net/$VETH_SERVER/address") || fail "read the server end's address"
+    client_mac=$(ip netns exec "$NS_CLIENT" cat "/sys/class/net/$VETH_CLIENT/address") || fail "read the client end's address"
+    ip netns exec "$NS_SERVER" ip neigh replace "$CLIENT_ADDRESS" lladdr "$client_mac" dev "$VETH_SERVER" nud permanent \
+        || fail "permanent neighbour entry on the server end"
+    ip netns exec "$NS_CLIENT" ip neigh replace "$SERVER_ADDRESS" lladdr "$server_mac" dev "$VETH_CLIENT" nud permanent \
+        || fail "permanent neighbour entry on the client end"
+fi
+ip netns exec "$NS_SERVER" ip neigh show dev "$VETH_SERVER"
+ip netns exec "$NS_CLIENT" ip neigh show dev "$VETH_CLIENT"
+
+# every neighbour state change on either end, timestamped, for the logs
+ip netns exec "$NS_SERVER" ip -ts monitor neigh > "$LOG_DIR/neigh-server.log" 2>&1 &
+PIDS+=("$!")
+ip netns exec "$NS_CLIENT" ip -ts monitor neigh > "$LOG_DIR/neigh-client.log" 2>&1 &
+PIDS+=("$!")
 
 netem "$NS_SERVER" "$VETH_SERVER" add "$LOSS" || fail "tc qdisc add netem on the server end (is sch_netem available?)"
 netem "$NS_CLIENT" "$VETH_CLIENT" add "$LOSS" || fail "tc qdisc add netem on the client end"

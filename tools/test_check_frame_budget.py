@@ -82,6 +82,11 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("total_us_p99_median=101.25", report_ro)
         self.assertIn("verdict=FAIL", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # ... and names the FAIL to the nightly watch, which lists it red
+        self.assertRegex(report_ro, r"(?m)^::warning title=REPORT-ONLY-FAIL::frame_budget transport=msgx P=32 "
+                         r"total_us_p99_median=101\.25 .*verdict=FAIL$")
+        # an enforcing leg exits 1 instead and prints no annotation
+        self.assertNotIn("REPORT-ONLY-FAIL", report)
 
     def test_malformed_or_missing_line_fails(self) -> None:
         missing_p32 = (
@@ -148,6 +153,9 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("VOID load=4.25 cores=16", report_ro)
         self.assertIn("verdict=VOID", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # a report-only void exits 0, so it names itself to the nightly watch
+        self.assertIn("::warning title=UNMEASURED::frame budget VOID: host load 4.25 over 4 (16 cores / 4) "
+                      "before run 1; nothing measured", report_ro)
 
         # Windows (load1=None) prints load=unavailable and does not void:
         code_win, report_win = cfb.evaluate_gate(

@@ -315,6 +315,55 @@ static int load_census_fd_is_rng( int fd )
 }
 #endif // #if defined( __APPLE__ ) || defined( __linux__ )
 
+#if defined( __linux__ )
+/* a joined thread can still be listed under /proc/self/task: pthread_join
+   returns when the kernel clears the thread's tid in do_exit, before the task
+   is reaped. do_exit sets PF_EXITING (0x4, the ninth field of
+   /proc/<tid>/stat) before it clears the tid, so a thread with that flag, or
+   one already gone, is not a survivor (the Apple census's exiting-thread rule) */
+static int load_census_thread_exiting( const char * tid )
+{
+    char path[64];
+    if ( snprintf( path, sizeof( path ), "/proc/self/task/%s/stat", tid ) >= (int) sizeof( path ) )
+    {
+        return 0;
+    }
+
+    FILE * file = fopen( path, "r" );
+    if ( !file )
+    {
+        return 1;
+    }
+
+    char line[1024];
+    const size_t length = fread( line, 1, sizeof( line ) - 1, file );
+    fclose( file );
+    if ( length == 0 )
+    {
+        return 1;
+    }
+    line[length] = '\0';
+
+    /* the name in field 2 may hold spaces and parentheses: the fields after it
+       start past the last ')': state, ppid, pgrp, session, tty_nr, tpgid, flags */
+    const char * rest = strrchr( line, ')' );
+    if ( !rest )
+    {
+        return 0;
+    }
+
+    char state = 0;
+    long ppid = 0, pgrp = 0, session = 0, tty = 0, tpgid = 0;
+    unsigned long flags = 0;
+    if ( sscanf( rest + 1, " %c %ld %ld %ld %ld %ld %lu", &state, &ppid, &pgrp, &session, &tty, &tpgid, &flags ) != 7 )
+    {
+        return 0;
+    }
+
+    return ( flags & 0x4UL ) != 0;
+}
+#endif // #if defined( __linux__ )
+
 static int load_census_take( struct load_census_t * census )
 {
     census->valid = 0;
@@ -393,6 +442,11 @@ static int load_census_take( struct load_census_t * census )
     while ( ( entry = readdir( tasks ) ) != NULL )
     {
         if ( entry->d_name[0] < '0' || entry->d_name[0] > '9' )
+        {
+            continue;
+        }
+
+        if ( load_census_thread_exiting( entry->d_name ) )
         {
             continue;
         }

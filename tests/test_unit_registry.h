@@ -24,6 +24,8 @@
 #ifndef ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
 #define ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
 
+#include "check_count.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -156,6 +158,7 @@ struct rocketnet_unit_file_registrar_t
 #define rocketnet_unit_check( condition )                                                                         \
 do                                                                                                                \
 {                                                                                                                 \
+    ROCKETNET_TEST_COUNT_CHECK();                                                                                 \
     if ( !(condition) )                                                                                           \
     {                                                                                                             \
         if ( *rocketnet_unit_expected_fail_active() )                                                             \

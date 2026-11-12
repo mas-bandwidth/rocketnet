@@ -1788,6 +1788,20 @@ static int ep_reuse_write( rn_endpoint_t * endpoint, double now, uint64_t first_
     return count;
 }
 
+// The receipt sends of ep_reuse_sends after the reset, three updates of
+// four sends from serial 1: the reliable receipt send is serial 1 + 4u and
+// the unreliable one 3 + 4u, so receipt send k is serial 2k + 1. Each is
+// counted once, and only as ACKED.
+
+#define EP_REUSE_RECEIPT_SENDS 6
+
+static void ep_reuse_receipt_seen( int * seen, const rocketnet_message_receipt_t & receipt )
+{
+    check( receipt.status == ROCKETNET_RECEIPT_STATUS_ACKED );
+    check( receipt.serial % 2 == 1 && receipt.serial <= 2 * EP_REUSE_RECEIPT_SENDS - 1 );
+    seen[receipt.serial / 2]++;
+}
+
 static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
 {
     rocketnet_message_config_t config;
@@ -1849,6 +1863,7 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
 
     // the same sends after it: the same packets and the same receipts
 
+    int seen[EP_REUSE_RECEIPT_SENDS] = {};
     for ( int update = 0; update < 3; update++ )
     {
         const double now = 2000.0 + 0.1 * update;
@@ -1868,8 +1883,56 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
             check( busy_hashes[p] == fresh_hashes[p] );
         }
 
-        rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update, now + 0.05 );
-        rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update, now + 0.05 );
+        // every packet of the update acked, then the update's end publishes
+        // its receipts (rn_endpoint_tick): both receipt sends of each update
+        // come back, so the comparison below compares something
+
+        for ( int p = 0; p < busy_count; p++ )
+        {
+            rn_endpoint_on_acked( &busy, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+            rn_endpoint_on_acked( &fresh, 100 + 10 * (uint64_t) update + (uint64_t) p, now + 0.05 );
+        }
+        rn_endpoint_tick( &busy, now + 0.05 );
+        rn_endpoint_tick( &fresh, now + 0.05 );
+        rocketnet_message_receipt_t busy_receipts[16];
+        rocketnet_message_receipt_t fresh_receipts[16];
+        const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
+        const int fresh_taken = rn_endpoint_take_receipts( &fresh, fresh_receipts, 16 );
+        check( busy_taken > 0 );
+        check( busy_taken == fresh_taken );
+        for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
+        {
+            check( busy_receipts[r].serial == fresh_receipts[r].serial && busy_receipts[r].status == fresh_receipts[r].status );
+            ep_reuse_receipt_seen( seen, busy_receipts[r] );
+        }
+    }
+
+    // drain: updates with no new sends write what the reliable load kept
+    // queued (each update's unreliable sends wait for an update with room),
+    // until both endpoints have written everything. Every receipt send of
+    // the three updates then has its one receipt, ACKED: the reliable ones
+    // through their messages, the unreliable ones through the packets that
+    // carried them (rn_endpoint_packet_sent's receipt commit)
+
+    for ( int drain = 0; drain < 8; drain++ )
+    {
+        const double now = 2000.5 + 0.1 * drain;
+        int busy_lengths[8];
+        int fresh_lengths[8];
+        uint64_t busy_hashes[8];
+        uint64_t fresh_hashes[8];
+        const uint64_t first_id = 200 + 10 * (uint64_t) drain;
+        const int busy_count = ep_reuse_write( &busy, now, first_id, busy_lengths, busy_hashes, 8 );
+        const int fresh_count = ep_reuse_write( &fresh, now, first_id, fresh_lengths, fresh_hashes, 8 );
+        check( busy_count == fresh_count );
+        for ( int p = 0; p < busy_count; p++ )
+        {
+            check( busy_lengths[p] == fresh_lengths[p] && busy_hashes[p] == fresh_hashes[p] );
+            rn_endpoint_on_acked( &busy, first_id + (uint64_t) p, now + 0.05 );
+            rn_endpoint_on_acked( &fresh, first_id + (uint64_t) p, now + 0.05 );
+        }
+        rn_endpoint_tick( &busy, now + 0.05 );
+        rn_endpoint_tick( &fresh, now + 0.05 );
         rocketnet_message_receipt_t busy_receipts[16];
         rocketnet_message_receipt_t fresh_receipts[16];
         const int busy_taken = rn_endpoint_take_receipts( &busy, busy_receipts, 16 );
@@ -1878,7 +1941,18 @@ static void test_endpoint_reused_slot_writes_what_a_fresh_slot_writes()
         for ( int r = 0; r < busy_taken && r < fresh_taken; r++ )
         {
             check( busy_receipts[r].serial == fresh_receipts[r].serial && busy_receipts[r].status == fresh_receipts[r].status );
+            ep_reuse_receipt_seen( seen, busy_receipts[r] );
         }
+        if ( busy_count == 0 && busy_taken == 0 )
+        {
+            break;
+        }
+    }
+
+    check( busy.unreliable_count == 0 && fresh.unreliable_count == 0 );
+    for ( int i = 0; i < EP_REUSE_RECEIPT_SENDS; i++ )
+    {
+        check( seen[i] == 1 );
     }
 
     rn_arena_destroy( arena_busy );

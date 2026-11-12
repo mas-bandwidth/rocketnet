@@ -5,10 +5,9 @@
 
 // Round-trip invariants for every wire form: the input chooses field values,
 // the real write path encodes them, the real read path decodes them, and the
-// decoded values must be exactly the ones written. netcode's fuzz_read_packet
-// and fuzz_parse_address carry the same oracle; the message records' codec is
-// already held to it by rocketnet_fuzz_message (pack-back of every accepted
-// payload), so this target covers everything below that layer.
+// decoded values must be exactly the ones written. The message records' codec
+// is held to the same oracle by rocketnet_fuzz_message (pack-back of every
+// accepted payload), so this target covers everything below that layer.
 //
 // THE SELECTOR BYTE: input[0] % 8 chooses the form, the rest is its fields
 // (short input is zero-filled).

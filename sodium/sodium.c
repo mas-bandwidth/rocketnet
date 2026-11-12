@@ -19,7 +19,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/* Amalgamated libsodium subset for yojimbo/netcode — generated; do not edit by hand. */
+/* Amalgamated libsodium subset for rocketnet — generated; do not edit by hand. */
 
 #include "sodium.h"
 #if defined(HAVE_AVXINTRIN_H)
@@ -1241,7 +1241,7 @@ _sodium_runtime_get_cpu_features(void)
     ret &= _sodium_runtime_intel_cpu_features(&_cpu_features);
     _cpu_features.initialized = 1;
 
-    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+    #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
     printf( "\nCPU features: " );
     if ( _cpu_features.has_sse2 ) printf( "sse2 " );
     if ( _cpu_features.has_ssse3 ) printf( "ssse3 " );
@@ -1250,7 +1250,7 @@ _sodium_runtime_get_cpu_features(void)
     if ( _cpu_features.has_avx2 ) printf( "avx2 " );
     if ( _cpu_features.has_avx512f ) printf( "avx512f " );
     printf( "\n\n" );
-    #endif // #if NETCODE_CRYPTO_LOGS
+    #endif // #if ROCKETNET_CRYPTO_LOGS
     
     return ret;
 }
@@ -2035,45 +2035,20 @@ sodium_init(void)
     if (sodium_crit_leave() != 0) {
         return -1; /* LCOV_EXCL_LINE */
     }
-    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+    #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
     printf( "\n" );
-    #endif // #if NETCODE_CRYPTO_LOGS
+    #endif // #if ROCKETNET_CRYPTO_LOGS
     return 0;
 }
 
 #ifdef _WIN32
 
-static CRITICAL_SECTION _sodium_lock;
-static volatile LONG    _sodium_lock_initialized;
-
-int
-_sodium_crit_init(void)
-{
-    LONG status = 0L;
-
-    while ((status = InterlockedCompareExchange(&_sodium_lock_initialized,
-                                                1L, 0L)) == 1L) {
-        Sleep(0);
-    }
-
-    switch (status) {
-    case 0L:
-        InitializeCriticalSection(&_sodium_lock);
-        return InterlockedExchange(&_sodium_lock_initialized, 2L) == 1L ? 0 : -1;
-    case 2L:
-        return 0;
-    default: /* should never be reached */
-        return -1;
-    }
-}
+static SRWLOCK _sodium_lock = SRWLOCK_INIT;
 
 int
 sodium_crit_enter(void)
 {
-    if (_sodium_crit_init() != 0) {
-        return -1; /* LCOV_EXCL_LINE */
-    }
-    EnterCriticalSection(&_sodium_lock);
+    AcquireSRWLockExclusive(&_sodium_lock);
     assert(locked == 0);
     locked = 1;
 
@@ -2090,7 +2065,7 @@ sodium_crit_leave(void)
         return -1;
     }
     locked = 0;
-    LeaveCriticalSection(&_sodium_lock);
+    ReleaseSRWLockExclusive(&_sodium_lock);
 
     return 0;
 }
@@ -4201,25 +4176,25 @@ _crypto_stream_chacha20_pick_best_implementation(void)
 #if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
     defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
     if (sodium_runtime_has_avx2()) {
-        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+        #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
         printf( "chacha20 -> avx2\n" );
-        #endif // #if NETCODE_CRYPTO_LOGS
+        #endif // #if ROCKETNET_CRYPTO_LOGS
         implementation = &crypto_stream_chacha20_dolbeau_avx2_implementation;
         return 0;
     }
 #endif
 #if defined(HAVE_EMMINTRIN_H) && defined(HAVE_TMMINTRIN_H)
     if (sodium_runtime_has_ssse3()) {
-        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+        #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
         printf( "chacha20 -> ssse3\n" );
-        #endif // #if NETCODE_CRYPTO_LOGS
+        #endif // #if ROCKETNET_CRYPTO_LOGS
         implementation = &crypto_stream_chacha20_dolbeau_ssse3_implementation;
         return 0;
     }
 #endif
-    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+    #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
     printf( "chacha20 -> ref\n" );
-    #endif // #if NETCODE_CRYPTO_LOGS
+    #endif // #if ROCKETNET_CRYPTO_LOGS
     return 0;
 }
 #undef implementation
@@ -5978,16 +5953,16 @@ _crypto_onetimeauth_poly1305_pick_best_implementation(void)
     implementation = &crypto_onetimeauth_poly1305_donna_implementation;
 #if defined(HAVE_TI_MODE) && defined(HAVE_EMMINTRIN_H)
     if (sodium_runtime_has_sse2()) {
-        #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+        #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
         printf( "poly1305 -> sse3\n" );
-        #endif // #if NETCODE_CRYPTO_LOGS
+        #endif // #if ROCKETNET_CRYPTO_LOGS
         implementation = &crypto_onetimeauth_poly1305_sse2_implementation;
         return 0;
     }
 #endif
-    #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
+    #if defined(ROCKETNET_CRYPTO_LOGS) && ROCKETNET_CRYPTO_LOGS
     printf( "poly1305 -> ref\n" );
-    #endif // #if NETCODE_CRYPTO_LOGS
+    #endif // #if ROCKETNET_CRYPTO_LOGS
     return 0;
 }
 #undef implementation

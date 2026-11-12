@@ -23,7 +23,8 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 | `Arrive(k)` | the network: a message of `k` datagrams lands in the socket (environment) |
 | `Begin(r)` | the call, `max_packets = r`, `total = 0` |
 | `Deliver` | `rocketnet_client_gso_receive_deliver`: `slots[total] = segment carry_segment`, both incremented, while `carry_segment < carry_segments` and `total < max_packets` |
-| `Read` | the `recvmmsg` of one message into the coalesce buffer, only once no segment is held, and past the first slot only while `max_packets - total >= ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`; the message is held from then on (`carry_segment = 0`, `carry_segments = num_segments`) |
+| `Read` | the `recvmmsg` of one message into the coalesce buffer, only once no segment is held, and past the first slot only while `max_packets - total >= ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`; the message is held from then on (`carry_segment = 0`, `carry_segments = num_segments`), and only while the call's read budget lasts (`reads_remaining > 0`); it spends one read |
+| `Skip` | a read that delivers nothing: a weather errno, or a zero-length, truncated or refused-source datagram skipped; under the same conditions as `Read`, it spends one read |
 | `End` | the call returns `total` when neither is enabled |
 | `Done` | a terminal stutter once every datagram arrived and was returned |
 
@@ -33,6 +34,7 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 |---|---|
 | `Conservation` | every datagram that arrived is returned, in this call's slots, held, or in the socket, each once and in arrival order |
 | `InRoom` | a call writes only the slots below its room |
+| `ReadBudget` | a call reads the socket at most `max_packets` times, kept or skipped: one read budget, as the platform's receive has it (`docs/TRANSPORT-INTERNALS.md`) |
 
 ## Reversed witnesses
 
@@ -41,6 +43,7 @@ whenever the room left holds `ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS`.
 | `MCRNClientGroCarryBrokenDropTail.cfg` | the segments past the room are dropped when the call ends, as the code did before the carry (it counted them in `gro_packets_dropped`) | `Conservation` |
 | `MCRNClientGroCarryBrokenReadOverHeld.cfg` | the socket is read while segments are held, and the new message overwrites them | `Conservation` |
 | `MCRNClientGroCarryBrokenPastRoom.cfg` | the delivery loop runs while `total <= room` | `InRoom` |
+| `MCRNClientGroCarryBrokenSkipBudget.cfg` | a skip does not spend the read budget, as the code before v1.1.8 kept separate weather (8) and skip (`max_packets`) counts | `ReadBudget` |
 
 Each counterexample was checked by hand against the code. The drop-tail
 trace is a message of two arriving, a call with room 1 that reads it and

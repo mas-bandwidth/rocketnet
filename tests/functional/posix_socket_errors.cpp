@@ -30,6 +30,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "../kernel_drops.h"
+
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
@@ -67,6 +69,82 @@ static void posix_check_impl( bool condition, const char * text, const char * fi
 }
 
 #define posix_check( condition ) posix_check_impl( (condition), #condition, __FILE__, __LINE__ )
+
+// receive the `count` datagrams of sends[] through the socket's batch receive,
+// each matched by its bytes and each exactly once (a datagram that matches none,
+// or one already seen, fails). Loopback can drop one (tests/kernel_drops.h):
+// what is still missing at the deadline is sent again through the batch send
+// only when the kernel counted that many receive drops; otherwise the loss is
+// the socket layer's and the case fails. Returns the count received.
+
+#define POSIX_RECEIVE_EACH_MAX 128
+
+static int posix_receive_each( rocketnet_platform_socket_t * socket, struct rocketnet_loss_gate_t * gate, const struct rocketnet_platform_send_t * sends, int count )
+{
+    posix_check( count > 0 && count <= POSIX_RECEIVE_EACH_MAX );
+
+    bool arrived[POSIX_RECEIVE_EACH_MAX];
+    memset( arrived, 0, sizeof( arrived ) );
+
+    static uint8_t data[8 * ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+
+    int received = 0;
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < count )
+    {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: received %d of %d\n", gate->name, received, count );
+            fflush( stdout );
+            posix_check( rocketnet_loss_gate_resend( gate, count - received ) );
+
+            struct rocketnet_platform_send_t missing[POSIX_RECEIVE_EACH_MAX];
+            int num_missing = 0;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( !arrived[i] )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+
+            rocketnet_platform_socket_send_packets( socket, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        const int got = rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 );
+        if ( got == 0 )
+        {
+            rocketnet_platform_sleep( 0.0005 );
+            continue;
+        }
+
+        for ( int g = 0; g < got; g++ )
+        {
+            const uint8_t * packet = data + (size_t) g * ROCKETNET_RECEIVE_CEILING;
+            int match = -1;
+            for ( int i = 0; i < count; i++ )
+            {
+                if ( bytes[g] == sends[i].packet_bytes && memcmp( packet, sends[i].packet_data, (size_t) bytes[g] ) == 0 )
+                {
+                    match = i;
+                    break;
+                }
+            }
+            posix_check( match >= 0 );
+            posix_check( !arrived[match] );
+            arrived[match] = true;
+            received++;
+        }
+    }
+
+    return received;
+}
+
 
 // ---------------------------------------------------
 // the Linux native server transports (gso, io_uring) own their sockets, so no
@@ -452,6 +530,9 @@ static void posix_pair_destroy( struct posix_pair_t * pair )
 #define POSIX_WEATHER_GARBAGE       1000
 #define POSIX_WEATHER_ROUNDS        20
 #define POSIX_WEATHER_ZEROS         8       // zero-length datagrams per round, interleaved
+#define POSIX_WEATHER_CHUNK         16      // datagrams sent before they must all be counted (16 x 1500 bytes: far inside any receive buffer)
+#define POSIX_WEATHER_CHUNK_WAIT    2.0     // seconds a chunk may take to be counted before what is missing is sent again
+#define POSIX_WEATHER_RESENDS       3       // resends of one chunk before the case fails
 #define POSIX_WEATHER_VALID_BYTES   100
 
 struct posix_expect_t
@@ -487,6 +568,8 @@ static void posix_classify( const uint8_t * data, int bytes, struct posix_expect
     }
 }
 
+static void posix_expect_count( const uint8_t * data, int bytes, struct posix_expect_t * expect );
+
 static void posix_send_datagram( int sender, const struct sockaddr_storage * to, socklen_t to_bytes, const uint8_t * data, int bytes,
                                  struct posix_expect_t * expect )
 {
@@ -501,6 +584,14 @@ static void posix_send_datagram( int sender, const struct sockaddr_storage * to,
     {
         return;
     }
+    posix_expect_count( data, bytes, expect );
+}
+
+// what one datagram of these bytes adds to the receiver's counters, the
+// receiver's own classification (posix_classify) and the native size pass
+
+static void posix_expect_count( const uint8_t * data, int bytes, struct posix_expect_t * expect )
+{
 #if defined( __linux__ )
     // a zero-length datagram: the portable pump skips it uncounted; the gso
     // worker and the io_uring receive count it in their size pass
@@ -616,31 +707,220 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     int valid_sent = 0;
     int valid_seen = 0;
 
-    for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    // Loopback does not promise delivery: macOS drops a datagram when a
+    // burst overruns the receiving socket or the loopback input queue, more
+    // so on a loaded runner (Nightly CI 43263328293: a round's 50 storm
+    // datagrams and its valid payload never counted in 5 s). The counts here
+    // are exact, so a loss cannot be waited out. The storm goes in chunks of
+    // POSIX_WEATHER_CHUNK, and each chunk is kept until its datagrams are
+    // counted. What a chunk is still short of after POSIX_WEATHER_CHUNK_WAIT
+    // seconds is sent again from the chunk's own datagrams, class by class
+    // (every datagram of one class moves the counters the same way), at most
+    // POSIX_WEATHER_RESENDS times, each resend printed. The valid payload is
+    // sent again the same way. A datagram that was only late and arrives
+    // after its resend overshoots its class, and that fails by name: no
+    // count may exceed what was sent.
+
+    static uint8_t chunk_data[POSIX_WEATHER_CHUNK][65507];
+    int chunk_bytes[POSIX_WEATHER_CHUNK];
+    struct posix_expect_t chunk_class[POSIX_WEATHER_CHUNK];
+    int chunk_count = 0;
+    int resends = 0;
+    int round = 0;
+
+    // one update; every valid payload that arrived is checked and counted
+
+    auto pump = [&]()
+    {
+        posix_pair_update( &pair );
+
+        if ( at_server )
+        {
+            const int num_payloads = rocketnet_server_transport_num_payloads( pair.server );
+            for ( int i = 0; i < num_payloads; i++ )
+            {
+                int client_index = -1;
+                int payload_bytes = 0;
+                uint8_t * payload = rocketnet_server_transport_payload( pair.server, i, &client_index, &payload_bytes );
+                posix_check( client_index == pair.client_index );
+                posix_check( valid_seen < valid_sent );
+                posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+                valid_seen++;
+            }
+        }
+        else
+        {
+            const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
+            for ( int i = 0; i < num_payloads; i++ )
+            {
+                int payload_bytes = 0;
+                uint8_t * payload = rocketnet_client_transport_payload( pair.client, i, &payload_bytes );
+
+                posix_check( valid_seen < valid_sent );
+                posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+                valid_seen++;
+            }
+        }
+    };
+
+    auto send_valid = [&]( int index )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
+                                    : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
+        posix_check( frame != NULL );
+        posix_valid_payload( index, frame + context.payload_index );
+
+        if ( at_server )
+        {
+            posix_check( rocketnet_client_transport_finish_packet( pair.client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+            rocketnet_client_transport_send_packets( pair.client );
+        }
+        else
+        {
+            posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+            rocketnet_server_transport_send_packets( pair.server );
+        }
+    };
+
+    auto send_kept = [&]( int i )
+    {
+        // the oversize datagram is above the loopback MTU with dont-fragment
+        // set; lifted for that send only
+        if ( chunk_bytes[i] > 1500 )
+        {
+            posix_set_dont_fragment( sender, ipv6, 0 );
+        }
+        posix_send_datagram( sender, &to, to_bytes, chunk_data[i], chunk_bytes[i], NULL );
+        if ( chunk_bytes[i] > 1500 )
+        {
+            posix_set_dont_fragment( sender, ipv6, 1 );
+        }
+    };
+
+    // send a datagram and keep it in the chunk (counted into expect)
+
+    auto send_and_keep = [&]( const uint8_t * data, int bytes, bool counted )
+    {
+        posix_check( chunk_count < POSIX_WEATHER_CHUNK );
+        const int i = chunk_count++;
+        memcpy( chunk_data[i], data, (size_t) bytes );
+        chunk_bytes[i] = bytes;
+        memset( &chunk_class[i], 0, sizeof( chunk_class[i] ) );
+        if ( counted )
+        {
+            posix_expect_count( data, bytes, &chunk_class[i] );
+        }
+        send_kept( i );
+        expect.too_short += chunk_class[i].too_short;
+        expect.too_large += chunk_class[i].too_large;
+        expect.wrong_epoch += chunk_class[i].wrong_epoch;
+        expect.wrong_value += chunk_class[i].wrong_value;
+        expect.transport_size += chunk_class[i].transport_size;
+    };
+
+    auto print_short = [&]( const char * what, int updates, const struct posix_expect_t * now )
+    {
+        printf( "round %d %s after %d updates: too_short %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_value %llu/%llu transport_size %llu/%llu valid %d/%d\n",
+                round, what, updates, (unsigned long long) now->too_short, (unsigned long long) expect.too_short,
+                (unsigned long long) now->too_large, (unsigned long long) expect.too_large, (unsigned long long) now->wrong_epoch,
+                (unsigned long long) expect.wrong_epoch, (unsigned long long) now->wrong_value, (unsigned long long) expect.wrong_value,
+                (unsigned long long) now->transport_size, (unsigned long long) expect.transport_size, valid_seen, valid_sent );
+    };
+
+    // wait until the counters reach expect (and, with all_valid, every valid
+    // payload has arrived); resend what is missing, bounded; then forget the chunk
+
+    auto settle = [&]( bool all_valid )
+    {
+        for ( int attempt = 0;; attempt++ )
+        {
+            const double deadline = rocketnet_platform_time() + POSIX_WEATHER_CHUNK_WAIT;
+            int updates = 0;
+            struct posix_expect_t now;
+            for ( ;; )
+            {
+                pump();
+                updates++;
+                posix_counters_read( posix_pair_counters( &pair, at_server ), &now );
+
+                const bool over = now.too_short > expect.too_short || now.too_large > expect.too_large || now.wrong_epoch > expect.wrong_epoch ||
+                                  now.wrong_value > expect.wrong_value || now.transport_size > expect.transport_size;
+                if ( over )
+                {
+                    print_short( "counted more than was sent", updates, &now );
+                    posix_check( !over );
+                }
+
+                if ( posix_expect_equal( &now, &expect ) && ( !all_valid || valid_seen == valid_sent ) )
+                {
+                    chunk_count = 0;
+                    return;
+                }
+
+                if ( rocketnet_platform_time() >= deadline )
+                {
+                    break;
+                }
+
+                rocketnet_platform_sleep( 0.001 );
+            }
+
+            print_short( "still short", updates, &now );
+            const bool may_resend = attempt < POSIX_WEATHER_RESENDS;
+            posix_check( may_resend );
+            resends++;
+
+            // the deficit, class by class, filled from the chunk's own datagrams
+
+            struct posix_expect_t deficit;
+            deficit.too_short = expect.too_short - now.too_short;
+            deficit.too_large = expect.too_large - now.too_large;
+            deficit.wrong_epoch = expect.wrong_epoch - now.wrong_epoch;
+            deficit.wrong_value = expect.wrong_value - now.wrong_value;
+            deficit.transport_size = expect.transport_size - now.transport_size;
+            int resent = 0;
+            for ( int i = chunk_count - 1; i >= 0; i-- )
+            {
+                const struct posix_expect_t * c = &chunk_class[i];
+                const bool counted = c->too_short || c->too_large || c->wrong_epoch || c->wrong_value || c->transport_size;
+                if ( counted && c->too_short <= deficit.too_short && c->too_large <= deficit.too_large && c->wrong_epoch <= deficit.wrong_epoch &&
+                     c->wrong_value <= deficit.wrong_value && c->transport_size <= deficit.transport_size )
+                {
+                    send_kept( i );
+                    deficit.too_short -= c->too_short;
+                    deficit.too_large -= c->too_large;
+                    deficit.wrong_epoch -= c->wrong_epoch;
+                    deficit.wrong_value -= c->wrong_value;
+                    deficit.transport_size -= c->transport_size;
+                    resent++;
+                }
+            }
+            const bool covered = deficit.too_short == 0 && deficit.too_large == 0 && deficit.wrong_epoch == 0 && deficit.wrong_value == 0 && deficit.transport_size == 0;
+            posix_check( covered );
+
+            int valid_resent = 0;
+            if ( all_valid )
+            {
+                for ( int index = valid_seen; index < valid_sent; index++ )
+                {
+                    send_valid( index );
+                    valid_resent++;
+                }
+            }
+
+            printf( "round %d resend %d of %d: %d storm datagrams and %d valid payloads sent again\n", round, attempt + 1, POSIX_WEATHER_RESENDS, resent,
+                    valid_resent );
+        }
+    };
+
+    for ( round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
     {
         // the valid traffic for this round leaves first, through the
         // transport, so its datagram is in flight while the weather lands
 
-        {
-            struct rocketnet_packet_context_t context;
-            uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
-                                        : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
-            posix_check( frame != NULL );
-            posix_valid_payload( valid_sent, frame + context.payload_index );
-
-            if ( at_server )
-            {
-                posix_check( rocketnet_client_transport_finish_packet( pair.client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-                rocketnet_client_transport_send_packets( pair.client );
-            }
-            else
-            {
-                posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-                rocketnet_server_transport_send_packets( pair.server );
-            }
-
-            valid_sent++;
-        }
+        send_valid( valid_sent );
+        valid_sent++;
 
         // the first round carries the oversize datagram and the two runts
 
@@ -651,25 +931,29 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
                 buffer[i] = (uint8_t) ( 0x11 + i );
             }
 
-            // the transports socket sets dont-fragment, which refuses a
-            // datagram above the loopback MTU; lifted for this one send
-
-            posix_set_dont_fragment( sender, ipv6, 0 );
-            posix_send_datagram( sender, &to, to_bytes, buffer, 65507, &expect );
-            posix_set_dont_fragment( sender, ipv6, 1 );
+            send_and_keep( buffer, 65507, true );
             buffer[0] = 0x40;
-            posix_send_datagram( sender, &to, to_bytes, buffer, 1, &expect );
-            posix_send_datagram( sender, &to, to_bytes, buffer, ROCKETNET_PREFILTER_BYTES - 1, &expect );
+            send_and_keep( buffer, 1, true );
+            send_and_keep( buffer, ROCKETNET_PREFILTER_BYTES - 1, true );
+            settle( false );
         }
 
-        // the seeded storm, a zero-length datagram between every few
+        // the seeded storm, a zero-length datagram between every few. Every
+        // receiver drains on its own thread (the server transports' receive
+        // workers, the client's I/O thread): every datagram behind every
+        // zero-length one is read within the chunk's wait, where a drain
+        // that stopped at a zero-length datagram would stall.
 
         const int garbage_this_round = POSIX_WEATHER_GARBAGE / POSIX_WEATHER_ROUNDS;
         for ( int g = 0; g < garbage_this_round; g++ )
         {
             if ( g % ( garbage_this_round / POSIX_WEATHER_ZEROS ) == 0 )
             {
-                posix_send_datagram( sender, &to, to_bytes, buffer, 0, posix_weather_native != POSIX_NATIVE_NONE ? &expect : NULL );
+                if ( chunk_count == POSIX_WEATHER_CHUNK )
+                {
+                    settle( false );
+                }
+                send_and_keep( buffer, 0, posix_weather_native != POSIX_NATIVE_NONE );
             }
 
             const int bytes = (int) ( posix_next_random( &random_state ) % 1500 ) + 1;
@@ -678,79 +962,21 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
                 buffer[i] = (uint8_t) posix_next_random( &random_state );
             }
 
-            posix_send_datagram( sender, &to, to_bytes, buffer, bytes, &expect );
+            if ( chunk_count == POSIX_WEATHER_CHUNK )
+            {
+                settle( false );
+            }
+            send_and_keep( buffer, bytes, true );
             garbage_sent++;
         }
 
-        // every receiver drains on its own thread (the server transports'
-        // receive workers, the client's I/O thread), so the bound is a
-        // deadline: every datagram behind every zero-length one is read
-        // well inside it, where a drain that stopped at a zero-length
-        // datagram would stall.
-
-        const double deadline = rocketnet_platform_time() + 5.0;
-        int updates = 0;
-
-        for ( ;; )
-        {
-            posix_pair_update( &pair );
-            updates++;
-
-            if ( at_server )
-            {
-                const int num_payloads = rocketnet_server_transport_num_payloads( pair.server );
-                for ( int i = 0; i < num_payloads; i++ )
-                {
-                    int client_index = -1;
-                    int payload_bytes = 0;
-                    uint8_t * payload = rocketnet_server_transport_payload( pair.server, i, &client_index, &payload_bytes );
-                    posix_check( client_index == pair.client_index );
-                    posix_check( valid_seen < valid_sent );
-                    posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
-                    valid_seen++;
-                }
-            }
-            else
-            {
-                const int num_payloads = rocketnet_client_transport_num_payloads( pair.client );
-                for ( int i = 0; i < num_payloads; i++ )
-                {
-                    int payload_bytes = 0;
-                    uint8_t * payload = rocketnet_client_transport_payload( pair.client, i, &payload_bytes );
-
-                    posix_check( valid_seen < valid_sent );
-                    posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
-                    valid_seen++;
-                }
-            }
-
-            struct posix_expect_t now;
-            posix_counters_read( posix_pair_counters( &pair, at_server ), &now );
-            if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
-            {
-                break;
-            }
-
-            const bool short_now = rocketnet_platform_time() >= deadline;
-            if ( short_now )
-            {
-                {
-                    printf( "round %d still short after %d updates: too_short %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_value %llu/%llu transport_size %llu/%llu valid %d/%d\n",
-                            round, updates,
-                            (unsigned long long) now.too_short, (unsigned long long) expect.too_short,
-                            (unsigned long long) now.too_large, (unsigned long long) expect.too_large,
-                            (unsigned long long) now.wrong_epoch, (unsigned long long) expect.wrong_epoch,
-                            (unsigned long long) now.wrong_value, (unsigned long long) expect.wrong_value,
-                            (unsigned long long) now.transport_size, (unsigned long long) expect.transport_size,
-                            valid_seen, valid_sent );
-                    posix_check( !short_now );
-                }
-            }
-
-            rocketnet_platform_sleep( 0.001 );
-        }
-
+        settle( true );
         posix_pair_check_connected( &pair );
+    }
+
+    if ( resends > 0 )
+    {
+        printf( "  %d resends: loopback lost datagrams this run\n", resends );
     }
 
     // a few quiet updates: nothing more moves, nothing more arrives
@@ -1110,32 +1336,20 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
         rocketnet_platform_sleep( 0.01 );
         posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
 
-        // the next batch goes: all eight arrive, nothing more is counted
+        // the next batch goes: all eight arrive, each once, nothing more is
+        // counted (posix_receive_each: a loopback loss the kernel counted is
+        // sent again; any other loss fails)
+
+        struct rocketnet_loss_gate_t gate;
+        rocketnet_loss_gate_begin( &gate, "posix_send_seam_socket" );
 
         rocketnet_platform_socket_send_packets( socket, sends, 8 );
         posix_check( rocketnet_platform_socket_send_failures( socket ) - before == failed );
         posix_check( rocketnet_platform_socket_send_replay_failures( socket ) - replay_before == replay_failed );
 
-        int received = 0;
-        const double deadline = rocketnet_platform_time() + 5.0;
-        while ( received < 8 && rocketnet_platform_time() < deadline )
-        {
-            const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
-                                                                       ROCKETNET_RECEIVE_CEILING, bytes + received, 8 - received );
-            received += got;
-            if ( got == 0 )
-            {
-                rocketnet_platform_sleep( 0.0005 );
-            }
-        }
-
-        posix_check( received == 8 );
-
-        for ( int i = 0; i < 8; i++ )
-        {
-            posix_check( bytes[i] == 64 );
-            posix_check( memcmp( data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packets[i], 64 ) == 0 );
-        }
+        posix_check( posix_receive_each( socket, &gate, sends, 8 ) == 8 );
+        rocketnet_platform_sleep( 0.01 );
+        posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
 
         posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
     }
@@ -1487,6 +1701,9 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
     rocketnet_platform_sleep( 0.01 );
     posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, num_packets ) == 0 );
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_msgx_send_replay_refusals_counted_apart" );
+
     rocketnet_platform_socket_fail_next_sends( socket, 1, ENOBUFS );
     rocketnet_platform_socket_send_packets( socket, sends, num_packets );
     rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
@@ -1498,25 +1715,12 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
     posix_check( sent_failures == 1 );
     posix_check( sent_replay_failures == 0 );
 
-    int received = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( received < num_packets && rocketnet_platform_time() < deadline )
-    {
-        const int got = rocketnet_platform_socket_receive_packets( socket, from + received, data + (size_t) received * ROCKETNET_RECEIVE_CEILING,
-                                                                   ROCKETNET_RECEIVE_CEILING, bytes + received, num_packets - received );
-        received += got;
-        if ( got == 0 )
-        {
-            rocketnet_platform_sleep( 0.0005 );
-        }
-    }
+    // every datagram of the replay arrives, each once (posix_receive_each: a
+    // loopback loss the kernel counted is sent again; any other loss fails)
 
-    posix_check( received == num_packets );
-    for ( int i = 0; i < num_packets; i++ )
-    {
-        posix_check( bytes[i] == 64 );
-        posix_check( memcmp( data + (size_t) i * ROCKETNET_RECEIVE_CEILING, packets[i], 64 ) == 0 );
-    }
+    posix_check( posix_receive_each( socket, &gate, sends, num_packets ) == num_packets );
+    rocketnet_platform_sleep( 0.01 );
+    posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, num_packets ) == 0 );
 
     posix_check( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
 
@@ -1688,6 +1892,9 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
     rocketnet_log_function( posix_mmsg_progress_log, &log );
     const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_mmsg_progress_retries_original_suffix" );
+
     rocketnet_platform_socket_fail_mmsg_after_packets( socket, prefix, error );
     const int first = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends, num_packets );
     const int invalid_after_first = log.invalid;
@@ -1713,9 +1920,36 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
     const int expected = num_packets - invalid_count - ( terminal ? 1 : 0 );
     bool seen[max_packets] = {};
     int received = 0;
-    const double deadline = rocketnet_platform_time() + 5.0;
-    while ( received < expected && rocketnet_platform_time() < deadline )
+
+    // loopback can drop one (tests/kernel_drops.h): a datagram still missing at
+    // the deadline is sent again, through the plain batch send, only when the
+    // kernel counted that many receive drops; a loss the kernel did not count
+    // is the mmsg path's and fails here, before the progress bookkeeping
+
+    double wait = 5.0;
+    double start = rocketnet_platform_time();
+    while ( received < expected )
     {
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "  ipv%d mmsg progress errno=%d prefix=%d holes=%d: received %d of %d at the deadline\n", ipv6 ? 6 : 4, error, prefix, holes ? 1 : 0,
+                    received, expected );
+            fflush( stdout );
+            posix_check( rocketnet_loss_gate_resend( &gate, expected - received ) );
+            struct rocketnet_platform_send_t missing[max_packets];
+            int num_missing = 0;
+            for ( int i = 0; i < num_packets; i++ )
+            {
+                if ( !seen[i] && !refused_address[i] && !( terminal && i == refusal_index ) )
+                {
+                    missing[num_missing++] = sends[i];
+                }
+            }
+            rocketnet_platform_socket_send_packets( socket, missing, num_missing );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_address_t from;
         uint8_t data[64];
         const int bytes = rocketnet_platform_socket_receive_packet( socket, &from, data, sizeof( data ) );
@@ -3164,6 +3398,73 @@ static void posix_xdp_print( const char * what, const struct posix_xdp_expect_t 
     fflush( stdout );
 }
 
+static void posix_xdp_add( struct posix_xdp_expect_t * to, const struct posix_xdp_expect_t * adds )
+{
+    to->too_small += adds->too_small;
+    to->too_large += adds->too_large;
+    to->wrong_epoch += adds->wrong_epoch;
+    to->wrong_filter += adds->wrong_filter;
+    to->invalid_type += adds->invalid_type;
+    to->fragment += adds->fragment;
+    to->first_fragment += adds->first_fragment;
+}
+
+// from -= takes; every field of takes is at most the same field of from
+
+static void posix_xdp_sub( struct posix_xdp_expect_t * from, const struct posix_xdp_expect_t * takes )
+{
+    from->too_small -= takes->too_small;
+    from->too_large -= takes->too_large;
+    from->wrong_epoch -= takes->wrong_epoch;
+    from->wrong_filter -= takes->wrong_filter;
+    from->invalid_type -= takes->invalid_type;
+    from->fragment -= takes->fragment;
+    from->first_fragment -= takes->first_fragment;
+}
+
+static bool posix_xdp_fits( const struct posix_xdp_expect_t * a, const struct posix_xdp_expect_t * within )
+{
+    return a->too_small <= within->too_small && a->too_large <= within->too_large && a->wrong_epoch <= within->wrong_epoch &&
+           a->wrong_filter <= within->wrong_filter && a->invalid_type <= within->invalid_type && a->fragment <= within->fragment &&
+           a->first_fragment <= within->first_fragment;
+}
+
+static bool posix_xdp_over( const struct posix_xdp_expect_t * now, const struct posix_xdp_expect_t * want )
+{
+    return !posix_xdp_fits( now, want );
+}
+
+static uint64_t posix_xdp_total( const struct posix_xdp_expect_t * a )
+{
+    return a->too_small + a->too_large + a->wrong_epoch + a->wrong_filter + a->invalid_type + a->fragment + a->first_fragment;
+}
+
+// the far veth's transmit drops, read in the far namespace: a frame the far
+// end cannot hand to the near end's ring is dropped in its transmit and
+// counted in its tx_dropped, before the XDP program sees it. Measured in the
+// virtme-ng guest (kernel 7.0, 2026-11-12): bursts of up to 20000 datagrams,
+// with a 32 MiB send buffer and with threaded NAPI on the other CPU, lost
+// none (the sender is held back instead), so this counter's exactness could
+// not be measured: it has never moved. A loss it does not count fails the
+// case as before; it counts the client's frames too, so it can over-permit a
+// resend, and the class-by-class fill and the over-count check still hold.
+
+static uint64_t posix_xdp_veth_drops()
+{
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /sys/class/net/%s/statistics/tx_dropped", posix_xdp_net.netns, posix_xdp_net.far_name );
+    FILE * file = popen( command, "r" );
+    posix_check( file != NULL );
+
+    unsigned long long value = 0;
+    const bool read = fscanf( file, "%llu", &value ) == 1;
+
+    pclose( file );
+    posix_check( read );
+
+    return (uint64_t) value;
+}
+
 // the kernel filter's verdict on one whole datagram, in the program's order
 
 static void posix_xdp_classify( const uint8_t * data, int bytes, struct posix_xdp_expect_t * expect )
@@ -3194,6 +3495,8 @@ static void posix_xdp_update( struct rocketnet_server_transport_t * server, stru
     rocketnet_server_transport_send_packets( server );
 }
 
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
 static void posix_xdp_weather( int ipv6 )
 {
     const char * case_name = ipv6 ? "test_xdp_transport_linux_receive_weather_ipv6" : "test_xdp_transport_linux_receive_weather_ipv4";
@@ -3216,6 +3519,7 @@ static void posix_xdp_weather( int ipv6 )
     }
 
     const struct rocketnet_xdp_test_net_t & net = posix_xdp_net;
+    rocketnet_functional_require_xdp_case( net.netns );
 
     char command[1024];
     snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
@@ -3423,22 +3727,239 @@ static void posix_xdp_weather( int ipv6 )
     int valid_seen = 0;
     uint64_t frag_creates = 0;
     uint64_t other_frag_creates = 0;
-    uint64_t fragments_counted = 0;
     static uint8_t other_sent[POSIX_XDP_OTHER_BYTES];
     static uint8_t other_received[POSIX_XDP_OTHER_BYTES + 1];
     int other_received_bytes = -1;
+    bool other_in_flight = false;
 
-    for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    // The veth does not promise delivery either: a frame the far end cannot
+    // hand to the near end's ring is dropped before the XDP program sees it,
+    // and the counts here are exact, so a loss cannot be waited out. The
+    // weather form (posix_weather_cell): the storm goes in chunks of
+    // POSIX_WEATHER_CHUNK, each kept until its datagrams are counted; what a
+    // chunk is still short of after POSIX_WEATHER_CHUNK_WAIT seconds is sent
+    // again from the chunk's own datagrams, class by class, at most
+    // POSIX_WEATHER_RESENDS times, each resend printed, and the valid payload
+    // the same way. Here the XDP program is the library's, so a resend must
+    // not hide a count the library lost: it is permitted only when the far
+    // veth's own transmit-drop counter (posix_xdp_veth_drops) rose by at least
+    // the frames missing since the case began, less what earlier resends used.
+    // A count above what was sent fails by name, and a deficit that is not
+    // whole datagrams of the chunk (a lost fragment of a fragmented datagram)
+    // fails by name too.
+
+    static uint8_t chunk_data[POSIX_WEATHER_CHUNK][65507];
+    int chunk_bytes[POSIX_WEATHER_CHUNK];
+    const struct sockaddr_storage * chunk_to[POSIX_WEATHER_CHUNK];
+    bool chunk_fragmented[POSIX_WEATHER_CHUNK];
+    struct posix_xdp_expect_t chunk_class[POSIX_WEATHER_CHUNK];
+    int chunk_count = 0;
+    int resends = 0;
+    int round = 0;
+    const uint64_t veth_drops_start = posix_xdp_veth_drops();
+    uint64_t veth_drops_used = 0;
+
+    // one update; every valid payload that arrived is checked and counted, and
+    // the other port's socket is read once its datagram is in flight
+
+    auto pump = [&]()
     {
+        posix_xdp_update( server, client );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
         {
-            struct rocketnet_packet_context_t context;
-            uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
-            posix_check( frame != NULL );
-            posix_valid_payload( valid_sent, frame + context.payload_index );
-            posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-            rocketnet_client_transport_send_packets( client );
-            valid_sent++;
+            int payload_client = -1;
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client, &payload_bytes );
+            posix_check( payload_client == client_index );
+            posix_check( valid_seen < valid_sent );
+            posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+            valid_seen++;
         }
+
+        if ( other_in_flight && other_received_bytes < 0 )
+        {
+            const ssize_t got = recv( other_receiver, other_received, sizeof( other_received ), 0 );
+            if ( got >= 0 )
+            {
+                other_received_bytes = (int) got;
+            }
+        }
+    };
+
+    auto send_valid = [&]( int index )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
+        posix_check( frame != NULL );
+        posix_valid_payload( index, frame + context.payload_index );
+        posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+        rocketnet_client_transport_send_packets( client );
+    };
+
+    auto send_kept = [&]( int i )
+    {
+        // a datagram above the veth MTU leaves with dont-fragment lifted, for
+        // that send only
+        if ( chunk_fragmented[i] )
+        {
+            posix_set_dont_fragment( sender, ipv6, 0 );
+        }
+        posix_send_datagram( sender, chunk_to[i], to_bytes, chunk_data[i], chunk_bytes[i], NULL );
+        if ( chunk_fragmented[i] )
+        {
+            posix_set_dont_fragment( sender, ipv6, 1 );
+        }
+    };
+
+    // send a datagram and keep it in the chunk; what it adds to the kernel
+    // filter's counters goes into expect
+
+    auto send_and_keep = [&]( const uint8_t * data, int bytes, const struct sockaddr_storage * where, bool fragmented,
+                              const struct posix_xdp_expect_t * adds )
+    {
+        posix_check( chunk_count < POSIX_WEATHER_CHUNK );
+        const int i = chunk_count++;
+        memcpy( chunk_data[i], data, (size_t) bytes );
+        chunk_bytes[i] = bytes;
+        chunk_to[i] = where;
+        chunk_fragmented[i] = fragmented;
+        chunk_class[i] = *adds;
+        send_kept( i );
+        posix_xdp_add( &expect, adds );
+    };
+
+    // wait until the counters reach expect (and, with all_valid, every valid
+    // payload has arrived; and the other port's datagram, once sent); resend
+    // what is missing when the far veth counted its loss, bounded; then forget
+    // the chunk
+
+    auto settle = [&]( bool all_valid )
+    {
+        for ( int attempt = 0;; attempt++ )
+        {
+            const double deadline = rocketnet_platform_time() + POSIX_WEATHER_CHUNK_WAIT;
+            struct posix_xdp_expect_t now;
+            for ( ;; )
+            {
+                pump();
+                posix_xdp_read( server, &now );
+
+                if ( posix_xdp_over( &now, &expect ) )
+                {
+                    char what[96];
+                    snprintf( what, sizeof( what ), "%s: round %d counted more than was sent", case_name, round );
+                    posix_xdp_print( what, &now, &expect );
+                    posix_check( !posix_xdp_over( &now, &expect ) );
+                }
+
+                if ( posix_xdp_equal( &now, &expect ) && ( !all_valid || valid_seen == valid_sent ) && ( !other_in_flight || other_received_bytes >= 0 ) )
+                {
+                    chunk_count = 0;
+                    return;
+                }
+
+                if ( rocketnet_platform_time() >= deadline )
+                {
+                    break;
+                }
+
+                rocketnet_platform_sleep( 0.001 );
+            }
+
+            char what[128];
+            snprintf( what, sizeof( what ), "%s: round %d still short (valid %d/%d, other port %d bytes)", case_name, round, valid_seen, valid_sent,
+                      other_received_bytes );
+            posix_xdp_print( what, &now, &expect );
+
+            // the frames missing, and the far veth's word on them
+
+            struct posix_xdp_expect_t deficit = expect;
+            posix_xdp_sub( &deficit, &now );
+            const int valid_missing = all_valid ? valid_sent - valid_seen : 0;
+            const uint64_t missing = posix_xdp_total( &deficit ) + (uint64_t) valid_missing;
+            if ( missing == 0 )
+            {
+                // every frame reached the filter and was counted: what is
+                // missing is the other port's datagram, lost after the filter
+                // passed its fragments (the near stack's reassembly), which no
+                // resend from here can fill without counting its fragments twice
+                printf( "%s: round %d: every frame was counted at the filter, but the other port's socket has not read its datagram: lost after the filter, in the near stack's reassembly, not on the veth\n",
+                        case_name, round );
+                fflush( stdout );
+            }
+            posix_check( missing > 0 );
+
+            const uint64_t veth_now = posix_xdp_veth_drops();
+            const uint64_t drops = veth_now >= veth_drops_start ? veth_now - veth_drops_start : 0;
+            const uint64_t unused = drops >= veth_drops_used ? drops - veth_drops_used : 0;
+            if ( unused < missing )
+            {
+                printf( "%s: round %d: %llu frames missing at the deadline, and the far veth counted %llu transmit drops since the case began (%llu used by earlier resends): the loss is not the veth's\n",
+                        case_name, round, (unsigned long long) missing, (unsigned long long) drops, (unsigned long long) veth_drops_used );
+                fflush( stdout );
+            }
+            posix_check( unused >= missing );
+
+            if ( attempt >= POSIX_WEATHER_RESENDS )
+            {
+                printf( "%s: round %d: %llu frames still missing after %d resends (far veth transmit drops %llu since the case began)\n", case_name, round,
+                        (unsigned long long) missing, POSIX_WEATHER_RESENDS, (unsigned long long) drops );
+                fflush( stdout );
+            }
+            posix_check( attempt < POSIX_WEATHER_RESENDS );
+            veth_drops_used += missing;
+            resends++;
+
+            // the deficit, class by class, filled from the chunk's own
+            // datagrams: one is sent again only when everything it adds fits
+            // what is still missing
+
+            int resent = 0;
+            for ( int i = chunk_count - 1; i >= 0; i-- )
+            {
+                const struct posix_xdp_expect_t * c = &chunk_class[i];
+                if ( posix_xdp_total( c ) > 0 && posix_xdp_fits( c, &deficit ) )
+                {
+                    send_kept( i );
+                    posix_xdp_sub( &deficit, c );
+                    resent++;
+                }
+            }
+
+            if ( posix_xdp_total( &deficit ) != 0 )
+            {
+                struct posix_xdp_expect_t nothing;
+                memset( &nothing, 0, sizeof( nothing ) );
+                posix_xdp_print( "the deficit left (left/0) is not whole datagrams of the chunk", &deficit, &nothing );
+            }
+            posix_check( posix_xdp_total( &deficit ) == 0 );
+
+            int valid_resent = 0;
+            if ( all_valid )
+            {
+                for ( int index = valid_seen; index < valid_sent; index++ )
+                {
+                    send_valid( index );
+                    valid_resent++;
+                }
+            }
+
+            printf( "%s: round %d resend %d of %d: %llu frames missing, the far veth counted %llu transmit drops: %d storm datagrams and %d valid payloads sent again\n",
+                    case_name, round, attempt + 1, POSIX_WEATHER_RESENDS, (unsigned long long) missing, (unsigned long long) drops, resent, valid_resent );
+            fflush( stdout );
+        }
+    };
+
+
+    for ( round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    {
+        // the valid traffic for this round leaves first, through the
+        // transport, so its datagram is in flight while the weather lands
+
+        send_valid( valid_sent );
+        valid_sent++;
 
         if ( round == 0 )
         {
@@ -3451,13 +3972,14 @@ static void posix_xdp_weather( int ipv6 )
                 buffer[i] = (uint8_t) ( 0x11 + i );
             }
 
-            const uint64_t creates_before = posix_xdp_frag_creates( ipv6 );
+            struct posix_xdp_expect_t adds;
+            memset( &adds, 0, sizeof( adds ) );
+            adds.first_fragment = 1;
+            adds.fragment = expect_fragments - 1;
 
-            posix_set_dont_fragment( sender, ipv6, 0 );
-            posix_send_datagram( sender, &to, to_bytes, buffer, oversize, NULL );
+            const uint64_t creates_before = posix_xdp_frag_creates( ipv6 );
+            send_and_keep( buffer, oversize, &to, true, &adds );
             frag_creates = posix_xdp_frag_creates( ipv6 ) - creates_before;
-            expect.first_fragment += 1;
-            expect.fragment += expect_fragments - 1;
 
             // a fragmented datagram to another port: every fragment passes
             // counted PASSED_FRAGMENT, none is dropped, and the kernel
@@ -3468,27 +3990,38 @@ static void posix_xdp_weather( int ipv6 )
                 other_sent[i] = (uint8_t) ( 0xa5 ^ ( i * 7 ) ^ ( i >> 8 ) );
             }
 
+            memset( &adds, 0, sizeof( adds ) );
+            adds.fragment = expect_other_fragments;
+
             const uint64_t other_creates_before = posix_xdp_frag_creates( ipv6 );
-
-            posix_send_datagram( sender, &to_other, to_bytes, other_sent, POSIX_XDP_OTHER_BYTES, NULL );
+            send_and_keep( other_sent, POSIX_XDP_OTHER_BYTES, &to_other, true, &adds );
             other_frag_creates = posix_xdp_frag_creates( ipv6 ) - other_creates_before;
-            posix_set_dont_fragment( sender, ipv6, 1 );
-            expect.fragment += expect_other_fragments;
+            other_in_flight = true;
 
+            memset( &adds, 0, sizeof( adds ) );
+            adds.too_small = 1;
             buffer[0] = 0x40;
-            posix_send_datagram( sender, &to, to_bytes, buffer, 1, NULL );
-            expect.too_small++;
-            posix_send_datagram( sender, &to, to_bytes, buffer, ROCKETNET_PREFILTER_BYTES - 1, NULL );
-            expect.too_small++;
+            send_and_keep( buffer, 1, &to, false, &adds );
+            send_and_keep( buffer, ROCKETNET_PREFILTER_BYTES - 1, &to, false, &adds );
+            settle( false );
         }
+
+        // the seeded storm, a zero-length datagram between every few
 
         const int garbage_this_round = POSIX_WEATHER_GARBAGE / POSIX_WEATHER_ROUNDS;
         for ( int g = 0; g < garbage_this_round; g++ )
         {
             if ( g % ( garbage_this_round / POSIX_WEATHER_ZEROS ) == 0 )
             {
-                posix_send_datagram( sender, &to, to_bytes, buffer, 0, NULL );
-                expect.too_small++;
+                if ( chunk_count == POSIX_WEATHER_CHUNK )
+                {
+                    settle( false );
+                }
+
+                struct posix_xdp_expect_t adds;
+                memset( &adds, 0, sizeof( adds ) );
+                adds.too_small = 1;
+                send_and_keep( buffer, 0, &to, false, &adds );
             }
 
             const int bytes = (int) ( posix_next_random( &random_state ) % (uint64_t) max_whole ) + 1;
@@ -3497,64 +4030,28 @@ static void posix_xdp_weather( int ipv6 )
                 buffer[i] = (uint8_t) posix_next_random( &random_state );
             }
 
-            posix_send_datagram( sender, &to, to_bytes, buffer, bytes, NULL );
-            posix_xdp_classify( buffer, bytes, &expect );
+            if ( chunk_count == POSIX_WEATHER_CHUNK )
+            {
+                settle( false );
+            }
+
+            struct posix_xdp_expect_t adds;
+            memset( &adds, 0, sizeof( adds ) );
+            posix_xdp_classify( buffer, bytes, &adds );
+            send_and_keep( buffer, bytes, &to, false, &adds );
             garbage_sent++;
         }
 
-        const double deadline = rocketnet_platform_time() + 5.0;
-
-        for ( ;; )
-        {
-            posix_xdp_update( server, client );
-
-            const int num_payloads = rocketnet_server_transport_num_payloads( server );
-            for ( int i = 0; i < num_payloads; i++ )
-            {
-                int payload_client = -1;
-                int payload_bytes = 0;
-                uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client, &payload_bytes );
-                posix_check( payload_client == client_index );
-                posix_check( valid_seen < valid_sent );
-                posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
-                valid_seen++;
-            }
-
-            struct posix_xdp_expect_t now;
-            posix_xdp_read( server, &now );
-
-            if ( round == 0 && fragments_counted == 0 )
-            {
-                fragments_counted = now.fragment - start.fragment;
-            }
-
-            if ( round == 0 && other_received_bytes < 0 )
-            {
-                const ssize_t got = recv( other_receiver, other_received, sizeof( other_received ), 0 );
-                if ( got >= 0 )
-                {
-                    other_received_bytes = (int) got;
-                }
-            }
-
-            if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent && ( round != 0 || other_received_bytes >= 0 ) )
-            {
-                break;
-            }
-
-            if ( rocketnet_platform_time() >= deadline )
-            {
-                char what[64];
-                snprintf( what, sizeof( what ), "round %d still short (valid %d/%d, other port %d bytes)", round, valid_seen, valid_sent, other_received_bytes );
-                posix_xdp_print( what, &now, &expect );
-                posix_check( rocketnet_platform_time() < deadline );
-            }
-
-            rocketnet_platform_sleep( 0.001 );
-        }
+        settle( true );
 
         posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         posix_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+    }
+
+    if ( resends > 0 )
+    {
+        printf( "  %d resends: the far veth dropped frames this run\n", resends );
+        fflush( stdout );
     }
 
     // a few quiet updates: nothing more moves, nothing more arrives
@@ -3647,10 +4144,17 @@ static void posix_xdp_weather( int ipv6 )
         rocketnet_server_socket_finish_packet( xdp, 0, frame, 64 );
         rocketnet_server_socket_send_packets( xdp );
 
+        // send_packets hands the staged frame to the xdp worker only when it
+        // takes the queue's send_mutex and finds a spare buffer; otherwise the
+        // frame stays staged and the next call hands it over. Call it again
+        // while waiting, as a server's every tick does: a frame that is
+        // never handed over still leaves SEND_FAILED at 0, and the case red
+
         const double deadline = rocketnet_platform_time() + 5.0;
         while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before && rocketnet_platform_time() < deadline )
         {
             rocketnet_platform_sleep( 0.001 );
+            rocketnet_server_socket_send_packets( xdp );
         }
 
         xdp_send_failed = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
