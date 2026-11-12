@@ -14491,6 +14491,14 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_no_transport_pin_is_set";
     }
+    if ( predicate == rocketnet_test_server_pin_is_not_xdp )
+    {
+        return "rocketnet_test_server_pin_is_not_xdp";
+    }
+    if ( predicate == rocketnet_test_a_transport_pin_is_set_and_not_xdp )
+    {
+        return "rocketnet_test_a_transport_pin_is_set_and_not_xdp";
+    }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )
     {
