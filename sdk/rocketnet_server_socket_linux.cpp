@@ -804,11 +804,12 @@ static bool rocketnet_server_socket_xdp_device( const char * interface_name, uns
     memset( &lower, 0, sizeof( lower ) );
     int error = 0;
 
+    char error_text[128];
     int result = rocketnet_gateway_netlink_link( (int) interface_index, &device, &error );
     if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
         rocketnet_warn( "xdp transport refused: could not read the link of %s from rtnetlink: %s (%s) (R2)", interface_name,
-                        rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+                        rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
         return false;
     }
 
@@ -819,7 +820,7 @@ static bool rocketnet_server_socket_xdp_device( const char * interface_name, uns
         if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
         {
             rocketnet_warn( "xdp transport refused: could not read the link under VLAN device %s from rtnetlink: %s (%s) (R2)", interface_name,
-                            rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+                            rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
             return false;
         }
         have_lower = true;
@@ -834,16 +835,22 @@ static bool rocketnet_server_socket_xdp_device( const char * interface_name, uns
         return false;
     }
 
+    const char * attach_name = form == ROCKETNET_XDP_LINK_VLAN ? lower.name : interface_name;
+    const int written = snprintf( xdp_name, xdp_name_size, "%s", attach_name );
+    if ( written <= 0 || (size_t) written >= xdp_name_size )
+    {
+        rocketnet_warn( "xdp transport refused: the device name %s does not fit %zu bytes (R2)", attach_name, xdp_name_size );
+        return false;
+    }
+
     if ( form == ROCKETNET_XDP_LINK_VLAN )
     {
-        snprintf( xdp_name, xdp_name_size, "%s", lower.name );
         *xdp_index = (unsigned int) lower.index;
         *vlan_id = device.vlan_id;
         rocketnet_info( "xdp: %s is 802.1Q VLAN %d on %s: the transport attaches to %s and tags every frame it sends", interface_name, device.vlan_id, lower.name, lower.name );
         return true;
     }
 
-    snprintf( xdp_name, xdp_name_size, "%s", interface_name );
     *xdp_index = interface_index;
     *vlan_id = 0;
     return true;
@@ -1331,7 +1338,12 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             return false;
         }
 
-        snprintf( interface_name, sizeof( interface_name ), "%s", xdp_name );
+        const int written = snprintf( interface_name, sizeof( interface_name ), "%s", xdp_name );
+        if ( written <= 0 || written >= (int) sizeof( interface_name ) )
+        {
+            rocketnet_warn( "xdp pre-flight: the device name %s does not fit %zu bytes (R2)", xdp_name, sizeof( interface_name ) );
+            return false;
+        }
         interface_index = xdp_index;
     }
 
@@ -2250,7 +2262,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     const int ret = rocketnet_xdp_program_attach( server_socket->program, server_socket->xdp_interface_index, false );
     if ( ret != 0 )
     {
-        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s); generic (skb) mode is not used. use a NIC whose driver supports native XDP, or another transport", xdp_interface_name, strerror( ret < 0 ? -ret : ret ) );
+        char attach_error[128];
+        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s); generic (skb) mode is not used. use a NIC whose driver supports native XDP, or another transport", xdp_interface_name, strerror_r( ret < 0 ? -ret : ret, attach_error, sizeof( attach_error ) ) );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2637,11 +2650,8 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
             if ( result != 0 )
             {
                 char xdp_interface_name[IF_NAMESIZE] = { 0 };
-                if ( if_indextoname( (unsigned int) server_socket->xdp_interface_index, xdp_interface_name ) == NULL )
-                {
-                    snprintf( xdp_interface_name, sizeof( xdp_interface_name ), "%d", server_socket->xdp_interface_index );
-                }
-                rocketnet_error( "could not detach server_xdp program (native) from interface %s (errno %d)", xdp_interface_name, -result );
+                const bool named = if_indextoname( (unsigned int) server_socket->xdp_interface_index, xdp_interface_name ) != NULL;
+                rocketnet_error( "could not detach server_xdp program (native) from interface %s (index %d, errno %d)", named ? xdp_interface_name : "?", server_socket->xdp_interface_index, -result );
             }
         }
 
