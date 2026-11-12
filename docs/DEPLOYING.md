@@ -121,6 +121,19 @@ Cold, on a fresh box, as root:
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
     #    auto ladder falls to gso with the reason named where it is not.
 
+    # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
+    #    rebuilds the interrupt vectors after the pre-flight has passed, and
+    #    with irqaffinity=0 every queue vector lands on cpu 0, away from the
+    #    worker that polls it. Once the server is up, as root:
+    scripts/rocketnet-provision eth0 7 repin
+    #    It waits (ROCKETNET_REPIN_WAIT_SECONDS, default 60) for the attached
+    #    program, the carrier and exactly 7 queue vectors, pins <if>-TxRx-k
+    #    to the k-th isolated cpu (the cpu XDP worker k pins itself to),
+    #    moves any other vector of the port off the worker cpus, and reads
+    #    them back. It writes only smp_affinity_list, so it runs beside the
+    #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
+    #    a port left with many channels provisions on the first run.
+
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every
     #    datagram to the server's address and port, so a restart on that port

@@ -78,7 +78,7 @@ static void usage( void )
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
         "  --transport T           pin the transport (e.g. xdp); the in-tree i40e refuses\n"
-        "  --xdp-queues N          the xdp transport's queue count (xdp thread k pins to cpu 1 + k)\n"
+        "  --num-xdp-queues N      the xdp transport's queue count (xdp thread k pins to cpu 1 + k)\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -1136,6 +1136,7 @@ int main( int argc, char ** argv )
     int packets_per_update = 64;
     double counters_every = 60.0;
     double update_hz = 1000.0;
+    int update_hz_given = 0;
     uint32_t seed = 0;
     uint32_t send_kbps = 500;
     int xdp_queues = 0;
@@ -1179,6 +1180,12 @@ int main( int argc, char ** argv )
         else if ( strcmp( a, "--update-hz" ) == 0 && i + 1 < argc )
         {
             update_hz = strtod( argv[++i], NULL );
+            if ( !( update_hz >= 1.0 && update_hz <= 100000.0 ) )
+            {
+                fprintf( stderr, "server: --update-hz must be 1 to 100000\n" );
+                return 1;
+            }
+            update_hz_given = 1;
         }
         else if ( strcmp( a, "--counters-every" ) == 0 && i + 1 < argc )
         {
@@ -1196,12 +1203,12 @@ int main( int argc, char ** argv )
         {
             transport = argv[++i];
         }
-        else if ( strcmp( a, "--xdp-queues" ) == 0 && i + 1 < argc )
+        else if ( strcmp( a, "--num-xdp-queues" ) == 0 && i + 1 < argc )
         {
             xdp_queues = (int) strtol( argv[++i], NULL, 10 );
             if ( xdp_queues < 1 || xdp_queues > 1024 )
             {
-                fprintf( stderr, "server: --xdp-queues must be 1 to 1024\n" );
+                fprintf( stderr, "server: --num-xdp-queues must be 1 to 1024\n" );
                 return 1;
             }
         }
@@ -1222,7 +1229,8 @@ int main( int argc, char ** argv )
         }
     }
 
-    (void) update_hz;
+    // the echo loop keeps its historical 60 Hz unless --update-hz is given
+    const double echo_sleep = update_hz_given ? 1.0 / update_hz : 1.0 / 60.0;
 
     if ( !address )
     {
@@ -1346,7 +1354,7 @@ int main( int argc, char ** argv )
             }
 
             check_stdin_closed();
-            rocketnet_sleep( 1.0 / 60.0 );
+            rocketnet_sleep( echo_sleep );
         }
     }
     else

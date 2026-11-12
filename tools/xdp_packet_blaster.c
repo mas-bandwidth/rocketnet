@@ -2522,6 +2522,11 @@ static void rn_blaster_worker_run( rn_blaster_shared_t * shared, rn_blaster_work
                 rn_endpoint_config_tick( &session.endpoint, connected ? 1 : 0, now );
                 if ( rn_endpoint_error( &session.endpoint ) != ROCKETNET_DISCONNECT_REASON_NONE )
                 {
+                    if ( worker->error.empty() )
+                    {
+                        worker->error = "message endpoint failed with disconnect reason " +
+                                        std::to_string( (int) rn_endpoint_error( &session.endpoint ) );
+                    }
                     worker->sessions_ok = false;
                 }
                 if ( connected )
