@@ -66,8 +66,8 @@ jobs:
             printf '## nightly watch: RED\n\nThe watch did not run (no output; step status %s).\n' "$status" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          grep -E '^(NEW-RED|NO-VERDICT|STALE|API-ERROR|BAD-ROW|NO-WORKFLOWS)' nightly-watch.log > "$tmp/red.txt" || true
-          grep -E '^nightly watch: ' nightly-watch.log > "$tmp/counts.txt" || true
+          grep -E '^(NEW-RED|NO-VERDICT|STALE|API-ERROR|BAD-ROW|NO-WORKFLOWS)' nightly-watch.log > "$tmp/red.txt" || [ $? -eq 1 ]
+          grep -E '^nightly watch: ' nightly-watch.log > "$tmp/counts.txt" || [ $? -eq 1 ]
           {
             if [ "$status" = "0" ]; then
               echo "## nightly watch: green"

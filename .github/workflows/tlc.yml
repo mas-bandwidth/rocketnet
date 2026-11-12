@@ -287,8 +287,18 @@ jobs:
           {
             echo "### TLC re-run $RERUN_SLICE at $(cat "$job/source-revision.txt")"
             echo
-            grep -h '^TLC-RERUN ' "$job/rerun/rerun-plan.log" | sed 's/^/    /' || true
-            grep -h -e '^TLC-RERUN MISMATCH' -e '^TLC-RERUN-' -e '^TLC-RERUN adapter' "$job/rerun/rerun-compare.log" | sed 's/^/    /' || true
+            # grep exits 1 on no match (fine); a missing log is named, and the
+            # step's verdict is the re-run's own exit below
+            if [ -f "$job/rerun/rerun-plan.log" ]; then
+              grep -h '^TLC-RERUN ' "$job/rerun/rerun-plan.log" | sed 's/^/    /' || [ $? -eq 1 ]
+            else
+              echo "    (no rerun-plan.log)"
+            fi
+            if [ -f "$job/rerun/rerun-compare.log" ]; then
+              grep -h -e '^TLC-RERUN MISMATCH' -e '^TLC-RERUN-' -e '^TLC-RERUN adapter' "$job/rerun/rerun-compare.log" | sed 's/^/    /' || [ $? -eq 1 ]
+            else
+              echo "    (no rerun-compare.log)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 

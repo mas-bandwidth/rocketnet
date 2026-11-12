@@ -204,14 +204,25 @@ jobs:
           scripts/vm-boot-guard --marker "$guest/started" -- \
             vng --run "$vm_kernel" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 sh "$guest/run.sh" "$guest" "$PWD" > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
-          grep '^VM-BOOT-GUARD' "$guest/vm.log" || true
-          peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" 2>/dev/null | tail -n 1) || true
+          # grep exits 1 on no match (fine) and 2 on an unreadable log (red)
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]
+          peak_kib=""
+          if [ -f "$guest/xdp.time" ]; then
+            peak_kib=$(sed -nE 's/.*Maximum resident set size \(kbytes\): ([0-9]+).*/\1/p' "$guest/xdp.time" | tail -n 1)
+          fi
           echo "LOAD cell=xdp guest_peak_rss_kib=${peak_kib:-unknown} need_bytes=$need_bytes guest_memory=${guest_gib}G"
           if [ -n "${peak_kib:-}" ] && [ $((peak_kib * 1024)) -gt $(( 1000 * touched_per_client_bytes )) ]; then
             echo "LOAD cell=xdp WARN peak RSS is above the measured touched bytes; re-measure touched_per_client_bytes (docs/LOAD.md)"
           fi
-          line=$(grep '^load: connected' "$guest/xdp.out" 2>/dev/null | tail -n 1) || true
-          [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
+          line=""
+          if [ -f "$guest/xdp.out" ]; then
+            line=$(grep '^load: connected' "$guest/xdp.out" | tail -n 1) || [ $? -eq 1 ]
+          fi
+          if [ -z "$line" ]; then
+            for log in "$guest/vm.log" "$guest/xdp.err"; do
+              if [ -f "$log" ]; then tail -n 60 "$log"; else echo "($log missing)"; fi
+            done
+          fi
           xdp_status=$(cat "$guest/xdp.exit" 2>/dev/null) || xdp_status="missing"
           [ "$xdp_status" = 0 ] || { echo "LOAD cell=xdp $line"; echo "LOAD cell=xdp FAIL load in the guest exited $xdp_status"; exit 1; }
           check_cell xdp xdp "$line"

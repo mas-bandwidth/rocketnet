@@ -378,8 +378,7 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
           set -euo pipefail
-          clang="$(command -v clang || true)"
-          if [ -z "$clang" ]; then
+          if ! clang="$(command -v clang)"; then
             echo "TOOL-MISSING clang (any) (PATH) on $RUNNER_NAME"
             exit 1
           fi
@@ -1097,14 +1096,18 @@ jobs:
         if: (matrix.leg == 'builds' || (matrix.with_builds && !inputs.full))
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
+      # Prints both JSON lines on macOS. A nonzero exit is red here (the
+      # assertion below requires exit 0 from the same runs) and the
+      # assertion still runs after it, so its planned and live figures show.
       - name: Memory plans echo the allocator observation on macOS
+        id: memory_echo
         if: runner.os == 'macOS' && matrix.leg == 'checks'
         run: |
-          ./bin/transport_memory 1 1416 portable 1 || true
-          ./bin/transport_memory 1 1416 msgx 1 || true
+          ./bin/transport_memory 1 1416 portable 1
+          ./bin/transport_memory 1 1416 msgx 1
 
       - name: Memory plans against allocator observations
-        if: matrix.leg == 'checks'
+        if: ${{ matrix.leg == 'checks' && (success() || steps.memory_echo.outcome == 'failure') }}
         run: python3 tools/check_memory.py ./bin/transport_memory
 
       - name: "Functional: native driver contract and external backend"
@@ -3274,6 +3277,15 @@ jobs:
       # under the committed floor.
       - name: Test the big-endian byte-case runner
         run: bash tools/bigendian/test_run_byte_cases.sh
+
+      # tools/check_or_true.py: no `|| true` / `|| :` discards a status in
+      # workflows, .github/scripts, scripts/ or tools/**/*.sh outside
+      # tools/or_true_allowlist.txt (file, exact line, reason; a stale entry
+      # is red). --self-test plants each spelling and the empty tree.
+      - name: No or-true discards a status in CI shell code
+        run: |
+          python3 tools/check_or_true.py --self-test
+          python3 tools/check_or_true.py
 
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every

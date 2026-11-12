@@ -1,0 +1,20 @@
+# tools/check_or_true.py: the `|| true` lines whose status is genuinely irrelevant.
+# path<TAB>exact line (stripped)<TAB>reason. A stale or reasonless entry is red.
+# Everything else handles the status explicitly: see the checker's docstring.
+.github/workflows/nightly-bigendian-system.yml	kill "$QEMU_PID" 2>/dev/null || true	cleanup on EXIT: qemu may exit between the kill -0 test above and this kill
+.github/workflows/nightly-bigendian-system.yml	wait "$QEMU_PID" 2>/dev/null || true	cleanup on EXIT: wait returns the killed qemu's signal status, the expected result of the kill above
+scripts/lan-proof	kill "$server_hold_pid" 2>/dev/null || true	the Windows lock holder normally returns once its server stops; this ends it if not, and it may be gone already
+scripts/lan-proof	wait "$server_hold_pid" 2>/dev/null || true	reaps the lock holder just killed; its status is the signal, the expected result
+scripts/lan-proof-remote	kill "$pid" 2>/dev/null || true	stop: the process may have exited already; the kill -0 loop below judges whether it is gone
+scripts/lan-proof-remote	kill -9 "$pid" 2>/dev/null || true	stop, last resort after ten seconds: the process may exit in the meantime; stop's status must not depend on that race
+scripts/live-xdp-fleet-remote	systemctl kill -s INT rn-live-server 2>/dev/null || true	the unit may be inactive already; the is-active wait and the stop check below judge the outcome
+scripts/live-xdp-fleet-remote	systemctl --user stop "rn-live-client-$label" 2>/dev/null || true	hosts with no systemd user manager (macOS, the Windows interop shell) stop the client by its pid file on the next lines
+scripts/live-xdp-fleet-remote	kill -INT "$( cat "$BASE/$label.pid" )" 2>/dev/null || true	the client may have exited already at the end of its run; stop is idempotent
+scripts/live-xdp-fleet-remote	ip link set dev "$nic" xdp off 2>/dev/null || true	either attach mode may be in use, or neither; the prog/xdp check on the next lines fails restore if a program is still attached
+scripts/live-xdp-fleet-remote	ip link set dev "$nic" xdpgeneric off 2>/dev/null || true	either attach mode may be in use, or neither; the prog/xdp check on the next lines fails restore if a program is still attached
+scripts/live-xdp-fleet-remote	systemctl stop rn-live-watchdog.service 2>/dev/null || true	teardown: the unit exists only on a host where a run started it; absent is the expected state
+scripts/live-xdp-fleet-remote	systemctl stop rn-live-deadman.timer 2>/dev/null || true	teardown: the unit exists only on a host where a run started it; absent is the expected state
+scripts/live-xdp-fleet-remote	systemctl stop rn-live-deadman.service 2>/dev/null || true	teardown: the unit exists only on a host where a run started it; absent is the expected state
+scripts/live-xdp-fleet-remote	systemctl reset-failed rn-live-deadman.service 2>/dev/null || true	teardown: clears a failed dead-man record if one exists; none is the expected state
+tools/fuzz_ndebug.sh	wait -n || true	reaps one finished target to free a slot; each target's verdict is read from its log below (libFuzzer's Done line and the crash directory)
+tools/fuzz_ndebug.sh	wait "$pid" 2>/dev/null || true	reaps the remaining targets; each target's verdict is read from its log below (libFuzzer's Done line and the crash directory)

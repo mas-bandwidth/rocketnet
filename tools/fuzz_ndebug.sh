@@ -139,8 +139,8 @@ LIB="$BUILD/librocketnet_dev.a"
 # (awk reads the whole file: an early-exit grep -m1 would SIGPIPE the
 # pipeline under pipefail)
 lib_commands=$(awk '/"command"/ && /rocketnet_dev\.dir\// && /\/sdk\//' "$BUILD/compile_commands.json")
-sdk_lines=$(printf '%s\n' "$lib_commands" | grep -c . || true)
-sdk_ndebug=$(printf '%s\n' "$lib_commands" | grep -c -- ' -DNDEBUG ' || true)
+sdk_lines=$(printf '%s\n' "$lib_commands" | grep -c . || [ $? -eq 1 ])
+sdk_ndebug=$(printf '%s\n' "$lib_commands" | grep -c -- ' -DNDEBUG ' || [ $? -eq 1 ])
 if [ "$sdk_lines" -eq 0 ] || [ "$sdk_lines" -ne "$sdk_ndebug" ]; then
     echo "NDEBUG-LIBRARY FAIL: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG" >&2
     exit 1
@@ -148,7 +148,10 @@ fi
 echo "NDEBUG-LIBRARY compile: $sdk_ndebug of $sdk_lines rocketnet_dev sdk/ compile lines carry -DNDEBUG"
 printf '%s\n' "$lib_commands" | awk '!shown && /\/sdk\/rocketnet\.cpp"/ { sub(/^ *"command": */, ""); print; shown = 1 }' \
     | tee "$OUT/logs/ndebug-compile-line.txt"
-referencing=$(nm -A "$LIB" 2>/dev/null | grep -E ' U .*rn_assert_function' || true)
+# nm on its own line: an unreadable library stops here instead of reading as
+# "no reference"; grep exits 1 when nothing references the callback
+symbols=$(nm -A "$LIB")
+referencing=$(printf '%s\n' "$symbols" | grep -E ' U .*rn_assert_function') || [ $? -eq 1 ]
 if [ -n "$referencing" ]; then
     echo "NDEBUG-LIBRARY FAIL: library objects still reference rn_assert_function:" >&2
     echo "$referencing" >&2
@@ -228,15 +231,20 @@ done
 # is read from its log: libFuzzer prints "Done N runs" only on a clean finish
 for t in "${TARGETS[@]}"; do
     log="$OUT/logs/fuzz-$t.log"
-    done_line=$(grep -E '^Done [0-9]+ runs' "$log" | tail -n 1 || true)
-    execs=$(grep -E '^stat::number_of_executed_units' "$log" | tail -n 1 | awk '{print $2}' || true)
+    if [ ! -f "$log" ]; then
+        failed=1
+        echo "FAIL $t: no log $log"
+        continue
+    fi
+    done_line=$(grep -E '^Done [0-9]+ runs' "$log" | tail -n 1 || [ $? -eq 1 ])
+    execs=$(grep -E '^stat::number_of_executed_units' "$log" | tail -n 1 | awk '{print $2}' || [ $? -eq 1 ])
     reproducers=$(find "$OUT/crashes/$t" -type f 2>/dev/null | sort)
     if [ -n "$done_line" ] && [ -z "$reproducers" ]; then
         echo "PASS $t: $done_line (executed units ${execs:-?})"
     else
         failed=1
         echo "FAIL $t: no clean finish; log $log"
-        grep -E 'ERROR: (AddressSanitizer|LeakSanitizer|libFuzzer)|runtime error:|SUMMARY:' "$log" | head -n 5 || true
+        grep -m 5 -E 'ERROR: (AddressSanitizer|LeakSanitizer|libFuzzer)|runtime error:|SUMMARY:' "$log" || [ $? -eq 1 ]
         if [ -n "$reproducers" ]; then
             while IFS= read -r r; do echo "  REPRODUCER $t $r"; done <<<"$reproducers"
         fi

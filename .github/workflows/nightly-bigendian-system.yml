@@ -230,7 +230,11 @@ jobs:
             done
             [ "$ok" = 1 ] && break
             echo "GUEST-DID-NOT-BOOT attempt ${attempt}/${boot_attempts}: ${why}"
-            tail -n 40 "$WORK/serial.log" || true
+            if [ -f "$WORK/serial.log" ]; then
+              tail -n 40 "$WORK/serial.log"
+            else
+              echo "(no serial.log: qemu wrote no console)"
+            fi
             cleanup
             attempt=$((attempt + 1))
           done

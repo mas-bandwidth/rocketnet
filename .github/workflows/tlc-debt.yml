@@ -176,7 +176,7 @@ jobs:
           if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
             line="CASE UNFINISHED config=$CASE_CONFIG seconds=$seconds deadline=${TLC_DEBT_SECONDS}s"
           else
-            line=$(grep -h '^CASE' "$job/case.log" || true)
+            line=$(grep -h '^CASE' "$job/case.log") || [ $? -eq 1 ]
             [ -n "$line" ] || line="CASE NO-RESULT config=$CASE_CONFIG seconds=$seconds exit=$rc"
           fi
           echo "$line" | tee "$job/outcome.txt"

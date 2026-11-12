@@ -27,7 +27,7 @@ mkdir -p "$job"
 # A planner refusal (an empty slice, a bad record) stops here, red.
 python3 tools/plan_tlc_nightly.py --select rerun "$@" > "$job/rerun-plan" 2> "$job/rerun-plan.log" \
   || { cat "$job/rerun-plan.log"; exit 1; }
-grep -v '^TLC-PLAN ' "$job/rerun-plan.log" || true
+grep -v '^TLC-PLAN ' "$job/rerun-plan.log" || [ $? -eq 1 ]
 echo "TLC-RERUN parallel=$parallel cases: $(cut -d' ' -f4 "$job/rerun-plan" | tr '\n' ' ')"
 
 export TLC_JOB="$job"
