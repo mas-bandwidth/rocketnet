@@ -525,7 +525,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 {
                     hold[a] = 8 + random.below( 16 );
                 }
-                if ( stage == 0 && a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 3 ) == 0 )
+                if ( stage == 0 && a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 2 ) == 0 )
                 {
                     // stage the stale claim: the main thread first, then
                     // another filler that is between calls
