@@ -105,10 +105,13 @@ Adds(t, l) == IF Monotone THEN t > l ELSE t # l
 Refilled(a, l, t, r, cap) == IF Refill /\ Adds(t, l) THEN Min(cap, a + r * Dist(t, l)) ELSE a
 Moved(l, t) == IF Adds(t, l) THEN t ELSE l
 
+
+\* The credit state is grouped into three record-valued variables so that a
+\* step of the byte instance (which never changes them) copies few
+\* variables: TLC's cost per successor grows with their number.
 VARIABLES
-    now,        \* the clock, in ticks (one tick is the client's send tick)
+    now,        \* the clock, in ticks (one tick is the client's send tick); the highest time argument
     srv,        \* the server's time argument
-    hi,         \* the highest time argument so far
     backs,      \* steps back taken
     reconnects, \* slot reuses taken
     fl,         \* flooder packets this tick
@@ -116,87 +119,88 @@ VARIABLES
     net,        \* each correct client's packets in flight: <<[n, st, k]>>
     allow,      \* the byte allowance per key
     last,       \* its last refill time
-    ctl,        \* the control tokens per key
-    ctlLast,    \* their last refill time
-    spent,      \* the ack credit mark per key
-    seq,        \* the server's session sequences taken per client (its next)
-    debt,       \* each correct client's ack debt
-    kaAt,       \* one past the tick of each correct client's last keep-alive (0: none)
-    bye,        \* each correct client has sent its disconnect
-    elicited,   \* eliciting packets the server sent each client, this connection
-    credited,   \* each client's acks paid by the ack credit, this connection
-    tokens,     \* each client's packets paid by control tokens, this connection
+    cred,       \* per key: control tokens t, their last refill time tl, the ack credit mark s
+    cl,         \* per correct client: its ack debt d, one past the tick of its last keep-alive ka (0: none), bye
+    cnt,        \* per client: the server's session sequences taken q (its next), and this connection's
+                \* eliciting packets e, acks paid by the ack credit cr, packets paid by control tokens tk
     shadow,     \* each client's allowance computed from its own packets only
     refused,    \* refused packets per client, this connection
     acc,        \* accepted bytes per client, this connection
     start       \* the time argument at which the connection started
 
-vars == << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq,
-          debt, kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
+vars == << now, srv, backs, reconnects, fl, sb, net, allow, last, cred, cl, cnt, shadow, refused, acc, start >>
 
 TypeOK ==
-    /\ now \in 0..Horizon /\ srv \in 0..Horizon /\ hi \in 0..Horizon
+    /\ now \in 0..Horizon /\ srv \in 0..Horizon
     /\ backs \in 0..MaxBack /\ reconnects \in 0..MaxReconnect /\ fl \in 0..FloodPerTick
     /\ sb \in [Correct -> 0..MaxPkt]
     /\ allow \in [Keys -> 0..Cap] /\ last \in [Keys -> 0..Horizon]
-    /\ ctl \in [Keys -> 0..CtlCap] /\ ctlLast \in [Keys -> 0..Horizon]
-    /\ spent \in [Keys -> Nat] /\ seq \in [Clients -> Nat]
-    /\ debt \in [Correct -> Nat]
-    /\ kaAt \in [Correct -> 0..Horizon + 1] /\ bye \in [Correct -> BOOLEAN]
-    /\ elicited \in [Clients -> Nat] /\ credited \in [Clients -> Nat] /\ tokens \in [Clients -> Nat]
+    /\ cred \in [Keys -> [t : 0..CtlCap, tl : 0..Horizon, s : Nat]]
+    /\ cl \in [Correct -> [d : Nat, ka : 0..Horizon + 1, bye : BOOLEAN]]
+    /\ cnt \in [Clients -> [q : Nat, e : Nat, cr : Nat, tk : Nat]]
     /\ shadow \in [Clients -> [a : 0..Cap, l : 0..Horizon, k : 0..CtlCap, kl : 0..Horizon, s : Nat]]
     /\ refused \in [Clients -> Nat] /\ acc \in [Clients -> Nat] /\ start \in [Clients -> 0..Horizon]
 
 Init ==
-    /\ now = 0 /\ srv = 0 /\ hi = 0 /\ backs = 0 /\ reconnects = 0 /\ fl = 0
+    /\ now = 0 /\ srv = 0 /\ backs = 0 /\ reconnects = 0 /\ fl = 0
     /\ sb = [c \in Correct |-> MaxPkt]
     /\ net = [c \in Correct |-> << >>]
     /\ allow = [k \in Keys |-> Cap]
     /\ last = [k \in Keys |-> 0]
-    /\ ctl = [k \in Keys |-> CtlCap]
-    /\ ctlLast = [k \in Keys |-> 0]
-    /\ spent = [k \in Keys |-> 1]
-    /\ seq = [c \in Clients |-> 1]
-    /\ debt = [c \in Correct |-> 0]
-    /\ kaAt = [c \in Correct |-> 0]
-    /\ bye = [c \in Correct |-> FALSE]
-    /\ elicited = [c \in Clients |-> 0]
-    /\ credited = [c \in Clients |-> 0]
-    /\ tokens = [c \in Clients |-> 0]
+    /\ cred = [k \in Keys |-> [t |-> CtlCap, tl |-> 0, s |-> 1]]
+    /\ cl = [c \in Correct |-> [d |-> 0, ka |-> 0, bye |-> FALSE]]
+    /\ cnt = [c \in Clients |-> [q |-> 1, e |-> 0, cr |-> 0, tk |-> 0]]
     /\ shadow = [c \in Clients |-> [a |-> Cap, l |-> 0, k |-> CtlCap, kl |-> 0, s |-> 1]]
     /\ refused = [c \in Clients |-> 0]
     /\ acc = [c \in Clients |-> 0]
     /\ start = [c \in Clients |-> 0]
 
-\* which credit pays a packet of kind k, given the credit state (a, ctl tokens
-\* after refill, ack mark s) and the sequence counter q of its client
+\* which credit pays a packet of kind k, given the credit state (control
+\* tokens t after refill, ack mark s) and the sequence counter q of its client
 AckPays(k, s, q) == AckCredit /\ k = "ack" /\ (~CreditBound \/ s < q)
 CtlPays(k, t) == Control /\ k \in {"ka", "dc"} /\ t >= 1
 
-\* Receive: one authenticated packet of n bytes and kind k from c at the time
-\* argument: rocketnet_server_receive_allowance_take_packet
-Take(c, n, k) ==
+\* a payload: the bytes alone (rocketnet_server_receive_allowance_take); the
+\* same as TakeKind for "pay", written out so the byte instance stays cheap
+TakeBytes(c, n) ==
     LET y == Key(c)
         a == Refilled(allow[y], last[y], srv, R, Cap)
-        t == Refilled(ctl[y], ctlLast[y], srv, Factor, CtlCap)
+        sa == Refilled(shadow[c].a, shadow[c].l, srv, R, Cap)
+    IN  /\ last' = [last EXCEPT ![y] = Moved(last[y], srv)]
+        /\ shadow' = [shadow EXCEPT ![c].a = IF n <= sa THEN sa - n ELSE sa,
+                                    ![c].l = Moved(shadow[c].l, srv)]
+        /\ IF n <= a
+           THEN /\ allow' = [allow EXCEPT ![y] = a - n]
+                /\ acc' = [acc EXCEPT ![c] = acc[c] + n]
+                /\ UNCHANGED refused
+           ELSE /\ allow' = [allow EXCEPT ![y] = a]
+                /\ refused' = [refused EXCEPT ![c] = refused[c] + 1]
+                /\ UNCHANGED acc
+        /\ UNCHANGED << cred, cnt >>
+
+\* any kind: its own credit first, then the bytes
+TakeKind(c, n, k) ==
+    LET y == Key(c)
+        a == Refilled(allow[y], last[y], srv, R, Cap)
+        t == Refilled(cred[y].t, cred[y].tl, srv, Factor, CtlCap)
         sa == Refilled(shadow[c].a, shadow[c].l, srv, R, Cap)
         st == Refilled(shadow[c].k, shadow[c].kl, srv, Factor, CtlCap)
-        ack == AckPays(k, spent[y], seq[c])
+        ack == AckPays(k, cred[y].s, cnt[c].q)
         ka == ~ack /\ CtlPays(k, t)
-        sack == AckPays(k, shadow[c].s, seq[c])
+        sack == AckPays(k, shadow[c].s, cnt[c].q)
         ska == ~sack /\ CtlPays(k, st)
-    IN  /\ ctlLast' = IF k \in {"ka", "dc"} /\ ~ack THEN [ctlLast EXCEPT ![y] = Moved(ctlLast[y], srv)] ELSE ctlLast
-        /\ ctl' = IF ka THEN [ctl EXCEPT ![y] = t - 1]
-                  ELSE IF k \in {"ka", "dc"} THEN [ctl EXCEPT ![y] = t]
-                  ELSE ctl
-        /\ spent' = IF ack THEN [spent EXCEPT ![y] = spent[y] + 1] ELSE spent
-        /\ credited' = IF ack THEN [credited EXCEPT ![c] = credited[c] + 1] ELSE credited
-        /\ tokens' = IF ka THEN [tokens EXCEPT ![c] = tokens[c] + 1] ELSE tokens
+        ctlKind == k \in {"ka", "dc"}
+    IN  /\ cred' = [cred EXCEPT ![y] =
+               [t |-> IF ka THEN t - 1 ELSE IF ctlKind THEN t ELSE cred[y].t,
+                tl |-> IF ctlKind /\ ~ack THEN Moved(cred[y].tl, srv) ELSE cred[y].tl,
+                s |-> IF ack THEN cred[y].s + 1 ELSE cred[y].s]]
+        /\ cnt' = [cnt EXCEPT ![c].cr = IF ack THEN cnt[c].cr + 1 ELSE cnt[c].cr,
+                              ![c].tk = IF ka THEN cnt[c].tk + 1 ELSE cnt[c].tk]
         /\ shadow' = [shadow EXCEPT ![c] =
                [a |-> IF ~sack /\ ~ska THEN (IF n <= sa THEN sa - n ELSE sa) ELSE shadow[c].a,
                 l |-> IF ~sack /\ ~ska THEN Moved(shadow[c].l, srv) ELSE shadow[c].l,
-                k |-> IF ska THEN st - 1 ELSE IF k \in {"ka", "dc"} /\ ~sack THEN st ELSE shadow[c].k,
-                kl |-> IF k \in {"ka", "dc"} /\ ~sack THEN Moved(shadow[c].kl, srv) ELSE shadow[c].kl,
+                k |-> IF ska THEN st - 1 ELSE IF ctlKind /\ ~sack THEN st ELSE shadow[c].k,
+                kl |-> IF ctlKind /\ ~sack THEN Moved(shadow[c].kl, srv) ELSE shadow[c].kl,
                 s |-> IF sack THEN shadow[c].s + 1 ELSE shadow[c].s]]
         /\ IF ack \/ ka
            THEN /\ UNCHANGED << allow, last, refused, acc >>
@@ -209,87 +213,82 @@ Take(c, n, k) ==
                         /\ refused' = [refused EXCEPT ![c] = refused[c] + 1]
                         /\ UNCHANGED acc
 
+\* Receive: one authenticated packet of n bytes and kind k from c at the time
+\* argument: rocketnet_server_receive_allowance_take_packet
+Take(c, n, k) == IF k = "pay" THEN TakeBytes(c, n) ELSE TakeKind(c, n, k)
+
 \* the clock moves only when no packet in flight would pass its delivery bound
 Tick ==
     /\ now < Horizon
     /\ \A c \in Correct : \A i \in 1..Len(net[c]) : now + 1 - net[c][i].st <= T - 1
-    /\ now' = now + 1 /\ srv' = now + 1 /\ hi' = now + 1 /\ fl' = 0
+    /\ now' = now + 1 /\ srv' = now + 1 /\ fl' = 0
     /\ sb' = [c \in Correct |-> Min(MaxPkt, sb[c] + B)]
-    /\ UNCHANGED << backs, reconnects, net, allow, last, ctl, ctlLast, spent, seq, debt, kaAt, bye,
-                    elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ UNCHANGED << backs, reconnects, net, allow, last, cred, cl, cnt, shadow, refused, acc, start >>
 
 StepBack ==
     /\ backs < MaxBack /\ srv > 0
     /\ srv' = srv - 1 /\ backs' = backs + 1
-    /\ UNCHANGED << now, hi, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent, seq, debt,
-                    kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ UNCHANGED << now, reconnects, fl, sb, net, allow, last, cred, cl, cnt, shadow, refused, acc, start >>
 
 \* the server sends c an eliciting packet (keep-alive, payload, disconnect):
 \* one session sequence. A correct client receives it (its debt grows) or
 \* loses it, at once: receiving later only delays the ack it owes, and the
 \* server's credit was taken when it sent, so at once is the worst case.
 Elicit(c, got) ==
-    /\ seq[c] - 1 < MaxElicit
-    /\ seq' = [seq EXCEPT ![c] = seq[c] + 1]
-    /\ elicited' = [elicited EXCEPT ![c] = elicited[c] + 1]
-    /\ debt' = IF c \in Correct /\ got THEN [debt EXCEPT ![c] = debt[c] + 1] ELSE debt
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, spent,
-                    kaAt, bye, credited, tokens, shadow, refused, acc, start >>
+    /\ cnt[c].q - 1 < MaxElicit
+    /\ cnt' = [cnt EXCEPT ![c].q = cnt[c].q + 1, ![c].e = cnt[c].e + 1]
+    /\ cl' = IF c \in Correct /\ got THEN [cl EXCEPT ![c].d = cl[c].d + 1] ELSE cl
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, net, allow, last, cred, shadow, refused, acc, start >>
 
 \* the server's own standalone ack: a sequence that elicits nothing
 \* (rocketnet_server_protocol_write_ack_if_due)
 ServerAck(c) ==
-    /\ seq[c] - 1 < MaxElicit
-    /\ seq' = [seq EXCEPT ![c] = seq[c] + 1]
-    /\ spent' = IF ServerAckSpends THEN [spent EXCEPT ![Key(c)] = spent[Key(c)] + 1] ELSE spent
+    /\ cnt[c].q - 1 < MaxElicit
+    /\ cnt' = [cnt EXCEPT ![c].q = cnt[c].q + 1]
+    /\ cred' = IF ServerAckSpends THEN [cred EXCEPT ![Key(c)].s = cred[Key(c)].s + 1] ELSE cred
     /\ shadow' = IF ServerAckSpends THEN [shadow EXCEPT ![c].s = shadow[c].s + 1] ELSE shadow
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, net, allow, last, ctl, ctlLast, debt,
-                    kaAt, bye, elicited, credited, tokens, refused, acc, start >>
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, net, allow, last, cl, refused, acc, start >>
 
 \* a correct client's send of kind k and n bytes: every send pays its debt
-CanSend(c) == ~bye[c] /\ Len(net[c]) < MaxNet
-Sent(c, n, k) ==
-    /\ net' = [net EXCEPT ![c] = Append(net[c], [n |-> n, st |-> now, k |-> k])]
-    /\ debt' = [debt EXCEPT ![c] = 0]
+CanSend(c) == ~cl[c].bye /\ Len(net[c]) < MaxNet
+Queued(c, n, k) == net' = [net EXCEPT ![c] = Append(net[c], [n |-> n, st |-> now, k |-> k])]
 
 Send(c, n) ==
     /\ CanSend(c) /\ n <= sb[c]
     /\ sb' = [sb EXCEPT ![c] = sb[c] - n]
-    /\ Sent(c, n, "pay")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, allow, last, ctl, ctlLast, spent, seq,
-                    kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ Queued(c, n, "pay")
+    /\ cl' = [cl EXCEPT ![c].d = 0]
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, allow, last, cred, cnt, shadow, refused, acc, start >>
 
 SendAck(c) ==
-    /\ "ack" \in Kinds /\ CanSend(c) /\ debt[c] >= 1
-    /\ Sent(c, MaxPkt, "ack")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
-                    kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ "ack" \in Kinds /\ CanSend(c) /\ cl[c].d >= 1
+    /\ Queued(c, MaxPkt, "ack")
+    /\ cl' = [cl EXCEPT ![c].d = 0]
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, allow, last, cred, cnt, shadow, refused, acc, start >>
 
 SendKeepAlive(c) ==
-    /\ "ka" \in Kinds /\ CanSend(c) /\ kaAt[c] # now + 1
-    /\ kaAt' = [kaAt EXCEPT ![c] = now + 1]
-    /\ Sent(c, MaxPkt, "ka")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
-                    bye, elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ "ka" \in Kinds /\ CanSend(c) /\ cl[c].ka # now + 1
+    /\ Queued(c, MaxPkt, "ka")
+    /\ cl' = [cl EXCEPT ![c].d = 0, ![c].ka = now + 1]
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, allow, last, cred, cnt, shadow, refused, acc, start >>
 
 SendDisconnect(c) ==
     /\ "dc" \in Kinds /\ CanSend(c)
-    /\ bye' = [bye EXCEPT ![c] = TRUE]
-    /\ Sent(c, MaxPkt, "dc")
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq,
-                    kaAt, elicited, credited, tokens, shadow, refused, acc, start >>
+    /\ Queued(c, MaxPkt, "dc")
+    /\ cl' = [cl EXCEPT ![c].d = 0, ![c].bye = TRUE]
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, allow, last, cred, cnt, shadow, refused, acc, start >>
 
 Deliver(c) ==
     /\ net[c] # << >>
     /\ Take(c, Head(net[c]).n, Head(net[c]).k)
     /\ net' = [net EXCEPT ![c] = Tail(net[c])]
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, seq, debt, kaAt, bye, elicited, start >>
+    /\ UNCHANGED << now, srv, backs, reconnects, fl, sb, cl, start >>
 
 Flood(c, n, k) ==
     /\ fl < FloodPerTick
     /\ Take(c, n, k)
     /\ fl' = fl + 1
-    /\ UNCHANGED << now, srv, hi, backs, reconnects, sb, net, seq, debt, kaAt, bye, elicited, start >>
+    /\ UNCHANGED << now, srv, backs, reconnects, sb, net, cl, start >>
 
 \* the connection ends and a new one takes the slot: the slot's allowance is
 \* zeroed by the reset and started full at the connection's start
@@ -301,37 +300,38 @@ Reconnect(c) ==
     /\ reconnects' = reconnects + 1
     /\ allow' = [allow EXCEPT ![c] = Cap]
     /\ last' = [last EXCEPT ![c] = srv]
-    /\ ctl' = [ctl EXCEPT ![c] = CtlCap]
-    /\ ctlLast' = [ctlLast EXCEPT ![c] = srv]
-    /\ spent' = [spent EXCEPT ![c] = seq[c]]
-    /\ shadow' = [shadow EXCEPT ![c] = [a |-> Cap, l |-> srv, k |-> CtlCap, kl |-> srv, s |-> seq[c]]]
+    /\ cred' = [cred EXCEPT ![c] = [t |-> CtlCap, tl |-> srv, s |-> cnt[c].q]]
+    /\ shadow' = [shadow EXCEPT ![c] = [a |-> Cap, l |-> srv, k |-> CtlCap, kl |-> srv, s |-> cnt[c].q]]
     /\ refused' = [refused EXCEPT ![c] = 0]
     /\ acc' = [acc EXCEPT ![c] = 0]
-    /\ elicited' = [elicited EXCEPT ![c] = 0]
-    /\ credited' = [credited EXCEPT ![c] = 0]
-    /\ tokens' = [tokens EXCEPT ![c] = 0]
+    /\ cnt' = [cnt EXCEPT ![c] = [q |-> cnt[c].q, e |-> 0, cr |-> 0, tk |-> 0]]
     /\ start' = [start EXCEPT ![c] = srv]
     /\ sb' = IF c \in Correct THEN [sb EXCEPT ![c] = MaxPkt] ELSE sb
     /\ net' = IF c \in Correct THEN [net EXCEPT ![c] = << >>] ELSE net
-    /\ debt' = IF c \in Correct THEN [debt EXCEPT ![c] = 0] ELSE debt
-    /\ kaAt' = IF c \in Correct THEN [kaAt EXCEPT ![c] = 0] ELSE kaAt
-    /\ bye' = IF c \in Correct THEN [bye EXCEPT ![c] = FALSE] ELSE bye
-    /\ UNCHANGED << now, srv, hi, backs, fl, seq >>
+    /\ cl' = IF c \in Correct THEN [cl EXCEPT ![c] = [d |-> 0, ka |-> 0, bye |-> FALSE]] ELSE cl
+    /\ UNCHANGED << now, srv, backs, fl >>
 
 \* the run ends at the horizon: a terminal stutter
 Done == now = Horizon /\ UNCHANGED vars
+
+\* the credits' actions, behind one constant test so that the byte instance
+\* (MaxElicit = 0, payload only), in which none is ever enabled, does not
+\* evaluate them state by state
+Credits == MaxElicit > 0 \/ Kinds # {"pay"}
+CreditNext ==
+    \/ \E c \in Clients, got \in BOOLEAN : Elicit(c, got)
+    \/ \E c \in Clients : ServerAck(c)
+    \/ \E c \in Correct : SendAck(c) \/ SendKeepAlive(c) \/ SendDisconnect(c)
 
 Next ==
     \/ Tick
     \/ Done
     \/ StepBack
-    \/ \E c \in Clients, got \in BOOLEAN : Elicit(c, got)
-    \/ \E c \in Clients : ServerAck(c)
     \/ \E c \in Correct, n \in 1..MaxPkt : Send(c, n)
-    \/ \E c \in Correct : SendAck(c) \/ SendKeepAlive(c) \/ SendDisconnect(c)
     \/ \E c \in Correct : Deliver(c)
     \/ \E c \in Flooders, n \in 1..MaxPkt, k \in Kinds : Flood(c, n, k)
     \/ \E c \in Clients : Reconnect(c)
+    \/ Credits /\ CreditNext
 
 Spec == Init /\ [][Next]_vars
 
@@ -343,17 +343,18 @@ UnderRateNeverRefused == \A c \in Correct : refused[c] = 0
 \* a client's allowance is what its own packets made it
 Isolated == \A c \in Correct :
     /\ allow[Key(c)] = shadow[c].a
-    /\ ctl[Key(c)] = shadow[c].k
-    /\ spent[Key(c)] = shadow[c].s
+    /\ cred[Key(c)].t = shadow[c].k
+    /\ cred[Key(c)].s = shadow[c].s
 
-\* nothing is accepted beyond the capacity and the rate times the time seen:
-\* in bytes, and in control tokens
+\* nothing is accepted beyond the capacity and the rate times the time seen
+\* (now is the highest time argument: a step back moves only srv): in bytes,
+\* and in control tokens
 NoMint == \A c \in Clients :
-    /\ acc[c] <= Cap + R * (hi - start[c])
-    /\ tokens[c] <= CtlCap + Factor * (hi - start[c])
+    /\ acc[c] <= Cap + R * (now - start[c])
+    /\ cnt[c].tk <= CtlCap + Factor * (now - start[c])
 
 \* the ack credit pays for no more standalone acks than the eliciting packets
 \* the server sent that client this connection
-AcksBounded == \A c \in Clients : credited[c] <= elicited[c]
+AcksBounded == \A c \in Clients : cnt[c].cr <= cnt[c].e
 
 =============================================================================

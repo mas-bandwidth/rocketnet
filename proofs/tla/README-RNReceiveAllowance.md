@@ -58,10 +58,14 @@ measured records in `proofs/tla/RUNS.tsv`.
 One correct client `c1` and one flooder `f1`; the setting B = 1 byte a tick at
 Factor 2 (R = 2); one maximum packet of 2, which is also the correct client's
 bucket depth; a timeout of T = 2 ticks, so the correct client's packets arrive
-up to one tick late and may arrive together; five ticks; two flood packets a
+up to one tick late and may arrive together, two in flight at most; five
+ticks; two flood packets a
 tick; one step back of the server's time argument; one slot reuse. The server
 sends nothing and the clients send payload only (`MaxElicit = 0`,
-`Kinds = {"pay"}`). The control checks every invariant.
+`Kinds = {"pay"}`). The control checks every invariant. It held three packets
+in flight before the credits; with the credit variables in every state TLC
+takes about 1.4 times as long a state, and three would not fit the 110 s run
+budget on the bench, so two.
 
 `MCRNReceiveAllowanceCredit.cfg`: one correct client, the same setting and
 packet, three ticks, up to two session packets from the server (eliciting,
