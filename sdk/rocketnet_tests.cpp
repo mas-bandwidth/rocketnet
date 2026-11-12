@@ -9859,6 +9859,13 @@ void rocketnet_test_ack_debt()
 
     const uint8_t data[4] = { 1, 2, 3, 4 };
 
+    // At a threshold of 1 the two "threshold - 1" loops below run no times:
+    // the "below the threshold" state is zero eliciting packets, which the
+    // first "not due" check covers. A threshold above 1 brings the loops to
+    // life and needs its own below-threshold case: this assert says so.
+
+    static_assert( ROCKETNET_ACK_DEBT_THRESHOLD == 1, "test_ack_debt: a threshold above 1 needs a case with eliciting packets below it" );
+
     for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD - 1; i++ )
     {
         time += 0.001;
