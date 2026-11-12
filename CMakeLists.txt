@@ -847,8 +847,15 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_platform_text.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    # The empty-body audit reads every functional source, whatever binary or
+    # platform builds it: the glob, not a hand list, so a new file is read.
+    file( GLOB ROCKETNET_FUNCTIONAL_AUDIT_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.inc" )
+    string( REPLACE ";" "|" ROCKETNET_FUNCTIONAL_AUDIT_LIST "${ROCKETNET_FUNCTIONAL_AUDIT_SOURCES}" )
     set_property( SOURCE tests/source_audit_functional_integrity.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
+        "ROCKETNET_FUNCTIONAL_SOURCES=\"${ROCKETNET_FUNCTIONAL_AUDIT_LIST}\"" )
     target_compile_features(source_audit PRIVATE cxx_std_11)
     rocketnet_warning_floor(source_audit)
     target_link_libraries(source_audit PRIVATE rocketnet_test_support Threads::Threads)
