@@ -9443,6 +9443,10 @@ bool rocketnet_test_xdp_veth_runs_here()
 
 static bool rocketnet_xdp_veth_capture_present = false;
 
+// set by the both-families case: both ends carry both families' addresses,
+// and the server's second_public_address names the other family
+static bool rocketnet_xdp_veth_both = false;
+
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
 struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
@@ -9488,14 +9492,14 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     }
     rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
 
-    if ( ipv6 )
+    if ( ipv6 || rocketnet_xdp_veth_both )
     {
         rocketnet_xdp_veth_run( "sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_NEAR ".addr_gen_mode=1" );
         rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_FAR ".addr_gen_mode=1" );
         rocketnet_xdp_veth_run( "ip addr add 2001:db8:77::1/64 dev " ROCKETNET_XDP_VETH_NEAR " nodad" );
         rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 2001:db8:77::2/64 dev " ROCKETNET_XDP_VETH_FAR " nodad" );
     }
-    else
+    if ( !ipv6 || rocketnet_xdp_veth_both )
     {
         rocketnet_xdp_veth_run( "ip addr add 10.77.2.1/24 dev " ROCKETNET_XDP_VETH_NEAR );
         rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR );
@@ -9623,6 +9627,11 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     server_config.num_xdp_queues = veth_queues;
     server_config.num_os_cpus = 1;
     snprintf( server_config.transport, sizeof( server_config.transport ), "xdp" );
+    if ( rocketnet_xdp_veth_both )
+    {
+        // the other family's address on the same interface and port
+        snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), ipv6 ? "10.77.2.1:%d" : "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT );
+    }
 
     // the create at info level, so every pre-flight line is in the output
 
@@ -10230,6 +10239,217 @@ static void rocketnet_xdp_over_mtu_refused( const char * case_name )
 
     rn_native_client_transport_stop_and_destroy( client );
     rocketnet_xdp_veth_teardown();
+}
+
+// One xdp server serves both families on one interface (second_public_address,
+// ServedFamilies): an IPv4 client and an IPv6 client connect to the one
+// server, each one's payloads reach the server under its own client index,
+// and the server's payloads to each reach that client and only that client.
+// Then the create's refusals, with the pair still up and no server on it:
+// addresses the transport layer's own checks pass on but the xdp create
+// refuses (a link-local public or second address, the families on different
+// interfaces), each refused with nothing attached.
+static void rocketnet_xdp_serves_both_families( const char * case_name )
+{
+    char server_address[128];
+    rocketnet_xdp_veth_both = true;
+    struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    rocketnet_xdp_veth_both = false;
+
+    char server_address_ipv6[128];
+    snprintf( server_address_ipv6, sizeof( server_address_ipv6 ), "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT );
+
+    struct rocketnet_client_transport_t * clients[2];
+    clients[0] = rocketnet_xdp_veth_client( server_address );
+    clients[1] = rocketnet_xdp_veth_client( server_address_ipv6 );
+
+    // connect both, one after the other, so the IPv4 client takes index 0
+    for ( int c = 0; c < 2; c++ )
+    {
+        const double start = rocketnet_platform_time();
+        while ( rocketnet_platform_time() - start < 10.0 )
+        {
+            for ( int k = 0; k <= c; k++ )
+            {
+                rocketnet_client_transport_update( clients[k], rocketnet_platform_time() );
+            }
+            rocketnet_server_transport_update( server, rocketnet_platform_time() );
+            rocketnet_server_transport_send_packets( server );
+            if ( rocketnet_client_transport_state( clients[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                 rocketnet_server_transport_num_connected_clients( server ) == c + 1 )
+            {
+                break;
+            }
+            rocketnet_platform_sleep( 0.001 );
+        }
+        if ( rocketnet_server_transport_num_connected_clients( server ) != c + 1 )
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: the %s client did not connect (server has %d connected)", case_name, c == 0 ? "IPv4" : "IPv6", rocketnet_server_transport_num_connected_clients( server ) );
+        }
+        rocketnet_check( rocketnet_client_transport_state( clients[c] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+        rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == c + 1 );
+    }
+
+    // each payload's first byte names who sent it and to whom: 0x40 + client
+    // index to the server, 0x80 + client index from it
+
+    const int count = 32;
+    int server_received[2] = { 0, 0 };
+    int client_received[2] = { 0, 0 };
+    int sent_to_server[2] = { 0, 0 };
+    int sent_to_client[2] = { 0, 0 };
+
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        for ( int c = 0; c < 2; c++ )
+        {
+            uint8_t payload[64];
+            if ( sent_to_server[c] < count )
+            {
+                memset( payload, 0x40 + c, sizeof( payload ) );
+                rocketnet_client_transport_send_packet( clients[c], payload, (int) sizeof( payload ) );
+                sent_to_server[c]++;
+            }
+            if ( sent_to_client[c] < count )
+            {
+                const uint64_t ring_full = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL );
+                memset( payload, 0x80 + c, sizeof( payload ) );
+                rocketnet_server_transport_send_packet( server, c, payload, (int) sizeof( payload ) );
+                if ( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) == ring_full )
+                {
+                    sent_to_client[c]++;
+                }
+            }
+        }
+
+        rocketnet_server_transport_send_packets( server );
+        for ( int c = 0; c < 2; c++ )
+        {
+            rocketnet_client_transport_update( clients[c], rocketnet_platform_time() );
+        }
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
+        {
+            int payload_client_index, payload_bytes;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+            rocketnet_check( payload_client_index == 0 || payload_client_index == 1 );
+            rocketnet_check( payload_bytes == 64 );
+            rocketnet_check( payload[0] == 0x40 + payload_client_index && payload[63] == 0x40 + payload_client_index );
+            server_received[payload_client_index]++;
+        }
+
+        for ( int c = 0; c < 2; c++ )
+        {
+            uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+            int packet_bytes;
+            while ( ( packet_bytes = rocketnet_client_transport_receive_packet( clients[c], packet, (int) sizeof( packet ) ) ) > 0 )
+            {
+                rocketnet_check( packet_bytes == 64 );
+                rocketnet_check( packet[0] == 0x80 + c && packet[63] == 0x80 + c );
+                client_received[c]++;
+            }
+        }
+
+        if ( server_received[0] >= count && server_received[1] >= count && client_received[0] >= count && client_received[1] >= count )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: server opened %d from IPv4 and %d from IPv6, the IPv4 client opened %d and the IPv6 client %d, of %d each", case_name,
+                      server_received[0], server_received[1], client_received[0], client_received[1], count );
+    rocketnet_check( server_received[0] == count && server_received[1] == count );
+    rocketnet_check( client_received[0] == count && client_received[1] == count );
+
+    for ( int c = 0; c < 2; c++ )
+    {
+        rn_native_client_transport_stop_and_destroy( clients[c] );
+    }
+
+    rocketnet_server_transport_stop( server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rn_native_server_transport_stop_and_destroy( server );
+    rocketnet_xdp_veth_server = NULL;
+
+    // the refusals: the xdp create itself, called with the pair up and no
+    // server on it, so no refusal is the pre-flight's for a program still
+    // attached. each returns NULL before it binds or attaches anything.
+
+    struct rocketnet_server_transport_config_t refusal_config;
+    rocketnet_server_transport_dev_config( &refusal_config );
+
+    char ipv4_address[64];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "10.77.2.1:%d", ROCKETNET_XDP_VETH_PORT );
+    char link_local[64];
+    snprintf( link_local, sizeof( link_local ), "[fe80::77]:%d", ROCKETNET_XDP_VETH_PORT );
+    char other_interface[64];
+    snprintf( other_interface, sizeof( other_interface ), "[2001:db8:78::1]:%d", ROCKETNET_XDP_VETH_PORT );
+    char wrong_port[64];
+    snprintf( wrong_port, sizeof( wrong_port ), "[2001:db8:77::1]:%d", ROCKETNET_XDP_VETH_PORT + 1 );
+    char same_family[64];
+    snprintf( same_family, sizeof( same_family ), "10.77.2.2:%d", ROCKETNET_XDP_VETH_PORT );
+
+    // port 0: a second address that does not parse reads as port 0, so only
+    // the parse check refuses it with INVALID_ADDRESS here
+    char ipv4_port_zero[64];
+    snprintf( ipv4_port_zero, sizeof( ipv4_port_zero ), "10.77.2.1:0" );
+
+    // the families on two interfaces: the IPv6 address on lo. the link-local
+    // address is on the near end, so only the link-local checks refuse it
+    // (an address on no interface the later lookup would refuse anyway)
+    rocketnet_xdp_veth_run( "ip addr add 2001:db8:78::1/128 dev lo nodad" );
+    rocketnet_xdp_veth_run( "ip addr add fe80::77/64 dev " ROCKETNET_XDP_VETH_NEAR " nodad" );
+
+    struct refusal_t
+    {
+        const char * public_address;
+        const char * second_address;
+        int status;
+    };
+    const struct refusal_t refusals[] = {
+        { "not an address", NULL, 0 },
+        { link_local, NULL, 0 },
+        { ipv4_address, "not an address", ROCKETNET_STATUS_INVALID_ADDRESS },
+        { ipv4_port_zero, "not an address", ROCKETNET_STATUS_INVALID_ADDRESS },
+        { ipv4_address, same_family, ROCKETNET_STATUS_INVALID_ADDRESS },
+        { ipv4_address, wrong_port, ROCKETNET_STATUS_INVALID_ADDRESS },
+        { ipv4_address, link_local, ROCKETNET_STATUS_INVALID_ADDRESS },
+        { ipv4_address, other_interface, ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED },
+    };
+
+    for ( size_t i = 0; i < sizeof( refusals ) / sizeof( refusals[0] ); i++ )
+    {
+#if ROCKETNET_DEV
+        rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+        int status = 0;
+        struct rocketnet_server_socket_t * refused = rocketnet_server_socket_create( NULL, refusals[i].public_address, refusal_config.packet_filter, 4, 1, 1, refusals[i].second_address, &status );
+        if ( refused || status != refusals[i].status )
+        {
+            rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: FAILED: refusal %d (%s, second %s): created %s, status %d want %d", case_name, (int) i, refusals[i].public_address,
+                              refusals[i].second_address ? refusals[i].second_address : "none", refused ? "yes" : "no", status, refusals[i].status );
+        }
+        rocketnet_check( refused == NULL );
+        rocketnet_check( status == refusals[i].status );
+    }
+
+    rocketnet_xdp_veth_run( "ip addr del 2001:db8:78::1/128 dev lo" );
+
+    rocketnet_xdp_veth_teardown();
+    rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: both families served, %d refusals refused", case_name, (int) ( sizeof( refusals ) / sizeof( refusals[0] ) ) );
+}
+
+void rocketnet_test_xdp_serves_both_families()
+{
+    rocketnet_xdp_serves_both_families( "test_xdp_transport_serves_both_families" );
 }
 
 void rocketnet_test_xdp_over_mtu_refused_ipv4()
@@ -13345,6 +13565,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_gateway_change_while_serving", rocketnet_test_xdp_gateway_change_while_serving, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_over_mtu_frame_refused_ipv4", rocketnet_test_xdp_over_mtu_refused_ipv4, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_serves_both_families", rocketnet_test_xdp_serves_both_families, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
