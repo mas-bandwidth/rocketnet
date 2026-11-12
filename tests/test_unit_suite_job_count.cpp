@@ -79,6 +79,48 @@ static void test_suite_finish_fails_when_no_case_ran()
 
 REGISTER_UNIT_TEST( test_suite_finish_fails_when_no_case_ran );
 
+// A case the runner failed (its memory bound, its time limit) gets the
+// runner's reason line even when the case printed a check line while passing,
+// as a case that exercises the check path does; a case that failed itself and
+// printed its own check line does not get a second one.
+static void test_suite_runner_reason_is_printed_over_a_check_line()
+{
+    suite_result over = suite_result();
+    over.name = "test_planted";
+    over.failed = false;
+    over.peak_rss_mb = 1506;
+    over.rss_over_bound = false;
+    over.output = "check failed: no case ran\n";
+    suite_check_rss( over, 698, true );
+    check( over.failed && over.rss_over_bound );
+    check( over.detail == "test_planted peak_rss_mb=1506 bound_mb=698" );
+    check( suite_runner_failed( over ) );
+    check( suite_failure_line_needed( over ) );
+
+    suite_result slow = suite_result();
+    slow.name = "test_planted";
+    slow.failed = true;
+    slow.rss_over_bound = false;
+    slow.detail = "test_planted exceeded 120s";
+    slow.output = "check failed: no case ran\n";
+    check( suite_runner_failed( slow ) );
+    check( suite_failure_line_needed( slow ) );
+
+    suite_result own = suite_result();
+    own.name = "test_planted";
+    own.failed = true;
+    own.rss_over_bound = false;
+    own.detail = "test_planted exit 1";
+    own.output = "check failed: x == 1, function f, file g, line 2\n";
+    check( !suite_runner_failed( own ) );
+    check( !suite_failure_line_needed( own ) );
+
+    own.output = "no check line\n";
+    check( suite_failure_line_needed( own ) );
+}
+
+REGISTER_UNIT_TEST( test_suite_runner_reason_is_printed_over_a_check_line );
+
 // A case passes only by returning. While it runs, the exit guard is armed for
 // the process that started it, so an exit( 0 ) inside the case fails it; a
 // child the case forks (another pid) and the time after the case returned are
