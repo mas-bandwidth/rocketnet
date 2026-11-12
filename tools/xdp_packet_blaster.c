@@ -1053,6 +1053,64 @@ static int rn_blaster_mutate_case( const rn_blaster_case_t & item, const uint8_t
     return bytes;
 }
 
+/* The UDP destination port of a frame rocketnet_xdp_frame_parse_vlan accepted,
+ * read back from the payload pointer it returned. The payload starts right
+ * after the UDP header whether the 802.1Q tag is in the frame or the NIC
+ * stripped it (rx-vlan-offload), so the port is never read at an offset that
+ * assumes the tag is there. */
+static uint16_t rn_blaster_reply_destination_port( const uint8_t * frame, const uint8_t * payload )
+{
+    if ( !frame || !payload || payload - frame < 14 + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES )
+    {
+        return 0;
+    }
+    return (uint16_t) ( ( (uint16_t) payload[-6] << 8 ) | payload[-5] );
+}
+
+/* A reply built tagged, then the same frame with the tag removed as
+ * rx-vlan-offload delivers it: both parse, and both give the client's port. */
+static bool rn_blaster_reply_port_case( const char * server_text, const char * client_text, int vlan_id, bool strip,
+                                        uint16_t wanted_port )
+{
+    rocketnet_address_t server = {};
+    rocketnet_address_t client = {};
+    if ( !rocketnet_address_parse( &server, server_text ) || !rocketnet_address_parse( &client, client_text ) )
+    {
+        return false;
+    }
+    const uint8_t server_mac[6] = { 2, 0, 0, 0, 0, 1 };
+    const uint8_t client_mac[6] = { 2, 0, 0, 0, 0, 2 };
+    const int payload_bytes = 32;
+    uint8_t frame[256] = {};
+    const int header_bytes = rocketnet_xdp_frame_header_bytes_vlan( server.type, vlan_id );
+    if ( header_bytes <= 0 )
+    {
+        return false;
+    }
+    memset( frame + header_bytes, 0x5a, (size_t) payload_bytes );
+    int frame_bytes = rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, client_mac, &server, &client,
+                                                      payload_bytes, vlan_id );
+    if ( frame_bytes <= 0 )
+    {
+        return false;
+    }
+    if ( strip )
+    {
+        const int tag_bytes = rocketnet_xdp_frame_tag_bytes( vlan_id );
+        memmove( frame + 12, frame + 12 + tag_bytes, (size_t) ( frame_bytes - 12 - tag_bytes ) );
+        frame_bytes -= tag_bytes;
+    }
+    rocketnet_address_t from = {};
+    const uint8_t * packet = NULL;
+    int packet_bytes = 0;
+    if ( !rocketnet_xdp_frame_parse_vlan( frame, (size_t) frame_bytes, vlan_id, &from, &packet, &packet_bytes ) ||
+         !rocketnet_address_equal( &from, &server ) || packet_bytes != payload_bytes )
+    {
+        return false;
+    }
+    return rn_blaster_reply_destination_port( frame, packet ) == wanted_port;
+}
+
 static int rn_blaster_self_test()
 {
     int failures = 0;
@@ -1342,6 +1400,12 @@ static int rn_blaster_self_test()
         RN_BLASTER_CHECK( total.submitted == 7u && total.receive_wrong_thread == 2u && total.physical_wire_bytes == 1002u &&
                           total.transmit_wakeups == 4u && total.offered == 0u );
     }
+    /* A reply's client port: untagged, tagged, and tag stripped by rx-vlan-offload. */
+    RN_BLASTER_CHECK( rn_blaster_reply_port_case( "10.0.0.1:40000", "10.0.0.2:41001", 0, false, 41001 ) );
+    RN_BLASTER_CHECK( rn_blaster_reply_port_case( "10.0.0.1:40000", "10.0.0.2:41001", 2195, false, 41001 ) );
+    RN_BLASTER_CHECK( rn_blaster_reply_port_case( "10.0.0.1:40000", "10.0.0.2:41001", 2195, true, 41001 ) );
+    RN_BLASTER_CHECK( rn_blaster_reply_port_case( "[fd00::1]:40000", "[fd00::2]:41002", 2195, false, 41002 ) );
+    RN_BLASTER_CHECK( rn_blaster_reply_port_case( "[fd00::1]:40000", "[fd00::2]:41002", 2195, true, 41002 ) );
 #undef RN_BLASTER_CHECK
     if ( failures == 0 )
     {
@@ -2105,16 +2169,6 @@ static bool rn_blaster_send_robustness( rn_blaster_xsk_t * xsk, const uint8_t * 
     return rn_blaster_queue_frame( xsk, address, frame_bytes, packet_bytes, results );
 }
 
-static uint16_t rn_blaster_frame_destination_port( const uint8_t * frame, int frame_bytes, int family, int vlan_id )
-{
-    const int header = rocketnet_xdp_frame_header_bytes_vlan( family, vlan_id );
-    if ( header <= 0 || frame_bytes < header )
-    {
-        return 0;
-    }
-    return (uint16_t) ( ( (uint16_t) frame[header - 6] << 8 ) | frame[header - 5] );
-}
-
 static void rn_blaster_fill_returned( rn_blaster_xsk_t * xsk )
 {
     if ( xsk->pending_fill.empty() )
@@ -2192,7 +2246,7 @@ static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_s
             ++results->receive_refused;
             continue;
         }
-        const uint16_t destination_port = rn_blaster_frame_destination_port( frame, (int) descriptor->len, from.type, xsk->vlan_id );
+        const uint16_t destination_port = rn_blaster_reply_destination_port( frame, packet );
         const uint8_t owner = port_owner[destination_port];
         if ( owner == RN_BLASTER_PORT_UNOWNED )
         {
