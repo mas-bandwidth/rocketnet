@@ -451,7 +451,9 @@ jobs:
       # leg: on the Linux Release leg, in shard 0/2 only.
       - name: Sodium known answers
         if: matrix.leg == 'unit' && matrix.shard != '1/2'
-        run: ./bin/test_sodium
+        run: |
+          ./bin/test_sodium
+          ./bin/test_sodium_dispatch
 
       # The committed sodium pair from its SHA-256 pinned inputs, byte for
       # byte, on the Linux and macOS Release unit legs; the
@@ -1609,6 +1611,7 @@ jobs:
           set -euo pipefail
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
+          ./bin/Release/test_sodium_dispatch.exe
 
       # The shipped Windows sockets keep datagrams whole: each create (portable,
       # iocp, rio) sets IP_DONTFRAGMENT, and IPV6_DONTFRAG on IPv6, inline. The
@@ -2349,7 +2352,7 @@ jobs:
       - name: Build the sanitized functional suite and the lifecycle binaries
         timeout-minutes: 6
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel 8
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium test_sodium_dispatch --parallel 8
 
       - name: Start combined unit and functional timing (unit rows)
         if: startsWith(matrix.leg, 'unit suite')
@@ -2414,7 +2417,9 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
-        run: ./bin/test_sodium
+        run: |
+          ./bin/test_sodium
+          ./bin/test_sodium_dispatch
 
       - name: Inactive XDP index negative control
         if: matrix.leg == 'functional suite'

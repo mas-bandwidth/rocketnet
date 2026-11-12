@@ -88,6 +88,24 @@ None changes cryptographic arithmetic; `test_sodium` and the oracle check
 below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 "-Wlong-long"` lines in its public headers are kept as written.
 
+## CPU feature detection
+
+ChaCha20 (AVX2, SSSE3, reference) and BLAKE2b (AVX2, SSE4.1, SSSE3,
+reference) pick their implementation at `sodium_init` from the CPU features
+the baseline's `_sodium_runtime_intel_cpu_features` detects. AVX, and AVX2
+with it, counts only when CPUID reports AVX, XSAVE and OSXSAVE and XCR0 shows
+the OS saves both SSE and YMM state, upstream's check. Upstream reads XCR0 on
+GCC and Clang with an inline XGETBV opcode when its configure defines
+`HAVE_AVX_ASM`; this pair has no configure and leaves `HAVE_AVX_ASM` off,
+because it also selects assembly the subset does not carry. Through v1.1.7
+XCR0 therefore stayed 0 on GCC and Clang, and AVX2 was compiled in but never
+chosen. One generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`)
+lets that same XGETBV run when `HAVE_CPUID` is defined (GCC or Clang on x86;
+`sodium.h`). MSVC keeps its `_xgetbv` path, and an MSVC build without
+`/arch:AVX2` compiles no AVX2 code, as before. arm64 has no x86 detection and
+is unchanged. `bin/test_sodium_dispatch` checks the picks against the CPU and
+that every implementation agrees with the reference.
+
 ## MemorySanitizer
 
 Two baseline writes reach memory through calls MemorySanitizer cannot see:
