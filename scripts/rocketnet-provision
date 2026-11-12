@@ -47,10 +47,10 @@
 # RUNTIME TIER -- this script PERFORMS these, idempotently:
 #
 #   R1. root                  the XDP data plane requires euid 0.
-#   R2. interface             the interface exists and is UP (this script
-#                             takes the interface name; whether it carries
-#                             the server's public IPv4 address is checked by
-#                             the pre-flight, which alone knows the address).
+#   R2. interface             the interface exists and is UP; an 802.1Q VLAN
+#                             device resolves to its parent NIC, where R3-R7
+#                             act (QinQ, 802.1ad, stacked devices refuse); the
+#                             pre-flight checks it carries the public address.
 #   R3. exclusive xdp slot    no XDP program attached (this script unloads;
 #                             the library never unloads anyone and pins only
 #                             under its own per-INSTANCE random-token root
@@ -588,6 +588,89 @@ r8_enforce()
     fi
 }
 
+# THE XDP DEVICE (R2): the interface named carries the server's address; the
+# device the transport attaches to, and that this script provisions, is the
+# one the library's pre-flight resolves the same way (rocketnet_xdp_link_classify
+# in sdk/rocketnet_gateway_netlink_linux.cpp):
+#
+#   an untagged device         itself
+#   one 802.1Q VLAN device     its parent, when the parent is a physical NIC
+#                              (no link kind) or veth: the queues, IRQs,
+#                              busy-poll knobs and the XDP slot are the
+#                              parent's
+#   refused, by name           an 802.1ad VLAN, a VLAN on a VLAN (QinQ), a
+#                              VLAN on any other kind or whose parent is in
+#                              another namespace, and a bond, bridge, team,
+#                              macvlan, macvtap, ipvlan or ipvtap
+#
+# read from `ip -o -d link show dev NAME`: the name field is NAME@PARENT (or
+# NAME@ifN for a parent in another namespace, with link-netnsid), and the
+# third backslash-separated segment starts with the link kind when the device
+# has one (vlan carries "vlan protocol 802.1Q id N"). Prints one line:
+#   plain NAME | vlan PARENT ID | refused REASON | unread REASON
+
+xdp_link_line()
+{
+    ip -o -d link show dev "$1" 2>/dev/null | head -n 1
+}
+
+xdp_link_kind()   # one ip -o -d line on stdin: the link kind, or empty
+{
+    awk -F'\\' 'NF >= 3 { sub( /^ +/, "", $3 ); split( $3, w, " " ); if ( w[1] != "addrgenmode" ) print w[1] }'
+}
+
+xdp_device_resolve()
+{
+    local NAME="$1" LINE KIND PARENT PARENT_LINE PARENT_KIND PROTOCOL ID
+    LINE="$(xdp_link_line "$NAME")"
+    if [ -z "$LINE" ]; then
+        echo "unread ip -o -d link show dev $NAME printed nothing"
+        return
+    fi
+    KIND="$(printf '%s\n' "$LINE" | xdp_link_kind)"
+    case "$KIND" in
+        bond|bridge|team|macvlan|macvtap|ipvlan|ipvtap)
+            echo "refused $NAME is a $KIND device, stacked on other devices"
+            return
+            ;;
+        vlan) ;;
+        *)
+            echo "plain $NAME"
+            return
+            ;;
+    esac
+    PROTOCOL="$(printf '%s\n' "$LINE" | sed -n 's/.* vlan protocol \([^ ]*\) id \([0-9]*\) .*/\1/p')"
+    ID="$(printf '%s\n' "$LINE" | sed -n 's/.* vlan protocol \([^ ]*\) id \([0-9]*\) .*/\2/p')"
+    PARENT="$(printf '%s\n' "$LINE" | awk '{ name = $2; sub( /:$/, "", name ); at = index( name, "@" ); if ( at > 0 ) print substr( name, at + 1 ) }')"
+    if [ "$PROTOCOL" != "802.1Q" ]; then
+        echo "refused $NAME is a VLAN whose tag protocol is ${PROTOCOL:-unknown}, not 802.1Q (802.1ad, the outer tag of QinQ)"
+        return
+    fi
+    case "$ID" in
+        ''|*[!0-9]*) echo "refused $NAME is a VLAN whose id could not be read"; return ;;
+    esac
+    if [ "$ID" -lt 1 ] || [ "$ID" -gt 4094 ]; then
+        echo "refused $NAME is a VLAN whose id $ID is not 1 to 4094"
+        return
+    fi
+    if [ -z "$PARENT" ] || printf '%s\n' "$LINE" | grep -q ' link-netnsid '; then
+        echo "refused $NAME is a VLAN whose parent is not a device in this network namespace"
+        return
+    fi
+    PARENT_LINE="$(xdp_link_line "$PARENT")"
+    if [ -z "$PARENT_LINE" ]; then
+        echo "refused $NAME is a VLAN whose parent $PARENT could not be read"
+        return
+    fi
+    PARENT_KIND="$(printf '%s\n' "$PARENT_LINE" | xdp_link_kind)"
+    case "$PARENT_KIND" in
+        vlan) echo "refused $NAME is a VLAN on the VLAN $PARENT (nested tags, QinQ)"; return ;;
+        ''|veth) ;;
+        *) echo "refused $NAME is a VLAN on $PARENT, a $PARENT_KIND device (only a physical NIC or veth carries it)"; return ;;
+    esac
+    echo "vlan $PARENT $ID"
+}
+
 # SELFTEST: the script's matcher held to the SAME CASE SET as the C test
 # (rocketnet_test_xdp_interrupt_matcher), transcribed -- the bytes differ
 # deliberately in ways outside the boundary logic (single spaces where the
@@ -1067,6 +1150,84 @@ STUB
         echo "selftest FAIL: second full-flow PROPAGATION: $FULL2_UNMET_LINES UNMET lines printed but the summary counted differently"; PASS=0
     fi
 
+    # --- THE XDP DEVICE (R2): the resolver over `ip -o -d link show dev`,
+    # replayed from lines captured with iproute2 6.19.0 in a virtme-ng
+    # guest (the MAC addresses and the tails past the kind's fields
+    # trimmed). The stub answers only that exact form, and a device it has
+    # no line for as ip does: nothing on stdout, exit 1 ---
+
+    cat > "$STUB_DIR/ip" << 'STUB'
+#!/bin/sh
+[ "$1 $2 $3 $4 $5" = "-o -d link show dev" ] || { echo "stub: unexpected invocation $*" >&2; exit 99; }
+[ -f "$STUB_STATE_DIR/link.$6" ] || { echo "Device \"$6\" does not exist." >&2; exit 1; }
+cat "$STUB_STATE_DIR/link.$6"
+STUB
+    chmod +x "$STUB_DIR/ip"
+
+    link_line()   # $1 name  $2 the ip -o -d line
+    {
+        printf '%s\n' "$2" > "$STUB_STATE_DIR/link.$1"
+    }
+    IP_HEAD='mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000\    link/ether 02:00:00:00:00:01 brd ff:ff:ff:ff:ff:ff'
+    IP_TAIL='addrgenmode eui64 numtxqueues 1 numrxqueues 1 gso_max_size 65536 gso_max_segs 65535'
+    link_line vk0       "3: vk0@vk1: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 \\    veth $IP_TAIL"
+    link_line dk0       "4: dk0: <BROADCAST,NOARP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 0 \\    dummy $IP_TAIL"
+    link_line eno1      "2: eno1: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 9702 $IP_TAIL"
+    link_line vk0.10    "5: vk0.10@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 10 <REORDER_HDR> $IP_TAIL"
+    link_line eno1.4094 "6: eno1.4094@eno1: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 4094 <REORDER_HDR> $IP_TAIL"
+    link_line vk0.10.20 "7: vk0.10.20@vk0.10: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 20 <REORDER_HDR> $IP_TAIL"
+    link_line vkad      "8: vkad@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1ad id 30 <REORDER_HDR> $IP_TAIL"
+    link_line dk0.40    "9: dk0.40@dk0: <BROADCAST,NOARP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 40 <REORDER_HDR> $IP_TAIL"
+    link_line vn0.5     "13: vn0.5@if12: <BROADCAST,MULTICAST> $IP_HEAD link-netnsid 0 promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 5 <REORDER_HDR> $IP_TAIL"
+    link_line bk0       "10: bk0: <BROADCAST,MULTICAST,MASTER> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 netns-immutable \\    bond mode balance-rr miimon 0 updelay 0 $IP_TAIL"
+    link_line brk0      "11: brk0: <BROADCAST,MULTICAST> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 netns-immutable \\    bridge forward_delay 1500 vlan_filtering 0 vlan_protocol 802.1Q $IP_TAIL"
+    link_line mvk0      "12: mvk0@vk0: <BROADCAST,MULTICAST,M-DOWN> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 65535 \\    macvlan mode bridge bcqueuelen 1000 $IP_TAIL"
+    link_line bk0.7     "14: bk0.7@bk0: <BROADCAST,MULTICAST,MASTER> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 7 <REORDER_HDR> $IP_TAIL"
+    link_line lo        "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\\    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00 promiscuity 0 allmulti 0 minmtu 0 maxmtu 0 netns-immutable $IP_TAIL"
+
+    expect_device()   # $1 interface  $2 the resolver's whole line, or a prefix ending in "*"
+    {
+        RESULT="$(PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" xdp_device_resolve "$1")"
+        case "$2" in
+            *'*') case "$RESULT" in "${2%\*}"*) return ;; esac ;;
+            *) [ "$RESULT" = "$2" ] && return ;;
+        esac
+        echo "selftest FAIL: the xdp device of '$1' resolved '$RESULT', want '$2'"; PASS=0
+    }
+
+    expect_device eno1      "plain eno1"
+    expect_device vk0       "plain vk0"
+    expect_device dk0       "plain dk0"
+    expect_device lo        "plain lo"
+    expect_device vk0.10    "vlan vk0 10"
+    expect_device eno1.4094 "vlan eno1 4094"
+    expect_device vk0.10.20 "refused vk0.10.20 is a VLAN on the VLAN vk0.10 (nested tags, QinQ)"
+    expect_device vkad      "refused vkad is a VLAN whose tag protocol is 802.1ad, not 802.1Q*"
+    expect_device dk0.40    "refused dk0.40 is a VLAN on dk0, a dummy device*"
+    expect_device bk0.7     "refused bk0.7 is a VLAN on bk0, a bond device*"
+    expect_device vn0.5     "refused vn0.5 is a VLAN whose parent is not a device in this network namespace"
+    expect_device bk0       "refused bk0 is a bond device, stacked on other devices"
+    expect_device brk0      "refused brk0 is a bridge device, stacked on other devices"
+    expect_device mvk0      "refused mvk0 is a macvlan device, stacked on other devices"
+    expect_device nosuch0   "unread *"
+
+    # the whole script on a VLAN: R3 and R7 act on the parent, and the
+    # refused forms end the run by name before any condition is read
+
+    echo clean > "$STUB_STATE_DIR/state.stubnic0"
+    echo 7 > "$STUB_STATE_DIR/combined.stubnic0"
+    link_line stubnic0     "20: stubnic0: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 68 maxmtu 9702 $IP_TAIL"
+    link_line stubnic0.300 "21: stubnic0.300@stubnic0: <BROADCAST,MULTICAST,UP,LOWER_UP> $IP_HEAD promiscuity 0 allmulti 0 minmtu 0 maxmtu 65535 \\    vlan protocol 802.1Q id 300 <REORDER_HDR> $IP_TAIL"
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubnic0.300 7 verify 2>&1 )"
+    expect_case "full-flow verify on a VLAN names the parent" $? 1 "$OUT" "stubnic0.300 is 802.1Q VLAN 300 on stubnic0: the xdp transport attaches to stubnic0" "" "on stubnic0.300 (R3)"
+    expect_case "full-flow verify on a VLAN reads R3 on the parent" 1 1 "$OUT" "no XDP program attached to stubnic0"
+    expect_case "full-flow verify on a VLAN reads R7 on the parent" 1 1 "$OUT" "combined queue count already 7 (R7)" "" "stubnic0.300 (R7)"
+
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" vk0.10.20 7 verify 2>&1 )"
+    expect_case "full-flow verify refuses QinQ by name" $? 1 "$OUT" "the xdp transport refuses vk0.10.20: vk0.10.20 is a VLAN on the VLAN vk0.10 (nested tags, QinQ) (R2)" "" "(R3)"
+    OUT="$( PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" bk0 7 verify 2>&1 )"
+    expect_case "full-flow verify refuses a bond by name" $? 1 "$OUT" "the xdp transport refuses bk0: bk0 is a bond device" "" "(R3)"
+
     # --- the pair-level pins kept from round eleven: the parser sees only
     # what the query's stdout carried ---
 
@@ -1341,6 +1502,29 @@ if [ -n "$ISOLATED" ]; then
             *) ISOLATED_CPUS+=("$RANGE") ;;
         esac
     done
+fi
+
+# R2, the device: the interface named, or the parent of its 802.1Q VLAN
+# (THE XDP DEVICE above); everything below acts on it. A refused device ends
+# the run in either mode: no condition below means anything for it.
+
+ADDRESS_INTERFACE="$INTERFACE"
+if command -v ip >/dev/null 2>&1; then
+    RESOLVED="$(xdp_device_resolve "$INTERFACE")"
+    case "$RESOLVED" in
+        "vlan "*)
+            read -r _ INTERFACE VLAN_ID <<< "$RESOLVED"
+            say "$ADDRESS_INTERFACE is 802.1Q VLAN $VLAN_ID on $INTERFACE: the xdp transport attaches to $INTERFACE and tags its frames, so R3 to R7 act on $INTERFACE (R2)"
+            ;;
+        "refused "*)
+            fail "the xdp transport refuses $ADDRESS_INTERFACE: ${RESOLVED#refused } (R2). supported: an untagged interface, or one 802.1Q VLAN device on a physical NIC"
+            say "$MODE FAILED: $UNMET_COUNT unmet condition(s) above"
+            exit 1
+            ;;
+        *) ;;   # plain; or unread, and R2 below names the missing interface
+    esac
+else
+    fail "ip (iproute2) is not installed, so whether $INTERFACE is a VLAN or a stacked device cannot be read (R2)"
 fi
 
 # B3. NIC transport, reported informationally

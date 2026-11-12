@@ -938,6 +938,210 @@ static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
 REGISTER_UNIT_TEST( test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks );
 #endif // #if defined( __linux__ ) && !ROCKETNET_XDP
 
+// ---------------------------------------------------------------------------
+// 802.1Q: the transport of a server whose address is on a VLAN device. The
+// tagged goldens are the untagged goldens above with the four tag bytes
+// written in after the MACs by hand (81 00, then the TCI): the IP and UDP
+// headers and their checksums do not change.
+
+static void vlan_golden( const uint8_t * untagged, size_t untagged_bytes, uint16_t tci, uint8_t * out )
+{
+    memcpy( out, untagged, 12 );
+    out[12] = 0x81;
+    out[13] = 0x00;
+    out[14] = (uint8_t) ( tci >> 8 );
+    out[15] = (uint8_t) tci;
+    memcpy( out + 16, untagged + 12, untagged_bytes - 12 );
+}
+
+static void test_xdp_vlan_frame_matches_golden_and_round_trips()
+{
+    rocketnet_address_t s4, d4, s6, d6;
+    rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &s6, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d6, "[2001:db8::2]:40001" ) );
+
+    uint8_t expected[128];
+    uint8_t frame[128];
+    rocketnet_address_t from;
+    const uint8_t * payload;
+    int payload_bytes;
+
+    rocketnet_unit_check( rocketnet_xdp_frame_header_bytes_vlan( ROCKETNET_ADDRESS_IPV4, 100 ) == 46 );
+    rocketnet_unit_check( rocketnet_xdp_frame_header_bytes_vlan( ROCKETNET_ADDRESS_IPV6, 100 ) == 66 );
+    rocketnet_unit_check( rocketnet_xdp_frame_header_bytes_vlan( ROCKETNET_ADDRESS_IPV4, 0 ) == 42 );
+
+    // IPv4, VLAN 100 (0x064)
+
+    vlan_golden( golden_ipv4, sizeof( golden_ipv4 ), 0x0064, expected );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 46, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, 4, 100 ) == 50 );
+    rocketnet_unit_check( memcmp( frame, expected, sizeof( golden_ipv4 ) + 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse_vlan( frame, 50, 100, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 && from.port == 40000 && from.data.ipv4[3] == 10 );
+    rocketnet_unit_check( payload == frame + 46 && payload_bytes == 4 );
+
+    // IPv6, VLAN 4094, the highest
+
+    vlan_golden( golden_ipv6, sizeof( golden_ipv6 ), 0x0FFE, expected );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 66, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s6, &d6, 4, 4094 ) == 70 );
+    rocketnet_unit_check( memcmp( frame, expected, sizeof( golden_ipv6 ) + 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse_vlan( frame, 70, 4094, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 && from.port == 40000 && from.data.ipv6[7] == 1 );
+    rocketnet_unit_check( payload == frame + 66 && payload_bytes == 4 );
+
+    // VLAN 0 is the untagged frame, byte for byte
+
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 42, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, 4, 0 ) == 46 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof( golden_ipv4 ) ) == 0 );
+
+    // a tag carrying priority 7 and DEI is taken: only the 12-bit VLAN ID is matched
+
+    vlan_golden( golden_ipv4, sizeof( golden_ipv4 ), 0xF064, expected );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse_vlan( expected, 50, 100, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( payload == expected + 46 && payload_bytes == 4 );
+}
+
+// the refusals: a tag of another VLAN, a tag on an untagged transport, a tag
+// cut by the frame end, and the untagged frame a NIC hands over with its tag
+// stripped (taken)
+static void test_xdp_vlan_parse_refuses_other_tags_and_takes_stripped_frames()
+{
+    uint8_t tagged[128];
+    rocketnet_address_t from;
+    const uint8_t * payload;
+    int payload_bytes;
+
+    vlan_golden( golden_ipv4, sizeof( golden_ipv4 ), 0x0064, tagged );
+
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( tagged, 50, 101, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( tagged, 50, 4094, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( tagged, 50, 0, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( tagged, 50, &from, &payload, &payload_bytes ) );
+
+    // the tag needs 18 bytes, the tagged IPv4 header set 46 and this frame's
+    // UDP length 50
+
+    rocketnet_unit_check( rocketnet_xdp_frame_vlan_tag( tagged, 17, 100 ) == -1 );
+    rocketnet_unit_check( rocketnet_xdp_frame_vlan_tag( tagged, 18, 100 ) == 4 );
+    rocketnet_unit_check( rocketnet_xdp_frame_vlan_tag( tagged, 18, 101 ) == -1 );
+    rocketnet_unit_check( rocketnet_xdp_frame_vlan_tag( golden_ipv4, sizeof( golden_ipv4 ), 100 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_vlan_tag( golden_ipv4, sizeof( golden_ipv4 ), 0 ) == 0 );
+    for ( size_t bytes = 14; bytes < 50; bytes++ )
+    {
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( tagged, bytes, 100, &from, &payload, &payload_bytes ) );
+    }
+    rocketnet_unit_check( rocketnet_xdp_frame_parse_vlan( tagged, 50, 100, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( payload_bytes == 4 );
+
+    // stripped: the untagged frame is taken by a VLAN transport
+
+    rocketnet_unit_check( rocketnet_xdp_frame_parse_vlan( golden_ipv4, sizeof( golden_ipv4 ), 100, &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( payload == golden_ipv4 + 42 && payload_bytes == 4 );
+}
+
+// receive counts a refused tag as not IP, and dispatches a matching or a
+// stripped one
+static void test_xdp_vlan_receive_counts_refused_tags()
+{
+    rocketnet_address_t s4, d4;
+    rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
+
+    const int body = 64;
+    rocketnet_unit_check( body >= ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    uint8_t tagged[256];
+    uint8_t untagged[256];
+    memset( tagged, 0x33, sizeof( tagged ) );
+    memset( untagged, 0x33, sizeof( untagged ) );
+    const int tagged_bytes = rocketnet_xdp_frame_build_vlan( tagged, sizeof( tagged ), server_mac, gateway_mac, &s4, &d4, body, 7 );
+    const int untagged_bytes = rocketnet_xdp_frame_build( untagged, sizeof( untagged ), server_mac, gateway_mac, &s4, &d4, body );
+    rocketnet_unit_check( tagged_bytes == 46 + body && untagged_bytes == 42 + body );
+
+    rocketnet_address_t from;
+    const uint8_t * payload;
+    int payload_bytes;
+    struct rocketnet_xdp_receive_drops_t drops;
+    memset( &drops, 0, sizeof( drops ) );
+
+    rocketnet_unit_check( rocketnet_xdp_frame_receive_vlan( tagged, (size_t) tagged_bytes, ROCKETNET_ADDRESS_IPV4, 7, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( payload == tagged + 46 && payload_bytes == body );
+    rocketnet_unit_check( rocketnet_xdp_frame_receive_vlan( untagged, (size_t) untagged_bytes, ROCKETNET_ADDRESS_IPV4, 7, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( payload == untagged + 42 && payload_bytes == body );
+    rocketnet_unit_check( rocketnet_xdp_receive_drops_total( &drops ) == 0 );
+
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_vlan( tagged, (size_t) tagged_bytes, ROCKETNET_ADDRESS_IPV4, 8, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive( tagged, (size_t) tagged_bytes, ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_vlan( tagged, 17, ROCKETNET_ADDRESS_IPV4, 7, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( drops.not_ip == 3 && rocketnet_xdp_receive_drops_total( &drops ) == 3 );
+
+    // a tagged frame cut inside its headers is malformed
+
+    rocketnet_unit_check( !rocketnet_xdp_frame_receive_vlan( tagged, 45, ROCKETNET_ADDRESS_IPV4, 7, &from, &payload, &payload_bytes, &drops ) );
+    rocketnet_unit_check( drops.malformed == 1 );
+}
+
+// the size limits: the payload limits are the untagged ones (1452 both
+// families), the frame is 4 bytes longer, and the MTU judges the IP packet,
+// which the tag does not change
+static void test_xdp_vlan_size_limits()
+{
+    rocketnet_address_t s6, d6, s4, d4;
+    rocketnet_unit_check( rocketnet_address_parse( &s6, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d6, "[2001:db8::2]:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
+
+    uint8_t frame[2048];
+    memset( frame, 0, sizeof( frame ) );
+    const int ipv6 = rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES, 9 );
+    const int ipv4 = rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, ROCKETNET_RECEIVE_PACKET_BYTES, 9 );
+    rocketnet_unit_check( ipv6 == 1518 );
+    rocketnet_unit_check( ipv4 == 1498 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES + 1, 9 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, ROCKETNET_RECEIVE_PACKET_BYTES + 1, 9 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, 1517, server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES, 9 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, 1518, server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES, 9 ) == 1518 );
+
+    rocketnet_unit_check( rocketnet_xdp_frame_fits_mtu_vlan( ipv6, 1500, 9 ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_fits_mtu_vlan( ipv6, 1499, 9 ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_fits_mtu_vlan( ipv4, 1480, 9 ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_fits_mtu_vlan( ipv4, 1479, 9 ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_fits_mtu( ipv6, 1500 ) );
+
+    // a VLAN ID outside 0..4094 is refused, nothing written
+
+    memset( frame, 0x5A, sizeof( frame ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, 4, 4095 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build_vlan( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, 4, -1 ) == 0 );
+    for ( size_t i = 0; i < sizeof( frame ); i++ )
+    {
+        rocketnet_unit_check( frame[i] == 0x5A );
+    }
+
+    // the send copy places the packet behind the tag, and refuses a frame
+    // that fits the untagged header but not the tagged one
+
+    uint8_t packet[ROCKETNET_MAX_PACKET_BYTES];
+    memset( packet, 0xC3, sizeof( packet ) );
+    uint64_t refused = 0;
+    rocketnet_unit_check( rocketnet_xdp_send_copy_vlan( frame, sizeof( frame ), ROCKETNET_ADDRESS_IPV6, 9, packet, sizeof( packet ), &refused ) == (int) sizeof( packet ) );
+    rocketnet_unit_check( frame[65] == 0x5A && frame[66] == 0xC3 && frame[66 + sizeof( packet ) - 1] == 0xC3 );
+    rocketnet_unit_check( rocketnet_xdp_send_copy( frame, 1514, ROCKETNET_ADDRESS_IPV6, packet, sizeof( packet ), &refused ) == (int) sizeof( packet ) );
+    rocketnet_unit_check( rocketnet_xdp_send_copy_vlan( frame, 1517, ROCKETNET_ADDRESS_IPV6, 9, packet, sizeof( packet ), &refused ) == -1 );
+    rocketnet_unit_check( refused == 1 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_vlan_frame_matches_golden_and_round_trips );
+REGISTER_UNIT_TEST( test_xdp_vlan_parse_refuses_other_tags_and_takes_stripped_frames );
+REGISTER_UNIT_TEST( test_xdp_vlan_receive_counts_refused_tags );
+REGISTER_UNIT_TEST( test_xdp_vlan_size_limits );
 REGISTER_UNIT_TEST( test_ipv4_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_udp_checksum_verifies );
