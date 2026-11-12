@@ -83,11 +83,19 @@ def self_test():
         got = bool(unexpected_installed_files(tree(*paths)))
         if got != want:
             failures.append(f"{name}: refused={got}, expected {want}")
+    # a staged consumer (a variant off) holds every file of the template, so
+    # the staged CMakeLists.txt finds what it runs from its own directory
+    template = sorted(p.name for p in (Path(__file__).parent / "package_consumer").iterdir() if p.is_file())
+    for shared, dev in ((False, True), (True, False), (False, False)):
+        staged = prepare_consumer_source(Path(tempfile.mkdtemp(prefix="check-package-consumer-")), shared, dev)
+        got = sorted(p.name for p in staged.iterdir() if p.is_file())
+        if got != template:
+            failures.append(f"staged consumer (shared={shared}, dev={dev}) holds {got}, the template {template}")
     for f in failures:
         print("FAIL check_package self-test:", f)
     if failures:
         return 1
-    print(f"ok check_package self-test: {len(cases)} installed trees")
+    print(f"ok check_package self-test: {len(cases)} installed trees, 3 staged consumers")
     return 0
 
 
@@ -197,8 +205,11 @@ def prepare_consumer_source(root, shared_enabled, dev_enabled):
         return template_dir
     staged = root / "consumer_source"
     staged.mkdir(parents=True, exist_ok=True)
-    for name in ("main.c", "main.cpp"):
-        shutil.copy2(template_dir / name, staged / name)
+    # every template file but the CMakeLists.txt rewritten below: the consumer
+    # sources and the script its internal_header_refused test runs
+    for source in sorted(template_dir.iterdir()):
+        if source.is_file() and source.name != "CMakeLists.txt":
+            shutil.copy2(source, staged / source.name)
     cmake_text = (template_dir / "CMakeLists.txt").read_text()
     extra_checks = []
     if not shared_enabled:
