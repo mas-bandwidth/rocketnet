@@ -254,6 +254,7 @@ handshake_cost|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	handshake_c
 happy_path|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	happy-path	*	happy_path	per-commit	happy path
 happy_path|macos|arm64|appleclang|Release|devON|none|-~-|default	ci.yml	happy-path	*	happy_path	per-commit	happy path
 happy_path|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	happy-path	*	happy_path	per-commit	happy path
+harden_load|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	harden_load	manual	the server transport hardening load (docs/HARDEN_LOAD.md), run by scripts/harden-cell and scripts/harden-pair
 instruction_count|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	instruction-gate	*	instruction_count	per-commit	instruction-count gate
 internal_header_probe|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	internal_header_probe	inside:build+consumer	probe built by tools/check_package.py
 keygen|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-bigendian-system.yml	bigendian-system	*	keygen	nightly	keygen in the s390x guest
@@ -270,6 +271,9 @@ scripts/channel-seed-sweep|linux|x86_64|gcc|Release|devON|none|-~-|default	night
 scripts/check-fleet-runners-selftest|linux|x86_64|gcc|Release|devON|none|-~-|default	static.yml	static	Fleet-runner lint selftest	scripts/check-fleet-runners-selftest	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 scripts/check-fleet-runners|linux|x86_64|gcc|Release|devON|none|-~-|default	static.yml	static	Fleet-runner lint	scripts/check-fleet-runners	per-commit	user/releaser script (scripts/)
 scripts/distro-container-build|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	distro-container	Build and test in an Ubuntu ${{ matrix.release }} container	scripts/distro-container-build	per-commit	user/releaser script (scripts/)
+scripts/harden-cell|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/harden-cell	manual	one hardening cell in two network namespaces, as root: sudo scripts/harden-cell --bin build/bin --transport <t> --row <row> --out <dir>
+scripts/harden-pair|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/harden-pair	manual	a hardening cell over two hosts by ssh: scripts/harden-pair --server-host DEST --client-host DEST --server-ip ADDR --remote DIR --transport <t> --row <row> --out <dir>
+scripts/harden-rows|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/harden-rows	manual	the hardening rows, sourced by scripts/harden-cell and scripts/harden-pair (harden_row <row>)
 scripts/io-uring-gate|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-soak.yml	soak	Many-client load (1000 clients, every Linux server cell)	scripts/io-uring-gate	nightly	user/releaser script (scripts/)
 scripts/lan-proof-remote|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	scripts/lan-proof-remote	manual	the per-host half of scripts/lan-proof (LAN 1000-client proof over two hosts), run by it over ssh
 scripts/lan-proof-selftest|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Self-tests of the registered checkers	scripts/lan-proof-selftest	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
