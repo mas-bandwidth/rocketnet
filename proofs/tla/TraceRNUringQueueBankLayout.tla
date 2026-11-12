@@ -26,20 +26,18 @@ VarsRec ==
      demand |-> demand, flushes |-> flushes, oob |-> oob, shared |-> shared,
      foreign |-> foreign, routeBad |-> routeBad]
 
-\* a record names exactly the model's variables, each equal to the state's
-Matches(r) == DOMAIN r = DOMAIN VarsRec /\ \A f \in DOMAIN r : VarsRec[f] = r[f]
-
+\* a record is the model's variables exactly: record equality is equal fields
+\* and equal values, so a record with a field more or less never matches
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = ~Matches(TraceLog[1])
+    /\ rejected = (VarsRec # TraceLog[1])
 
 TraceStep ==
     /\ ~rejected
     /\ ti < Len(TraceLog)
     /\ Next
-    /\ DOMAIN TraceLog[ti + 1] = DOMAIN VarsRec
-    /\ \A f \in DOMAIN TraceLog[ti + 1] : VarsRec'[f] = TraceLog[ti + 1][f]
+    /\ VarsRec' = TraceLog[ti + 1]
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 

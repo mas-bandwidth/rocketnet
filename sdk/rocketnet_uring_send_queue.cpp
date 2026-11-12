@@ -222,7 +222,7 @@ int rocketnet_uring_send_queues_staged( const struct rocketnet_uring_send_queues
 // proofs/tla/RNUringQueueBankLayout.tla Flush: every queue that staged turns
 // its producer over to its next bank, whose counter is reset before any fill
 // sees it. ROCKETNET_URING_SEND_QUEUE_PLANT is the trace check's plant
-// (proofs/tla/README-TraceCheck.md): only tests/tla_trace.cpp's plant build
+// (proofs/tla/README-TraceCheck.md): only tests/tla_trace_bank.cpp in the plant build
 // defines it, and its traces must fail TraceConsistent
 
 int rocketnet_uring_send_queues_turn( struct rocketnet_uring_send_queues_t * queues )

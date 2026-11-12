@@ -10,6 +10,15 @@
 // bank and what the code returned. The model's table is the code's: the
 // same bucket count and each destination's home bucket from
 // rocketnet_send_gather_home.
+// The walk prints PLANT-FIRED n, the cases with three or more packets to one
+// destination: a property of the input, which only those cases can show
+// against the plant (ROCKETNET_SEND_GATHER_PLANT, a chain appended after its
+// head), so the clean walk prints it too.
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_SEND_GATHER_PLANT 1
+#include "../sdk/rocketnet_send_gather.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
@@ -134,7 +143,7 @@ static int trace_gather( uint64_t seed, int steps, const char * out )
 
     // the plant reverses a destination's packets after its second: only a
     // case with three or more to one destination can show it
-    printf( "GATHER-REORDERABLE %d\n", reorderable );
+    printf( "PLANT-FIRED %d\n", reorderable );
 
     std::string hash = "MCHash(d) == CASE ";
     for ( int d = 0; d < GATHER_DESTS; d++ )
@@ -151,11 +160,11 @@ static int trace_gather( uint64_t seed, int steps, const char * out )
               "    CapRule = \"bytes\"\n    ShortRule = \"close\"\n",
               GATHER_SLOTS, scratch.buckets, GATHER_MAX_SEGMENTS, GATHER_MAX_BYTES );
 
-#if defined( ROCKETNET_SEND_GATHER_PLANT )
+#if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceGatherPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_SEND_GATHER_PLANT )
+#else  // #if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceGatherSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_SEND_GATHER_PLANT )
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
     return tla_write_trace( out, name, "TraceRNSendGatherLayout", definitions, constants, records, "TraceEnds" ) ? 0 : 1;
 }

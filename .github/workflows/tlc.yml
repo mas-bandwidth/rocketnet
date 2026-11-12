@@ -341,8 +341,9 @@ jobs:
         run: rm -rf -- "$TLC_EVIDENCE"
 
   # The trace check over a rolling range of seeds (proofs/tla/README-TraceCheck.md):
-  # ci.yml runs seeds 1-4 on every commit; each night runs 64 seeds that start
-  # where the day of the year puts them, so the range moves every night.
+  # ci.yml runs seeds 1-4 of every layer on every commit; each night runs 64
+  # seeds that start where the day of the year puts them, so the range moves
+  # every night.
   trace:
     name: TLA+ trace check (rolling seeds)
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -357,7 +358,7 @@ jobs:
           CXX: g++
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
-          cmake --build build --target tla_trace tla_trace_plant --parallel
+          cmake --build build --target tla_trace tla_trace_plant --parallel 8
       - name: Every trace is a behaviour of its spec, every plant's is not
         shell: bash
         env:
@@ -378,4 +379,4 @@ jobs:
           fi
           first=$(( 1000 + 64 * 10#$(date -u +%j) ))
           python3 tools/tla_trace_check.py --bin bin --tlacheck "$job/tlacheck" --jar "$jar" \
-            --layer bank --seeds "$first-$(( first + 63 ))" --jobs 8 --dir "$job/bank"
+            --layer all --seeds "$first-$(( first + 63 ))" --jobs 8 --dir "$job/work"
