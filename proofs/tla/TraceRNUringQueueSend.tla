@@ -29,18 +29,19 @@ VarsRec ==
      pend |-> pend, status |-> status, nextId |-> nextId, eagains |-> eagains,
      demand |-> demand, flushes |-> flushes, kernelWrite |-> kernelWrite]
 
-Matches(r) == \A f \in DOMAIN r : VarsRec[f] = r[f]
+\* a record names exactly the model's variables, each equal to the state's
+Matches(r) == DOMAIN r = DOMAIN VarsRec /\ \A f \in DOMAIN r : VarsRec[f] = r[f]
 
 TraceInit ==
     /\ Init
-    /\ Matches(TraceLog[1])
     /\ ti = 1
-    /\ rejected = FALSE
+    /\ rejected = ~Matches(TraceLog[1])
 
 TraceStep ==
     /\ ~rejected
     /\ ti < Len(TraceLog)
     /\ Next
+    /\ DOMAIN TraceLog[ti + 1] = DOMAIN VarsRec
     /\ \A f \in DOMAIN TraceLog[ti + 1] : VarsRec'[f] = TraceLog[ti + 1][f]
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
