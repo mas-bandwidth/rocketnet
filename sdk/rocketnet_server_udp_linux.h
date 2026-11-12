@@ -51,4 +51,4 @@ void rocketnet_server_udp_probe_offloads( const int * fds, int num_fds, bool pro
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_UDP_LINUX_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_UDP_LINUX_H
