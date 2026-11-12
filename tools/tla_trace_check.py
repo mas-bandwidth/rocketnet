@@ -92,6 +92,13 @@ LAYERS = {
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
     },
+    "xdp-gateway-refresh": {
+        "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
+        "kind": "steps",
+        "untraced": {
+            "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
+        },
+    },
 }
 
 STEPS = 400
