@@ -208,6 +208,171 @@ static void test_token_claims_refuse_a_second_address_at_every_slot()
 
 REGISTER_UNIT_TEST( test_token_claims_refuse_a_second_address_at_every_slot );
 
+// Expired first: a full bindings table whose oldest binding is live takes an
+// expired binding before it. A fresh table hands out slots 0, 1, 2, ... in
+// order, so ids[i] holds slot i. Case one: ids[3] expires at 1500, the rest
+// at 2000; at 1600 ids[8] takes slot 3 and ids[0], the oldest and live,
+// still refuses a second address. Case two puts the expired binding in
+// slot 0 without making it the oldest: ids[0] expires at 1100 and is bound
+// again at 1200 (now the newest, expiring at 1500); at 1600 ids[8] takes
+// slot 0 and ids[1], now the oldest, is kept.
+static void test_token_bindings_take_the_expired_before_the_oldest()
+{
+    const int capacity = 8;
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+
+    for ( int expired_slot = 3; expired_slot >= 0; expired_slot -= 3 )
+    {
+        struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+        check( history );
+
+        for ( int i = 0; i < capacity; ++i )
+        {
+            const uint64_t expire = i != expired_slot ? 2000 : ( expired_slot == 3 ? 1500 : 1100 );
+            tt_id( id, i );
+            rocketnet_used_token_history_record( history, id, &address[0], expire, 1000 );
+        }
+
+        if ( expired_slot == 0 )
+        {
+            tt_id( id, 0 );
+            rocketnet_used_token_history_record( history, id, &address[0], 1500, 1200 );
+            check( rocketnet_used_token_history_check( history, id, &address[1], 1200 ) == 0 );
+        }
+
+        tt_id( id, 8 );
+        rocketnet_used_token_history_record( history, id, &address[0], 2000, 1600 );
+        check( rocketnet_used_token_history_check( history, id, &address[1], 1600 ) == 0 );
+
+        const int oldest = expired_slot == 0 ? 1 : 0;
+        tt_id( id, oldest );
+        check( rocketnet_used_token_history_check( history, id, &address[1], 1600 ) == 0 );
+        tt_id( id, expired_slot );
+        check( rocketnet_used_token_history_check( history, id, &address[1], 1600 ) == 1 );
+
+        for ( int i = 0; i < capacity; ++i )
+        {
+            tt_id( id, i );
+            check( rocketnet_used_token_history_check( history, id, &address[1], 1600 ) == ( i == expired_slot ? 1 : 0 ) );
+        }
+
+        rocketnet_used_token_history_destroy( history );
+    }
+}
+
+REGISTER_UNIT_TEST( test_token_bindings_take_the_expired_before_the_oldest );
+
+// The expiry floor (the scan's lower bound) never hides an expired binding.
+// Each scenario fills a table of 8 at 1000 (ids[i] in slot i) and then binds
+// new ids; after each step the kept set is checked: a kept id refuses a
+// second address, a taken id does not.
+struct tt_floor_step_t
+{
+    uint64_t now;
+    int taken;
+};
+
+static void tt_floor_scenario( const uint64_t * expire, const tt_floor_step_t * steps, int step_count )
+{
+    const int capacity = 8;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    bool kept[8 + 8];
+    for ( int i = 0; i < capacity; ++i )
+    {
+        tt_id( id, i );
+        rocketnet_used_token_history_record( history, id, &address[0], expire[i], 1000 );
+        kept[i] = true;
+    }
+
+    for ( int s = 0; s < step_count; ++s )
+    {
+        tt_id( id, capacity + s );
+        rocketnet_used_token_history_record( history, id, &address[0], 5000, steps[s].now );
+        kept[capacity + s] = true;
+        kept[steps[s].taken] = false;
+
+        for ( int i = 0; i <= capacity + s; ++i )
+        {
+            tt_id( id, i );
+            const int want = kept[i] ? 0 : 1;
+            check( rocketnet_used_token_history_check( history, id, &address[1], steps[s].now ) == want );
+        }
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+static void test_token_binding_floor_never_hides_an_expired_binding()
+{
+    // a binding expiring exactly now has expired: the floor equals the clock
+    // and the scan takes slot 3, not the live oldest
+    {
+        const uint64_t expire[8] = { 2000, 2000, 2000, 1600, 2000, 2000, 2000, 2000 };
+        const tt_floor_step_t steps[1] = { { 1600, 3 } };
+        tt_floor_scenario( expire, steps, 1 );
+    }
+
+    // the oldest expiring exactly now is taken without a scan, and the floor
+    // still finds slot 5 later
+    {
+        const uint64_t expire[8] = { 1600, 3000, 3000, 3000, 3000, 1700, 3000, 3000 };
+        const tt_floor_step_t steps[2] = { { 1600, 0 }, { 1800, 5 } };
+        tt_floor_scenario( expire, steps, 2 );
+    }
+
+    // a scan that finds slot 5 leaves the floor below slot 6's expiry; a scan
+    // that finds nothing evicts the oldest and raises the floor to the
+    // earliest live expiry (2000, slot 6), which a later scan finds
+    {
+        const uint64_t expire[8] = { 3000, 3000, 2800, 2800, 2800, 1500, 2000, 2800 };
+        const tt_floor_step_t steps[3] = { { 1600, 5 }, { 1700, 0 }, { 2100, 6 } };
+        tt_floor_scenario( expire, steps, 3 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_token_binding_floor_never_hides_an_expired_binding );
+
+// A second claim of a live token from its own address is the same claim: it
+// does not move the deadline. Claimed at 1000 until 1010, claimed again at
+// 1005 asking 1015: at 1012 the claim has expired and a second address may
+// claim. A release from the holder frees the slot and the token is unknown.
+static void test_token_claim_repeated_keeps_its_deadline()
+{
+    const int capacity = 4;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+    uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    tt_id( id, 7 );
+
+    check( rocketnet_used_token_history_claim_record( history, id, &address[0], 1010.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_record( history, id, &address[0], 1015.0, 1005.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_check( history, id, &address[1], 1009.0 ) == 0 );
+    check( rocketnet_used_token_history_claim_check( history, id, &address[1], 1012.0 ) == 1 );
+
+    check( rocketnet_used_token_history_claim_record( history, id, &address[0], 1020.0, 1012.0 ) == 1 );
+    rocketnet_used_token_history_claim_release( history, id, &address[0] );
+    check( rocketnet_used_token_history_claim_check( history, id, &address[1], 1013.0 ) == 1 );
+    for ( int i = 0; i < capacity; ++i )
+    {
+        tt_id( id, 100 + i );
+        check( rocketnet_used_token_history_claim_record( history, id, &address[1], 1030.0, 1013.0 ) == 1 );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
+REGISTER_UNIT_TEST( test_token_claim_repeated_keeps_its_deadline );
+
 #if ROCKETNET_DEV
 
 extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
