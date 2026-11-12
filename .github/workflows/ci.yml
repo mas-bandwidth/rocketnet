@@ -3475,6 +3475,18 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # tools/check_msvc_crt.py: no bare call MSVC deprecates (C4996, an error
+      # under /WX) in a test, tool or example source MSVC compiles; three
+      # reached Windows CI on 2026-11-12. --self-test plants each of the 218
+      # names, the guard forms and an empty tree.
+      - name: No CRT call MSVC deprecates where MSVC compiles it
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_msvc_crt.py --self-test
+          python3 tools/check_msvc_crt.py
+
       # tools/check_make_jobs.py: every make -j, cmake --build --parallel
       # and cmake --build -j in every tracked Makefile, workflow, shell,
       # Python and Go file names its job count (a bare one is unbounded under
