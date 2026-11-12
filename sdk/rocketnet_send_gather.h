@@ -20,10 +20,6 @@
 // proofs/tla/RNSendGatherLayout.tla models it at this layout.
 //
 // Pure: no allocation, no platform. The caller owns every array.
-//
-// INTERFACE PUBLISHED AHEAD OF ITS MODEL AND CODE: the signatures are fixed
-// for the transports to build against; the body lands with
-// RNSendGatherLayout and its trace check.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -64,6 +60,10 @@ bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t 
 // entries at most), and returns the number of runs. Refuses (-1) when count
 // exceeds the scratch's max_slots, max_segments < 1 or max_bytes < 1; a
 // packet larger than max_bytes is a run of its own.
+// a destination's home bucket in a table of buckets entries (a power of two):
+// the trace harness reads it to give the model the same table
+int rocketnet_send_gather_home( const struct rocketnet_address_t * address, int buckets );
+
 int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stride,
                            const int * packet_bytes, size_t bytes_stride, int count,
                            int max_segments, int max_bytes,
