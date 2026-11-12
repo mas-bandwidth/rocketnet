@@ -26,7 +26,8 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 // NULL when the payload may be echoed; otherwise what makes it a payload
