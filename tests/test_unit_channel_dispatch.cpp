@@ -94,8 +94,13 @@ static void test_dispatch_reaches_each_of_n_channels()
     rn_region_reset( region );
 }
 
-// Every type outside the current send mask is refused and counted. Later
-// type cards may add bits without weakening refusal for the remaining types.
+// Every type outside the current send mask is refused and counted. The
+// default mask enables all eight types, so the refusals run on a narrowed
+// mask (unreliable and reliable ordered only): six types refused on send,
+// the three wire codes of disabled types refused on receive. Later type cards
+// may add bits to the default without weakening refusal for the rest.
+
+#define DISPATCH_NARROW_MASK ( ( 1u << ROCKETNET_CHANNEL_TYPE_UNRELIABLE ) | ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ) )
 
 static void test_disabled_codes_are_refused_and_counted()
 {
@@ -105,14 +110,14 @@ static void test_disabled_codes_are_refused_and_counted()
     memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
 
     rn_channels_t channels;
-    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-    rocketnet_unit_check( channels.enabled_types == ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION );
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, DISPATCH_NARROW_MASK ) );
+    rocketnet_unit_check( channels.enabled_types == DISPATCH_NARROW_MASK );
 
     uint64_t refused = 0;
 
     for ( int type = 0; type < ROCKETNET_CHANNEL_NUM_TYPES; type++ )
     {
-        const bool enabled = ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << type ) ) != 0;
+        const bool enabled = ( DISPATCH_NARROW_MASK & ( 1u << type ) ) != 0;
         rocketnet_unit_check( rn_channels_send_check( &channels, type, 0 ) ==
                               ( enabled ? ROCKETNET_CHANNEL_SEND_OK : ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED ) );
         if ( !enabled )
@@ -121,11 +126,9 @@ static void test_disabled_codes_are_refused_and_counted()
         }
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == refused );
     }
+    rocketnet_unit_check( refused == ROCKETNET_CHANNEL_NUM_TYPES - 2 );
 
-    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT ) ) != 0 );
-    rocketnet_unit_check( ( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & ( 1u << ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) ) != 0 );
-
-    // wire codes still outside the enabled mask are refused on receive
+    // wire codes of the disabled types are refused on receive, each counted
 
     static uint8_t payload[8];
     const int codes[3] = { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, ROCKETNET_MESSAGE_CODE_RELIABLE, ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED };
@@ -133,10 +136,7 @@ static void test_disabled_codes_are_refused_and_counted()
 
     for ( int i = 0; i < 3; i++ )
     {
-        if ( rn_channels_enabled_codes( &channels ) & ( 1u << codes[i] ) )
-        {
-            continue;
-        }
+        rocketnet_unit_check( ( rn_channels_enabled_codes( &channels ) & ( 1u << codes[i] ) ) == 0 );
 
         struct rocketnet_message_record_t record;
         dispatch_record( &record, codes[i], 0, payload, (int) sizeof( payload ) );
@@ -146,6 +146,7 @@ static void test_disabled_codes_are_refused_and_counted()
         refused_wire++;
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED] == refused_wire );
     }
+    rocketnet_unit_check( refused_wire == 3 );
 
     // a wire code 5, 6 or 7 is a violation: the receipt types travel as 0, 2 and 3
 
@@ -158,7 +159,7 @@ static void test_disabled_codes_are_refused_and_counted()
 
     // the enabled codes the reader checks against carry the mask (7.5)
 
-    rocketnet_unit_check( rn_channels_enabled_codes( &channels ) == rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION ) );
+    rocketnet_unit_check( rn_channels_enabled_codes( &channels ) == rocketnet_message_enabled_codes( DISPATCH_NARROW_MASK ) );
 
     rn_region_reset( region );
 }

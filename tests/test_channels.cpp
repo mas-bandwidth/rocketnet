@@ -19,6 +19,7 @@
     one test alone.
 */
 
+#include "check_count.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_message.h"
 #include "rocketnet_read_write.h"
@@ -49,6 +50,7 @@
 #define channels_check( condition )                                                         \
 do                                                                                          \
 {                                                                                           \
+    ROCKETNET_TEST_COUNT_CHECK();                                                           \
     if ( !(condition) )                                                                     \
     {                                                                                       \
         printf( "check failed: ( %s ), function %s, file %s, line %d\n",                    \
@@ -946,9 +948,20 @@ static void rn_trap_write( const char * text )
 #endif // #if defined( _WIN32 )
 }
 
+// The in-process witness (Windows, which has no fork): a firing trap counts
+// here and returns instead of ending the process.
+static volatile int rn_trap_witness_in_process = 0;
+static volatile int rn_trap_witness_fired = 0;
+
 static void rn_trap_fire( const char * function, size_t bytes )
 {
     rn_trap_armed = 0;
+
+    if ( rn_trap_witness_in_process )
+    {
+        rn_trap_witness_fired++;
+        return;
+    }
 
     char line[160];
 
@@ -1173,6 +1186,7 @@ static void rn_test_log_function( void * context, enum rocketnet_log_level_t lev
 #define check( condition )                                                                               \
     do                                                                                                   \
     {                                                                                                    \
+        ROCKETNET_TEST_COUNT_CHECK();                                                                    \
         if ( !( condition ) )                                                                            \
         {                                                                                                \
             rn_trap_armed = 0;                                                                           \
@@ -1968,6 +1982,47 @@ static void test_channels_allocator_trap_witness()
         check( waited == pid );
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
+}
+#else
+static void test_channels_allocator_trap_witness_in_process()
+{
+    // Windows has no fork, so the trap is witnessed in this process: armed
+    // with nothing allocating it stays quiet; armed around each net Windows
+    // traps (the library's allocation hooks: a direct rocketnet_malloc and
+    // free, and an arena's create and destroy) it fires. operator new and libc
+    // are trapped on glibc only (RN_TEST_TRAP_LIBC). The firing trap's exit
+    // is the POSIX witness's.
+
+    rn_trap_phase = "witness";
+    rn_trap_witness_in_process = 1;
+
+    rn_trap_witness_fired = 0;
+    rn_trap_armed = 1;
+    rn_trap_armed = 0;
+    check( rn_trap_witness_fired == 0 );
+
+    for ( int net = 0; net < 2; net++ )
+    {
+        rn_trap_witness_fired = 0;
+        rn_trap_armed = 1;
+        if ( net == 0 )
+        {
+            rocketnet_free( NULL, rocketnet_malloc( NULL, 8 ) );
+        }
+        else
+        {
+            rocketnet_counters_t counters;
+            rocketnet_message_config_t config;
+            rocketnet_message_default_config( &config );
+            rn_arena_destroy( rn_arena_create( NULL, &config, 1, &counters ) );
+        }
+        const int fired = rn_trap_witness_fired;
+        rn_trap_armed = 0;
+        check( fired >= 1 );
+    }
+
+    rn_trap_witness_in_process = 0;
+    rn_trap_phase = "idle";
 }
 #endif // #if !defined( _WIN32 )
 
@@ -5265,6 +5320,8 @@ static const struct channels_test_t channels_tests[] = {
     { "test_channels_allocator_sizing", "ChannelsAllocatorSizing", test_channels_allocator_sizing },
 #if !defined( _WIN32 )
     { "test_channels_allocator_trap_witness", "ChannelsAllocatorTrapWitness", test_channels_allocator_trap_witness },
+#else
+    { "test_channels_allocator_trap_witness_in_process", "ChannelsAllocatorTrapWitnessInProcess", test_channels_allocator_trap_witness_in_process },
 #endif // #if !defined( _WIN32 )
     { "test_channels_allocator_no_live_allocation", "ChannelsAllocatorNoLiveAllocation", test_channels_allocator_no_live_allocation },
     { "test_channels_single_form_parses_as_one_code0_record", "ChannelsSingleFormParsesAsOneCode0Record", test_channels_single_form_parses_as_one_code0_record },
