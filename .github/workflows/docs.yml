@@ -65,6 +65,8 @@ jobs:
           python3 tools/docs/check_links.py
           sh tools/docs/check_agents_md.sh all
           python3 tools/docs/check_getting_started.py
+          python3 tools/docs/check_doc_c_blocks.py --self-test
+          python3 tools/docs/check_doc_c_blocks.py
           python3 tools/docs/check_fuzz_harnesses.py --self-test
           python3 tools/docs/check_fuzz_harnesses.py
 
