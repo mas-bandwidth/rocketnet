@@ -3255,6 +3255,13 @@ jobs:
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
       - name: Every main commit gets its own concurrency group
         run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
+      # release-check.yml's unreleased-wire-changes job runs git log over
+      # tools/wire_paths.txt; a path that is gone would leave the gate silently.
+      # --self-test plants a gone, an untracked, a doubled and a spaced path.
+      - name: Every wire path is a tracked file
+        run: |
+          python3 tools/check_wire_paths.py --self-test
+          python3 tools/check_wire_paths.py
 
       # Every job a push or pull request runs is bounded to two minutes
       # (timeout-minutes: 2, or ${{ inputs.full && N || 2 }} in this file), so
