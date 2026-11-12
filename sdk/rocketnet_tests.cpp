@@ -1875,7 +1875,18 @@ void rocketnet_test_sealed_packet_refusals()
 
     packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + 2] ^= 1;
 
+    memset( opened, 0x11, sizeof( opened ) );
     rocketnet_check( rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet, bytes, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 3, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL, rocketnet_test_session_c2s_key ) == -1 );
+
+    // a failed open's output: zeros from the AEAD, checked and then poisoned
+    // in a DEV build (rocketnet_protocol.h); nothing past the plaintext written
+#if ROCKETNET_DEV
+    for ( int i = 0; i < 5; i++ )
+    {
+        rocketnet_check( opened[i] == ROCKETNET_OPEN_POISON_BYTE );
+    }
+#endif // #if ROCKETNET_DEV
+    rocketnet_check( opened[5] == 0x11 );
 
     packet[ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + 2] ^= 1;
 

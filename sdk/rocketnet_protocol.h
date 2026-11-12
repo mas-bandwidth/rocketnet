@@ -119,6 +119,19 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
 // into out_session_nonce (which those types require), and opens. Returns the
 // opened data length, or -1 on refusal. Refusal reasons are deliberately not
 // distinguished here; the reading order counts them at its own steps.
+//
+// out_data is defined only when the call returns the length. The AEAD may
+// write plaintext there before it checks the tag (the AArch64 one pass does,
+// sodium/local/dispatch.h.in) and zeroes it when the check fails, so out_data
+// must be memory no other thread and no application code reads until this
+// returns. Every caller opens into its own stack or into the server's next
+// unpublished payload slot, published only on success
+// (sodium/ARM64-CONSTANT-TIME.md, "Where a failed open writes"). A DEV build
+// checks a failed AEAD open left zeros, then fills the bytes with
+// ROCKETNET_OPEN_POISON_BYTE, so a caller that read them would carry a
+// pattern the tests look for.
+
+#define ROCKETNET_OPEN_POISON_BYTE 0xDB
 
 int rocketnet_open_sealed_packet( uint8_t * out_data,
                                   uint8_t * out_session_nonce,

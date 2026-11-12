@@ -1021,6 +1021,16 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
     rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );
 
+    // the bundled sodium's picks (sodium/README.md, "AEAD dispatch and
+    // AArch64"); ROCKETNET_SODIUM_PORTABLE in the environment forces the
+    // portable ones
+#if defined( ROCKETNET_BUNDLED_SODIUM )
+    rocketnet_info( "crypto is chacha20poly1305 %s, chacha20 %s, poly1305 %s",
+                    sodium_runtime_aead_chacha20poly1305_ietf_implementation(),
+                    sodium_runtime_chacha20_implementation(),
+                    sodium_runtime_poly1305_implementation() );
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+
     {
         rn_lifecycle_lock_t lock;
 
