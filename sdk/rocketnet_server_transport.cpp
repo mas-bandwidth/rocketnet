@@ -319,6 +319,7 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    int link_setting_busy_for_test; // the next setting takes that meet the lock held
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -910,6 +911,19 @@ static bool rocketnet_server_link_active( rocketnet_server_transport_t * transpo
     {
         return false;
     }
+#if ROCKETNET_DEV
+    if ( transport->link_setting_busy_for_test > 0 )
+    {
+        // the lock is held across this one take, as another thread holding
+        // it would: a waiting setting stays waiting and the take answers the
+        // setting already in force
+        transport->link_setting_busy_for_test--;
+        rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+        const bool active = rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->link_simulator_mutex );
+        rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+        return active || rocketnet_network_simulator_patterns_active( transport->link_simulator );
+    }
+#endif // #if ROCKETNET_DEV
     return rocketnet_network_simulator_take_setting( transport->link_simulator, &transport->link_simulator_mutex ) ||
            rocketnet_network_simulator_patterns_active( transport->link_simulator );
 }
@@ -987,6 +1001,16 @@ void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_tran
 {
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
+}
+
+// The unit seam for a setting take that meets the lock held without a second
+// thread: the next `takes` reads of the link setting hold the simulator's lock
+// across the take, so a setting handed over stays waiting and the read answers
+// the setting already in force, as a real lock miss does.
+void rocketnet_server_transport_link_setting_busy_for_test( struct rocketnet_server_transport_t * server_transport, int takes )
+{
+    rocketnet_assert( server_transport );
+    server_transport->link_setting_busy_for_test = takes > 0 ? takes : 0;
 }
 
 // The unit seam for a staged transport without a staged socket: exchanges the
