@@ -17,9 +17,9 @@ EXTENDS RNSendGatherLayout
 CONSTANT TraceLog
 
 \* a case the model cannot start from is an error, never a case skipped
-ASSUME \A j \in DOMAIN TraceLog :
-    /\ DOMAIN TraceLog[j].dest = 0..(S - 1) /\ DOMAIN TraceLog[j].size = 0..(S - 1)
-    /\ \A s \in 0..(S - 1) : TraceLog[j].dest[s] \in Dests /\ TraceLog[j].size[s] \in Sizes
+ASSUME \A n \in DOMAIN TraceLog :
+    /\ DOMAIN TraceLog[n].dest = 0..(S - 1) /\ DOMAIN TraceLog[n].size = 0..(S - 1)
+    /\ \A s \in 0..(S - 1) : TraceLog[n].dest[s] \in Dests /\ TraceLog[n].size[s] \in Sizes
 
 VARIABLE ci          \* the case this behaviour runs
 
@@ -37,7 +37,7 @@ TraceSpec == TraceInit /\ [][Next /\ UNCHANGED ci]_<<vars, ci>> /\ WF_<<vars, ci
 
 \* every case names every field, and the model ends where the code did
 TraceConsistent ==
-    /\ \A j \in DOMAIN TraceLog : DOMAIN TraceLog[j] = CaseFields
+    /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = CaseFields
     /\ (pc = "done" =>
            /\ ~oob
            /\ order = TraceLog[ci].order
