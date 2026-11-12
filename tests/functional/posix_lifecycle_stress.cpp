@@ -451,8 +451,11 @@ static bool posix_xdp_offered()
     return read && strstr( line, "virtme" ) != NULL;
 }
 
+void rocketnet_functional_require_xdp_case( const char * fixture );
+
 static void posix_xdp_setup()
 {
+    rocketnet_functional_require_xdp_case( POSIX_XDP_NETNS );
     if ( posix_xdp_made )
     {
         return;
