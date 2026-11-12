@@ -5192,7 +5192,67 @@ static void test_message_budget_refunded_on_failed_unreliable_flush()
     mo_pair_teardown( &pair );
 }
 
+// A sequenced message that fills a whole packet, sent on each channel past
+// 0: the write pass takes it as the large sequenced packet, charged its
+// maximum wire bytes at write and settled to the wire bytes the transport
+// took, so the bucket and bytes_spent move by exactly those bytes; the
+// client receives it once, on its own channel, byte for byte. (The default
+// build's channels are all below ROCKETNET_MESSAGE_WIDE_CHANNEL: the record
+// header here is 10 bytes.)
+static void test_message_large_sequenced_on_a_channel_past_zero()
+{
+    for ( int channel = 1; channel < 4; channel++ )
+    {
+        mo_pair_t pair;
+        mo_refund_setup( &pair );
+
+        const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+        const uint64_t failed = mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+        const mo_refund_mark_t mark = mo_refund_mark( &pair );
+
+        uint8_t message[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 - 10];      // the record's 10-byte header, and the form byte
+        mo_fill( message, (uint32_t) ( 60 + channel ), sizeof( message ) );
+        pair.net->refuse_start = true;
+        check( rocketnet_message_server_send( pair.server, 0, channel, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, message, (int) sizeof( message ) ) != 0 );
+        pair.net->refuse_start = false;
+
+        const size_t logged = pair.net->server->sent_log.size();
+        mo_refund_update_at_mark( &pair );
+
+        const rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
+        check( slot->large_admitted > 0 );                                  // planned as the large sequenced packet
+        check( pair.net->server->sent_log.size() == logged + 1 );
+        if ( pair.net->server->sent_log.size() == logged + 1 )
+        {
+            const int payload = pair.net->server->sent_log[logged].bytes;
+            check( payload == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+            const int wire = rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload );
+            check( wire < slot->large_admitted );                           // the settle has something to give back
+            check( slot->budget.bytes_spent == mark.bytes_spent + (uint64_t) wire );
+            check( fabs( slot->budget.tokens - ( mark.tokens - (double) wire ) ) < 1e-6 );
+        }
+        check( slot->budget.refusals == mark.refusals );
+        check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed );
+
+        std::vector<mo_received_t> client_got;
+        for ( int i = 0; i < 3; i++ )
+        {
+            mo_step( &pair, NULL, &client_got );
+        }
+        check( client_got.size() == 1 );
+        if ( client_got.size() == 1 )
+        {
+            uint32_t id = 0;
+            check( client_got[0].channel == channel );
+            check( client_got[0].bytes.size() == sizeof( message ) );
+            check( mo_verify( client_got[0].bytes, &id ) && id == (uint32_t) ( 60 + channel ) );
+        }
+        mo_pair_teardown( &pair );
+    }
+}
+
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_large_sequenced_finish );
+REGISTER_UNIT_TEST( test_message_large_sequenced_on_a_channel_past_zero );
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_in_place_finish );
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_write_pass_finish );
 REGISTER_UNIT_TEST( test_message_budget_refunded_on_failed_unreliable_flush );

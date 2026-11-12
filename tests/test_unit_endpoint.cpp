@@ -1964,6 +1964,52 @@ static void test_endpoint_start_refusals_count_their_own_counter()
     rn_arena_destroy( arena );
 }
 
+// A frame smaller than the packet the plan asked for is never written into:
+// rn_endpoint_write_packet fails the packet and writes nothing, and the
+// message is due again for a frame of the size asked for. (The servers and
+// clients check the frame first; this is the endpoint's own guard.)
+static void test_endpoint_write_refuses_a_frame_smaller_than_planned()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    uint8_t data[300];
+    memset( data, 0x6B, sizeof( data ) );
+    check( rn_endpoint_send( &endpoint, data, (int) sizeof( data ), ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 );
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    const int request = rn_endpoint_next_packet_bytes( &endpoint, 1000.0 );
+    check( request == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    memset( frame, 0xEE, sizeof( frame ) );
+    check( rn_endpoint_write_packet( &endpoint, frame, request - 1, 1, 1000.0 ) == 0 );
+    check( frame[0] == 0xEE );                                          // nothing written
+
+    // the next flush asks again and writes it into a whole frame
+
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    const int bytes = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), 2, 1000.0 );
+    check( bytes > (int) sizeof( data ) );
+    rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), 1000.0 );
+
+    rn_arena_destroy( arena );
+}
+
 // ---------------------------------------------------------------------------
 // the reliable timeout off by default (standard/MESSAGES.md m9.3, 10.3): a
 // heard connection whose reliable stream never progresses never ends, and
@@ -2130,6 +2176,7 @@ REGISTER_UNIT_TEST( test_endpoint_unreliable_ring_full_push_keeps_every_live_mes
 REGISTER_UNIT_TEST( test_endpoint_unreliable_renumber_at_ticket_wrap_over_a_full_ring );
 REGISTER_UNIT_TEST( test_endpoint_reused_slot_writes_what_a_fresh_slot_writes );
 REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
+REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
