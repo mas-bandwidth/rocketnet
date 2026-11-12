@@ -43,6 +43,40 @@
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
 
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+#include <sanitizer/msan_interface.h>
+#define MAX_PAYLOAD_MSAN 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
+
+// Whether live state is the same bytes as the copy taken of it before a
+// refused call. The ack endpoint is library memory written member by member,
+// so its padding and any member not yet written hold no value. A memcmp of it
+// reads them, and MemorySanitizer reports the compare (bench-nyc-3,
+// 2026-11-12). So the compare runs on two fresh copies, and only the copies are
+// unpoisoned. The live state keeps its shadow, so a library read of a byte
+// nothing wrote is still reported where it happens, and a refused call that
+// writes any byte of the state still fails the compare.
+
+static bool max_payload_same_bytes( const void * before, const void * live, size_t bytes )
+{
+    uint8_t * a = (uint8_t *) malloc( bytes );
+    uint8_t * b = (uint8_t *) malloc( bytes );
+    check( a != NULL && b != NULL );
+    memcpy( a, before, bytes );
+    memcpy( b, live, bytes );
+#if defined( MAX_PAYLOAD_MSAN )
+    __msan_unpoison( a, bytes );
+    __msan_unpoison( b, bytes );
+#endif // #if defined( MAX_PAYLOAD_MSAN )
+    const bool same = memcmp( a, b, bytes ) == 0;
+    free( a );
+    free( b );
+    return same;
+}
+
+
 // the largest application packet represented here: baseline, delta, explosion
 // and message writers fill to this many bytes
 
@@ -740,8 +774,8 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
 
         check( rocketnet_client_protocol_seal_payload_frame( &pair->client, sequence, sequence, wire_start,
                                                              refused_sizes[i], pair->time ) == 0 );
-        check( memcmp( client_before, &pair->client, sizeof( pair->client ) ) == 0 );
-        check( memcmp( counters_before, &pair->client_counters, sizeof( pair->client_counters ) ) == 0 );
+        check( max_payload_same_bytes( client_before, &pair->client, sizeof( pair->client ) ) );
+        check( max_payload_same_bytes( counters_before, &pair->client_counters, sizeof( pair->client_counters ) ) );
         for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
         {
             check( wire_start[j] == 0xEE );
@@ -764,10 +798,10 @@ static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
 
         check( rocketnet_server_protocol_seal_payload_frame( &pair->server, 0, sequence, sequence, wire_start,
                                                              refused_sizes[i], pair->time ) == 0 );
-        check( memcmp( server_before, &pair->server, sizeof( pair->server ) ) == 0 );
-        check( memcmp( mapping_before, mapping, sizeof( *mapping ) ) == 0 );
-        check( memcmp( endpoint_before, endpoint, sizeof( *endpoint ) ) == 0 );
-        check( memcmp( counters_before, &pair->server_counters, sizeof( pair->server_counters ) ) == 0 );
+        check( max_payload_same_bytes( server_before, &pair->server, sizeof( pair->server ) ) );
+        check( max_payload_same_bytes( mapping_before, mapping, sizeof( *mapping ) ) );
+        check( max_payload_same_bytes( endpoint_before, endpoint, sizeof( *endpoint ) ) );
+        check( max_payload_same_bytes( counters_before, &pair->server_counters, sizeof( pair->server_counters ) ) );
         for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
         {
             check( wire_start[j] == 0xEE );
