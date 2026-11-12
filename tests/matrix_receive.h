@@ -16,6 +16,12 @@
     - a sequence at or past the sender's count is never-sent;
     - a sequence that arrives twice is a duplicate;
     - RELIABLE_ORDERED and its receipt form get every sequence in order;
+    - the two share one order per channel (rocketnet.h: the receipt form is
+      "As RELIABLE_ORDERED"), so each sender interleaves them on a channel,
+      3:0, 7:0, 3:1, 7:1 and so on while it drives both
+      (matrix_interleave_admits), and an arrival out of that interleave is
+      cross-mode-order: judged at once when the sent report shows the
+      sender drove both modes on the channel, held until it does otherwise;
     - the sequenced modes get strictly increasing sequences;
     - every owed sequence (modes 2, 3, 6, 7, and 0 and 5 above 1,411 where
       they travel as a reliable block) arrives by the end of the drain, or it
@@ -93,6 +99,26 @@ static inline int matrix_ordered( int mode )
 static inline int matrix_sequenced( int mode )
 {
     return mode == 1 || mode == 4;
+}
+
+// the ordered mode that shares a channel's order with this one, else -1
+static inline int matrix_interleave_partner( int mode )
+{
+    return mode == 3 ? 7 : ( mode == 7 ? 3 : -1 );
+}
+
+// The interleave of the two ordered modes on one channel: 1 when sequence q
+// of `mode` may go now (sender) or may arrive now (receiver), given its
+// partner's count on the channel (sent, or arrived in order), the partner's
+// total (0: no bound) and whether the sender drives the partner at all.
+// Mode 3's q follows the partner's q - 1; mode 7's q follows mode 3's q.
+static inline int matrix_interleave_admits( int mode, uint32_t q, uint32_t partner_count, uint32_t partner_total, int partner_driven )
+{
+    if ( !matrix_ordered( mode ) || !partner_driven || ( partner_total != 0 && partner_count >= partner_total ) )
+    {
+        return 1;
+    }
+    return mode == 3 ? partner_count >= q : partner_count > q;
 }
 
 // every sequence arrives: 2, 3, 6, 7, and 0 and 5 above 1,411 where they
@@ -180,6 +206,10 @@ struct matrix_rx_t
     uint32_t tiny_received[ROCKETNET_LIVE_NUM_MODES][ROCKETNET_LIVE_HEADER_BYTES];
     uint32_t tiny_sent[ROCKETNET_LIVE_NUM_MODES][ROCKETNET_LIVE_HEADER_BYTES];
     int have_sent_report;
+    uint32_t totals[ROCKETNET_LIVE_NUM_MODES];             // the sender's sequences per stream, 0 for no bound; set after reset
+    uint32_t cross_held[ROCKETNET_LIVE_NUM_CHANNELS];      // arrivals out of the 3/7 interleave before the sent report
+    int64_t cross_first[ROCKETNET_LIVE_NUM_CHANNELS];      // the first of them: its sequence
+    int cross_first_mode[ROCKETNET_LIVE_NUM_CHANNELS];     // and its mode
 };
 
 static inline void matrix_rx_reset( struct matrix_rx_t * rx )
@@ -321,6 +351,38 @@ static inline const char * matrix_rx_tiny( struct matrix_rx_t * rx, int mode, in
     return NULL;
 }
 
+// Judge an ordered arrival that matrix_rx_accept took as sequence q against
+// the 3/7 interleave on its channel. Returns "cross-mode-order" when it is out
+// of the interleave and the sent report shows the sender drove both modes on
+// the channel; before the report it is held (matrix_rx_sent_report names it
+// then), and when the sender drove one mode only it is no fault. Else NULL.
+static inline const char * matrix_rx_interleave( struct matrix_rx_t * rx, int mode, int channel, uint32_t q )
+{
+    const int partner = matrix_interleave_partner( mode );
+    if ( partner < 0 )
+    {
+        return NULL;
+    }
+
+    const struct matrix_rx_stream_t * p = &rx->streams[partner][channel];
+    if ( matrix_interleave_admits( mode, q, p->expected, rx->totals[partner], 1 ) )
+    {
+        return NULL;
+    }
+
+    if ( rx->have_sent_report )
+    {
+        return rx->streams[mode][channel].sent > 0 && p->sent > 0 ? "cross-mode-order" : NULL;
+    }
+
+    if ( rx->cross_held[channel]++ == 0 )
+    {
+        rx->cross_first[channel] = (int64_t) q;
+        rx->cross_first_mode[channel] = mode;
+    }
+    return NULL;
+}
+
 // The tiny messages of each length a count of sends on one stream implies.
 static inline void matrix_rx_count_tiny( const rocketnet_live_config_t * config, struct matrix_rx_t * rx, int mode, int channel, uint32_t count )
 {
@@ -403,6 +465,16 @@ static inline void matrix_rx_sent_report( const rocketnet_live_config_t * config
             }
             matrix_rx_advance( config, s, mode, channel );
         }
+    }
+
+    // arrivals held out of the 3/7 interleave: a fault where the sender drove both
+    for ( int channel = 0; channel < ROCKETNET_LIVE_NUM_CHANNELS; channel++ )
+    {
+        if ( rx->cross_held[channel] > 0 && rx->streams[3][channel].sent > 0 && rx->streams[7][channel].sent > 0 )
+        {
+            fail( context, rx->cross_first_mode[channel], channel, rx->cross_first[channel], "cross-mode-order", (int) rx->cross_held[channel] );
+        }
+        rx->cross_held[channel] = 0;
     }
 }
 

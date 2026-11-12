@@ -1119,6 +1119,15 @@ jobs:
         if: matrix.leg == 'checks'
         run: python3 tools/check_memory.py ./bin/transport_memory
 
+      # The message matrix's receive oracle (tests/matrix_receive.h) held to
+      # its named faults without a socket: duplicate, never-sent,
+      # out-of-order, not-increasing, lost, and the 3/7 cross-mode order
+      # (held before the sent report, named after it, no fault for a sender
+      # that drove one mode). The --matrix pair itself needs a bench.
+      - name: The matrix oracle's self-test
+        if: matrix.leg == 'checks'
+        run: ./bin/server --matrix --seed 7 --self-test-result "$RUNNER_TEMP/matrix-server-self-test.tsv"
+
       # The contract and the extension's build share nothing and run at once
       # (tools/run_parallel.py).
       - name: "Functional: native driver contract and external backend"
