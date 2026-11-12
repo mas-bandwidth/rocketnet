@@ -4765,3 +4765,74 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     return result;
 }
 #endif // #if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+
+// mutation gaps st-layout begin
+#if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+// The unit seam for the transport's carved layout: every carve behind the
+// fixed part, in layout order, as its name, its offset from the transport's
+// base (read from the pointer create wired, never from the layout), its
+// element count and its element bytes; fixed_bytes is the fixed part's
+// size. Returns the number of carves, writing at most max of them.
+int rocketnet_server_transport_carves_for_test( const struct rocketnet_server_transport_t * server, const char ** names,
+                                                uint64_t * offsets, uint64_t * counts, uint64_t * strides, int max,
+                                                uint64_t * fixed_bytes )
+{
+    rocketnet_assert( server && names && offsets && counts && strides && fixed_bytes );
+
+    const uint8_t * base = (const uint8_t *) server;
+    const struct rocketnet_server_payload_ring_t * ring = &server->payload_ring;
+    const struct rocketnet_server_send_buffer_t * send = &server->send_buffer;
+    const struct rocketnet_server_receive_buffer_t * receive = &server->receive_buffer;
+    const struct rocketnet_server_payloads_t * payloads = &server->payloads;
+    const uint64_t ring_slots = (uint64_t) ring->size;
+    const uint64_t send_packets = (uint64_t) send->capacity;
+    const uint64_t receive_packets = (uint64_t) receive->capacity;
+    const uint64_t payload_packets = (uint64_t) payloads->capacity;
+    const uint64_t bursts = (uint64_t) server->disconnect_burst_capacity;
+
+    struct carve_for_test_t
+    {
+        const char * name;
+        const void * pointer;
+        uint64_t count;
+        uint64_t stride;
+    };
+
+    const carve_for_test_t carves[] = {
+        { "ring_info", ring->info, ring_slots, sizeof( rocketnet_server_payload_slot_info_t ) },
+        { "ring_data", ring->data, ring_slots, (uint64_t) ROCKETNET_FRAME_STRIDE },
+        { "ring_sends", ring->sends, ring_slots, sizeof( rocketnet_platform_send_t ) },
+        { "ring_send_client_index", ring->send_client_index, ring_slots, sizeof( int ) },
+        { "ring_accepted", ring->accepted, ring_slots, sizeof( bool ) },
+        { "send_to", send->to, send_packets, sizeof( rocketnet_address_t ) },
+        { "send_packet_bytes", send->packet_bytes, send_packets, sizeof( int ) },
+        { "send_data", send->data, send_packets, (uint64_t) ROCKETNET_FRAME_SIZE },
+        { "send_sends", send->sends, send_packets, sizeof( rocketnet_platform_send_t ) },
+        { "send_accepted", send->accepted, send_packets, sizeof( bool ) },
+        { "receive_from", receive->from, receive_packets, sizeof( rocketnet_address_t ) },
+        { "receive_packet_bytes", receive->packet_bytes, receive_packets, sizeof( int ) },
+        { "receive_data", receive->data, receive_packets, (uint64_t) ROCKETNET_RECEIVE_CEILING },
+        { "disconnect_bursts", server->disconnect_bursts, bursts, sizeof( rocketnet_server_disconnect_burst_t ) },
+        { "disconnect_burst_keys", server->disconnect_burst_keys, bursts, (uint64_t) ROCKETNET_KEY_BYTES },
+        { "cookie_reply_sources", server->protocol.cookie_reply_sources, (uint64_t) server->protocol.cookie_reply_source_words, sizeof( uint64_t ) },
+        { "payload_client_index", payloads->client_index, payload_packets, sizeof( int ) },
+        { "payload_connection_id", payloads->connection_id, payload_packets, sizeof( uint64_t ) },
+        { "payload_sequence", payloads->sequence, payload_packets, sizeof( uint64_t ) },
+        { "payload_data", payloads->payload_data, payload_packets, sizeof( uint8_t * ) },
+        { "payload_bytes", payloads->payload_bytes, payload_packets, sizeof( int ) },
+        { "payload_storage", server->payload_storage, payload_packets, (uint64_t) ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES },
+    };
+
+    const int num_carves = (int) ( sizeof( carves ) / sizeof( carves[0] ) );
+    for ( int i = 0; i < num_carves && i < max; i++ )
+    {
+        names[i] = carves[i].name;
+        offsets[i] = (uint64_t) ( (const uint8_t *) carves[i].pointer - base );
+        counts[i] = carves[i].count;
+        strides[i] = carves[i].stride;
+    }
+    *fixed_bytes = sizeof( rocketnet_server_transport_t );
+    return num_carves;
+}
+#endif // #if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+// mutation gaps st-layout end
