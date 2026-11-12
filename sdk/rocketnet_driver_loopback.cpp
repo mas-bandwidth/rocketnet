@@ -739,9 +739,21 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
 
     if ( shutdown && !loopback_try_send_lock( hub ) )
     {
-        if ( count > 0 )
+        // a contended lock fails every send of the batch; a size outside
+        // 1 .. ROCKETNET_RECEIVE_CEILING is no send, uncounted as below
+
+        uint64_t failed = 0;
+        for ( int i = 0; i < count; ++i )
         {
-            loopback_send_failed( sender, (uint64_t) count );
+            if ( packets[i].packet_bytes > 0 && packets[i].packet_bytes <= ROCKETNET_RECEIVE_CEILING )
+            {
+                ++failed;
+            }
+        }
+
+        if ( failed > 0 )
+        {
+            loopback_send_failed( sender, failed );
         }
         return;
     }
