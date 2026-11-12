@@ -1240,7 +1240,12 @@ static void test_reservation_takes_a_packet_that_fits_exactly()
     channels->deliveries = 0;
     rn_ordered_end_update( &b->ordered );
 
-    // ordering 0 in turn releases both held: three deliveries, exactly three left
+    // ordering 0 in turn releases both held: three deliveries; with two left it waits, with exactly three it is taken
+
+    channels->deliveries = channels->delivery_capacity - 2;
+    check( rn_ordered_receive( &b->ordered, packet[0].data, packet[0].bytes ) == ROCKETNET_CHANNEL_RECEIVE_DEFERRED );
+    check( b->region->channel_receive[0].ordered_read == 0 );
+    check( !rn_region_exhausted( b->region ) );
 
     channels->deliveries = channels->delivery_capacity - 3;
     check( rn_ordered_receive( &b->ordered, packet[0].data, packet[0].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
