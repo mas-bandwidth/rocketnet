@@ -95,7 +95,8 @@ acts are the runtime resources (its embedded BPF program loaded and attached, AF
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
 step; no application using XDP reconstructs it. The
 script's header carries the authoritative
-condition list; the pre-flight checks exactly those conditions.
+condition list; the pre-flight checks exactly those conditions, except R8
+(the real-time throttle), which only the script checks.
 
 Cold, on a fresh box, as root:
 
@@ -107,6 +108,12 @@ Cold, on a fresh box, as root:
 
     # 2. RUNTIME TIER (idempotent, re-run any time):
     scripts/rocketnet-provision eth0 7
+    #    On a kernel before 6.12 (Ubuntu 22.04 and 24.04) this also turns
+    #    off the real-time throttle (R8), which otherwise stops every
+    #    spinning XDP worker about 50 ms in every second, and 0.2 to 1 s at
+    #    a time on nohz_full cpus. Keep it across reboots (LINUX.md
+    #    section 6 says why and what it costs):
+    echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf
 
     # 3. Check without changing anything (what the library's pre-flight will say):
     scripts/rocketnet-provision eth0 7 verify

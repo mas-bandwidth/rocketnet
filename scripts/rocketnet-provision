@@ -83,6 +83,16 @@
 #                             queue count the server is configured for
 #                             (ethtool -L; a NIC without channel support
 #                             passes).
+#   R8. real-time throttle    kernel.sched_rt_runtime_us = -1 on a kernel
+#                             with the real-time throttle (before 6.12, or
+#                             built with CONFIG_RT_GROUP_SCHED): each xdp
+#                             worker spins at SCHED_RR without sleeping, and
+#                             the stock 950000 stops it about 50 ms in every
+#                             second, 0.2 to 1 s at a time on a nohz_full
+#                             cpu. Later kernels pass. Checked by this script
+#                             only: the pre-flight does not refuse on it.
+#                             Not kept across reboots (nor are R4 to R7):
+#                             /etc/sysctl.d keeps it (docs/LINUX.md).
 #
 #   K1. kernel capability     the kernel grants an AF_XDP socket and a BPF
 #                             program load. Verified by the library
@@ -448,6 +458,61 @@ r7_enforce()
                 fail "ethtool -l failed on $INTERFACE (R7): ${ETHTOOL_ERROR:-unknown error} -- cannot verify the queue count"
                 ;;
         esac
+    fi
+}
+
+# R8 ENFORCEMENT AS A FUNCTION, same contract: VERIFY in; say/fail out.
+# The kernel release, the sysctl's file and the kernel's build config are
+# read through R8_RELEASE, R8_RUNTIME and R8_CONFIG, so the selftest drives
+# every arm against files in its own temp dir.
+
+# true when the kernel stops a real-time thread that never sleeps: every
+# kernel before 6.12, and a later one built with CONFIG_RT_GROUP_SCHED; a
+# release that does not parse is taken as throttling (fails closed)
+r8_throttles()
+{
+    local MAJOR="${1%%.*}"
+    local REST="${1#*.}"
+    local MINOR="${REST%%[!0-9]*}"
+    case "$MAJOR$MINOR" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    if [ "$MAJOR" -lt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 12 ]; }; then
+        return 0
+    fi
+    [ -r "$2" ] && grep -qx 'CONFIG_RT_GROUP_SCHED=y' "$2"
+}
+
+r8_enforce()
+{
+    local RELEASE="${R8_RELEASE:-$(uname -r)}"
+    local RUNTIME_FILE="${R8_RUNTIME:-/proc/sys/kernel/sched_rt_runtime_us}"
+    local CONFIG="${R8_CONFIG:-/boot/config-$RELEASE}"
+    local PERSIST="echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf"
+
+    if ! r8_throttles "$RELEASE" "$CONFIG"; then
+        say "kernel $RELEASE has no real-time throttle (R8 passes; any ordinary task runnable on a worker's cpu still takes 50 ms in every second from it: keep other tasks off the isolated cpus)"
+        return
+    fi
+    if [ ! -r "$RUNTIME_FILE" ]; then
+        fail "cannot read $RUNTIME_FILE (R8): the real-time throttle can be neither verified nor set"
+        return
+    fi
+    local R8_CURRENT
+    R8_CURRENT="$(cat "$RUNTIME_FILE" 2>/dev/null)"
+    if [ "$R8_CURRENT" = "-1" ]; then
+        say "kernel.sched_rt_runtime_us already -1 (R8)"
+    elif [ $VERIFY -eq 1 ]; then
+        fail "kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}, want -1 (R8): kernel $RELEASE stops each spinning xdp worker about 50 ms in every second (0.2 to 1 s at a time on a nohz_full cpu): sysctl -w kernel.sched_rt_runtime_us=-1, and to keep it across reboots: $PERSIST"
+    else
+        say "setting kernel.sched_rt_runtime_us = -1 (R8; to keep it across reboots: $PERSIST)"
+        if ! printf '%s\n' -1 2>/dev/null > "$RUNTIME_FILE"; then
+            fail "could not set kernel.sched_rt_runtime_us (R8)"
+        elif [ "$(cat "$RUNTIME_FILE" 2>/dev/null)" != "-1" ]; then
+            fail "kernel.sched_rt_runtime_us reads back $(cat "$RUNTIME_FILE" 2>/dev/null) after the write, want -1 (R8)"
+        else
+            say "kernel.sched_rt_runtime_us confirmed at -1 (R8)"
+        fi
     fi
 }
 
@@ -972,6 +1037,44 @@ exit 0'
     expect_case "r3 outside-set re-grade" $RC 1 "$OUT" "R3 re-grade 'maybe' is outside the outcome set" 1
     rm -f "$STUB_STATE_DIR/garbage_marker"
 
+    # --- R8: the real-time throttle, every arm, against a sysctl file and
+    # a build config in the temp dir ---
+
+    run_r8()        # $1 verify-flag  $2 release  $3 sysctl file  $4 config  -> rc = UNMET
+    {
+        ( UNMET=0; VERIFY="$1"; R8_RELEASE="$2"; R8_RUNTIME="$3"; R8_CONFIG="$4"
+          r8_enforce; exit $UNMET ) 2>&1
+    }
+
+    R8_DIR="$STUB_DIR/r8"
+    mkdir -p "$R8_DIR/sysctl_dir"
+    echo 950000 > "$R8_DIR/stock"
+    echo -1 > "$R8_DIR/off"
+    echo "# CONFIG_RT_GROUP_SCHED is not set" > "$R8_DIR/config_plain"
+    echo "CONFIG_RT_GROUP_SCHED=y" > "$R8_DIR/config_groups"
+
+    OUT="$(run_r8 1 6.8.0-147-generic "$R8_DIR/stock" "$R8_DIR/config_plain")"
+    expect_case "r8 verify 6.8 stock" $? 1 "$OUT" "kernel.sched_rt_runtime_us is 950000, want -1 (R8)" 1
+    OUT="$(run_r8 1 5.15.0-126-generic "$R8_DIR/stock" "$R8_DIR/config_plain")"
+    expect_case "r8 verify 5.15 stock names the fix" $? 1 "$OUT" "sysctl -w kernel.sched_rt_runtime_us=-1" 1
+    OUT="$(run_r8 1 6.11.0-29-generic "$R8_DIR/off" "$R8_DIR/config_plain")"
+    expect_case "r8 verify 6.11 off" $? 0 "$OUT" "already -1 (R8)" 0
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock" "$R8_DIR/config_plain")"
+    expect_case "r8 verify 6.12 passes" $? 0 "$OUT" "has no real-time throttle (R8 passes" 0
+    OUT="$(run_r8 1 7.0.0-43-generic "$R8_DIR/stock" "$R8_DIR/config_groups")"
+    expect_case "r8 verify 7.0 with rt groups" $? 1 "$OUT" "want -1 (R8)" 1
+    OUT="$(run_r8 1 garbage "$R8_DIR/stock" "$R8_DIR/config_plain")"
+    expect_case "r8 verify unparseable release fails closed" $? 1 "$OUT" "want -1 (R8)" 1
+    OUT="$(run_r8 1 6.8.0-147-generic "$R8_DIR/absent" "$R8_DIR/config_plain")"
+    expect_case "r8 verify unreadable sysctl" $? 1 "$OUT" "can be neither verified nor set" 1
+    OUT="$(run_r8 0 6.8.0-147-generic "$R8_DIR/stock" "$R8_DIR/config_plain")"
+    expect_case "r8 provision sets -1" $? 0 "$OUT" "confirmed at -1 (R8)" 0
+    if [ "$(cat "$R8_DIR/stock")" != "-1" ]; then
+        echo "selftest FAIL: r8 provision did not write -1"; PASS=0
+    fi
+    OUT="$(run_r8 0 6.8.0-147-generic "$R8_DIR/sysctl_dir" "$R8_DIR/config_plain")"
+    expect_case "r8 provision write refused" $? 1 "$OUT" "could not set kernel.sched_rt_runtime_us (R8)" 1
+
     rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
 
     kill "$WATCHDOG_PID" 2>/dev/null
@@ -1280,6 +1383,10 @@ fi
 # R7. queue count
 
 r7_enforce
+
+# R8. real-time throttle
+
+r8_enforce
 
 
 if [ $VERIFY -eq 1 ]; then
