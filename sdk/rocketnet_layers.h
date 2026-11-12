@@ -587,6 +587,13 @@ struct rocketnet_server_transport_io_operations_t;
 void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
                                                   const struct rocketnet_server_transport_io_operations_t ** operations,
                                                   void ** instance );
+/** @brief The fill budget and the protocol reserve the last opened fill phase gave a send queue, for a unit test (RNSendReserve). */
+uint64_t rocketnet_server_transport_fill_budget_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+/** @brief Marks a client's keep-alive acknowledged or not, so a unit test reaches the own-frame rule of the send reserve (RNSendReserve). */
+void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
+/** @brief The own frames (RNSendReserve) the open fill phase has not yet given out, for a test. */
+uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
 
 // a NULL client_transport is a counted no-op that returns 0

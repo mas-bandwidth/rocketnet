@@ -800,6 +800,20 @@ void rocketnet_test_transport_ring_exhaustion()
     if ( strcmp( rocketnet_server_transport_io_name( server ), "iocp" ) == 0 )
     {
         completion_capacity = rocketnet_server_iocp_send_queue_size( server_config.max_clients );
+#if ROCKETNET_DEV
+        // a staged transport keeps its protocol reserve out of the fill
+        // (RNSendReserve): the fill takes the client's lane less that lane's
+        // reserve (the largest, the only one with a connected slot), plus
+        // the client's own frame when its keep-alive is acknowledged
+        uint64_t reserve = 0;
+        for ( int queue = 0; queue < ROCKETNET_SERVER_MAX_SEND_QUEUES; ++queue )
+        {
+            const uint64_t queue_reserve = rocketnet_server_transport_send_reserve_for_test( server, queue );
+            reserve = queue_reserve > reserve ? queue_reserve : reserve;
+        }
+        completion_capacity -= (int) reserve;
+        completion_capacity += (int) rocketnet_server_transport_fill_own_frames_for_test( server );
+#endif // #if ROCKETNET_DEV
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
@@ -808,10 +822,13 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
-    // counter attributes every refusal exactly (the fill already incurred
-    // refusals, so the baseline is read here)
+    // counters attribute every refusal exactly (the fill already incurred
+    // refusals, so the baseline is read here). A staged transport refuses
+    // the fill at its protocol reserve (send_reserve_refused) before its
+    // staging is full; a buffered one at its full ring (send_ring_full).
 
-    const uint64_t ring_full_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    const uint64_t * refusal_counters = rocketnet_server_transport_counters( server )->values;
+    const uint64_t refused_before = refusal_counters[ROCKETNET_COUNTER_SEND_RING_FULL] + refusal_counters[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
 
     for ( int i = 0; i < 44; i++ )
     {
@@ -819,7 +836,8 @@ void rocketnet_test_transport_ring_exhaustion()
         rocketnet_check( rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context ) == NULL );
     }
 
-    rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 44 );
+    refusal_counters = rocketnet_server_transport_counters( server )->values;
+    rocketnet_check( refusal_counters[ROCKETNET_COUNTER_SEND_RING_FULL] + refusal_counters[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before + 44 );
 
     rocketnet_server_transport_send_packets( server );
 
@@ -883,7 +901,7 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_check( recovered );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_RESERVE_REFUSED, ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW );
 }
 
 struct rocketnet_test_client_hammer_args_t
