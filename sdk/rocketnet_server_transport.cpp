@@ -4589,6 +4589,10 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
 
 double rocketnet_server_transport_heard_age( const struct rocketnet_server_transport_t * server_transport, int client_index )
 {
+    if ( !server_transport )
+    {
+        return -1.0;
+    }
     const struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     if ( !protocol->acks || client_index < 0 || client_index >= protocol->acks->max_clients || !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
     {

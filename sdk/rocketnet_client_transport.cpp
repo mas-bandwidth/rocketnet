@@ -4261,6 +4261,10 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
 
 double rocketnet_client_transport_heard_age( const struct rocketnet_client_transport_t * client_transport )
 {
+    if ( !client_transport )
+    {
+        return -1.0;
+    }
     const struct rocketnet_client_protocol_t * protocol = &client_transport->protocol;
     if ( protocol->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED || protocol->last_receive_time <= 0.0 )
     {
