@@ -807,27 +807,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    # The counter audit (test_unit_counter_classes.cpp) reads source files: the
-    # tests that must name every counter, and the sdk files that count them.
-    # Both lists reach it as compile definitions, relative to the source
-    # directory, so the audit never walks a directory itself.
-    file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" )
-    if(NOT ROCKETNET_DEV)
-        list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
-            "tests/test_unit_connection_internal_error_counters.cpp")
-    endif()
-    list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
-    file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
-    list( REMOVE_ITEM ROCKETNET_COUNTER_SDK_SOURCES "sdk/rocketnet_tests.cpp"
-        "sdk/rocketnet_counters.h" "sdk/rocketnet_counters.cpp" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_TEST_SOURCES_LIST "${ROCKETNET_COUNTER_TEST_SOURCES}" )
-    string( REPLACE ";" "|" ROCKETNET_COUNTER_SDK_SOURCES_LIST "${ROCKETNET_COUNTER_SDK_SOURCES}" )
+    # The counter ladder audit (source_audit_counter_classes.cpp) reads the sdk
+    # files it names, relative to the source directory. Which counters a test
+    # observes is tools/check_counter_observed.py, from the build's own file set.
     set_property( SOURCE tests/source_audit_counter_classes.cpp APPEND PROPERTY COMPILE_DEFINITIONS
-        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
-        "ROCKETNET_COUNTER_TEST_SOURCES=\"${ROCKETNET_COUNTER_TEST_SOURCES_LIST}\""
-        "ROCKETNET_COUNTER_SDK_SOURCES=\"${ROCKETNET_COUNTER_SDK_SOURCES_LIST}\"" )
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     # The source-audit binary runs the repository text audits that used to be
     # unit cases: they read source, header and doc files through
     # ROCKETNET_SOURCE_DIR. It is a static gate: it reads files only, opens no

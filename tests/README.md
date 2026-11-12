@@ -68,7 +68,6 @@ not registered there, so it is neither run nor printed.
 The repository text audits that used to be unit cases — the client/server
 "says messages, not packets" scan (`test_client_server_say_messages_not_packets`),
 the environment-name documentation check (`test_config_env_every_name_read_is_documented`),
-the counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
 the one-family-per-outcome check (`test_counters_every_outcome_in_at_most_one_family`)
 and the XDP counter-row check (`test_xdp_transport_host_every_counter_has_a_case`) —
 run in the static source-audit binary `./bin/source_audit`, not `./bin/test`. It
