@@ -1,3 +1,9 @@
+# MOVED TO MAIN (2026-11-12): this branch copy never reached main, and a cron on
+# a branch never fires, so its schedule (and any temporary push trigger) is
+# removed here. The working version, against today's tree, is the file of the
+# same path on branch fixa/branches (fix-verify-a item 7), which carries the
+# cron once it is on main. This copy is kept for its history only.
+#
 # Nightly framework integration: rocketnet main, vendored into the framework
 # (robotgamedevelopers/framework, private) exactly the way the framework
 # vendors it, then built and run. A break in the public API, in the source
@@ -45,8 +51,6 @@
 name: Nightly framework integration
 
 on:
-  schedule:
-    - cron: "50 7 * * *"
   workflow_dispatch:
   # a change to this nightly runs it on its own pull request, and nothing else does
   pull_request:
