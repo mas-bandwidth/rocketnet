@@ -870,8 +870,20 @@ static int rocketnet_server_transport_send_queue_of( const rocketnet_server_tran
 static void rocketnet_server_transport_send_reserves( const rocketnet_server_transport_t * server_transport, uint64_t * reserve )
 {
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
-    const uint64_t fixed = (uint64_t) server_transport->protocol.handshakes_per_update + (uint64_t) server_transport->disconnect_packets_per_update +
-                           (uint64_t) rocketnet_client_slots_num_free( slots );
+    const uint64_t protocol = (uint64_t) server_transport->protocol.handshakes_per_update + (uint64_t) server_transport->disconnect_packets_per_update;
+
+    // a transport not yet given its client slots (a bare one a unit test
+    // builds) has no client to owe a control frame
+    if ( !slots )
+    {
+        for ( int queue = 0; queue < server_transport->send_queues; ++queue )
+        {
+            reserve[queue] = protocol;
+        }
+        return;
+    }
+
+    const uint64_t fixed = protocol + (uint64_t) rocketnet_client_slots_num_free( slots );
     for ( int queue = 0; queue < server_transport->send_queues; ++queue )
     {
         reserve[queue] = fixed;
