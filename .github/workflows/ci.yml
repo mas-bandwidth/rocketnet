@@ -995,9 +995,9 @@ jobs:
         run: python3 tools/check_transport_matrix.py
 
       # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
-      # does not match its named workflow (check_row, :139) or when tests/functional/
-      # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
-      # check_wildcard_binds :185). It reads files only, so one leg per Linux
+      # does not match its named workflow (check_row) or when tests/functional/
+      # holds a wildcard address literal outside WILDCARD_ALLOWED
+      # (check_wildcard_binds). It reads files only, so one leg per Linux
       # row runs it.
       - name: Check the platform policy and tests/functional/ wildcard binds
         if: runner.os == 'Linux' && matrix.leg == 'checks'
@@ -4084,6 +4084,15 @@ jobs:
       - name: Test the installed-SDK file list
         if: ${{ !cancelled() }}
         run: python3 tools/check_package.py --self-test
+
+      # tools/check_platform_policy.py plants each row it must refuse (tokens
+      # from two runners, a step named by a prefix, an if: false or
+      # inputs.full step or job, an unreadable if:, a transport no matrix
+      # cell runs) and each wildcard bind, in scratch trees; the real-tree
+      # check runs in the build-and-test checks row
+      - name: Test the platform policy checker
+        if: ${{ !cancelled() }}
+        run: python3 tools/check_platform_policy.py --self-check
 
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
       # diagnostic pragma in sdk/ is listed with a reason in
