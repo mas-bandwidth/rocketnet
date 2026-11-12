@@ -1694,6 +1694,145 @@ static void test_iocp_send_post_fails()
     printf( "test_iocp_transport_send_post_fails\n" );
 }
 
+// standard/TRANSPORT.md t2.4 rule 7: one destination refusing a segmented
+// send (WSASendMsg answering WSAEINVAL or WSAEOPNOTSUPP, through the post
+// seam) is that destination's. Its run is resent plain and nothing drops; its
+// later runs leave plain; every other destination keeps one USO post per run.
+// v1.1.0 to v1.1.7 cleared USO for the whole transport on the first refusal.
+// proofs/tla/RNSegmentRefusal.tla OtherDestinationUnaffected.
+
+#define IOCP_SEGMENT_REFUSAL_THRESHOLD 8 // ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
+
+static bool iocp_uso_transport( rocketnet_address_t * bind, rocketnet_server_iocp_t ** transport )
+{
+    *bind = address( "127.0.0.1:0" );
+    *transport = rocketnet_server_iocp_create( NULL, bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    CHECK( *transport );
+    if ( !( rocketnet_server_iocp_features( *transport ) & ROCKETNET_IOCP_FEATURE_USO ) )
+    {
+        printf( "SKIPPED segment refusal: this host has no USO\n" );
+        wait_stopped( *transport );
+        rn_native_backend_stop_and_destroy( *transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+        return false;
+    }
+    return true;
+}
+
+// one run of 16 equal frames to a client, optionally refused at the post;
+// every frame reaches the client either way
+static void iocp_segment_round( rocketnet_server_iocp_t * transport, rocketnet_platform_socket_t * client,
+                                const rocketnet_address_t * client_address, int refusal )
+{
+    const int round = ++fault_round & 0xFF;
+    const uint64_t retired = iocp_sends_retired( transport );
+    if ( refusal )
+    {
+        rocketnet_server_iocp_test_fail_next( transport, ROCKETNET_IOCP_TEST_FAULT_SEND_POST, 1, refusal );
+    }
+    iocp_stage( transport, client_address, round, 16 );
+    iocp_flush( transport );
+    CHECK( fault_client_receive( client, round, 16 ) == 16 );
+    iocp_wait_sends( transport, retired + 16 );
+    CHECK( rocketnet_server_iocp_test_faults_left( transport, ROCKETNET_IOCP_TEST_FAULT_SEND_POST ) == 0 );
+}
+
+static void test_iocp_uso_refusal_is_per_destination()
+{
+    rocketnet_address_t bind;
+    rocketnet_server_iocp_t * transport;
+    if ( !iocp_uso_transport( &bind, &transport ) )
+    {
+        return;
+    }
+
+    rocketnet_address_t a_address;
+    rocketnet_address_t b_address;
+    rocketnet_platform_socket_t * a = fault_client( &a_address );
+    rocketnet_platform_socket_t * b = fault_client( &b_address );
+
+    // B refuses its run: resent plain, all 16 delivered
+
+    iocp_segment_round( transport, b, &b_address, WSAEINVAL );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_FALLBACKS ) == 1 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 0 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_SEND_FAILED ) == 0 );
+
+    // A's next run is still one segmented post
+
+    iocp_segment_round( transport, a, &a_address, 0 );
+    printf( "after B refused: A's run USO_SENDS=%llu features=%d\n",
+            (unsigned long long) iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ), rocketnet_server_iocp_features( transport ) );
+    CHECK( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_USO );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 1 );
+
+    // B's later runs leave plain without another refusal; A keeps segmenting
+
+    for ( int r = 0; r < 3; ++r )
+    {
+        iocp_segment_round( transport, b, &b_address, 0 );
+        iocp_segment_round( transport, a, &a_address, 0 );
+    }
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 4 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_FALLBACKS ) == 1 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_SEND_FAILED ) == 0 );
+
+    // once a segmented send was accepted, no number of refusing destinations
+    // turns USO off
+
+    for ( int d = 0; d < IOCP_SEGMENT_REFUSAL_THRESHOLD; ++d )
+    {
+        rocketnet_address_t refusing_address;
+        rocketnet_platform_socket_t * refusing = fault_client( &refusing_address );
+        iocp_segment_round( transport, refusing, &refusing_address, d % 2 ? WSAEOPNOTSUPP : WSAEINVAL );
+        rocketnet_platform_socket_destroy( refusing );
+    }
+    iocp_segment_round( transport, a, &a_address, 0 );
+    CHECK( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_USO );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 5 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_FALLBACKS ) == 1 + IOCP_SEGMENT_REFUSAL_THRESHOLD );
+
+    iocp_all_frames_free( transport, &a_address );
+    rocketnet_platform_socket_destroy( b );
+    iocp_finish( transport, a );
+    printf( "test_iocp_transport_uso_refusal_is_per_destination\n" );
+}
+
+// USO turns off for the transport only when the threshold of distinct
+// destinations refused before any segmented send was accepted: a host that
+// cannot segment at all. Below it, the transport keeps USO.
+static void test_iocp_uso_refused_everywhere_turns_off()
+{
+    rocketnet_address_t bind;
+    rocketnet_server_iocp_t * transport;
+    if ( !iocp_uso_transport( &bind, &transport ) )
+    {
+        return;
+    }
+
+    for ( int d = 0; d < IOCP_SEGMENT_REFUSAL_THRESHOLD; ++d )
+    {
+        rocketnet_address_t refusing_address;
+        rocketnet_platform_socket_t * refusing = fault_client( &refusing_address );
+        iocp_segment_round( transport, refusing, &refusing_address, WSAEINVAL );
+        rocketnet_platform_socket_destroy( refusing );
+        const bool on = ( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_USO ) != 0;
+        printf( "    %d destinations refused: USO %s\n", d + 1, on ? "on" : "off" );
+        CHECK( on == ( d + 1 < IOCP_SEGMENT_REFUSAL_THRESHOLD ) );
+    }
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_FALLBACKS ) == IOCP_SEGMENT_REFUSAL_THRESHOLD );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 0 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_SEND_FAILED ) == 0 );
+
+    rocketnet_address_t a_address;
+    rocketnet_platform_socket_t * a = fault_client( &a_address );
+    iocp_segment_round( transport, a, &a_address, 0 );
+    CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 0 );
+
+    iocp_all_frames_free( transport, &a_address );
+    iocp_finish( transport, a );
+    printf( "test_iocp_transport_uso_refused_everywhere_turns_off\n" );
+}
+
 static void test_iocp_receive_completion_fails()
 {
     rocketnet_address_t bind = address( "127.0.0.1:0" );
@@ -2858,6 +2997,8 @@ static const fault_case_t fault_cases[] = {
     { "test_iocp_transport_stop_sends_published_burst", test_iocp_stop_sends_published_burst },
     { "test_iocp_transport_send_completion_fails", test_iocp_send_completion_fails },
     { "test_iocp_transport_send_post_fails", test_iocp_send_post_fails },
+    { "test_iocp_transport_uso_refusal_is_per_destination", test_iocp_uso_refusal_is_per_destination },
+    { "test_iocp_transport_uso_refused_everywhere_turns_off", test_iocp_uso_refused_everywhere_turns_off },
     { "test_iocp_transport_receive_completion_fails", test_iocp_receive_completion_fails },
     { "test_windows_oversize_receive_at_post", test_windows_oversize_receive_at_post },
     { "test_iocp_transport_receive_oversize_queued_at_post", test_receive_oversize_queued_at_post },
