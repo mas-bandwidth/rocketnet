@@ -455,9 +455,9 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          # the thirteen harnesses build in one parallel build and replay at once;
+          # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --target $targets --parallel 8
@@ -479,16 +479,19 @@ jobs:
       # can withhold a seed must then exit 1 and print INCOMPLETE, so a
       # generator that only returned its failure would be seen to go on.
       # An empty input file stands in for a corpus, so a generator that does
-      # not exit replays it and exits 0, which this step refuses.
+      # not exit replays it and exits 0, which this step refuses. seed_harnesses
+      # is every TARGETS harness whose source has a seed generator (it reads
+      # ROCKETNET_FUZZ_SEED_DIR); tools/docs/check_fuzz_harnesses.py holds it
+      # to exactly that set.
       - name: Run the fuzz seed generators
         if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
+          seed_harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
           empty="$RUNNER_TEMP/fuzz-empty-input"
           : > "$empty"
           failed=0
-          for harness in $harnesses; do
+          for harness in $seed_harnesses; do
             out="$RUNNER_TEMP/fuzz-seeds-$harness"
             rm -rf "$out" && mkdir -p "$out"
             if ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_SEED_FROM=tests/fuzz/corpus "./bin/fuzz_replay_$harness" "$empty" > "fuzz-seeds-$harness.log" 2>&1; then
@@ -1389,9 +1392,9 @@ jobs:
         if: matrix.leg != 'c'
         shell: bash
         run: |
-          # the thirteen harnesses build in one parallel build and replay at once;
+          # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           cmake --build build --config Release --target $targets --parallel 8
@@ -2214,9 +2217,12 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          # the thirteen harnesses build in one parallel build and replay at once;
+          # the fourteen harnesses build in one parallel build and replay at once;
           # each replay's exit status is checked
-          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink"
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          # and the Linux-only XDP filter harness (tests/fuzz/Makefile XDP_TARGETS)
+          xdp_harnesses="rocketnet_fuzz_xdp_filter"
+          harnesses="$harnesses $xdp_harnesses"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
           mkdir -p bin
@@ -2313,10 +2319,9 @@ jobs:
 
       - name: Build every fuzzer with NDEBUG
         run: |
-          for src in rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message \
-                   rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-                   rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session \
-                   rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink; do
+          harnesses="rocketnet_fuzz rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_message rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint"
+          echo "NDEBUG_HARNESSES=$harnesses" >> "$GITHUB_ENV"
+          for src in $harnesses; do
             clang++ -g -O1 -std=c++17 \
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
@@ -2329,20 +2334,22 @@ jobs:
       - name: Replay all corpora under NDEBUG
         env:
           ASAN_OPTIONS: detect_leaks=0
+        shell: bash
         run: |
-          ./bin/rocketnet_fuzz_ndebug tests/fuzz/corpus/*
-          ./bin/rocketnet_fuzz_connect_token_ndebug tests/fuzz/corpus_connect_token/*
-          ./bin/rocketnet_fuzz_receive_structured_ndebug tests/fuzz/corpus_receive_structured/*
-          ./bin/rocketnet_fuzz_message_ndebug tests/fuzz/corpus_message/*
-          ./bin/rocketnet_fuzz_token_private_ndebug tests/fuzz/corpus_token_private/*
-          ./bin/rocketnet_fuzz_round_trip_ndebug tests/fuzz/corpus_round_trip/*
-          ./bin/rocketnet_fuzz_config_ndebug tests/fuzz/corpus_config/*
-          ./bin/rocketnet_fuzz_server_transport_ndebug tests/fuzz/corpus_server_transport/*
-          ./bin/rocketnet_fuzz_client_transport_ndebug tests/fuzz/corpus_client_transport/*
-          ./bin/rocketnet_fuzz_session_ndebug tests/fuzz/corpus_session/*
-          ./bin/rocketnet_fuzz_xdp_frame_ndebug tests/fuzz/corpus_xdp_frame/*
-          ./bin/rocketnet_fuzz_uring_recvmsg_ndebug tests/fuzz/corpus_uring_recvmsg/*
-          ./bin/rocketnet_fuzz_gateway_netlink_ndebug tests/fuzz/corpus_gateway_netlink/*
+          # every harness the build step built, each against its own corpus;
+          # one failing replay never hides the rest (each is named, then the
+          # step fails)
+          set -uo pipefail
+          failed=0
+          for harness in $NDEBUG_HARNESSES; do
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
+            if ! "./bin/${harness}_ndebug" "$corpus"/* > "fuzz-ndebug-$harness.log" 2>&1; then
+              echo "NDEBUG replay failed: $harness"
+              tail -n 30 "fuzz-ndebug-$harness.log"
+              failed=1
+            fi
+          done
+          exit $failed
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the

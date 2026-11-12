@@ -1409,7 +1409,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
     set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} tests/fuzz/${harness}.cpp tests/fuzz/replay_main.cpp)
         else()
@@ -1424,6 +1424,21 @@ if(ROCKETNET_BUILD_TOOLS)
         rocketnet_use_sodium(fuzz_replay_${harness})
         target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
     endforeach()
+    # The XDP filter harness (tests/fuzz/Makefile XDP_TARGETS) runs the filter
+    # program through the host-C shim, which this file builds on GCC or Clang
+    # off Windows (rocketnet_xdp_filter_host above); the harness reads the
+    # AF_XDP frame layout, so it is a Linux target, as in the Makefile.
+    if(TARGET rocketnet_xdp_filter_host AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(fuzz_replay_rocketnet_fuzz_xdp_filter tests/fuzz/replay_main.cpp tests/fuzz/rocketnet_fuzz_xdp_filter.cpp)
+        target_compile_definitions(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE ROCKETNET_DEV=1)
+        target_compile_features(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE cxx_std_17)
+        target_include_directories(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/sodium"
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        rocketnet_use_sodium(fuzz_replay_rocketnet_fuzz_xdp_filter)
+        target_link_libraries(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE rocketnet_xdp_filter_host rocketnet_dev Threads::Threads)
+    endif()
 endif()
 
 set(rocketnet_install_targets rocketnet)

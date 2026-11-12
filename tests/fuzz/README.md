@@ -61,11 +61,11 @@ development library first, then the targets:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build --target rocketnet_dev --parallel 4
-make -C tests/fuzz -j 4                 # the thirteen targets (not the differential)
-make -C tests/fuzz compile              # syntax check of all thirteen sources on any host
+make -C tests/fuzz -j 4                 # the fourteen targets, and the XDP filter target on Linux (not the differential)
+make -C tests/fuzz compile              # syntax check of all fourteen TARGETS sources on any host
 ```
 
-`tests/fuzz/Makefile` builds the thirteen targets other than `rocketnet_fuzz_differential` with
+`tests/fuzz/Makefile` builds the fourteen TARGETS (and, on Linux, rocketnet_fuzz_xdp_filter) other than `rocketnet_fuzz_differential` with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
 nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
 nightly builds it:
@@ -262,8 +262,8 @@ deterministic, so a regenerated corpus differs only when the code under it
 changed. The generator exits the process itself, from
 `LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
 libFuzzer ignores that function's return value, and so does the replay
-driver. ci.yml's macOS checks leg, on the nightly tier, runs all thirteen
-generators and requires each to exit 0, and requires
+driver. ci.yml's macOS checks leg, on the nightly tier, runs every seed
+generator (each harness whose source reads `ROCKETNET_FUZZ_SEED_DIR`; `rocketnet_fuzz_endpoint` has none) and requires each to exit 0, and requires
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` to
 exit 1 with `INCOMPLETE` when a seed is withheld
 (`ROCKETNET_FUZZ_WITHHOLD`).
@@ -319,14 +319,14 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 ## In CI
 
-- `ci.yml` `fuzz-smoke` deterministically replays all thirteen committed corpora
+- `ci.yml` `fuzz-smoke` deterministically replays the fourteen committed corpora, and on Linux the XDP filter's,
   through the `fuzz_replay_*` drivers on every push. The time-boxed
   fixed-seed mutation pass moved to `fuzz-nightly.yml`.
 - `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
   Windows, restores each target's growing corpus from the cache (one cache
   per platform), runs a bounded campaign (`max_total_time`, 900 s by
   default) and uploads any reproducer.
-- `fuzz-nightly.yml` also runs the same thirteen-target matrix under
+- `fuzz-nightly.yml` also runs the same fourteen-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++
   headers at `-O1`, exactly as `tools/run_msan.sh` does, and each target

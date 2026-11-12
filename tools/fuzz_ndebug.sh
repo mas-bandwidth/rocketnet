@@ -52,6 +52,7 @@ ALL_TARGETS=(
     rocketnet_fuzz_xdp_frame
     rocketnet_fuzz_uring_recvmsg
     rocketnet_fuzz_gateway_netlink
+    rocketnet_fuzz_endpoint
     rocketnet_fuzz_differential
 )
 

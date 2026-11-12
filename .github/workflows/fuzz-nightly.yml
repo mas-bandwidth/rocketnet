@@ -71,6 +71,8 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
+          - '{"target":"rocketnet_fuzz_xdp_filter","source":"tests/fuzz/rocketnet_fuzz_xdp_filter.cpp","seeds":"tests/fuzz/corpus_xdp_filter","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_filter.dict"}'
           - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
     concurrency:
       group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
@@ -137,16 +139,25 @@ jobs:
           set -euo pipefail
           mkdir -p bin
           EXTRA=""
+          EXTRA_LIBS=""
           if [[ "${{ fromJSON(matrix.leg).target }}" == "rocketnet_fuzz_differential" ]]; then
             cc -O2 -DNDEBUG -ffp-contract=off -c netcode-ref/netcode.c -o bin/netcode_ref.o \
               -I netcode-ref -I sodium
             EXTRA="-Itools/differential -Inetcode-ref -DROCKETNET_DIFFERENTIAL_NETCODE_DIR bin/netcode_ref.o"
           fi
+          # the XDP filter harness links the filter program as host C
+          # (tests/xdp_host/, CMake's rocketnet_xdp_filter_host), instrumented
+          # by the same configure flags as the library
+          if [[ "${{ fromJSON(matrix.leg).target }}" == "rocketnet_fuzz_xdp_filter" ]]; then
+            cmake --build build-fuzz --target rocketnet_xdp_filter_host --parallel 8
+            EXTRA_LIBS="$(find build-fuzz -name librocketnet_xdp_filter_host.a | head -n 1)"
+            [ -n "$EXTRA_LIBS" ] || { echo "librocketnet_xdp_filter_host.a was not built"; exit 1; }
+          fi
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -DROCKETNET_DEV=1 \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itests $EXTRA "${{ fromJSON(matrix.leg).source }}" build-fuzz/librocketnet_dev.a \
+            -Isodium -Isdk -Itests $EXTRA "${{ fromJSON(matrix.leg).source }}" $EXTRA_LIBS build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread \
             -o "bin/${{ fromJSON(matrix.leg).target }}"
 
@@ -236,6 +247,7 @@ jobs:
           - rocketnet_fuzz_server_transport
           - rocketnet_fuzz_client_transport
           - rocketnet_fuzz_session
+          - rocketnet_fuzz_endpoint
           - rocketnet_fuzz_differential
     concurrency:
       group: fuzz-nightly-ndebug-${{ matrix.ref }}-${{ matrix.target }}
@@ -325,6 +337,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
       group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -487,6 +500,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
       group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -606,7 +620,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # MemorySanitizer over the same thirteen-target matrix, Linux only (row 262's
+  # MemorySanitizer over the same fourteen-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
@@ -650,6 +664,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_endpoint","source":"tests/fuzz/rocketnet_fuzz_endpoint.cpp","seeds":"tests/fuzz/corpus_endpoint","dict":"tests/fuzz/dict/rocketnet_fuzz_endpoint.dict"}'
     concurrency:
       group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true

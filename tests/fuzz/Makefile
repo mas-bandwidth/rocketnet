@@ -4,7 +4,7 @@
 # compiled out of the release library, so they must link the development
 # archive and see ROCKETNET_DEV=1. ci.yml's fuzz-smoke covers
 # rocketnet_fuzz against the release library; fuzz-nightly.yml drives the
-# thirteen targets in TARGETS below, with the same flags and link set, plus
+# fourteen targets in TARGETS below (and rocketnet_fuzz_xdp_filter on Linux), with the same flags and link set, plus
 # rocketnet_fuzz_differential, which needs the pinned netcode checkout.
 #
 # The bpf/xdp link deps are Linux only; darwin links the same library without
@@ -46,19 +46,20 @@ TARGETS = rocketnet_fuzz \
           rocketnet_fuzz_session \
           rocketnet_fuzz_xdp_frame \
           rocketnet_fuzz_uring_recvmsg \
-          rocketnet_fuzz_gateway_netlink
+          rocketnet_fuzz_gateway_netlink \
+          rocketnet_fuzz_endpoint
 
-# Built by `all` and checked by `compile`, but not yet replayed by CI (the
-# fuzz-smoke and NDEBUG harness lists, the CMake fuzz_replay_ drivers) or run
-# by fuzz-nightly.yml. TARGETS is the list those name
-# (tools/docs/check_fuzz_harnesses.py); a target moves there when it is wired
-# in. rocketnet_fuzz_xdp_filter below is the same.
-UNWIRED_TARGETS = rocketnet_fuzz_endpoint
-SOURCES = $(addsuffix .cpp,$(TARGETS) $(UNWIRED_TARGETS))
+# TARGETS is the list every replay and fuzz job names (the per-commit
+# fuzz-smoke replay, the macOS and Windows replays, the NDEBUG lists, the CMake
+# fuzz_replay_ drivers, fuzz-nightly.yml): tools/docs/check_fuzz_harnesses.py
+# fails on a harness source or a corpus directory that no list names.
+SOURCES = $(addsuffix .cpp,$(TARGETS))
 
 # The XDP filter program (sdk/xdp/server_xdp.c) as host C, through the unit
 # suite's shim (tests/xdp_host/), instrumented like the library. GNU C on a
-# non-Windows host only; on Darwin the target is not built.
+# non-Windows host only; on Darwin the target is not built. XDP_TARGETS is
+# the Linux list: fuzz-smoke replays it (xdp_harnesses), CMake builds its
+# fuzz_replay_ driver on Linux, and fuzz-nightly.yml fuzzes it on Linux.
 XDP_HOST_OBJ = $(BUILD)/xdp_host_fuzz.o
 ifeq ($(UNAME_S),Darwin)
 XDP_TARGETS =
@@ -66,7 +67,7 @@ else
 XDP_TARGETS = rocketnet_fuzz_xdp_filter
 endif
 
-all: $(TARGETS) $(UNWIRED_TARGETS) $(XDP_TARGETS)
+all: $(TARGETS) $(XDP_TARGETS)
 
 $(XDP_HOST_OBJ): ../xdp_host/server_xdp_host.c ../../sdk/xdp/server_xdp.c
 	$(subst clang++,clang,$(CXX)) -g -O1 -std=gnu11 -ffreestanding -ffp-contract=off -D__linux__ -D__BPF__ \
@@ -81,13 +82,13 @@ rocketnet_fuzz_xdp_filter: rocketnet_fuzz_xdp_filter.cpp $(XDP_HOST_OBJ) $(LIB)
 # themselves through rocketnet_fuzz_pair.h, so they rebuild when it changes.
 rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session: rocketnet_fuzz_pair.h
 
-$(TARGETS) $(UNWIRED_TARGETS): %: %.cpp $(LIB)
+$(TARGETS): %: %.cpp $(LIB)
 	$(CXX) $(FLAGS) $(SANITIZE) $< $(LIB) $(LINKS) -o $@
 
 compile: $(SOURCES)
 	$(CXX) $(FLAGS) -fsyntax-only $(SOURCES)
 
 clean:
-	rm -f $(TARGETS) $(UNWIRED_TARGETS) $(XDP_TARGETS) $(XDP_HOST_OBJ)
+	rm -f $(TARGETS) $(XDP_TARGETS) $(XDP_HOST_OBJ)
 
 .PHONY: all compile clean

@@ -528,7 +528,7 @@ abort assertions unchanged. A new forking case must do the same.
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
 rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
-libFuzzer"); `make` builds a replay binary for each of the thirteen harnesses in
+libFuzzer"); `make` builds a replay binary for each of the fourteen harnesses in
 [tests/fuzz/README.md](../tests/fuzz/README.md). Replay every corpus:
 
 ```sh
@@ -536,7 +536,7 @@ for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_toke
     rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip \
     rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport \
     rocketnet_fuzz_session rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg \
-    rocketnet_fuzz_gateway_netlink; do
+    rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint; do
   ./bin/fuzz_replay_$harness tests/fuzz/corpus${harness#rocketnet_fuzz}/* || echo "FAIL $harness"
 done
 ```
