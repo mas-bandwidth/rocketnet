@@ -22,8 +22,8 @@ static int keep_going_case( const char * name )
 {
     printf( "ran %s\n", name );
     fflush( stdout );
-    const char * marks = std::getenv( "KEEP_GOING_SUITE_MARKS" );
-    if ( marks )
+    char marks[1024];
+    if ( rocketnet_test_getenv( "KEEP_GOING_SUITE_MARKS", marks, sizeof( marks ) ) )
     {
         const std::string path = std::string( marks ) + "/" + name;
         FILE * file = rocketnet_test_fopen( path.c_str(), "w" );
