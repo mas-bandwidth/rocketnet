@@ -12072,7 +12072,7 @@ void rocketnet_test_public_config_resolve()
     rocketnet_check( kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS && message.num_channels == 32 && strcmp( client_transport.transport, "auto" ) == 0 );
 
     rocketnet_check( rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps ) );
-    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == 1000 && server_transport.public_address[0] == '\0' );
+    rocketnet_check( kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && server_transport.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) && server_transport.public_address[0] == '\0' );
 
     // every client field lands
 
@@ -12915,7 +12915,7 @@ void rocketnet_test_config_validation()
     rocketnet_log_level( empty_saved_level );
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
-    rocketnet_check( config.max_clients == 1000 );
+    rocketnet_check( config.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) );
     rocketnet_check( strstr( rocketnet_test_captured_log, "config ignores empty ROCKETNET_SERVER_MAX_CLIENTS" ) != NULL );
 
     rocketnet_test_env_restore( &guard );
@@ -13269,7 +13269,9 @@ void rocketnet_test_config_override_logging()
     // key is untouched and its encoding appears nowhere in the log
 
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_MAX_CLIENTS=77" ) != NULL );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "(displaces 1000)" ) != NULL );
+    char displaced[32];
+    snprintf( displaced, sizeof( displaced ), "(displaces %d)", ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 );
+    rocketnet_check( strstr( rocketnet_test_captured_log, displaced ) != NULL );
     rocketnet_check( memcmp( config.server_secret_key, secret_bytes, 32 ) != 0 );
     rocketnet_check( strstr( rocketnet_test_captured_log, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) == NULL );
     rocketnet_check( strstr( rocketnet_test_captured_log, secret_base64 ) == NULL );

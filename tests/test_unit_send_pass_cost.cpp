@@ -34,7 +34,7 @@
 
 #define check rocketnet_unit_check
 
-#define SP_CONNECTIONS      1000
+#define SP_CONNECTIONS      ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )     // the default max_clients (rocketnet.h)
 #define SP_PAYLOAD_INDEX    32
 #define SP_MESSAGE_BYTES    1000
 #define SP_T0               1000.0

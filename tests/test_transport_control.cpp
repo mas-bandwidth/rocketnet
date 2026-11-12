@@ -2150,7 +2150,7 @@ int main( int argc, char ** argv )
 
     CHECK( argc == 1 );
     test_buffered_control_pressure();
-    test_buffered_control_pressure( 1000 );
+    test_buffered_control_pressure( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 );       // the default max_clients (rocketnet.h)
     test_disconnect_burst_next_send( false );
     test_disconnect_burst_next_send( true );
     test_staged_control_fairness();

@@ -392,12 +392,13 @@ static void test_sized_config_refuses_unknown_size()
 
 static void test_server_default_config_max_clients_is_1000()
 {
+    const int expected = ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000;     // 1000, or a smaller build maximum (rocketnet.h)
     struct rocketnet_server_transport_config_t unsized, sized;
     rocketnet_server_transport_default_config( &unsized );
     memset( &sized, 0xA5, sizeof( sized ) );
     check( rocketnet_server_transport_default_config_sized( &sized, sizeof( sized ) ) == 1 );
-    check( unsized.max_clients == 1000 );
-    check( sized.max_clients == 1000 );
+    check( unsized.max_clients == expected );
+    check( sized.max_clients == expected );
 }
 
 // The public creates run one validation per side (rn_client_config_valid

@@ -37,6 +37,7 @@ struct rocketnet_unit_file_test_t
     const char * name;
     const char * expected_fail_card;    // NULL: ordinary test; else: the defect card that must still fail today
     void ( *function )();
+    const char * skipped_by;            // NULL: runs in this build; else: the condition it fails (UNIT_TEST_SKIPPED_UNLESS)
 };
 
 // The tree had 1,029 registrations when this fixed registry replaced the
@@ -97,6 +98,7 @@ inline enum rocketnet_unit_file_register_result_t rocketnet_unit_file_register(
     registry->tests[0].name = name;
     registry->tests[0].function = function;
     registry->tests[0].expected_fail_card = expected_fail_card;
+    registry->tests[0].skipped_by = NULL;
     registry->count++;
 
     return ROCKETNET_UNIT_FILE_REGISTERED;
@@ -203,6 +205,29 @@ inline struct rocketnet_unit_file_test_t * rocketnet_unit_file_find( const char 
     }
     return NULL;
 }
+
+// A case this build cannot run. Written after the case's REGISTER_UNIT_TEST:
+// when condition is false here the suite leaves the case out and prints
+// SKIPPED <case>: <condition> with the skipped count (tests/test.cpp), so it
+// is never dropped in silence. A build where the condition holds runs it.
+
+struct rocketnet_unit_file_build_condition_t
+{
+    rocketnet_unit_file_build_condition_t( const char * name, const char * skipped_by )
+    {
+        struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( name );
+        if ( test == NULL )
+        {
+            fprintf( stderr, "error: unit test %s names a build condition before its registration\n", name );
+            fflush( stderr );
+            abort();
+        }
+        test->skipped_by = skipped_by;
+    }
+};
+
+#define UNIT_TEST_SKIPPED_UNLESS( name, condition )                                                               \
+    static rocketnet_unit_file_build_condition_t rocketnet_unit_file_build_condition_##name( #name, ( condition ) ? NULL : #condition )
 
 // runs one registered test by name; returns 2 when it is not registered, 0 on
 // success, 1 on an unexpected pass of an expected-fail test. a failing

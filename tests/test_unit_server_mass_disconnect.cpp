@@ -49,7 +49,8 @@ int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_s
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static const uint64_t MASS_DISCONNECT_PROTOCOL_ID = 0x4D41535344495343ULL;
-static const int MASS_DISCONNECT_CLIENTS = 1000;
+// the default max_clients: 1000, or a smaller build maximum (rocketnet.h)
+static const int MASS_DISCONNECT_CLIENTS = ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000;
 
 #if ROCKETNET_DEV
 static int mass_disconnect_setenv( const char * name, const char * value )
