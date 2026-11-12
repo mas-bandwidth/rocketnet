@@ -705,12 +705,16 @@ static void rocketnet_server_socket_ipv6_bytes( const rocketnet_address_t * addr
     }
 }
 
-// a server's public address is global: an IPv6 link-local address
-// (fe80::/10) names no route off the link, so the pre-flight and create
-// refuse it by name
+// a server's public address is global: a link-local address (IPv4
+// 169.254.0.0/16, IPv6 fe80::/10) names no route off the link, so the
+// pre-flight and create refuse it by name
 
-static bool rocketnet_server_socket_ipv6_link_local( const rocketnet_address_t * address )
+static bool rocketnet_server_socket_link_local( const rocketnet_address_t * address )
 {
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        return address->data.ipv4[0] == 169 && address->data.ipv4[1] == 254;
+    }
     return address->type == ROCKETNET_ADDRESS_IPV6 && ( address->data.ipv6[0] & 0xFFC0 ) == 0xFE80;
 }
 
@@ -1302,9 +1306,9 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         return false;
     }
 
-    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    if ( rocketnet_server_socket_link_local( &public_address ) )
     {
-        rocketnet_warn( "xdp pre-flight: public address %s is ipv6 link-local (fe80::/10); a server's public address is global (R2 of scripts/rocketnet-provision)", public_address_string );
+        rocketnet_warn( "xdp pre-flight: public address %s is link-local (169.254.0.0/16, fe80::/10); a server's public address is global (R2 of scripts/rocketnet-provision)", public_address_string );
         return false;
     }
 
@@ -1743,9 +1747,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    if ( rocketnet_server_socket_ipv6_link_local( &public_address ) )
+    if ( rocketnet_server_socket_link_local( &public_address ) )
     {
-        rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
+        rocketnet_error( "server public address is link-local (169.254.0.0/16, fe80::/10); a server's public address is global" );
         return NULL;
     }
 
@@ -1781,9 +1785,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             return NULL;
         }
 
-        if ( rocketnet_server_socket_ipv6_link_local( &second_address ) )
+        if ( rocketnet_server_socket_link_local( &second_address ) )
         {
-            rocketnet_error( "server public address is ipv6 link-local (fe80::/10); a server's public address is global" );
+            rocketnet_error( "server public address is link-local (169.254.0.0/16, fe80::/10); a server's public address is global" );
             if ( create_status )
             {
                 *create_status = ROCKETNET_STATUS_INVALID_ADDRESS;

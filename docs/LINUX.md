@@ -501,8 +501,8 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   ends in `xdp pre-flight failed: this machine is not provisioned for the XDP data plane`
   (`sdk/rocketnet_server_socket_linux.cpp`). On an unprivileged host
   `auto` therefore falls to `gso` (`.github/workflows/ci.yml`).
-- A real port and a global address: port 0 refuses `xdp` (section 2), and an
-  IPv6 link-local address is refused by name
+- A real port and a global address: port 0 refuses `xdp` (section 2), and a
+  link-local address (IPv4 169.254.0.0/16, IPv6 fe80::/10) is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
   with a link-layer address` when the host has not yet talked to its gateway

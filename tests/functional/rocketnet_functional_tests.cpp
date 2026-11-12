@@ -5973,6 +5973,37 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_test_env_restore( &transport_guard );
 }
 
+#if ROCKETNET_XDP && ROCKETNET_DEV
+
+// a server's public address is global: create refuses a link-local address
+// of either family by name, before its pre-flight (forced unavailable here,
+// so nothing is attached whatever the address)
+
+void rocketnet_test_xdp_create_refuses_link_local()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0 };
+    const char * const link_local[] = { "169.254.10.20:40000", "[fe80::1]:40000" };
+
+    rocketnet_server_socket_set_preflight_test_result( 0 );
+    rocketnet_server_socket_allow_commit();
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+        struct rocketnet_server_socket_t * server_socket = rocketnet_server_socket_create( NULL, link_local[i], packet_filter, 1 );
+        rocketnet_test_xdp_capture_end( saved_level );
+
+        rocketnet_check( server_socket == NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "link-local" ) != NULL );
+        rocketnet_check( strstr( rocketnet_test_captured_log, "development control selects unavailable" ) == NULL );
+    }
+
+    rocketnet_server_socket_forbid_commit();
+    rocketnet_server_socket_clear_preflight_test_result();
+}
+
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
+
 void rocketnet_test_server_transport_io_ladder_fall()
 {
     // The fall runs the production ladder in both pre-flight answers, not
@@ -13592,6 +13623,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_transport_server_io_pin", rocketnet_test_server_transport_io_pin_gso, rocketnet_test_server_pin_allows_gso },
     { "test_io_uring_transport_server_io_pin", rocketnet_test_server_transport_io_pin_io_uring, rocketnet_test_server_pin_allows_io_uring },
     { "test_xdp_transport_server_io_pin", rocketnet_test_server_transport_io_pin_xdp, rocketnet_test_server_pin_allows_xdp },
+#if ROCKETNET_XDP && ROCKETNET_DEV
+    { "test_xdp_transport_create_refuses_link_local", rocketnet_test_xdp_create_refuses_link_local, NULL },
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
     { "test_server_transport_io_ladder_fall", rocketnet_test_server_transport_io_ladder_fall, rocketnet_test_server_pin_allows_gso },
     { "test_gso_transport_server_probe", rocketnet_test_server_gso_probe, NULL },
     { "test_gso_transport_server_wire_ipv4", rocketnet_test_server_gso_wire_ipv4, NULL },
