@@ -30,12 +30,13 @@
 // Every kernel feature is probed at create, and every probe failure selects
 // the next tier down rather than an error: no UDP_SEGMENT -> per-packet
 // sendmmsg entries; no UDP_GRO -> plain recvmmsg; and a kernel that accepts
-// the UDP_SEGMENT probe but refuses a live GSO send (offload edge cases
-// exist) resends that run plain and leaves segmentation on. Segmentation
-// turns off for the transport only after
-// ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD refused segmented sends
-// in a row, with no accepted segmented send between them. That degradation
-// resends the remainder plain and drops nothing.
+// the UDP_SEGMENT probe but refuses a live GSO send to one destination (its
+// route: an IPsec policy, say) resends that run plain, remembers the
+// destination so its later runs leave plain, and leaves segmentation on for
+// every other destination. Segmentation turns off for the transport only
+// when ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD destinations refused
+// and no segmented send was ever accepted (rocketnet_server_gso.h). That
+// degradation resends the remainder plain and drops nothing.
 
 #include "rocketnet_server_gso.h"
 #include "rocketnet_constants.h"
@@ -221,8 +222,7 @@ struct rocketnet_server_gso_t
     std::atomic<uint64_t> counter_send_syscalls{ 0 };
     std::atomic<uint64_t> counter_send_dropped{ 0 };
     std::atomic<uint64_t> counter_gso_sends{ 0 };
-    // TX worker only. An accepted segmented send resets it. A plain send does not.
-    int segment_consecutive_refusals = 0;
+    struct rocketnet_segment_refused_t segment_refused = {};    // TX worker only: the destinations that refused a segmented send
     bool segment_refusal_warned = false;        // TX worker only: the first refused run warns, later ones are spam
     uint64_t counter_packets_received;
     uint64_t counter_receive_syscalls;
@@ -418,8 +418,9 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
                                        rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full );
 
 // proofs/tla/RNGsoHandoff.tla TxSend: send a held bank from *slot. One live
-// GSO refusal resends that run plain. The consecutive-refusal threshold
-// turns segmentation off and resends from the refused message.
+// GSO refusal resends that run plain. Refusals by the threshold of
+// destinations with none accepted turn segmentation off and resend from the
+// refused message.
 // proofs/tla/RNGsoHandoff.tla TxSendFull: a full socket stops the bank at its
 // first unsent slot and returns false, the rest kept in order in the held bank
 // for the next attempt.
@@ -1738,10 +1739,11 @@ static int rocketnet_server_gso_resend_plain( struct rocketnet_server_gso_t * gs
 
 // one flush pass: walk the staged slots once, build sendmmsg batches,
 // coalescing adjacent same-destination runs into GSO super-datagrams where
-// the feature is on. returns the first unconsumed slot. below the
-// consecutive-refusal threshold a refused segmented run is resent plain and
-// the batch continues; at the threshold the caller flips the feature off and
-// resumes plain from this message. a full socket (*full) resumes from its
+// the feature is on and the destination has not refused one. returns the
+// first unconsumed slot. a refused segmented run is resent plain, its
+// destination remembered, and the batch continues; when the transport cannot
+// segment at all (rocketnet_segment_refused_add) the caller flips the feature
+// off and resumes plain from this message. a full socket (*full) resumes from its
 // first unsent message later. A slot this pass dropped is cleared, so a
 // resumed pass skips it uncounted.
 
@@ -1778,13 +1780,14 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
             int run_bytes = segment_bytes;
             batch_end++;
 
-            if ( use_gso )
+            if ( use_gso && !rocketnet_segment_refused_contains( &gso->segment_refused, &info->to ) )
             {
-                // extend the run: equal sizes to the same destination, plus
+                // extend the run, for a destination that has not refused a
+                // segmented send: equal sizes to the same destination, plus
                 // at most one shorter tail (UDP_SEGMENT semantics: every
                 // segment is the stride except possibly the last). a LARGER
                 // packet, a different destination, or an aborted slot ends
-                // the run.
+                // the run (proofs/tla/RNSegmentRefusal.tla Run).
 
                 while ( batch_end < num_slots && run_count < ROCKETNET_GSO_MAX_SEGMENTS )
                 {
@@ -1909,7 +1912,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                     if ( message_is_gso[i] )
                     {
                         gso->counter_gso_sends++;
-                        gso->segment_consecutive_refusals = 0;
+                        gso->segment_refused.accepted = true;
                     }
                 }
 
@@ -1921,20 +1924,23 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
             if ( message_is_gso[sent] && rocketnet_server_gso_segment_refused( errno ) )
             {
-                // the kernel accepted the UDP_SEGMENT probe but refused this
-                // segmented send. one destination is not the transport: resend
-                // that run plain and keep later messages segmented. the tier
-                // turns off only after the consecutive-refusal threshold, and
-                // then the bank resends from this message with nothing dropped.
+                // the kernel accepted the UDP_SEGMENT probe but this
+                // destination refused a segmented send. it is that
+                // destination's: it is remembered, so its later runs leave
+                // plain, and this run is resent plain; other destinations keep
+                // segmenting. the tier turns off only when the threshold of
+                // destinations refused with none ever accepted (a kernel that
+                // cannot segment), and then the bank resends from this message
+                // with nothing dropped (proofs/tla/RNSegmentRefusal.tla Refuse).
 
                 const char * reason = strerror( errno );
-                gso->segment_consecutive_refusals++;
+                const int refused_slot = message_first_slot[sent];
 
-                if ( gso->segment_consecutive_refusals >= ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
+                if ( rocketnet_segment_refused_add( &gso->segment_refused, &bank->info[refused_slot].to ) )
                 {
-                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d consecutive refusals, degrading to plain sendmmsg", reason, gso->segment_consecutive_refusals );
+                    rocketnet_warn( "gso transport: live GSO send refused (%s). %d destinations refused and none accepted, degrading to plain sendmmsg", reason, gso->segment_refused.destinations );
                     *disable_gso = true;
-                    return message_first_slot[sent];
+                    return refused_slot;
                 }
 
                 if ( !gso->segment_refusal_warned )

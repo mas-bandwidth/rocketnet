@@ -53,6 +53,7 @@ thread; io_uring submits on the main thread.
 | `SkipSlot` | `rocketnet_server_uring_submit_phase` skips an aborted slot (`packet_bytes <= 0`) or one unroutable on the socket family, dropping and counting it with no send |
 | `KernelComplete(g)` | the kernel posts a send's completion (environment action) |
 | `Reap` | a send completion reaped, in `send_packets` or `receive_packets`: its phase's pending count falls by one send |
+| `ReapRefused` | a run of more than one slot whose destination refused the segmented send, reaped: `rocketnet_server_uring_resend_plain` resends each of its slots as one send and counts each pending in the phase before the reap returns, so its pending count falls by one and rises by the run's slots |
 | `SendEnd` | the end of `send_packets`: every complete phase (every slot submitted or skipped, none pending) has its index and submitted mark reset; when the fill phase still holds staged slots and the next phase is empty, the fill moves to it. Under `LateReap` the pass does not stop part way; with late completions it may, the rest submitted by a later call |
 | `RecvEnd` | the end of `receive_packets` and of the update; under `LateReap` every send submitted is reaped by now |
 
@@ -80,6 +81,14 @@ on a 16-cpu linux-amd64 bench (Java 21.0.12.1, the pinned JAR, two workers).
 | `MCRNUringSendPhasesBrokenNoBase.cfg` | `BaseRule = FALSE`: start_packet's slot without the phase base | `NoWriteWhileKernelOwned` | 12 | 56 | 0.6 |
 | `MCRNUringSendPhasesBrokenRemainder.cfg` | `QuotientRule = FALSE`: a completion's phase is its slot's remainder | `PendingMatches` | 12 | 405 | 0.6 |
 | `MCRNUringSendPhasesBrokenSlots.cfg` | `CountRule = FALSE`: the submit counts the run's slots while the reap retires one send | `PendingMatches` | 12 | 13 | 4.4 |
+| `MCRNUringSendPhasesBrokenResendUncounted.cfg` | `ResendRule = FALSE`: a refused run's resends are not counted pending | `NoWriteWhileKernelOwned` | 12 | 217 | 0.9 |
+
+`ReapRefused` adds transitions but no distinct states to the two passing
+cases: a refused run resent as one-slot sends counted pending is a state
+the code also reaches by submitting those slots as one-slot runs, so the
+resend keeps every property the staging already had. The other rows'
+figures are from their earlier measurement; the refreshed records in
+`RUNS.tsv` match them in exit and distinct states.
 
 ## Counterexamples, checked by hand against the code
 
@@ -106,6 +115,16 @@ counts the one in-flight send, so the count is already too high before any
 completion, and after the reap it is still above the sends that remain.
 The code adds one per run (`send_pending[phase]++`) and decrements one
 send when that run's CQE is reaped.
+
+**BrokenResendUncounted**: update 0 stages two slots of phase 0 and
+`send_packets` submits them as one two-slot run. The destination refuses
+it: the reap lowers phase 0's count to 0 and resends both slots, but with
+`ResendRule = FALSE` does not count them. `SendEnd` finds phase 0 complete
+and resets its index while the kernel owns both resent slots, and update
+1's `start_packet` hands out slot 0. The code decrements
+`send_pending[slot / ROCKETNET_URING_SEND_QUEUE_SIZE]` for the run's CQE
+and `rocketnet_server_uring_resend_plain` increments `send_pending[phase]`
+for each resend before the reap returns, so the phase stays incomplete.
 
 **BrokenRemainder**: phase 0's slot 0 and phase 1's slot 2 are submitted
 (as one-slot runs) and the kernel posts slot 2's completion first. Its

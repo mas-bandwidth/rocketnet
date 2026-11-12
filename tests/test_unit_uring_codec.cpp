@@ -24,6 +24,7 @@
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_uring_codec.h"
 #include "../sdk/rocketnet_server_uring.h"
+#include "../sdk/rocketnet_server_gso.h"
 
 #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT )
 #define ROCKETNET_URING_CODEC_ACTIVE 1
@@ -637,18 +638,24 @@ REGISTER_UNIT_TEST( test_uring_recvmsg_gro_stride );
 
 #if ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
-// one segmented SENDMSG completed with -EINVAL. the run is counted dropped,
-// segmentation is off for the transport from then on, and a later run to the
-// same destination leaves plain, one SENDMSG per slot. no kernel ring and no
-// socket: the fake completion source.
+// segmented SENDMSGs refused by their destination: -EIO in the run's CQE, as
+// the kernel answers a destination whose route cannot take UDP segmentation
+// (an IPsec policy, say). no kernel ring and no socket: the fake completion
+// source, which reads each submitted send's destination port and run length
+// from its staging slot and refuses a run of more than one packet to the
+// refusing port, or to every port.
 
 struct uring_segment_fake_t
 {
-    struct rocketnet_server_uring_test_completion_t fifo[32];
+    struct rocketnet_server_uring_test_completion_t fifo[64];
     int head;
     int tail;
-    int send_res;
-    int sends;
+    struct rocketnet_server_uring_t * uring;
+    uint16_t refuse_port;                   // nonzero: segmented runs to this port are refused
+    bool refuse_all;                        // every segmented run is refused: a kernel that cannot segment
+    int refusals;
+    int segmented;
+    int plain;
 };
 
 static int uring_segment_fake_count( struct uring_segment_fake_t * fake )
@@ -658,9 +665,9 @@ static int uring_segment_fake_count( struct uring_segment_fake_t * fake )
 
 static void uring_segment_fake_push( struct uring_segment_fake_t * fake, uint64_t user_data, int32_t res, uint32_t flags )
 {
-    rocketnet_unit_check( uring_segment_fake_count( fake ) < 32 );
+    rocketnet_unit_check( uring_segment_fake_count( fake ) < 64 );
 
-    struct rocketnet_server_uring_test_completion_t * completion = &fake->fifo[fake->tail % 32];
+    struct rocketnet_server_uring_test_completion_t * completion = &fake->fifo[fake->tail % 64];
     completion->user_data = user_data;
     completion->res = res;
     completion->flags = flags;
@@ -678,7 +685,7 @@ static int uring_segment_fake_peek( void * context, struct rocketnet_server_urin
 
     for ( int i = 0; i < count; i++ )
     {
-        completions[i] = fake->fifo[( fake->head + i ) % 32];
+        completions[i] = fake->fifo[( fake->head + i ) % 64];
     }
 
     return count;
@@ -704,8 +711,26 @@ static void uring_segment_fake_submitted( void * context, uint64_t user_data )
 
     if ( kind == ROCKETNET_URING_TAG_SEND )
     {
-        fake->sends++;
-        uring_segment_fake_push( fake, user_data, fake->send_res, 0 );
+        uint16_t port = 0;
+        int run_packets = 0;
+        rocketnet_server_uring_test_send_slot( fake->uring, (int) rocketnet_uring_tag_index( user_data ), &port, &run_packets );
+
+        if ( run_packets > 1 && ( fake->refuse_all || ( fake->refuse_port != 0 && port == fake->refuse_port ) ) )
+        {
+            fake->refusals++;
+            uring_segment_fake_push( fake, user_data, -EIO, 0 );
+            return;
+        }
+
+        if ( run_packets > 1 )
+        {
+            fake->segmented++;
+        }
+        else
+        {
+            fake->plain++;
+        }
+        uring_segment_fake_push( fake, user_data, 64 * ( run_packets > 1 ? run_packets : 1 ), 0 );
     }
     else if ( kind == ROCKETNET_URING_TAG_CANCEL )
     {
@@ -732,56 +757,120 @@ static void uring_segment_stage( struct rocketnet_server_uring_t * uring, uint16
     }
 }
 
-static void test_uring_segment_refusal_sends_plain_after()
+static struct rocketnet_server_uring_t * uring_segment_open( struct uring_segment_fake_t * fake, struct rocketnet_server_uring_test_source_t * source )
 {
-    struct uring_segment_fake_t fake;
-    memset( &fake, 0, sizeof( fake ) );
-    fake.send_res = -EINVAL;
+    memset( source, 0, sizeof( *source ) );
+    source->context = fake;
+    source->peek = uring_segment_fake_peek;
+    source->advance = uring_segment_fake_advance;
+    source->ready = uring_segment_fake_ready;
+    source->submitted = uring_segment_fake_submitted;
 
-    struct rocketnet_server_uring_test_source_t source;
-    memset( &source, 0, sizeof( source ) );
-    source.context = &fake;
-    source.peek = uring_segment_fake_peek;
-    source.advance = uring_segment_fake_advance;
-    source.ready = uring_segment_fake_ready;
-    source.submitted = uring_segment_fake_submitted;
-
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, source );
     rocketnet_unit_check( uring );
+    fake->uring = uring;
     rocketnet_server_uring_test_set_features( uring, ROCKETNET_SERVER_URING_FEATURE_SEGMENT );
+    return uring;
+}
 
-    uring_segment_stage( uring, 40000, 2 );
-    rocketnet_server_uring_send_packets( uring );
-
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
-    rocketnet_server_uring_counters( uring, counters );
-
-    // the refusal arrives in the run's CQE, which has handed its slots back,
-    // so the run cannot be resent and is dropped (rocketnet_server_uring_reap_cqe);
-    // gso, whose sendmmsg refuses with the bank still held, resends it plain
-    // (test_server_gso_segment_refusal_keeps_other_destinations)
-    rocketnet_unit_check( fake.sends == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 2 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 1 );
-    rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 );
-
-    // the same destination again: two slots leave as two plain SENDMSGs
-    fake.send_res = 64;
-    uring_segment_stage( uring, 40000, 2 );
-    rocketnet_server_uring_send_packets( uring );
-    rocketnet_server_uring_counters( uring, counters );
-    rocketnet_unit_check( fake.sends == 3 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_SENDS] == 1 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == 2 );
-    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 2 );
-
+static void uring_segment_close( struct rocketnet_server_uring_t * uring )
+{
     rocketnet_server_uring_stop( uring );
     rocketnet_unit_check( rocketnet_server_uring_stopped( uring ) );
     rocketnet_server_uring_destroy( uring );
 }
 
-REGISTER_UNIT_TEST( test_uring_segment_refusal_sends_plain_after );
+// one destination refuses every segmented run, another accepts them and
+// sends one packet an update, the normal game load. many updates later the
+// accepting destination's run is still one segmented send, the refusing
+// destination's packets all left, plain, nothing was dropped, and the
+// refusing destination paid one refusal, not one a run.
+
+static void test_uring_segment_refusal_is_per_destination()
+{
+    struct uring_segment_fake_t fake;
+    memset( &fake, 0, sizeof( fake ) );
+    fake.refuse_port = 40000;
+
+    struct rocketnet_server_uring_test_source_t source;
+    struct rocketnet_server_uring_t * uring = uring_segment_open( &fake, &source );
+
+    const int rounds = 4 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    for ( int i = 0; i < rounds; i++ )
+    {
+        uring_segment_stage( uring, 40000, 2 );
+        uring_segment_stage( uring, 40001, 1 );
+        rocketnet_server_uring_send_packets( uring );
+    }
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+
+    rocketnet_unit_check( fake.refusals == 1 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds ) );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 0 );
+    rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
+    rocketnet_unit_check( rocketnet_server_uring_test_send_idle( uring ) );
+
+    // the accepting destination's run is one segmented send; the refusing
+    // destination's run in the same update leaves plain, unrefused
+    const int segmented_before = fake.segmented;
+    uring_segment_stage( uring, 40001, 2 );
+    uring_segment_stage( uring, 40000, 2 );
+    rocketnet_server_uring_send_packets( uring );
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_unit_check( fake.segmented == segmented_before + 1 );
+    rocketnet_unit_check( fake.refusals == 1 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 3 * rounds + 4 ) );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+
+    uring_segment_close( uring );
+}
+
+REGISTER_UNIT_TEST( test_uring_segment_refusal_is_per_destination );
+
+// a kernel that accepted the UDP_SEGMENT probe but refuses every segmented
+// send, so no segmented send is ever accepted: each refusing destination's
+// run is resent plain, and once ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
+// destinations refused, segmentation is off for the transport and later runs
+// leave plain without a refusal. nothing is dropped.
+
+static void test_uring_segment_refused_everywhere_turns_off()
+{
+    struct uring_segment_fake_t fake;
+    memset( &fake, 0, sizeof( fake ) );
+    fake.refuse_all = true;
+
+    struct rocketnet_server_uring_test_source_t source;
+    struct rocketnet_server_uring_t * uring = uring_segment_open( &fake, &source );
+
+    for ( int i = 0; i < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD; i++ )
+    {
+        rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0 );
+        uring_segment_stage( uring, (uint16_t) ( 41000 + i ), 2 );
+        rocketnet_server_uring_send_packets( uring );
+    }
+
+    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_unit_check( fake.refusals == ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD );
+    rocketnet_unit_check( ( rocketnet_server_uring_features( uring ) & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS] == 1 );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD ) );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] == 0 );
+
+    // a new destination: two plain SENDMSGs, no refusal
+    uring_segment_stage( uring, 42000, 2 );
+    rocketnet_server_uring_send_packets( uring );
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_unit_check( fake.refusals == ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD );
+    rocketnet_unit_check( counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] == (uint64_t) ( 2 * ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD + 2 ) );
+
+    uring_segment_close( uring );
+}
+
+REGISTER_UNIT_TEST( test_uring_segment_refused_everywhere_turns_off );
 
 #endif // #if ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 

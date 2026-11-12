@@ -49,6 +49,14 @@
 (* (PendingMatches).  CountRule = FALSE makes the submit count the run's    *)
 (* slots while the reap retires one send, so a multi-slot run breaks       *)
 (* PendingMatches.                                                          *)
+(*                                                                         *)
+(* A run of more than one slot may be refused by its destination (its     *)
+(* CQE carries -EINVAL, -EIO or -EOPNOTSUPP): the reap resends each of its *)
+(* slots at once as one send (ReapRefused,                                 *)
+(* rocketnet_server_uring_resend_plain).  ResendRule = FALSE is the        *)
+(* reversed witness: the resends are not counted pending in their phase,   *)
+(* so the phase can complete and its index reset while the kernel owns the *)
+(* resent slots (NoWriteWhileKernelOwned).                                 *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -59,12 +67,13 @@ CONSTANTS Phases,       \* send phases (the code: ROCKETNET_URING_SEND_PHASES)
           LateReap,     \* every send's completion is reaped by the next receive call
           BaseRule,     \* start_packet adds the phase base to the index
           QuotientRule, \* a reaped send's phase is its head slot's quotient by Size
-          CountRule     \* submit counts one send (TRUE) or the run's slots (FALSE); reap retires one
+          CountRule,    \* submit counts one send (TRUE) or the run's slots (FALSE); reap retires one
+          ResendRule    \* a refused run's resends are pending in its phase before the reap returns
 
 ASSUME Phases \in Nat \ {0} /\ Size \in Nat \ {0} /\ MaxUpdates \in Nat
 ASSUME MaxSegments \in Nat \ {0}
 ASSUME LateReap \in BOOLEAN /\ BaseRule \in BOOLEAN /\ QuotientRule \in BOOLEAN
-ASSUME CountRule \in BOOLEAN
+ASSUME CountRule \in BOOLEAN /\ ResendRule \in BOOLEAN
 
 Ph    == 0..(Phases - 1)
 Slots == 0..(Phases * Size - 1)
@@ -183,6 +192,23 @@ Reap ==
           /\ runLen' = [runLen EXCEPT ![g] = 0]
     /\ UNCHANGED <<fill, num, submitted, unposted, written, step, upd, demand, refused>>
 
+\* a reaped run of more than one slot that its destination refused: the reap
+\* resends each slot of it at once as a send of one slot, and each is pending
+\* in the phase before the reap returns (ResendRule)
+ReapRefused ==
+    /\ step \in {"send", "recv"}
+    /\ cq # <<>>
+    /\ PhaseOf(Head(cq)) \in Ph
+    /\ pendC[PhaseOf(Head(cq))] > 0
+    /\ runLen[Head(cq)] > 1
+    /\ LET g == Head(cq)
+           R == RunOf(g)
+       IN /\ pendC' = [pendC EXCEPT ![PhaseOf(g)] = @ - 1 + (IF ResendRule THEN Cardinality(R) ELSE 0)]
+          /\ cq' = Tail(cq)
+          /\ unposted' = unposted \cup R
+          /\ runLen' = [s \in Slots |-> IF s \in R THEN 1 ELSE runLen[s]]
+    /\ UNCHANGED <<fill, num, submitted, written, step, upd, demand, refused>>
+
 \* the end of send_packets: every complete phase reset; then, when the fill
 \* phase still holds staged slots and the next phase is empty, the fill
 \* moves to it and the old fill phase is committed.  Under LateReap the
@@ -222,6 +248,7 @@ Next ==
     \/ SkipSlot
     \/ \E g \in Slots : KernelComplete(g)
     \/ Reap
+    \/ ReapRefused
     \/ SendEnd
     \/ RecvEnd
     \/ Done

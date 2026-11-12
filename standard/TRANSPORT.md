@@ -246,7 +246,7 @@ endpoint's role (client or server) on the platform it runs on. A transport
 that the implementation documents as pin-only (for example an in-process
 loopback for tests) is never part of an `auto` order and is applicable only
 as the sole name of a list. An implementation with exactly one transport MAY
-ignore rules 1 to 5 and keeps rule 6.
+ignore rules 1 to 5 and keeps rules 6 and 7.
 
 1. The value is `auto`, or empty, or an ordered, comma-separated list of
    transport names. `auto` and the empty value MUST expand to the
@@ -276,6 +276,15 @@ ignore rules 1 to 5 and keeps rule 6.
 6. An endpoint MUST report the name of the transport that carries it, and
    MUST log at create the chosen transport and the reason each earlier
    candidate was skipped or refused.
+7. A server transport that sends several of one destination's packets as one
+   segmented send scopes a refusal of that send to its destination. When the
+   operating system refuses a segmented send for its destination (its route
+   cannot carry one), the transport MUST send those packets unsegmented, MUST
+   NOT drop them for that refusal, and MUST NOT send any other destination's
+   packets unsegmented because of it. A transport MAY stop segmenting for
+   every destination only when segmented sends to several destinations were
+   refused and none was ever accepted, so that the operating system itself
+   cannot segment.
 
 <a id="t3"></a>
 ## t3. Constants and registries
@@ -4061,6 +4070,18 @@ warning. The endpoint reports the transport that carries it and logs each earlie
 candidate's skip or refusal. A transport never changes a byte on the wire, so
 transport selection is a deployment and diagnosis surface rather than a
 protocol one. See [t2.4 Transport selection](#t2.4).
+
+### Segmented sends
+
+A Linux server transport may coalesce a run of one destination's packets into
+one UDP segmented send. A route that cannot carry one (an IPsec policy, or a
+path MTU below the segment) makes the kernel refuse it for that destination
+alone. The transport resends that run unsegmented and remembers the
+destination, so its later runs go unsegmented without a refusal, while every
+other destination keeps segmenting. It stops segmenting for all destinations
+only when a threshold of destinations refused and no segmented send was ever
+accepted, which is a kernel that cannot segment. See
+[t2.4 Transport selection](#t2.4), rule 7.
 
 ### Kernel prefilter and XDP
 
