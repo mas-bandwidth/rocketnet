@@ -2768,9 +2768,11 @@ jobs:
           - leg: Release
             build_type: Release
             flags: ''
+          # Debug, with -O1 for speed: Release and RelWithDebInfo add
+          # _FORTIFY_SOURCE, which Apple clang's asan redefines
           - leg: asan + ubsan
-            build_type: RelWithDebInfo
-            flags: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+            build_type: Debug
+            flags: -O1 -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
