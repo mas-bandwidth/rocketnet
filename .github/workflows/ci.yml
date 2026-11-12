@@ -439,6 +439,7 @@ jobs:
         run: |
           ./bin/test_sodium
           ./bin/test_sodium_dispatch
+          ./bin/test_sodium_detect
 
       # The committed sodium pair from its SHA-256 pinned inputs, byte for
       # byte, on the Linux and macOS Release unit legs; the
@@ -1418,6 +1419,7 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
           ./bin/Release/test_sodium_dispatch.exe
+          ./bin/Release/test_sodium_detect.exe
 
       # Leg (c): a Windows test child that fails exits at once and never waits
       # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
@@ -2043,7 +2045,7 @@ jobs:
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_transport test_sodium test_sodium_dispatch --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium test_sodium_dispatch test_sodium_detect --parallel
 
       - name: Start combined unit and functional timing (unit rows)
         if: startsWith(matrix.leg, 'unit suite')
@@ -2111,6 +2113,7 @@ jobs:
         run: |
           ./bin/test_sodium
           ./bin/test_sodium_dispatch
+          ./bin/test_sodium_detect
 
       - name: Inactive XDP index negative control
         if: matrix.leg == 'functional suite'

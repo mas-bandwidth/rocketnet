@@ -644,6 +644,11 @@ if(ROCKETNET_BUILD_TESTS)
         add_executable(test_sodium_dispatch tests/test_sodium_dispatch.cpp tests/sodium_dispatch_seam.c)
         rocketnet_use_sodium(test_sodium_dispatch)
         rocketnet_warning_floor(test_sodium_dispatch)
+        # The x86 AVX detection fed chosen CPUID and XCR0 values (sodium.c's
+        # own test seam); it compiles sodium.c into itself as well.
+        add_executable(test_sodium_detect tests/test_sodium_detect.c)
+        rocketnet_use_sodium(test_sodium_detect)
+        rocketnet_warning_floor(test_sodium_detect)
     endif()
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)

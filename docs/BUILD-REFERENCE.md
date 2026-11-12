@@ -211,6 +211,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | CI nightly tier `Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)`: the cases only it compiles, and the promotion case |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `test_sodium_dispatch` | unit | the vendored pair's runtime picks are the best the CPU runs; every ChaCha20, Poly1305 and BLAKE2b implementation it contains agrees with the reference, and the known answers hold with AVX2 forced off (bundled sodium only) | CI `Sodium known answers` |
+| `test_sodium_detect` | unit | the vendored pair's x86 AVX and AVX2 detection fed chosen CPUID and XCR0 values: AVX only with AVX, XSAVE and OSXSAVE and SSE and YMM state in XCR0, AVX2 only with leaf 7 reported and its AVX2 bit (bundled sodium only) | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |

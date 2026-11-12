@@ -56,6 +56,34 @@ BASELINE_ADAPTATIONS = {
         # reads the marker, so it follows whatever conditions the read has.
         ('                             : "%edx");\n# endif\n        if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {\n',
          '                             : "%edx");\n# else\n#  define SODIUM_RUNTIME_NO_XCR0_READ 1\n# endif\n        if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {\n'),
+        # Runtime AVX detection on GCC and Clang (sodium/README.md, "CPU
+        # feature detection"): upstream reads XCR0 with this XGETBV opcode
+        # when its configure defines HAVE_AVX_ASM, which the pair leaves off
+        # (it also selects assembly the subset does not carry), so XCR0
+        # stayed 0 and AVX, and with it AVX2, was never detected. HAVE_CPUID
+        # (sodium.h: GCC or Clang on x86) reads it too. Upstream's OS check
+        # is unchanged: AVX only with AVX, XSAVE and OSXSAVE in CPUID leaf 1
+        # and SSE and YMM state in XCR0.
+        ('# elif defined(HAVE_AVX_ASM)\n        __asm__ __volatile__(".byte 0x0f, 0x01, 0xd0" /* XGETBV */\n',
+         '# elif defined(HAVE_AVX_ASM) || defined(HAVE_CPUID)\n        __asm__ __volatile__(".byte 0x0f, 0x01, 0xd0" /* XGETBV */\n'),
+        # Leaf 7 only when CPUID reports it: upstream reads leaf 7 for AVX2
+        # and AVX-512F without checking the highest leaf leaf 0 returned.
+        ('    cpu_features->has_avx2 = 0;\n#ifdef HAVE_AVX2INTRIN_H\n    if (cpu_features->has_avx) {\n',
+         '    cpu_features->has_avx2 = 0;\n#ifdef HAVE_AVX2INTRIN_H\n    if (cpu_features->has_avx && id >= 7U) {\n'),
+        # A test seam, no change to a normal build: tests/sodium_detect_seam.c
+        # defines SODIUM_RUNTIME_TEST_CPUID and SODIUM_RUNTIME_TEST_XCR0 to
+        # feed the detection chosen CPUID and XCR0 values; otherwise the
+        # macros are the real reads.
+        ('static int\n_sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)\n{\n    unsigned int cpu_info[4];\n    unsigned int id;\n    uint32_t     xcr0 = 0U;\n\n    _cpuid(cpu_info, 0x0);\n',
+         '#ifdef SODIUM_RUNTIME_TEST_CPUID\n# define SODIUM_RUNTIME_CPUID(info, type) SODIUM_RUNTIME_TEST_CPUID((info), (type))\n#else\n# define SODIUM_RUNTIME_CPUID(info, type) _cpuid((info), (type))\n#endif\n\nstatic int\n_sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)\n{\n    unsigned int cpu_info[4];\n    unsigned int id;\n    uint32_t     xcr0 = 0U;\n\n    SODIUM_RUNTIME_CPUID(cpu_info, 0x0);\n'),
+        ('        return -1; /* LCOV_EXCL_LINE */\n    }\n    _cpuid(cpu_info, 0x00000001);\n',
+         '        return -1; /* LCOV_EXCL_LINE */\n    }\n    SODIUM_RUNTIME_CPUID(cpu_info, 0x00000001);\n'),
+        ('        unsigned int cpu_info7[4];\n\n        _cpuid(cpu_info7, 0x00000007);\n        cpu_features->has_avx2 =',
+         '        unsigned int cpu_info7[4];\n\n        SODIUM_RUNTIME_CPUID(cpu_info7, 0x00000007);\n        cpu_features->has_avx2 ='),
+        ('        unsigned int cpu_info7[4];\n\n        _cpuid(cpu_info7, 0x00000007);\n        if ((cpu_info7[1] & CPUID_EBX_AVX512F)',
+         '        unsigned int cpu_info7[4];\n\n        SODIUM_RUNTIME_CPUID(cpu_info7, 0x00000007);\n        if ((cpu_info7[1] & CPUID_EBX_AVX512F)'),
+        ('        xcr0 = 0U;\n# if defined(HAVE__XGETBV) || \\\n',
+         '        xcr0 = 0U;\n# if defined(SODIUM_RUNTIME_TEST_XCR0)\n        xcr0 = SODIUM_RUNTIME_TEST_XCR0();\n# elif defined(HAVE__XGETBV) || \\\n'),
     ],
 }
 # MemorySanitizer adaptations (sodium/README.md, "MemorySanitizer"). Two

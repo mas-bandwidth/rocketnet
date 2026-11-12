@@ -1116,6 +1116,12 @@ _cpuid(unsigned int cpu_info[4U], const unsigned int cpu_info_type)
 #endif
 }
 
+#ifdef SODIUM_RUNTIME_TEST_CPUID
+# define SODIUM_RUNTIME_CPUID(info, type) SODIUM_RUNTIME_TEST_CPUID((info), (type))
+#else
+# define SODIUM_RUNTIME_CPUID(info, type) _cpuid((info), (type))
+#endif
+
 static int
 _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
 {
@@ -1123,11 +1129,11 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
     unsigned int id;
     uint32_t     xcr0 = 0U;
 
-    _cpuid(cpu_info, 0x0);
+    SODIUM_RUNTIME_CPUID(cpu_info, 0x0);
     if ((id = cpu_info[0]) == 0U) {
         return -1; /* LCOV_EXCL_LINE */
     }
-    _cpuid(cpu_info, 0x00000001);
+    SODIUM_RUNTIME_CPUID(cpu_info, 0x00000001);
 #ifdef HAVE_EMMINTRIN_H
     cpu_features->has_sse2 = ((cpu_info[3] & CPUID_EDX_SSE2) != 0x0);
 #else
@@ -1159,7 +1165,9 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
     if ((cpu_info[2] & (CPUID_ECX_AVX | CPUID_ECX_XSAVE | CPUID_ECX_OSXSAVE)) ==
         (CPUID_ECX_AVX | CPUID_ECX_XSAVE | CPUID_ECX_OSXSAVE)) {
         xcr0 = 0U;
-# if defined(HAVE__XGETBV) || \
+# if defined(SODIUM_RUNTIME_TEST_XCR0)
+        xcr0 = SODIUM_RUNTIME_TEST_XCR0();
+# elif defined(HAVE__XGETBV) || \
         (defined(_MSC_VER) && defined(_XCR_XFEATURE_ENABLED_MASK) && _MSC_FULL_VER >= 160040219)
         xcr0 = (uint32_t) _xgetbv(0);
 # elif defined(_MSC_VER) && defined(_M_IX86)
@@ -1179,7 +1187,7 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
             pop ecx
             pop eax
         }
-# elif defined(HAVE_AVX_ASM)
+# elif defined(HAVE_AVX_ASM) || defined(HAVE_CPUID)
         __asm__ __volatile__(".byte 0x0f, 0x01, 0xd0" /* XGETBV */
                              : "=a"(xcr0)
                              : "c"((uint32_t) 0U)
@@ -1195,10 +1203,10 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
 
     cpu_features->has_avx2 = 0;
 #ifdef HAVE_AVX2INTRIN_H
-    if (cpu_features->has_avx) {
+    if (cpu_features->has_avx && id >= 7U) {
         unsigned int cpu_info7[4];
 
-        _cpuid(cpu_info7, 0x00000007);
+        SODIUM_RUNTIME_CPUID(cpu_info7, 0x00000007);
         cpu_features->has_avx2 = ((cpu_info7[1] & CPUID_EBX_AVX2) != 0x0);
     }
 #endif
@@ -1208,7 +1216,7 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
     if (cpu_features->has_avx2) {
         unsigned int cpu_info7[4];
 
-        _cpuid(cpu_info7, 0x00000007);
+        SODIUM_RUNTIME_CPUID(cpu_info7, 0x00000007);
         if ((cpu_info7[1] & CPUID_EBX_AVX512F) == CPUID_EBX_AVX512F &&
             (xcr0 & (XCR0_OPMASK | XCR0_ZMM_HI256 | XCR0_HI16_ZMM))
             == (XCR0_OPMASK | XCR0_ZMM_HI256 | XCR0_HI16_ZMM)) {

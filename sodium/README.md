@@ -89,17 +89,40 @@ below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 ## CPU feature detection
 
 ChaCha20 (AVX2, SSSE3, reference) and BLAKE2b (AVX2, SSE4.1, SSSE3,
-reference) pick their implementation at `sodium_init` from the CPU features
-the baseline's `_sodium_runtime_intel_cpu_features` detects, unchanged from
-upstream. AVX, and AVX2 with it, counts only when XCR0 shows the OS saves
-SSE and YMM state, and the pair reads XCR0 only where upstream does without
-a configure step (`_xgetbv` on MSVC, or `HAVE_AVX_ASM`, which this pair
-leaves off): on GCC and Clang x86 AVX2 is compiled in and not chosen. One
-generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`) adds no
-code: it defines `SODIUM_RUNTIME_NO_XCR0_READ` where no branch of the XCR0
-read is compiled. `bin/test_sodium_dispatch` reads that marker
-(`sodium_dispatch_built("cpu", "avx2")` in `tests/sodium_dispatch_seam.c`),
-so it expects AVX2 exactly where the read exists, whatever its conditions.
+reference) pick their implementation at `sodium_init`, from the CPU features
+that the baseline's `_sodium_runtime_intel_cpu_features` detects.
+
+AVX, and AVX2 with it, counts only when both of these hold:
+- CPUID leaf 1 reports AVX, XSAVE and OSXSAVE;
+- XCR0 shows that the OS saves both SSE and YMM state (upstream's check).
+
+AVX2 also needs the AVX2 bit of CPUID leaf 7.
+
+Upstream reads XCR0 on GCC and Clang with an inline XGETBV opcode when its
+configure defines `HAVE_AVX_ASM`. This pair has no configure and leaves
+`HAVE_AVX_ASM` off, because that macro also selects assembly the subset
+does not carry. Through v1.1.7, XCR0 therefore stayed 0 on GCC and Clang,
+and AVX2 was compiled in but never chosen.
+
+`BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`) makes these edits to the
+detection:
+- **XGETBV under `HAVE_CPUID`.** The same XGETBV runs when `HAVE_CPUID` is
+  defined (GCC or Clang on x86; `sodium.h`). MSVC keeps its `_xgetbv` path.
+  An MSVC build without `/arch:AVX2` compiles no AVX2 code, as before.
+- **Leaf 7 is read only when leaf 0 reports it.** Upstream read leaf 7
+  without checking the highest leaf.
+- **A test seam.** `SODIUM_RUNTIME_TEST_CPUID` and `SODIUM_RUNTIME_TEST_XCR0`
+  replace the CPUID and XCR0 reads when a test defines them. They are
+  undefined in every other build.
+- **A marker, no code.** `SODIUM_RUNTIME_NO_XCR0_READ` is defined where no
+  branch of the XCR0 read is compiled.
+
+The tests:
+- `bin/test_sodium_detect` feeds the detection chosen CPUID and XCR0 values.
+  A detection that drops the OSXSAVE check, the XCR0 check or the
+  highest-leaf check fails it.
+- `bin/test_sodium_dispatch` checks the picks against the CPU, and expects
+  AVX2 exactly where the XCR0 read exists (it reads the marker).
 
 ## MemorySanitizer
 
