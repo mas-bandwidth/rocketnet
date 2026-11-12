@@ -38,10 +38,11 @@
 # prints XDP-GUEST-DID-NOT-BOOT and fails each of its cases with the guard's
 # log. That deadline is on the boot only: ROCKETNET_NIGHTLY_NO_TIMEOUT=1
 # lifts the 120 s limit on the guest's cases, never the boot deadline. The
-# io_uring cell is not run when the kernel disables io_uring, as the matrix
-# skips it, and that skip fails the run unless --allow-skip io_uring says it
-# is expected on this host: the nightly's fleet kernels offer io_uring, so a
-# skip there is a cell that went unrepeated, not a pass.
+# io_uring cell is not run when the kernel disables io_uring, and
+# scripts/io-uring-gate decides what that means: on a machine listed in
+# tools/io_uring_absent_runners.txt the cell prints [SKIPPED ...] and the run
+# goes on; anywhere else the cell prints FAIL and the run fails, because a
+# fleet runner without io_uring is a cell that went unrepeated, not a pass.
 #
 # Output: one line per case of every cell,
 #
@@ -53,7 +54,7 @@
 # retried. The exit status is 0 only when every run of every unmarked case
 # passed, no marked case passed, every cell run printed at least one CELL
 # line (a case list of blanks names no case and is refused when read), no
-# cell was skipped unless allowed, and (with --asan) every suite passed.
+# io_uring cell was refused by scripts/io-uring-gate, and (with --asan) every suite passed.
 #
 # --asan configures and builds a Release build with ROCKETNET_SANITIZE_ADDRESS
 # into its own build directory (build-asan by default, binaries in its bin/,
@@ -78,12 +79,6 @@
 #   --jobs N          build jobs for --asan (default 4)
 #   --out DIR         where the logs go (default build/transport-cells-repeat)
 #   --ci PATH         the workflow to read (default .github/workflows/ci.yml)
-#   --allow-skip io_uring
-#                     a kernel that disables io_uring skips that cell without
-#                     failing the run (default: the skip fails it)
-#
-# ROCKETNET_IO_URING_DISABLED_FILE names the file read for the kernel's
-# io_uring switch (default /proc/sys/kernel/io_uring_disabled; a test seam).
 #
 # Bash 3.2 and later: Linux, macOS and Windows git-bash. Run from the
 # repository root.
@@ -100,7 +95,6 @@ asan_dir=build-asan
 jobs=4
 out=build/transport-cells-repeat
 ci=.github/workflows/ci.yml
-allow_skip_uring=0
 
 usage() { sed -n '3,/^# Bash 3.2/s/^# \{0,1\}//p' "$0"; exit "${1:-2}"; }
 
@@ -116,9 +110,6 @@ while [ $# -gt 0 ]; do
         --jobs) jobs=${2:?--jobs needs N}; shift 2 ;;
         --out) out=${2:?--out needs a directory}; shift 2 ;;
         --ci) ci=${2:?--ci needs a path}; shift 2 ;;
-        --allow-skip)
-            [ "${2:-}" = io_uring ] || { echo "transport-cells-repeat: --allow-skip takes io_uring" >&2; exit 2; }
-            allow_skip_uring=1; shift 2 ;;
         -h|--help) usage 0 ;;
         *) echo "transport-cells-repeat: unknown option $1" >&2; usage 2 ;;
     esac
@@ -245,8 +236,17 @@ fi
 [ -n "$functional" ] || { if [ "$os" = windows ]; then functional=./bin/Release/functional.exe; else functional=./bin/functional; fi; }
 [ -x "$functional" ] || { echo "transport-cells-repeat: no functional binary at $functional (build first, or --functional)" >&2; exit 2; }
 
+# io_uring: a Linux machine whose kernel disables it fails its io_uring cells by name, unless
+# tools/io_uring_absent_runners.txt lists it with a reason (scripts/io-uring-gate)
 uring_offered=0
-if [ "$os" = linux ] && [ "$(cat "${ROCKETNET_IO_URING_DISABLED_FILE:-/proc/sys/kernel/io_uring_disabled}" 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
+uring_status=3
+uring_line="[SKIPPED io_uring is Linux only]"
+uring_refused=0
+if [ "$os" = linux ]; then
+    uring_status=0
+    uring_line=$("$(dirname "$0")/io-uring-gate" "io_uring") || uring_status=$?
+    if [ "$uring_status" = 0 ]; then uring_offered=1; fi
+fi
 
 # the logs live under the working directory: the xdp guest writes them through --rwdir "$PWD"
 mkdir -p "$out"
@@ -348,23 +348,20 @@ run_xdp_cell() { # server client
 # each cell runs its runs in series; the cells run in parallel
 while read -r server client expected; do
     [ -n "$server" ] || continue
-    [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
+    if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
+        echo "CELL $server/$client ${uring_line#io_uring }"
+        if [ "$uring_status" != 3 ]; then uring_refused=1; fi
+        continue
+    fi
     if [ "$server" = xdp ]; then run_xdp_cell "$server" "$client" & else run_socket_cell "$server" "$client" & fi
 done <<< "$cells"
 wait
 
 failed=0
+if [ "$uring_refused" = 1 ]; then failed=1; fi
 while read -r server client expected; do
     [ -n "$server" ] || continue
-    if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
-        if [ "$allow_skip_uring" = 1 ]; then
-            echo "CELL $server/$client [SKIPPED this kernel disables io_uring] (allowed: --allow-skip io_uring)"
-        else
-            echo "CELL $server/$client [SKIPPED this kernel disables io_uring] SKIP-NOT-ALLOWED: the cell ran no case; pass --allow-skip io_uring where this kernel is expected"
-            failed=1
-        fi
-        continue
-    fi
+    [ "$server" = io_uring ] && [ "$uring_offered" = 0 ] && continue
     printed=0
     for case in $(cell_cases "$server"); do
         printed=$((printed + 1))

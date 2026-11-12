@@ -119,14 +119,14 @@ jobs:
           run_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1
-          if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
-            run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
-          else
-            # a fleet runner with io_uring disabled has lost a cell: a failure,
-            # as scripts/soak-per-transport counts it, never a green skip
-            echo "LOAD cell=io_uring FAIL this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled)"
-            exit 1
-          fi
+          # a fleet runner without io_uring fails the cell by name unless tools/io_uring_absent_runners.txt lists it
+          gate=0
+          scripts/io-uring-gate "LOAD cell=io_uring" || gate=$?
+          case "$gate" in
+            0) run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            3) ;;
+            *) exit 1 ;;
+          esac
           vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
           if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
             echo "LOAD cell=xdp FAIL no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm"
@@ -270,6 +270,9 @@ jobs:
     name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
     runs-on: [self-hosted, Linux, X64, fleet, long]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a DISCARDED night annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'needs a host below half its cores in load at start and end; otherwise LOW_TICK DISCARDED'
     strategy:
       fail-fast: false
       matrix:
@@ -303,6 +306,7 @@ jobs:
           if ! idle "$load_start"; then
             echo "::error title=low-tick DISCARDED::the host was never idle enough in 120 minutes: load_1m=$load_start cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_start at start, not below $cores cores / 2; nothing measured"
             exit 1
           fi
           set +e
@@ -320,6 +324,7 @@ jobs:
           if ! idle "$load_end"; then
             echo "::error title=low-tick DISCARDED::a pass measured while load exceeded half the cores: load_1m=$load_end cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            echo "::warning title=UNMEASURED::low-tick load DISCARDED: host load_1m=$load_end at the end, not below $cores cores / 2; the case (exit $result) is not kept"
             exit 1
           fi
           echo "LOW_TICK PASS measured on an idle host"
