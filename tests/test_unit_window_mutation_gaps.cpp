@@ -490,6 +490,46 @@ static void test_receipt_sweep_resolves_packet_id_one_at_its_deadline()
 
 REGISTER_UNIT_TEST( test_receipt_sweep_resolves_packet_id_one_at_its_deadline );
 
+// The receipt ring full between the update that made its events visible and
+// the read: events emitted after end_update (send_packets' losses) push the
+// oldest visible ones out, and the read returns only the live ones, oldest
+// first, never a slot already written over.
+static void test_receipt_read_skips_events_the_full_ring_dropped()
+{
+    gaps_window_t w;
+    gaps_small_config( &w.config );
+    gaps_window_open( &w );
+
+    const uint32_t capacity = w.ack.region->receipt_entries;
+    check( capacity >= 4 && capacity <= 1024 );
+    rn_window_ack_receipt_begin_update( &w.ack );
+    for ( uint32_t s = 1; s <= capacity; s++ )
+    {
+        rn_window_ack_receipt_emit_loss( &w.ack, s );
+    }
+    rn_window_ack_receipt_end_update( &w.ack );
+
+    const uint32_t late = 3;
+    for ( uint32_t s = capacity + 1; s <= capacity + late; s++ )
+    {
+        rn_window_ack_receipt_emit_loss( &w.ack, s );
+    }
+    check( gaps_counter( &w, ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL ) == late );
+
+    static rocketnet_message_receipt_t out[1024 + 8];
+    const int n = rn_window_ack_receipts( &w.ack, out, (int) capacity + 8 );
+    check( n == (int) ( capacity - late ) );
+    for ( int i = 0; i < n && i < (int) capacity; i++ )
+    {
+        check( out[i].serial == (uint32_t) i + late + 1 );
+        check( out[i].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    }
+
+    gaps_window_close( &w );
+}
+
+REGISTER_UNIT_TEST( test_receipt_read_skips_events_the_full_ring_dropped );
+
 // Probing's slot is U's only in the resend sequence U is linked in: asked for
 // the other class, or once U is acknowledged, there is none.
 static void test_probe_slot_is_u_in_its_own_class_only()
