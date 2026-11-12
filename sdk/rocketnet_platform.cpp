@@ -1178,9 +1178,10 @@ static uint64_t time_start;
 static double time_start;
 #endif // #if defined( __APPLE__ )
 
-// set once init has set up the clock; until then rocketnet_platform_time is
-// 0 (on macOS the timebase denominator is still zero). The clock stays set
-// up across term, so this is never cleared.
+// set once the first init has set up the clock; until then
+// rocketnet_platform_time is 0 (on macOS the timebase denominator is still
+// zero). The clock and its origin stay set up across term, so this is never
+// cleared and a later init leaves them as they are.
 static std::atomic<bool> clock_ready( false );
 
 bool rocketnet_platform_init()
@@ -1192,15 +1193,21 @@ bool rocketnet_platform_init()
     }
 #endif // #if ROCKETNET_DEV
 
+    // the first init fixes the origin; a later init keeps it, so the clock
+    // never goes backwards across term and init
+
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+    {
 #if defined( __APPLE__ )
-    mach_timebase_info( &timebase_info );
-    time_start = mach_absolute_time();
+        mach_timebase_info( &timebase_info );
+        time_start = mach_absolute_time();
 #else // #if defined( __APPLE__ )
-    timespec ts;
-    clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+        timespec ts;
+        clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
+        time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
 #endif // #if defined( __APPLE__ )
-    clock_ready.store( true, std::memory_order_release );
+        clock_ready.store( true, std::memory_order_release );
+    }
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
     // absence is not an error: a socket without them runs the portable pump
@@ -3909,10 +3916,16 @@ bool rocketnet_platform_init()
         }
     }
 
-    ROCKETNET_PLATFORM_PRIORITY_CALL( timer_frequency )
-    ( &timer_frequency );
-    QueryPerformanceCounter( &timer_start );
-    clock_ready.store( true, std::memory_order_release );
+    // the first init fixes the origin; a later init keeps it, so the clock
+    // never goes backwards across term and init
+
+    if ( !clock_ready.load( std::memory_order_acquire ) )
+    {
+        ROCKETNET_PLATFORM_PRIORITY_CALL( timer_frequency )
+        ( &timer_frequency );
+        QueryPerformanceCounter( &timer_start );
+        clock_ready.store( true, std::memory_order_release );
+    }
 
     if ( ROCKETNET_PLATFORM_PRIORITY_CALL( platform_start )() != 0 )
     {

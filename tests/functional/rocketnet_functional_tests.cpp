@@ -11357,6 +11357,22 @@ static struct rocketnet_client_t * rocketnet_test_oom_sweep_client( rocketnet_te
     return client;
 }
 
+// rocketnet_time keeps the origin of the first init across term and init:
+// it never goes backwards (rocketnet.h: monotonic elapsed seconds). Real
+// clock, so functional.
+
+void rocketnet_test_time_keeps_its_origin_across_reinit()
+{
+    while ( rocketnet_time() < 0.02 )
+    {
+    }
+
+    const double before = rocketnet_time();
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_time() >= before );
+}
+
 static void rocketnet_test_oom_sweep( const char * server_transport, const char * client_transport )
 {
     const char * name = server_transport ? server_transport : "auto";
@@ -13427,6 +13443,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
     { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
     { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+    { "test_time_keeps_its_origin_across_reinit", rocketnet_test_time_keeps_its_origin_across_reinit, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
