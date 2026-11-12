@@ -618,6 +618,20 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     const int server_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
     const int transport_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[1] );
 
+    // the disconnect already wiped the client's keys, so only the destroy's
+    // own wipe is left to look at: refill the client transport's secret spans
+    // (keys, token, ephemeral key, nonce, the I/O thread's open copy) and the
+    // destroy must zero them again
+
+    {
+        const secrets_wiped_watch_t * client_watch = &secrets_wiped_watches[2];
+        for ( int s = 0; s < client_watch->spans; s++ )
+        {
+            memset( (uint8_t *) client_watch->block + client_watch->offsets[s], 0xC3, client_watch->bytes[s] );
+        }
+    }
+    const int client_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[2] );
+
     std::map<void *, std::vector<uint8_t>> copies;
     for ( std::map<void *, size_t>::iterator it = sizes.begin(); it != sizes.end(); ++it )
     {
@@ -656,6 +670,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
 
     check( server_secret_before > 0 );
     check( transport_secret_before > 0 );
+    check( client_secret_before > 0 );
     check( watches_freed == 3 );
     check( secret_left == 0 );
     check( written_most <= 256 );
