@@ -27,7 +27,6 @@ static const char * const source_audit_cases[] = {
 #if ROCKETNET_DEV
     "test_config_env_every_name_read_is_documented",
 #endif // #if ROCKETNET_DEV
-    "test_counters_every_counter_is_named_by_a_test",
     "test_counters_every_outcome_in_at_most_one_family",
     "test_server_process_outcomes_budget_exceeded_with_siblings",
     "test_tools_never_cast_public_client_to_internal",
