@@ -173,6 +173,7 @@ struct rocketnet_client_io_t
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     std::atomic<bool> stopped; // released only after the final core access
+    std::atomic<bool> stop_woken; // stored by the main thread once stop's wake call has returned; the I/O thread's exit closes the wake handle only after it
     struct rocketnet_client_io_open_t open;
     std::atomic<uint64_t> transport_faults;     // written by the I/O thread only: a send result, receive count or byte count this step refused
     std::atomic<uint64_t> receive_too_large;    // written by the receiving thread only: byte counts refused as past the UDP size limit
@@ -224,6 +225,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->time_context = time_context;
     io->guard_timeout_seconds = ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS;
     io->quit.store( false, std::memory_order_relaxed );
+    io->stop_woken.store( false, std::memory_order_relaxed );
 
     io->stopped.store( false, std::memory_order_relaxed );
 
@@ -484,6 +486,10 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
     {
         io->transport->operations->wake( io->transport->instance );
     }
+
+    // proofs/tla/RNClientIoShutdown.tla RequestReturn: the wake call has
+    // returned; the I/O thread's exit may now close the wake handle
+    io->stop_woken.store( true, std::memory_order_release );
 }
 
 // proofs/tla/RNBufferHandoff.tla MainTryLock: binds the Filling ring's destination, then try-acquires the mutex.
@@ -827,6 +833,15 @@ inline void rocketnet_client_io_discard_at_stop( rocketnet_client_io_t * io )
     }
 
     io->receive_discarded_at_stop.store( discarded, std::memory_order_relaxed );
+
+    // proofs/tla/RNClientIoShutdown.tla WorkerQuiesce: quit is stored before
+    // stop's wake call, so the exit can run while that call is still to
+    // return; the wake handle closes only once it has (stop_woken), so the
+    // call never writes to a closed, possibly reused, descriptor
+    while ( !io->stop_woken.load( std::memory_order_acquire ) )
+    {
+        rocketnet_platform_sleep( 0.0001 );
+    }
 
     if ( operations->close )
     {

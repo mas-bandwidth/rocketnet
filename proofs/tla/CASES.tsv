@@ -409,6 +409,7 @@ MCRNClientIoShutdownBrokenFreeBeforeComplete.cfg	MCRNClientIoShutdown.tla	invari
 MCRNClientIoShutdownBrokenReuseBeforeComplete.cfg	MCRNClientIoShutdown.tla	invariant	NoReuseBeforeComplete	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenAckBeforeWipe.cfg	MCRNClientIoShutdown.tla	invariant	CompletionMeansQuiescent	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenExitUnread.cfg	MCRNClientIoShutdown.tla	invariant	StoppedSocketDrained	check	shutdownownership	required	-
+MCRNClientIoShutdownBrokenCloseBeforeWake.cfg	MCRNClientIoShutdown.tla	invariant	NoWakeAfterClose	check	shutdownownership	required	-
 MCRNClientIoShutdownBrokenRepeatCallback.cfg	MCRNClientIoShutdown.tla	invariant	CallbackOnce	check	shutdownownership	required	-
 MCRNClientLinkStop.cfg	MCRNClientLinkStop.tla	pass	-	ignore-terminal	rnclientlinkstop	required	-
 MCRNClientLinkStopBrokenNoDrain.cfg	MCRNClientLinkStop.tla	invariant	StopLeavesNothingStaged	ignore-terminal	rnclientlinkstop	required	-

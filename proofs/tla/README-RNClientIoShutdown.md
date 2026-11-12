@@ -77,6 +77,12 @@ reversed guarantees. Negative controls separately restore:
    (`exitunread`): `StoppedSocketDrained` fails, a completed stop with a
    datagram still queued. The positive `RNClientIo` controls also check
    `StoppedSocketDrained` and `NoUnreadDiscard`.
+8. Closing the wake handle at the worker's exit before the stop request's
+   wake call has returned (`closebeforewake`): `NoWakeAfterClose` fails, the
+   request's wake writes to a closed, possibly reused, descriptor. The code
+   stores `stop_woken` after the wake call and the exit waits for it before
+   `close` (sdk/rocketnet_client_io.h). Found by ThreadSanitizer in
+   test_lifecycle.
 
 The three-ring fixture intentionally tests the final handoff boundary; ordinary
 ring allocation, payload bytes, address binding and receive publication remain

@@ -228,6 +228,62 @@ static void test_client_io_stop_counts_and_closes_what_is_queued()
 }
 REGISTER_UNIT_TEST( test_client_io_stop_counts_and_closes_what_is_queued );
 
+// Stop stores quit before its wake call, so a worker thread can reach its exit
+// while that call is still to return; the exit closes the wake handle only
+// once stop_woken says it has (RNClientIoShutdown NoWakeAfterClose, found by
+// ThreadSanitizer as a write to the closed eventfd). Here the wake call sees
+// stop_woken still clear and the handle still open, stop then stores it, and
+// the exit that follows closes once.
+
+static rocketnet_client_io_t * client_io_stop_wake_io = NULL;
+static int client_io_stop_wake_saw_woken = -1;
+static int client_io_stop_wake_saw_closes = -1;
+
+static void client_io_stop_test_wake_order( void * transport )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    client_io_stop_wake_saw_woken = client_io_stop_wake_io->stop_woken.load( std::memory_order_acquire ) ? 1 : 0;
+    client_io_stop_wake_saw_closes = fake->close_calls;
+    fake->wake_calls++;
+    fake->wake = true;
+}
+
+static void test_client_io_stop_wakes_before_the_exit_closes()
+{
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_batch;
+    operations.close = rocketnet_fake_client_close;
+    operations.wake = client_io_stop_test_wake_order;
+
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &operations, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_stop_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
+    client_io_stop_wake_io = &io;
+
+    rocketnet_unit_check( !io.stop_woken.load( std::memory_order_acquire ) );
+
+    rocketnet_address_t from = {};
+    rocketnet_address_load_ipv4( &from, 0x7f000001, 9160 );
+    rocketnet_client_io_stop( &io, 0, &from );
+
+    rocketnet_unit_check( fake.wake_calls == 1 );
+    rocketnet_unit_check( client_io_stop_wake_saw_woken == 0 );
+    rocketnet_unit_check( client_io_stop_wake_saw_closes == 0 );
+    rocketnet_unit_check( io.stop_woken.load( std::memory_order_acquire ) );
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( fake.close_calls == 1 );
+
+    client_io_stop_wake_io = NULL;
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_stop_wakes_before_the_exit_closes );
+
 // A late hand-off after worker exit asserts in Debug and is refused even when
 // the assertion hook returns or assertions are compiled out. It cannot bind
 // a destination, mutate either ring, or wake the exited worker.
