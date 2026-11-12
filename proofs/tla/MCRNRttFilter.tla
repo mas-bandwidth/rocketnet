@@ -6,7 +6,8 @@
 (* the Broken configs the reversed witnesses (v1.1.0's silence on any gap, *)
 (* and no filter); MCRNRttFilterFirstAck.cfg and                         *)
 (* MCRNRttFilterUnowed.cfg are recorded expected failures of the code: the *)
-(* first acknowledgement of a connection, and an outage with nothing owed. *)
+(* first acknowledgement of a connection, and a sample from a copy whose   *)
+(* number was already acknowledged; MCRNRttFilterStandard.cfg is m9.1.    *)
 (***************************************************************************)
 EXTENDS RNRttFilter
 =============================================================================
