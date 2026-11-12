@@ -584,7 +584,7 @@ endif()
 if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client tests/client_server/client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
-    add_executable(server tests/client_server/server.c)
+    add_executable(server tests/client_server/server.c tests/echo_payload.cpp)
     target_link_libraries(server PRIVATE rocketnet_dev)
     add_executable(happy_server tools/happy_path/happy_server.c)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
@@ -705,6 +705,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_xdp_replay_marks.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_echo_payload.cpp
+            tests/echo_payload.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
             tests/test_unit_api_polish.cpp

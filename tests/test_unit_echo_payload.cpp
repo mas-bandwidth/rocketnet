@@ -12,6 +12,7 @@
 #include "test_unit_registry.h"
 
 #include "echo_payload.h"
+#include "rocketnet_message.h"
 
 #include <stdint.h>
 #include <string.h>

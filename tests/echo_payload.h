@@ -15,7 +15,7 @@
     is refused by name instead of echoed; the echo measures the transport
     echo of unreliable records, nothing more.
 
-    No allocation, no syscall, no global state.
+    No allocation, no syscall, no global state. C and C++.
 */
 
 #pragma once
@@ -23,45 +23,20 @@
 #ifndef ROCKETNET_TESTS_ECHO_PAYLOAD_H
 #define ROCKETNET_TESTS_ECHO_PAYLOAD_H
 
-#include "rocketnet_message.h"
-
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // NULL when the payload may be echoed; otherwise what makes it a payload
-// only its sender's peer could answer, for the server to print.
+// only its sender's peer could answer, for the server to print
+// (tests/echo_payload.cpp).
 
-static inline const char * rocketnet_echo_payload_refusal( const uint8_t * payload, int bytes )
-{
-    struct rocketnet_message_limits_t limits;
-    limits.num_channels = 65536;
-    limits.enabled_codes = rocketnet_message_enabled_codes( 0xFFu );
-    limits.reliable_messages_in_flight = 65536;
-    limits.max_message_bytes = 64 * 1024 * 1024;
-    limits.receive_message_buffer_bytes = 64 * 1024 * 1024;
+const char * rocketnet_echo_payload_refusal( const uint8_t * payload, int bytes );
 
-    struct rocketnet_message_reader_t reader;
-    if ( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
-    {
-        return NULL;    // not message records: a raw transport payload, echoed as it came
-    }
-
-    struct rocketnet_message_record_t record;
-    while ( rocketnet_message_reader_next( &reader, &record ) )
-    {
-        if ( record.block )
-        {
-            return "a fragment of a numbered block (a message over one record, promoted)";
-        }
-        if ( record.control )
-        {
-            continue;
-        }
-        if ( record.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE && record.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
-        {
-            return "a numbered application message (a reliable code, or an unreliable message over 1411 bytes promoted)";
-        }
-    }
-    return NULL;
+#ifdef __cplusplus
 }
+#endif
 
 #endif // #ifndef ROCKETNET_TESTS_ECHO_PAYLOAD_H
