@@ -531,9 +531,17 @@ jobs:
       ROCKETNET_MAY_NOT_MEASURE: 'report-only; a loaded host voids the run'
   linux-frame-budget:
     name: linux frame budget
+  windows-frame-budget:
+    name: windows frame budget
+    env:
+      ROCKETNET_REPORT_ONLY: 'the Windows runner carries other work'
 """
 MAC = "macos frame budget"
 LINUX = "linux frame budget"
+WIN = "windows frame budget"
+FAIL_LINE = ("frame_budget transport=portable P=32 total_us_p99_median=180.25 runs=180.25,181.00,179.50 "
+             "gate=100 verdict=FAIL")
+REPORT_FAIL = [{"title": "REPORT-ONLY-FAIL", "message": FAIL_LINE}]
 VOID = [{"title": "UNMEASURED", "message": "VOID: host load 6.50 over the 4.00 gate; nothing measured"}]
 
 
@@ -541,7 +549,8 @@ def nights(count):
     """`count` nightly runs of nightly-frame-budget.yml, newest first: ids 101, 100, ...,
     created 08:45Z on 2026-11-12, 11-11, ...; each has the two jobs, job id = run id * 10 (+1)."""
     runs = [run(101 - n, (NOW - datetime.timedelta(days=n)).strftime("%Y-%m-%dT08:45:00Z")) for n in range(count)]
-    jobs = {r["id"]: [job(MAC, job_id=r["id"] * 10), job(LINUX, job_id=r["id"] * 10 + 1)] for r in runs}
+    jobs = {r["id"]: [job(MAC, job_id=r["id"] * 10), job(LINUX, job_id=r["id"] * 10 + 1),
+                       job(WIN, job_id=r["id"] * 10 + 2)] for r in runs}
     return {"nightly-frame-budget.yml": runs}, jobs
 
 
@@ -639,6 +648,40 @@ class Unmeasured(WatchCase):
                         "NO-MEASUREMENT nightly-frame-budget.yml :: macos frame budget: no measurement in 7 nights; "
                         "tonight: frame budget VOID: host load 16.00")
 
+    def test_report_only_fail_is_red(self):
+        runs, jobs = nights(2)
+        code, out = self.watch(FakeApi(runs, jobs, notes={1012: REPORT_FAIL}))
+        self.assertExit(1, code, out, "REPORT-FAIL nightly-frame-budget.yml :: windows frame budget: " + FAIL_LINE +
+                        " (report-only, so the job exited 0: the Windows runner carries other work)",
+                        "REPORT-FAIL 1", "nightly watch: RED: 1 ")
+
+    def test_report_only_pass_is_green(self):
+        runs, jobs = nights(2)
+        api = FakeApi(runs, jobs)
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green: 0 ", "REPORT-FAIL 0")
+        self.assertIn(f"/repos/{REPO}/check-runs/1012/annotations", api.calls)
+
+    def test_report_only_fail_owned_by_a_row_is_owned(self):
+        self.rows("nightly-frame-budget.yml\twindows frame budget\tglenn\t2026-11-12\tWindows runner contention\n")
+        runs, jobs = nights(2)
+        code, out = self.watch(FakeApi(runs, jobs, notes={1012: REPORT_FAIL}))
+        self.assertExit(0, code, out, "OWNED nightly-frame-budget.yml :: windows frame budget (report-only FAIL: "
+                        + FAIL_LINE + ") by glenn")
+
+    def test_replay_of_a_report_only_fail_is_red(self):
+        # the planted-violations row nightly-watch/report-only-fail, without the frame-budget run
+        output = FAIL_LINE + "\n::warning title=REPORT-ONLY-FAIL::" + FAIL_LINE + "\n"
+        recorded = nightly_replay.replay(self.root, REPO, "nightly-frame-budget.yml", WIN, 1, "success", output, NOW)
+        replay_file = os.path.join(self.root, "replay.json")
+        with open(replay_file, "w", encoding="utf-8") as f:
+            json.dump(recorded, f)
+        out = io.StringIO()
+        code = watch.main(["--root", self.root, "--replay", replay_file], now=NOW, sleep=lambda s: None,
+                          since=lambda name: OLD, out=out)
+        self.assertExit(1, code, out.getvalue(), "REPORT-FAIL nightly-frame-budget.yml :: windows frame budget: "
+                        + FAIL_LINE)
+
     def test_every_gated_job_in_the_repository_names_a_reason(self):
         root = str(Path(__file__).resolve().parent.parent)
         total = 0
@@ -647,6 +690,10 @@ class Unmeasured(WatchCase):
                 self.assertTrue(why.strip(), (name, regex))
                 total += 1
         self.assertGreater(total, 0, "no workflow declares ROCKETNET_MAY_NOT_MEASURE")
+        reports = [why for name, _ in watch.scheduled_workflows(root)
+                   for _, why in watch.may_not_measure(root, name, watch.REPORT_ONLY)]
+        self.assertEqual(2, len(reports), "the macOS and Windows frame-budget legs are report-only")
+        self.assertTrue(all(why.strip() for why in reports), reports)
 
 
 class CronParser(unittest.TestCase):

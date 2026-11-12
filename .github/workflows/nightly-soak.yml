@@ -116,11 +116,14 @@ jobs:
           run_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable
           run_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1
-          if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
-            run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
-          else
-            echo "LOAD cell=io_uring [SKIPPED this kernel disables io_uring]"
-          fi
+          # a fleet runner without io_uring fails the cell by name unless tools/io_uring_absent_runners.txt lists it
+          gate=0
+          scripts/io-uring-gate "LOAD cell=io_uring" || gate=$?
+          case "$gate" in
+            0) run_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable ;;
+            3) ;;
+            *) exit 1 ;;
+          esac
           vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
           if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
             echo "LOAD cell=xdp FAIL no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm"

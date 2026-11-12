@@ -165,6 +165,10 @@ def evaluate_gate(
         f"frame_budget transport={transport} P=32 total_us_p99_median={median_us:.2f} "
         f"runs={runs_str} gate={gate_us:g} verdict={verdict}"
     )
+    if not passed and report_only:
+        # report-only exits 0 on FAIL; the nightly watch reads this annotation and lists the night
+        # red (tools/check_nightly_dispositions.py, REPORT-FAIL)
+        lines_out.append(f"::warning title=REPORT-ONLY-FAIL::{lines_out[-1]}")
     if passed or report_only:
         return 0, "\n".join(lines_out)
     return 1, "\n".join(lines_out)

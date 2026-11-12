@@ -50,6 +50,10 @@ and the jobs of the newest completed one. It is red on:
               a job that may decline to measure (below) declined again
               tonight and none of its last MEASURE_NIGHTS (7) scheduled runs
               measured.
+  REPORT-FAIL a report-only job (job env `ROCKETNET_REPORT_ONLY: <why>`) exited 0
+              on a failed verdict and said so with a
+              `::warning title=REPORT-ONLY-FAIL::<verdict line>` annotation; owned
+              by a disposition row like any red job.
   BAD-ROW     a disposition row that does not parse (exit 2).
 
 A job that may end without its measurement (a load gate that voids or
@@ -120,6 +124,11 @@ ROW_MAX_AGE_DAYS = 14
 MEASURE_NIGHTS = 7
 UNMEASURED_TITLE = "UNMEASURED"
 MAY_NOT_MEASURE = "ROCKETNET_MAY_NOT_MEASURE"
+# A report-only job (job env ROCKETNET_REPORT_ONLY: <why>, where the design states it) exits 0 on a
+# failed verdict and prints `::warning title=REPORT-ONLY-FAIL::<verdict line>`; the watch lists that
+# night red (REPORT-FAIL, ownable by a disposition row like any red job).
+REPORT_ONLY = "ROCKETNET_REPORT_ONLY"
+REPORT_FAIL_TITLE = "REPORT-ONLY-FAIL"
 # A transient GitHub failure (5xx, a rate limit, a dropped connection) is tried four
 # times, 5 + 10 + 20 s apart; a wait GitHub names (Retry-After, X-RateLimit-Reset) is
 # honoured up to MAX_WAIT. The job's 15-minute deadline bounds the rest.
@@ -280,10 +289,11 @@ def git_since(root, name):
     return parse_time(out)
 
 
-def may_not_measure(root, name):
+def may_not_measure(root, name, key=MAY_NOT_MEASURE):
     """[(display-name regex, why)] for the jobs of one workflow that declare, in their job env,
-    ROCKETNET_MAY_NOT_MEASURE: <why> (a job that can end without its measurement: a load gate,
-    a report-only leg, a skipped cell). Derived from the file, never hand-listed here."""
+    <key>: <why>: ROCKETNET_MAY_NOT_MEASURE (a job that can end without its measurement: a load
+    gate, a report-only leg that voids) or ROCKETNET_REPORT_ONLY (a job whose failed verdict exits
+    0). Derived from the file, never hand-listed here."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import workflow_jobs  # noqa: E402 -- the repository's own workflow reader
     flow = workflow_jobs.Workflow(os.path.join(root, ".github", "workflows", name))
@@ -291,7 +301,7 @@ def may_not_measure(root, name):
     for job in flow.jobs:
         body = (flow.data.get("jobs") or {}).get(job.id) or {}
         env = body.get("env") if isinstance(body, dict) else None
-        why = env.get(MAY_NOT_MEASURE) if isinstance(env, dict) else None
+        why = env.get(key) if isinstance(env, dict) else None
         if why:
             found.append((job.pattern(), str(why)))
     return found
@@ -494,10 +504,11 @@ class Watch:
         self.where = dispositions_name
         self.count = {"NEW-RED": 0, "NO-VERDICT": 0, "STALE": 0, "API-ERROR": 0,
                       "OWNED": 0, "GREEN": 0, "RUNNING": 0, "PENDING": 0,
-                      "UNMEASURED": 0, "NO-MEASUREMENT": 0}
+                      "UNMEASURED": 0, "NO-MEASUREMENT": 0, "REPORT-FAIL": 0}
         self.evaluated = set()
         self.scheduled = set()
         self.jobs_cache = {}
+        self.notes_cache = {}
 
     def say(self, text):
         print(text, file=self.out)
@@ -541,7 +552,7 @@ class Watch:
         self.count["OWNED"] += 1
         self.say(f"OWNED {workflow} :: {job_name} ({what}) by {row['owner']} since {row['date']}: {row['cause']}")
 
-    def watch(self, workflow, crons, since, gated=None):
+    def watch(self, workflow, crons, since, gated=None, report_only=None):
         self.scheduled.add(workflow)
         start = self.flagged()
         if not crons:
@@ -632,6 +643,21 @@ class Watch:
                 except ApiError as error:
                     self.api_error(error)
                     continue
+            report = next((why for regex, why in (report_only or []) if re.fullmatch(regex, name)), None)
+            if report is not None and conclusion == "success":
+                try:
+                    failed = self.note(job, REPORT_FAIL_TITLE)
+                except ApiError as error:
+                    self.api_error(error)
+                    continue
+                if failed is not None:
+                    row = self.owner_of(workflow, name, skip=False)
+                    if row is not None:
+                        self.check_owner(row, workflow, name, f"report-only FAIL: {failed}")
+                    else:
+                        self.red("REPORT-FAIL", f"{workflow} :: {name}: {failed} (report-only, so the job "
+                                 f"exited 0: {report}); no disposition in {self.where}")
+                continue
             if conclusion == "success":
                 continue
             if conclusion == "skipped":
@@ -681,7 +707,7 @@ class Watch:
 
     def flagged(self):
         return sum(self.count[k] for k in ("NEW-RED", "NO-VERDICT", "STALE", "OWNED", "API-ERROR",
-                                           "UNMEASURED", "NO-MEASUREMENT"))
+                                           "UNMEASURED", "NO-MEASUREMENT", "REPORT-FAIL"))
 
     # ------------------------------------------------ jobs that may decline to measure
 
@@ -690,13 +716,19 @@ class Watch:
             self.jobs_cache[run_id] = self.api.run_jobs(self.repo, run_id)
         return self.jobs_cache[run_id]
 
-    def unmeasured_note(self, job):
-        """The job's UNMEASURED annotation message, or None when it has none."""
-        notes = self.api.get(f"/repos/{self.repo}/check-runs/{job['id']}/annotations", {"per_page": 100})
-        for note in notes if isinstance(notes, list) else []:
-            if note.get("title") == UNMEASURED_TITLE:
+    def note(self, job, title):
+        """The message of the job's annotation titled `title`, or None when it has none."""
+        if job["id"] not in self.notes_cache:
+            notes = self.api.get(f"/repos/{self.repo}/check-runs/{job['id']}/annotations", {"per_page": 100})
+            self.notes_cache[job["id"]] = notes if isinstance(notes, list) else []
+        for note in self.notes_cache[job["id"]]:
+            if note.get("title") == title:
                 return str(note.get("message", "")).strip() or "(no message)"
         return None
+
+    def unmeasured_note(self, job):
+        """The job's UNMEASURED annotation message, or None when it has none."""
+        return self.note(job, UNMEASURED_TITLE)
 
     def measured(self, job):
         """True when the job concluded with a verdict and declared no UNMEASURED."""
@@ -779,22 +811,25 @@ def main(argv=None, fetch=None, now=None, sleep=None, since=None, out=None):
     for name, crons in workflows:
         try:
             gated = may_not_measure(args.root, name)
+            report_only = may_not_measure(args.root, name, REPORT_ONLY)
         except Exception as error:  # noqa: BLE001 -- a workflow the reader cannot read is red, never skipped
             watch.no_verdict(name, "(file)", f"cannot read its jobs for {MAY_NOT_MEASURE}: {error}")
-            gated = []
-        watch.watch(name, crons, since(name), gated)
+            gated, report_only = [], []
+        watch.watch(name, crons, since(name), gated, report_only)
     watch.finish_rows()
 
     c = watch.count
-    failures = c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"] + c["NO-MEASUREMENT"]
+    failures = (c["NEW-RED"] + c["NO-VERDICT"] + c["STALE"] + c["API-ERROR"] + c["NO-MEASUREMENT"]
+                + c["REPORT-FAIL"])
     print(f"nightly watch: {len(workflows)} scheduled workflows, {c['GREEN']} green, {c['OWNED']} owned, "
           f"{c['RUNNING']} running, {c['PENDING']} pending; NEW-RED {c['NEW-RED']}, "
           f"NO-VERDICT {c['NO-VERDICT']}, STALE {c['STALE']}, API-ERROR {c['API-ERROR']}, "
-          f"UNMEASURED {c['UNMEASURED']}, NO-MEASUREMENT {c['NO-MEASUREMENT']}", file=out)
+          f"UNMEASURED {c['UNMEASURED']}, NO-MEASUREMENT {c['NO-MEASUREMENT']}, REPORT-FAIL {c['REPORT-FAIL']}",
+          file=out)
     # an unmeasured night is its own outcome: never reported as green, red only after MEASURE_NIGHTS
     status = "RED" if failures else ("UNMEASURED" if c["UNMEASURED"] else "green")
-    print(f"nightly watch: {status}: {failures} unowned, no-verdict, stale, api-error "
-          f"or no-measurement; {c['UNMEASURED']} unmeasured tonight (not green, not yet red)", file=out)
+    print(f"nightly watch: {status}: {failures} unowned, no-verdict, stale, api-error, "
+          f"no-measurement or report-fail; {c['UNMEASURED']} unmeasured tonight (not green, not yet red)", file=out)
     if c["API-ERROR"]:
         print(f"nightly watch: RED: could not read run state for {c['API-ERROR']} request(s); "
               "what those requests cover has no verdict tonight", file=out)

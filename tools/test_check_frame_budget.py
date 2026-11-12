@@ -82,6 +82,11 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("total_us_p99_median=101.25", report_ro)
         self.assertIn("verdict=FAIL", report_ro)
         self.assertNotIn("verdict=PASS", report_ro)
+        # ... and names the FAIL to the nightly watch, which lists it red
+        self.assertRegex(report_ro, r"(?m)^::warning title=REPORT-ONLY-FAIL::frame_budget transport=msgx P=32 "
+                         r"total_us_p99_median=101\.25 .*verdict=FAIL$")
+        # an enforcing leg exits 1 instead and prints no annotation
+        self.assertNotIn("REPORT-ONLY-FAIL", report)
 
     def test_malformed_or_missing_line_fails(self) -> None:
         missing_p32 = (
