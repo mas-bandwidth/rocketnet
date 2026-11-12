@@ -4045,10 +4045,13 @@ int chacha20_dolbeau_link_warning_dummy = 0;
 #define implementation implementation__cc20
 #include <stdio.h>
 #include <stdlib.h>
+#include "rn_arm64.h"
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
 extern struct crypto_stream_chacha20_implementation crypto_stream_chacha20_rn_neon_implementation;
 extern struct crypto_onetimeauth_poly1305_implementation crypto_onetimeauth_poly1305_rn_mul64_implementation;
 #endif
+/* SCRATCH arm-crypto tracer: the fused AEAD, NULL = the composed path */
+static const struct rn_aead_ietf_implementation *implementation__aead = NULL;
 
 #if defined(HAVE_AVX2INTRIN_H) && defined(HAVE_EMMINTRIN_H) && \
     defined(HAVE_TMMINTRIN_H) && defined(HAVE_SMMINTRIN_H)
@@ -4211,8 +4214,10 @@ _crypto_stream_chacha20_pick_best_implementation(void)
     if (sodium_runtime_has_neon() && getenv("ROCKETNET_SODIUM_PORTABLE") == NULL) {
         #if defined(NETCODE_CRYPTO_LOGS) && NETCODE_CRYPTO_LOGS
         printf( "chacha20 -> neon\n" );
+        printf( "chacha20poly1305_ietf -> fused\n" );
         #endif // #if NETCODE_CRYPTO_LOGS
         implementation = &crypto_stream_chacha20_rn_neon_implementation;
+        implementation__aead = &rn_aead_ietf_fused_implementation;
         return 0;
     }
 #endif
@@ -6125,6 +6130,13 @@ crypto_aead_chacha20poly1305_ietf_encrypt_detached(unsigned char *c,
     unsigned char                     slen[8U];
 
     (void) nsec;
+    if (implementation__aead != NULL) {
+        implementation__aead->seal(c, mac, m, mlen, ad, adlen, npub, k);
+        if (maclen_p != NULL) {
+            *maclen_p = crypto_aead_chacha20poly1305_ietf_ABYTES;
+        }
+        return 0;
+    }
     crypto_stream_chacha20_ietf(block0, sizeof block0, npub, k);
     crypto_onetimeauth_poly1305_init(&state, block0);
     sodium_memzero(block0, sizeof block0);
@@ -6283,6 +6295,9 @@ crypto_aead_chacha20poly1305_ietf_decrypt_detached(unsigned char *m,
     int                               ret;
 
     (void) nsec;
+    if (implementation__aead != NULL) {
+        return implementation__aead->open(m, c, clen, mac, ad, adlen, npub, k);
+    }
     crypto_stream_chacha20_ietf(block0, sizeof block0, npub, k);
     crypto_onetimeauth_poly1305_init(&state, block0);
     sodium_memzero(block0, sizeof block0);

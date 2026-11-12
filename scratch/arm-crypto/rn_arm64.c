@@ -10,6 +10,7 @@
    wiped with sodium_memzero. */
 
 #include "sodium.h"
+#include "rn_arm64.h"
 
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
 
@@ -410,43 +411,66 @@ struct rn_poly_state
 };
 
 /* h = (h + m + hibit * 2^128) * r mod 2^130 - 5, partially reduced:
-   h2 <= 4 on exit, so h < 2^130 + 2^128 < 2p. */
+   h2 <= 4 on exit, so h < 2^130 + 2^128 < 2p.
+   r1 has its low two bits clear, so h1*r1*2^128 = h1*(r1/4)*2^130
+   = 5*(r1/4)*h1 = s1*h1 (mod p); likewise h2*r1*2^192 = s1*h2*2^64. */
+#define POLY_STEP( h0, h1, h2, r0, r1, s1, m, hibit )                                                                         \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        rn_u128 t_ = (rn_u128) ( h0 ) + load64_le( m );                                                                        \
+        h0 = (uint64_t) t_;                                                                                                    \
+        t_ = (rn_u128) ( h1 ) + load64_le( ( m ) + 8 ) + (uint64_t) ( t_ >> 64 );                                              \
+        h1 = (uint64_t) t_;                                                                                                    \
+        h2 += (uint64_t) ( t_ >> 64 ) + ( hibit ); /* <= 6 */                                                                  \
+        const rn_u128 d0_ = (rn_u128) ( h0 ) * ( r0 ) + (rn_u128) ( h1 ) * ( s1 );                                             \
+        rn_u128 d1_ = (rn_u128) ( h0 ) * ( r1 ) + (rn_u128) ( h1 ) * ( r0 ) + (rn_u128) ( ( h2 ) * ( s1 ) );                   \
+        uint64_t d2_ = ( h2 ) * ( r0 );                                                                                        \
+        h0 = (uint64_t) d0_;                                                                                                   \
+        d1_ += (uint64_t) ( d0_ >> 64 );                                                                                       \
+        h1 = (uint64_t) d1_;                                                                                                   \
+        d2_ += (uint64_t) ( d1_ >> 64 );                                                                                       \
+        /* fold bits 130 and up: c * 2^130 = 5c */                                                                             \
+        h2 = d2_ & 3;                                                                                                          \
+        const uint64_t c_ = ( d2_ & ~(uint64_t) 3 ) + ( d2_ >> 2 );                                                            \
+        t_ = (rn_u128) ( h0 ) + c_;                                                                                            \
+        h0 = (uint64_t) t_;                                                                                                    \
+        t_ = (rn_u128) ( h1 ) + (uint64_t) ( t_ >> 64 );                                                                       \
+        h1 = (uint64_t) t_;                                                                                                    \
+        h2 += (uint64_t) ( t_ >> 64 );                                                                                         \
+    } while ( 0 )
+
 static void poly_blocks( struct rn_poly_state * st, const unsigned char * m, size_t blocks, uint64_t hibit )
 {
     const uint64_t r0 = st->r0, r1 = st->r1, s1 = st->s1;
     uint64_t h0 = st->h0, h1 = st->h1, h2 = st->h2;
     while ( blocks-- > 0 )
     {
-        rn_u128 t = (rn_u128) h0 + load64_le( m );
-        h0 = (uint64_t) t;
-        t = (rn_u128) h1 + load64_le( m + 8 ) + (uint64_t) ( t >> 64 );
-        h1 = (uint64_t) t;
-        h2 += (uint64_t) ( t >> 64 ) + hibit; /* <= 6 */
-
-        /* r1 has its low two bits clear, so h1*r1*2^128 = h1*(r1/4)*2^130
-           = 5*(r1/4)*h1 = s1*h1 (mod p); likewise h2*r1*2^192 = s1*h2*2^64. */
-        const rn_u128 d0 = (rn_u128) h0 * r0 + (rn_u128) h1 * s1;
-        rn_u128 d1 = (rn_u128) h0 * r1 + (rn_u128) h1 * r0 + (rn_u128) ( h2 * s1 );
-        uint64_t d2 = h2 * r0;
-
-        h0 = (uint64_t) d0;
-        d1 += (uint64_t) ( d0 >> 64 );
-        h1 = (uint64_t) d1;
-        d2 += (uint64_t) ( d1 >> 64 );
-
-        /* fold bits 130 and up: c * 2^130 = 5c */
-        h2 = d2 & 3;
-        const uint64_t c = ( d2 & ~(uint64_t) 3 ) + ( d2 >> 2 );
-        t = (rn_u128) h0 + c;
-        h0 = (uint64_t) t;
-        t = (rn_u128) h1 + (uint64_t) ( t >> 64 );
-        h1 = (uint64_t) t;
-        h2 += (uint64_t) ( t >> 64 );
+        POLY_STEP( h0, h1, h2, r0, r1, s1, m, hibit );
         m += 16;
     }
     st->h0 = h0;
     st->h1 = h1;
     st->h2 = h2;
+}
+
+/* Final reduction and tag: h < 2p, so subtract p once if h >= p by
+   computing g = h + 5 and keeping g when it reaches 2^130 (mask, no branch);
+   then add the pad mod 2^128. */
+static void poly_finish( uint64_t h0, uint64_t h1, uint64_t h2, uint64_t pad0, uint64_t pad1, unsigned char out[16] )
+{
+    rn_u128 t = (rn_u128) h0 + 5;
+    const uint64_t g0 = (uint64_t) t;
+    t = (rn_u128) h1 + (uint64_t) ( t >> 64 );
+    const uint64_t g1 = (uint64_t) t;
+    const uint64_t g2 = h2 + (uint64_t) ( t >> 64 );
+    const uint64_t mask = (uint64_t) 0 - ( g2 >> 2 );
+    h0 = ( h0 & ~mask ) | ( g0 & mask );
+    h1 = ( h1 & ~mask ) | ( g1 & mask );
+    t = (rn_u128) h0 + pad0;
+    h0 = (uint64_t) t;
+    h1 = h1 + pad1 + (uint64_t) ( t >> 64 );
+    store64_le( out, h0 );
+    store64_le( out + 8, h1 );
 }
 
 static int poly_init( crypto_onetimeauth_poly1305_state * state, const unsigned char * key )
@@ -510,22 +534,7 @@ static int poly_final( crypto_onetimeauth_poly1305_state * state, unsigned char 
         memset( st->buffer + st->leftover + 1, 0, (size_t) ( 15 - st->leftover ) );
         poly_blocks( st, st->buffer, 1, 0 );
     }
-    /* h < 2p: subtract p once if h >= p, by computing g = h + 5 and keeping g
-       when it reaches 2^130 (bit 130 is set), selected by mask. */
-    uint64_t h0 = st->h0, h1 = st->h1, h2 = st->h2;
-    rn_u128 t = (rn_u128) h0 + 5;
-    const uint64_t g0 = (uint64_t) t;
-    t = (rn_u128) h1 + (uint64_t) ( t >> 64 );
-    const uint64_t g1 = (uint64_t) t;
-    const uint64_t g2 = h2 + (uint64_t) ( t >> 64 );
-    const uint64_t mask = (uint64_t) 0 - ( g2 >> 2 );
-    h0 = ( h0 & ~mask ) | ( g0 & mask );
-    h1 = ( h1 & ~mask ) | ( g1 & mask );
-    t = (rn_u128) h0 + st->pad0;
-    h0 = (uint64_t) t;
-    h1 = h1 + st->pad1 + (uint64_t) ( t >> 64 );
-    store64_le( out, h0 );
-    store64_le( out + 8, h1 );
+    poly_finish( st->h0, st->h1, st->h2, st->pad0, st->pad1, out );
     sodium_memzero( st, sizeof( *st ) );
     return 0;
 }
@@ -550,6 +559,271 @@ static int poly_verify( const unsigned char * h, const unsigned char * in, unsig
 
 struct crypto_onetimeauth_poly1305_implementation crypto_onetimeauth_poly1305_rn_mul64_implementation = {
     poly_onetimeauth, poly_verify, poly_init, poly_update, poly_final,
+};
+
+/* ---------- Fused ChaCha20-Poly1305 (RFC 8439 2.8), one pass ----------
+
+   The composed AEAD runs ChaCha20 over the message and then Poly1305 over the
+   ciphertext. Here each 256-byte ChaCha20 step (four blocks, vector pipes)
+   also absorbs up to 20 Poly1305 blocks (integer multiply pipe), two per
+   double round, so the two run side by side. Same construction, same bytes:
+   key block 0, message from block 1, MAC over ad | pad | c | pad | len | len,
+   every Poly1305 block a full 16 bytes with the high bit set. */
+
+struct rn_poly_regs
+{
+    uint64_t r0, r1, s1, h0, h1, h2;
+};
+
+static void chacha4_xor_poly( const struct rn_chacha_state * st, uint64_t ctr, unsigned char * out, const unsigned char * in, size_t len,
+                              struct rn_poly_regs * p, const unsigned char * pm, size_t pblocks )
+{
+    const uint8x16_t r8 = vld1q_u8( rotl8_index );
+    uint32x4_t in_v[16];
+    chacha_input4( st, ctr, in_v );
+    const uint64_t r0 = p->r0, r1 = p->r1, s1 = p->s1;
+    uint64_t h0 = p->h0, h1 = p->h1, h2 = p->h2;
+    size_t pdone = 0;
+
+    uint32x4_t x0 = in_v[0], x1 = in_v[1], x2 = in_v[2], x3 = in_v[3];
+    uint32x4_t x4 = in_v[4], x5 = in_v[5], x6 = in_v[6], x7 = in_v[7];
+    uint32x4_t x8 = in_v[8], x9 = in_v[9], x10 = in_v[10], x11 = in_v[11];
+    uint32x4_t x12 = in_v[12], x13 = in_v[13], x14 = in_v[14], x15 = in_v[15];
+
+    for ( int round = 0; round < 10; round++ )
+    {
+        QR4( x0, x4, x8, x12 );
+        QR4( x1, x5, x9, x13 );
+        if ( pdone < pblocks )
+        {
+            POLY_STEP( h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1 );
+            pdone++;
+        }
+        QR4( x2, x6, x10, x14 );
+        QR4( x3, x7, x11, x15 );
+        QR4( x0, x5, x10, x15 );
+        QR4( x1, x6, x11, x12 );
+        if ( pdone < pblocks )
+        {
+            POLY_STEP( h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1 );
+            pdone++;
+        }
+        QR4( x2, x7, x8, x13 );
+        QR4( x3, x4, x9, x14 );
+    }
+    while ( pdone < pblocks )
+    {
+        POLY_STEP( h0, h1, h2, r0, r1, s1, pm + 16 * pdone, 1 );
+        pdone++;
+    }
+    p->h0 = h0;
+    p->h1 = h1;
+    p->h2 = h2;
+
+    uint32x4_t x[16] = { x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15 };
+    for ( int i = 0; i < 16; i++ )
+    {
+        x[i] = vaddq_u32( x[i], in_v[i] );
+    }
+    chacha_out4( x, out, in, len );
+}
+
+static void poly_regs_absorb( struct rn_poly_regs * p, const unsigned char * m, size_t blocks )
+{
+    const uint64_t r0 = p->r0, r1 = p->r1, s1 = p->s1;
+    uint64_t h0 = p->h0, h1 = p->h1, h2 = p->h2;
+    for ( size_t i = 0; i < blocks; i++ )
+    {
+        POLY_STEP( h0, h1, h2, r0, r1, s1, m + 16 * i, 1 );
+    }
+    p->h0 = h0;
+    p->h1 = h1;
+    p->h2 = h2;
+}
+
+/* absorb n bytes as AEAD data: whole blocks, then the tail zero-padded to 16 */
+static void poly_regs_absorb_padded( struct rn_poly_regs * p, const unsigned char * m, size_t n )
+{
+    poly_regs_absorb( p, m, n / 16 );
+    if ( n % 16 != 0 )
+    {
+        unsigned char block[16] = { 0 };
+        memcpy( block, m + ( n & ~(size_t) 15 ), n % 16 );
+        poly_regs_absorb( p, block, 1 );
+        sodium_memzero( block, sizeof( block ) );
+    }
+}
+
+static void poly_regs_init( struct rn_poly_regs * p, uint64_t pad[2], const unsigned char key[32] )
+{
+    p->r0 = load64_le( key ) & 0x0FFFFFFC0FFFFFFFULL;
+    p->r1 = load64_le( key + 8 ) & 0x0FFFFFFC0FFFFFFCULL;
+    p->s1 = p->r1 + ( p->r1 >> 2 );
+    p->h0 = 0;
+    p->h1 = 0;
+    p->h2 = 0;
+    pad[0] = load64_le( key + 16 );
+    pad[1] = load64_le( key + 24 );
+}
+
+static void poly_regs_lengths_finish( struct rn_poly_regs * p, const uint64_t pad[2], unsigned long long adlen, unsigned long long mlen,
+                                      unsigned char out[16] )
+{
+    unsigned char lens[16];
+    store64_le( lens, (uint64_t) adlen );
+    store64_le( lens + 8, (uint64_t) mlen );
+    poly_regs_absorb( p, lens, 1 );
+    poly_finish( p->h0, p->h1, p->h2, pad[0], pad[1], out );
+}
+
+static void ietf_setup( struct rn_chacha_state * st, uint64_t * ctr0, const unsigned char * npub, const unsigned char * k )
+{
+    chacha_setup( st, k );
+    const uint32_t n0 = load32_le( npub );
+    st->w[14] = load32_le( npub + 4 );
+    st->w[15] = load32_le( npub + 8 );
+    *ctr0 = (uint64_t) n0 << 32;
+}
+
+/* Blocks 0..3 in one four-block step: block 0 is the Poly1305 key, blocks
+   1..3 cover message bytes 0..191. */
+static void first_step( const struct rn_chacha_state * st, uint64_t ctr0, unsigned char * out, const unsigned char * in, size_t n,
+                        unsigned char key[32] )
+{
+    unsigned char ks[256];
+    chacha_blocks4( st, ctr0, ks, NULL, 64 + n );
+    memcpy( key, ks, 32 );
+    for ( size_t i = 0; i < n; i++ )
+    {
+        out[i] = (unsigned char) ( ks[64 + i] ^ in[i] );
+    }
+    sodium_memzero( ks, sizeof( ks ) );
+}
+
+static int aead_seal_fused( unsigned char * c, unsigned char * mac, const unsigned char * m, unsigned long long mlen, const unsigned char * ad,
+                            unsigned long long adlen, const unsigned char * npub, const unsigned char * k )
+{
+    struct rn_chacha_state st;
+    struct rn_poly_regs p;
+    uint64_t pad[2], ctr0;
+    unsigned char key[32];
+    ietf_setup( &st, &ctr0, npub, k );
+
+    const size_t first = mlen < 192 ? (size_t) mlen : 192;
+    first_step( &st, ctr0, c, m, first, key );
+    poly_regs_init( &p, pad, key );
+    sodium_memzero( key, sizeof( key ) );
+    poly_regs_absorb_padded( &p, ad, (size_t) adlen );
+
+    /* ciphertext [0, absorbed) is in the MAC; each step absorbs what the
+       previous one wrote, so the MAC trails the cipher by one step */
+    size_t absorbed = 0;
+    size_t off = first;
+    uint64_t ctr = ctr0 + 4;
+    while ( off < mlen )
+    {
+        const size_t n = mlen - off < 256 ? (size_t) ( mlen - off ) : 256;
+        chacha4_xor_poly( &st, ctr, c + off, m + off, n, &p, c + absorbed, ( off - absorbed ) / 16 );
+        absorbed = off;
+        off += n;
+        ctr += 4;
+    }
+    poly_regs_absorb_padded( &p, c + absorbed, (size_t) mlen - absorbed );
+    poly_regs_lengths_finish( &p, pad, adlen, mlen, mac );
+    sodium_memzero( &p, sizeof( p ) );
+    sodium_memzero( pad, sizeof( pad ) );
+    sodium_memzero( &st, sizeof( st ) );
+    return 0;
+}
+
+static int aead_open_fused( unsigned char * m, const unsigned char * c, unsigned long long clen, const unsigned char * mac, const unsigned char * ad,
+                            unsigned long long adlen, const unsigned char * npub, const unsigned char * k )
+{
+    struct rn_chacha_state st;
+    struct rn_poly_regs p;
+    uint64_t pad[2], ctr0;
+    unsigned char computed[16];
+    const size_t mlen = (size_t) clen;
+    ietf_setup( &st, &ctr0, npub, k );
+
+    if ( m == NULL )
+    {
+        /* verify only: the key block, then the MAC over the ciphertext */
+        unsigned char ks[64];
+        chacha_block1( &st, ctr0, ks, NULL, 64 );
+        poly_regs_init( &p, pad, ks );
+        sodium_memzero( ks, sizeof( ks ) );
+        poly_regs_absorb_padded( &p, ad, (size_t) adlen );
+        poly_regs_absorb_padded( &p, c, mlen );
+    }
+    else
+    {
+        /* The MAC is taken over the input ciphertext before each step
+           overwrites it (m may equal c), so every read of c[i] precedes the
+           write of m[i]. The plaintext is written before the tag is checked
+           and is wiped if the check fails, as the composed path's result. */
+        const size_t first = mlen < 192 ? mlen : 192;
+        unsigned char ks[256];
+        chacha_blocks4( &st, ctr0, ks, NULL, 64 + first );
+        poly_regs_init( &p, pad, ks );
+        poly_regs_absorb_padded( &p, ad, (size_t) adlen );
+        const int last_is_first = first == mlen;
+        if ( last_is_first )
+        {
+            poly_regs_absorb_padded( &p, c, first );
+        }
+        else
+        {
+            poly_regs_absorb( &p, c, first / 16 );
+        }
+        for ( size_t i = 0; i < first; i++ )
+        {
+            m[i] = (unsigned char) ( ks[64 + i] ^ c[i] );
+        }
+        sodium_memzero( ks, sizeof( ks ) );
+
+        size_t off = first;
+        uint64_t ctr = ctr0 + 4;
+        while ( off < mlen )
+        {
+            const size_t n = mlen - off < 256 ? mlen - off : 256;
+            const int last = off + n == mlen;
+            unsigned char tail[16] = { 0 };
+            if ( last && n % 16 != 0 )
+            {
+                memcpy( tail, c + off + ( n & ~(size_t) 15 ), n % 16 ); /* before the step overwrites it */
+            }
+            chacha4_xor_poly( &st, ctr, m + off, c + off, n, &p, c + off, n / 16 );
+            if ( last && n % 16 != 0 )
+            {
+                poly_regs_absorb( &p, tail, 1 );
+                sodium_memzero( tail, sizeof( tail ) );
+            }
+            off += n;
+            ctr += 4;
+        }
+    }
+    poly_regs_lengths_finish( &p, pad, adlen, mlen, computed );
+    sodium_memzero( &p, sizeof( p ) );
+    sodium_memzero( pad, sizeof( pad ) );
+    sodium_memzero( &st, sizeof( st ) );
+    const int ret = crypto_verify_16( computed, mac );
+    sodium_memzero( computed, sizeof( computed ) );
+    if ( m == NULL )
+    {
+        return ret;
+    }
+    if ( ret != 0 )
+    {
+        memset( m, 0, mlen );
+        return -1;
+    }
+    return 0;
+}
+
+struct rn_aead_ietf_implementation rn_aead_ietf_fused_implementation = {
+    aead_seal_fused,
+    aead_open_fused,
 };
 
 #endif

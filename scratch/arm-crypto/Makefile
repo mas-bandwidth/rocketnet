@@ -9,7 +9,7 @@ CC ?= cc
 WARN = -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion -Werror
 CFLAGS = -O3 -DNDEBUG -std=gnu11 $(WARN)
 
-harness: harness.c rn_arm64.c sodium.c sodium.h
+harness: harness.c rn_arm64.c rn_arm64.h sodium.c sodium.h
 	$(CC) $(CFLAGS) -c rn_arm64.c -o rn_arm64.o
 	$(CC) $(CFLAGS) harness.c rn_arm64.o -o harness
 

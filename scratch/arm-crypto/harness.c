@@ -23,13 +23,16 @@
 extern int rn_arm64_chacha8;
 #endif
 
-/* 0: portable; 1: arm64, four ChaCha20 blocks in flight; 2: arm64, eight */
+/* 0: portable; 1: arm64 composed, four ChaCha20 blocks in flight; 2: arm64
+   composed, eight; 3: arm64 fused AEAD pass (the primitives as in 2) */
+#define NPATHS 4
 static int use_arm( int on )
 {
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
-    rn_arm64_chacha8 = on == 2;
+    rn_arm64_chacha8 = on >= 2;
     implementation__cc20 = on ? &crypto_stream_chacha20_rn_neon_implementation : &crypto_stream_chacha20_ref_implementation;
     implementation__poly = on ? &crypto_onetimeauth_poly1305_rn_mul64_implementation : &crypto_onetimeauth_poly1305_donna_implementation;
+    implementation__aead = on == 3 ? &rn_aead_ietf_fused_implementation : NULL;
     return 1;
 #else
     (void) on;
@@ -40,6 +43,10 @@ static int use_arm( int on )
 static const char * picked_chacha20( void )
 {
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
+    if ( implementation__aead != NULL )
+    {
+        return "fused";
+    }
     if ( implementation__cc20 == &crypto_stream_chacha20_rn_neon_implementation )
     {
         return rn_arm64_chacha8 ? "neon8" : "neon4";
@@ -266,7 +273,7 @@ static void seed_rng( uint64_t seed )
 
 static int diff( long cases, uint64_t seed )
 {
-    static unsigned char key[32], nonce[12], aad[256], m[2001], c_ref[2001 + 16], c_arm[2001 + 16], p[2001], s_ref[2001], s_arm[2001];
+    static unsigned char key[32], nonce[12], aad[256], m[2001], c_ref[2001 + 16], c_arm_buf[2001 + 16 + 16], m_un_buf[2001 + 16], p[2001], s_ref[2001], s_arm[2001];
     long mismatch = 0, forged_accepted = 0, open_fail = 0, stream_mismatch = 0;
     seed_rng( seed );
     for ( long i = 0; i < cases; i++ )
@@ -280,8 +287,11 @@ static int diff( long cases, uint64_t seed )
         unsigned long long clen = 0, plen = 0;
         use_arm( 0 );
         crypto_aead_chacha20poly1305_ietf_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-        use_arm( 1 + (int) ( i & 1 ) );
-        crypto_aead_chacha20poly1305_ietf_encrypt( c_arm, &clen, m, mlen, aad, alen, NULL, nonce, key );
+        use_arm( 1 + (int) ( i % 3 ) );
+        unsigned char * const c_arm = c_arm_buf + ( i % 13 ); /* unaligned output */
+        unsigned char * const m_un = m_un_buf + ( i % 11 ); /* unaligned input */
+        memcpy( m_un, m, mlen );
+        crypto_aead_chacha20poly1305_ietf_encrypt( c_arm, &clen, m_un, mlen, aad, alen, NULL, nonce, key );
         if ( memcmp( c_ref, c_arm, mlen + 16 ) != 0 )
         {
             mismatch++;
@@ -307,9 +317,9 @@ static int diff( long cases, uint64_t seed )
         {
             aad[where - clen] ^= bit;
         }
-        for ( int path = 0; path < 3; path++ )
+        for ( int path = 0; path < NPATHS; path++ )
         {
-            use_arm( path == 0 ? 0 : 1 + (int) ( i & 1 ) );
+            use_arm( path == 0 ? 0 : 1 + (int) ( i % 3 ) );
             if ( crypto_aead_chacha20poly1305_ietf_decrypt( p, &plen, NULL, c_arm, clen, aad, alen, nonce, key ) == 0 )
             {
                 forged_accepted++;
@@ -317,7 +327,7 @@ static int diff( long cases, uint64_t seed )
         }
         /* every 1000th case: the raw streams across the 32-bit counter
            boundary, both layouts, so the carry into word 13 matches */
-        if ( i % 1000 <= 1 )
+        if ( i % 1000 <= 2 )
         {
             const uint32_t ic32 = 0xFFFFFFFFu - (uint32_t) ( next_u64() % 8 );
             const uint64_t ic64 = 0xFFFFFFFFull - ( next_u64() % 8 );
@@ -333,7 +343,7 @@ static int diff( long cases, uint64_t seed )
             /* the original (non-IETF) AEAD too */
             use_arm( 0 );
             crypto_aead_chacha20poly1305_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-            use_arm( 1 + (int) ( i & 1 ) );
+            use_arm( 1 + (int) ( i % 3 ) );
             crypto_aead_chacha20poly1305_encrypt( c_arm, &clen, m, mlen, aad, alen, NULL, nonce, key );
             stream_mismatch += memcmp( c_ref, c_arm, mlen + 16 ) != 0;
         }
@@ -341,6 +351,95 @@ static int diff( long cases, uint64_t seed )
     printf( "diff cases=%ld seed=%llu mismatch=%ld open_fail=%ld forged_accepted=%ld stream_and_original_aead_mismatch=%ld\n", cases,
             (unsigned long long) seed, mismatch, open_fail, forged_accepted, stream_mismatch );
     return mismatch + open_fail + forged_accepted + stream_mismatch == 0 ? 0 : 1;
+}
+
+/* Exhaustive sweep for one arm64 path: every message length lo..hi, every
+   aad length 0..64, every message alignment 0..15 x aad alignment 0..15,
+   in place and out of place. Each must seal to the portable bytes and open
+   back. Per (length, aad length), one bit flip at the zero alignments must be
+   refused with the output zeroed. */
+static int sweep( int path, int lo, int hi )
+{
+    static unsigned char key[32], nonce[12], m[2001], aad[65], c_ref[2001 + 16];
+    static unsigned char mbuf[2001 + 16 + 16], abuf[65 + 16], obuf[2001 + 16 + 16], pbuf[2001 + 16];
+    long cases = 0, mismatch = 0, open_fail = 0, forged_accepted = 0, not_wiped = 0;
+    for ( int mlen = lo; mlen <= hi; mlen++ )
+    {
+        for ( int alen = 0; alen <= 64; alen++ )
+        {
+            seed_rng( (uint64_t) mlen * 1000 + (uint64_t) alen );
+            fill( key, sizeof( key ) );
+            fill( nonce, sizeof( nonce ) );
+            fill( m, (size_t) mlen );
+            fill( aad, (size_t) alen );
+            unsigned long long clen = 0, plen = 0;
+            use_arm( 0 );
+            crypto_aead_chacha20poly1305_ietf_encrypt( c_ref, &clen, m, (unsigned long long) mlen, aad, (unsigned long long) alen, NULL, nonce,
+                                                       key );
+            use_arm( path );
+            for ( int am = 0; am < 16; am++ )
+            {
+                for ( int aa = 0; aa < 16; aa++ )
+                {
+                    unsigned char * const a = abuf + aa;
+                    memcpy( a, aad, (size_t) alen );
+                    for ( int inplace = 0; inplace < 2; inplace++ )
+                    {
+                        unsigned char * const in = mbuf + am;
+                        unsigned char * const out = inplace ? in : obuf + ( ( am + aa ) & 15 );
+                        memcpy( in, m, (size_t) mlen );
+                        crypto_aead_chacha20poly1305_ietf_encrypt( out, &clen, in, (unsigned long long) mlen, a, (unsigned long long) alen,
+                                                                   NULL, nonce, key );
+                        cases++;
+                        if ( clen != (unsigned long long) mlen + 16 || memcmp( out, c_ref, (size_t) clen ) != 0 )
+                        {
+                            mismatch++;
+                            if ( mismatch < 5 )
+                            {
+                                printf( "MISMATCH mlen %d alen %d am %d aa %d inplace %d\n", mlen, alen, am, aa, inplace );
+                            }
+                        }
+                        unsigned char * const dst = inplace ? out : pbuf + ( ( am * 3 + aa ) & 15 );
+                        if ( crypto_aead_chacha20poly1305_ietf_decrypt( dst, &plen, NULL, out, clen, a, (unsigned long long) alen, nonce, key ) !=
+                                 0 ||
+                             plen != (unsigned long long) mlen || memcmp( dst, m, (size_t) mlen ) != 0 )
+                        {
+                            open_fail++;
+                        }
+                        if ( am == 0 && aa == 0 )
+                        {
+                            /* forgery: re-seal, flip one bit of c, tag or aad */
+                            crypto_aead_chacha20poly1305_ietf_encrypt( out, &clen, m, (unsigned long long) mlen, a, (unsigned long long) alen,
+                                                                       NULL, nonce, key );
+                            const size_t bits = ( (size_t) clen + (size_t) alen ) * 8;
+                            const size_t bit = ( (size_t) mlen * 31 + (size_t) alen * 7 + (size_t) inplace ) % bits;
+                            unsigned char * const target = bit / 8 < clen ? out + bit / 8 : a + ( bit / 8 - clen );
+                            *target ^= (unsigned char) ( 1u << ( bit % 8 ) );
+                            unsigned char * const fdst = inplace ? out : pbuf;
+                            if ( crypto_aead_chacha20poly1305_ietf_decrypt( fdst, &plen, NULL, out, clen, a, (unsigned long long) alen, nonce,
+                                                                            key ) == 0 )
+                            {
+                                forged_accepted++;
+                            }
+                            for ( int i = 0; i < mlen; i++ )
+                            {
+                                if ( fdst[i] != 0 )
+                                {
+                                    not_wiped++;
+                                    break;
+                                }
+                            }
+                            *target ^= (unsigned char) ( 1u << ( bit % 8 ) );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    printf( "sweep path=%s/%s mlen=%d..%d alen=0..64 align=16x16 inplace+outofplace cases=%ld mismatch=%ld open_fail=%ld forged_accepted=%ld "
+            "not_wiped=%ld\n",
+            picked_chacha20(), picked_poly1305(), lo, hi, cases, mismatch, open_fail, forged_accepted, not_wiped );
+    return mismatch + open_fail + forged_accepted + not_wiped == 0 ? 0 : 1;
 }
 
 static double now_seconds( void )
@@ -362,7 +461,7 @@ static void bench( int iterations )
     {
         m[i] = (unsigned char) i;
     }
-    for ( int path = 0; path < 3; path++ )
+    for ( int path = 0; path < NPATHS; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 4; s++ )
@@ -411,7 +510,7 @@ static void parts( int iterations )
     static unsigned char m[1400], c[1400];
     memset( key, 7, sizeof( key ) );
     memset( nonce, 1, sizeof( nonce ) );
-    for ( int path = 0; path < 3; path++ )
+    for ( int path = 0; path < NPATHS; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 5; s++ )
@@ -449,7 +548,7 @@ static void ct( void )
     memset( ad, 3, sizeof( ad ) );
     memset( m, 4, sizeof( m ) );
     static const int sizes[6] = { 0, 1, 63, 200, 1200, 1400 };
-    for ( int path = 0; path < 3; path++ )
+    for ( int path = 0; path < NPATHS; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 6; s++ )
@@ -483,19 +582,24 @@ int main( int argc, char ** argv )
     }
     if ( strcmp( argv[1], "vectors" ) == 0 && argc > 2 )
     {
-        for ( int path = 0; path < 3; path++ )
+        for ( int path = 0; path < NPATHS; path++ )
         {
             if ( !use_arm( path ) && path >= 1 )
             {
                 printf( "no arm64 path in this build\n" );
                 break;
             }
-            const char * name = path == 0 ? "portable" : path == 1 ? "arm64-4" : "arm64-8";
+            static const char * const names[NPATHS] = { "portable", "arm64-4", "arm64-8", "arm64-fused" };
+            const char * name = names[path];
             rfc_vectors( name );
             wycheproof( argv[2], name );
         }
         printf( "vectors failures=%d\n", failures );
         return failures == 0 ? 0 : 1;
+    }
+    if ( strcmp( argv[1], "sweep" ) == 0 && argc > 4 )
+    {
+        return sweep( atoi( argv[2] ), atoi( argv[3] ), atoi( argv[4] ) );
     }
     if ( strcmp( argv[1], "diff" ) == 0 && argc > 3 )
     {
