@@ -1,0 +1,433 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+// The trace check of the XDP worker's receive pass and the ownership of its
+// frames (proofs/tla/RNXdpReceiveRing.tla, TraceRNXdpReceiveRing.tla,
+// README-TraceCheck.md). A seeded walk drives the worker's own receive
+// code (sdk/rocketnet_xdp_receive_pass.h and rocketnet_xdp_receive_ring_finish)
+// over an RX ring and a fill ring it lays out itself: libxdp's own
+// struct xsk_ring_cons and struct xsk_ring_prod over memory the walk owns,
+// read and written through libxdp's inline ring functions, exactly as over a
+// socket's mapped rings. The walk is the kernel too: it posts each packet
+// into the next frame of its fill batch, as a step of its own.
+//
+// The UMEM is six frames: frames 0 and 1 are the send region, frames 2 to 5
+// the receive region, named "f2" to "f5" in the records; a descriptor naming
+// a send frame is "send frame", the model's SendFrame. Each packet the
+// kernel posts is an IPv4 UDP frame the codec takes, so the code stages one
+// packet for every receive frame it reads, as the model does.
+//
+// The operations and the records they write:
+//   kernel_receive     the kernel posts a packet in its batch's next frame   KernelReceive
+//   kernel_refresh     the kernel publishes its consumer and peeks again      KernelRefresh
+//   kernel_misdeliver  a defect posts a descriptor naming send frame 0        KernelMisdeliver
+//   peek               rocketnet_xdp_receive_peek                            Peek
+//   take               rocketnet_xdp_receive_take                            Take
+//   finish             rocketnet_xdp_receive_end, then rocketnet_xdp_fill_flush  Finish
+//   flush              rocketnet_xdp_fill_flush at the top of a pass         Refill
+//   drain              the application takes the staged packets              Drain
+// A peek that returns 0 and a flush that reserves nothing take no model step
+// and write no record (the model: "a peek of zero is no step", "a
+// reservation of zero is this step not yet taken").
+//
+// The plant (ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING in the header) is the
+// reversed witness MCRNXdpReceiveRingBrokenPeekPastStaging: the peek asks
+// for the pending return's room alone. Its effect is a peek that returns
+// more descriptors than the staging buffer has room for; the walk reports it
+// at that record. No socket, no kernel object, no clock.
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING 1
+#endif // #if defined( ROCKETNET_TLA_PLANT )
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <string>
+#include <vector>
+
+#include "tla_trace_record.h"
+
+#if defined( __linux__ ) && ROCKETNET_XDP
+
+#include "../sdk/rocketnet_pending_frames.h"
+#include "../sdk/rocketnet_xdp_receive_pass.h"
+
+namespace
+{
+    const uint32_t RING_FRAMES = 4;             // the receive frames: Frames
+    const uint32_t RING_SEND_FRAMES = 2;        // the send region below them
+    const uint32_t RING_RX_SIZE = 2;            // the RX ring's entries: RingSize
+    const uint32_t RING_STAGE_CAPACITY = 4;     // the staging buffer's packets: StageCap
+    const uint32_t RING_FILL_SIZE = 8;          // the fill ring: FillSize, twice the frames as the server sizes it
+    const uint32_t RING_STAGE_SLOTS = 8;        // the staging arrays: room for the planted peek's overrun
+    const int RING_PACKET_BYTES = 64;           // each packet's payload
+
+    const uint64_t RING_REGION_BEGIN = (uint64_t) RING_SEND_FRAMES * ROCKETNET_XDP_FRAME_SIZE;
+    const uint64_t RING_REGION_END = (uint64_t) ( RING_SEND_FRAMES + RING_FRAMES ) * ROCKETNET_XDP_FRAME_SIZE;
+
+    // the staging buffer: the worker's rocketnet_server_socket_receive_buffer_t, small
+    struct ring_staging_t
+    {
+        uint32_t num_packets;
+        uint8_t eth[RING_STAGE_SLOTS][ETH_ALEN];
+        rocketnet_address_t from[RING_STAGE_SLOTS];
+        size_t packet_bytes[RING_STAGE_SLOTS];
+        uint8_t packet_data[RING_STAGE_SLOTS][ROCKETNET_XDP_FRAME_SIZE];
+    };
+
+    struct ring_walk_t
+    {
+        uint8_t umem[( RING_SEND_FRAMES + RING_FRAMES ) * ROCKETNET_XDP_FRAME_SIZE];
+
+        // the RX ring and the fill ring: the shared producer and consumer
+        // words and the descriptors, and libxdp's user-side views of them
+        uint32_t rx_producer;
+        uint32_t rx_consumer;
+        uint32_t rx_flags;
+        struct xdp_desc rx_desc[RING_RX_SIZE];
+        struct xsk_ring_cons rx;
+
+        uint32_t fill_producer;
+        uint32_t fill_consumer;
+        uint32_t fill_flags;
+        uint64_t fill_addr[RING_FILL_SIZE];
+        struct xsk_ring_prod fill;
+
+        // the worker's: its staging buffer, its pending return and the
+        // pass's scratch, receive_frames
+        ring_staging_t staging;
+        rocketnet_pending_frames_t<RING_FRAMES> pending_return;
+        uint64_t frame[RING_FRAMES];
+        struct rocketnet_xdp_receive_drops_t drops;
+
+        // the pass in progress: the worker's locals
+        bool taking;
+        uint32_t receive_index;
+        uint32_t num_packets;
+        uint32_t num_consumed;
+        uint32_t num_returned;
+
+        // the kernel's fill batch, and the one defect
+        uint32_t kcache;
+        uint32_t kused;
+        bool defect;
+
+        rocketnet_address_t client;
+        rocketnet_address_t server;
+    };
+
+    std::string ring_frame_name( uint64_t addr )
+    {
+        if ( addr < RING_REGION_BEGIN || addr >= RING_REGION_END )
+        {
+            return tla_string( "send frame" );
+        }
+        char name[16];
+        snprintf( name, sizeof( name ), "f%d", (int) ( addr / ROCKETNET_XDP_FRAME_SIZE ) );
+        return tla_string( name );
+    }
+
+    std::string ring_set( const std::vector<std::string> & members )
+    {
+        std::string text = "{";
+        for ( size_t i = 0; i < members.size(); i++ )
+        {
+            text += ( i > 0 ? ", " : "" ) + members[i];
+        }
+        return text + "}";
+    }
+
+    tla_record_t ring_state( const ring_walk_t & w )
+    {
+        std::vector<std::string> fq;
+        for ( uint32_t i = w.fill_consumer; i != w.fill_producer; i++ )
+        {
+            fq.push_back( ring_frame_name( w.fill_addr[i & ( RING_FILL_SIZE - 1 )] ) );
+        }
+
+        std::vector<std::string> ring;
+        for ( uint32_t i = w.rx_consumer; i != w.rx_producer; i++ )
+        {
+            ring.push_back( ring_frame_name( w.rx_desc[i & ( RING_RX_SIZE - 1 )].addr ) );
+        }
+
+        // the frames the worker holds: its pending return, and this pass's
+        // returned frames not yet appended to it
+        std::vector<std::string> pending;
+        for ( size_t i = 0; i < w.pending_return.count; i++ )
+        {
+            pending.push_back( ring_frame_name( w.pending_return.frames[i] ) );
+        }
+        if ( w.taking )
+        {
+            for ( uint32_t i = 0; i < w.num_returned; i++ )
+            {
+                pending.push_back( ring_frame_name( w.frame[i] ) );
+            }
+        }
+
+        tla_record_t state;
+        state.add( "fq", tla_sequence( fq ) );
+        state.add( "kcache", tla_int( w.kcache ) );
+        state.add( "kused", tla_int( w.kused ) );
+        state.add( "ring", tla_sequence( ring ) );
+        state.add( "ahead", tla_int( (int64_t) (uint32_t) ( w.rx.cached_cons - w.rx_consumer ) ) );
+        state.add( "cprod", tla_int( (int64_t) (uint32_t) ( w.rx.cached_prod - w.rx_consumer ) ) );
+        state.add( "phase", tla_string( w.taking ? "taking" : "idle" ) );
+        state.add( "start", tla_int( w.taking ? (int64_t) (uint32_t) ( w.receive_index - w.rx_consumer ) : 0 ) );
+        state.add( "peeked", tla_int( w.taking ? w.num_packets : 0 ) );
+        state.add( "taken", tla_int( w.taking ? w.num_consumed : 0 ) );
+        state.add( "pending", ring_set( pending ) );
+        state.add( "staged", tla_int( w.staging.num_packets ) );
+        state.add( "took", tla_bool( w.taking && w.num_consumed > 0 ) );
+        state.add( "defect", tla_bool( w.defect ) );
+        return state;
+    }
+
+    // the kernel: a packet from the client lands in the frame at addr
+    void ring_post( ring_walk_t & w, uint64_t addr, uint32_t len )
+    {
+        struct xdp_desc * desc = &w.rx_desc[w.rx_producer & ( RING_RX_SIZE - 1 )];
+        desc->addr = addr;
+        desc->len = len;
+        desc->options = 0;
+        w.rx_producer++;
+    }
+
+    uint32_t ring_build_packet( ring_walk_t & w, uint64_t addr, int sequence )
+    {
+        static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
+        static const uint8_t client_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
+        uint8_t * frame = w.umem + addr;
+        const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
+        memset( frame + header_bytes, sequence & 0xFF, RING_PACKET_BYTES );
+        const int bytes = rocketnet_xdp_frame_build( frame, ROCKETNET_XDP_FRAME_SIZE, client_mac, server_mac, &w.client, &w.server, RING_PACKET_BYTES );
+        return (uint32_t) bytes;
+    }
+
+    void ring_init( ring_walk_t & w )
+    {
+        w = ring_walk_t();
+
+        w.rx.cached_prod = 0;
+        w.rx.cached_cons = 0;
+        w.rx.mask = RING_RX_SIZE - 1;
+        w.rx.size = RING_RX_SIZE;
+        w.rx.producer = &w.rx_producer;
+        w.rx.consumer = &w.rx_consumer;
+        w.rx.ring = w.rx_desc;
+        w.rx.flags = &w.rx_flags;
+
+        // libxdp's producer view starts with the whole ring free (xsk_umem__create)
+        w.fill.cached_prod = 0;
+        w.fill.cached_cons = RING_FILL_SIZE;
+        w.fill.mask = RING_FILL_SIZE - 1;
+        w.fill.size = RING_FILL_SIZE;
+        w.fill.producer = &w.fill_producer;
+        w.fill.consumer = &w.fill_consumer;
+        w.fill.ring = w.fill_addr;
+        w.fill.flags = &w.fill_flags;
+
+        w.client.type = ROCKETNET_ADDRESS_IPV4;
+        w.client.data.ipv4[0] = 10;
+        w.client.data.ipv4[3] = 2;
+        w.client.port = 50000;
+        w.server.type = ROCKETNET_ADDRESS_IPV4;
+        w.server.data.ipv4[0] = 10;
+        w.server.data.ipv4[3] = 1;
+        w.server.port = 40000;
+    }
+}
+
+static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
+{
+    static ring_walk_t w;
+    ring_init( w );
+
+    tla_random_t random = { seed };
+    std::vector<tla_record_t> records;
+    tla_report_t report;
+
+    // create's first fill: every receive frame, in frame order, through the
+    // pending return and the worker's flush
+    uint64_t first[RING_FRAMES];
+    for ( uint32_t i = 0; i < RING_FRAMES; i++ )
+    {
+        first[i] = RING_REGION_BEGIN + (uint64_t) i * ROCKETNET_XDP_FRAME_SIZE;
+    }
+    if ( !w.pending_return.append( first, RING_FRAMES ) || !rocketnet_xdp_fill_flush( &w.pending_return, &w.fill ) )
+    {
+        fprintf( stderr, "tla_trace xdp-receive-ring: the first fill did not fit\n" );
+        return 1;
+    }
+
+    records.push_back( tla_step( "init", "init", tla_sequence( std::vector<std::string>() ), ring_state( w ) ) );
+
+    const std::string no_args = tla_sequence( std::vector<std::string>() );
+    int sequence = 0;
+    int idle_tries = 0;
+
+    while ( (int) records.size() < steps + 1 )
+    {
+        if ( ++idle_tries > 10000 )
+        {
+            fprintf( stderr, "tla_trace xdp-receive-ring: no step is possible at record %d\n", (int) records.size() );
+            return 1;
+        }
+
+        const uint32_t fill_entries = w.fill_producer - w.fill_consumer;
+        const uint32_t ring_entries = w.rx_producer - w.rx_consumer;
+
+        // the application drains a full staging buffer at once (only the
+        // planted peek can take it past full)
+        int choice = random.below( 9 );
+        if ( !w.taking && w.staging.num_packets >= RING_STAGE_CAPACITY )
+        {
+            choice = 8;
+        }
+
+        if ( choice == 0 || choice == 1 )
+        {
+            if ( w.kused >= w.kcache || ring_entries >= RING_RX_SIZE )
+            {
+                continue;
+            }
+            const uint64_t addr = w.fill_addr[( w.fill_consumer + w.kused ) & ( RING_FILL_SIZE - 1 )];
+            const uint32_t len = ring_build_packet( w, addr, ++sequence );
+            w.kused++;
+            ring_post( w, addr, len );
+            report.act( "KernelReceive" );
+            records.push_back( tla_step( "kernel_receive", "KernelReceive", no_args, ring_state( w ) ) );
+        }
+        else if ( choice == 2 )
+        {
+            if ( w.kused != w.kcache || !( w.kused > 0 || fill_entries > w.kcache ) )
+            {
+                continue;
+            }
+            w.fill_consumer += w.kused;
+            w.kcache = fill_entries - w.kused;
+            w.kused = 0;
+            report.act( "KernelRefresh" );
+            records.push_back( tla_step( "kernel_refresh", "KernelRefresh", no_args, ring_state( w ) ) );
+        }
+        else if ( choice == 3 )
+        {
+            if ( w.defect || ring_entries >= RING_RX_SIZE || random.below( 8 ) != 0 )
+            {
+                continue;
+            }
+            ring_post( w, 0, 128 );
+            w.defect = true;
+            report.act( "KernelMisdeliver" );
+            records.push_back( tla_step( "kernel_misdeliver", "KernelMisdeliver", no_args, ring_state( w ) ) );
+        }
+        else if ( choice == 4 )
+        {
+            if ( w.taking )
+            {
+                continue;
+            }
+            const uint32_t staging_room = RING_STAGE_CAPACITY - w.staging.num_packets;
+            const uint32_t peeked = rocketnet_xdp_receive_peek( &w.rx, &w.staging, RING_STAGE_CAPACITY, &w.pending_return, &w.receive_index );
+            if ( peeked == 0 )
+            {
+                continue;
+            }
+            w.taking = true;
+            w.num_packets = peeked;
+            w.num_consumed = 0;
+            w.num_returned = 0;
+            report.act( "Peek" );
+            records.push_back( tla_step( "peek", "Peek", no_args, ring_state( w ) ) );
+            if ( peeked > staging_room )
+            {
+                report.planted( (int) records.size() );
+            }
+        }
+        else if ( choice == 5 || choice == 6 )
+        {
+            if ( !w.taking )
+            {
+                continue;
+            }
+            if ( w.num_consumed < w.num_packets )
+            {
+                rocketnet_xdp_receive_take( &w.rx, w.receive_index, &w.num_consumed, w.umem, RING_REGION_BEGIN, RING_REGION_END,
+                                            ROCKETNET_ADDRESS_IPV4, &w.staging, RING_STAGE_CAPACITY, w.frame, &w.num_returned, &w.drops );
+                report.act( "Take" );
+                records.push_back( tla_step( "take", "Take", no_args, ring_state( w ) ) );
+            }
+            else
+            {
+                if ( !rocketnet_xdp_receive_end( &w.rx, w.num_packets, w.num_consumed, w.frame, w.num_returned, &w.pending_return ) )
+                {
+                    fprintf( stderr, "tla_trace xdp-receive-ring: the pending return refused the pass's frames at record %d\n", (int) records.size() );
+                    return 1;
+                }
+                w.taking = false;
+                rocketnet_xdp_fill_flush( &w.pending_return, &w.fill );
+                report.act( "Finish" );
+                records.push_back( tla_step( "finish", "Finish", no_args, ring_state( w ) ) );
+            }
+        }
+        else if ( choice == 7 )
+        {
+            if ( w.taking || w.pending_return.count == 0 || !rocketnet_xdp_fill_flush( &w.pending_return, &w.fill ) )
+            {
+                continue;
+            }
+            report.act( "Refill" );
+            records.push_back( tla_step( "flush", "Refill", no_args, ring_state( w ) ) );
+        }
+        else
+        {
+            if ( w.taking || w.staging.num_packets == 0 )
+            {
+                continue;
+            }
+            w.staging.num_packets = 0;
+            report.act( "Drain" );
+            records.push_back( tla_step( "drain", "Drain", no_args, ring_state( w ) ) );
+        }
+
+        idle_tries = 0;
+    }
+
+    report.print();
+
+#if defined( ROCKETNET_TLA_PLANT )
+    const std::string name = "MCTraceXdpReceiveRingPlantSeed" + tla_int( (int64_t) seed );
+#else  // #if defined( ROCKETNET_TLA_PLANT )
+    const std::string name = "MCTraceXdpReceiveRingSeed" + tla_int( (int64_t) seed );
+#endif // #if defined( ROCKETNET_TLA_PLANT )
+
+    std::vector<std::string> frames;
+    for ( uint32_t i = 0; i < RING_FRAMES; i++ )
+    {
+        frames.push_back( ring_frame_name( RING_REGION_BEGIN + (uint64_t) i * ROCKETNET_XDP_FRAME_SIZE ) );
+    }
+    const std::string definitions = "TraceFrames == " + ring_set( frames ) + "\n";
+
+    char constants[256];
+    snprintf( constants, sizeof( constants ), "    Frames <- TraceFrames\n    RingSize = %d\n    StageCap = %d\n    PendCap = %d\n    FillSize = %d\n",
+              (int) RING_RX_SIZE, (int) RING_STAGE_CAPACITY, (int) RING_FRAMES, (int) RING_FILL_SIZE );
+    return tla_write_trace( out, name, "TraceRNXdpReceiveRing", definitions, constants, records ) ? 0 : 1;
+}
+
+#else // #if defined( __linux__ ) && ROCKETNET_XDP
+
+// the receive pass is the AF_XDP worker's: a build without XDP has no code to
+// walk, and the layer says so rather than pass
+static int trace_xdp_receive_ring( uint64_t, int, const char * )
+{
+    fprintf( stderr, "tla_trace xdp-receive-ring: this build has no XDP transport (ROCKETNET_XDP off): no trace\n" );
+    return 1;
+}
+
+#endif // #if defined( __linux__ ) && ROCKETNET_XDP
+
+TLA_TRACE_LAYER( "xdp-receive-ring", trace_xdp_receive_ring );

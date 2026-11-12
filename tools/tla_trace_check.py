@@ -109,6 +109,11 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-receive-ring": {
+        "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 STEPS = 400
