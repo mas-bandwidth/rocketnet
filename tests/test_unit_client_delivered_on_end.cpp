@@ -403,4 +403,77 @@ static void test_client_receive_cursor_at_one_byte_and_null_out_arguments()
 }
 
 REGISTER_UNIT_TEST( test_client_receive_cursor_at_one_byte_and_null_out_arguments );
+
+// the server's acked payload packets over steps of both sides
+
+static int delivered_on_end_acked_over( struct delivered_on_end_pair_t * pair, int steps )
+{
+    int acked = 0;
+    for ( int i = 0; i < steps; i++ )
+    {
+        delivered_on_end_step( pair );
+        const int * client_index = NULL;
+        const uint64_t * packet_ids = NULL;
+        acked += rocketnet_server_transport_acked_packets( pair->server, &client_index, &packet_ids );
+    }
+    return acked;
+}
+
+static void delivered_on_end_send( struct delivered_on_end_pair_t * pair, uint8_t tag )
+{
+    const uint8_t payload[2] = { tag, 0x5A };
+    rocketnet_server_transport_send_packet( pair->server, 0, payload, (int) sizeof( payload ) );
+}
+
+// The message layer's deferred acks (rocketnet_client_transport_defer_payload_acks,
+// accept_payload; sdk/rocketnet_message_client.cpp links them): a deferred
+// client acks a payload only when the caller accepts it by its index in this
+// update's batch. An index outside the batch accepts nothing, also an index
+// that held a payload in an earlier, larger batch; an accepted payload is
+// acked once.
+
+static void test_client_deferred_acks_only_for_accepted_payloads_in_this_batch()
+{
+    struct delivered_on_end_pair_t pair;
+    delivered_on_end_setup( &pair );
+    delivered_on_end_connect( &pair );
+    delivered_on_end_acked_over( &pair, 10 );
+
+    rocketnet_client_transport_defer_payload_acks( pair.client );
+
+    // a batch of two, neither accepted
+
+    delivered_on_end_send( &pair, 1 );
+    delivered_on_end_send( &pair, 2 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 2 );
+
+    // a batch of one; indices past it, and before it, accept nothing
+
+    delivered_on_end_send( &pair, 3 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 1 );
+    rocketnet_client_transport_accept_payload( pair.client, 1 );
+    rocketnet_client_transport_accept_payload( pair.client, -1 );
+    rocketnet_client_transport_accept_payload( pair.client, 2 );
+
+    check( delivered_on_end_acked_over( &pair, 10 ) == 0 );
+
+    // the one accepted payload is acked, once
+
+    delivered_on_end_send( &pair, 4 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 1 );
+    rocketnet_client_transport_accept_payload( pair.client, 0 );
+
+    check( delivered_on_end_acked_over( &pair, 10 ) == 1 );
+
+    rn_test_client_transport_stop_and_destroy( pair.client );
+    rn_test_server_transport_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_client_deferred_acks_only_for_accepted_payloads_in_this_batch );
 #endif // #if ROCKETNET_DEV

@@ -6,6 +6,10 @@
 #include "../sdk/rocketnet_replay.h"
 // This target compiles the transport into its own deterministic fixture.
 #include "../sdk/rocketnet_server_transport.cpp"
+// and the client transport, for the connection reset's write set
+#include "../sdk/rocketnet_client_transport.cpp"
+#include "fake_client_driver.h"
+#include "rocketnet_connect_token.h"
 #include "loopback_hub.h"
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
@@ -1984,6 +1988,141 @@ static void test_disconnect_allowance_shared_with_the_message_update()
     printf( "test_disconnect_allowance_shared_with_the_message_update\n" );
 }
 
+#if ROCKETNET_DEV
+
+// The client transport's connection reset (rocketnet_client_connection_reset,
+// the transport-owned part of ClientSession End) writes only what it owns:
+// the packet leases, the fill rings' counts and the stats cursor. Every other
+// byte of the transport, the stop burst's storage poisoned so a stray zero
+// shows, is the same after it. The rings are one array in the transport's one
+// allocation, so a write past the last ring lands in the members that follow
+// (the stop burst on every layout), where no sanitizer sees it.
+
+static void control_client_token( uint8_t * token )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = 1;
+    signed_fields.expire_timestamp = 1ULL << 40;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127;
+    signed_fields.ipv4_address[3] = 1;
+    signed_fields.ipv4_address[4] = 0x40;
+    signed_fields.ipv4_address[5] = 0x9c;
+    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
+    memset( token, 0, ROCKETNET_CONNECT_TOKEN_BYTES );
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+}
+
+static double control_client_time( void * )
+{
+    return 1000.0;
+}
+
+static bool control_client_owned_by_reset( size_t offset )
+{
+    const size_t leases = offsetof( rocketnet_client_transport_t, packet_leases );
+    if ( offset >= leases && offset < leases + sizeof( ( (rocketnet_client_transport_t *) 0 )->packet_leases ) )
+    {
+        return true;
+    }
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+    {
+        const size_t count = offsetof( rocketnet_client_transport_t, payload_ring ) + (size_t) ring * sizeof( rocketnet_client_payload_ring_t ) +
+                             offsetof( rocketnet_client_payload_ring_t, num_packets );
+        if ( offset >= count && offset < count + sizeof( uint64_t ) )
+        {
+            return true;
+        }
+    }
+    const size_t stats = offsetof( rocketnet_client_transport_t, stats_counted );
+    return offset >= stats && offset < stats + sizeof( ( (rocketnet_client_transport_t *) 0 )->stats_counted );
+}
+
+static void test_client_connection_reset_writes_only_what_it_owns()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    control_client_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = control_client_time;
+
+    rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &operations, fake );
+    CHECK( client != NULL );
+    CHECK( !client->io_thread );
+
+    memset( client->stop_burst, 0xA5, sizeof( client->stop_burst ) );
+    client->payload_ring[0].num_packets = 3;
+    client->stats_counted = 3;
+
+    const size_t bytes = sizeof( rocketnet_client_transport_t );
+    uint8_t * before = (uint8_t *) malloc( bytes );
+    CHECK( before != NULL );
+    memcpy( before, (const void *) client, bytes );
+
+    rocketnet_client_connection_reset( client );
+
+    CHECK( client->payload_ring[0].num_packets == 0 );
+    CHECK( client->stats_counted == 0 );
+
+    const uint8_t * after = (const uint8_t *) client;
+    size_t changed = 0;
+    for ( size_t offset = 0; offset < bytes; offset++ )
+    {
+        if ( after[offset] != before[offset] && !control_client_owned_by_reset( offset ) )
+        {
+            if ( changed == 0 )
+            {
+                fprintf( stderr, "connection reset wrote byte %zu of the transport (stop_burst is at %zu)\n", offset,
+                         offsetof( rocketnet_client_transport_t, stop_burst ) );
+            }
+            changed++;
+        }
+    }
+    CHECK( changed == 0 );
+
+    // with the I/O thread design the rings other than the Filling one are the
+    // worker's (handed off, or its own): the reset leaves their counts alone
+    // and resets only the Filling ring's, whichever ring that is
+
+    const bool io_thread = client->io_thread;
+    const int send_fill = client->client_io.send_fill;
+    client->io_thread = true;
+    for ( int fill = 0; fill < ROCKETNET_CLIENT_IO_NUM_RINGS; fill++ )
+    {
+        client->client_io.send_fill = fill;
+        for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+        {
+            client->payload_ring[ring].num_packets = 5;
+        }
+        rocketnet_client_connection_reset( client );
+        for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+        {
+            CHECK( client->payload_ring[ring].num_packets == ( ring == fill ? 0u : 5u ) );
+        }
+    }
+    client->io_thread = io_thread;
+    client->client_io.send_fill = send_fill;
+    for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
+    {
+        client->payload_ring[ring].num_packets = 0;
+    }
+
+    free( before );
+    rn_native_client_transport_stop_and_destroy( client );
+    delete fake;
+    printf( "test_client_connection_reset_writes_only_what_it_owns\n" );
+}
+
+#endif // #if ROCKETNET_DEV
+
 int main( int argc, char ** argv )
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
@@ -2031,6 +2170,9 @@ int main( int argc, char ** argv )
     test_sweep_each_client_once_per_round();
     test_sweep_follows_the_rule_as_clients_come_and_go();
     test_disconnect_seals_per_update_at_each_bound();
+#if ROCKETNET_DEV
+    test_client_connection_reset_writes_only_what_it_owns();
+#endif // #if ROCKETNET_DEV
     test_disconnect_allowance_shared_with_the_message_update();
     CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
