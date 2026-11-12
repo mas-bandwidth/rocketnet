@@ -199,7 +199,7 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         {
             const uint32_t holder = rn_fill_phase_word_thread( seen );
             const bool other = holder != 0 && holder != me;
-            if ( other && ( rn_fill_phase_word_in( seen ) || rn_fill_phase_word_epoch( seen ) == epoch ) )
+            if ( other && ( rn_fill_phase_word_in( seen ) || (int32_t) ( rn_fill_phase_word_epoch( seen ) - epoch ) >= 0 ) )
             {
                 RN_FILL_PHASE_TRACE( "FillClaim", client_index, seen, true );
                 rn_fill_phase_count( fill_phase->two_fillers_counter );

@@ -168,8 +168,10 @@ FillBegin(f, c) ==
     /\ violated' = (violated \/ MainBusy)
     /\ UNCHANGED <<mpc, mscan, seen, mainCalls, epoch, word, flagged, phaseFillers, mainsDone, fillsDone>>
 
-\* the claim refuses a client another filler is inside, or claimed in this epoch
-Taken(f, w) == w.th \notin {NoOwner, f} /\ (w.in \/ w.ep = fepoch[f])
+\* the claim refuses a client another filler is inside, or claimed in this
+\* epoch or a later one: a call that loaded an older epoch is stale (a main
+\* operation ended inside it) and must not overwrite the current phase's claim
+Taken(f, w) == w.th \notin {NoOwner, f} /\ (w.in \/ w.ep >= fepoch[f])
 
 \* the contract is broken by a second filler on a client in one phase,
 \* whether its claim lands or is refused
