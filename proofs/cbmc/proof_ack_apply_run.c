@@ -36,15 +36,13 @@
 
 #include "rocketnet_ack.cpp"
 
-static void proof_set_bit( uint64_t * words, uint64_t slot )
-{
-    words[slot >> 6] |= 1ULL << ( slot & 63 );
-}
-
-static int proof_bit( const uint64_t * words, uint64_t slot )
-{
-    return (int) ( ( words[slot >> 6] >> ( slot & 63 ) ) & 1ULL );
-}
+// The harness reads and writes the endpoint by array index, never through a
+// pointer into it: ESBMC 8.5 encodes a write through a pointer whose offset
+// into the endpoint (a 260 KB object) is symbolic as a byte-level update of
+// the whole object, and two or more of them do not fit in memory
+// (proofs/cbmc/INVENTORY.md, "ACK run measurements"). The production leaf still makes one per
+// newly acked record, which is what bounds this harness.
+#define PROOF_BIT( words, slot ) ( (int) ( ( ( words )[( slot ) >> 6] >> ( ( slot ) & 63 ) ) & 1ULL ) )
 
 int harness_ack_apply_run( void )
 {
@@ -70,6 +68,17 @@ int harness_ack_apply_run( void )
     __CPROVER_assume( high <= highest );
     __CPROVER_assume( highest - low < ROCKETNET_SENT_PACKET_BUFFER_SIZE );
 
+#if defined( ACK_RUN_PLANT_VACUOUS )
+    // the vacuity plant: with this assume every assertion holds vacuously;
+    // both reach controls must then stop failing, which turns the night red
+    __CPROVER_assume( 0 );
+#endif // #if defined( ACK_RUN_PLANT_VACUOUS )
+
+#if defined( ACK_REACH_WRAP )
+    // the run straddles the ring end: the walk's second branch
+    __CPROVER_assume( high % ROCKETNET_SENT_PACKET_BUFFER_SIZE < low % ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+#endif // #if defined( ACK_REACH_WRAP )
+
     endpoint.highest_sequence = highest;
     len = high - low + 1;
 
@@ -77,28 +86,31 @@ int harness_ack_apply_run( void )
     {
         const uint64_t sequence = low + i;
         const uint64_t slot = sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-        struct rocketnet_sent_packet_record_t * record = &endpoint.sent[slot];
         const uint8_t already_acked = nondet_uchar() & 1U;
 
-        record->sequence = sequence;
-        record->packet_id = 0;
-        record->send_time = 0.0;
-        record->wire_bytes = 0;
-        record->acked = already_acked;
-        record->has_packet_id = 0;
-        record->was_keep_alive = 0;
-        proof_set_bit( endpoint.sent_written, slot );
-        proof_set_bit( endpoint.sent_held, slot );
+        endpoint.sent[slot].sequence = sequence;
+        endpoint.sent[slot].packet_id = 0;
+        endpoint.sent[slot].send_time = 0.0;
+        endpoint.sent[slot].wire_bytes = 0;
+        endpoint.sent[slot].acked = already_acked;
+        endpoint.sent[slot].has_packet_id = 0;
+        endpoint.sent[slot].was_keep_alive = 0;
+        endpoint.sent_written[slot >> 6] |= 1ULL << ( slot & 63 );
+        endpoint.sent_held[slot >> 6] |= 1ULL << ( slot & 63 );
 
         if ( !already_acked )
         {
-            proof_set_bit( endpoint.sent_unacked, slot );
+            endpoint.sent_unacked[slot >> 6] |= 1ULL << ( slot & 63 );
             expected_new++;
             expected_largest = sequence;
             if ( sequence <= rocketnet_ack_stats_eligible_top( highest ) )
             {
                 eligible_unacked++;
             }
+        }
+        else
+        {
+            endpoint.sent_unacked[slot >> 6] &= ~( 1ULL << ( slot & 63 ) );
         }
     }
 
@@ -133,11 +145,11 @@ int harness_ack_apply_run( void )
                           "the ACK walk does not overwrite a live sent record" );
         __CPROVER_assert( endpoint.sent[slot].acked == 1,
                           "an arbitrary sequence in the run ends acked" );
-        __CPROVER_assert( proof_bit( endpoint.sent_written, slot ) == 1,
+        __CPROVER_assert( PROOF_BIT( endpoint.sent_written, slot ) == 1,
                           "an ACK does not erase the written identity" );
-        __CPROVER_assert( proof_bit( endpoint.sent_held, slot ) == 1,
+        __CPROVER_assert( PROOF_BIT( endpoint.sent_held, slot ) == 1,
                           "an ACK does not erase the held identity" );
-        __CPROVER_assert( proof_bit( endpoint.sent_unacked, slot ) == 0,
+        __CPROVER_assert( PROOF_BIT( endpoint.sent_unacked, slot ) == 0,
                           "an ACK clears the unacked identity" );
     }
 
@@ -146,6 +158,11 @@ int harness_ack_apply_run( void )
     __CPROVER_assert( g_ack_visit_count == 0,
                       "negative control reaches the production ACK operation" );
 #endif // #if defined( ACK_NEGATIVE_CONTROL )
+
+#if defined( ACK_REACH_WRAP )
+    __CPROVER_assume( expected_new > 0 );
+    __CPROVER_assert( 0, "reach control: a run that wraps the ring end reaches every assertion" );
+#endif // #if defined( ACK_REACH_WRAP )
 
     return 0;
 }
