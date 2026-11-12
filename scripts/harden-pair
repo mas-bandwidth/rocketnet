@@ -229,6 +229,10 @@ fi
 status=0
 "$local_bin/harden_load" reconcile --logs "$logs" --netem-duplicates "$duplicates" --min-delivery "$min_delivery" --frame-p99-us "$frame_p99_us" \
     | tee "$out/reconcile.txt" || status=1
-grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt" || true
+# every role prints a verdict; none at all is a role that never ran to its end
+if ! grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"; then
+    echo "harden-pair: no role printed a verdict" | tee -a "$out/reconcile.txt"
+    status=1
+fi
 echo "harden_pair: transport=$transport row=$row exit=$status utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$out/reconcile.txt"
 exit "$status"
