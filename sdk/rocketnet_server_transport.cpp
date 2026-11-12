@@ -2072,6 +2072,27 @@ struct rocketnet_server_transport_resolved_t
 // scope to carry); a bind address for a family the server does not serve; and
 // any bind address on a server that serves both families, whose one
 // dual-stack socket cannot bind two specific addresses.
+// The environment is ambient: set once for a host or a test run, it cannot
+// know each server's families, so a bind address it sets for a family the
+// server does not serve is dropped with one log line, not refused. A config
+// field is a statement about this server, so the resolve below still
+// refuses that one.
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int serves_ipv4,
+                                                     int serves_ipv6 )
+{
+    rocketnet_assert( config && ipv4_before && ipv6_before );
+    if ( !serves_ipv4 && strcmp( config->bind_ipv4_address, ipv4_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=%s: the server does not serve IPv4", config->bind_ipv4_address );
+        rocketnet_copy_string( config->bind_ipv4_address, ipv4_before, sizeof( config->bind_ipv4_address ) );
+    }
+    if ( !serves_ipv6 && strcmp( config->bind_ipv6_address, ipv6_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=%s: the server does not serve IPv6", config->bind_ipv6_address );
+        rocketnet_copy_string( config->bind_ipv6_address, ipv6_before, sizeof( config->bind_ipv6_address ) );
+    }
+}
+
 bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const rocketnet_address_t * public_address,
                                                       int serves_both, rocketnet_address_t * bind_address, int * status )
 {
@@ -2211,7 +2232,15 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    // the bind addresses before the environment pass: one the environment
+    // sets for a family this server does not serve is dropped below, once
+    // the served families are known (rocketnet_server_transport_ignore_ambient_bind)
+    const bool env_pass = !resolved_memory_budget;
+    char bind_before[2][ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_copy_string( bind_before[0], effective_config.bind_ipv4_address, sizeof( bind_before[0] ) );
+    rocketnet_copy_string( bind_before[1], effective_config.bind_ipv6_address, sizeof( bind_before[1] ) );
+
+    if ( env_pass && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
         {
@@ -2368,6 +2397,12 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         }
 
         serves_both = 1;
+    }
+
+    if ( env_pass )
+    {
+        const bool ipv4 = public_address.type == ROCKETNET_ADDRESS_IPV4;
+        rocketnet_server_transport_ignore_ambient_bind( &effective_config, bind_before[0], bind_before[1], serves_both || ipv4, serves_both || !ipv4 );
     }
 
     rocketnet_address_t bind_address;

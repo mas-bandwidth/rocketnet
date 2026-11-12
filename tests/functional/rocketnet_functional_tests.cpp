@@ -796,11 +796,20 @@ void rocketnet_test_transport_ring_exhaustion()
     // the first fill. Wait for that whole pool, not an incidental count.
 
     int completion_capacity = 0;
+    int completion_own = 0; // the own frame a production build cannot see: 0 or 1 above completion_capacity
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( strcmp( rocketnet_server_transport_io_name( server ), "iocp" ) == 0 )
     {
         completion_capacity = rocketnet_server_iocp_send_queue_size( server_config.max_clients );
-#if ROCKETNET_DEV
+#if !ROCKETNET_DEV
+        // the production library has no test reads: the reserve from the
+        // constants that bound it (rocketnet_server_transport_send_reserves),
+        // the client's queue holding the whole-server allowances and one
+        // frame a slot; the own frame is given only once the client's
+        // keep-alive is acknowledged, so the fill may take one more
+        completion_capacity -= server_config.handshakes_per_update + server_config.disconnect_packets_per_update + server_config.max_clients;
+        completion_own = 1;
+#else
         // a staged transport keeps its protocol reserve out of the fill
         // (RNSendReserve): the fill takes the client's lane less that lane's
         // reserve (the largest, the only one with a connected slot), plus
@@ -813,13 +822,13 @@ void rocketnet_test_transport_ring_exhaustion()
         }
         completion_capacity -= (int) reserve;
         completion_capacity += (int) rocketnet_server_transport_fill_own_frames_for_test( server );
-#endif // #if ROCKETNET_DEV
+#endif // #if !ROCKETNET_DEV
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const int capacity = rocketnet_test_fill_server_ring( server, completion_capacity );
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
-    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
+    rocketnet_check( completion_capacity == 0 || ( capacity >= completion_capacity && capacity <= completion_capacity + completion_own ) );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
     // counters attribute every refusal exactly (the fill already incurred
