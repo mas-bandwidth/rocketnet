@@ -1809,7 +1809,6 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
         rn_packet_item_t * item = &plan->items[plan->count];
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
         {
-            item->resend = unsent ? 0 : 1;
             plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
             plan->count++;
         }
