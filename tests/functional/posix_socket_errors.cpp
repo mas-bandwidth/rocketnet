@@ -2984,9 +2984,11 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
 #include <sched.h>
 #include <sys/vfs.h>
 
-#define POSIX_XDP_NETNS         "rnxdpwx"
-#define POSIX_XDP_NEAR          "rnxdpwx0"
-#define POSIX_XDP_FAR           "rnxdpwx1"
+#include "xdp_test_net.h"
+
+// the pair's names and addresses are the case's own (tests/functional/xdp_test_net.h)
+static struct rocketnet_xdp_test_net_t posix_xdp_net;
+
 #define POSIX_XDP_PORT          40412
 #define POSIX_XDP_OTHER_PORT    40413
 #define POSIX_XDP_OTHER_BYTES   4000    // larger than the MTU: fragmented
@@ -3012,7 +3014,9 @@ static void posix_xdp_teardown()
 
     if ( posix_xdp_made )
     {
-        if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+        char command[256];
+        snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", posix_xdp_net.netns, posix_xdp_net.near_name );
+        if ( system( command ) != 0 )
         {
             // already gone
         }
@@ -3055,7 +3059,9 @@ static bool posix_xdp_inside_virtme()
 
 static uint64_t posix_xdp_frag_creates( int ipv6 )
 {
-    FILE * file = popen( ipv6 ? "ip netns exec " POSIX_XDP_NETNS " cat /proc/net/snmp6" : "ip netns exec " POSIX_XDP_NETNS " cat /proc/net/snmp", "r" );
+    char command[128];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /proc/net/snmp%s", posix_xdp_net.netns, ipv6 ? "6" : "" );
+    FILE * file = popen( command, "r" );
     posix_check( file != NULL );
 
     char line[4096];
@@ -3200,36 +3206,63 @@ static void posix_xdp_weather( int ipv6 )
         posix_xdp_run( "mount -t bpf bpf /sys/fs/bpf" );
     }
 
-    if ( system( "ip netns del " POSIX_XDP_NETNS " 2>/dev/null; ip link del " POSIX_XDP_NEAR " 2>/dev/null" ) != 0 )
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( case_name, &posix_xdp_net, reason, sizeof( reason ) ) )
+    {
+        printf( "%s\n", reason );
+        fflush( stdout );
+        const bool test_network_taken = false;
+        posix_check( test_network_taken );
+    }
+
+    const struct rocketnet_xdp_test_net_t & net = posix_xdp_net;
+
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
+    if ( system( command ) != 0 )
     {
         // nothing left from an earlier run
     }
 
     posix_xdp_made = true;
-    posix_xdp_run( "ip netns add " POSIX_XDP_NETNS );
-    posix_xdp_run( "ip link add " POSIX_XDP_NEAR " mtu 1500 type veth peer name " POSIX_XDP_FAR " mtu 1500" );
-    posix_xdp_run( "ip link set " POSIX_XDP_FAR " netns " POSIX_XDP_NETNS );
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link add %s mtu 1500 type veth peer name %s mtu 1500", net.near_name, net.far_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s netns %s", net.far_name, net.netns );
+    posix_xdp_run( command );
 
     if ( ipv6 )
     {
-        posix_xdp_run( "sysctl -qw net.ipv6.conf." POSIX_XDP_NEAR ".addr_gen_mode=1" );
-        posix_xdp_run( "ip netns exec " POSIX_XDP_NETNS " sysctl -qw net.ipv6.conf." POSIX_XDP_FAR ".addr_gen_mode=1" );
-        posix_xdp_run( "ip addr add 2001:db8:78::1/64 dev " POSIX_XDP_NEAR " nodad" );
-        posix_xdp_run( "ip -n " POSIX_XDP_NETNS " addr add 2001:db8:78::2/64 dev " POSIX_XDP_FAR " nodad" );
+        snprintf( command, sizeof( command ), "sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip netns exec %s sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.netns, net.far_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip addr add %s/64 dev %s nodad", net.near6, net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/64 dev %s nodad", net.netns, net.far6, net.far_name );
+        posix_xdp_run( command );
     }
     else
     {
-        posix_xdp_run( "ip addr add 10.77.3.1/24 dev " POSIX_XDP_NEAR );
-        posix_xdp_run( "ip -n " POSIX_XDP_NETNS " addr add 10.77.3.2/24 dev " POSIX_XDP_FAR );
+        snprintf( command, sizeof( command ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+        posix_xdp_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+        posix_xdp_run( command );
     }
 
-    posix_xdp_run( "ip link set " POSIX_XDP_NEAR " up" );
-    posix_xdp_run( "echo 2 > /sys/class/net/" POSIX_XDP_NEAR "/napi_defer_hard_irqs" );
-    posix_xdp_run( "echo 200000 > /sys/class/net/" POSIX_XDP_NEAR "/gro_flush_timeout" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set lo up" );
-    posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set " POSIX_XDP_FAR " up" );
+    snprintf( command, sizeof( command ), "ip link set %s up", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set lo up", net.netns );
+    posix_xdp_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, net.far_name );
+    posix_xdp_run( command );
 
-    const char * server_host = ipv6 ? "2001:db8:78::1" : "10.77.3.1";
+    const char * server_host = ipv6 ? net.near6 : net.near4;
     char server_address[128];
     snprintf( server_address, sizeof( server_address ), ipv6 ? "[%s]:%d" : "%s:%d", server_host, POSIX_XDP_PORT );
 
@@ -3302,7 +3335,7 @@ static void posix_xdp_weather( int ipv6 )
     snprintf( client_config.transport, sizeof( client_config.transport ), "portable" );
 
     const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-    const int far_ns = open( "/var/run/netns/" POSIX_XDP_NETNS, O_RDONLY );
+    const int far_ns = open( posix_xdp_net.netns_path, O_RDONLY );
     posix_check( self_ns >= 0 && far_ns >= 0 );
     posix_check( setns( far_ns, CLONE_NEWNET ) == 0 );
 
@@ -3603,7 +3636,9 @@ static void posix_xdp_weather( int ipv6 )
 
         const uint64_t failed_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED];
         rocketnet_address_t other_family;
-        posix_check( rocketnet_address_parse( &other_family, ipv6 ? "10.77.3.2:40412" : "[2001:db8:78::2]:40412" ) );
+        char other_family_text[64];
+        snprintf( other_family_text, sizeof( other_family_text ), ipv6 ? "%s:%d" : "[%s]:%d", ipv6 ? posix_xdp_net.far4 : posix_xdp_net.far6, POSIX_XDP_PORT );
+        posix_check( rocketnet_address_parse( &other_family, other_family_text ) );
 
         static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
         uint8_t * frame = rocketnet_server_socket_start_packet_internal( xdp, 0, 0, &other_family, other_mac );

@@ -40,6 +40,7 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
 void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server );
 void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
 const char * rocketnet_xdp_veth_netns_path();
+const char * rocketnet_xdp_veth_host( bool ipv6, bool far );
 #endif
 
 #include <stdint.h>
@@ -769,7 +770,8 @@ void rocketnet_test_session_reconnect_isolation_xdp()
     session_check( setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 ) == 0 );
     session_check( setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 ) == 0 );
 
-    session_run_isolation_pair( "xdp", "portable", "10.77.2.1", "10.77.2.1", 40411, 40412, rocketnet_xdp_veth_netns_path() );
+    const char * near_host = rocketnet_xdp_veth_host( false, false );
+    session_run_isolation_pair( "xdp", "portable", near_host, near_host, 40411, 40412, rocketnet_xdp_veth_netns_path() );
     rocketnet_xdp_veth_pair_down( NULL );
 }
 #endif // ROCKETNET_XDP

@@ -9412,18 +9412,16 @@ void rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6()
 #include <string>
 #include <vector>
 
-// The namespace, the pair's names, its addresses, the gateway routes and the
-// xsk sockets on the near end are one per kernel, so two veth cases in one
-// kernel take each other's pair down (xsk create fails EBUSY on queue 0). A
-// case takes this lock before it touches any of them and refuses, naming the
-// holder, when another process holds it; the lock goes with the process.
-#define ROCKETNET_XDP_VETH_LOCK         "/run/rocketnet-xdp-veth.lock"
-#define ROCKETNET_XDP_VETH_NETNS        "rnxdpfam"
-#define ROCKETNET_XDP_VETH_NEAR         "rnxdpfam0"
-#define ROCKETNET_XDP_VETH_FAR          "rnxdpfam1"
+#include "xdp_test_net.h"
+
+// The namespace, the pair's names, its addresses and the gateway routes are
+// one per kernel and the suite runs cases in parallel, so each case takes its
+// own (tests/functional/xdp_test_net.h); the server binds the same port on
+// each case's own near address.
 #define ROCKETNET_XDP_VETH_PORT         40411
 #define ROCKETNET_XDP_VETH_COUNT        20
 
+static struct rocketnet_xdp_test_net_t rocketnet_xdp_veth_net;
 static pid_t rocketnet_xdp_veth_capture_pid = -1;
 static struct rocketnet_server_transport_t * rocketnet_xdp_veth_server = NULL;
 static bool rocketnet_xdp_veth_made = false;
@@ -9449,7 +9447,9 @@ static void rocketnet_xdp_veth_teardown()
     {
         // deleting the namespace takes the far end, and with it the pair
 
-        if ( system( "ip netns del " ROCKETNET_XDP_VETH_NETNS " 2>/dev/null; ip link del " ROCKETNET_XDP_VETH_NEAR " 2>/dev/null" ) != 0 )
+        char command[256];
+        snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", rocketnet_xdp_veth_net.netns, rocketnet_xdp_veth_net.near_name );
+        if ( system( command ) != 0 )
         {
             // already gone
         }
@@ -9539,46 +9539,29 @@ bool rocketnet_test_xdp_veth_runs_here()
 }
 
 static bool rocketnet_xdp_veth_capture_present = false;
-static int rocketnet_xdp_veth_lock = -1;           // held until the process exits
 
-// one veth case per kernel at a time: a second refuses, naming the holder
-static void rocketnet_xdp_veth_take_lock()
+// the case's own names, addresses and metric; a case that cannot take them
+// (its names held by another live case, or every slot taken) fails, naming why
+static void rocketnet_xdp_veth_take_net( const char * case_name )
 {
-    if ( rocketnet_xdp_veth_lock >= 0 )
+    char reason[512];
+    if ( !rocketnet_xdp_test_net_take( case_name, &rocketnet_xdp_veth_net, reason, sizeof( reason ) ) )
     {
-        return;
-    }
-
-    const int lock = open( ROCKETNET_XDP_VETH_LOCK, O_RDWR | O_CREAT | O_CLOEXEC, 0644 );
-    rocketnet_check( lock >= 0 );
-
-    if ( flock( lock, LOCK_EX | LOCK_NB ) != 0 )
-    {
-        char holder[32] = "";
-        const ssize_t bytes = pread( lock, holder, sizeof( holder ) - 1, 0 );
-        holder[bytes > 0 ? bytes : 0] = '\0';
-        holder[strcspn( holder, "\r\n" )] = '\0';
-        printf( "xdp veth cases run one per kernel: pid %s holds " ROCKETNET_XDP_VETH_LOCK " (namespace " ROCKETNET_XDP_VETH_NETNS ", veth " ROCKETNET_XDP_VETH_NEAR "/" ROCKETNET_XDP_VETH_FAR " and 10.77.2.0/24 are fixed); run the veth cases one at a time\n",
-                holder[0] ? holder : "(unknown)" );
+        printf( "%s\n", reason );
         fflush( stdout );
-        close( lock );
-        const bool no_other_veth_case_in_this_kernel = false;
-        rocketnet_check( no_other_veth_case_in_this_kernel );
+        const bool test_network_taken = false;
+        rocketnet_check( test_network_taken );
     }
-
-    char text[32];
-    const int length = snprintf( text, sizeof( text ), "%d\n", (int) getpid() );
-    rocketnet_check( ftruncate( lock, 0 ) == 0 );
-    rocketnet_check( pwrite( lock, text, (size_t) length, 0 ) == (ssize_t) length );
-    rocketnet_xdp_veth_lock = lock;
 }
 
 // the pair, the capture and the xdp server on its near end, shared by the
 // veth cases; server_address receives the address the client dials
 struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes )
 {
-    rocketnet_xdp_veth_take_lock();
+    rocketnet_xdp_veth_take_net( case_name );
     atexit( rocketnet_xdp_veth_teardown );
+
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
 
     // the boot tier the xdp pre-flight verifies; a guest boots with an empty
     // bpffs mount point
@@ -9589,7 +9572,9 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
         rocketnet_xdp_veth_run( "mount -t bpf bpf /sys/fs/bpf" );
     }
 
-    if ( system( "ip netns del " ROCKETNET_XDP_VETH_NETNS " 2>/dev/null; ip link del " ROCKETNET_XDP_VETH_NEAR " 2>/dev/null" ) != 0 )
+    char command[1024];
+    snprintf( command, sizeof( command ), "ip netns del %s 2>/dev/null; ip link del %s 2>/dev/null", net.netns, net.near_name );
+    if ( system( command ) != 0 )
     {
         // nothing left from an earlier run
     }
@@ -9601,7 +9586,8 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     // case starts at once.
 
     rocketnet_xdp_veth_made = true;
-    rocketnet_xdp_veth_run( "ip netns add " ROCKETNET_XDP_VETH_NETNS );
+    snprintf( command, sizeof( command ), "ip netns add %s", net.netns );
+    rocketnet_xdp_veth_run( command );
 
     int veth_queues = 1;
 
@@ -9612,35 +9598,46 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
             veth_queues = atoi( text );
         }
     }
-    {
-        char command[256];
-        snprintf( command, sizeof( command ), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu %d numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu %d numtxqueues %d numrxqueues %d", rocketnet_xdp_veth_mtu, veth_queues, veth_queues, rocketnet_xdp_veth_mtu, veth_queues, veth_queues );
-        rocketnet_xdp_veth_run( command );
-    }
-    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
+
+    snprintf( command, sizeof( command ), "ip link add %s mtu %d numtxqueues %d numrxqueues %d type veth peer name %s mtu %d numtxqueues %d numrxqueues %d", net.near_name,
+              rocketnet_xdp_veth_mtu, veth_queues, veth_queues, net.far_name, rocketnet_xdp_veth_mtu, veth_queues, veth_queues );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip link set %s netns %s", net.far_name, net.netns );
+    rocketnet_xdp_veth_run( command );
 
     if ( ipv6 )
     {
-        rocketnet_xdp_veth_run( "sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_NEAR ".addr_gen_mode=1" );
-        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " sysctl -qw net.ipv6.conf." ROCKETNET_XDP_VETH_FAR ".addr_gen_mode=1" );
-        rocketnet_xdp_veth_run( "ip addr add 2001:db8:77::1/64 dev " ROCKETNET_XDP_VETH_NEAR " nodad" );
-        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 2001:db8:77::2/64 dev " ROCKETNET_XDP_VETH_FAR " nodad" );
+        snprintf( command, sizeof( command ), "sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.near_name );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip netns exec %s sysctl -qw net.ipv6.conf.%s.addr_gen_mode=1", net.netns, net.far_name );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip addr add %s/64 dev %s nodad", net.near6, net.near_name );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/64 dev %s nodad", net.netns, net.far6, net.far_name );
+        rocketnet_xdp_veth_run( command );
     }
     else
     {
-        rocketnet_xdp_veth_run( "ip addr add 10.77.2.1/24 dev " ROCKETNET_XDP_VETH_NEAR );
-        rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " addr add 10.77.2.2/24 dev " ROCKETNET_XDP_VETH_FAR );
+        snprintf( command, sizeof( command ), "ip addr add %s/24 dev %s", net.near4, net.near_name );
+        rocketnet_xdp_veth_run( command );
+        snprintf( command, sizeof( command ), "ip -n %s addr add %s/24 dev %s", net.netns, net.far4, net.far_name );
+        rocketnet_xdp_veth_run( command );
     }
 
-    rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_NEAR " up" );
+    snprintf( command, sizeof( command ), "ip link set %s up", net.near_name );
+    rocketnet_xdp_veth_run( command );
 
     // the busy-poll pair the pre-flight verifies (R5), as a provisioned
     // interface carries it
 
-    rocketnet_xdp_veth_run( "echo 2 > /sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/napi_defer_hard_irqs" );
-    rocketnet_xdp_veth_run( "echo 200000 > /sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/gro_flush_timeout" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link set lo up" );
-    rocketnet_xdp_veth_run( "ip -n " ROCKETNET_XDP_VETH_NETNS " link set " ROCKETNET_XDP_VETH_FAR " up" );
+    snprintf( command, sizeof( command ), "echo 2 > /sys/class/net/%s/napi_defer_hard_irqs", net.near_name );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "echo 200000 > /sys/class/net/%s/gro_flush_timeout", net.near_name );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set lo up", net.netns );
+    rocketnet_xdp_veth_run( command );
+    snprintf( command, sizeof( command ), "ip -n %s link set %s up", net.netns, net.far_name );
+    rocketnet_xdp_veth_run( command );
 
     // the client's checksums are filled in software, so the capture on the
     // far end judges both directions' checksums rather than reading a
@@ -9648,10 +9645,11 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
 
     if ( system( "command -v ethtool >/dev/null 2>&1" ) == 0 )
     {
-        rocketnet_xdp_veth_run( "ip netns exec " ROCKETNET_XDP_VETH_NETNS " ethtool -K " ROCKETNET_XDP_VETH_FAR " tx off >/dev/null" );
+        snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s tx off >/dev/null", net.netns, net.far_name );
+        rocketnet_xdp_veth_run( command );
     }
 
-    const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
+    const char * server_host = ipv6 ? net.near6 : net.near4;
 
     if ( ipv6 )
     {
@@ -9694,7 +9692,7 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
             // until the block's timeout retires it, and the packets of a block
             // not yet retired when SIGINT stops tcpdump never reach the file.
 
-            execlp( "ip", "ip", "netns", "exec", ROCKETNET_XDP_VETH_NETNS, "tcpdump", "--immediate-mode", "-i", ROCKETNET_XDP_VETH_FAR, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char *) NULL );
+            execlp( "ip", "ip", "netns", "exec", net.netns, "tcpdump", "--immediate-mode", "-i", net.far_name, "-n", "-U", "-s", "0", "-w", rocketnet_xdp_veth_pcap, filter, (char *) NULL );
             _exit( 127 );
         }
 
@@ -9796,7 +9794,19 @@ void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroy
 
 const char * rocketnet_xdp_veth_netns_path()
 {
-    return "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS;
+    return rocketnet_xdp_veth_net.netns_path;
+}
+
+// the case's near (server) or far (client) host, bare: 10.79.<slot>.1 or
+// 2001:db8:79:<slot>::2
+const char * rocketnet_xdp_veth_host( bool ipv6, bool far )
+{
+    if ( ipv6 )
+    {
+        return far ? rocketnet_xdp_veth_net.far6 : rocketnet_xdp_veth_net.near6;
+    }
+
+    return far ? rocketnet_xdp_veth_net.far4 : rocketnet_xdp_veth_net.near4;
 }
 
 void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
@@ -9804,8 +9814,9 @@ void rocketnet_xdp_veth_copy_far_mac( uint8_t * mac )
     // setns does not switch the mounted sysfs, so the far end's address file
     // is not visible that way. ip netns exec mounts a sysfs for that namespace.
 
-    const std::vector<std::string> lines = rocketnet_xdp_veth_lines(
-        "ip netns exec " ROCKETNET_XDP_VETH_NETNS " cat /sys/class/net/" ROCKETNET_XDP_VETH_FAR "/address" );
+    char command[256];
+    snprintf( command, sizeof( command ), "ip netns exec %s cat /sys/class/net/%s/address", rocketnet_xdp_veth_net.netns, rocketnet_xdp_veth_net.far_name );
+    const std::vector<std::string> lines = rocketnet_xdp_veth_lines( command );
     rocketnet_check( lines.size() == 1 );
 
     unsigned int octet[6] = { 0, 0, 0, 0, 0, 0 };
@@ -9832,7 +9843,7 @@ static struct rocketnet_client_transport_t * rocketnet_xdp_veth_client( const ch
     snprintf( client_config.transport, sizeof( client_config.transport ), "portable" );
 
     const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
-    const int far_ns = open( "/var/run/netns/" ROCKETNET_XDP_VETH_NETNS, O_RDONLY );
+    const int far_ns = open( rocketnet_xdp_veth_net.netns_path, O_RDONLY );
     rocketnet_check( self_ns >= 0 && far_ns >= 0 );
     rocketnet_check( setns( far_ns, CLONE_NEWNET ) == 0 );
 
@@ -9851,7 +9862,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( ipv6, case_name, server_address, sizeof( server_address ) );
     struct rocketnet_client_transport_t * client = rocketnet_xdp_veth_client( server_address );
     const bool capture_tool_present = rocketnet_xdp_veth_capture_present;
-    const char * server_host = ipv6 ? "2001:db8:77::1" : "10.77.2.1";
+    const char * server_host = rocketnet_xdp_veth_host( ipv6, false );
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
@@ -10186,21 +10197,27 @@ static void rocketnet_xdp_keep_alive_before_first_payloads( bool ipv6, const cha
 // refresh still follows the gateway, not that it never blocks (the unit case
 // test_xdp_transport_gateway_netlink_refresh_never_blocks shows that). The
 // longest server update across the changes is printed, not checked. The
-// route takes a metric of its own, so it adds to a default route the host
-// may have rather than replacing it, and both go with the pair.
+// route takes a metric of its own (the case's slot's, so two cases in one
+// kernel never hold the same default route), so it adds to a default route
+// the host may have rather than replacing it, and both go with the pair.
 
 static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
 {
     char server_address[128];
     struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    const struct rocketnet_xdp_test_net_t & net = rocketnet_xdp_veth_net;
 
-    static const char * const changes[3][2] = {
-        { "ip route add default via 10.77.2.2 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242 && ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a1 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
-          "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
-        { "ip neigh replace 10.77.2.2 lladdr 02:00:00:00:77:a2 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent",
-          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
-        { "ip neigh replace 10.77.2.3 lladdr 02:00:00:00:77:a3 dev " ROCKETNET_XDP_VETH_NEAR " nud permanent && ip route replace default via 10.77.2.3 dev " ROCKETNET_XDP_VETH_NEAR " metric 4242",
-          "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
+    char commands[3][1024];
+    snprintf( commands[0], sizeof( commands[0] ), "ip route add default via %s dev %s metric %d && ip neigh replace %s lladdr 02:00:00:00:77:a1 dev %s nud permanent",
+              net.far4, net.near_name, net.metric, net.far4, net.near_name );
+    snprintf( commands[1], sizeof( commands[1] ), "ip neigh replace %s lladdr 02:00:00:00:77:a2 dev %s nud permanent", net.far4, net.near_name );
+    snprintf( commands[2], sizeof( commands[2] ), "ip neigh replace %s lladdr 02:00:00:00:77:a3 dev %s nud permanent && ip route replace default via %s dev %s metric %d",
+              net.third4, net.near_name, net.third4, net.near_name, net.metric );
+
+    const char * const changes[3][2] = {
+        { commands[0], "ipv4 gateway ethernet address is now 02.00.00.00.77.a1" },
+        { commands[1], "ipv4 gateway ethernet address changed from 02.00.00.00.77.a1 to 02.00.00.00.77.a2" },
+        { commands[2], "ipv4 gateway ethernet address changed from 02.00.00.00.77.a2 to 02.00.00.00.77.a3" },
     };
 
     rocketnet_test_captured_log_reset();
@@ -10258,7 +10275,9 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
 
 static uint64_t rocketnet_xdp_veth_near_tx_dropped()
 {
-    FILE * file = fopen( "/sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/statistics/tx_dropped", "r" );
+    char path[96];
+    snprintf( path, sizeof( path ), "/sys/class/net/%s/statistics/tx_dropped", rocketnet_xdp_veth_net.near_name );
+    FILE * file = fopen( path, "r" );
     rocketnet_check( file );
     unsigned long long value = 0;
     rocketnet_check( fscanf( file, "%llu", &value ) == 1 );
