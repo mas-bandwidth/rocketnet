@@ -53,8 +53,8 @@
 
 #define FP_CLIENTS 2
 #define FP_FILLERS 3
-#define FP_MAX_MAIN 6
-#define FP_MAX_FILLS 6
+#define FP_MAX_MAIN 10
+#define FP_MAX_FILLS 10
 #define FP_ACTORS ( 1 + FP_FILLERS )
 
 // an actor between steps: parked before its next call (READY), parked in the
@@ -492,7 +492,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 {
                     unknown = true;
                 }
-                if ( a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 2 ) == 0 )
+                if ( a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 4 ) != 0 )
                 {
                     hold[a] = 8 + random.below( 16 );
                 }
