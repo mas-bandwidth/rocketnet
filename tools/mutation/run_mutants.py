@@ -18,6 +18,13 @@ therefore non-risk. The process exits 1 when a chosen risk-class mutant
 survives. --self-test checks that rule on planted source: it does not compile
 the SDK and it does not sleep.
 
+--slice K/N runs one deterministic Nth of the list: the mutants whose slice key
+(a hash of the file, the line's text, the column in it, the operator and the
+replacement; never the line number, so a slice does not move when lines are
+added above) is K modulo N. Slices 0 .. N-1 together are every mutant, so N
+runs, one per slice, cover the whole list with the same exit rule. The nightly
+runs the day's slice (.github/workflows/nightly.yml, docs/TESTING.md).
+
 Python 3 standard library only. Example:
 
   python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
@@ -25,6 +32,7 @@ Python 3 standard library only. Example:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import queue
@@ -84,6 +92,31 @@ def risk_survivors(mutants):
         if kind == "risk" and mutant.get("status") == "survived":
             found.append(mutant)
     return found
+
+
+def slice_key(mutant):
+    """A mutant's slice number source: the same for the same change however
+    the lines above it move (file, the line's text, the column within that
+    text, operator, replacement), never its line number."""
+    text = mutant["original"]
+    indent = len(text) - len(text.lstrip())
+    key = "\0".join((mutant["file"], text.strip(), str(mutant["column"] - indent),
+                     mutant["operator"], mutant["mutated_token"]))
+    return int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big")
+
+
+def in_slice(mutant, index, count):
+    """True when the mutant belongs to slice index of count: every mutant is in
+    exactly one slice, so slices 0 .. count-1 together are the whole list."""
+    return slice_key(mutant) % count == index
+
+
+def parse_slice(text):
+    """'K/N' -> (K, N) with 0 <= K < N; raises ValueError otherwise."""
+    index, sep, count = text.partition("/")
+    if not sep or not index.isdigit() or not count.isdigit() or int(count) < 1 or int(index) >= int(count):
+        raise ValueError(f"--slice wants K/N with 0 <= K < N, not {text!r}")
+    return int(index), int(count)
 
 
 def code_mask(text):
@@ -426,8 +459,29 @@ def self_test():
     if octal != {"mode = 0701;", "mode = 0677;"}:
         print(f"self-test FAILED: a C octal literal mutated to {sorted(octal)}")
         return 1
+    # slices: every mutant in exactly one of N, the same slice on every run, and
+    # the same slice when lines are added above it
+    for count in (1, 3, 90):
+        homes = [[i for i in range(count) if in_slice(m, i, count)] for m in first]
+        if any(len(h) != 1 for h in homes):
+            print(f"self-test FAILED: a mutant is not in exactly one of {count} slices")
+            return 1
+    moved = generate("plant.cpp", "// a new first line\n\n" + text)
+    if [slice_key(m) for m in moved] != [slice_key(m) for m in first]:
+        print("self-test FAILED: a mutant's slice changed when lines were added above it")
+        return 1
+    for bad in ("3/3", "1", "a/2", "0/0", "-1/4"):
+        try:
+            parse_slice(bad)
+        except ValueError:
+            continue
+        print(f"self-test FAILED: --slice {bad} was accepted")
+        return 1
+    if parse_slice("89/90") != (89, 90):
+        print("self-test FAILED: --slice 89/90 was not read as (89, 90)")
+        return 1
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
-          "rocketnet_assert survivors do not")
+          "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers")
     return 0
 
 
@@ -438,6 +492,10 @@ def main():
     p.add_argument("--files", nargs="+", default=DEFAULT_FILES, help="repository-relative sources to mutate")
     p.add_argument("--workers", type=int, default=4, help="parallel trees (default 4)")
     p.add_argument("--max-mutants", type=int, default=0, help="sample this many (0: all)")
+    p.add_argument("--slice", default="",
+                   help="K/N: keep only the mutants of slice K of N (a hash of each mutant's file, line text, "
+                        "column in the line, operator and replacement, modulo N) before --max-mutants; "
+                        "slices 0..N-1 together are every mutant. Default: no slicing")
     p.add_argument("--seed", type=int, default=1, help="sampling seed (default 1)")
     p.add_argument("--time-budget-minutes", type=float, default=0, help="stop starting mutants after this (0: none)")
     p.add_argument("--include", nargs="*", default=[], help="mutant ids always run (see --list)")
@@ -453,16 +511,27 @@ def main():
     args = p.parse_args()
     if args.self_test:
         return self_test()
+    try:
+        slice_of = parse_slice(args.slice) if args.slice else None
+    except ValueError as error:
+        p.error(str(error))
     started = time.monotonic()
 
     mutants = []
     for rel in args.files:
         mutants += generate(rel, (ROOT / rel).read_text())
+    generated = len(mutants)
+    order = {id(m): n for n, m in enumerate(mutants)}
+    # --only and --include name mutants of the whole list, in or out of the slice
+    by_id = {m["id"]: m for m in mutants}
+    if slice_of:
+        mutants = [m for m in mutants if in_slice(m, *slice_of)]
+        print(f"slice {slice_of[0]}/{slice_of[1]}: {len(mutants)} of {generated} generated mutants",
+              file=sys.stderr if args.list else sys.stdout, flush=True)
     if args.list:
         for m in mutants:
             print(f"{m['id']}\t{m['mutated'].strip()}")
         return 0
-    by_id = {m["id"]: m for m in mutants}
     missing = [i for i in args.only + args.include if i not in by_id]
     if missing:
         sys.exit(f"unknown mutant id: {missing[0]}")
@@ -473,8 +542,9 @@ def main():
         rest = [m for m in mutants if m["id"] not in args.include]
         room = len(rest) if args.max_mutants <= 0 else max(0, args.max_mutants - len(chosen))
         chosen += random.Random(args.seed).sample(rest, min(room, len(rest)))
-        chosen.sort(key=mutants.index)
-    print(f"{len(mutants)} mutants generated, {len(chosen)} chosen, {args.workers} workers", flush=True)
+        chosen.sort(key=lambda m: order[id(m)])
+    print(f"{generated} mutants generated, {len(mutants)} in the slice, {len(chosen)} chosen, {args.workers} workers"
+          if slice_of else f"{generated} mutants generated, {len(chosen)} chosen, {args.workers} workers", flush=True)
 
     files = tree_files(ROOT)
     workers = [Worker(i, args, files) for i in range(args.workers)]
@@ -531,11 +601,12 @@ def main():
     score = (counts["detected"] + counts["timed_out"]) / judged if judged else 0.0
     wall = time.monotonic() - started
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    summary = dict(counts, total=len(chosen), generated=len(mutants), score=round(score, 4), wall_seconds=round(wall, 1),
-                   baseline_test_seconds=round(baseline, 2), timeout_seconds=round(timeout, 2))
+    summary = dict(counts, total=len(chosen), generated=generated, in_slice=len(mutants), score=round(score, 4),
+                   wall_seconds=round(wall, 1), baseline_test_seconds=round(baseline, 2), timeout_seconds=round(timeout, 2))
     out = Path(args.out) if args.out else Path(args.work_dir) / "results.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"head": head, "files": args.files, "seed": args.seed, "workers": args.workers,
+                               "slice": {"index": slice_of[0], "count": slice_of[1]} if slice_of else None,
                                "summary": summary, "mutants": chosen}, indent=2) + "\n")
 
     print(f"\n{'status':<15} {'file:line':<45} {'operator':<22} original -> mutated")

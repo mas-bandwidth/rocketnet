@@ -16,6 +16,7 @@ provides the local commands and prerequisites.
 | --- | --- |
 | [CI](../.github/workflows/ci.yml) | Linux, macOS and Windows builds; unit and functional suites; live transport cases; integration examples; package and ABI checks; sanitizer and fuzz smoke runs; conformance and platform checks |
 | [Threaded TSan](../.github/workflows/nightly.yml) | Unit and functional suites with ThreadSanitizer; required on the release commit before tagging |
+| [Mutation campaign](../.github/workflows/nightly.yml) | Nightly, `linux / mutation`: one slice of 90 of the whole mutant list of `tools/mutation/run_mutants.py` (the six core table and ring files and every SDK source changed in the last 91 days; 53,350 mutants on 2026-11-12), the slice being the UTC day number modulo 90: 575 to 756 mutants (mean 656 over every SDK source at 555eb5963), 83 to 110 minutes at the measured 6.9 mutants a minute with 4 workers. A risk-class survivor in the slice fails the night. The 90 slices cover the whole list every 90 nights; the whole list in one run takes about 129 hours with 4 workers (workflow_dispatch `mutation_full`, with more `mutation_workers` to fit the job's 120-hour limit). Each night's slice is printed (`MUTATION-SLICE`) and kept as the `mutation-slice-*` artifact, 90 days, one full cycle |
 | [Static analysis](../.github/workflows/static.yml) | Reported GCC analyzer, clang-tidy and cppcheck findings; see the [GCC evidence limit](#static-analysis-evidence-limit) below |
 | [TLC records](../.github/workflows/tlc.yml) | Nightly. A green run proves: the coverage rows are true; the coverage checker's tests, the case planner's controls, the records checker's tests and the TLC adapter's controls pass; every committed record is valid and current (no stale group); every non-PASS record is a declared timeout-debt case with a bounded FAIL/124 record; the ledgers merge clean. It runs no model from the [case inventory](../proofs/tla/CASES.tsv) itself: each result is the [run ledger](../proofs/tla/RUNS.tsv) record committed when the model was checked, and a stale record makes the run red. The timeout-debt cases (11 at this commit) are checked only to their bounded record; their full results are not part of a release, and their evidence is [tlc-debt.yml](../.github/workflows/tlc-debt.yml), a weekly watch |
 | [CBMC](../.github/workflows/cbmc.yml) | The bounded arithmetic properties and assumptions in the [proof harnesses](../proofs/cbmc/) |
@@ -37,7 +38,23 @@ besides the build dependencies each job checks by name:
   `/dev/kvm` the runner user can write, `~/vm-kernels/vmlinuz-$(uname -r)`
   readable by the runner user, and the running kernel's modules;
   `scripts/vm-tier-missing` prints what is absent, and the cell fails with
-  that line (`VM-TIER-MISSING`);
+  that line (`VM-TIER-MISSING`); every guest booted for tests (the transport
+  matrix and its nightly repeat, the XDP filter guest gate, the soak, load
+  and outage cells) boots under `scripts/vm-boot-guard`: the guest writes a
+  started marker as its first act, a guest with none after 120 s is killed
+  and booted again, three attempts, and then fails by name (`VM-BOOT-GUARD`,
+  `XDP-GUEST-DID-NOT-BOOT`). That deadline is on the boot only;
+  `ROCKETNET_NIGHTLY_NO_TIMEOUT=1` lifts the limits on test cases and never
+  the boot deadline, and nothing bounds a guest's cases once it has started.
+  The nightly s390x full-system guest has the same rule with a 1200 s
+  deadline (its boot takes about 4 minutes under TCG). `vng` carries its
+  guest command on the guest kernel's command line, which x86 cuts at 2048
+  bytes (a longer one panics the kernel before its console is up and the
+  guest halts silently), so every caller writes the guest's commands to a
+  script file and hands `vng` only its path, and `scripts/vm-boot-guard`
+  measures the line with `vng --dry-run`, prints it, and refuses one over
+  1900 bytes by name. The nightly cells job runs one xdp repetition from a
+  work directory over 100 characters long to hold that;
 - a locked-memory limit that covers the io_uring cases ([LINUX.md, section 8](LINUX.md#8-limits-for-1000-clients));
 - for `big endian s390x`: the s390x cross compilers, the s390x multiarch
   libsodium, libbpf, libxdp and libstdc++, and `qemu-s390x` or

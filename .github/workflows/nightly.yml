@@ -66,10 +66,12 @@
 #                           loopback) fifty times in a row on the native
 #                           Windows runner, for the same one-in-fifty reason.
 #
-#   linux / mutation        tools/mutation/run_mutants.py at full mutant
-#                           count over the day's changed SDK files and the
-#                           six core table and ring files. A risk-class
-#                           survivor fails the job. One mutant is one rebuild
+#   linux / mutation        tools/mutation/run_mutants.py over every mutant
+#                           of the six core table and ring files and the SDK
+#                           files changed in the last 91 days, one slice of
+#                           90 a night (about 95 minutes), so the whole list
+#                           every 90 nights. A risk-class survivor in the
+#                           slice fails the job. One mutant is one rebuild
 #                           and one unit-suite run, which does not fit the
 #                           per-commit two minutes.
 
@@ -79,6 +81,15 @@ on:
   schedule:
     - cron: "40 8 * * *"
   workflow_dispatch:
+    inputs:
+      mutation_full:
+        description: "linux / mutation: run the whole mutant list instead of the day's slice (about 130 hours with 4 workers: past the job's 120-hour limit, so raise mutation_workers)"
+        type: boolean
+        default: false
+      mutation_workers:
+        description: "linux / mutation: parallel build-and-test trees (each takes about 2 cores; the nightly uses 4)"
+        type: string
+        default: "4"
 
 permissions:
   contents: read
@@ -396,7 +407,11 @@ jobs:
   # them and the xdp cell as root inside a virtme-ng guest of the runner's own
   # kernel, and prints one CELL <server>/<client> <case> runs=N pass=P fail=F
   # line per case, keeping the first failing log. A failure is reported with
-  # its log, never retried. The ASan step builds into build-asan (./bin is
+  # its log, never retried. Each xdp guest boots under scripts/vm-boot-guard:
+  # a guest that has not written its started marker in 120 s is killed and
+  # booted again, three attempts, then that run's cases fail by name
+  # (XDP-GUEST-DID-NOT-BOOT); the nightly opt-in lifts no boot deadline and
+  # the guard bounds no case. The ASan step builds into build-asan (./bin is
   # untouched), runs the same cells once, then the whole functional suite once
   # per cell with that cell's server and client transports pinned (SUITE
   # lines; the xdp cell runs its cases in the guest instead). The logs are
@@ -421,6 +436,32 @@ jobs:
 
       - name: Build Release
         run: make -j4
+
+      # THE COMMAND-LINE REGRESSION. vng carries its guest command on the
+      # guest kernel's command line, which x86 cuts at 2048 bytes; with the
+      # case list on it, the xdp cell's one guest of 13 cases from this
+      # runner's 77-character work directory was 2079 bytes, its kernel
+      # panicked before its console was up and the guest halted (run
+      # 43151301540). transport-cells-repeat now hands vng only a script
+      # file's short relative path, and scripts/vm-boot-guard refuses a
+      # command line over 1900 bytes by name. This step holds that: one
+      # repetition of every xdp case from a copy of the run's files in a
+      # work directory over 100 characters long must pass. It boots a guest,
+      # so it is here and not on the per-commit gate (about a minute).
+      - name: One xdp repetition from a work directory over 100 characters long
+        shell: bash
+        run: |
+          set -euo pipefail
+          long="$RUNNER_TEMP/rocketnet-xdp-cell-from-a-long-work-directory/$(printf '%040d' 0)"
+          rm -rf "$long"
+          mkdir -p "$long/tests/functional" "$long/.github/workflows"
+          cp -a bin scripts "$long/"
+          cp .github/workflows/ci.yml "$long/.github/workflows/"
+          cp tests/functional/rocketnet_functional_tests.cpp "$long/tests/functional/"
+          echo "work directory: $long (${#long} characters)"
+          [ "${#long}" -ge 100 ]
+          cd "$long"
+          scripts/transport-cells-repeat --runs 1 --cell xdp/portable
 
       - name: Every Linux transport cell, fifty times in a row
         shell: bash
@@ -844,13 +885,31 @@ jobs:
           grep -q 'AA64 machine (ARM64)' arm64-headers.txt
           python tools/check_exports.py build-arm64/bin/Release/rocketnet.dll build-arm64/Release/rocketnet.lib
 
-  # THE MUTATION GATE. Full mutant count (--max-mutants 0 is every mutant the
-  # generator emits, not a sample) over SDK sources committed in the last 24
-  # hours and, always, the six core table and ring files. The script exits 1
-  # when a risk-class mutant survives ./bin/test. --self-test does not build;
-  # this step is the campaign, which is why it is not on the per-commit gate.
-  # The tool is exec'd so a cancelled step's signal reaches it; it then kills
-  # every test process it started before it exits.
+  # THE MUTATION GATE, ONE SLICE A NIGHT. The list is every mutant the
+  # generator emits (--max-mutants 0, never a sample) over the six core table
+  # and ring files and every SDK source committed in the last 91 days. The
+  # whole list does not fit a night: run 43151301540 (main ee94e6fbf,
+  # 2026-11-12) generated 53350 mutants and judged 6.9 a minute on hetzner2
+  # with 4 workers, about 129 hours for the list, past this job's 120-hour
+  # limit; it never finished on any release. So each night runs one slice:
+  # tools/mutation/run_mutants.py --slice K/90, the mutants whose slice key
+  # (a hash of file, line text, column, operator and replacement, never the
+  # line number) is K modulo 90, with K the UTC day number modulo 90. Over
+  # every SDK source at 555eb5963 (59080 mutants) a slice holds 575 to 756,
+  # mean 656: 83 to 110 minutes, mean 95, at the measured rate, plus the four
+  # workers' first build; the 90 slices cover the whole list every
+  # 90 nights, and the 91-day window keeps a changed file in the list for
+  # all 90 of them. 90 is also the repository's artifact retention in days,
+  # so the slice records of one whole cycle are always there to audit. The
+  # rule is unchanged: the script exits 1 when a risk-class mutant of the
+  # slice survives ./bin/test. workflow_dispatch with mutation_full runs the
+  # whole list for a deliberate long run (raise mutation_workers to fit the
+  # 120-hour limit). --self-test does not build; this step is the campaign,
+  # which is why it is not on the per-commit gate. The tool is exec'd so a
+  # cancelled step's signal reaches it; it then kills every test process it
+  # started before it exits. The slice record (build/mutation/slice.txt) is
+  # written before the campaign starts and uploaded with results.json
+  # whatever the outcome, as mutation-slice-<job>-<run>-<attempt>.
 
   mutation:
     name: linux / mutation
@@ -870,10 +929,24 @@ jobs:
           ref: ${{ matrix.ref }}
           fetch-depth: 0
 
-      - name: Mutation campaign, full count, risk-class survivors fail
+      - name: Mutation campaign, the day's slice of the full count, risk-class survivors fail
         shell: bash
+        env:
+          MUTATION_FULL: ${{ inputs.mutation_full && '1' || '0' }}
+          MUTATION_WORKERS: ${{ inputs.mutation_workers || '4' }}
+          MUTATION_REF: ${{ matrix.ref }}
         run: |
           set -euo pipefail
+          slices=90
+          case "$MUTATION_WORKERS" in ''|*[!0-9]*|0) echo "mutation_workers must be a positive integer, not '$MUTATION_WORKERS'" >&2; exit 1 ;; esac
+          day=$(( $(date -u +%s) / 86400 ))
+          if [[ "$MUTATION_FULL" == 1 ]]; then
+            slice_args=()
+            slice="full (workflow_dispatch mutation_full: every slice, 0..$((slices - 1)) of $slices)"
+          else
+            slice_args=(--slice "$((day % slices))/$slices")
+            slice="$((day % slices))/$slices"
+          fi
           core=(
             sdk/rocketnet_token_tables.cpp
             sdk/rocketnet_encryption_map.cpp
@@ -888,7 +961,9 @@ jobs:
               exit 1
             fi
           done
-          changed="$(git log --since='24 hours ago' --name-only --pretty=format: -- sdk | sed '/^$/d' | sort -u)"
+          # one more day than there are slices: a file changed today is in the
+          # list for every slice of the next cycle
+          changed="$(git log --since="$((slices + 1)) days ago" --name-only --pretty=format: -- sdk | sed '/^$/d' | sort -u)"
           files=("${core[@]}")
           while IFS= read -r f; do
             [[ "$f" =~ ^sdk/.+\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc)$ ]] || continue
@@ -904,6 +979,29 @@ jobs:
               files+=("$f")
             fi
           done <<< "$changed"
+          mkdir -p build/mutation
+          {
+            echo "date_utc=$(date -u +%Y-%m-%d)"
+            echo "day_number=$day"
+            echo "slice=$slice"
+            echo "slices=$slices"
+            echo "ref=$MUTATION_REF"
+            echo "head=$(git rev-parse HEAD)"
+            echo "workers=$MUTATION_WORKERS"
+            echo "run=$GITHUB_RUN_ID attempt=$GITHUB_RUN_ATTEMPT"
+            echo "files=${files[*]}"
+          } > build/mutation/slice.txt
+          echo "MUTATION-SLICE $slice of the full list (day $day, UTC $(date -u +%Y-%m-%d)); the $slices slices cover every mutant every $slices nights"
           printf 'mutation files:\n'
           printf '  %s\n' "${files[@]}"
-          exec python3 tools/mutation/run_mutants.py --max-mutants 0 --files "${files[@]}"
+          exec python3 tools/mutation/run_mutants.py --max-mutants 0 ${slice_args[@]+"${slice_args[@]}"} --workers "$MUTATION_WORKERS" --out build/mutation/results.json --files "${files[@]}"
+
+      - name: Keep the slice record and the results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: mutation-slice-${{ strategy.job-index }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/mutation/slice.txt
+            build/mutation/results.json
+          if-no-files-found: ignore

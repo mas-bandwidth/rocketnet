@@ -155,22 +155,24 @@ jobs:
           # bytes; the whole unit and functional suites pass in a 32 GiB
           # guest (x86_64 virtme-ng guest, 4 CPUs, 2026-11-11). Guest pages
           # the suite does not touch cost the runner nothing.
-          qemu-system-s390x \
-            -machine s390-ccw-virtio \
-            -cpu max \
-            -accel tcg,thread=multi \
-            -m 32768 \
-            -smp 4 \
-            -display none \
-            -serial file:"$WORK/serial.log" \
-            -drive "file=$WORK/overlay.qcow2,if=none,id=hd0,format=qcow2,cache=writeback" \
-            -device virtio-blk-ccw,drive=hd0,bootindex=1 \
-            -drive "file=$WORK/seed.img,if=none,id=cidata,format=raw" \
-            -device virtio-blk-ccw,drive=cidata \
-            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22,hostfwd=udp:127.0.0.1:${GUEST_UDP_PORT}-:${GUEST_UDP_PORT}" \
-            -device virtio-net-ccw,netdev=net0 \
-            >"$WORK/qemu.log" 2>&1 &
-          QEMU_PID=$!
+          start_guest() {
+            qemu-system-s390x \
+              -machine s390-ccw-virtio \
+              -cpu max \
+              -accel tcg,thread=multi \
+              -m 32768 \
+              -smp 4 \
+              -display none \
+              -serial file:"$WORK/serial.log" \
+              -drive "file=$WORK/overlay.qcow2,if=none,id=hd0,format=qcow2,cache=writeback" \
+              -device virtio-blk-ccw,drive=hd0,bootindex=1 \
+              -drive "file=$WORK/seed.img,if=none,id=cidata,format=raw" \
+              -device virtio-blk-ccw,drive=cidata \
+              -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22,hostfwd=udp:127.0.0.1:${GUEST_UDP_PORT}-:${GUEST_UDP_PORT}" \
+              -device virtio-net-ccw,netdev=net0 \
+              >"$WORK/qemu.log" 2>&1 &
+            QEMU_PID=$!
+          }
           cleanup() {
             if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
               kill "$QEMU_PID" 2>/dev/null || true
@@ -189,25 +191,51 @@ jobs:
             -o StrictHostKeyChecking=no
             -o UserKnownHostsFile=/dev/null
             -o IdentitiesOnly=yes)
+          # THE BOOT DEADLINE. The guest has booted when ssh answers; that
+          # took 17 tries (about 4 minutes) on run 43010917783. A guest with
+          # no ssh after boot_deadline seconds is killed and booted again from
+          # a fresh overlay, up to boot_attempts times, then the step fails
+          # by name. This bounds the boot only: the nightly opt-in
+          # (ROCKETNET_NIGHTLY_NO_TIMEOUT) lifts limits on test cases, and a
+          # guest that never booted runs none. Nothing below is bounded.
+          boot_deadline=1200
+          boot_attempts=3
           ok=0
-          i=0
-          while :; do
-            i=$((i + 1))
-            if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-              echo "qemu exited before ssh"
-              tail -n 40 "$WORK/serial.log" || true
-              exit 1
+          attempt=1
+          while [ "$attempt" -le "$boot_attempts" ]; do
+            if [ "$attempt" -gt 1 ]; then
+              rm -f "$WORK/overlay.qcow2"
+              qemu-img create -f qcow2 -F qcow2 -b "$WORK/$IMAGE" "$WORK/overlay.qcow2" 8G
             fi
-            if "${SSH[@]}" true 2>/dev/null; then
-              ok=1
-              echo "ssh up at try ${i}"
-              break
-            fi
-            sleep 10
+            start_guest
+            boot_start=$SECONDS
+            i=0
+            why=""
+            while :; do
+              i=$((i + 1))
+              if ! kill -0 "$QEMU_PID" 2>/dev/null; then
+                why="qemu exited before ssh"
+                break
+              fi
+              if "${SSH[@]}" true 2>/dev/null; then
+                ok=1
+                echo "ssh up at try ${i} of boot attempt ${attempt}, after $((SECONDS - boot_start)) s"
+                break
+              fi
+              if [ $((SECONDS - boot_start)) -ge "$boot_deadline" ]; then
+                why="no ssh after ${boot_deadline} s"
+                break
+              fi
+              sleep 10
+            done
+            [ "$ok" = 1 ] && break
+            echo "GUEST-DID-NOT-BOOT attempt ${attempt}/${boot_attempts}: ${why}"
+            tail -n 40 "$WORK/serial.log" || true
+            cleanup
+            attempt=$((attempt + 1))
           done
           if [ "$ok" != 1 ]; then
-            echo "ssh did not come up"
-            tail -n 40 "$WORK/serial.log" || true
+            echo "GUEST-DID-NOT-BOOT the s390x guest did not boot in ${boot_attempts} attempts (deadline ${boot_deadline} s each)"
             exit 1
           fi
 

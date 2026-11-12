@@ -107,9 +107,20 @@ if [ "$VM" -eq 1 ]; then
     # vng from a short directory: its virtiofs socket path must stay under 108
     # bytes. 1G covers the pair (the server's plan is under 50 MB) and fits a
     # bench slot; stdin is closed so the guest never waits on a terminal.
+    # The guest runs $LOG_DIR/guest.sh, whose first act writes
+    # $LOG_DIR/started: vng's command line (the guest kernel's, 2048 bytes on
+    # x86) carries only that file's path. scripts/vm-boot-guard refuses a
+    # command line over 1900 bytes, kills and boots again a guest that has
+    # not written the marker in 120 s (three attempts), and bounds nothing
+    # once it has.
+    {
+        printf ': > %q\n' "$LOG_DIR/started"
+        printf 'exec sudo bash %q --bin-dir %q --log-dir %q --delay-ms %q --loss %q\n' \
+            "$SCRIPT" "$BIN_DIR" "$LOG_DIR" "$DELAY_MS" "$LOSS"
+    } > "$LOG_DIR/guest.sh" || fail "cannot write $LOG_DIR/guest.sh"
     short=$(mktemp -d /tmp/rnoutage.XXXXXX) || fail "cannot create a short directory for vng"
-    ( cd "$short" && vng --run "$vm_kernel" --memory 1G --cpus 4 --rwdir "$LOG_DIR" -- \
-        sudo bash "$SCRIPT" --bin-dir "$BIN_DIR" --log-dir "$LOG_DIR" --delay-ms "$DELAY_MS" --loss "$LOSS" ) \
+    ( cd "$short" && "$SCRIPT_DIR/vm-boot-guard" --marker "$LOG_DIR/started" -- vng --run "$vm_kernel" --memory 1G --cpus 4 --rwdir "$LOG_DIR" -- \
+        sh "$LOG_DIR/guest.sh" ) \
         < /dev/null > "$LOG_DIR/vm.log" 2>&1 || echo "vng exit=$?" >> "$LOG_DIR/vm.log"
     rmdir "$short" 2>/dev/null
     cat "$LOG_DIR/vm.log"
