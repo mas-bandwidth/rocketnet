@@ -3554,6 +3554,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tools/check_independent_steps.py --self-test && python3 tools/check_independent_steps.py
 
+      # The three workflow checkers below read workflows as lines; this holds
+      # every workflow to the one shape they read (bare keys, two-space job
+      # ids, four-space properties, block-form concurrency), so a spelling
+      # GitHub accepts cannot carry a hosted runner, an unbounded job or a
+      # shared main group past them (VERIFY-3 A-1).
+      - name: Every workflow is in the shape the workflow checkers read
+        if: ${{ !cancelled() }}
+        run: python3 tools/check_workflow_shape.py --self-test && python3 tools/check_workflow_shape.py
       - name: Every runs-on selects the fleet
         if: ${{ !cancelled() }}
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
