@@ -128,9 +128,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // and nothing to the client.
 // The IOCP send lanes (sdk/rocketnet_server_iocp.h: 8 lanes of 4096
 // operations at 1000 clients, each lane its own pool) then move the server
-// by 23782776, measured on aws-win-iocp-1 (MSVC, x64, DEV=ON, Release). The
-// client did not move.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1492239223 )
+// by 23782776, and each lane's send gather scratch
+// (sdk/rocketnet_send_gather.h, 114728 bytes over 4096 slots) by 917824,
+// measured on aws-win-iocp-1 (MSVC, x64, DEV=ON, Release). The client did
+// not move.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493157047 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
