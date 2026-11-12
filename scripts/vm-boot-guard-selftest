@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Controls for scripts/vm-boot-guard on fake guests: real processes, a
-# two-second boot deadline, no VM, no network; about 20 seconds in all.
+# two-second boot deadline, no VM, no network; about 50 seconds on Linux
+# (the transport-cells-repeat controls run there only), 30 elsewhere.
+# ci.yml's platform-selftests job runs it.
 #
 #   - a guest that never writes its marker is killed at the deadline, with
 #     every process of its group, and booted again until the attempts run out;

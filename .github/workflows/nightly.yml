@@ -69,7 +69,7 @@
 #   linux / mutation        tools/mutation/run_mutants.py over every mutant
 #                           of the six core table and ring files and the SDK
 #                           files changed in the last 91 days, one slice of
-#                           90 a night (about 90 minutes), so the whole list
+#                           90 a night (about 95 minutes), so the whole list
 #                           every 90 nights. A risk-class survivor in the
 #                           slice fails the job. One mutant is one rebuild
 #                           and one unit-suite run, which does not fit the
@@ -868,9 +868,10 @@ jobs:
   # limit; it never finished on any release. So each night runs one slice:
   # tools/mutation/run_mutants.py --slice K/90, the mutants whose slice key
   # (a hash of file, line text, column, operator and replacement, never the
-  # line number) is K modulo 90, with K the UTC day number modulo 90. That
-  # is about 600 to 660 mutants, 85 to 95 minutes at the measured rate plus
-  # the four workers' first build; the 90 slices cover the whole list every
+  # line number) is K modulo 90, with K the UTC day number modulo 90. Over
+  # every SDK source at 555eb5963 (59080 mutants) a slice holds 575 to 756,
+  # mean 656: 83 to 110 minutes, mean 95, at the measured rate, plus the four
+  # workers' first build; the 90 slices cover the whole list every
   # 90 nights, and the 91-day window keeps a changed file in the list for
   # all 90 of them. 90 is also the repository's artifact retention in days,
   # so the slice records of one whole cycle are always there to audit. The

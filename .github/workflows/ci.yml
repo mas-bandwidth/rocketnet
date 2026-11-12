@@ -3017,6 +3017,17 @@ jobs:
       - name: soak argument and summary selftest
         run: bash scripts/soak-args-selftest
 
+      # scripts/vm-boot-guard on fake guests: a guest that never writes its
+      # started marker is killed at a 2 s deadline with its whole process
+      # group and booted again, three attempts, then fails by name; a guest
+      # that writes it and runs past the deadline is never cut short; on
+      # Linux, transport-cells-repeat's xdp cell under
+      # ROCKETNET_NIGHTLY_NO_TIMEOUT=1 fails a never-booting guest's run by
+      # name instead of waiting. About 50 s on Linux (2026-11-12, hetzner1).
+
+      - name: VM boot deadline selftest
+        run: bash scripts/vm-boot-guard-selftest
+
       # the bench harnesses' failure states (#98). Building them here is the
       # only place benchmarks/ is compiled by CI at all, which alone catches the
       # platform-only files rotting; the selftest then FORCES each abort path
