@@ -246,14 +246,21 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     return 1;
 }
 
-// one receive stream: unreliable kinds count gaps as loss and a step back as
-// an error; reliable ordered kinds must arrive exactly in order
+// one receive stream. Reliable ordered kinds must arrive exactly in order.
+// Unreliable kinds promise neither delivery nor order, only at most once
+// (rocketnet.h): a gap is counted lost until its message arrives late, a late
+// arrival is counted reordered, and a second arrival of a sequence still in
+// the window is a duplicate, an error
+
+#define HARDEN_WINDOW 1024
+#define HARDEN_FLUSH_SECONDS 0.1
 
 struct harden_stream_t
 {
     uint32_t connection = 0;
     uint32_t expected = 0;
     bool started = false;
+    uint64_t seen[HARDEN_WINDOW / 64] = {};
 };
 
 struct harden_verify_t
@@ -261,11 +268,26 @@ struct harden_verify_t
     uint64_t delivered[HARDEN_KINDS] = {};
     uint64_t lost[HARDEN_KINDS] = {};
     uint64_t head[HARDEN_KINDS] = {};
+    uint64_t reordered[HARDEN_KINDS] = {};
+    uint64_t late_past_window[HARDEN_KINDS] = {};
     uint64_t errors = 0;
     uint64_t wrong_owner = 0;
     uint64_t reliable_gaps = 0;
     uint64_t back = 0;
+    uint64_t duplicates = 0;
 };
+
+static bool harden_stream_seen( const harden_stream_t * stream, uint32_t sequence )
+{
+    return ( stream->seen[( sequence % HARDEN_WINDOW ) / 64] >> ( sequence % 64 ) ) & 1;
+}
+
+static void harden_stream_mark( harden_stream_t * stream, uint32_t sequence, bool seen )
+{
+    const uint64_t bit = UINT64_C( 1 ) << ( sequence % 64 );
+    uint64_t & word = stream->seen[( sequence % HARDEN_WINDOW ) / 64];
+    word = seen ? ( word | bit ) : ( word & ~bit );
+}
 
 static void harden_stream_take( harden_stream_t * stream, const harden_message_t * m, bool reliable, harden_verify_t * v )
 {
@@ -273,6 +295,7 @@ static void harden_stream_take( harden_stream_t * stream, const harden_message_t
     {
         // a new connection's first message: sequences start at 0, so what
         // came before it was sent before this end could take it
+        *stream = harden_stream_t();
         stream->started = true;
         stream->connection = m->connection;
         v->head[m->kind] += m->sequence;
@@ -280,8 +303,30 @@ static void harden_stream_take( harden_stream_t * stream, const harden_message_t
     }
     if ( m->sequence < stream->expected )
     {
-        v->back++;
-        v->errors++;
+        if ( reliable )
+        {
+            v->back++;
+            v->errors++;
+            return;
+        }
+        if ( stream->expected - m->sequence > HARDEN_WINDOW )
+        {
+            // older than the window: no record of whether it came before
+            v->late_past_window[m->kind]++;
+            v->lost[m->kind]--;
+            v->delivered[m->kind]++;
+            return;
+        }
+        if ( harden_stream_seen( stream, m->sequence ) )
+        {
+            v->duplicates++;
+            v->errors++;
+            return;
+        }
+        harden_stream_mark( stream, m->sequence, true );
+        v->reordered[m->kind]++;
+        v->lost[m->kind]--;
+        v->delivered[m->kind]++;
         return;
     }
     if ( m->sequence > stream->expected )
@@ -293,6 +338,13 @@ static void harden_stream_take( harden_stream_t * stream, const harden_message_t
         }
         v->lost[m->kind] += m->sequence - stream->expected;
     }
+    // every sequence the window moves past is cleared, this one is seen
+    const uint32_t clear = m->sequence - stream->expected < HARDEN_WINDOW ? m->sequence - stream->expected : HARDEN_WINDOW;
+    for ( uint32_t i = 0; i < clear; i++ )
+    {
+        harden_stream_mark( stream, stream->expected + i, false );
+    }
+    harden_stream_mark( stream, m->sequence, true );
     stream->expected = m->sequence + 1;
     v->delivered[m->kind]++;
 }
@@ -339,6 +391,7 @@ struct harden_options_t
     std::string logs;
     int netem_duplicates = 0;
     int frame_p99_us = 12000;
+    double min_delivery = 99.9;
 };
 
 static bool harden_parse_sizes( const char * text, harden_options_t * o )
@@ -519,6 +572,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--netem-duplicates" ) == 0 )
         {
             o->netem_duplicates = atoi( v );
+        }
+        else if ( strcmp( a, "--min-delivery" ) == 0 )
+        {
+            o->min_delivery = atof( v );
         }
         else if ( strcmp( a, "--frame-p99-us" ) == 0 )
         {
@@ -1281,6 +1338,16 @@ static int harden_server_main( const harden_options_t & o )
         harden_print_counters( "c2s_transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
         harden_print_cut_network( role, "c2s", o );
     }
+    // a send the transport kept for its next send_packets leaves now: a few
+    // frames of sends only, then the freeze
+    {
+        const double flush_end = harden_now() + HARDEN_FLUSH_SECONDS;
+        while ( harden_now() < flush_end )
+        {
+            rocketnet_server_send_packets( server );
+            rocketnet_sleep( 1.0 / o.hz );
+        }
+    }
     // T3, server to client cut: what the frozen server sent
     harden_sleep_until_wall( cut_s2c_at );
     {
@@ -1332,10 +1399,15 @@ static int harden_server_main( const harden_options_t & o )
         harden_print_term( role, name, (int64_t) verify.lost[k] );
         snprintf( name, sizeof( name ), "in_head_kind%d", k );
         harden_print_term( role, name, (int64_t) verify.head[k] );
+        snprintf( name, sizeof( name ), "in_reordered_kind%d", k );
+        harden_print_term( role, name, (int64_t) verify.reordered[k] );
+        snprintf( name, sizeof( name ), "in_late_past_window_kind%d", k );
+        harden_print_term( role, name, (int64_t) verify.late_past_window[k] );
     }
     harden_print_term( role, "in_errors", (int64_t) verify.errors );
     harden_print_term( role, "in_reliable_gaps", (int64_t) verify.reliable_gaps );
     harden_print_term( role, "in_back", (int64_t) verify.back );
+    harden_print_term( role, "in_duplicates", (int64_t) verify.duplicates );
     harden_print_term( role, "in_wrong_owner", (int64_t) verify.wrong_owner );
     harden_print_counters( "transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
     harden_print_counters( "message", role, message_server ? rocketnet_message_server_counters( message_server ) : NULL, true );
@@ -1527,7 +1599,11 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
         // the cleanup sends again
         const bool stop_traffic = cleanup || wall >= end_at;
         const bool sends = cleanup || wall < end_at;
-        const bool frozen = !cleanup && wall >= end_at && wall < thaw_at;
+        // a hand-off the transport deferred leaves with the next send_packets
+        // (CLIENT_SEND_DEFERRED), so the clients flush for a few frames, sends
+        // only, before they freeze
+        const bool flushing = !cleanup && wall >= end_at && wall < end_at + HARDEN_FLUSH_SECONDS;
+        const bool frozen = !cleanup && wall >= end_at + HARDEN_FLUSH_SECONDS && wall < thaw_at;
         // the last churn event leaves room for a silent stop to time out
         // and its client to come back before the end
         const bool churn_open = wall < end_at - (double) o->token_timeout - 6.0;
@@ -1651,6 +1727,14 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                 continue;
             }
 
+            if ( flushing )
+            {
+                if ( c.phase == HARDEN_PHASE_LIVE || c.phase == HARDEN_PHASE_LEAVING )
+                {
+                    rocketnet_client_send_packets( c.client );
+                }
+                continue;
+            }
             rocketnet_client_update( c.client, t );
             const struct rocketnet_message_batch_t * batch;
             while ( ( batch = rocketnet_client_receive_messages( c.client ) ) != NULL )
@@ -1849,11 +1933,14 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
         totals->verify.delivered[k] += verify.delivered[k];
         totals->verify.lost[k] += verify.lost[k];
         totals->verify.head[k] += verify.head[k];
+        totals->verify.reordered[k] += verify.reordered[k];
+        totals->verify.late_past_window[k] += verify.late_past_window[k];
     }
     totals->verify.errors += verify.errors;
     totals->verify.wrong_owner += verify.wrong_owner;
     totals->verify.reliable_gaps += verify.reliable_gaps;
     totals->verify.back += verify.back;
+    totals->verify.duplicates += verify.duplicates;
     for ( int k = 0; k < HARDEN_CLIENT_SLOTS; k++ )
     {
         totals->counters[k] += counters[(size_t) k];
@@ -1976,10 +2063,15 @@ static int harden_clients_main( const harden_options_t & o )
         harden_print_term( role, name, (int64_t) v.lost[k] );
         snprintf( name, sizeof( name ), "head_kind%d", k );
         harden_print_term( role, name, (int64_t) v.head[k] );
+        snprintf( name, sizeof( name ), "reordered_kind%d", k );
+        harden_print_term( role, name, (int64_t) v.reordered[k] );
+        snprintf( name, sizeof( name ), "late_past_window_kind%d", k );
+        harden_print_term( role, name, (int64_t) v.late_past_window[k] );
     }
     harden_print_term( role, "errors", (int64_t) v.errors );
     harden_print_term( role, "reliable_gaps", (int64_t) v.reliable_gaps );
     harden_print_term( role, "back", (int64_t) v.back );
+    harden_print_term( role, "duplicates", (int64_t) v.duplicates );
     harden_print_term( role, "wrong_owner", (int64_t) v.wrong_owner );
     harden_print_term( role, "connections_read", (int64_t) totals.connections_read );
     harden_print_term( role, "joins", (int64_t) totals.joins );
@@ -2578,13 +2670,21 @@ static int harden_reconcile_main( const harden_options_t & o )
     // the players: delivery verified, nobody stable dropped, the frame held
     const int64_t p99 = t.get( "server.work_p99_us" );
     const bool frame_ok = p99 <= (int64_t) o.frame_p99_us;
-    const bool players_ok = t.get( "clients.errors" ) == 0 && t.get( "server.in_errors" ) == 0 && t.get( "clients.stable_ends" ) == 0 && t.get( "clients.connects" ) > 0;
-    const int64_t burst_delivered = t.get( "clients.delivered_kind0" );
-    const int64_t burst_lost = t.get( "clients.lost_kind0" );
+    // delivery: unreliable messages each way, delivered against delivered +
+    // lost, held to --min-delivery percent
+    const int64_t down_delivered = t.get( "clients.delivered_kind0" );
+    const int64_t down_lost = t.get( "clients.lost_kind0" );
+    const int64_t up_delivered = t.get( "server.in_delivered_kind3" );
+    const int64_t up_lost = t.get( "server.in_lost_kind3" );
+    const double down_percent = down_delivered + down_lost > 0 ? 100.0 * (double) down_delivered / (double) ( down_delivered + down_lost ) : 0.0;
+    const double up_percent = up_delivered + up_lost > 0 ? 100.0 * (double) up_delivered / (double) ( up_delivered + up_lost ) : 0.0;
+    const bool delivery_ok = down_percent >= o.min_delivery && up_percent >= o.min_delivery;
+    const bool players_ok = t.get( "clients.errors" ) == 0 && t.get( "server.in_errors" ) == 0 && t.get( "clients.stable_ends" ) == 0 && t.get( "clients.connects" ) > 0 && delivery_ok;
     printf( "harden_players: connects=%" PRId64 " stable_ends=%" PRId64 " unplanned_ends=%" PRId64 " client_errors=%" PRId64 " server_in_errors=%" PRId64
-            " unreliable_delivered=%" PRId64 " unreliable_lost=%" PRId64 " (%.4f%%) reliable_delivered=%" PRId64 " big_delivered=%" PRId64 " verdict=%s\n",
+            " s2c_unreliable_delivered=%" PRId64 " lost=%" PRId64 " reordered=%" PRId64 " (%.4f%%) c2s_unreliable_delivered=%" PRId64 " lost=%" PRId64 " reordered=%" PRId64
+            " (%.4f%%) bound=%.3f%% reliable_delivered=%" PRId64 " big_delivered=%" PRId64 " verdict=%s\n",
             t.get( "clients.connects" ), t.get( "clients.stable_ends" ), t.get( "clients.unplanned_ends" ), t.get( "clients.errors" ), t.get( "server.in_errors" ),
-            burst_delivered, burst_lost, burst_delivered + burst_lost > 0 ? 100.0 * (double) burst_lost / (double) ( burst_delivered + burst_lost ) : 0.0,
+            down_delivered, down_lost, t.get( "clients.reordered_kind0" ), down_percent, up_delivered, up_lost, t.get( "server.in_reordered_kind3" ), up_percent, o.min_delivery,
             t.get( "clients.delivered_kind1" ), t.get( "clients.delivered_kind2" ), players_ok ? "PASS" : "FAIL" );
     printf( "harden_frame: work_p99_us=%" PRId64 " work_p999_us=%" PRId64 " work_max_us=%" PRId64 " overruns=%" PRId64 " frames=%" PRId64 " bound_p99_us=%d verdict=%s\n", p99,
             t.get( "server.work_p999_us" ), t.get( "server.work_max_us" ), t.get( "server.overruns" ), t.get( "server.frames" ), o.frame_p99_us, frame_ok ? "PASS" : "FAIL" );

@@ -108,6 +108,7 @@ client_shape=(--messages 1 --reliable-every 1 --join-rate 100)
 netem=""
 hostile=0
 duplicates=0
+min_delivery=99.9
 case "$row" in
     control)
         server_shape=(--base 1 --burst 0 --burst-clients 0 --reliable-every 0 --big-every 0)
@@ -125,6 +126,7 @@ case "$row" in
         # without the delay), 15 ms +- 5 ms of normal jitter
         netem="delay 15ms 5ms distribution normal reorder 2% loss 1% duplicate 0.5% limit 200000"
         duplicates=1
+        min_delivery=97
         ;;
     hostile)
         hostile=1
@@ -133,6 +135,7 @@ case "$row" in
         server_shape=(--base 1 --burst 15 --burst-clients "${burst_clients:-3}" --reliable-every 1 --big-every 60 --big-bytes 3000)
         client_shape=(--messages 1 --reliable-every 1 --join-rate 100 --churn-clients 100 --churn-rate 2 --token-timeout 5)
         netem="delay 15ms 5ms distribution normal loss 0.5% limit 200000"
+        min_delivery=99
         ;;
     *)
         usage
@@ -206,7 +209,7 @@ logs="$out/server.log,$out/clients.log"
 if [ "$hostile" = "1" ]; then
     logs="$logs,$out/hostile.log"
 fi
-"$tool" reconcile --logs "$logs" --netem-duplicates "$duplicates" --frame-p99-us "$frame_p99_us" | tee "$out/reconcile.txt" || status=1
+"$tool" reconcile --logs "$logs" --netem-duplicates "$duplicates" --min-delivery "$min_delivery" --frame-p99-us "$frame_p99_us" | tee "$out/reconcile.txt" || status=1
 grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"
 echo "harden_cell: transport=$transport row=$row exit=$status utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$out/reconcile.txt"
 exit "$status"
