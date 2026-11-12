@@ -14,7 +14,7 @@
 //
 //   tla_trace --layer bank --seed N --out DIR [--steps K]
 //
-// writes DIR/MCTraceBank_<seed>.tla and .cfg (MCTraceBankPlant_<seed> from the
+// writes DIR/MCTraceBankSeed<seed>.tla and .cfg (MCTraceBankPlantSeed<seed> from the
 // plant build). The plant build (tla_trace_plant) compiles the layer's code
 // with its plant define: the walk is the same, and its trace must fail
 // TraceConsistent.
@@ -522,9 +522,9 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
               BANK_QUEUES, ROCKETNET_URING_SEND_BANKS, BANK_SLOTS, ROCKETNET_FRAME_STRIDE, BANK_DEMAND, BANK_MAX_FLUSH );
 
 #if defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
-    const std::string name = "MCTraceBankPlant_" + tla_int( (int64_t) seed );
+    const std::string name = "MCTraceBankPlantSeed" + tla_int( (int64_t) seed );
 #else  // #if defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
-    const std::string name = "MCTraceBank_" + tla_int( (int64_t) seed );
+    const std::string name = "MCTraceBankSeed" + tla_int( (int64_t) seed );
 #endif // #if defined( ROCKETNET_URING_SEND_QUEUE_PLANT )
 
     return tla_write_trace( out, name, "TraceRNUringQueueBankLayout", definitions, constants, records ) ? 0 : 1;
