@@ -1,3 +1,9 @@
+# MOVED TO MAIN (2026-11-12): this branch copy never reached main, and a cron on
+# a branch never fires, so its schedule (and any temporary push trigger) is
+# removed here. The working version, against today's tree, is the file of the
+# same path on branch fixa/branches (fix-verify-a item 7), which carries the
+# cron once it is on main. This copy is kept for its history only.
+#
 # THE NIGHTLY WINDOWS SANITIZERS AND APPLICATION VERIFIER.
 #
 # The Windows twin of nightly-macos-sanitizers.yml. nightly.yml's windows /
@@ -53,13 +59,7 @@
 name: nightly-windows-sanitizers
 
 on:
-  schedule:
-    - cron: "10 7 * * *"
   workflow_dispatch:
-  # TEMPORARY: the first run of this branch (dispatch needs the file on the default branch); removed before merge
-  push:
-    branches: [nightly/windows-sanitizers]
-
 permissions:
   contents: read
 
