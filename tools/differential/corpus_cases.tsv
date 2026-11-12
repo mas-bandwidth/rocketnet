@@ -1,13 +1,29 @@
-# The netcode 1.02 decision for each tests/fuzz/corpus_connect_token file the
-# differential maps to netcode (tools/differential/README.md, the fuzz
-# corpus mode), recorded from the live run against tag v1.2.1. Columns:
+# One row for every file of tests/fuzz/corpus_connect_token (a file without a
+# row, or a row without a file, fails the gate). Columns:
 #
-#   corpus file <TAB> mapped fields <TAB> netcode reference decision
-raw_empty	raw,clock+0m	refuse:version
-raw_version_prefix	raw,clock+0m	refuse:version
-structured_before_create	untouched,clock-127m	accept
-structured_expired	untouched,clock+127m	refuse:expired
-structured_flip_clear_key	clear,clock+0m	accept
-structured_flip_protocol_id	protocol,clock+0m	refuse:protocol
-structured_flip_signature	signature,clock+0m	refuse:signature
-structured_untouched	untouched,clock+0m	accept
+#   corpus file <TAB> mapped fields <TAB> netcode reference decision <TAB> rocketnet decision
+#
+# The netcode column is the netcode 1.02 decision recorded from the live run
+# against tag v1.2.1 (tools/differential/README.md, the fuzz corpus mode);
+# "-" where the case is not comparable (every raw file, and a structured file
+# touching a field netcode 1.02 does not carry), which the gate never puts to
+# netcode. The rocketnet column is the decision rocketnet must reach, and the
+# gate holds the live decision to it on every row, comparable or not.
+raw_empty	raw,clock+0m	-	refuse:version
+raw_version_prefix	raw,clock+0m	-	refuse:protocol
+seed_type_clear_mutation	clear,clock+0m	accept	accept
+seed_type_client_expired	raw,clock+5m	-	refuse:expired
+seed_type_client_flags_invalid	raw,clock+0m	-	refuse:address
+seed_type_client_ipv4	raw,clock+0m	-	accept
+seed_type_client_ipv6	raw,clock+0m	-	refuse:address
+seed_type_client_version_invalid	raw,clock+0m	-	refuse:version
+seed_type_client_window_invalid	raw,clock+0m	-	refuse:expired
+seed_type_covered_mutation	version,clock+0m	refuse:version	refuse:version
+seed_type_signature_rejected	raw,clock+0m	-	refuse:version
+seed_type_signature_verified	untouched,clock+0m	accept	accept
+structured_before_create	untouched,clock-127m	accept	refuse:future
+structured_expired	untouched,clock+127m	refuse:expired	refuse:expired
+structured_flip_clear_key	clear,clock+0m	accept	accept
+structured_flip_protocol_id	protocol,clock+0m	refuse:protocol	refuse:protocol
+structured_flip_signature	signature,clock+0m	refuse:signature	refuse:signature
+structured_untouched	untouched,clock+0m	accept	accept

@@ -84,11 +84,13 @@ bash tools/differential/run.sh
 bash tools/differential/run.sh /path/to/netcode
 ```
 
-`run.sh` builds rocketnet once (the `rocketnet_dev` library, which carries the
+`run.sh` builds rocketnet (the `rocketnet_dev` library, which carries the
 token minting used to construct the cases while the admission path is the
-production code), then compiles and runs the harness. The build fetches
+production code; rebuilt incrementally on every run, so a stale archive is
+never judged), then compiles and runs the harness. The build fetches
 nothing; the netcode source is only ever read from the path on the command
-line.
+line. `DIFFERENTIAL_BUILD_DIR` (default `build`) and `DIFFERENTIAL_JOBS`
+(default 2) set the library's build directory and parallelism.
 
 The harness prints one line per case:
 
@@ -104,6 +106,49 @@ Then one line per fuzz corpus file (below). `verdict` is one of:
 * `rocketnet-weaker` — netcode refuses, rocketnet admits. A finding.
 * `rocketnet-stricter` — rocketnet refuses, netcode admits. Listed with the
   reason and judged against `REQUIREMENTS.md`.
+* `not-comparable` — the case cannot be put to netcode 1.02 (corpus mode,
+  below); only rocketnet's decision is checked.
+
+Every row of `cases.tsv` and `corpus_cases.tsv` also records, in its last
+column, the decision rocketnet must reach, and the live decision is held to
+it. That is what catches a removed refusal netcode cannot see: a permitted
+`rocketnet-stricter` row turning `agree` (a removed timeout or create rung),
+or a `not-comparable` row's decision changing.
+
+## Exit status
+
+The last line printed is the tally, for example
+`differential: PASS compared=17 agree=15 stricter-permitted=2 not-comparable=9 failures=0`.
+`run.sh` exits 0 only on `PASS`. It exits 1, with one `FAIL <row>: <why>`
+line on stderr per failure, when any row is:
+
+* `rocketnet-weaker`;
+* `rocketnet-stricter` in a class not permitted below (`timeout`, `future`);
+* different from rocketnet's expected decision in its row;
+* (live) one where live netcode disagrees with the reference column, or
+  where netcode could not be asked;
+* a corpus file with no row in `corpus_cases.tsv`, a row naming no corpus
+  file, an unreadable file, or a case-table row out of order;
+
+and when no row at all was compared with netcode. A build failure also exits
+nonzero.
+
+## The self-test, and where it runs
+
+`bash tools/differential/selftest.sh [NETCODE_DIR]` copies the tracked files
+to a scratch directory, requires the stock copy to print `PASS` and exit 0,
+then plants one fault at a time in the copy and requires each to print
+`FAIL`, exit nonzero, and fail only on the rows that fault touches: the
+protocol id rung removed (`wrong_protocol_id` turns `rocketnet-weaker`), the
+version rung removed (only the expected rocketnet decisions of the raw and
+version rows see it), the timeout rung removed (the permitted stricter row
+turns `agree`), a reference cell altered, and a corpus row deleted. Each
+restored file is touched so the incremental build drops the plant, and the
+restored copy must pass again at the end. The checkout is never changed.
+
+`.github/workflows/nightly-differential.yml` runs the self-test and then the
+gate, live against the pinned netcode source, every night on the fleet. The
+gate's tally line goes to the job summary.
 
 ## The netcode side, live
 
@@ -149,38 +194,61 @@ xor:
 | clear keys and pad | 640-767 | the public token's client keys and pad, before the client writes its request |
 
 A case touching any not-comparable field prints `not-comparable` and is not
-judged. The clock maps to netcode's `expire_seconds` (300 minus the offset,
-zero when that is not positive): netcode stamps and checks expiry on its own
-wall clock and keeps no create time, so a token "not yet created" is a valid
-token there. The raw half maps to a netcode request whose bytes after the
-packet type are the same input bytes, zero-padded.
+judged against netcode. The clock maps to netcode's `expire_seconds` (300
+minus the offset, zero when that is not positive): netcode stamps and checks
+expiry on its own wall clock and keeps no create time, so a token "not yet
+created" is a valid token there.
 
-The netcode column comes from the live library when `NETCODE_DIR` is given
-and from `corpus_cases.tsv` otherwise, which records the live run against
-tag v1.2.1; a corpus file with no row there prints `needs-NETCODE_DIR` and
-`not-run`. The live run reports on stderr where it disagrees with that file,
-and prints a `FINDING` line on stderr for any `rocketnet-weaker` case.
+The raw half is never comparable. A raw file's bytes would land in netcode's
+request from its version info on (the first 13 bytes of a rocketnet token
+are rocketnet's version, protocol id and create time, where netcode wants
+`NETCODE 1.02\0`), so netcode refuses every raw file at its version compare,
+whatever the token holds: that refusal says "not a netcode packet", not
+"bad token". A verdict against it compared nothing, and read
+`rocketnet-weaker` exactly when the file is a valid rocketnet token for the
+harness's server (`seed_type_client_ipv4`; judged an artefact of the mapping,
+2026-11-12). Raw rows print `not-comparable` with rocketnet's decision, which
+is held to the row's expected rocketnet column.
 
-Measured against tag v1.2.1:
+`corpus_cases.tsv` has one row per corpus file: the file, the fields the
+mapping reads, the netcode 1.02 decision recorded from the live run against
+tag v1.2.1 (`-` for a not-comparable row), and the decision rocketnet must
+reach. With `NETCODE_DIR` the live netcode answer is held to the recorded
+one.
+
+Measured against tag v1.2.1 (2026-11-12, amd-2):
 
 ```
 # corpus	fields	netcode	rocketnet	verdict
-raw_empty	raw,clock+0m	refuse:version	refuse:version	agree
-raw_version_prefix	raw,clock+0m	refuse:version	refuse:protocol	agree
+raw_empty	raw,clock+0m	not-comparable	refuse:version	not-comparable
+raw_version_prefix	raw,clock+0m	not-comparable	refuse:protocol	not-comparable
+seed_type_clear_mutation	clear,clock+0m	accept	accept	agree
+seed_type_client_expired	raw,clock+5m	not-comparable	refuse:expired	not-comparable
+seed_type_client_flags_invalid	raw,clock+0m	not-comparable	refuse:address	not-comparable
+seed_type_client_ipv4	raw,clock+0m	not-comparable	accept	not-comparable
+seed_type_client_ipv6	raw,clock+0m	not-comparable	refuse:address	not-comparable
+seed_type_client_version_invalid	raw,clock+0m	not-comparable	refuse:version	not-comparable
+seed_type_client_window_invalid	raw,clock+0m	not-comparable	refuse:expired	not-comparable
+seed_type_covered_mutation	version,clock+0m	refuse:version	refuse:version	agree
+seed_type_signature_rejected	raw,clock+0m	not-comparable	refuse:version	not-comparable
+seed_type_signature_verified	untouched,clock+0m	accept	accept	agree
 structured_before_create	untouched,clock-127m	accept	refuse:future	rocketnet-stricter
 structured_expired	untouched,clock+127m	refuse:expired	refuse:expired	agree
 structured_flip_clear_key	clear,clock+0m	accept	accept	agree
 structured_flip_protocol_id	protocol,clock+0m	refuse:protocol	refuse:protocol	agree
 structured_flip_signature	signature,clock+0m	refuse:signature	refuse:signature	agree
 structured_untouched	untouched,clock+0m	accept	accept	agree
+
+differential: PASS compared=17 agree=15 stricter-permitted=2 not-comparable=9 failures=0
 ```
 
-No case is `rocketnet-weaker`. The one `rocketnet-stricter` case is a token
-presented before its create time: netcode 1.02 carries no create time to the
-server and admits it; rocketnet refuses it (`TOKEN_CREATED_IN_FUTURE`), which
-`REQUIREMENTS.md` permits. The verdict compares the decision only; the
-reason classes may differ when both refuse (`raw_version_prefix`: netcode
-stops at its version string, rocketnet at the protocol id).
+No row is `rocketnet-weaker`. The two `rocketnet-stricter` rows are the
+permitted ones: the table's `timeout_out_of_range` and the corpus's
+`structured_before_create`, a token presented before its create time, which
+netcode 1.02 (carrying no create time to the server) admits and rocketnet
+refuses (`TOKEN_CREATED_IN_FUTURE`), as `REQUIREMENTS.md` permits. The
+verdict compares the decision only; the reason classes may differ when both
+refuse.
 
 ## The differential fuzz target
 
@@ -223,14 +291,17 @@ dictionary at `tests/fuzz/dict/rocketnet_fuzz_differential.dict`.
 
 ## Files
 
-* `cases.tsv` — the case table and the netcode reference decisions.
-* `corpus_cases.tsv` — the netcode 1.02 reference decision for each mapped
-  fuzz corpus file, recorded from the live run.
+* `cases.tsv` — the case table, the netcode reference decisions and the
+  decision rocketnet must reach.
+* `corpus_cases.tsv` — one row per fuzz corpus file: the netcode 1.02
+  reference decision recorded from the live run (`-` where not comparable)
+  and the decision rocketnet must reach.
 * `decide.h` — the shared decision core (the case model, the rocketnet
   decider, the netcode live decider, the verdict), used by the gate and the
   fuzz target.
 * `netcode_decisions.cpp` — the fixed gate: drives rocketnet live and compares.
 * `run.sh` — builds both libraries (netcode only when `NETCODE_DIR` is given)
-  and runs the harness.
+  and runs the harness; its exit status is the gate's.
+* `selftest.sh` — proves the gate passes stock and fails on planted faults.
 * `tests/fuzz/rocketnet_fuzz_differential.cpp` — the differential fuzz target.
 * `README.md` — this file.
