@@ -2881,12 +2881,15 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     // library gap went
     const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped + c.library_refused_before_received;
     const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
-    // a qdisc drop is an skb, and a GSO skb carries several datagrams: the
-    // drops name one where the libraries lost several. The datagrams riding
-    // in a GSO skb beyond its first are the send_gap (OutDatagrams counts the
-    // skb), so with the qdisc dropping, a gap of at most that many is a
-    // dropped GSO skb's later segments; the gap is never below zero
-    const int64_t gso_slack = c.qdisc_dropped > 0 && send_gap > 0 ? send_gap : 0;
+    // the kernel's drops count skbs, and a GSO skb carries several datagrams:
+    // a qdisc drop, a send buffer error, or a GSO skb arriving whole (a veth
+    // and a UDP_GRO socket keep it whole) at a closed port or a full socket
+    // names one where the libraries lost several. The datagrams riding in a
+    // GSO skb beyond its first are the send_gap (OutDatagrams counts the skb),
+    // so while any of those drops, a gap of at most that many is a dropped
+    // GSO skb's later segments; the gap is never below zero
+    const int64_t skb_drops = c.qdisc_dropped + c.kernel_sndbuf + c.arrived_noports + c.arrived_inerrors;
+    const int64_t gso_slack = skb_drops > 0 && send_gap > 0 ? send_gap : 0;
     const bool ok = duplicates_expected ? library_gap <= 0 : library_gap >= 0 && library_gap <= gso_slack;
     printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s", direction, c.library_sent,
             c.library_received, named_drops, library_gap, duplicates_expected && library_gap < 0 ? ", netem duplicates" : "" );
