@@ -59,6 +59,8 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # the nightly-framework row's needs (env:FRAMEWORK_READ_TOKEN), as nightly-framework.yml passes it
+          FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN }}
         run: |
           set -euo pipefail
           python3 tools/planted_violations.py --self-test

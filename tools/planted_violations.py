@@ -64,6 +64,17 @@ Table: tab separated, a header line, `#` comments. Columns:
            PLANT-BROKEN, never red.
   command  the step's own command (see wiring); `\\n` is a newline
   red      python regex the command's output must contain
+  needs    `-`, or what the row needs from the machine that runs it, which the
+           fleet runner of its job has and a bench may not; comma separated:
+             env:NAME      the environment variable is set and not empty
+             file:PATH     the path exists (~ and $VAR expanded)
+             cmd:NAME      the program is on PATH
+             quiet:F       the host's 1-minute load is at most F times the
+                           CPUs this run may use (nproc); the row runs after
+                           every other row, alone, and waits up to
+                           QUIET_WAIT seconds for the load to come down
+           A row whose need is not met is not run: PLANT-UNMET <id> (needs
+           <what>: <why>), and the run exits 1 (the check was not shown red).
 
 Commands run under `bash -euo pipefail` in the scratch checkout's root with
 ROCKETNET_PLANTED=1 set. Output after setup is what the red regex is matched
@@ -77,8 +88,8 @@ Usage:
   planted_violations.py --self-test       fixtures, no build
 
 Exit 0 when every run row is RED and the table is complete; 1 on any GREEN,
-BROKEN, HUNG, MISSING or STALE, or when zero rows ran; 2 for a table that does
-not parse.
+BROKEN, HUNG, UNMET, MISSING or STALE, or when zero rows ran; 2 for a table that
+does not parse.
 """
 
 import argparse
@@ -102,7 +113,11 @@ ROOT = Path(__file__).resolve().parent.parent
 TABLE = "tools/planted_violations.tsv"
 CHECKERS = "tools/checkers.txt"
 PLANTED = "tools/planted"
-COLUMNS = ["id", "workflow", "job", "step", "os", "skip", "plant", "setup", "command", "red"]
+COLUMNS = ["id", "workflow", "job", "step", "os", "skip", "plant", "setup", "command", "red", "needs"]
+NEED_KINDS = ("env", "file", "cmd", "quiet")
+# a quiet row waits this long for the host's load to come down before it is UNMET
+QUIET_WAIT = 900
+QUIET_POLL = 15
 OSES = ("linux", "macos", "windows")
 MARKER = "@@PLANTED-VIOLATIONS-SETUP-DONE@@"
 RUNS_ON_OS = {"Linux": "linux", "macOS": "macos", "Windows": "windows"}
@@ -167,10 +182,68 @@ def load_table(path):
             raise TableError(f"{path}:{number}: red regex: {error}") from error
         for plant in split_plants(row["plant"]):
             parse_plant(plant, f"{path}:{number}")
+        row["_needs"] = parse_needs(row["needs"], f"{path}:{number}")
         rows.append(row)
     if header is None:
         raise TableError(f"{path}: no header line")
     return rows
+
+
+def parse_needs(text, where):
+    """[(kind, argument)] of a needs cell; '-' is none."""
+    if text == "-":
+        return []
+    needs = []
+    for item in (part.strip() for part in text.split(",")):
+        kind, sep, argument = item.partition(":")
+        if not sep or kind not in NEED_KINDS or not argument:
+            raise TableError(f"{where}: need {item!r} is not one of " + ", ".join(k + ":..." for k in NEED_KINDS))
+        if kind == "quiet":
+            try:
+                if not 0 < float(argument) <= 4:
+                    raise ValueError
+            except ValueError:
+                raise TableError(f"{where}: quiet:{argument} wants a load fraction in (0, 4]") from None
+        needs.append((kind, argument))
+    return needs
+
+
+def usable_cpus():
+    """The CPUs this run may use (what nproc prints): the affinity mask where there is one."""
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def unmet_need(needs, environ=None, load=None, cpus=usable_cpus, sleep=None, clock=None):
+    """None when every need is met, else '<kind>:<argument>: <why>' for the first that is not."""
+    import time
+    environ = os.environ if environ is None else environ
+    load = load or (lambda: os.getloadavg()[0])
+    sleep = sleep or time.sleep
+    clock = clock or time.monotonic
+    for kind, argument in needs:
+        what = f"{kind}:{argument}"
+        if kind == "env" and not environ.get(argument):
+            return f"{what}: {argument} is not set"
+        if kind == "file":
+            path = os.path.expanduser(os.path.expandvars(argument))
+            if not os.path.exists(path):
+                return f"{what}: {path} does not exist on {platform.node()}"
+        if kind == "cmd" and shutil.which(argument, path=environ.get("PATH")) is None:
+            return f"{what}: {argument} is not on PATH on {platform.node()}"
+        if kind == "quiet":
+            limit = float(argument) * cpus()
+            start = clock()
+            while True:
+                now = load()
+                if now <= limit:
+                    break
+                if clock() - start >= QUIET_WAIT:
+                    return (f"{what}: host load {now:.2f} over {limit:g} ({argument} x {cpus()} CPUs) on "
+                            f"{platform.node()} after waiting {QUIET_WAIT} s")
+                sleep(QUIET_POLL)
+    return None
 
 
 def split_plants(text):
@@ -428,7 +501,14 @@ def scratch_checkout(root, path):
     return Path(path)
 
 
+def runner_temp(tree):
+    """A row's RUNNER_TEMP: a sibling of its scratch checkout (<slot>.runner-temp)."""
+    tree = Path(tree)
+    return tree.with_name(tree.name + ".runner-temp")
+
+
 def remove_checkout(root, path):
+    shutil.rmtree(runner_temp(Path(path).resolve()), ignore_errors=True)
     if Path(path).exists():
         subprocess.run(["git", "worktree", "remove", "--force", str(path)], cwd=root, capture_output=True)
         shutil.rmtree(path, ignore_errors=True)
@@ -440,8 +520,12 @@ def run_script(script, tree, timeout):
     # each row gets its own runner temp and step summary, so parallel rows never share a
     # timing receipt; the workspace is the scratch checkout
     tree = Path(tree).resolve()  # the script runs inside the tree: every path it is given is absolute
-    temp = tree / ".planted-runner-temp"
-    temp.mkdir(parents=True, exist_ok=True)
+    # beside the checkout, never inside it, as on a runner: a step that archives the workspace
+    # (tar -C "$GITHUB_WORKSPACE") must not take in its own live work files under RUNNER_TEMP
+    # (nightly-bigendian-system on bench-nyc-3: "overlay.qcow2: file changed as we read it")
+    temp = runner_temp(tree)
+    shutil.rmtree(temp, ignore_errors=True)
+    temp.mkdir(parents=True)
     env = dict(os.environ, ROCKETNET_PLANTED="1", RUNNER_TEMP=str(temp), GITHUB_WORKSPACE=str(tree),
                GITHUB_STEP_SUMMARY=str(temp / "step-summary.md"),
                RUNNER_OS={"linux": "Linux", "macos": "macOS", "windows": "Windows"}.get(host_os(), "Linux"))
@@ -484,13 +568,16 @@ APPLY_STEP_FILES = (
     'done < "$GITHUB_ENV"\n')
 
 # a setup line that is exactly this separates two of the job's steps: what the first wrote to
-# $GITHUB_ENV and $GITHUB_PATH reaches the second, as on the runner
+# $GITHUB_ENV and $GITHUB_PATH reaches the second, and the second starts in the workspace, as on
+# the runner (a `cd` in one step does not carry into the next)
 STEP_BREAK = "# --- next step ---"
+NEXT_STEP = APPLY_STEP_FILES + 'cd "$GITHUB_WORKSPACE"\n'
 
 
 def setup_script(setup):
-    """The setup cell as a script: each STEP_BREAK line applies the step files."""
-    return "".join(APPLY_STEP_FILES if line == STEP_BREAK else line + "\n" for line in setup.split("\n"))
+    """The setup cell as a script: each STEP_BREAK line applies the step files and returns to the
+    workspace."""
+    return "".join(NEXT_STEP if line == STEP_BREAK else line + "\n" for line in setup.split("\n"))
 
 
 def run_row(row, root, path, timeout=None, keep=False, checkout=scratch_checkout):
@@ -537,7 +624,8 @@ def say(line):
     print(line, flush=True)
 
 
-def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
+def run(argv, root=ROOT, out=say, checkout=scratch_checkout, need_probes=None):
+    need_probes = need_probes or {}
     parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     parser.add_argument("--table", default=None)
     parser.add_argument("--os", choices=OSES, default=None)
@@ -608,7 +696,7 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
         out(f"PLANT-SKIP {row['id']} ({row['skip']})")
     base = Path(args.scratch).resolve() if args.scratch else Path(tempfile.mkdtemp(prefix="planted-violations-"))
     base.mkdir(parents=True, exist_ok=True)
-    counts = {"RED": 0, "GREEN": 0, "BROKEN": 0, "HUNG": 0}
+    counts = {"RED": 0, "GREEN": 0, "BROKEN": 0, "HUNG": 0, "UNMET": 0}
     slots = queue.Queue()
     for number in range(max(1, args.jobs)):
         slots.put(base / f"slot-{number}")
@@ -616,33 +704,48 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
     def in_a_slot(row):
         path = slots.get()
         try:
+            missing = unmet_need(row.get("_needs", []), **need_probes)
+            if missing:
+                return "UNMET", f"needs {missing}"
             return run_row(row, root, path, args.row_timeout, args.keep, checkout)
         finally:
             slots.put(path)
 
+    def report(row, verdict, detail):
+        counts[verdict] += 1
+        if verdict == "RED":
+            out(f"PLANT-RED {row['id']} :: {detail}")
+        else:
+            out(f"PLANT-{verdict} {row['id']} ({detail})")
+
+    # a row that needs a quiet host runs after every other row, one at a time
+    quiet = [r for r in selected if any(kind == "quiet" for kind, _ in r.get("_needs", []))]
+    shared = [r for r in selected if r not in quiet]
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futures = {pool.submit(in_a_slot, row): row for row in selected}
+        futures = {pool.submit(in_a_slot, row): row for row in shared}
         for future in concurrent.futures.as_completed(futures):
             row = futures[future]
             try:
                 verdict, detail = future.result()
             except Exception as error:  # a scratch checkout that cannot be made is broken, not green
                 verdict, detail = "BROKEN", f"scratch checkout failed: {error}"
-            counts[verdict] += 1
-            if verdict == "RED":
-                out(f"PLANT-RED {row['id']} :: {detail}")
-            else:
-                out(f"PLANT-{verdict} {row['id']} ({detail})")
+            report(row, verdict, detail)
+    for row in quiet:
+        try:
+            verdict, detail = in_a_slot(row)
+        except Exception as error:  # a scratch checkout that cannot be made is broken, not green
+            verdict, detail = "BROKEN", f"scratch checkout failed: {error}"
+        report(row, verdict, detail)
     if not args.keep and not args.scratch:
         shutil.rmtree(base, ignore_errors=True)
     ran = sum(counts.values())
     out(f"planted-violations: os={want_os} rows run={ran} red={counts['RED']} green={counts['GREEN']} "
-        f"broken={counts['BROKEN']} hung={counts['HUNG']} skipped={len(skipped)} "
+        f"broken={counts['BROKEN']} hung={counts['HUNG']} unmet={counts['UNMET']} skipped={len(skipped)} "
         f"table problems={len(problems)}")
     if ran == 0:
         out("planted-violations: zero rows ran: nothing was shown to fail")
         return 1
-    if counts["GREEN"] or counts["BROKEN"] or counts["HUNG"] or problems:
+    if counts["GREEN"] or counts["BROKEN"] or counts["HUNG"] or counts["UNMET"] or problems:
         return 1
     return 0
 
@@ -692,7 +795,9 @@ def self_test(out=say):
 
         def table(*rows):
             path = Path(tmp) / "table.tsv"
-            path.write_text(header + "\n" + "".join("\t".join(r) + "\n" for r in rows), encoding="utf-8")
+            # a fixture row without its needs cell needs nothing
+            path.write_text(header + "\n" + "".join("\t".join(list(r) + ["-"] * (len(COLUMNS) - len(r))) + "\n"
+                                                    for r in rows), encoding="utf-8")
             return str(path)
 
         good = ["w/good", "w.yml", "good", "Check", "linux", "-", "sed:data.txt:s/fine/BAD/", "-",
@@ -714,10 +819,10 @@ def self_test(out=say):
         manual = ["m/any", "manual.yml", "any", "-", "linux", "-", "write:x:y", "-", "echo ok", "ok"]
         complete = [good, lazy, matrixed, uncovered]
 
-        def go(rows, *extra):
+        def go(rows, *extra, probes=None):
             lines = []
             code = run(["--table", table(*rows), "--os", "linux", "--jobs", "2", *extra], root=repo,
-                       out=lines.append)
+                       out=lines.append, need_probes=probes)
             return code, lines
 
         def has(lines, prefix):
@@ -755,12 +860,47 @@ def self_test(out=say):
         code_b, lines_b = go([good, lazy, matrixed, uncovered, broken_row], "--only", "w/stepbreak")
         expect("a step break hands GITHUB_ENV to the next setup step (RED)",
                has(lines_b, "PLANT-RED w/stepbreak") and code_b == 0)
+        # RUNNER_TEMP is beside the scratch checkout, never inside it (a step that archives the
+        # workspace must not take in its own live files)
+        slot = Path(tmp) / "slot-0"
+        expect("RUNNER_TEMP is outside the checkout", runner_temp(slot).parent == slot.parent and runner_temp(slot) != slot)
+        # a cd in one setup step does not carry into the next
+        cd_row = list(broken_row)
+        cd_row[0] = "w/stepcd"
+        cd_row[7] = f"{wrote}\\nmkdir -p elsewhere\\ncd elsewhere\\n{STEP_BREAK}\\n[ -f check.sh ] || exit 3"
+        code_b, lines_b = go([good, lazy, matrixed, uncovered, cd_row], "--only", "w/stepcd")
+        expect("a step break returns to the workspace (RED)", has(lines_b, "PLANT-RED w/stepcd") and code_b == 0)
         expect("all red, complete table exits 0", code == 0)
         expect("the plant did not touch the real tree", (repo / "data.txt").read_text() == "fine\n")
         # a check that does not catch its plant
         code, lines = go(complete, "--only", "w/lazy")
         expect("lazy check is PLANT-GREEN", has(lines, "PLANT-GREEN w/lazy (the check did not catch its plant"))
         expect("a GREEN row exits 1", code == 1)
+        # needs: a row whose need is not met is UNMET, never run, and the run exits 1; met, it runs
+        needy = list(good) + ["env:PLANTED_VIOLATIONS_NEVER_SET"]
+        needy[0] = "w/needy"
+        code, lines = go([needy, lazy, matrixed, uncovered], "--only", "w/needy")
+        expect("an unset env need is PLANT-UNMET and exits 1",
+               has(lines, "PLANT-UNMET w/needy (needs env:PLANTED_VIOLATIONS_NEVER_SET: ") and code == 1
+               and not has(lines, "PLANT-RED w/needy"))
+        needy[10] = "file:" + str(repo / "check.sh") + ", cmd:sh"
+        code, lines = go([needy, lazy, matrixed, uncovered], "--only", "w/needy")
+        expect("met file and cmd needs run the row (RED)", has(lines, "PLANT-RED w/needy") and code == 0)
+        clock = [0.0]
+        busy = {"load": lambda: 9.0, "cpus": lambda: 4, "sleep": lambda s: clock.__setitem__(0, clock[0] + s),
+                "clock": lambda: clock[0]}
+        needy[10] = "quiet:0.5"
+        code, lines = go([needy, lazy, matrixed, uncovered], "--only", "w/needy", probes=busy)
+        expect("a busy host is quiet-UNMET after the wait",
+               has(lines, f"PLANT-UNMET w/needy (needs quiet:0.5: host load 9.00 over 2 (0.5 x 4 CPUs)")
+               and clock[0] >= QUIET_WAIT and code == 1)
+        idle = dict(busy, load=lambda: 1.0)
+        code, lines = go([needy, lazy, matrixed, uncovered], "--only", "w/needy", probes=idle)
+        expect("a quiet host runs the quiet row (RED)", has(lines, "PLANT-RED w/needy") and code == 0)
+        for bad in ("gpu:yes", "env:", "quiet:0", "quiet:x"):
+            needy[10] = bad
+            code, lines = go([needy, lazy, matrixed, uncovered], "--check-table")
+            expect(f"need {bad!r} does not parse (exit 2)", code == 2)
         # a missing row (job with no row) is red even when every run row is red
         code, lines = go([good, lazy, matrixed], "--only", "w/good")
         expect("uncovered job is PLANT-MISSING", "PLANT-MISSING w.yml:uncovered" in lines)
