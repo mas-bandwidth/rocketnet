@@ -80,6 +80,17 @@ bool rocketnet_signed_connect_data_names_port_zero( const struct rocketnet_signe
            ( ( signed_fields->address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 && ipv6_port_zero );
 }
 
+// The writer's wipe seam, compiled into ROCKETNET_DEV builds only: each
+// secret staging the writers below wipe is handed to the hook after its wipe,
+// so a unit case reads what the staging still holds
+// (test_unit_secrets_wiped.cpp).
+#if ROCKETNET_DEV
+void ( *rocketnet_token_writer_wipe_hook )( const void * staging, int bytes ) = NULL;
+#define ROCKETNET_TOKEN_WRITER_WIPED( staging, bytes ) do { if ( rocketnet_token_writer_wipe_hook ) { rocketnet_token_writer_wipe_hook( staging, bytes ); } } while ( 0 )
+#else
+#define ROCKETNET_TOKEN_WRITER_WIPED( staging, bytes ) do {} while ( 0 )
+#endif // #if ROCKETNET_DEV
+
 #if ROCKETNET_DEV
 
 static int rocketnet_box_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned long long mlen,
@@ -119,6 +130,8 @@ static int rocketnet_box_seal_with_ephemeral( uint8_t * c, const uint8_t * m, un
 out:
     sodium_memzero( nonce, sizeof( nonce ) );
     sodium_memzero( &state, sizeof( state ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( nonce, (int) sizeof( nonce ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( &state, (int) sizeof( state ) );
     return result;
 }
 
@@ -195,6 +208,8 @@ out:
 
     sodium_memzero( private_block, sizeof( private_block ) );
     sodium_memzero( &private_data, sizeof( private_data ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( private_block, (int) sizeof( private_block ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( &private_data, (int) sizeof( private_data ) );
     return result;
 }
 
@@ -411,6 +426,7 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
     rocketnet_crypto_release();
 
     sodium_memzero( &private_fields, sizeof( private_fields ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( &private_fields, (int) sizeof( private_fields ) );
 
     return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
@@ -608,6 +624,7 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
     const enum rocketnet_status_t status = rocketnet_create_connect_token( &config, connect_token );
 
     sodium_memzero( &config, sizeof( config ) );
+    ROCKETNET_TOKEN_WRITER_WIPED( &config, (int) sizeof( config ) );
 
     return status;
 }
