@@ -17,7 +17,7 @@
     stops on SIGINT, after --duration seconds, or when a watched stdin (a
     pipe, socket or terminal: its controlling ssh) closes, and refuses to
     start when the XDP transport is pinned and the interface reports the
-    in-tree i40e (section 9). The matrix exits 1 when any check failed.
+    in-tree i40e on a kernel older than 7.0.0-43 (section 9). The matrix exits 1 when any check failed.
 */
 
 #include "tests/native_shutdown.h"
@@ -77,8 +77,9 @@ static void usage( void )
         "  --counters-every S      print counters, RSS and transport stats every S seconds\n"
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
-        "  --transport T           pin the transport (e.g. xdp); the in-tree i40e refuses\n"
+        "  --transport T           pin the transport (e.g. xdp); the in-tree i40e before kernel 7.0.0-43 refuses\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
+        "  --i40e-kernel-check R   print whether section 9 refuses the in-tree i40e on kernel release R (exit 1) and exit\n"
         "  --help                  this message\n"
         "environment:\n"
         "  ROCKETNET_SERVER_TRANSPORT   the transport candidate list\n"
@@ -365,6 +366,51 @@ static int in_tree_i40e( const char * nic )
 
     pclose( u );
     return strcmp( transport, "i40e" ) == 0 && strcmp( version, kernel ) == 0;
+#endif // #if defined( _WIN32 )
+}
+
+// Section 9: 1 when kernel release R, read as Ubuntu's A.B.C-N, is older than
+// 7.0.0-43, the kernel whose in-tree i40e passed the 60-minute zero-copy soak
+// (docs/LINUX.md). A release that does not read so counts as older, so the
+// refusal stays. scripts/live-xdp-fleet-remote (i40e_kernel_refused) is the
+// same rule; its i40e-guard-selftest holds both to one case list.
+static int kernel_release_before_i40e_soak( const char * release )
+{
+    int v[4] = { 0, 0, 0, 0 };
+    if ( sscanf( release, "%d.%d.%d-%d", &v[0], &v[1], &v[2], &v[3] ) < 3 )
+    {
+        return 1;
+    }
+
+    const int soak[4] = { 7, 0, 0, 43 };
+    for ( int i = 0; i < 4; i++ )
+    {
+        if ( v[i] != soak[i] )
+        {
+            return v[i] < soak[i];
+        }
+    }
+
+    return 0;
+}
+
+// the running kernel (`uname -r`) under kernel_release_before_i40e_soak
+static int kernel_before_i40e_soak( void )
+{
+#if defined( _WIN32 )
+    return 0;
+#else
+    FILE * u = popen( "uname -r", "r" );
+    if ( !u )
+    {
+        return 1;
+    }
+
+    char kernel[64] = { 0 };
+    const int got_line = fgets( kernel, sizeof kernel, u ) != NULL;
+    pclose( u );
+
+    return !got_line || kernel_release_before_i40e_soak( kernel );
 #endif // #if defined( _WIN32 )
 }
 
@@ -1430,6 +1476,14 @@ int main( int argc, char ** argv )
             self_test = 1;
             self_test_path = argv[++i];
         }
+        else if ( strcmp( a, "--i40e-kernel-check" ) == 0 && i + 1 < argc )
+        {
+            // section 9's kernel rule on a given release: exit 1 refused, 0 allowed
+            // (scripts/live-xdp-fleet-remote i40e-guard-selftest)
+            const int refused = kernel_release_before_i40e_soak( argv[++i] );
+            printf( "%s\n", refused ? "refused" : "allowed" );
+            return refused;
+        }
         else if ( a[0] != '-' && !address )
         {
             address = a;
@@ -1485,14 +1539,16 @@ int main( int argc, char ** argv )
         snprintf( config.transport, sizeof config.transport, "%s", env_transport );
     }
 
-    // section 9: when xdp is pinned, refuse the in-tree i40e
+    // section 9: when xdp is pinned, refuse the in-tree i40e on a kernel older
+    // than 7.0.0-43, the one its zero-copy soak passed on (docs/LINUX.md). The
+    // in-tree i40e of 7.0.0-31 panicked twice in i40e_construct_skb_zc
 
     if ( strcmp( config.transport, "xdp" ) == 0 )
     {
         char nic[64] = { 0 };
-        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_i40e( nic ) )
+        if ( interface_for_address( address, nic, sizeof nic ) && in_tree_i40e( nic ) && kernel_before_i40e_soak() )
         {
-            fprintf( stderr, "server: refusing: interface %s reports the in-tree i40e\n", nic );
+            fprintf( stderr, "server: refusing: interface %s reports the in-tree i40e on a kernel older than 7.0.0-43\n", nic );
             rocketnet_term();
             return 1;
         }

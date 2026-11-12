@@ -303,7 +303,7 @@ echo "  XDP SAFETY 1: sdk/xdp/server_xdp.c returns XDP_PASS for every packet tha
 echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
 echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
 echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"
-echo "  XDP SAFETY 4: the preflight records ethtool -i $server_nic and refuses the in-tree i40e version (the one that equals uname -r)"
+echo "  XDP SAFETY 4: the preflight records ethtool -i $server_nic and refuses the in-tree i40e (version equals uname -r) on a kernel older than 7.0.0-43"
 echo "  start:   ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path start server $commit $server_label $server_address $seed $min_each 1000 1000 60 $server_queues $server_results $server_status"
 echo "  command: $server_command"
 echo "  XDP SAFETY 3: within 10 s of the load, a fresh ssh connection (no control master) proves ssh still works: ssh -o ControlMaster=no -o BatchMode=yes $server_ssh true"
