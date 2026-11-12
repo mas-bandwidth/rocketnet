@@ -62,8 +62,9 @@
 #define DST_OUTAGE_START_STATE_1           1    // the client enters REQUESTING_COOKIE
 #define DST_OUTAGE_START_STATE_2           2    // the client enters SENDING_CONNECTION_REQUEST
 #define DST_OUTAGE_START_STATE_3           3    // the client enters SENDING_CONNECTION_RESPONSE
-#define DST_OUTAGE_START_TRUE_X1           4    // state 3 plus half a round trip plus 25 ms: the server has \
-                                                // accepted the response, the client does not yet know
+// state 3 plus half a round trip plus 25 ms: the server has accepted the
+// response, the client does not yet know
+#define DST_OUTAGE_START_TRUE_X1           4
 #define DST_OUTAGE_START_SERVER_CONNECTED  5    // the server reports the client connected
 #define DST_OUTAGE_START_CLIENT_CONNECTED  6    // the client reports CONNECTED
 
