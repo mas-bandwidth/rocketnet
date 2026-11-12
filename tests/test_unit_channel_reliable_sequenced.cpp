@@ -309,6 +309,62 @@ static void test_reservation_skips_a_code_1_hold_past_du()
 
 REGISTER_UNIT_TEST( test_reservation_skips_a_code_1_hold_past_du );
 
+// The same code-1 hold below Du: its release takes a slot, so the in-turn
+// record, the held ordered record and the hold need three. With two left the
+// packet waits; with exactly three it is taken and all three are delivered.
+
+static void test_reservation_counts_a_code_1_hold_below_du()
+{
+    for ( uint32_t room = 2; room <= 3; room++ )
+    {
+        rs_node_t sender;
+        rs_node_t receiver;
+        rs_init( &sender );
+        rs_init( &receiver );
+
+        const uint8_t state = 7, later = 2, first = 1;
+        rn_delivery_t out;
+        uint32_t slot;
+
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, &state );
+        check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+        record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, 0, &later );
+        check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+        check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        rn_ordered_end_update( &receiver.ordered );
+
+        rn_channels_t * channels = &receiver.ordered.channels;
+        channels->unreliable_delivered = receiver.region->delivery_entries - receiver.region->window - 1;
+        channels->deliveries = channels->delivery_capacity - room;
+
+        rs_send( &sender, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, &first, 1 );
+        rs_packet_t packet;
+        check( rs_write( &sender, 1.0, &packet, 1, 1 ) == 1 );
+
+        const int result = rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes );
+        check( !rn_region_exhausted( receiver.region ) );
+        if ( room == 2 )
+        {
+            check( result == ROCKETNET_CHANNEL_RECEIVE_DEFERRED );
+            check( receiver.region->channel_receive[0].ordered_read == 0 );
+            check( receiver.region->channel_receive[0].held_sequenced != RN_DESCRIPTOR_NONE );
+        }
+        else
+        {
+            check( result == ROCKETNET_MESSAGE_VIOLATION_NONE );
+            check( receiver.region->channel_receive[0].ordered_read == 2 );
+            check( channels->deliveries == channels->delivery_capacity );
+            check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+        }
+
+        rn_unit_arena_destroy( sender.arena );
+        rn_unit_arena_destroy( receiver.arena );
+    }
+}
+
+REGISTER_UNIT_TEST( test_reservation_counts_a_code_1_hold_below_du );
+
 static void test_resent_until_packet_acked()
 {
     rs_node_t sender;
