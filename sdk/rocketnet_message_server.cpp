@@ -1258,9 +1258,16 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         }
 
         // a queued or whole-packet send cannot overtake completed records
-        // (RNOutgoingBuild SealBuild before StartQueued).
+        // (RNOutgoingBuild SealBuild before StartQueued). A start that will be
+        // refused (no whole frame for it and no room or a refused route in
+        // the region, the room query's own decision) seals nothing: a
+        // refusal leaves the connection as it was (standard/MESSAGES.md m1.7)
 
-        rn_message_flush_unreliable( object, index, false );
+        if ( rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time ) >= 0 ||
+             rn_endpoint_send_room( connection, channel, reliability, bytes, transport_max ) )
+        {
+            rn_message_flush_unreliable( object, index, false );
+        }
     }
 
     // RNOutgoingBuild StartInPlace, the whole-frame case: a fitting message
