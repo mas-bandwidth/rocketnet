@@ -13,7 +13,10 @@ count, the pass cursor, the modulo and the sealed counts.
 | `sealed[s]` | `disconnect_bursts[s].sealed` |
 | `head`, `count` | `disconnect_burst_head`, `disconnect_burst_count` |
 | `cursor` | `disconnect_burst_cursor`, the offset from the head of the burst the pass visits next |
-| `C` | `rocketnet_server_disconnect_bursts(max_clients)`, the ring's slots, which is `2 * max_clients` and not `ROCKETNET_MAX_CLIENTS` |
+| `SteadyCap` | `disconnect_burst_steady_cap`, which is `max_clients`: the most bursts a running server keeps waiting, and the most clients connected |
+| `C` | `rocketnet_server_disconnect_bursts(max_clients)`, the ring's slots, which is `2 * max_clients` (`2 * SteadyCap`) and not `ROCKETNET_MAX_CLIENTS` |
+| `conn` | the connected slots (`rocketnet_client_slots_connected`) |
+| `stopping` | `rocketnet_server_stop` has run and the transport is `STOPPING` |
 | `K` | `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS` |
 | `abandoned` | bursts marked complete because the destination was refused |
 | `dropped` | ghost: bursts dropped before complete by a stop step with no send room |
@@ -24,15 +27,33 @@ packets sealed for it (`seals`), collect the bursts that left the ring
 
 ## Actions and the code they mirror
 
-- **`Defer`**: `rocketnet_server_transport_disconnect_client_impl` when a
-  burst already waits or the update's allowance is short of `K`: with
-  `disconnect_burst_count < C`,
+- **`Connect`**: a client connects into a free slot while the server runs
+  (outside this code: an environment action); at most `SteadyCap` are
+  connected.
+- **`Defer`**: `rocketnet_server_transport_disconnect_client_impl` on a
+  running server (`shutdown` false) when a burst already waits or the
+  update's allowance is short of `K`: while
+  `disconnect_burst_count < disconnect_burst_steady_cap`,
   `rocketnet_server_transport_defer_disconnect_burst` writes slot
-  `(head + count) % C` with `sealed = 0` and counts it;
-  with the ring full the new burst is dropped and the slot closed locally.
-  A running server refuses earlier, at `max_clients`
-  (`disconnect_burst_steady_cap`); `ServerStopSpread` models that cap. This
-  model is the ring at its own capacity.
+  `(head + count) % C` with `sealed = 0` and counts it; otherwise the new
+  burst is dropped and the slot closed locally. There is no test against
+  `C`. The immediate burst (no burst waiting, allowance and room for `K`)
+  never touches the ring; its ring is the one a client that never connected
+  leaves, so letting every disconnect defer only adds behaviours.
+- **`Stop`**: `rocketnet_server_stop`: every connected slot is disconnected
+  with `shutdown` true (`rocketnet_server_transport_disconnect_client_shutdown`),
+  which defers its burst with no room test at all, one append after
+  another at `(head + count) % C`; then the transport is `STOPPING`. It runs
+  once (it returns at once unless the server is running), and after it no
+  client connects and no running disconnect is made. The bursts waiting
+  before it are at most `SteadyCap` (`SteadyWithinCap`) and it appends at
+  most `SteadyCap`, so the ring of `2 * SteadyCap` holds them all: this is
+  the whole of the code's no-overwrite argument. The only test of the ring's
+  capacity in the code is
+  `rocketnet_assert( disconnect_burst_count < disconnect_burst_capacity )`
+  in `rocketnet_server_transport_defer_disconnect_burst`, compiled out of a
+  release build; the model has no counterpart for it, and `NoOverwrite` is
+  what it would catch.
 - **`SealStep`**: one seal in
   `rocketnet_server_transport_drain_disconnect_bursts`: the cursor restarts
   at 0 once it reaches `count`, the incomplete burst at `(head + cursor) % C`
@@ -45,7 +66,8 @@ packets sealed for it (`seals`), collect the bursts that left the ring
 - **`PassOver`**: the same iteration when the entry is already complete. The
   cursor moves on and the entry is not sealed. An abandoned burst away from
   the head leaves only once the pop reaches it.
-- **`DropForRoom`**: `rocketnet_server_transport_stop_step` when the
+- **`DropForRoom`**: `rocketnet_server_transport_stop_step` (which returns
+  unless the transport is `STOPPING`, so only after `Stop`) when the
   transport reports no send room and is idle, and still no room when read
   again (`ServerStopSpread`'s `AbandonNoRoom`): every waiting burst is popped
   from the head with its key wiped, so `head` moves on by `count` modulo `C`
@@ -57,15 +79,16 @@ packets sealed for it (`seals`), collect the bursts that left the ring
 A drain ends when its allowance is spent or a send frame is refused for a
 reason other than the destination. Either leaves the ring and the cursor as
 they are, and the next update's drain continues the pass, so any interleaving
-of `Defer`, `SealStep`, `Abandon`, `PassOver` and `DropForRoom` is a run of
-updates and stop steps (a drop comes only at a stop step; letting the model
-defer again after one only adds behaviours). The stop
-path's drain is the same loop with a larger allowance. The immediate burst
-(no burst waiting, the allowance covering `K`) never touches the ring.
+of `Connect`, `Defer`, `SealStep`, `Abandon` and `PassOver` before `Stop`,
+and of `SealStep`, `Abandon`, `PassOver` and `DropForRoom` after it, is a run
+of updates and then of stop steps. The stop path's drain is the same loop
+with a larger allowance.
 
 ## Invariants
 
 - **`NoOverwrite`**: a deferred burst never overwrites a waiting one.
+- **`SteadyWithinCap`**: a running server keeps at most `SteadyCap` bursts
+  waiting.
 - **`SealOnlyLive`**: a seal is made only for a waiting burst, never for the
   slot past the tail.
 - **`PassFair`**: no burst is sealed twice in a pass, and a pass ends only
@@ -91,9 +114,10 @@ burst; `PassFair` is the rule the code keeps.
 
 ## The instance
 
-`MCRNDisconnectBurstRing.cfg`: four slots, bursts of two packets, eight
-disconnects, so the ring fills, drops a burst, wraps and refills.
-`MCRNDisconnectBurstRingK3.cfg`: three slots, bursts of three, seven
+`MCRNDisconnectBurstRing.cfg`: a steady cap of two (four slots), bursts of
+two packets, eight disconnects, so a running server reaches its cap and
+drops a burst, the ring wraps, and the stop fills it to four.
+`MCRNDisconnectBurstRingK3.cfg`: a steady cap of two, bursts of three, seven
 disconnects, so waiting bursts are two seals apart. Both run without deadlock
 checking (`ignore-terminal`): once every disconnect is made and every burst
 has left, nothing is enabled. `SealStep` is enabled whenever a burst waits, so
@@ -104,27 +128,39 @@ no other state is terminal.
 Each turns one rule off and must fail with the invariant it names. Every
 counterexample below was checked against the C by hand.
 
-1. **`MCRNDisconnectBurstRingBrokenFullOffByOne.cfg`**
-   (`FullTestExact = FALSE`): the room test in
+1. **`MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg`**
+   (`SteadyCapExact = FALSE`): the steady cap test in
    `rocketnet_server_transport_disconnect_client_impl` as
-   `disconnect_burst_count <= C`. Violates `NoOverwrite`:
-   three bursts fill the ring of three at head 0; a fourth writes slot
-   `(0 + 3) % 3 = 0`, the waiting head's record and key.
+   `disconnect_burst_count <= disconnect_burst_steady_cap`. Violates
+   `NoOverwrite` (TLC trace, 10 states, checked by hand against the C):
+   two clients connect; three running disconnects (a client reconnecting
+   between them) defer bursts 1, 2, 3 at slots 0, 1, 2, the third passing
+   `2 <= 2`, so `count` is 3 with `max_clients` 2; two clients connect;
+   `rocketnet_server_stop` calls the shutdown disconnect for each, and
+   `rocketnet_server_transport_defer_disconnect_burst` writes slot
+   `(0 + 3) % 4 = 3`, then slot `(0 + 4) % 4 = 0`: the waiting head's
+   record and key, burst 1, overwritten by burst 5. The assert at the top
+   of the defer is the only thing that would see it, in a debug build.
+   (`ServerStopSpread`'s `steadycapoffbyone` is the same rule at the
+   protocol's level; this one is at the ring's layout.)
 2. **`MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg`**
    (`CursorWrapAt = FALSE`): the drain restarting the cursor only at
-   `cursor > count`. Violates `SealOnlyLive`: one burst waits; its first seal
+   `cursor > count`. Violates `SealOnlyLive` (checked by hand): one burst waits; its first seal
    moves the cursor to 1, equal to `count`; the next iteration keeps it and
    seals slot `head + 1`, which holds no waiting burst.
 3. **`MCRNDisconnectBurstRingBrokenCursorKept.cfg`** (`CursorDrops = FALSE`):
    the pop loop without `if ( disconnect_burst_cursor > 0 ) cursor--`.
-   Violates `SealedFallFromHead`: burst 1 completes and leaves with the cursor
-   at 1 and the ring empty; bursts 2 and 3 are deferred at offsets 0 and 1;
-   the next seal goes to offset 1, so burst 3 has a packet sealed and burst 2,
-   at the head, none.
+   Violates `SealedFallFromHead` (8 states, checked by hand): burst 1 is
+   deferred at slot 0, the stop appends bursts 2 and 3 at slots 1 and 2;
+   burst 1's destination is refused, it is marked complete with the cursor
+   moved to 1, and the pop takes it (head 1, count 2) with the cursor kept
+   at 1; the next iteration seals slot `(1 + 1) % 4 = 2`, so burst 3 has a
+   packet sealed and burst 2, at the head, none.
 4. **`MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg`**
    (`DropResetsCursor = FALSE`): the drop for room without
-   `disconnect_burst_cursor = 0`. Violates `CursorInRange`: one burst is
-   deferred at slot 0, its first seal moves the cursor to 1, and the drop
+   `disconnect_burst_cursor = 0`. Violates `CursorInRange` (checked by
+   hand): one burst is deferred at slot 0, the server stops, its first seal
+   moves the cursor to 1, and the drop
    pops it (head 1, count 0) with the cursor left at 1, past the empty ring.
    In the code the next drain's wrap test would hide it, but the stop step
    ends the stop there, and the drop is the one pop that does not lower the
@@ -136,6 +172,17 @@ there), so in this layout it changes no outcome; the code advances it as the
 pops do.
 
 ## Runs
+
+Bench runs of this version (two workers, `distinct` states and seconds):
+
+| Case | Result | Distinct | Seconds |
+|---|---|---|---|
+| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 4.5 |
+| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 6.4 |
+| `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.8 |
 
 The records are in `RUNS.tsv` (group `rndisconnectburstring`), made with the
 pinned runner as `proofs/tla/README.md` describes.

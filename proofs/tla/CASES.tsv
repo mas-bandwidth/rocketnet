@@ -702,7 +702,7 @@ MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg	MCRNXdpReplyMacsLayout.tla	invariant
 MCRNXdpReplyMacsLayoutBrokenInsertWindowLong.cfg	MCRNXdpReplyMacsLayout.tla	invariant	TableIsMap	check	rnxdpreplymacslayout	required	-
 MCRNDisconnectBurstRing.cfg	MCRNDisconnectBurstRing.tla	pass	-	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingK3.cfg	MCRNDisconnectBurstRing.tla	pass	-	ignore-terminal	rndisconnectburstring	required	-
-MCRNDisconnectBurstRingBrokenFullOffByOne.cfg	MCRNDisconnectBurstRing.tla	invariant	NoOverwrite	ignore-terminal	rndisconnectburstring	required	-
+MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg	MCRNDisconnectBurstRing.tla	invariant	NoOverwrite	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg	MCRNDisconnectBurstRing.tla	invariant	SealOnlyLive	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingBrokenCursorKept.cfg	MCRNDisconnectBurstRing.tla	invariant	SealedFallFromHead	ignore-terminal	rndisconnectburstring	required	-
 MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg	MCRNDisconnectBurstRing.tla	invariant	CursorInRange	ignore-terminal	rndisconnectburstring	required	-
