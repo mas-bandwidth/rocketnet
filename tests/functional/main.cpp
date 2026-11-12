@@ -106,13 +106,6 @@ static const char * const rocketnet_functional_nightly_cases[] = {
     "test_posix_connect_disconnect_1000_portable_*",
     "test_posix_connect_disconnect_1000_msgx_portable",
 #endif // #if defined( __APPLE__ )
-#if defined( __linux__ )
-    // XDP cases share the host's XDP state (the pre-flight answer, the commit
-    // barrier, interfaces): they cannot run beside other cases, so they run in
-    // the Linux nightly tier, which runs serially (nightly.yml)
-    "test_xdp_transport_*",
-    "test_session_reconnect_isolation_xdp",
-#endif // #if defined( __linux__ )
 #if defined( _WIN32 )
     // the RIO and IOCP x1000 server cycles, 16-45 s each on the Windows bench
     // (captain, 2026-10-29); the portable x1000 cycles stay on every commit
@@ -130,12 +123,66 @@ static const char * const rocketnet_functional_nightly_cases[] = {
 // (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1, nightly.yml), never run
 // alone per commit. The nightly tier holds every case over a second on any
 // operating system, measured 2026-10-29 (ROCKETNET_TEST_REPORT=all).
+static bool rocketnet_functional_name_matches( const char * name, const char * pattern )
+{
+    const size_t length = strlen( pattern );
+    return length > 0 && pattern[length - 1] == '*' ? strncmp( name, pattern, length - 1 ) == 0 : strcmp( name, pattern ) == 0;
+}
+
+#if defined( __linux__ )
+
+// The XDP cases share the host's XDP state (the pre-flight answer, the commit
+// barrier, the veth pairs and namespaces of each fixture family), so none may
+// run beside another case, XDP or not. They are in the Linux nightly tier,
+// each in a group of its own (a group runs alone, groups in ascending order),
+// numbered by its place among the registered XDP cases, so the rest of the
+// nightly tier keeps running in parallel in group 0. An XDP case is any case
+// whose name says xdp: every row run under an XDP predicate does (the veth,
+// weather, posix offered and server pin predicates; checked 2026-11-12), and
+// a narrower list let test_posix_hard_killed_client_xdp_ipv4_client_portable
+// lose its namespace to a test_xdp_transport case running beside it.
+static bool rocketnet_functional_is_xdp_case( const char * name )
+{
+    return strstr( name, "xdp" ) != NULL;
+}
+
+static int rocketnet_functional_xdp_group( const char * name )
+{
+    int ordinal = 0;
+    const int count = rocketnet_functional_test_count();
+    for ( int i = 0; i < count; i++ )
+    {
+        const char * registered = rocketnet_functional_test_name( i );
+        if ( registered && rocketnet_functional_is_xdp_case( registered ) )
+        {
+            ordinal++;
+            if ( strcmp( registered, name ) == 0 && ordinal < SUITE_GROUP_NIGHTLY - 1 )
+            {
+                return ordinal;
+            }
+        }
+    }
+
+    // a case outside the registry (a sibling binary), or past the groups
+    // below the nightly flag, takes the last group: still apart from every
+    // case of group 0 and of the numbered XDP groups
+    return SUITE_GROUP_NIGHTLY - 1;
+}
+
+#endif // #if defined( __linux__ )
+
 static int rocketnet_functional_test_group( const char * name )
 {
+#if defined( __linux__ )
+    if ( rocketnet_functional_is_xdp_case( name ) )
+    {
+        return SUITE_GROUP_NIGHTLY | rocketnet_functional_xdp_group( name );
+    }
+#endif // #if defined( __linux__ )
+
     for ( const char * const * nightly = rocketnet_functional_nightly_cases; *nightly; ++nightly )
     {
-        const size_t length = strlen( *nightly );
-        if ( length > 0 && ( *nightly )[length - 1] == '*' ? strncmp( name, *nightly, length - 1 ) == 0 : strcmp( name, *nightly ) == 0 )
+        if ( rocketnet_functional_name_matches( name, *nightly ) )
         {
             return SUITE_GROUP_NIGHTLY;
         }
