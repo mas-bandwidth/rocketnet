@@ -20,7 +20,11 @@
 #
 # The reference trace changes only when the harness or the library changes what
 # a run does; a change that moves it updates DST_REFERENCE_TRACE and docs/DST.md
-# in the same commit, from three equal PASS lines (Linux, macOS, Windows).
+# in the same commit, from three equal PASS lines (Linux, macOS, Windows). The
+# fixed range 1-2050 and each schedule's PASS line are held the same way
+# (DST_FIXED_TRACE, DST_TRACE_<SCHEDULE>): a change that moves them updates
+# them from three equal lines. The sweep's trace is not compared: its range
+# rolls nightly and differs per OS (tools/printed_values_allowlist.txt).
 #
 # Nightlies are exempt from the two-minute rule. Each sweep is sized to about
 # 1200 s from a Release measurement on that OS, and each range was run once
@@ -49,6 +53,19 @@ on:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
   DST_REFERENCE_TRACE: 255b8ae11ec099cb
+  # The fixed range and each fault schedule are compared too, not only
+  # printed (VERIFY-2 F-W6): equal on Linux, macOS and Windows in run
+  # 43203428903 (2026-11-12, main 555eb5963), read from its log.
+  DST_FIXED_TRACE: 5ec8156775d05f45
+  DST_TRACE_CLOCK_BACK: 4f7d5a3d680d4219
+  DST_TRACE_SEQ_GAP: 35ac4c25b0c024cd
+  DST_TRACE_SEQ_WRAP_31: 444b1661b8b0e519
+  DST_TRACE_SEQ_WRAP_32: 5424687cb5956080
+  DST_TRACE_BURST: 8886e97da96a007a
+  DST_TRACE_DUP_STORM: 0cb3c5f598054026
+  DST_TRACE_OUTAGE: a12bbb97ff73e3a6
+  DST_TRACE_OUTAGE_PAST: e76d4e74b0627e5a
+  DST_TRACE_SEND_FAIL: 22f3d51670f3beba
 
 permissions:
   contents: read
@@ -130,7 +147,9 @@ jobs:
           "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
           echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
-          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
+          want="PASS seeds=1-2050 runs=2050 trace=$DST_FIXED_TRACE"
+          got=$(tail -n 1 dst-fixed.log)
+          if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
@@ -141,6 +160,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-clock-back.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_CLOCK_BACK schedule=clock-back fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=clock-back on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
@@ -152,6 +173,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-gap.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_GAP schedule=seq-gap fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-gap on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
@@ -163,6 +186,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_31 schedule=seq-wrap-31 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-31 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
@@ -174,6 +199,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_32 schedule=seq-wrap-32 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-32 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
@@ -185,6 +212,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-burst.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_BURST schedule=burst fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=burst on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
@@ -196,6 +225,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-dup-storm.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_DUP_STORM schedule=dup-storm fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=dup-storm on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
@@ -207,6 +238,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE schedule=outage fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
@@ -218,6 +251,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage-past.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE_PAST schedule=outage-past fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage-past on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
@@ -229,6 +264,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-send-fail.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEND_FAIL schedule=send-fail fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=send-fail on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
 
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
@@ -331,7 +368,9 @@ jobs:
           "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
           echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
-          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
+          want="PASS seeds=1-2050 runs=2050 trace=$DST_FIXED_TRACE"
+          got=$(tail -n 1 dst-fixed.log)
+          if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
@@ -342,6 +381,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-clock-back.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_CLOCK_BACK schedule=clock-back fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=clock-back on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
@@ -353,6 +394,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-gap.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_GAP schedule=seq-gap fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-gap on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
@@ -364,6 +407,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_31 schedule=seq-wrap-31 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-31 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
@@ -375,6 +420,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_32 schedule=seq-wrap-32 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-32 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
@@ -386,6 +433,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-burst.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_BURST schedule=burst fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=burst on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
@@ -397,6 +446,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-dup-storm.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_DUP_STORM schedule=dup-storm fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=dup-storm on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
@@ -408,6 +459,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE schedule=outage fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
@@ -419,6 +472,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage-past.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE_PAST schedule=outage-past fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage-past on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
@@ -430,6 +485,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-send-fail.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEND_FAIL schedule=send-fail fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=send-fail on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
 
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
@@ -554,7 +611,9 @@ jobs:
           "$DST_BIN/dst$DST_EXE" --seeds 1-2050 | tr -d '\r' | tee dst-fixed.log
           echo "seeds=1-2050 took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-fixed.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
-          tail -n 1 dst-fixed.log | grep -q '^PASS seeds=1-2050 runs=2050 '
+          want="PASS seeds=1-2050 runs=2050 trace=$DST_FIXED_TRACE"
+          got=$(tail -n 1 dst-fixed.log)
+          if [ "$got" != "$want" ]; then echo "TRACE-MISMATCH seeds=1-2050 on $RUNNER_OS: want '$want' got '$got'"; exit 1; fi
 
       - name: Schedule clock-back seeds 1-50
         shell: bash
@@ -565,6 +624,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-clock-back.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_CLOCK_BACK schedule=clock-back fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=clock-back on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
 
       - name: Schedule seq-gap seeds 1-50
@@ -576,6 +637,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-gap.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_GAP schedule=seq-gap fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-gap on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-31 seeds 1-50
@@ -587,6 +650,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_31 schedule=seq-wrap-31 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-31 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
 
       - name: Schedule seq-wrap-32 seeds 1-50
@@ -598,6 +663,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEQ_WRAP_32 schedule=seq-wrap-32 fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=seq-wrap-32 on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
 
       - name: Schedule burst seeds 1-50
@@ -609,6 +676,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-burst.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_BURST schedule=burst fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=burst on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=burst seeds=1-50 fired=$fired"
 
       - name: Schedule dup-storm seeds 1-50
@@ -620,6 +689,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-dup-storm.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_DUP_STORM schedule=dup-storm fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=dup-storm on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
 
       - name: Schedule outage seeds 1-50
@@ -631,6 +702,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE schedule=outage fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage seeds=1-50 fired=$fired"
 
       - name: Schedule outage-past seeds 1-50
@@ -642,6 +715,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-outage-past.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_OUTAGE_PAST schedule=outage-past fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=outage-past on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
 
       - name: Schedule send-fail seeds 1-50
@@ -653,6 +728,8 @@ jobs:
           line=$(tail -n 1 dst-schedule-send-fail.log)
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=send-fail fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED send-fail fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          want="PASS seeds=1-50 runs=50 trace=$DST_TRACE_SEND_FAIL schedule=send-fail fired=$fired"
+          if [ "$line" != "$want" ]; then echo "TRACE-MISMATCH schedule=send-fail on $RUNNER_OS: want '$want' got '$line'"; exit 1; fi
           echo "PASS schedule=send-fail seeds=1-50 fired=$fired"
 
       # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over

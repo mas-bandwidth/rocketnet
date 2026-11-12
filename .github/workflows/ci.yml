@@ -3305,6 +3305,15 @@ jobs:
           python3 tools/check_scheduled_watched.py --self-test
           python3 tools/check_scheduled_watched.py
 
+      # tools/check_printed_compared.py: a step that prints trace=, hash= or
+      # sha256= (or runs dst --seeds) writes it against a committed value,
+      # or sits in a report-only job, or is in
+      # tools/printed_values_allowlist.txt with a reason.
+      - name: Every printed trace or hash is compared
+        run: |
+          python3 tools/check_printed_compared.py --self-test
+          python3 tools/check_printed_compared.py
+
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
       # vector against its RN_STANDARD_VECTOR twin, the Appendix A indexes,
