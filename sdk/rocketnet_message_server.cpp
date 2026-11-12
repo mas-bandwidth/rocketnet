@@ -35,9 +35,9 @@
 // an ordered message held ahead of its turn is copied into the receive ring
 // (THE COPIES (b), rn_channels_dispatch_ordered). rn_message_object_send is
 // one other copy: the convenience copies the caller's bytes into the record.
-// The last: while a connection's send budget holds less than one maximum
-// packet, its packet is written into a stack payload and copied into the
-// frame, so that a packet the budget refuses takes no frame
+// The last: while a connection's send budget holds less than one full-size
+// frame, its payload is written into a stack buffer and copied into the
+// frame, so that a payload the budget refuses takes no frame
 // (rn_message_connection_write).
 
 #include <string.h>
@@ -1620,16 +1620,16 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     // the endpoint writes it in place, and the object finishes it.
     //
     // proofs/tla/RNSendRotation.tla ConnWrite: a frame is started only for a
-    // packet that will be written (standard/MESSAGES.md m1.8, m9.4). Every
+    // payload that will be written (standard/MESSAGES.md m1.8, m9.4). Every
     // frame start takes a slot of the update's send capacity, which every
     // connection shares, and an abort never returns it. The window's refusal
     // is decided before a frame (rn_endpoint_next_packet_bytes asks
-    // rn_window_send_would_number). The budget's cannot be: a packet's charge
-    // depends on its payload, known only once it is packed. So while the
-    // connection's bucket holds less than one maximum packet
-    // (rn_endpoint_write_may_be_refused) the packet is written into a stack
-    // payload first and a frame is started only when bytes came out: one copy
-    // of at most one packet, paid only while the bucket is short.
+    // rn_window_send_would_number). The budget's cannot be: a payload's charge
+    // depends on its bytes, known only once it is packed. So while the
+    // connection's bucket holds less than one full-size frame
+    // (rn_endpoint_write_may_be_refused) the payload is written into a stack
+    // buffer first and a frame is started only when bytes came out: one copy
+    // of at most one payload, paid only while the bucket is short.
 
     rn_message_connection_t * connection = &object->connections[index];
     rn_message_link_t * link = &object->link;
@@ -1680,7 +1680,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
         }
         else
         {
-            // the bucket holds at least one maximum packet, or the connection
+            // the bucket holds at least one full-size frame, or the connection
             // is uncapped: the budget admits it, and the endpoint writes in place
             payload_bytes = rn_endpoint_write_packet( connection, frame + context.payload_index, context.payload_capacity, context.packet_id, now );
             if ( payload_bytes == 0 )
