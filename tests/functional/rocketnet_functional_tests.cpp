@@ -1321,13 +1321,13 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_check( rocketnet_server_transport_packet_payload( server, &changed, &checked_capacity ) == NULL );
 
         auto aborted = changed;
-        rocketnet_server_transport_abort_packet( server, &aborted );
-        rocketnet_check( aborted.frame == NULL );
         rocketnet_test_shape_asserts = 0;
         rocketnet_assert_function( rocketnet_test_shape_assert_hook );
+        rocketnet_server_transport_abort_packet( server, &aborted );
+        rocketnet_check( aborted.frame == NULL );
         rocketnet_check( rocketnet_server_transport_finish_packet( server, &changed, 1 ) == 0 );
         rocketnet_functional_restore_assert_function();
-        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+        rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 ) );
     }
 
     rocketnet_check( rocketnet_server_transport_packet_payload( server, &context, &checked_capacity ) == frame + context.payload_index );
