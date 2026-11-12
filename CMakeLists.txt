@@ -597,6 +597,14 @@ if(ROCKETNET_BUILD_EXAMPLES)
     target_link_libraries(bigendian_interop PRIVATE rocketnet_dev)
     add_executable(outage_pair tools/outage_pair/outage_pair.c)
     target_link_libraries(outage_pair PRIVATE rocketnet_dev)
+    # the cross-version check's harness (tools/xver/xver.c): one end of a real
+    # connection, run against an end built from another release by
+    # .github/workflows/nightly-xver.yml. Built here so a public API change
+    # that breaks it fails per commit. POSIX only (getpid, unistd.h).
+    if(NOT WIN32)
+        add_executable(xver tools/xver/xver.c)
+        target_link_libraries(xver PRIVATE rocketnet_dev)
+    endif()
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
