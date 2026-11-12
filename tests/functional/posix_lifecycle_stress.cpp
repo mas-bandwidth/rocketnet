@@ -1515,14 +1515,14 @@ static void posix_heap_keep( bool keep )
 #if defined( __SANITIZE_ADDRESS__ )
     (void) keep;
 #elif defined( __has_feature )
-#if __has_feature( address_sanitizer )
-    (void) keep;
+#if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+    (void) keep;                            // the sanitizer owns the heap: its mallopt sets nothing and returns 0
 #elif defined( __GLIBC__ )
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
 #else
     (void) keep;
-#endif // #if __has_feature( address_sanitizer )
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
 #elif defined( __GLIBC__ )
     posix_check( mallopt( M_MMAP_MAX, keep ? 0 : 65536 ) == 1 );
     posix_check( mallopt( M_TRIM_THRESHOLD, keep ? INT_MAX : 128 * 1024 ) == 1 );
