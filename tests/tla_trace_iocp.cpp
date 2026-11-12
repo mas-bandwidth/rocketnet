@@ -386,9 +386,12 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
             if ( !rocketnet_server_iocp_test_lanes_release( walk.lanes, op ) )
             {
                 // only a release to the wrong lane finds it full; the walk
-                // stops, its records so far are the witness
+                // writes the state the refusal left (the operation in no
+                // free queue and not in flight, which no model step makes)
+                // and stops
                 plant_fired++;
                 refused = true;
+                records.push_back( iocp_lanes_record( walk ) );
                 continue;
             }
             // the release landed in the lane of its carve, or the plant moved it
