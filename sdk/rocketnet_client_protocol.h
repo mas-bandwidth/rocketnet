@@ -77,7 +77,6 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( latest_cookie, uint8_t latest_cookie[ROCKETNET_COOKIE_FIELD_BYTES] ) \
     X( has_latest_cookie, int has_latest_cookie ) \
     X( send_latest_cookie, int send_latest_cookie ) \
-    X( session_nonce, uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES] ) \
     X( keys, struct rocketnet_connection_keys_t keys ) \
     X( stored_response, uint8_t stored_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES] ) \
     X( client_index, int client_index ) \

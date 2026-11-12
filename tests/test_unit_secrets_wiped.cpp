@@ -1526,19 +1526,19 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
     secrets_wiped_watch( rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) ),
                          rocketnet_client_transport_secret_spans_for_test );
 
-    check( secrets_wiped_watches[0].spans == 5 );
+    check( secrets_wiped_watches[0].spans == 4 );
 
     const int keys_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 0 );
     const int token_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 1 );
     const int ephemeral_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 2 );
-    const int io_open_key_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_connected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
     const int user_data_connected = secrets_wiped_user_data_live();
     const int planted_connected = secrets_wiped_planted_message_live();
 
     rocketnet_client_disconnect( pair.client );
 
     const int client_secrets_at_disconnect = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
-    const int io_open_key_at_disconnect = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_at_disconnect = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
 
     for ( int i = 0; i < 100 && rocketnet_server_client_connected( pair.server, 0 ); i++ )
     {
@@ -1597,7 +1597,7 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
                          rocketnet_client_transport_secret_spans_for_test );
 
     const int client_secrets_reconnected = secrets_wiped_secret_bytes( &secrets_wiped_watches[0] );
-    const int io_open_key_reconnected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 4 );
+    const int io_open_key_reconnected = secrets_wiped_span_nonzero_bytes( &secrets_wiped_watches[0], 3 );
 
     uint8_t fresh_message[32];
     for ( size_t i = 0; i < sizeof( fresh_message ); i++ )

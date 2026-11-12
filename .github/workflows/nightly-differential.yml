@@ -71,7 +71,7 @@ jobs:
           git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
           git -C netcode-ref checkout --quiet 1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
 
-      - name: Self-test: the gate passes stock and fails on every plant
+      - name: 'Self-test: the gate passes stock and fails on every plant'
         env:
           DIFFERENTIAL_JOBS: '4'
         run: bash tools/differential/selftest.sh netcode-ref
