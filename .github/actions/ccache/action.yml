@@ -55,7 +55,8 @@ runs:
           echo "CCACHE-ABSENT on $RUNNER_NAME: this job compiles uncached"
           exit 0
         fi
-        unexpected="$(env | sed -n 's/^\(CCACHE_[A-Za-z_]*\)=.*/\1/p' | grep -v -x -E 'CCACHE_DIR|CCACHE_MAXSIZE' || true)"
+        # every CCACHE_* name in the runner's environment other than the two the runner owns (none is the normal case)
+        unexpected="$(env | awk -F= '/^CCACHE_[A-Za-z_]*=/ && $1 != "CCACHE_DIR" && $1 != "CCACHE_MAXSIZE" { print $1 }')"
         if [ -n "$unexpected" ]; then
           echo "CCACHE-REFUSED on $RUNNER_NAME: the runner's environment sets $(echo $unexpected); only CCACHE_DIR and CCACHE_MAXSIZE belong to the runner"
           exit 1
