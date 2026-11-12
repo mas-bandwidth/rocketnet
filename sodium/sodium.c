@@ -1184,6 +1184,8 @@ _sodium_runtime_intel_cpu_features(CPUFeatures * const cpu_features)
                              : "=a"(xcr0)
                              : "c"((uint32_t) 0U)
                              : "%edx");
+# else
+#  define SODIUM_RUNTIME_NO_XCR0_READ 1
 # endif
         if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {
             cpu_features->has_avx = 1;

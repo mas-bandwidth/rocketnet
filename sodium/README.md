@@ -86,6 +86,21 @@ None changes cryptographic arithmetic; `test_sodium` and the oracle check
 below cover the result. Upstream's own `#pragma GCC diagnostic ignored
 "-Wlong-long"` lines in its public headers are kept as written.
 
+## CPU feature detection
+
+ChaCha20 (AVX2, SSSE3, reference) and BLAKE2b (AVX2, SSE4.1, SSSE3,
+reference) pick their implementation at `sodium_init` from the CPU features
+the baseline's `_sodium_runtime_intel_cpu_features` detects, unchanged from
+upstream. AVX, and AVX2 with it, counts only when XCR0 shows the OS saves
+SSE and YMM state, and the pair reads XCR0 only where upstream does without
+a configure step (`_xgetbv` on MSVC, or `HAVE_AVX_ASM`, which this pair
+leaves off): on GCC and Clang x86 AVX2 is compiled in and not chosen. One
+generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`) adds no
+code: it defines `SODIUM_RUNTIME_NO_XCR0_READ` where no branch of the XCR0
+read is compiled. `bin/test_sodium_dispatch` reads that marker
+(`sodium_dispatch_built("cpu", "avx2")` in `tests/sodium_dispatch_seam.c`),
+so it expects AVX2 exactly where the read exists, whatever its conditions.
+
 ## MemorySanitizer
 
 Two baseline writes reach memory through calls MemorySanitizer cannot see:

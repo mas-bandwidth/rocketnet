@@ -50,6 +50,12 @@ BASELINE_ADAPTATIONS = {
         # defined, so the pragma is GCC's alone.
         ('# ifdef __GNUC__\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n(',
          '# if defined(__GNUC__) && !defined(__clang__)\n#  pragma GCC target("sse2")\n# endif\n# include <emmintrin.h>\n\nstatic inline int\ncrypto_verify_n('),
+        # A marker, no code (sodium/README.md, "CPU feature detection"): when
+        # no branch of the XCR0 read is compiled, XCR0 stays 0 and AVX is
+        # never detected. The dispatch test (tests/sodium_dispatch_seam.c)
+        # reads the marker, so it follows whatever conditions the read has.
+        ('                             : "%edx");\n# endif\n        if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {\n',
+         '                             : "%edx");\n# else\n#  define SODIUM_RUNTIME_NO_XCR0_READ 1\n# endif\n        if ((xcr0 & (XCR0_SSE | XCR0_AVX)) == (XCR0_SSE | XCR0_AVX)) {\n'),
     ],
 }
 # MemorySanitizer adaptations (sodium/README.md, "MemorySanitizer"). Two

@@ -636,6 +636,15 @@ if(ROCKETNET_BUILD_TESTS)
     target_link_libraries(test_sodium PRIVATE rocketnet)
     rocketnet_use_sodium(test_sodium)
     rocketnet_warning_floor(test_sodium)
+    # The vendored pair's runtime dispatch: the picks are the best the CPU
+    # runs, and every implementation it contains agrees with the reference.
+    # It compiles sodium.c into itself (tests/sodium_dispatch_seam.c) and links
+    # no library, so the bundled pair only.
+    if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
+        add_executable(test_sodium_dispatch tests/test_sodium_dispatch.cpp tests/sodium_dispatch_seam.c)
+        rocketnet_use_sodium(test_sodium_dispatch)
+        rocketnet_warning_floor(test_sodium_dispatch)
+    endif()
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
