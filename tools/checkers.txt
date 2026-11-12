@@ -81,3 +81,4 @@ tools/check_wire_paths.py	python3 tools/check_wire_paths.py --self-test	python3 
 tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd {empty} && mkdir tests && touch tests/test_unit_standard_a.cpp tests/test_unit_connect_token_vectors.cpp tests/test_unit_xdp_filter_host.cpp && bash "$OLDPWD/tools/bigendian/run_byte_cases.sh" /usr/bin/true	ci.yml	lint	Test and count the big-endian byte cases
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
+tools/check_msvc_crt.py	python3 tools/check_msvc_crt.py --self-test	python3 tools/check_msvc_crt.py --root {empty}	ci.yml	lint	No CRT call MSVC deprecates where MSVC compiles it
