@@ -614,6 +614,7 @@ MCRNSendRotationBrokenStallDue.cfg	MCRNSendRotation.tla	invariant	NoAbort	check	
 MCRNSendRotationBrokenCursorAtServed.cfg	MCRNSendRotation.tla	invariant	BoundedWait	check	rnsendrotation	required	-
 MCRNSendRotationShortAck.cfg	MCRNSendRotation.tla	pass	-	check	rnsendrotation	required	-
 MCRNSendRotationRounds.cfg	MCRNSendRotation.tla	pass	-	check	rnsendrotation	required	-
+MCRNSendRotationRoundsRotate.cfg	MCRNSendRotation.tla	pass	-	check	rnsendrotation	required	-
 MCRNSendRotationBrokenShortAck.cfg	MCRNSendRotation.tla	invariant	NoAbort	check	rnsendrotation	required	-
 MCRNSendRotationBrokenBudgetFrame.cfg	MCRNSendRotation.tla	invariant	NoAbort	check	rnsendrotation	required	-
 MCRNSendRotationBrokenCutCursor.cfg	MCRNSendRotation.tla	invariant	CursorAsFullWalk	check	rnsendrotation	required	-
