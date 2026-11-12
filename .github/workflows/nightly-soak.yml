@@ -277,9 +277,20 @@ jobs:
         run: |
           set -euo pipefail
           cores=$(nproc)
+          idle() { awk -v observed="$1" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; }
+          # wait for an idle host (the other nightly jobs finish) rather than
+          # discarding the night: up to 120 minutes, checked each minute
+          waited=0
           load_start=$(awk '{ print $1 }' /proc/loadavg)
-          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
-          if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+          while ! idle "$load_start" && [ "$waited" -lt 120 ]; do
+            echo "LOW_TICK waiting for an idle host: load_1m=$load_start cores=$cores waited=${waited}m"
+            sleep 60
+            waited=$((waited + 1))
+            load_start=$(awk '{ print $1 }' /proc/loadavg)
+          done
+          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores waited=${waited}m"
+          if ! idle "$load_start"; then
+            echo "::error title=low-tick DISCARDED::the host was never idle enough in 120 minutes: load_1m=$load_start cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
             exit 1
           fi
@@ -289,11 +300,18 @@ jobs:
           set -e
           load_end=$(awk '{ print $1 }' /proc/loadavg)
           echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
-          if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+          # a failed case is a failure whatever the load: the end-of-run
+          # discard applies only to a pass measured on a loaded host
+          if [ "$result" -ne 0 ]; then
+            echo "LOW_TICK FAIL the case exited $result (load_1m at end $load_end)"
+            exit "$result"
+          fi
+          if ! idle "$load_end"; then
+            echo "::error title=low-tick DISCARDED::a pass measured while load exceeded half the cores: load_1m=$load_end cores=$cores (no measurement tonight)"
             echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
             exit 1
           fi
-          exit "$result"
+          echo "LOW_TICK PASS measured on an idle host"
 
   # Thirty minutes per Linux server cell under impairment, with flat fds,
   # threads and library bytes (resident memory is printed, not asserted: the
