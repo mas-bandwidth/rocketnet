@@ -126,6 +126,7 @@ typedef int harden_socket_t;
 
 #if defined( __linux__ )
 #include <linux/if_ether.h>
+#include <pthread.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
 #include <netinet/ip.h>
@@ -220,6 +221,26 @@ struct harden_message_t
     uint32_t bytes;
 };
 
+// --payload copy: every message's body is one pre-built pattern, copied in
+// behind the header, so the writer costs a memcpy (a game copying its own
+// state) instead of a pattern computed per message. The header still names
+// the client, connection, kind and sequence, and the receiver still checks
+// every byte, against the pre-built body. Both ends must use the same mode.
+// Set once, before any thread starts
+
+#define HARDEN_COPY_BODY_BYTES 65536
+
+static bool harden_payload_copy = false;
+static uint8_t harden_copy_body[HARDEN_COPY_BODY_BYTES];
+
+static void harden_copy_body_build()
+{
+    for ( int i = 0; i < HARDEN_COPY_BODY_BYTES; i++ )
+    {
+        harden_copy_body[i] = (uint8_t) ( harden_mix64( UINT64_C( 0x5eedc0de ) ^ (uint64_t) ( i / 8 ) ) >> ( 8 * ( i % 8 ) ) );
+    }
+}
+
 static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_t client_id, uint32_t connection, uint32_t sequence )
 {
     uint8_t * cursor = p;
@@ -229,6 +250,11 @@ static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_
     rocketnet_write_uint32( &cursor, connection );
     rocketnet_write_uint32( &cursor, sequence );
     rocketnet_write_uint32( &cursor, (uint32_t) bytes );
+    if ( harden_payload_copy )
+    {
+        memcpy( p + HARDEN_HEADER_BYTES, harden_copy_body + HARDEN_HEADER_BYTES, (size_t) ( bytes - HARDEN_HEADER_BYTES ) );
+        return;
+    }
     uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
     {
@@ -258,6 +284,10 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     if ( magic != HARDEN_MAGIC || out->kind >= HARDEN_KINDS || out->bytes != (uint32_t) bytes )
     {
         return 0;
+    }
+    if ( harden_payload_copy )
+    {
+        return memcmp( p + HARDEN_HEADER_BYTES, harden_copy_body + HARDEN_HEADER_BYTES, (size_t) ( bytes - HARDEN_HEADER_BYTES ) ) == 0 ? 1 : 0;
     }
     uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
@@ -403,6 +433,7 @@ struct harden_options_t
     int burst = 15;
     int burst_clients = 0;
     int fill_jobs = 0;
+    bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
     int num_sizes = 7;
     int reliable_every = 1;
@@ -547,6 +578,18 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->fill_jobs = atoi( v );
         }
+        else if ( strcmp( a, "--payload" ) == 0 )
+        {
+            if ( strcmp( v, "copy" ) == 0 )
+            {
+                o->payload_copy = true;
+            }
+            else if ( strcmp( v, "pattern" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --payload is pattern or copy\n" );
+                return false;
+            }
+        }
         else if ( strcmp( a, "--sizes" ) == 0 )
         {
             if ( !harden_parse_sizes( v, o ) )
@@ -632,7 +675,7 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
     if ( o->max_clients < 1 || o->clients < 0 || o->threads < 1 || o->threads > HARDEN_MAX_THREADS || o->seconds <= 0.0 || o->hz <= 0.0 ||
          o->join_rate <= 0.0 || o->churn_clients < 0 || o->churn_clients > o->clients || o->churn_rate < 0.0 || o->messages < 0 ||
          o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES ||
-         o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
+         o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || ( o->payload_copy && o->big_bytes > HARDEN_COPY_BODY_BYTES ) || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 )
     {
         fprintf( stderr, "harden_load: an option is out of range\n" );
@@ -1180,6 +1223,12 @@ static void harden_fill_range( harden_fill_pool_t * pool, int job )
 
 static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
 {
+#if defined( __linux__ )
+    // named, so a profile or ps -L finds the fill jobs
+    char name[16];
+    snprintf( name, sizeof( name ), "harden_fill%d", job );
+    pthread_setname_np( pthread_self(), name );
+#endif // #if defined( __linux__ )
     uint64_t seen = 0;
     for ( ;; )
     {
@@ -1303,8 +1352,8 @@ static int harden_server_main( const harden_options_t & o )
     }
     char utc[32];
     harden_utc( utc, sizeof( utc ) );
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs,
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -3121,6 +3170,11 @@ int main( int argc, char ** argv )
     }
     harden_kernel_base = harden_kernel_read();
     harden_link_base = harden_link_read( o.dev );
+    harden_payload_copy = o.payload_copy;
+    if ( harden_payload_copy )
+    {
+        harden_copy_body_build();
+    }
 
 #if defined( _WIN32 )
     WSADATA wsa;
