@@ -4,7 +4,8 @@
 
     The out-of-the-box server: runs with the published development keys, so
     a first server needs no backend and no configuration -- run it, point a
-    client at it, connected. Echoes every payload back to its sender. Pass
+    client at it, connected. Echoes each payload back to its sender, except
+    a numbered message, which it refuses by name (tests/echo_payload.h). Pass
     the public address clients dial: ./bin/server 192.0.2.10:40000
 
     The live XDP fleet run (docs/LIVE-XDP.md): `--matrix` runs the message
@@ -25,6 +26,7 @@
 #include "rocketnet_counters.h"
 #include "tests/live_verify.h"
 #include "tests/matrix_receive.h"
+#include "tests/echo_payload.h"
 #include "tests/portable_crt.h"
 
 #include <stdio.h>
@@ -1445,6 +1447,7 @@ int main( int argc, char ** argv )
 
         int last_num_connected = 0;
         double last_counters = 0.0;
+        uint64_t echo_refused = 0;
 
         while ( !quit )
         {
@@ -1464,7 +1467,21 @@ int main( int argc, char ** argv )
             {
                 int client_index, payload_bytes;
                 uint8_t * payload = rocketnet_server_transport_payload( transport_obj, i, &client_index, &payload_bytes );
-                rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                // only what the server could have sent byte for byte goes
+                // back (tests/echo_payload.h); a numbered message is named
+                const char * refusal = rocketnet_echo_payload_refusal( payload, payload_bytes );
+                if ( refusal )
+                {
+                    if ( echo_refused < 10 )
+                    {
+                        printf( "server echo refused a %d-byte payload from client %d: %s\n", payload_bytes, client_index, refusal );
+                    }
+                    echo_refused++;
+                }
+                else
+                {
+                    rocketnet_server_transport_send_packet( transport_obj, client_index, payload, payload_bytes );
+                }
                 // the message server defers payload acks to whoever consumes the payload; the echo consumes it here
                 rocketnet_server_transport_accept_payload( transport_obj, i );
             }

@@ -204,11 +204,12 @@ def main() -> int:
         assert "rss=externally_provisioned_one_queue" in first.stdout
 
         largest = list(args)
-        largest[largest.index("--payload-bytes") + 1] = "1412"
+        largest[largest.index("--payload-bytes") + 1] = "1411"
         result = run(largest, 0)
-        assert "nominal_rocketnet_bytes=1449" in result.stdout
+        assert "nominal_rocketnet_bytes=1448" in result.stdout
         over_largest = list(args)
-        over_largest[over_largest.index("--payload-bytes") + 1] = "1413"
+        # 1412 would be promoted to a numbered message the raw echo refuses
+        over_largest[over_largest.index("--payload-bytes") + 1] = "1412"
         run(over_largest, 2)
 
         token_file.write_text("".join(
