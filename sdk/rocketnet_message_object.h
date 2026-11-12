@@ -94,6 +94,9 @@ struct rn_message_link_t
     // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );
+    // returns the started frame (context->frame), not the payload: the layer
+    // writes at frame + context->payload_index. The public transport calls
+    // return the payload; the forwarders turn that back into the frame.
     uint8_t * ( *start_packet )( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
     int ( *finish_packet )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
     void ( *abort_packet )( void * transport, struct rocketnet_packet_context_t * context );

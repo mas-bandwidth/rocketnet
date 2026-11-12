@@ -824,7 +824,7 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_packet_context_t c_ctx;
         uint8_t * c_frame = rocketnet_client_transport_start_packet( client_a, 16, &c_ctx );
         check( c_frame != NULL );
-        memset( c_frame + c_ctx.payload_index, 0x11, 16 );
+        memset( c_frame, 0x11, 16 );
         rocketnet_packet_context_t c_copy = c_ctx;
         check( rocketnet_client_transport_finish_packet( client_a, &c_ctx, 16 ) > 0 );
         check_not_asserted();
@@ -836,7 +836,7 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_packet_context_t s_ctx;
         uint8_t * s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
-        memset( s_frame + s_ctx.payload_index, 0x22, 16 );
+        memset( s_frame, 0x22, 16 );
         rocketnet_packet_context_t s_copy = s_ctx;
         check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
         check_not_asserted();
@@ -1015,7 +1015,7 @@ static void test_finish_requires_start_transport_packets()
         // not take the retired() misuse path.
         s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
-        memset( s_frame + s_ctx.payload_index, 0x23, 16 );
+        memset( s_frame, 0x23, 16 );
         s_copy = s_ctx;
         check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
         check_not_asserted();

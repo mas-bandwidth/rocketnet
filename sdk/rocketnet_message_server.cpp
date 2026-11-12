@@ -2207,6 +2207,12 @@ static uint64_t rn_server_link_acked_connection( void * transport, int k )
     return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
 }
 
+// the link hands the layer the frame (rocketnet_message_object.h, start_packet)
+static uint8_t * rn_server_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
+{
+    return rocketnet_server_transport_start_packet( (rocketnet_server_transport_t *) transport, client_index, request_bytes, context ) ? context->frame : NULL;
+}
+
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
@@ -2224,7 +2230,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->payload_connection = rn_server_link_payload_connection;
     link->acked_connection = rn_server_link_acked_connection;
     link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_server_transport_max_payload_bytes )::call;
-    link->start_packet = RN_LINK_FORWARD( rocketnet_server_transport_start_packet )::call;
+    link->start_packet = rn_server_link_start_packet;
     link->finish_packet = RN_LINK_FORWARD( rocketnet_server_transport_finish_packet )::call;
     link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
     link->send_packets = RN_LINK_FORWARD( rocketnet_server_transport_send_packets )::call;

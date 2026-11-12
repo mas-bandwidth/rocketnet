@@ -75,7 +75,7 @@ int main()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         check( frame != NULL );
-        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        stream.Initialize( frame, context.payload_capacity );
 
         check( stream.SerializeBits( 0xdecafbad, 32 ) );
         check( stream.SerializeInteger( -17, -100, 100 ) );
@@ -130,7 +130,7 @@ int main()
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
         check( frame != NULL );
-        stream.Initialize( frame + context.payload_index, context.payload_capacity );
+        stream.Initialize( frame, context.payload_capacity );
         check( stream.SerializeBits( 0xabad1dea, 32 ) );
         stream.Flush();
         check( rocketnet_server_transport_finish_packet( server, &context, (int) stream.GetBytesProcessed() ) != 0 );

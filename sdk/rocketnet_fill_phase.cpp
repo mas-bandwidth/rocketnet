@@ -217,7 +217,12 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
         RN_FILL_PHASE_TRACE( "FillClaim", client_index, claimed, false );
     }
 
-    if ( fill_phase->main_calls.load() != 0 )
+    // the epoch is read again after the look: a main operation that began and
+    // ended between the epoch load and the claim left this claim stamped with
+    // the old phase, which a second filler in the new phase would not see
+    // (proofs/tla/RNFillPhase.tla FillLook)
+
+    if ( fill_phase->main_calls.load() != 0 || fill_phase->epoch.load() != epoch )
     {
         if ( claims )
         {
