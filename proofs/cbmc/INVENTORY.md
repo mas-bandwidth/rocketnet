@@ -93,7 +93,7 @@ with Z3 4.13.3). Raw logs are kept with the review record of that day.
   memory (384 GiB limit, no kill) and not a timeout (none set). Every night
   from 11-01 to 11-12 ended this way or was cancelled; neither target ever
   printed a verdict.
-- The cause, isolated with `proof_ack_micro.c` (one static endpoint, one
+- The cause, isolated with `diag_ack_micro.c` (one static endpoint, one
   symbolic slot): writing and reading `endpoint.sent[slot]` by index, or
   through a pointer to the endpoint, solves in under a second with
   Bitwuzla. A single write through `record = &endpoint.sent[slot]` does not
@@ -105,6 +105,18 @@ with Z3 4.13.3). Raw logs are kept with the review record of that day.
   grows by tens of GB per write whatever the solver. The production visit
   makes one such write (`record->acked = 1`) per newly acked record, plus
   reads through the same pointer.
+- `diag_ack_micro.c` is a diagnostic, not a proof: it measures how ESBMC
+  encodes writes into the ACK endpoint, and its asserts read back what it
+  wrote. No Makefile target or workflow runs it (CBMC cannot parse it: it
+  includes the C++ leaf). Run one variant by hand from proofs/cbmc with the
+  pinned ESBMC, through a C++ file that includes it as the Makefile's ACK
+  targets do: `printf '#include "%s"\n' "$PWD/diag_ack_micro.c" > /tmp/micro.cpp`,
+  then `esbmc /tmp/micro.cpp --function harness_micro --std c++17 --z3
+  -DROCKETNET_ESBMC -DNDEBUG -DROCKETNET_DEV=1 -I../../sdk --include-file
+  $PWD/esbmc_shim.h -DMICRO=<1..8> -DMICRO_N=<writes>` (add
+  `-DMICRO_LOCAL=1` for a local endpoint; MICRO=1 prints VERIFICATION
+  SUCCESSFUL in seconds with ESBMC 8.5.0). It was named `proof_ack_micro.c`
+  until 2026-11-12; a `proof_*.c` file is one a target runs.
 - The harness made it worse. It wrote 7 record fields and 2 or 3 bitmap
   words per run element through pointers. It now indexes the endpoint
   directly; with that, the bound-1 symex takes 400 s.

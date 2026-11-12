@@ -1,4 +1,4 @@
-// scratch: isolate what makes ESBMC's symex of the ACK harness slow
+// diagnostic, not a proof (INVENTORY.md, "ACK run measurements"): isolate what makes ESBMC's symex of the ACK harness slow
 #include <stdint.h>
 #include "rocketnet_ack.cpp"
 
