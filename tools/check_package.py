@@ -16,6 +16,81 @@ def run(*args, **kwargs):
     subprocess.run([str(arg) for arg in args], check=True, **kwargs)
 
 
+# What an installed SDK may hold, and nothing else (VERIFY-3 W2: an internal
+# header installed beside rocketnet.h shipped with every check green). Paths
+# are relative to the install prefix; LIB is lib, lib64 or a multiarch lib/<triple>.
+LIB = r"lib(?:64|/[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+)?"
+INSTALLED_FILES = (
+    (r"include/rocketnet\.h", "the whole public C API"),
+    (r"share/rocketnet/LICENSE", "the licence"),
+    (r"share/rocketnet/sodium/LICENSE", "the vendored sodium's licence"),
+    (LIB + r"/cmake/RocketNet/RocketNet(?:Config|ConfigVersion|Dependencies|Targets)\.cmake", "the package files"),
+    (LIB + r"/cmake/RocketNet/RocketNetTargets-[a-z]+\.cmake", "the per-configuration targets"),
+    (LIB + r"/(?:lib)?rocketnet(?:_shared)?\.(?:a|lib)", "the static library or the DLL's import library"),
+    (LIB + r"/librocketnet(?:_shared)?\.(?:so(?:\.[0-9]+)*|[0-9.]*dylib)", "the shared library and its links"),
+    (r"bin/rocketnet(?:_shared)?\.(?:dll|pdb)", "the Windows DLL and its symbols"),
+)
+
+
+def unexpected_installed_files(installed):
+    """Every installed file no INSTALLED_FILES row allows, and the rows nothing matched that must be there."""
+    problems = []
+    seen = set()
+    files = sorted(p.relative_to(installed).as_posix() for p in installed.rglob("*") if p.is_file() or p.is_symlink())
+    for rel in files:
+        for i, (pattern, _) in enumerate(INSTALLED_FILES):
+            if re.fullmatch(pattern, rel):
+                seen.add(i)
+                break
+        else:
+            problems.append(f"installed {rel}: not part of the SDK (tools/check_package.py INSTALLED_FILES)")
+    for i in (0, 1, 3):
+        if i not in seen:
+            problems.append(f"nothing installed for {INSTALLED_FILES[i][1]} ({INSTALLED_FILES[i][0]})")
+    if not any(re.fullmatch(INSTALLED_FILES[i][0], rel) for rel in files for i in (5, 6, 7)):
+        problems.append("no library installed")
+    return problems
+
+
+def self_test():
+    failures = []
+
+    def tree(*paths):
+        root = Path(tempfile.mkdtemp(prefix="check-package-"))
+        for rel in paths:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("")
+        return root
+
+    base = ["include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/sodium/LICENSE",
+            "lib/cmake/RocketNet/RocketNetConfig.cmake", "lib/cmake/RocketNet/RocketNetConfigVersion.cmake",
+            "lib/cmake/RocketNet/RocketNetDependencies.cmake", "lib/cmake/RocketNet/RocketNetTargets.cmake",
+            "lib/cmake/RocketNet/RocketNetTargets-release.cmake", "lib/librocketnet.a"]
+    cases = [
+        ("Linux static and shared", base + ["lib/librocketnet_shared.so"], False),
+        ("macOS dylib", base + ["lib/librocketnet_shared.dylib"], False),
+        ("multiarch libdir", [b.replace("lib/", "lib/x86_64-linux-gnu/", 1) if b.startswith("lib/") else b for b in base], False),
+        ("Windows", [b for b in base if not b.endswith(".a")] + ["lib/rocketnet.lib", "lib/rocketnet_shared.lib",
+                                                                   "bin/rocketnet_shared.dll"], False),
+        ("an internal header beside rocketnet.h", base + ["include/rocketnet_internal.h"], True),
+        ("a platform header", base + ["include/rocketnet_platform.h"], True),
+        ("a tool in bin", base + ["bin/keygen"], True),
+        ("a stray file", base + ["share/rocketnet/notes.txt"], True),
+        ("no public header", [b for b in base if not b.startswith("include/")], True),
+        ("no library", [b for b in base if not b.endswith(".a")], True),
+    ]
+    for name, paths, want in cases:
+        got = bool(unexpected_installed_files(tree(*paths)))
+        if got != want:
+            failures.append(f"{name}: refused={got}, expected {want}")
+    for f in failures:
+        print("FAIL check_package self-test:", f)
+    if failures:
+        return 1
+    print(f"ok check_package self-test: {len(cases)} installed trees")
+    return 0
+
+
 def cmake_bool(value, default=True):
     if value is None:
         return default
@@ -324,6 +399,8 @@ def check_client_package(installed, root, command, config, native_build_options)
 
 
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        sys.exit(self_test())
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path)
     parser.add_argument("--config", default="Release")
@@ -371,6 +448,10 @@ def main():
         stage, installed = root / "stage", root / "relocated SDK"
         run("cmake", "--install", build, "--config", args.config, "--prefix", stage)
         stage.rename(installed)
+        problems = unexpected_installed_files(installed)
+        if problems:
+            raise RuntimeError("the installed SDK holds what it should not:\n  " + "\n  ".join(problems))
+        print("Installed SDK: every file is one INSTALLED_FILES allows")
         # No absolute source/build/original install path may leak into package metadata.
         for config in installed.rglob("*.cmake"):
             text = config.read_text().replace("\\", "/")

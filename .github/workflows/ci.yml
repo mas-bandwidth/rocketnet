@@ -4075,6 +4075,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tools/replay_ci_steps.py --self-test
 
+      # tools/check_package.py holds the installed SDK to a list of the files
+      # it may hold (include/ is rocketnet.h alone); its self-test plants an
+      # internal header, a platform header, a tool, a stray file, and a tree
+      # with no header or no library (VERIFY-3 W2).
+      - name: Test the installed-SDK file list
+        if: ${{ !cancelled() }}
+        run: python3 tools/check_package.py --self-test
+
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
       # diagnostic pragma in sdk/ is listed with a reason in
       # tools/suppressions_reviewed.txt, and every listed one still exists. A
