@@ -72,7 +72,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-xver-${{ matrix.ref }}
+      group: nightly-xver-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
       # the tags are needed to find the previous release

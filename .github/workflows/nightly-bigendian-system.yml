@@ -61,7 +61,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-bigendian-system-${{ matrix.ref }}
+      group: nightly-bigendian-system-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0

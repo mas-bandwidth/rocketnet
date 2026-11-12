@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tlc-debt
+  group: tlc-debt-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:

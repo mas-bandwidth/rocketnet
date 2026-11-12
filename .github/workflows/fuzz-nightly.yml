@@ -73,7 +73,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
           - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
     concurrency:
-      group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -238,7 +238,7 @@ jobs:
           - rocketnet_fuzz_session
           - rocketnet_fuzz_differential
     concurrency:
-      group: fuzz-nightly-ndebug-${{ matrix.ref }}-${{ matrix.target }}
+      group: fuzz-nightly-ndebug-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.target }}
       cancel-in-progress: true
     steps:
 
@@ -326,7 +326,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-macos-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 
@@ -488,7 +488,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-windows-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     defaults:
       run:
@@ -651,7 +651,7 @@ jobs:
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
-      group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
+      group: fuzz-nightly-msan-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
     steps:
 

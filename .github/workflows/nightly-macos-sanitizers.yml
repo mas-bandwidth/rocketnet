@@ -68,7 +68,7 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg: [asan+ubsan, tsan, leaks]
     concurrency:
-      group: nightly-macos-sanitizers-${{ matrix.ref }}-${{ matrix.leg }}
+      group: nightly-macos-sanitizers-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.leg }}
       cancel-in-progress: true
     env:
       CC: /usr/bin/clang

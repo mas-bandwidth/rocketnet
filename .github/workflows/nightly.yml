@@ -122,7 +122,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-linux-clang-${{ matrix.ref }}
+      group: nightly-linux-clang-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -163,7 +163,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-macos-functional-${{ matrix.ref }}
+      group: nightly-macos-functional-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -223,7 +223,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-linux-functional-${{ matrix.ref }}
+      group: nightly-linux-functional-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -278,7 +278,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-functional-${{ matrix.ref }}
+      group: nightly-windows-functional-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -345,7 +345,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-tsan-threaded-${{ matrix.ref }}
+      group: nightly-tsan-threaded-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -428,7 +428,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-linux-transport-cells-repeat-${{ matrix.ref }}
+      group: nightly-linux-transport-cells-repeat-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -506,7 +506,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-macos-transport-cells-repeat-${{ matrix.ref }}
+      group: nightly-macos-transport-cells-repeat-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -554,7 +554,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-transport-cells-repeat-${{ matrix.ref }}
+      group: nightly-windows-transport-cells-repeat-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -619,7 +619,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-debug-${{ matrix.ref }}
+      group: nightly-windows-debug-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -723,7 +723,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-transport-extension-${{ matrix.ref }}
+      group: nightly-windows-transport-extension-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -758,7 +758,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-asan-${{ matrix.ref }}
+      group: nightly-windows-asan-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 
@@ -840,7 +840,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-windows-toolchains-${{ matrix.ref }}
+      group: nightly-windows-toolchains-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     defaults:
       run:
@@ -940,7 +940,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-mutation-${{ matrix.ref }}
+      group: nightly-mutation-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
     steps:
 

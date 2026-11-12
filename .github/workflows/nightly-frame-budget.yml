@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-frame-budget-${{ github.ref }}
+  group: nightly-frame-budget-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Test execution has no repository wall-clock cap; GitHub still limits
@@ -68,7 +68,7 @@ jobs:
     # Report-only: the fleet Mac is not reserved quiet (it also carries other
     # fleet work), so the budget is recorded rather than enforced. Its one
     # runner takes one job at a time, so no other workflow job overlaps the
-    # measurement, and the workflow concurrency group above keeps one run of
+    # measurement, and the workflow concurrency group above keeps one run of each event kind of
     # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
