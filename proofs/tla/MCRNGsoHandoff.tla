@@ -19,11 +19,17 @@ EXTENDS RNGsoHandoff
 NoBackoffBroken == TRUE
 
 \* MCRNGsoHandoffBrokenDropBeforeShutdown.cfg: refusals count before
-\* shutdown too; must fail DroppedOnlyAfterShutdown.
+\* shutdown too; must fail FullSocketDropsOnlyAfterShutdown.
 DropBeforeShutdownBroken == TRUE
 
 \* MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg: refusals count only after
 \* send_quit while the stop waits for send_idle; must fail
 \* ShutdownCompletes.
 BoundOnQuitOnlyBroken == TRUE
+
+\* MCRNGsoHandoffBrokenUncountedErrorDrop.cfg: a hard send error drops a
+\* message uncounted; must fail SentOrHeld.
+\* MCRNGsoHandoffReachErrorDropRunning.cfg (the rule) must fail
+\* NotReachedErrorDropRunning: a counted error drop before shutdown.
+CountErrorDropsBroken == FALSE
 =============================================================================
