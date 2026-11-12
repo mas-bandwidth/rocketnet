@@ -46,7 +46,6 @@ OWNED_GLOBS = (
     "sdk/*.h",
     "tests/*.h",
     "tools/*.h",
-    "tools/differential/*.h",
     "tests/xdp_host/server_xdp_host.h",
 )
 
