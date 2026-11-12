@@ -1279,7 +1279,7 @@ struct rocketnet_client_gso_io_layout_t
 struct rocketnet_client_iocp_receive_layout_t
 {
     OVERLAPPED overlapped;
-    WSABUF buffer;
+    WSABUF buffers[2];
     DWORD flags;
     INT from_bytes;
     sockaddr_storage from;
@@ -1295,6 +1295,7 @@ struct rocketnet_client_iocp_io_layout_t
     rocketnet_client_iocp_receive_layout_t receives[ROCKETNET_CLIENT_IOCP_RECEIVES];
     OVERLAPPED_ENTRY entries[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
     uint8_t buffers[ROCKETNET_CLIENT_IOCP_RECEIVES * ROCKETNET_CLIENT_IOCP_RECEIVE_BYTES];
+    uint8_t overflow[ROCKETNET_CLIENT_IOCP_OVERFLOW_BYTES];
 };
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
