@@ -13,10 +13,10 @@ One parameterized module covers every shape the code uses:
 
 | Instance | Code | Free queue | Ready | Consumer | Init |
 |---|---|---|---|---|---|
-| `MCRNBankFifoLayout.cfg` | `portable_rx_publish`, `portable_rx_acquire`, `portable_tx_publish`, `portable_tx_worker` (`sdk/rocketnet_driver_builtin.cpp`); `rocketnet_server_gso_publish_send`, `rocketnet_server_gso_take_send`, `rocketnet_server_gso_return_send` (`sdk/rocketnet_server_gso_linux.cpp`) | FIFO of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
+| `MCRNBankFifoLayout.cfg` | `rocketnet_buffer_handoff_t` at three banks as `rocketnet_buffer_handoff_started( 0 )` leaves it, which is the literal, run by `portable_rx_publish`, `portable_rx_acquire`, `portable_tx_publish`, `portable_tx_worker` (`sdk/rocketnet_driver_builtin.cpp`) and `rocketnet_server_gso_publish_send`, `rocketnet_server_gso_take_send`, `rocketnet_server_gso_return_send` (`sdk/rocketnet_server_gso_linux.cpp`), each with `max_ready` N - 1 | FIFO of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
 | `MCRNBankFifoLayoutLoopFour.cfg` | `rocketnet_xdp_buffer_exchange_t` (`sdk/rocketnet_server_socket_linux.cpp`), `rocketnet_buffer_handoff_t` (`sdk/rocketnet_buffer_handoff.h`) | FIFO of 4 | FIFO of 4 | one bank | loop |
-| `MCRNBankFifoLayoutHandoff.cfg` | `rocketnet_buffer_handoff_publish` with `max_ready` 1 | FIFO of 3 | FIFO of 3, at most 1 | one buffer | loop |
-| `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` | the same with `max_ready` = N, which its assert refuses | FIFO of 3 | FIFO of 3 | one buffer | loop |
+| `MCRNBankFifoLayoutHandoff.cfg` | `rocketnet_buffer_handoff_publish` with `max_ready` 1: the client's receive, and the gso server's per-queue receive triple buffer (`rocketnet_server_gso_publish_receive`, `rocketnet_server_gso_receive_from_queue`) | FIFO of 3 | FIFO of 3, at most 1 | one buffer | loop |
+| `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` | the same with `max_ready` = N, which its assert refuses; it holds every behaviour of `max_ready` N - 1, the portable and gso send and the portable receive | FIFO of 3 | FIFO of 3 | one buffer | loop |
 | `MCRNBankFifoLayoutLifoSend.cfg` | `rocketnet_server_iocp_send_packets`, `rocketnet_iocp_send_worker` (`sdk/rocketnet_server_iocp_windows.cpp`) | stack of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
 | `MCRNBankFifoLayoutLifoExposed.cfg` | `rocketnet_iocp_publish_receive_bank`, `rocketnet_server_iocp_receive_packets`; `rocketnet_rio_worker_pass`, `rocketnet_server_rio_receive_packets` (`sdk/rocketnet_server_rio_windows.cpp`) | stack of 4 | FIFO of 4 | up to 4 exposed | loop |
 | `MCRNBankFifoLayoutPosted.cfg` | `rocketnet_client_iocp_dequeue`, `rocketnet_client_iocp_receive_batch` (`sdk/rocketnet_client_iocp_windows.cpp`) | none: posted to the kernel | FIFO of `num_receives` = 3 in an array of 4 | up to 3 | every buffer posted |
@@ -40,6 +40,13 @@ a head advances `( head + 1 ) % N` (`HeadMod`). A stack is a count: push at
 rest of the array zero (C aggregate initialization) and a count of N - 1; the
 loop puts 1 .. N - 1 in order. `rocketnet_buffer_handoff_init` skips the
 producer it is given; the model's producer is 0, where it is the loop.
+`rocketnet_buffer_handoff_started( 0 )` zeroes the struct first, so at three
+banks it is the literal exactly. The gso server's receive queues start with
+the producer 1, then one `Publish` and one `Take`
+(`rocketnet_server_gso_receive_handoff_started`), so the worker holds 0, main
+holds 1 and 2 is free, as `RNGsoHandoff.tla` Init has it: a state the model
+reaches from its own Init with banks 0 and 1 renamed, and no invariant
+depends on a bank's name.
 
 ## Actions and the code they mirror
 
@@ -101,13 +108,14 @@ counterexample was checked against the C by hand.
 1. **`MCRNBankFifoLayoutBrokenFullOffByOne.cfg`** (`FreeSlack = 1`, the empty
    test one late): two publishes take banks 1 and 2 (free_count 0); a third
    proceeds and pops `free_index[free_head = 2]`, the stale 0 the literal put
-   there. In `portable_tx_publish` with `free_count == -1` for `== 0`, the
+   there. In `rocketnet_buffer_handoff_publish` (which `portable_tx_publish`
+   calls) with `free_count == -1` for `== 0`, the
    producer becomes bank 0 while bank 0 is still in the ready queue: main
    fills the bank the worker is sending. Fails `ExactlyOnePlace`.
 2. **`MCRNBankFifoLayoutBrokenNoTailMod.cfg`** (`TailMod = 0`): publish,
    publish, take, release, take, release: the second release writes
    `free_index[free_head + free_count] = free_index[2 + 1]`, one past the
-   array. In `portable_server_t` that is `free_head` itself. Fails `InBounds`.
+   array. In `rocketnet_buffer_handoff_t` that is `free_head` itself. Fails `InBounds`.
 3. **`MCRNBankFifoLayoutBrokenWrapTail.cfg`** (`TailMod = 2`, the tail % (N - 1)
    while the head advances % N): publish banks 0 and 1, take 0, release it to
    `free_index[( 2 + 0 ) % 2 = 0]`, publish 2 to `ready_index[( 1 + 1 ) % 2 = 0]`.
@@ -115,12 +123,13 @@ counterexample was checked against the C by hand.
    `ready_index[2]` = 1, 0: bank 0, the producer, instead of bank 2. Fails
    `ReadyMatches`.
 4. **`MCRNBankFifoLayoutBrokenLiteralFour.cfg`** (`InitKind = "literal"`, N = 4,
-   as `portable_server_t` would read with `PORTABLE_RX_BANKS` 4): the free
+   as the portable server's old literal would have read with
+   `PORTABLE_RX_BANKS` 4): the free
    queue is 1, 2, 0 with bank 0 the producer, and bank 3 is nowhere. Fails
    `ExactlyOnePlace` in the initial state. The literal is right at three
-   banks, which every literal in the code is (`PORTABLE_TX_BANKS`,
-   `PORTABLE_RX_BANKS`, `ROCKETNET_GSO_TX_BANKS`, `ROCKETNET_IOCP_SEND_BANKS`);
-   the loop initializers are right at every N (`MCRNBankFifoLayoutLoopFour.cfg`,
+   banks, which the one literal left in the code is (`ROCKETNET_IOCP_SEND_BANKS`);
+   the loop initializers, `rocketnet_buffer_handoff_init` among them, are right
+   at every N (`MCRNBankFifoLayoutLoopFour.cfg`,
    `MCRNBankFifoLayoutLifoExposed.cfg`).
 5. **`MCRNBankFifoLayoutBrokenMixedFreeOrder.cfg`** (pushed as a stack, popped
    as a FIFO): publish (bank 1 out, free_head 1, free_count 1), take bank 0,
