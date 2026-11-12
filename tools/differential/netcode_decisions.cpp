@@ -35,6 +35,22 @@
       rocketnet-weaker netcode refuses, rocketnet admits (a finding)
       rocketnet-stricter rocketnet refuses, netcode admits (judged against
                         REQUIREMENTS.md: no property weaker than netcode 1.02)
+      not-comparable   the case cannot be put to netcode 1.02 (a raw corpus
+                        file, or a structured one touching a field netcode
+                        does not carry); only rocketnet's decision is checked
+
+    Every row also records the decision rocketnet is expected to reach (the
+    last column of cases.tsv and corpus_cases.tsv), and the live decision is
+    held to it, so a removed refusal shows even where netcode cannot see it
+    (a permitted-stricter row turning agree, a not-comparable row admitted).
+
+    Exit status: 0 only when every row passes; 1 when any row is
+    rocketnet-weaker, rocketnet-stricter in a class the README does not
+    permit, differs from rocketnet's expected decision, has no reference row
+    (not-run), is unreadable, or (live) where live netcode disagrees with the
+    reference column; when a reference row names no corpus file; and when no
+    row was compared with netcode at all. The last line printed is the tally
+    and PASS or FAIL.
 */
 
 #include <stdio.h>
@@ -66,9 +82,69 @@ struct case_row_t
     const char * id;
     const char * description;
     const char * netcode_reference;      // accept, or refuse:<class>
+    const char * rocketnet_expected;     // the decision rocketnet must reach
 };
 
 static struct case_row_t g_cases[CASE_COUNT];
+
+// --- the tally ------------------------------------------------------------
+
+struct tally_t
+{
+    int compared;                // rows judged against a netcode decision
+    int agree;
+    int stricter_permitted;
+    int not_comparable;          // rocketnet's decision checked alone
+    int failures;                // every row or file that fails the gate
+};
+
+static struct tally_t g_tally;
+
+// one row's checks: the verdict when netcode was asked (netcode non-NULL),
+// and rocketnet's decision against the one the row expects. Prints the reason
+// for each failure on stderr.
+
+static void tally_row( const char * name, const struct decision_t * rn, const char * rocketnet, const char * netcode, const char * expected )
+{
+    if ( netcode )
+    {
+        g_tally.compared++;
+        const char * v = verdict( rn, netcode );
+        if ( strcmp( v, "agree" ) == 0 )
+        {
+            g_tally.agree++;
+        }
+        else if ( strcmp( v, "rocketnet-weaker" ) == 0 )
+        {
+            fprintf( stderr, "FAIL %s: rocketnet-weaker: netcode 1.02 %s, rocketnet admits\n", name, netcode );
+            g_tally.failures++;
+        }
+        else if ( stricter_class_permitted( rn->reason ) )
+        {
+            g_tally.stricter_permitted++;
+        }
+        else
+        {
+            fprintf( stderr, "FAIL %s: rocketnet-stricter in a class the README does not permit (%s)\n", name, rocketnet );
+            g_tally.failures++;
+        }
+    }
+    else
+    {
+        g_tally.not_comparable++;
+    }
+
+    if ( !expected )
+    {
+        fprintf( stderr, "FAIL %s: no expected rocketnet decision recorded\n", name );
+        g_tally.failures++;
+    }
+    else if ( strcmp( expected, rocketnet ) != 0 )
+    {
+        fprintf( stderr, "FAIL %s: rocketnet decided %s, the row expects %s\n", name, rocketnet, expected );
+        g_tally.failures++;
+    }
+}
 
 // Each fixed case maps to one abstract differential case (decide.h). The
 // default is a valid token; the switch applies the case's mutation.
@@ -317,8 +393,20 @@ static int corpus_read( const char * path, struct corpus_case_t * c )
     return 1;
 }
 
+// A raw file is never comparable: its bytes land in netcode's request from
+// the version info on, so netcode refuses every one of them as "not a
+// netcode packet" (refuse:version) whatever the token holds, and a verdict
+// against that constant says nothing about either library's token checks
+// (DIFFERENTIAL-JUDGEMENT, 2026-11-12: the valid-token seed read as
+// rocketnet-weaker, the other raw rows as empty agreements).
+
 static int corpus_comparable( const struct corpus_case_t * c )
 {
+    if ( c->raw )
+    {
+        return 0;
+    }
+
     for ( int field = 0; field < FIELD_COUNT; field++ )
     {
         if ( ( c->touched & ( 1u << field ) ) && !g_field_comparable[field] )
@@ -488,27 +576,44 @@ static int netcode_decide_corpus( const struct corpus_case_t * c, char * reason,
 
 #endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
 
-// the corpus reference: file name, then the netcode 1.02 decision the live
-// run recorded for it
+// the corpus reference: file name, the fields the mapping reads, the netcode
+// 1.02 decision the live run recorded, and the decision rocketnet must reach
 struct corpus_reference_t
 {
     char name[128];
-    char decision[64];
+    char netcode[64];
+    char rocketnet[64];
+    int seen;
 };
 
 static struct corpus_reference_t g_corpus_reference[256];
 static int g_corpus_reference_count = 0;
 
-static void corpus_read_reference( const char * path )
+static void corpus_copy_cell( char * out, size_t out_size, const char * cell )
+{
+    size_t len = strlen( cell );
+    if ( len >= out_size )
+    {
+        len = out_size - 1;
+    }
+    memcpy( out, cell, len );
+    out[len] = 0;
+}
+
+// returns the row count, or -1 when the file cannot be read or a row does not
+// have its four columns
+
+static int corpus_read_reference( const char * path )
 {
     FILE * f = fopen( path, "rb" );
     if ( !f )
     {
-        return;
+        return -1;
     }
 
+    int status = 0;
     char line[512];
-    while ( fgets( line, sizeof( line ), f ) && g_corpus_reference_count < 256 )
+    while ( fgets( line, sizeof( line ), f ) )
     {
         if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
         {
@@ -516,55 +621,69 @@ static void corpus_read_reference( const char * path )
         }
         line[strcspn( line, "\r\n" )] = 0;
 
-        char * tab = strchr( line, '\t' );
-        if ( !tab )
+        char * cells[4];
+        int n = 0;
+        char * p = line;
+        while ( n < 4 && p )
         {
-            continue;
-        }
-        *tab++ = 0;
-
-        char * tab2 = strchr( tab, '\t' );
-        const char * decision = tab2 ? tab2 + 1 : tab;
-        struct corpus_reference_t * r = &g_corpus_reference[g_corpus_reference_count++];
-
-        {
-            size_t len = strlen( line );
-            if ( len >= sizeof( r->name ) )
+            cells[n++] = p;
+            char * tab = strchr( p, '\t' );
+            if ( tab )
             {
-                len = sizeof( r->name ) - 1;
+                *tab = 0;
+                p = tab + 1;
             }
-            memcpy( r->name, line, len );
-            r->name[len] = 0;
+            else
+            {
+                p = NULL;
+            }
         }
-        snprintf( r->decision, sizeof( r->decision ), "%s", decision );
+
+        if ( n != 4 || p || g_corpus_reference_count >= 256 )
+        {
+            fprintf( stderr, "FAIL %s: a row without exactly four columns, or more than 256 rows\n", path );
+            status = -1;
+            break;
+        }
+
+        struct corpus_reference_t * r = &g_corpus_reference[g_corpus_reference_count++];
+        corpus_copy_cell( r->name, sizeof( r->name ), cells[0] );
+        corpus_copy_cell( r->netcode, sizeof( r->netcode ), cells[2] );
+        corpus_copy_cell( r->rocketnet, sizeof( r->rocketnet ), cells[3] );
+        r->seen = 0;
     }
 
     fclose( f );
+    return status == 0 ? g_corpus_reference_count : -1;
 }
 
-static const char * corpus_reference_for( const char * name )
+static struct corpus_reference_t * corpus_reference_for( const char * name )
 {
     for ( int i = 0; i < g_corpus_reference_count; i++ )
     {
         if ( strcmp( g_corpus_reference[i].name, name ) == 0 )
         {
-            return g_corpus_reference[i].decision;
+            return &g_corpus_reference[i];
         }
     }
     return NULL;
 }
 
-static int run_corpus( const char * reference_path, int count, const char ** paths )
+static void run_corpus( const char * reference_path, int count, const char ** paths )
 {
     if ( !corpus_build_base() )
     {
-        fprintf( stderr, "could not mint the corpus baseline token\n" );
-        return 1;
+        fprintf( stderr, "FAIL corpus: could not mint the corpus baseline token\n" );
+        g_tally.failures++;
+        return;
     }
 
-    corpus_read_reference( reference_path );
-
-    int weaker = 0;
+    if ( corpus_read_reference( reference_path ) < 0 )
+    {
+        fprintf( stderr, "FAIL corpus: could not read %s\n", reference_path );
+        g_tally.failures++;
+        return;
+    }
 
     printf( "# corpus\tfields\tnetcode\trocketnet\tverdict\n" );
     for ( int i = 0; i < count; i++ )
@@ -573,6 +692,8 @@ static int run_corpus( const char * reference_path, int count, const char ** pat
         if ( !corpus_read( paths[i], &c ) )
         {
             printf( "%s\t-\t-\t-\tunreadable\n", c.name );
+            fprintf( stderr, "FAIL %s: unreadable\n", c.name );
+            g_tally.failures++;
             continue;
         }
 
@@ -590,48 +711,69 @@ static int run_corpus( const char * reference_path, int count, const char ** pat
             snprintf( rocketnet, sizeof( rocketnet ), "refuse:%s", rn.reason );
         }
 
+        struct corpus_reference_t * reference = corpus_reference_for( c.name );
+        if ( !reference )
+        {
+            printf( "%s\t%s\tno-reference-row\t%s\tnot-run\n", c.name, fields, rocketnet );
+            fprintf( stderr, "FAIL %s: no row in %s (add the file's netcode and rocketnet decisions)\n", c.name, reference_path );
+            g_tally.failures++;
+            continue;
+        }
+        reference->seen = 1;
+
         if ( !corpus_comparable( &c ) )
         {
             printf( "%s\t%s\tnot-comparable\t%s\tnot-comparable\n", c.name, fields, rocketnet );
+            tally_row( c.name, &rn, rocketnet, NULL, reference->rocketnet );
             continue;
         }
 
-        const char * reference = corpus_reference_for( c.name );
-        const char * netcode = reference;
+        const char * netcode = reference->netcode;
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
         static char live[64];
         netcode_decide_corpus( &c, live, sizeof( live ) );
-        if ( reference && strcmp( reference, live ) != 0 )
+        if ( strcmp( reference->netcode, live ) != 0 )
         {
-            fprintf( stderr, "live netcode disagrees with the corpus reference on %s (%s, reference %s)\n", c.name, live, reference );
+            fprintf( stderr, "FAIL %s: live netcode disagrees with the corpus reference (%s, reference %s)\n", c.name, live, reference->netcode );
+            g_tally.failures++;
         }
 
         netcode = live;
 #endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
-        if ( !netcode )
-        {
-            printf( "%s\t%s\tneeds-NETCODE_DIR\t%s\tnot-run\n", c.name, fields, rocketnet );
-            continue;
-        }
 
-        const char * v = verdict( &rn, netcode );
-        if ( strcmp( v, "rocketnet-weaker" ) == 0 )
-        {
-            weaker++;
-        }
-
-        printf( "%s\t%s\t%s\t%s\t%s\n", c.name, fields, netcode, rocketnet, v );
+        printf( "%s\t%s\t%s\t%s\t%s\n", c.name, fields, netcode, rocketnet, verdict( &rn, netcode ) );
+        tally_row( c.name, &rn, rocketnet, netcode, reference->rocketnet );
     }
 
-    if ( weaker )
+    for ( int i = 0; i < g_corpus_reference_count; i++ )
     {
-        fprintf( stderr, "FINDING: %d corpus case(s) where netcode 1.02 refuses and rocketnet admits\n", weaker );
+        if ( !g_corpus_reference[i].seen )
+        {
+            fprintf( stderr, "FAIL %s: a row in %s names no corpus file given\n", g_corpus_reference[i].name, reference_path );
+            g_tally.failures++;
+        }
     }
-
-    return 0;
 }
 
 // --- transport --------------------------------------------------------------
+
+
+// the case ids, in the order of the enum above: a table row in another order
+// would be run as another case, so the order is checked, not assumed
+
+static const char * const g_case_ids[CASE_COUNT] = {
+    "valid_signature",
+    "expired_token",
+    "bad_signature",
+    "wrong_server_address",
+    "replayed_token",
+    "full_server",
+    "wrong_protocol_id",
+    "timeout_out_of_range",
+};
+
+// returns the row count (every row, so an extra row is seen), or -1 when the
+// file cannot be read or a row does not have its four columns
 
 static int parse_case_table( const char * path )
 {
@@ -649,44 +791,41 @@ static int parse_case_table( const char * path )
         {
             continue;
         }
+        line[strcspn( line, "\r\n" )] = 0;
 
-        char * nl = strchr( line, '\n' );
-        if ( nl )
+        char * cells[4];
+        int count = 0;
+        char * p = line;
+        while ( count < 4 && p )
         {
-            *nl = 0;
+            cells[count++] = p;
+            char * tab = strchr( p, '\t' );
+            if ( tab )
+            {
+                *tab = 0;
+                p = tab + 1;
+            }
+            else
+            {
+                p = NULL;
+            }
         }
 
-        nl = strchr( line, '\r' );
-        if ( nl )
+        if ( count != 4 || p )
         {
-            *nl = 0;
+            fprintf( stderr, "FAIL %s: a row without exactly four columns\n", path );
+            fclose( f );
+            return -1;
         }
-
-        char * id = line;
-        char * t1 = strchr( id, '\t' );
-        if ( !t1 )
-        {
-            continue;
-        }
-        *t1++ = 0;
-
-        char * description = t1;
-        char * t2 = strchr( description, '\t' );
-        if ( !t2 )
-        {
-            continue;
-        }
-        *t2++ = 0;
-
-        char * reference = t2;
 
         if ( n < CASE_COUNT )
         {
-            g_cases[n].id = strdup( id );
-            g_cases[n].description = strdup( description );
-            g_cases[n].netcode_reference = strdup( reference );
-            n++;
+            g_cases[n].id = strdup( cells[0] );
+            g_cases[n].description = strdup( cells[1] );
+            g_cases[n].netcode_reference = strdup( cells[2] );
+            g_cases[n].rocketnet_expected = strdup( cells[3] );
         }
+        n++;
     }
 
     fclose( f );
@@ -701,9 +840,11 @@ static void free_case_table()
         free( (void *) g_cases[i].id );
         free( (void *) g_cases[i].description );
         free( (void *) g_cases[i].netcode_reference );
+        free( (void *) g_cases[i].rocketnet_expected );
         g_cases[i].id = NULL;
         g_cases[i].description = NULL;
         g_cases[i].netcode_reference = NULL;
+        g_cases[i].rocketnet_expected = NULL;
     }
 }
 
@@ -737,13 +878,17 @@ int main( int argc, const char ** argv )
     if ( netcode_init() != NETCODE_OK )
     {
         fprintf( stderr, "netcode_init failed\n" );
+        printf( "differential: FAIL netcode_init\n" );
         return 1;
     }
 #endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
 
-    if ( parse_case_table( cases_path ) != CASE_COUNT )
+    const int rows = parse_case_table( cases_path );
+    if ( rows != CASE_COUNT )
     {
-        fprintf( stderr, "could not read %d cases from %s\n", CASE_COUNT, cases_path );
+        fprintf( stderr, "could not read exactly %d cases from %s (read %d)\n", CASE_COUNT, cases_path, rows );
+        printf( "differential: FAIL case table\n" );
+        free_case_table();
         return 1;
     }
 
@@ -753,6 +898,13 @@ int main( int argc, const char ** argv )
 
     for ( int i = 0; i < CASE_COUNT; i++ )
     {
+        if ( strcmp( g_cases[i].id, g_case_ids[i] ) != 0 )
+        {
+            fprintf( stderr, "FAIL %s: row %d of %s, where the harness runs %s\n", g_cases[i].id, i + 1, cases_path, g_case_ids[i] );
+            g_tally.failures++;
+            continue;
+        }
+
         struct differential_case_t c;
         differential_case_for_id( i, &c );
 
@@ -765,10 +917,16 @@ int main( int argc, const char ** argv )
         {
             if ( strcmp( live_reason, g_cases[i].netcode_reference ) != 0 )
             {
-                fprintf( stderr, "live netcode disagrees with the reference column on %s\n", g_cases[i].id );
+                fprintf( stderr, "FAIL %s: live netcode disagrees with the reference column (%s, reference %s)\n", g_cases[i].id, live_reason, g_cases[i].netcode_reference );
+                g_tally.failures++;
             }
 
             netcode = live_reason;
+        }
+        else
+        {
+            fprintf( stderr, "FAIL %s: live netcode could not be asked (mint or capture failed)\n", g_cases[i].id );
+            g_tally.failures++;
         }
 #endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
 
@@ -785,19 +943,28 @@ int main( int argc, const char ** argv )
 
         printf( "%s\t%s\t%s\t%s\n", g_cases[i].id, netcode, rocketnet,
                 verdict( &rn, netcode ) );
+        tally_row( g_cases[i].id, &rn, rocketnet, netcode, g_cases[i].rocketnet_expected );
     }
-
-    int status = 0;
 
     if ( corpus_at > 0 )
     {
         printf( "\n" );
-        status = run_corpus( argv[corpus_at + 1], argc - corpus_at - 2, argv + corpus_at + 2 );
+        run_corpus( argv[corpus_at + 1], argc - corpus_at - 2, argv + corpus_at + 2 );
     }
+
+    if ( g_tally.compared == 0 )
+    {
+        fprintf( stderr, "FAIL: no row was compared with netcode 1.02\n" );
+        g_tally.failures++;
+    }
+
+    printf( "\ndifferential: %s compared=%d agree=%d stricter-permitted=%d not-comparable=%d failures=%d\n",
+            g_tally.failures == 0 ? "PASS" : "FAIL",
+            g_tally.compared, g_tally.agree, g_tally.stricter_permitted, g_tally.not_comparable, g_tally.failures );
 
     free_case_table();
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
     netcode_term();
 #endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
-    return status;
+    return g_tally.failures == 0 ? 0 : 1;
 }
