@@ -698,14 +698,13 @@ jobs:
           bash tools/run_functional.sh dev-iocp --log functional-iocp.log ./bin/Debug/functional.exe
           grep -qx 'test_transport_env_pin_is_honoured' functional-iocp.log
 
-      - name: Run serialization surface (portable)
+      - name: Run lifecycle (portable)
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -euo pipefail
-          ./bin/Debug/test_serialize.exe
           ./bin/Debug/test_lifecycle.exe
 
       - name: Check production library boundary

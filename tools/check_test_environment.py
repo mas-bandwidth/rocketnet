@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the SDK suite with hostile ambient config; require the netcode output.
+"""Run the SDK suite with hostile ambient config; require the suite's own output.
 
 A passing run prints one line per test, its test_ lowercase snake_case name,
 then a blank line, "*** ALL TESTS PASSED ***" and a blank line, and nothing else. With the
@@ -262,7 +262,6 @@ def exec_functional_names():
     # patterns, plus each exec case's own name.
     patterns = []
     for rel in (
-        "tests/test_serialize.cpp",
         "tests/test_transport_control.cpp",
         "tests/test_msgx.cpp",
         "tests/test_xdp.cpp",

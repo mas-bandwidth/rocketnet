@@ -50,7 +50,7 @@ binary from another configuration can be mistaken for an up-to-date target.
 Then build the selected configuration and run its tests before switching again.
 
 The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
-(functional suite; it also runs `test_msgx`, `test_serialize` and
+(functional suite; it also runs `test_msgx` and
 `test_transport_control` as sibling executables, `tests/functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
 that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
@@ -503,7 +503,7 @@ One leg by hand, the tsan leg here (`asan+ubsan` takes the flags above,
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1" \
   -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -O1"
-cmake --build build-tsan --target test functional test_serialize test_transport_control test_msgx --parallel 4
+cmake --build build-tsan --target test functional test_transport_control test_msgx --parallel 4
 ROCKETNET_NIGHTLY_NO_TIMEOUT=1 TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1 \
   ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=msgx ./bin/functional
 ```
