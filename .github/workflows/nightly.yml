@@ -1066,6 +1066,14 @@ jobs:
           else
             slice_args=(--slice "$((day % slices))/$slices")
             slice="$((day % slices))/$slices"
+            # a line that landed since the night before is mutated tonight,
+            # whatever its slice, under the same baseline rule: an untested
+            # new line is a NEW survivor the night it lands, not 1 night in 90
+            new_since="$(git rev-list -1 --first-parent --before='26 hours ago' HEAD)"
+            if [[ -n "$new_since" ]]; then
+              slice_args+=(--new-since "$new_since")
+              slice="$slice, and every mutant on a line new since $new_since"
+            fi
           fi
           # every survivor must be in the reviewed baseline; the gap count
           # (MUTATION-GAPS) must equal its recorded ratchet and only goes down

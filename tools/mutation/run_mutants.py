@@ -47,6 +47,13 @@ down. AF_XDP survivors are judged by the list too. --check-baseline checks
 the list without a build (per commit). Without --baseline the campaign is
 the original one.
 
+--new-since REF runs, besides the slice, every mutant on a line new or
+modified in git diff REF HEAD, whatever its slice, under the same rule: a
+line is mutation-tested the night it lands, not only on the one night in N
+its slice comes round, so an untested new line is a NEW survivor that night.
+The nightly passes the first-parent commit of 26 hours before (one night
+plus grace).
+
 Python 3 standard library only. Example:
 
   python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
@@ -272,6 +279,38 @@ def linux_judgement(files, cmake_text, texts):
             not_judged[f] = "the whole file is #if ROCKETNET_XDP: Linux reaches it only in a guest"
         kept.append(f)
     return kept, out, not_judged
+
+
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def changed_lines(diff_text):
+    """{path: set of new-side line numbers} added or modified in a git diff -U0."""
+    changed, path = {}, None
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            name = line[4:].strip()
+            path = name[2:] if name.startswith("b/") else None
+            continue
+        m = HUNK_RE.match(line)
+        if m and path:
+            start, count = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+            changed.setdefault(path, set()).update(range(start, start + count))
+    return changed
+
+
+def git_changed_lines(ref, files):
+    """changed_lines of git diff REF HEAD over files; exits naming git's error."""
+    diff = subprocess.run(["git", "-C", str(ROOT), "diff", "-U0", "--no-color", "--no-renames", "--no-ext-diff",
+                           ref, "HEAD", "--", *files], capture_output=True, text=True)
+    if diff.returncode != 0:
+        sys.exit(f"git diff {ref} HEAD failed: {diff.stderr.strip()}")
+    return changed_lines(diff.stdout)
+
+
+def on_lines(mutants, lines):
+    """The mutants on the lines of {path: set of line numbers}."""
+    return [m for m in mutants if m["line"] in lines.get(m["file"], ())]
 
 
 BASELINE = ROOT / "tools" / "mutation" / "survivors.tsv"
@@ -872,6 +911,17 @@ def self_test():
     if parse_slice("89/90") != (89, 90):
         print("self-test FAILED: --slice 89/90 was not read as (89, 90)")
         return 1
+    # --new-since: the diff's new-side lines, and exactly the mutants on them
+    diff = ("diff --git a/plant.cpp b/plant.cpp\n--- a/plant.cpp\n+++ b/plant.cpp\n@@ -2,0 +3 @@\n+x\n"
+            "diff --git a/gone.cpp b/gone.cpp\n--- a/gone.cpp\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-y\n-z\n"
+            "--- a/two.cpp\n+++ b/two.cpp\n@@ -5,2 +7,2 @@\n-a\n-b\n+c\n+d\n")
+    if changed_lines(diff) != {"plant.cpp": {3}, "two.cpp": {7, 8}}:
+        print(f"self-test FAILED: changed_lines read {changed_lines(diff)}")
+        return 1
+    fresh = on_lines(first, {"plant.cpp": {3}})
+    if not fresh or any(m["line"] != 3 for m in fresh) or len(fresh) != sum(m["line"] == 3 for m in first):
+        print("self-test FAILED: --new-since did not pick exactly the mutants of the new line")
+        return 1
     # --platform linux: Windows and Apple sources and the headers only they
     # include are left out; AF_XDP files stay but are not judged; the rest stay
     cmake = ("set(ROCKETNET_SDK_SOURCES_LINUX\n    sdk/a_uring_linux.cpp)\n"
@@ -946,7 +996,7 @@ def self_test():
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
           f"{len(exits)} exit verdicts (a campaign that judged nothing exits 1), "
           "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers, "
-          "test code is left out, "
+          "test code is left out, --new-since picks the mutants of new lines, "
           "--platform linux leaves out Windows sources and their headers and sets AF_XDP apart, "
           "--baseline fails a new survivor, a stale equivalent, a killed gap, a gone entry and a broken ratchet, "
           "and passes known survivors")
@@ -1059,6 +1109,10 @@ def main():
                         "a gap entry that no longer survives, an entry the generator no longer emits and a gap "
                         "count other than the file's gap-ratchet each fail. Default: the original rule, every "
                         "risk-class survivor fails")
+    p.add_argument("--new-since", default="", metavar="REF",
+                   help="also run every mutant on a line new or modified in git diff REF HEAD, whatever its slice, "
+                        "under the same rule (the nightly: the commit of 26 hours before, so a line is tested the "
+                        "night it lands)")
     p.add_argument("--check-baseline", default="", metavar="PATH",
                    help="check the baseline without a build (format, ratchet, every entry still generated), then exit")
     p.add_argument("--rejudge", default="", metavar="RESULTS",
@@ -1140,6 +1194,15 @@ def main():
     if slice_of:
         mutants = [m for m in mutants if in_slice(m, *slice_of)]
         print(f"slice {slice_of[0]}/{slice_of[1]}: {len(mutants)} of {generated} generated mutants",
+              file=sys.stderr if args.list else sys.stdout, flush=True)
+    if args.new_since:
+        new_lines = git_changed_lines(args.new_since, args.files)
+        fresh = on_lines(list(by_id.values()), new_lines)
+        have = {m["id"] for m in mutants}
+        added = [m for m in fresh if m["id"] not in have]
+        mutants = sorted(mutants + added, key=lambda m: order[id(m)])
+        print(f"new since {args.new_since}: {len(fresh)} mutants on {sum(len(v) for v in new_lines.values())} new or "
+              f"modified lines run whatever their slice ({len(added)} of them outside it)",
               file=sys.stderr if args.list else sys.stdout, flush=True)
     if args.list:
         for m in mutants:
