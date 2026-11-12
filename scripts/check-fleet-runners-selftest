@@ -137,4 +137,124 @@ if ! grep -q "names no job" "$tmp/gone.out"; then
   exit 1
 fi
 
+
+# Every install spelling the tree uses or could use is refused on a fleet
+# runner, one plant per step so each must be named: the tree's own form
+# (sudo VAR=value apt-get install) first.
+mkdir -p "$tmp/spell/wf"
+cat > "$tmp/spell/wf/spell.yml" <<'EOF'
+name: spell
+on: [push]
+jobs:
+  spell:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: tree form
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake
+      - name: flag before verb
+        run: sudo apt-get -y install foo && make docs
+      - name: apt
+        run: sudo apt install -y foo
+      - name: pip3
+        run: pip3 install pyyaml
+      - name: python -m pip
+        run: python3 -m pip install --user pyyaml
+      - name: piped installer
+        run: curl -fsSL https://example.invalid/install.sh | sudo sh
+      - name: dnf in a chain
+        run: |
+          set -e; sudo -E dnf -y install foo
+      - name: inside ssh
+        run: ssh guest 'sudo apt-get update && sudo apt-get install -y foo'
+      - name: brew
+        run: brew install foo
+      - name: setup action
+        uses: actions/setup-python@v5
+      - name: continuation
+        run: |
+          sudo apt-get \
+            install -y foo
+EOF
+if ROCKETNET_WF_DIR="$tmp/spell/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/spell.out" 2>&1; then
+  echo "SELFTEST FAIL: unguarded installs in other spellings passed" >&2
+  cat "$tmp/spell.out" >&2
+  exit 1
+fi
+for want in "spell.yml:7:" "spell.yml:10:" "spell.yml:12:" "spell.yml:14:" "spell.yml:16:" "spell.yml:18:" \
+            "spell.yml:20:" "spell.yml:23:" "spell.yml:25:" "spell.yml:27:" "spell.yml:29:"; do
+  if ! grep -q "^$want" "$tmp/spell.out"; then
+    echo "SELFTEST FAIL: the install step at $want was not named" >&2
+    cat "$tmp/spell.out" >&2
+    exit 1
+  fi
+done
+if ! grep -q "install commands seen 11: guarded for hosted runners 0, exempt 0, refused 11" "$tmp/spell.out"; then
+  echo "SELFTEST FAIL: the census line does not count 11 refused installs" >&2
+  cat "$tmp/spell.out" >&2
+  exit 1
+fi
+
+# Commands that only mention a manager are not installs.
+mkdir -p "$tmp/quiet/wf"
+cat > "$tmp/quiet/wf/quiet.yml" <<'EOF'
+name: quiet
+on: [push]
+jobs:
+  quiet:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - run: go run ./tools/happy_path && go build ./...
+      - run: dpkg -s cmake && apt-cache policy cmake
+      - run: echo "install the tools first" && make install DESTDIR=stage
+      - run: npm install
+      - run: luarocks install --tree=lua_modules busted
+EOF
+if ! ROCKETNET_WF_DIR="$tmp/quiet/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/quiet.out" 2>&1; then
+  echo "SELFTEST FAIL: commands that install nothing on the runner were refused" >&2
+  cat "$tmp/quiet.out" >&2
+  exit 1
+fi
+
+# GUEST exempts installs only: never a hosted label; a GUEST row whose job
+# installs nothing the rule sees is stale.
+mkdir -p "$tmp/guest/wf"
+cat > "$tmp/guest/wf/guest.yml" <<'EOF'
+name: guest
+on: [push]
+jobs:
+  vm:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - run: ssh guest 'sudo apt-get install -y foo'
+  hosted:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make
+  idle:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - run: make
+EOF
+printf 'guest.yml vm GUEST in the guest\n' > "$tmp/exc-guest"
+if ! ROCKETNET_WF_DIR="$tmp/guest/wf" ROCKETNET_EXC_FILE="$tmp/exc-guest" python3 "$check" > "$tmp/guest.out" 2>&1; then
+  if grep -q "guest.yml / vm" "$tmp/guest.out"; then
+    echo "SELFTEST FAIL: a GUEST row did not exempt its job's install" >&2
+    cat "$tmp/guest.out" >&2
+    exit 1
+  fi
+fi
+printf 'guest.yml vm GUEST in the guest\nguest.yml hosted GUEST wrong\nguest.yml idle GUEST stale\n' > "$tmp/exc-guest2"
+if ROCKETNET_WF_DIR="$tmp/guest/wf" ROCKETNET_EXC_FILE="$tmp/exc-guest2" python3 "$check" > "$tmp/guest2.out" 2>&1; then
+  echo "SELFTEST FAIL: a GUEST row exempted a hosted label or a stale GUEST row passed" >&2
+  cat "$tmp/guest2.out" >&2
+  exit 1
+fi
+if ! grep -q "guest.yml / hosted runs on hosted label ubuntu-latest" "$tmp/guest2.out" ||
+   ! grep -q "GUEST row guest.yml idle exempts no install" "$tmp/guest2.out" ||
+   grep -q "guest.yml / vm" "$tmp/guest2.out"; then
+  echo "SELFTEST FAIL: GUEST rows were not judged as expected" >&2
+  cat "$tmp/guest2.out" >&2
+  exit 1
+fi
 echo "SELFTEST PASS"
