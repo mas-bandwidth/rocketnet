@@ -12,9 +12,10 @@
 // stateless rung, or hostile: well formed with the server's filter value)
 // and banks or counts it by the code's verdict, as
 // rocketnet_iocp_bank_datagram does, or drains the bank as main does. The
-// plant build compiles the admission with ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT
-// (the capacity check first): garbage then takes a slot the spec says it is
-// refused, and the trace fails TraceConsistent.
+// plant build (ROCKETNET_TLA_PLANT) includes its own copy of the admission's
+// file compiled with ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT (the capacity check
+// first): garbage then takes a slot the spec says it is refused, and the
+// trace fails TraceConsistent.
 //
 // The admission compiles in every development build, so this walk needs no
 // socket, no thread and no Windows.
@@ -30,6 +31,11 @@
 #include <vector>
 
 #include "tla_trace_record.h"
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT
+#include "../sdk/rocketnet_server_iocp_windows.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #if ROCKETNET_DEV
 
@@ -181,11 +187,11 @@ static int trace_iocp_admit( uint64_t seed, int steps, const char * out )
               "    CheckPastEnd = FALSE\n",
               IOCP_ADMIT_CAPACITY, arrivals + 1 );
 
-#if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+#if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceIocpAdmitPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+#else  // #if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceIocpAdmitSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT )
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
     return tla_write_trace( out, name, "TraceRNIocpReceiveAdmit", "", constants, records ) ? 0 : 1;
 }
