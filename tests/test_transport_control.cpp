@@ -1093,6 +1093,75 @@ static void test_staged_receive_guards()
     printf( "test_staged_receive_guards\n" );
 }
 
+// A flood of malformed datagrams from a connected client's address: each
+// passes the prefilter header as a connection request but is one byte short
+// of a request's size, so it fails the shape check. Each is counted
+// received and CONNECTION_REQUEST_WRONG_SIZE, and none is looked up in the
+// mapping table (the client's own wire totals stay untouched) or takes a
+// send frame. The last entry is a well-formed request from the pending
+// address, which is looked up and answered. Time is an argument.
+
+static void test_staged_malformed_flood_takes_no_lookup()
+{
+    auto * f = new control_fixture_t();
+    f->capacity = 64;
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = guard_server( f, &operations, true );
+    operations.receive = receive_crafted;
+
+    auto * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map,
+                                                     rocketnet_client_slots_mapping_index( server->protocol.client_slots, 0 ) );
+    mapping->last_keep_alive_send_time = 2.0;
+
+    const int request_bytes = (int) sizeof( f->request );
+    auto * batch = new staged_guard_batch_t();
+    for ( int i = 0; i < STAGED_GUARD_CAPACITY; ++i )
+    {
+        const bool last = i == STAGED_GUARD_CAPACITY - 1;
+        batch->from[i] = f->request_address;
+        if ( !last )
+        {
+            batch->from[i].port = 1000;
+        }
+        batch->bytes[i] = last ? request_bytes : request_bytes - 1;
+        batch->sizes[i] = request_bytes;
+        batch->data[i] = (uint8_t *) malloc( (size_t) request_bytes );
+        CHECK( batch->data[i] );
+        memcpy( batch->data[i], f->request, (size_t) request_bytes );
+    }
+    batch->view.num_packets = STAGED_GUARD_CAPACITY;
+    batch->view.capacity = STAGED_GUARD_CAPACITY;
+    batch->view.from = batch->from;
+    batch->view.packet_bytes = batch->bytes;
+    batch->view.packet_data = batch->data;
+    f->crafted = &batch->view;
+
+    const uint64_t * counters = server->counters.values;
+    const uint64_t wrong_size = counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE];
+    const uint64_t received = server->server_stats.packets_received;
+    const rocketnet_server_wire_totals_t client_before = server->client_wire_totals[0];
+
+    rocketnet_server_transport_update( server, 2.0 );
+
+    const int flood = STAGED_GUARD_CAPACITY - 1;
+    CHECK( counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] - wrong_size == (uint64_t) flood );
+    CHECK( server->server_stats.packets_received - received == (uint64_t) STAGED_GUARD_CAPACITY );
+    CHECK( server->client_wire_totals[0].packets_received == client_before.packets_received );
+    CHECK( server->client_wire_totals[0].bytes_received == client_before.bytes_received );
+    CHECK( f->start_calls == 1 );
+    CHECK( f->responses == 1 );
+    CHECK( server->transport_faults == 0 );
+
+    for ( int i = 0; i < STAGED_GUARD_CAPACITY; ++i )
+    {
+        free( batch->data[i] );
+    }
+    delete batch;
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_staged_malformed_flood_takes_no_lookup\n" );
+}
+
 // The unstaged receive: receive_batch writes into the server's own receive
 // buffer, a request in every slot it was given; the guard case sets the count
 // it returns and the leading entries' byte counts.
@@ -1230,6 +1299,7 @@ int main( int argc, char ** argv )
     test_deferred_accept_reads_only_this_batch();
     test_staged_receive_guards();
     test_unstaged_receive_guards();
+    test_staged_malformed_flood_takes_no_lookup();
     CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 }
