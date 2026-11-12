@@ -209,7 +209,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnxdpreplymacslayout` | The XDP reply MAC table's open addressing, four entries, a window of two, three addresses over every home map (README-RNXdpReplyMacsLayout.md). |
 | `rndisconnectburstring` | The server transport's ring of deferred disconnect bursts at the code's layout (README-RNDisconnectBurstRing.md). |
 | `rnserverreplayslots` | The per-slot records of the kernel replay walk across slot reuse, two slots and two addresses (README-RNServerReplaySlots.md). |
-| `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, and with the range 4..5 so every port can be held (README-RNLoopbackBindLayout.md). |
+| `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, with the range 4..5 so every port can be held, and with 4..5 lowered by the sizing to hold every record (README-RNLoopbackBindLayout.md). |
 | `rnclientslotslayout` | The client slots' LIFO free stack and owner generations at the code's layout, three slots, two ids and five generations (README-RNClientSlotsLayout.md). |
 | `rnsimulatorstorelayout` | The development link simulator's slot store and destination index at the code's layout, three slots, two shards and three destinations (README-RNSimulatorStoreLayout.md). |
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
