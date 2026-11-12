@@ -296,7 +296,9 @@ jobs:
           exit "$result"
 
   # Thirty minutes per Linux server cell under impairment, with flat fds,
-  # threads and resident memory: scripts/soak-per-transport runs bin/soak
+  # threads and library bytes (resident memory is printed, not asserted: the
+  # library is not responsible for the OS heap, tests/soak/soak.c
+  # PROCESS_RESOURCES_MEMORY): scripts/soak-per-transport runs bin/soak
   # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
   # io_uring, and xdp inside a virtme-ng guest of the runner's own kernel),
   # with loss, latency, jitter and duplication at both ends of the link
@@ -341,7 +343,7 @@ jobs:
       - name: Build
         run: make
 
-      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
+      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and library bytes)
         shell: bash
         run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
 
@@ -560,11 +562,12 @@ jobs:
       # latency, jitter and duplication at both ends of the link simulator
       # (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, the values
       # scripts/soak-per-transport runs), held to flat handles, threads and
-      # private bytes by --assert-flat, which also fails a run the impairment
+      # library bytes by --assert-flat (private bytes are printed, not
+      # asserted: tests/soak/soak.c), which also fails a run the impairment
       # leaves no drops or refused duplicates in. The server transport is
       # pinned and the granted name and the applied link settings are checked
       # from the run's own lines.
-      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
+      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and library bytes)
         shell: bash
         run: |
           set -uo pipefail
