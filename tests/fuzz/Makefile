@@ -44,6 +44,7 @@ TARGETS = rocketnet_fuzz \
           rocketnet_fuzz_server_transport \
           rocketnet_fuzz_client_transport \
           rocketnet_fuzz_session \
+          rocketnet_fuzz_session_raw \
           rocketnet_fuzz_xdp_frame \
           rocketnet_fuzz_uring_recvmsg \
           rocketnet_fuzz_gateway_netlink \
@@ -89,7 +90,7 @@ rocketnet_fuzz_xdp_filter: rocketnet_fuzz_xdp_filter.cpp $(XDP_HOST_OBJ) $(LIB)
 
 # the pair targets compile the server transport and the loopback driver into
 # themselves through rocketnet_fuzz_pair.h, so they rebuild when it changes.
-rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session: rocketnet_fuzz_pair.h
+rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw: rocketnet_fuzz_pair.h rocketnet_fuzz_session.cpp
 
 $(TARGETS): %: %.cpp $(LIB)
 	$(CXX) $(FLAGS) $(SANITIZE) $< $(LIB) $(LINKS) -o $@
