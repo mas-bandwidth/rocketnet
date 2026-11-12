@@ -2696,10 +2696,16 @@ static void test_windows_transports_sized_by_max_clients()
         CHECK( transport );
         const int64_t held = live_bytes.load() - before;
         CHECK( rocketnet_server_rio_send_room( transport ) == rocketnet_server_rio_send_queue_size( max_clients ) );
-        const uint64_t plan = rocketnet_server_rio_allocation_bytes( max_clients ) +
-                              rocketnet_memory_allocations( { rocketnet_server_rio_registered_region_bytes( max_clients ) } );
-        printf( "test_windows_transports_sized_by_max_clients rio max_clients=%d held=%lld plan=%llu\n", max_clients, (long long) held,
-                (unsigned long long) plan );
+        // the lanes the transport made (ROCKETNET_TEST_RIO_LANES may ask for
+        // more than one): each lane holds its own block and region
+        const int lanes = rocketnet_server_rio_lanes( transport );
+        char test_lanes[16] = "";
+        const int asked = GetEnvironmentVariableA( "ROCKETNET_TEST_RIO_LANES", test_lanes, (DWORD) sizeof( test_lanes ) ) > 0 ? atoi( test_lanes ) : 0;
+        CHECK( lanes == ( asked >= 2 && asked <= ROCKETNET_RIO_MAX_LANES ? asked : 1 ) );
+        const uint64_t plan = rocketnet_server_rio_allocation_bytes( max_clients, lanes ) +
+                              (uint64_t) lanes * rocketnet_memory_allocations( { rocketnet_server_rio_registered_region_bytes( max_clients ) } );
+        printf( "test_windows_transports_sized_by_max_clients rio max_clients=%d lanes=%d held=%lld plan=%llu\n", max_clients, lanes,
+                (long long) held, (unsigned long long) plan );
         CHECK( held > 0 && (uint64_t) held <= plan );
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     }
