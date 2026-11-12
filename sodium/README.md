@@ -99,9 +99,14 @@ because it also selects assembly the subset does not carry. Through v1.1.7
 XCR0 therefore stayed 0 on GCC and Clang, and AVX2 was compiled in but never
 chosen. One generator edit in `BASELINE_ADAPTATIONS` (`tools/generate_sodium.py`)
 lets that same XGETBV run when `HAVE_CPUID` is defined (GCC or Clang on x86;
-`sodium.h`). MSVC keeps its `_xgetbv` path, and an MSVC build without
-`/arch:AVX2` compiles no AVX2 code, as before. arm64 has no x86 detection and
-is unchanged. `bin/test_sodium_dispatch` checks the picks against the CPU and
+`sodium.h`). MSVC reads XCR0 with its `_xgetbv` intrinsic. The baseline
+compiled AVX and AVX2 under MSVC only with `/arch:AVX` or `/arch:AVX2`, so an
+MSVC build carried no AVX2 implementation; a second `BASELINE_ADAPTATIONS`
+edit defines `HAVE_AVXINTRIN_H` and (x64) `HAVE_AVX2INTRIN_H` for MSVC
+unconditionally, as upstream's `private/common.h` does. MSVC compiles AVX2
+intrinsics without an `/arch` switch and emits no AVX instruction anywhere
+else, so the AVX2 code exists only inside the AVX2 implementations, which the
+runtime check alone selects. arm64 has no x86 detection and is unchanged. `bin/test_sodium_dispatch` checks the picks against the CPU and
 that every implementation agrees with the reference.
 
 ## MemorySanitizer

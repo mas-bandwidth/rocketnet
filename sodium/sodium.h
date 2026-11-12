@@ -1583,13 +1583,11 @@ xor_buf(unsigned char *out, const unsigned char *in, size_t n)
 #  define HAVE_WMMINTRIN_H 1
 # endif
 
-/* MSVC has no per-function target pragma, so AVX/AVX2 codegen requires the
-   matching /arch: switch (which predefines __AVX__ / __AVX2__). Honor that, and
-   still allow an explicit NETCODE_AVX/NETCODE_AVX2 override. */
-# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)
-#  define HAVE_AVXINTRIN_H 1
-# endif
-# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) && _MSC_VER >= 1700 && defined(_M_X64)
+/* As upstream (private/common.h): MSVC compiles AVX and AVX2 intrinsics
+   without an /arch: switch and emits no AVX instruction outside them; the
+   runtime CPU check alone selects the AVX2 implementations. */
+# define HAVE_AVXINTRIN_H 1
+# if _MSC_VER >= 1700 && defined(_M_X64)
 #  define HAVE_AVX2INTRIN_H 1
 # endif
 

@@ -43,6 +43,29 @@ BASELINE_ADAPTATIONS = {
         # build only) takes upstream's no-fence fallback.
         ('#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__))\n',
          '#if !defined(HAVE_GCC_MEMORY_FENCES) && (defined(__GNUC__) || defined(__clang__)) && \\\n    !defined(__SANITIZE_THREAD__)\n'),
+        # MSVC AVX and AVX2 (sodium/README.md, "CPU feature detection"): the
+        # baseline compiled them only under /arch:AVX or /arch:AVX2, so an
+        # MSVC build never carried the AVX2 implementations. Upstream's
+        # src/libsodium/include/sodium/private/common.h defines both for x64
+        # MSVC unconditionally: MSVC compiles AVX intrinsics without /arch and
+        # emits no AVX instruction anywhere else, and the runtime CPU check
+        # alone selects the AVX2 implementations. Done as upstream does.
+        ('/* MSVC has no per-function target pragma, so AVX/AVX2 codegen requires the\n'
+         '   matching /arch: switch (which predefines __AVX__ / __AVX2__). Honor that, and\n'
+         '   still allow an explicit NETCODE_AVX/NETCODE_AVX2 override. */\n'
+         '# if defined(__AVX__) || NETCODE_AVX || NETCODE_AVX2\n'
+         '#  define HAVE_AVXINTRIN_H 1\n'
+         '# endif\n'
+         '# if (defined(__AVX2__) || NETCODE_AVX2) && _MSC_VER >= 1700 && defined(_M_X64)\n'
+         '#  define HAVE_AVX2INTRIN_H 1\n'
+         '# endif\n',
+         '/* As upstream (private/common.h): MSVC compiles AVX and AVX2 intrinsics\n'
+         '   without an /arch: switch and emits no AVX instruction outside them; the\n'
+         '   runtime CPU check alone selects the AVX2 implementations. */\n'
+         '# define HAVE_AVXINTRIN_H 1\n'
+         '# if _MSC_VER >= 1700 && defined(_M_X64)\n'
+         '#  define HAVE_AVX2INTRIN_H 1\n'
+         '# endif\n'),
     ],
     'sodium.c': [
         # -Wunknown-pragmas (clang): clang defines __GNUC__ but has no GCC
@@ -286,10 +309,6 @@ BASELINE_CONVERSIONS = {
         (None, r'^(     )NETCODE_X64 \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
          r'\1(defined(NETCODE_X64) && NETCODE_X64) || (defined(NETCODE_AVX) && NETCODE_AVX) || \\\n'
          r'\1(defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
-        (None, r'^# if defined\(__AVX__\) \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
-         '# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
-        (None, r'^# if \(defined\(__AVX2__\) \|\| NETCODE_AVX2\) ',
-         '# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) ', 1),
     ],
     'sodium.c': [
         (None, r'^(\s*)#(if|elif) (HAVE_WEAK_SYMBOLS|HAVE_ALLOCA|NETCODE_CRYPTO_LOGS)$', r'\1#\2 defined(\3) && \3', 11),
