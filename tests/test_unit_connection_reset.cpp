@@ -2379,3 +2379,198 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
 }
 REGISTER_UNIT_TEST( test_reliable_timeout_fires_while_send_pass_starved );
 #endif // #if ROCKETNET_DEV
+
+// Every KEEP member of the client protocol (rocketnet_connection_reset.h)
+// holds a value no init writes, so a reset that skipped restoring one shows:
+// the transport's key hooks and their context, set once after the create's
+// connect, the deferred-ack mode, the send rate, the filter, the counters and
+// the terminal state. The retire hook runs at every reset, with its context,
+// while the session keys are still there to retire; the keys are zero after.
+
+struct reset_key_hooks_t
+{
+    int published;
+    int retired;
+    const rocketnet_client_protocol_t * client;
+    uint8_t key_byte_at_retire;
+};
+
+static void reset_hooks_publish( void * context, const rocketnet_client_protocol_t * client )
+{
+    reset_key_hooks_t * hooks = (reset_key_hooks_t *) context;
+    hooks->published++;
+    (void) client;
+}
+
+static void reset_hooks_retire( void * context )
+{
+    reset_key_hooks_t * hooks = (reset_key_hooks_t *) context;
+    hooks->retired++;
+    hooks->key_byte_at_retire = ( (const uint8_t *) &hooks->client->keys )[0];
+}
+
+static void test_connection_reset_client_keeps_every_keep_member()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_client_protocol_t * client = (rocketnet_client_protocol_t *) malloc( sizeof( rocketnet_client_protocol_t ) );
+    check( client );
+    rocketnet_client_protocol_init( client, &counters );
+
+    reset_key_hooks_t hooks;
+    memset( &hooks, 0, sizeof( hooks ) );
+    hooks.client = client;
+
+    uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES];
+    for ( int i = 0; i < ROCKETNET_FILTER_VALUE_BYTES; i++ )
+    {
+        filter[i] = (uint8_t) ( 0x31 + i );
+    }
+
+    memcpy( client->packet_filter, filter, sizeof( filter ) );
+    client->send_rate = 33.0;
+    client->defer_payload_acks = 1;
+    client->publish_keys = reset_hooks_publish;
+    client->retire_keys = reset_hooks_retire;
+    client->keys_context = &hooks;
+
+    const int terminal[] = { ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,
+                             ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED,
+                             ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED };
+
+    for ( int round = 0; round < 3; round++ )
+    {
+        client->state = terminal[round];
+        memset( &client->keys, 0xA5, sizeof( client->keys ) );
+        hooks.key_byte_at_retire = 0;
+
+        rocketnet_client_connection_reset( client );
+
+        check( hooks.retired == round + 1 );
+        check( hooks.key_byte_at_retire == 0xA5 );
+        check( hooks.published == 0 );
+
+        check( client->publish_keys == reset_hooks_publish );
+        check( client->retire_keys == reset_hooks_retire );
+        check( client->keys_context == &hooks );
+        check( client->defer_payload_acks == 1 );
+        check( client->send_rate == 33.0 );
+        check( memcmp( client->packet_filter, filter, sizeof( filter ) ) == 0 );
+        check( client->counters == &counters );
+        check( client->state == terminal[round] );
+
+        rocketnet_connection_keys_t zero_keys;
+        memset( &zero_keys, 0, sizeof( zero_keys ) );
+        check( memcmp( &client->keys, &zero_keys, sizeof( zero_keys ) ) == 0 );
+    }
+
+    free( client );
+}
+REGISTER_UNIT_TEST( test_connection_reset_client_keeps_every_keep_member );
+
+// The server reset of an index outside the slots touches nothing: not the
+// connection id or end reason one past the arrays, not any slot's ack
+// endpoint, not a connected slot. Every product caller passes a slot it read
+// from a live mapping; the guard is what stands if one ever does not.
+
+static void test_connection_reset_server_reset_refuses_an_index_past_the_slots()
+{
+    reset_server_fixture_t f;
+    reset_server_setup( &f );
+
+    const int a = reset_server_assign( &f, "198.51.100.7:4000", 7 );
+    const int b = reset_server_assign( &f, "198.51.100.8:4000", 8 );
+    check( a != b );
+
+    // the arrays one element longer than the slots, the extra element a guard
+
+    const uint64_t guard_id = 0x5A5A5A5A5A5A5A5AULL;
+    const int guard_reason = 0x5A;
+    uint64_t connection_ids[3] = { f.connection_ids[0], f.connection_ids[1], guard_id };
+    int end_reasons[3] = { ROCKETNET_DISCONNECT_REASON_NONE, ROCKETNET_DISCONNECT_REASON_NONE, guard_reason };
+    f.server.connection_ids = connection_ids;
+    f.server.end_reasons = end_reasons;
+
+    f.server.acks->endpoints[a].highest_sequence = 11;
+    f.server.acks->endpoints[b].highest_sequence = 22;
+
+    const int outside[] = { 2, -1, 3, INT32_MAX, INT32_MIN };
+    for ( size_t i = 0; i < sizeof( outside ) / sizeof( outside[0] ); i++ )
+    {
+        rocketnet_server_connection_reset( &f.server, outside[i], ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
+
+        check( connection_ids[2] == guard_id );
+        check( end_reasons[2] == guard_reason );
+        check( connection_ids[a] == 7 + 100 && connection_ids[b] == 8 + 100 );
+        check( end_reasons[a] == ROCKETNET_DISCONNECT_REASON_NONE && end_reasons[b] == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_client_slots_connected( f.server.client_slots, a ) );
+        check( rocketnet_client_slots_connected( f.server.client_slots, b ) );
+        check( f.server.acks->endpoints[a].highest_sequence == 11 );
+        check( f.server.acks->endpoints[b].highest_sequence == 22 );
+        check( rocketnet_encryption_map_num_mappings( f.server.encryption_map ) == 2 );
+    }
+
+    // the last slot itself is still reset
+
+    const int last = 1;
+    rocketnet_server_connection_reset( &f.server, last, ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
+    check( !rocketnet_client_slots_connected( f.server.client_slots, last ) );
+    check( connection_ids[last] == 0 && end_reasons[last] == ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
+    check( connection_ids[2] == guard_id && end_reasons[2] == guard_reason );
+
+    f.server.connection_ids = f.connection_ids;
+    f.server.end_reasons = NULL;
+    reset_server_teardown( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_server_reset_refuses_an_index_past_the_slots );
+
+#if ROCKETNET_DEV
+
+// A client whose connection timed out is disconnected by its caller after the
+// fact (the order rocketnet_client_destroy asks for): the second reset of the
+// one connection runs the transport's retire hook again, with the context the
+// first reset kept, and the transport ends DISCONNECTED and clean.
+
+static void test_connection_reset_disconnect_after_a_timeout_is_clean()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof( f ) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+    reset_loopback_connect( &f, 0, 0xF201 );
+    for ( int i = 0; i < 20; i++ )
+    {
+        reset_loopback_step( &f );
+    }
+
+    rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
+
+    for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
+    {
+        f.now += 0.05;
+        check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_client_send_packets( f.clients[0] );
+    }
+
+    check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
+
+    rocketnet_client_transport_mark_connection_state_for_test( transport );
+    rocketnet_client_transport_disconnect( transport );
+    check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    reset_client_transport_clean( transport );
+
+    rocketnet_client_transport_disconnect( transport );
+    check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    f.now += 0.05;
+    check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
+    rocketnet_message_client_send_packets( f.clients[0] );
+    reset_client_transport_clean( transport );
+
+    reset_loopback_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_connection_reset_disconnect_after_a_timeout_is_clean );
+
+#endif // #if ROCKETNET_DEV

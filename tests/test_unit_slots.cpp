@@ -11,6 +11,9 @@
 
 #include "../sdk/rocketnet_slots.h"
 
+#include <stdint.h>
+#include <string.h>
+
 #define check rocketnet_unit_check
 
 // RNSlots Observe and Admit: a free slot discards, connect resets and binds,
@@ -150,6 +153,66 @@ static void test_slots_init_out_of_range_count_has_no_slots()
     rocketnet_assert_function( NULL );
 }
 
+// Init starts from nothing the caller left behind: a refused init leaves a
+// machine of zero slots naming no storage whatever the struct held, a single
+// slot with no storage, or half of it, is refused like any other count, and an accepted init
+// of one slot or more clears the caller's storage, so a slot reads free and
+// unchanged before its first observe.
+static void test_slots_init_owes_nothing_to_prior_contents()
+{
+    rocketnet_assert_function( slots_quiet_assert );
+
+    struct rn_slots_t slots;
+    uint64_t connection_ids[3];
+    uint8_t changed[3];
+
+    const int refused_counts[2] = { -1, ROCKETNET_MAX_CLIENTS + 1 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        memset( &slots, 0xFF, sizeof( slots ) );
+        rn_slots_init( &slots, refused_counts[i], connection_ids, changed );
+        check( slots.max_clients == 0 );
+        check( slots.connection_id == NULL );
+        check( slots.changed == NULL );
+    }
+
+    // one slot with no storage, or with only one of its two arrays
+
+    uint64_t * const id_storage[3] = { NULL, connection_ids, NULL };
+    uint8_t * const changed_storage[3] = { NULL, NULL, changed };
+    for ( int i = 0; i < 3; i++ )
+    {
+        memset( &slots, 0xFF, sizeof( slots ) );
+        rn_slots_init( &slots, 1, id_storage[i], changed_storage[i] );
+        check( slots.max_clients == 0 );
+        check( slots.connection_id == NULL );
+        check( slots.changed == NULL );
+    }
+
+    for ( int count = 1; count <= 3; count++ )
+    {
+        memset( connection_ids, 0xFF, sizeof( connection_ids ) );
+        memset( changed, 0xFF, sizeof( changed ) );
+        rn_slots_init( &slots, count, connection_ids, changed );
+        check( slots.max_clients == count );
+        for ( int s = 0; s < count; s++ )
+        {
+            check( connection_ids[s] == 0 );
+            check( changed[s] == 0 );
+            check( rn_slots_admit( &slots, s, 0 ) == RN_SLOTS_DISCARD );
+            check( rn_slots_observe( &slots, s, 0 ) == RN_SLOTS_NONE );
+        }
+        for ( int s = count; s < 3; s++ )
+        {
+            check( connection_ids[s] == UINT64_MAX );
+            check( changed[s] == 0xFF );
+        }
+    }
+
+    rocketnet_assert_function( NULL );
+}
+
 REGISTER_UNIT_TEST( test_slots_observe_and_admit );
+REGISTER_UNIT_TEST( test_slots_init_owes_nothing_to_prior_contents );
 REGISTER_UNIT_TEST( test_slots_same_batch_churn_discards_the_old_connection );
 REGISTER_UNIT_TEST( test_slots_init_out_of_range_count_has_no_slots );
