@@ -187,17 +187,20 @@ jobs:
       - name: Unit suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
         run: ./bin/test
 
       - name: Functional suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_TEST_REPORT: "1"
         run: bash tools/run_functional.sh dev ./bin/functional
 
       - name: Functional suite, portable rung pinned by env
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: bash tools/run_functional.sh dev-portable ./bin/functional
@@ -205,6 +208,7 @@ jobs:
       - name: Production functional suite, portable rung pinned by env
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: bash tools/run_functional.sh prod-portable ./build-production/bin/functional_production
@@ -247,11 +251,13 @@ jobs:
       - name: Unit suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
         run: ./bin/test
 
       - name: Functional suite, nightly tier (serial)
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_TEST_REPORT: "1"
           ROCKETNET_TEST_JOBS: "1"
         run: bash tools/run_functional.sh dev ./bin/functional
@@ -259,6 +265,7 @@ jobs:
       - name: Functional suite, portable rung pinned by env
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: bash tools/run_functional.sh dev-portable ./bin/functional
@@ -266,6 +273,7 @@ jobs:
       - name: Production functional suite, portable rung pinned by env
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: bash tools/run_functional.sh prod-portable ./build-production/bin/functional_production
@@ -305,6 +313,7 @@ jobs:
         shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_TEST_REPORT: "1"
         run: bash tools/run_functional.sh dev ./bin/Release/functional.exe
 
@@ -312,6 +321,7 @@ jobs:
         shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: bash tools/run_functional.sh prod-portable ./build-production/bin/Release/functional_production.exe

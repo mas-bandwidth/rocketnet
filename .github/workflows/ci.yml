@@ -3580,6 +3580,17 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # The nightly tier runs its suites with ROCKETNET_TEST_KEEP_GOING=1
+      # (nightly.yml): a failure no longer stops the run, so the summary must
+      # name every failed case and the run must still exit 1.
+      - name: Test the suite runner's keep-going mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_suite_keep_going.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran 3 tests' <<<"$output"
+
   # Every registered unit case runs in at least one CI configuration. Each job
   # that runs the unit suite uploads `bin/test --list` (or, for a leg that
   # runs named cases, the cases it ran) as unit-cases-<configuration>; this
