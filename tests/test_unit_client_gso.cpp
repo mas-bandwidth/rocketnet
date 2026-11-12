@@ -664,6 +664,51 @@ static void test_client_gso_receive_splits_gro_by_stride()
 }
 REGISTER_UNIT_TEST( test_client_gso_receive_splits_gro_by_stride );
 
+// A local sender's segmented send can arrive as one message of more segments
+// than GRO coalesces (UDP_MAX_SEGMENTS is 128 on recent kernels): it is cut
+// at its stride like any other, every datagram delivered in order across
+// calls, none lost and no fault counted.
+
+static void test_client_gso_receive_delivers_past_64_segments()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+    rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
+
+    // 129 datagrams of 100 bytes and a 40-byte tail, then a plain datagram
+
+    fake_gso_queue_receive( 12940, 100, 0, FAKE_GSO_CONTROL_GRO );
+    fake_gso_queue_receive( 200, 0, 7, FAKE_GSO_CONTROL_NONE );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 64 );
+    for ( int i = 0; i < 64; i++ )
+    {
+        check_gso_receive_slot( i, 100, i );
+    }
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 64 );
+    for ( int i = 0; i < 64; i++ )
+    {
+        check_gso_receive_slot( i, 100, 64 + i );
+    }
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 1 );
+
+    // the last two, and no read past them while a GRO message of 64 could
+    // not fit in the 62 left; the plain datagram is the next call's
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 2 );
+    check_gso_receive_slot( 0, 100, 128 );
+    check_gso_receive_slot( 1, 40, 129 );
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 64 ) == 1 );
+    check_gso_receive_slot( 0, 200, 7 );
+
+    rocketnet_unit_check( test_gso.packets_received == 131 );
+    rocketnet_unit_check( test_gso.gro_batches == 1 );
+    rocketnet_unit_check( test_gso.gro_cmsg_faults == 0 );
+}
+REGISTER_UNIT_TEST( test_client_gso_receive_delivers_past_64_segments );
+
 // a stream of zero-length datagrams holds the drain no longer than a batch
 // of packets would: a receive call skips at most its batch of them, and the
 // next call carries on

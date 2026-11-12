@@ -64,7 +64,10 @@ struct rocketnet_client_transport_io_operations_t;
 // payload bytes in one UDP_SEGMENT message, under the 64 KiB IP envelope
 #define ROCKETNET_CLIENT_GSO_MAX_SUPER_BYTES                              65000
 
-// segments in one UDP_GRO message: the kernel's UDP_GRO_CNT_MAX
+// segments in one UDP_GRO message: the kernel's UDP_GRO_CNT_MAX. A local
+// sender's segmented send can arrive with more (UDP_MAX_SEGMENTS is 128 on
+// recent kernels); its segments past a call's room are carried like any
+// other's
 #define ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS                            64
 // bytes of the receive coalesce buffer: the 64 KiB IP envelope
 #define ROCKETNET_CLIENT_GSO_COALESCE_BUFFER_BYTES                        65536
@@ -135,13 +138,13 @@ struct rocketnet_client_gso_t
     uint64_t gro_cmsg_faults;                           // truncated control areas and short UDP_GRO cmsgs
     int carry_segment;                                  // the next segment of the message in the coalesce buffer to deliver
     int carry_segments;                                 // that message's segment count: carry_segment == carry_segments when none is held
+    int carry_bytes;                                    // that message's bytes
+    int carry_stride;                                   // its segment stride: segment s is at s * carry_stride, the last one shorter
     struct rocketnet_address_t carry_source;            // that message's source
     struct mmsghdr receive_message;
     struct iovec receive_iovec;
     struct sockaddr_storage receive_name;
     struct rocketnet_client_gso_receive_control_t receive_control;
-    int segment_offsets[ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS];
-    int segment_lengths[ROCKETNET_CLIENT_GSO_RECEIVE_MAX_SEGMENTS];
     alignas( 16 ) uint8_t coalesce_buffer[ROCKETNET_CLIENT_GSO_COALESCE_BUFFER_BYTES];
 };
 

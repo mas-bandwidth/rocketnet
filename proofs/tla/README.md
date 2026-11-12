@@ -213,7 +213,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnclientslotslayout` | The client slots' LIFO free stack and owner generations at the code's layout, three slots, two ids and five generations (README-RNClientSlotsLayout.md). |
 | `rnsimulatorstorelayout` | The development link simulator's slot store and destination index at the code's layout, three slots, two shards and three destinations (README-RNSimulatorStoreLayout.md). |
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
-| `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4 and messages of up to three segments (README-RNClientGroCarry.md). |
+| `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
 | `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
 | `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
