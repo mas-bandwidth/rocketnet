@@ -3,6 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
+#pragma once
+
 #ifndef ROCKETNET_TESTS_FUNCTIONAL_RESERVED_PORT_H
 #define ROCKETNET_TESTS_FUNCTIONAL_RESERVED_PORT_H
 
@@ -116,4 +118,4 @@ static inline uint16_t rocketnet_test_reserved_port( int slot )
 
 #endif // #if defined( __linux__ )
 
-#endif // #ifndef ROCKETNET_TESTS_FUNCTIONAL_RESERVED_PORT_H
+#endif // ROCKETNET_TESTS_FUNCTIONAL_RESERVED_PORT_H
