@@ -1287,7 +1287,6 @@ jobs:
 
       - name: Remove the trace work
         if: always() && env.TRACE_JOB != ''
-        shell: bash
         run: rm -rf -- "$TRACE_JOB"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.

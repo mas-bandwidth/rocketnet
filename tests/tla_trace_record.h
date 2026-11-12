@@ -170,4 +170,4 @@ struct tla_trace_registrar_t
 
 #define TLA_TRACE_LAYER( name, walk ) static tla_trace_registrar_t tla_trace_registrar_##walk( name, walk )
 
-#endif // #ifndef ROCKETNET_TESTS_TLA_TRACE_RECORD_H
+#endif // ROCKETNET_TESTS_TLA_TRACE_RECORD_H
