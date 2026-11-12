@@ -1290,7 +1290,9 @@ jobs:
       - name: Remove the trace work
         if: always() && env.TRACE_JOB != ''
         shell: bash
-        run: rm -rf -- "$TRACE_JOB"
+        run: |
+          set -euo pipefail
+          rm -rf -- "$TRACE_JOB"
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
