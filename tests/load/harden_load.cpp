@@ -200,10 +200,13 @@ static uint64_t harden_mix64( uint64_t x )
     return x;
 }
 
-static uint8_t harden_pattern_byte( uint64_t client_id, uint32_t connection, uint32_t kind, uint32_t sequence, int i )
+// the pattern's word for the 8-byte block holding byte i: byte i is
+// (uint8_t) ( word >> ( 8 * ( i % 8 ) ) ). One mix a block, not a byte: the
+// writer runs on the server's main thread (or its fill jobs) inside the
+// measured frame, so its cost is kept to a fraction of the seal's
+static uint64_t harden_pattern_word( uint64_t client_id, uint32_t connection, uint32_t kind, uint32_t sequence, int block )
 {
-    const uint64_t word = harden_mix64( client_id ^ ( (uint64_t) connection << 40 ) ^ ( (uint64_t) kind << 56 ) ^ ( (uint64_t) sequence << 8 ) ^ (uint64_t) ( i / 8 ) );
-    return (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
+    return harden_mix64( client_id ^ ( (uint64_t) connection << 40 ) ^ ( (uint64_t) kind << 56 ) ^ ( (uint64_t) sequence << 8 ) ^ (uint64_t) block );
 }
 
 // ---------------------------------------------------------------- the message format
@@ -226,9 +229,14 @@ static void harden_write_message( uint8_t * p, int bytes, uint32_t kind, uint64_
     rocketnet_write_uint32( &cursor, connection );
     rocketnet_write_uint32( &cursor, sequence );
     rocketnet_write_uint32( &cursor, (uint32_t) bytes );
+    uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
     {
-        p[i] = harden_pattern_byte( client_id, connection, kind, sequence, i );
+        if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+        {
+            word = harden_pattern_word( client_id, connection, kind, sequence, i / 8 );
+        }
+        p[i] = (uint8_t) ( word >> ( 8 * ( i % 8 ) ) );
     }
 }
 
@@ -251,9 +259,14 @@ static int harden_read_message( const uint8_t * p, int bytes, struct harden_mess
     {
         return 0;
     }
+    uint64_t word = 0;
     for ( int i = HARDEN_HEADER_BYTES; i < bytes; i++ )
     {
-        if ( p[i] != harden_pattern_byte( out->client_id, out->connection, out->kind, out->sequence, i ) )
+        if ( i == HARDEN_HEADER_BYTES || i % 8 == 0 )
+        {
+            word = harden_pattern_word( out->client_id, out->connection, out->kind, out->sequence, i / 8 );
+        }
+        if ( p[i] != (uint8_t) ( word >> ( 8 * ( i % 8 ) ) ) )
         {
             return 0;
         }
