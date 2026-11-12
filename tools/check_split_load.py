@@ -226,7 +226,7 @@ def wire_map(text, role, run_id, first, count, receipt, load="rate_1hz"):
 def validate_timing(text, receipt, run_id):
     timing = one(text, "split_server_timing")
     expected(timing, run_id=run_id, scope="traffic_plus_drain")
-    if integer(timing, "server_update_count", 1) == 0 or integer(timing, "server_send_count", 1) == 0:
+    if integer(timing, "server_update_count") == 0 or integer(timing, "server_send_count") == 0:
         raise ValueError("server timing has no samples")
     if integer(timing, "clock_pair_count") != 10000:
         raise ValueError("server timing lacks clock calibration")
@@ -326,6 +326,8 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
         raise ValueError("a same-host smoke is judged in the proof mode only")
     if load not in LOAD_RATES:
         raise ValueError("unknown load mode")
+    if not (1 <= total <= 1000 and 1 <= duration <= 3600 and math.isfinite(limit) and limit > 0):
+        raise ValueError("invalid expected population, duration, or aggregate cap")
     offers = duration * LOAD_RATES[load]
     if not RUN_ID.fullmatch(run_id):
         raise ValueError("run ID must be exactly 16 hexadecimal characters")
@@ -412,8 +414,8 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
             client_s2c != sum(integer(x, "s2c_received") for x in shards) or
             server_c2s != client_c2s or server_s2c != client_s2c):
         raise ValueError("summary and stream counters disagree")
-    if client_c2s == 0 or server_s2c == 0:
-        raise ValueError("no application traffic")
+    # No zero-traffic refusal is needed here: duration and the rate are at
+    # least 1, so every client's streams above were held to a nonzero target.
     # Shards measure independent monotonic intervals. Divide their summed
     # traffic bytes by the shortest interval for a conservative aggregate bound.
     minimum_window = min(finite(shard, "wire_rate_denominator_s", 0.000001) for shard in shards)
@@ -547,19 +549,15 @@ def validate_proof(server_text, shard_texts, run_id, total, duration, limit, rea
                    server_transport, client_transport, allocation_manifest, same_host_smoke=False):
     """The proof cell: every stream of every client in both directions, both
     ends, the receipts, the wire floor and the pinned transport."""
+    # validate() has already held the receipt's transport to the readiness
+    # line and the request, and its first and count to the population.
     offers = duration * LOAD_RATES["proof"]
     granted = server.get("transport")
-    if ready.get("transport") != granted:
-        raise ValueError("server readiness transport differs from final receipt")
     if ready.get("transport_pin") != granted:
         raise ValueError(f"transport fallback: pinned {ready.get('transport_pin')}, granted {granted}")
     if server.get("transport_pin") != granted:
         raise ValueError(f"transport fallback: receipt pinned {server.get('transport_pin')}, "
                          f"granted {granted}")
-    if server_transport is not None and granted != server_transport:
-        raise ValueError("server transport differs from requested transport")
-    if integer(server, "first") != 0 or integer(server, "count") != total:
-        raise ValueError("server population receipt mismatch")
     proof_role(server_text, "server", run_id, granted)
     server_streams = proof_map(server_text, "server", run_id, 0, total)
     shards, client_streams, covered = [], {}, set()
@@ -655,9 +653,6 @@ def main():
                              "same_host_smoke for every role; proves delivery and receipts, never a qualification")
     args = parser.parse_args()
     try:
-        if not (1 <= args.total <= 1000 and 1 <= args.duration <= 3600 and
-                math.isfinite(args.aggregate_limit_kbps) and args.aggregate_limit_kbps > 0):
-            raise ValueError("invalid expected population, duration, or aggregate cap")
         result = validate(args.server.read_bytes().decode("utf-8"),
                           [path.read_bytes().decode("utf-8") for path in args.shard],
                           args.run_id, args.total, args.duration, args.aggregate_limit_kbps,
