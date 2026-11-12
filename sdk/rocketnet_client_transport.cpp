@@ -2506,9 +2506,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // nothing is opened during update. A host whose second socket is
     // refused races nothing and connects exactly as a one-family client; a
     // refusal for want of memory ends the create, as for the first socket.
-    // The memory plan seam opens no socket and races nothing.
+    // The memory plan seam opens no socket and races nothing. Loopback opens
+    // no socket and races nothing either: its endpoints are hub records, and
+    // the client memory plan plans no race for it.
 
-    bool race_ipv4 = both_families && client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6;
+    bool race_ipv4 = both_families && client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
+                     granted_transport != ROCKETNET_TRANSPORT_LOOPBACK;
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
     {
