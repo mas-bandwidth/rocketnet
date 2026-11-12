@@ -106,13 +106,15 @@
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
 // Each client slot holds its receive allowance (struct
-// rocketnet_server_receive_allowance_t, 32 bytes, one allocation of
-// max_clients of them, sdk/rocketnet_server_protocol.h), the server protocol
-// its pointer and rate (16 bytes), and the counter registry grows by four
-// counters (32 bytes a counter block): the server adds 32151 bytes at 1000
-// clients and the client 128 (two counter blocks, each rounded to 64)
-// (measured); the probe's actual= lines are 1469533302 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468484726 )
+// rocketnet_server_receive_allowance_t, 56 bytes: the bytes and their refill
+// time, the control tokens and theirs, the ack credit mark and the two
+// refused counts; one allocation of max_clients of them,
+// sdk/rocketnet_server_protocol.h), the server protocol its pointer and rate
+// (16 bytes), and the counter registry grows by four counters (32 bytes a
+// counter block): the server adds 56151 bytes at 1000 clients and the client
+// 128 (two counter blocks, each rounded to 64) (measured); the probe's
+// actual= lines are 1469557302 and 15036554.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468508726 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -177,13 +179,15 @@
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
 // Each client slot holds its receive allowance (struct
-// rocketnet_server_receive_allowance_t, 32 bytes, one allocation of
-// max_clients of them, sdk/rocketnet_server_protocol.h), the server protocol
-// its pointer and rate (16 bytes), and the counter registry grows by four
-// counters: the server adds 32215 bytes at 1000 clients and the client 128
-// (measured on amd-3, gcc Release: the probe's actual= lines are 3111708930
-// and 15186210). The client pin moves by the same 128, as before.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110660362ULL )
+// rocketnet_server_receive_allowance_t, 56 bytes: the bytes and their refill
+// time, the control tokens and theirs, the ack credit mark and the two
+// refused counts; one allocation of max_clients of them,
+// sdk/rocketnet_server_protocol.h), the server protocol its pointer and rate
+// (16 bytes), and the counter registry grows by four counters: the server
+// adds 56215 bytes at 1000 clients and the client 128 (measured on vision,
+// gcc Release, with the replay marks' 8: the probe's actual= line is
+// 3111732938). The client pin moves by the same 128, as before.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110684362ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147378 )
 #endif // #if defined( _WIN32 )
 
