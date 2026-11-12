@@ -55,7 +55,8 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_server_replay_marks.cpp
     sdk/rocketnet_server_protocol.cpp
     sdk/rocketnet_server_transport.cpp
-    sdk/rocketnet_token_tables.cpp)
+    sdk/rocketnet_token_tables.cpp
+    sdk/rocketnet_uring_send_queue.cpp)
 
 set(ROCKETNET_SDK_SOURCES_LINUX
     sdk/rocketnet_client_gso_linux.cpp
