@@ -1253,6 +1253,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # and the Linux send-error cases
     # test_gso_client_transport_wire_ipv4, test_gso_client_transport_wire_ipv6,
     # test_gso_client_transport_wire_plain, test_gso_client_transport_wire_gro,
+    # test_gso_client_transport_wire_gro_simulated,
     # test_gso_shutdown_send_interruptions, test_gso_transport_held_receive_view,
     # test_gso_transport_linux_sendmmsg_errors, test_gso_transport_linux_recvmmsg_errors,
     # test_io_uring_transport_linux_receive_cqe_errors,
