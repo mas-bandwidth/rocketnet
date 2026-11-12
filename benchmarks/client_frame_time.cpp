@@ -135,23 +135,36 @@ static int cft_syscall_fd = -1;
 
 static const char * cft_syscall_source = "none";
 
-static void cft_syscalls_open()
+// tracepoint_id: the raw_syscalls/sys_enter id, read by the caller where
+// `ip netns exec` has remounted /sys without tracefs, or 0 to read it here
+
+static void cft_syscalls_open( unsigned long long tracepoint_id )
 {
 #if defined( __linux__ )
-    const char * paths[] = { "/sys/kernel/tracing/events/raw_syscalls/sys_enter/id", "/sys/kernel/debug/tracing/events/raw_syscalls/sys_enter/id" };
+    const char * paths[] = { "--syscall-tracepoint-id", "/sys/kernel/tracing/events/raw_syscalls/sys_enter/id", "/sys/kernel/debug/tracing/events/raw_syscalls/sys_enter/id" };
     for ( const char * path : paths )
     {
-        FILE * file = fopen( path, "r" );
-        if ( !file )
+        unsigned long long id = tracepoint_id;
+        if ( path[0] == '-' )
         {
-            continue;
+            if ( id == 0 )
+            {
+                continue;
+            }
         }
-        unsigned long long id = 0;
-        const int read = fscanf( file, "%llu", &id );
-        fclose( file );
-        if ( read != 1 )
+        else
         {
-            continue;
+            FILE * file = fopen( path, "r" );
+            if ( !file )
+            {
+                continue;
+            }
+            const int read = fscanf( file, "%llu", &id );
+            fclose( file );
+            if ( read != 1 )
+            {
+                continue;
+            }
         }
         struct perf_event_attr attr;
         memset( &attr, 0, sizeof( attr ) );
@@ -167,8 +180,12 @@ static void cft_syscalls_open()
         }
         fprintf( stderr, "client_frame_time: perf_event_open on %s (id %llu) refused: %s\n", path, id, strerror( errno ) );
     }
+    fprintf( stderr, "client_frame_time: no system call counter (run as root; pass --syscall-tracepoint-id inside a network namespace)\n" );
 #elif defined( __APPLE__ ) // #if defined( __linux__ )
+    (void) tracepoint_id;
     cft_syscall_source = "task-events-whole-process";
+#else // #if defined( __linux__ )
+    (void) tracepoint_id;
 #endif // #if defined( __linux__ )
 }
 
@@ -714,7 +731,7 @@ static int cft_client( int argc, char ** argv )
     const char * csv = cft_arg( argc, argv, "--csv", NULL );
 
     cft_hooks_init();
-    cft_syscalls_open();
+    cft_syscalls_open( strtoull( cft_arg( argc, argv, "--syscall-tracepoint-id", "0" ), NULL, 10 ) );
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
     if ( rocketnet_init( NULL, cft_malloc, cft_free ) != ROCKETNET_STATUS_OK )
