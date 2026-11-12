@@ -141,7 +141,7 @@ jobs:
 
       - name: Build the instrumented library
         timeout-minutes: 4
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
       - name: Check out the pinned netcode reference
         if: contains(fromJSON(matrix.leg).target, 'differential')
@@ -350,8 +350,6 @@ jobs:
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
-          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
-          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
@@ -419,7 +417,7 @@ jobs:
 
       - name: Build the instrumented library
         timeout-minutes: 4
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         timeout-minutes: 1
@@ -513,8 +511,6 @@ jobs:
           - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
           - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
           - '{"target":"rocketnet_fuzz_xdp_frame","source":"tests/fuzz/rocketnet_fuzz_xdp_frame.cpp","seeds":"tests/fuzz/corpus_xdp_frame","dict":"tests/fuzz/dict/rocketnet_fuzz_xdp_frame.dict"}'
-          - '{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp","seeds":"tests/fuzz/corpus_uring_recvmsg","dict":"tests/fuzz/dict/rocketnet_fuzz_uring_recvmsg.dict"}'
-          - '{"target":"rocketnet_fuzz_gateway_netlink","source":"tests/fuzz/rocketnet_fuzz_gateway_netlink.cpp","seeds":"tests/fuzz/corpus_gateway_netlink","dict":"tests/fuzz/dict/rocketnet_fuzz_gateway_netlink.dict"}'
           - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
           - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
           - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
@@ -647,7 +643,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # MemorySanitizer over the same thirteen-target matrix, Linux only (row 262's
+  # MemorySanitizer over the same fourteen-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
   # sodium included, is configured with the MSan flags and the instrumented
@@ -813,7 +809,7 @@ jobs:
 
       - name: Build the instrumented library
         timeout-minutes: 4
-        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel 8
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         timeout-minutes: 1

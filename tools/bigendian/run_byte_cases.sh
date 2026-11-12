@@ -12,37 +12,105 @@
 # that a build condition dropped (the filter target not built, say) is a
 # failure, never a quiet skip.
 #
+# A run that finds nothing to run is a failure, never a pass:
+#   - either list (vectors, XDP filter cases) empty fails;
+#   - a registration line in those files that the strict pattern does not
+#     read (the macro spelled another way, a second argument) fails, so a
+#     case cannot leave the run by being spelled differently;
+#   - the counts must equal the ones docs/PLATFORMS.md states for this leg
+#     (row "The standard's byte vectors, N cases ... and X XDP filter
+#     cases"), so a drop in either count is red until the document says so.
+#
 # Usage: tools/bigendian/run_byte_cases.sh <unit binary> [runner...]
+#        tools/bigendian/run_byte_cases.sh --count
 #   tools/bigendian/run_byte_cases.sh bin/test qemu-s390x
 #   tools/bigendian/run_byte_cases.sh bin/test
+# --count reads the sources and the document only, prints the counts and
+# applies every rule above except running the cases (the lint job runs it).
+# Self-test: tools/bigendian/test_run_byte_cases.sh
 
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "usage: $0 <unit binary> [runner...]"
+    echo "usage: $0 <unit binary> [runner...] | --count"
     exit 2
 fi
 
-binary="$1"
-shift
+count_only=0
+if [ "$1" = "--count" ]; then
+    count_only=1
+else
+    binary="$1"
+    shift
+fi
 
 # the case runs in this process: no re-exec of an emulated binary
 export ROCKETNET_TEST_SUITE_CAPTURE=1
 
-vectors=$(sed -n 's/^REGISTER_UNIT_TEST( *\(test_[a-z0-9_]*\) *);.*/\1/p' tests/test_unit_standard_*.cpp tests/test_unit_connect_token_vectors.cpp | sort -u)
-filter=$(sed -n -E 's/^REGISTER_UNIT_TEST\( *(test_xdp_(transport|filter)_host_[a-z0-9_]*) *\);.*/\1/p' tests/test_unit_xdp_filter_host.cpp | sort -u)
+vector_files=$(ls tests/test_unit_standard_*.cpp tests/test_unit_connect_token_vectors.cpp)
+filter_file=tests/test_unit_xdp_filter_host.cpp
 
-# Zero or short is red: a registration spelled otherwise, or a moved file,
-# would empty the list and the run below would pass having run nothing.
-# The floors are the counts on 2026-11-12 (docs/PLATFORMS.md names them);
-# raise them when cases are added, never lower them to pass.
-VECTOR_FLOOR=58
-FILTER_FLOOR=30
-vector_count=$(printf '%s' "$vectors" | grep -c . || [ $? -eq 1 ])
-filter_count=$(printf '%s' "$filter" | grep -c . || [ $? -eq 1 ])
-if [ "$vector_count" -lt "$VECTOR_FLOOR" ] || [ "$filter_count" -lt "$FILTER_FLOOR" ]; then
-    echo "check failed: the sources name $vector_count vector and $filter_count XDP filter cases; the floor is $VECTOR_FLOOR and $FILTER_FLOOR"
+vectors=$(sed -nE 's/^REGISTER_UNIT_TEST\( *(test_[a-z0-9_]*) *\);.*/\1/p' $vector_files | sort -u)
+filter=$(sed -nE 's/^REGISTER_UNIT_TEST\( *(test_xdp_(transport|filter)_host_[a-z0-9_]*) *\);.*/\1/p' "$filter_file" | sort -u)
+
+# the loose reading: any line that registers something, however spelled; the
+# filter file also registers one case that is not a filter case
+# (test_xdp_transport_queue_default_matches_memory_plan), so there the loose
+# reading keeps the host filter names only
+loose_vectors="$(grep -ho 'REGISTER[A-Za-z_]*( *test_[a-z0-9_]*' $vector_files | sed 's/.*( *//' | sort -u)" || [ $? -eq 1 ]
+loose_filter="$(grep -ho 'REGISTER[A-Za-z_]*( *test_xdp_[a-z]*_host_[a-z0-9_]*' "$filter_file" | sed 's/.*( *//' | sort -u)" || [ $? -eq 1 ]
+
+lines() {
+    if [ -z "$1" ]; then
+        echo 0
+    else
+        printf '%s\n' "$1" | wc -l | tr -d ' '
+    fi
+}
+
+nv=$(lines "$vectors")
+nf=$(lines "$filter")
+
+bad=0
+if [ "$vectors" != "$loose_vectors" ]; then
+    echo "check failed: a registration in the vector sources is not read by the strict pattern:"
+    diff <(printf '%s\n' "$vectors") <(printf '%s\n' "$loose_vectors") || [ $? -eq 1 ]
+    bad=1
+fi
+if [ "$filter" != "$loose_filter" ]; then
+    echo "check failed: a registration in $filter_file is not read by the strict pattern:"
+    diff <(printf '%s\n' "$filter") <(printf '%s\n' "$loose_filter") || [ $? -eq 1 ]
+    bad=1
+fi
+if [ "$nv" = 0 ]; then
+    echo "check failed: no byte-vector case found in the vector sources"
+    bad=1
+fi
+if [ "$nf" = 0 ]; then
+    echo "check failed: no XDP filter host case found in $filter_file"
+    bad=1
+fi
+
+doc=docs/PLATFORMS.md
+[ -f "$doc" ] || { echo "check failed: $doc is missing; the counts cannot be checked"; exit 1; }
+doc_row="$(grep -F "tools/bigendian/run_byte_cases.sh" "$doc" | grep -F "byte vectors")" || [ $? -eq 1 ]
+doc_vectors=$(printf '%s\n' "$doc_row" | sed -n 's/.*byte vectors, \([0-9][0-9]*\) cases.*/\1/p')
+doc_filter=$(printf '%s\n' "$doc_row" | sed -n 's/.* \([0-9][0-9]*\) XDP filter cases.*/\1/p')
+if [ -z "$doc_vectors" ] || [ -z "$doc_filter" ]; then
+    echo "check failed: $doc has no row stating 'byte vectors, N cases' and 'X XDP filter cases' for this script"
+    bad=1
+elif [ "$doc_vectors" != "$nv" ] || [ "$doc_filter" != "$nf" ]; then
+    echo "check failed: $doc states $doc_vectors vector and $doc_filter XDP filter cases; the sources register $nv and $nf"
+    bad=1
+fi
+
+if [ "$bad" != 0 ]; then
     exit 1
+fi
+
+if [ "$count_only" = 1 ]; then
+    echo "byte cases: $nv vector, $nf XDP filter (counted, not run)"
+    exit 0
 fi
 
 listed=$("$@" "$binary" --list)
@@ -70,11 +138,7 @@ for name in $vectors $filter; do
 done
 rm -f case.out
 
-echo "byte cases: $count run, $failed failed ($vector_count vector, $filter_count XDP filter)"
-if [ "$count" -ne $((vector_count + filter_count)) ] || [ "$count" -eq 0 ]; then
-    echo "check failed: $count cases run; the sources name $((vector_count + filter_count))"
-    exit 1
-fi
-if [ "$failed" != 0 ]; then
+echo "byte cases: $count run, $failed failed ($nv vector, $nf XDP filter)"
+if [ "$failed" != 0 ] || [ "$count" != $((nv + nf)) ] || [ "$count" = 0 ]; then
     exit 1
 fi

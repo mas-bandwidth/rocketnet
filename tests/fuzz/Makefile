@@ -49,7 +49,23 @@ TARGETS = rocketnet_fuzz \
           rocketnet_fuzz_gateway_netlink \
           rocketnet_fuzz_endpoint \
           rocketnet_fuzz_xdp_filter
+
+# TARGETS is the list every replay and fuzz job names (the per-commit
+# fuzz-smoke replay, the macOS and Windows replays, the NDEBUG lists, the CMake
+# fuzz_replay_ drivers, fuzz-nightly.yml): tools/docs/check_fuzz_harnesses.py
+# fails on a harness source or a corpus directory that no list names.
 SOURCES = $(addsuffix .cpp,$(TARGETS))
+
+# The TARGETS harnesses that build everywhere but fuzz only on Linux: off
+# Linux their entry point is a no-op (`INITED cov: 1`), so fuzz-nightly.yml's
+# macOS and Windows matrices leave them out (the replays keep them: a replay of
+# a no-op is cheap and keeps the build honest). check_fuzz_harnesses.py holds
+# the macOS and Windows matrices to TARGETS less this list, and each source
+# here to a guard (__linux__, ROCKETNET_XDP, or the XDP filter's host-C
+# link, ROCKETNET_FUZZ_XDP_FILTER_HOST, which the Darwin make leaves out).
+LINUX_ONLY_TARGETS = rocketnet_fuzz_uring_recvmsg \
+                     rocketnet_fuzz_gateway_netlink \
+                     rocketnet_fuzz_xdp_filter
 
 # The XDP filter program (sdk/xdp/server_xdp.c) as host C, through the unit
 # suite's shim (tests/xdp_host/), instrumented like the library, linked into

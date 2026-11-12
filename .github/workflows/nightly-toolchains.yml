@@ -133,7 +133,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          "./$BUILD/bin/Release/functional.exe"
+          bash tools/run_functional.sh dev "./$BUILD/bin/Release/functional.exe"
 
       - name: Upload the configure and build logs
         if: failure()
@@ -214,7 +214,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          ./bin/functional
+          bash tools/run_functional.sh dev ./bin/functional
 
       - name: Upload the configure and build logs
         if: failure()
@@ -288,7 +288,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
-          ./bin/functional
+          bash tools/run_functional.sh dev ./bin/functional
 
       - name: Upload the configure and build logs
         if: failure()

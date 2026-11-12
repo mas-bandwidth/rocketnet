@@ -13837,6 +13837,23 @@ void rocketnet_functional_restore_assert_function()
     rocketnet_assert_function( rocketnet_functional_assert );
 }
 
+#if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+// the kernel command line of a virtme-ng guest names virtme (as
+// rocketnet_xdp_veth_inside_virtme reads it for the veth rows)
+static bool rocketnet_functional_inside_virtme()
+{
+    FILE * file = fopen( "/proc/cmdline", "r" );
+    if ( !file )
+    {
+        return false;
+    }
+    char line[4096];
+    const bool read = fgets( line, sizeof( line ), file ) != NULL;
+    fclose( file );
+    return read && strstr( line, "virtme" ) != NULL;
+}
+#endif // #if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
 void rocketnet_functional_prepare()
 {
     char verbose[256];
@@ -13848,7 +13865,22 @@ void rocketnet_functional_prepare()
 
     rocketnet_functional_restore_assert_function();
 
+#if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    // The production library has no rocketnet_server_socket_allow_commit
+    // (it is a development call), so the development suite's per-case opt-in
+    // before an XDP create on its veth pair has no production form, and with
+    // the barrier up every XDP row of functional_production could only fail
+    // or skip. Inside a virtme-ng guest, as root, there is no host NIC to
+    // protect (the rows attach to the guest's own veth pair), so there the
+    // production suite leaves the barrier down; everywhere else it is up,
+    // as in the development suite.
+    if ( !( geteuid() == 0 && rocketnet_functional_inside_virtme() ) )
+    {
+        rocketnet_forbid_xdp_commit();
+    }
+#else
     rocketnet_forbid_xdp_commit();
+#endif // #if !ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
     if ( rocketnet_functional_environment == NULL )
     {

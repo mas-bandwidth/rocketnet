@@ -72,8 +72,10 @@
 #define RN_BLASTER_CONNECT_TIMEOUT_SECONDS 30u
 
 static_assert( RN_BLASTER_FRAME_BYTES == ROCKETNET_XDP_FRAME_SIZE, "the benchmark preserves RocketNet's 4096-byte XDP frame" );
-static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES + 4u == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
-               "one record of the largest body fills one packet payload" );
+static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES == ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES,
+               "the largest payload is the largest message sent as one unreliable record, never promoted" );
+static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES + 4u <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+               "one record of the largest body fits one packet payload" );
 static_assert( 37u + RN_BLASTER_MAX_PAYLOAD_BYTES <= ROCKETNET_SEND_BUDGET, "the largest packet stays inside the send budget" );
 static_assert( RN_BLASTER_FILL_RING_SIZE >= 2u * RN_BLASTER_RX_FRAMES,
                "the fill ring retains a slot past the kernel's cached batch" );
@@ -668,6 +670,9 @@ static void rn_blaster_usage( const char * program )
              "  --source IP:PORT --server PRIVATE_IP:PORT --source-mac XX:.. --next-hop-mac XX:..\n"
              "  --packet-filter 8hex --token-file FILE --manifest FILE --clients N --duration 1..600\n"
              "  --rate-pps N --payload-bytes 1..%u --source-port 1024.. --seed N\n"
+             "    (the largest message sent as one unreliable record; the test server's echo\n"
+             "     returns only unreliable records, so an echo cell measures the transport\n"
+             "     echo of one unreliable record per message, never a numbered message)\n"
              "  --mode throughput|robustness --server-transport-profile xdp|gso|io_uring|msgx|iocp|rio\n"
              "  --direction c2s|s2c|both --bind auto|copy|zero-copy\n"
              "  [--threads 1..%u] [--cpus LIST, one CPU per thread, e.g. 1-6 or 0-7,32-39]\n"
@@ -1179,7 +1184,7 @@ static int rn_blaster_self_test()
     RN_BLASTER_CHECK( rocketnet_message_writer_add( &writer, &record ) );
     RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) > (int) sizeof( body ) );
 
-    /* The largest body fills one packet payload exactly; one byte more does not fit. */
+    /* The largest body is one record inside one packet payload. */
     {
         static uint8_t largest[RN_BLASTER_MAX_PAYLOAD_BYTES + 1u];
         uint8_t packet_payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
@@ -1189,10 +1194,7 @@ static int rn_blaster_self_test()
         unreliable.bytes = (int) RN_BLASTER_MAX_PAYLOAD_BYTES;
         rocketnet_message_writer_begin( &writer, packet_payload, sizeof( packet_payload ) );
         RN_BLASTER_CHECK( rocketnet_message_writer_add( &writer, &unreliable ) );
-        RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-        unreliable.bytes = (int) RN_BLASTER_MAX_PAYLOAD_BYTES + 1;
-        rocketnet_message_writer_begin( &writer, packet_payload, sizeof( packet_payload ) );
-        RN_BLASTER_CHECK( !rocketnet_message_writer_add( &writer, &unreliable ) );
+        RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) == (int) RN_BLASTER_MAX_PAYLOAD_BYTES + 4 );
     }
 
     /* Toeplitz against Microsoft's published RSS verification suite: the

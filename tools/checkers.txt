@@ -31,7 +31,8 @@ tools/check_hardening.py	python3 tools/test_check_hardening.py	python3 tools/che
 tools/check_header_exports.py	python3 tools/test_check_header_exports.py -v	python3 tools/check_header_exports.py --header {emptyfile} --exports {emptyfile}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_header_guards.py	python3 tools/check_header_guards.py --self-test -v	python3 tools/check_header_guards.py --root {empty}	ci.yml	lint	Test the header-guard checker's verdicts
 tools/check_instructions.py	python3 tools/test_check_instructions.py	python3 tools/check_instructions.py --bin {emptyfile}	ci.yml	instruction-gate	Test the instruction-count checker
-tools/check_make_jobs.sh	bash tools/test_check_make_jobs.sh	bash tools/check_make_jobs.sh {empty}	ci.yml	lint	Self-tests of the registered checkers
+tools/check_lsan_supp.py	python3 tools/check_lsan_supp.py --self-test	python3 tools/check_lsan_supp.py --root {empty}	ci.yml	lint	Every LeakSanitizer suppression names a live function
+tools/check_make_jobs.py	python3 tools/check_make_jobs.py --self-test	cd {empty} && python3 "$OLDPWD/tools/check_make_jobs.py"	ci.yml	lint	Every parallel build names its job count
 tools/check_memlock.sh	bash tools/test_check_memlock.sh	bash tools/check_memlock.sh --root {empty}	ci.yml	lint	Self-tests of the registered checkers
 tools/check_memory.py	python3 tools/test_check_memory.py -v	printf '#!/bin/sh\n' > {empty}/transport_memory && chmod +x {empty}/transport_memory && python3 tools/check_memory.py {empty}/transport_memory	ci.yml	lint	Self-tests of the registered checkers
 tools/check_nightly_dispositions.py	python3 tools/test_check_nightly_dispositions.py -v	python3 tools/check_nightly_dispositions.py --root {empty} --list	ci.yml	lint	Test the nightly watch's verdicts
@@ -72,6 +73,11 @@ tools/run_msan.sh	python3 tools/test_run_msan.py	printf '#!/bin/sh\n' > {empty}/
 tools/run_static.py	python3 tools/test_run_static.py	python3 tools/run_static.py --root {empty}	ci.yml	build-and-test	Test the static gate's verdicts
 tools/run_tidy.py	python3 tools/test_run_tidy.py	python3 tools/run_tidy.py --root {empty}	ci.yml	build-and-test	Test the tidy gate's verdicts
 tools/run_xdp_filter_guest.sh	bash tools/test_run_xdp_filter_guest.sh	bash tools/run_xdp_filter_guest.sh --verify-log {emptyfile} --artifact-dir {empty}	ci.yml	lint	Self-tests of the registered checkers
-tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd {empty} && mkdir tests && touch tests/test_unit_standard_a.cpp tests/test_unit_connect_token_vectors.cpp tests/test_unit_xdp_filter_host.cpp && bash "$OLDPWD/tools/bigendian/run_byte_cases.sh" /usr/bin/true	ci.yml	lint	Test the big-endian byte-case runner
+tools/run_parallel.py	python3 tools/run_parallel.py --self-test	python3 tools/run_parallel.py	ci.yml	lint	Test the parallel step runner
+tools/run_functional.sh	bash tools/test_run_functional.sh	cd {empty} && bash "$OLDPWD/tools/run_functional.sh" dev true	ci.yml	lint	Functional skips are held to the reviewed list
+tools/check_skips.py	python3 tools/check_skips.py --self-test	python3 tools/check_skips.py --variant dev {emptyfile}	ci.yml	lint	Functional skips are held to the reviewed list
+tools/check_suppressions.py	python3 tools/check_suppressions.py --self-test	python3 tools/check_suppressions.py --root {empty}	ci.yml	lint	Every in-source suppression in the library is reviewed
+tools/check_wire_paths.py	python3 tools/check_wire_paths.py --self-test	python3 tools/check_wire_paths.py --root {empty}	ci.yml	lint	Every wire path is a tracked file
+tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd {empty} && mkdir tests && touch tests/test_unit_standard_a.cpp tests/test_unit_connect_token_vectors.cpp tests/test_unit_xdp_filter_host.cpp && bash "$OLDPWD/tools/bigendian/run_byte_cases.sh" /usr/bin/true	ci.yml	lint	Test and count the big-endian byte cases
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure

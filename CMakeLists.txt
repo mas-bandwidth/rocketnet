@@ -584,7 +584,7 @@ endif()
 if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client tests/client_server/client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
-    add_executable(server tests/client_server/server.c)
+    add_executable(server tests/client_server/server.c tests/echo_payload.cpp)
     target_link_libraries(server PRIVATE rocketnet_dev)
     add_executable(happy_server tools/happy_path/happy_server.c)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
@@ -799,7 +799,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             COMMAND test_fp_contract_fma
             VERBATIM)
     endif()
-    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/echo_payload.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
