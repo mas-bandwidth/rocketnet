@@ -744,49 +744,59 @@ static harden_link_t harden_link_read( const std::string & dev )
 static harden_kernel_t harden_kernel_base;
 static harden_link_t harden_link_base;
 
-static void harden_print_cut_network( const char * role, const harden_options_t & o )
+static void harden_print_cut_term( const char * role, const char * cut, const char * name, int64_t value )
+{
+    printf( "harden_term: role=%s %s_%s=%" PRId64 "\n", role, cut, name, value );
+}
+
+// one cut's network terms: this namespace's kernel counts and this end's
+// device and qdisc, each as its change since the process started
+
+static void harden_print_cut_network( const char * role, const char * cut, const harden_options_t & o )
 {
     const harden_kernel_t k = harden_kernel_read();
     const harden_kernel_t & b = harden_kernel_base;
-    printf( "harden_term: role=%s cut_kernel_read=%d\n", role, k.read && b.read ? 1 : 0 );
-    harden_print_term( role, "cut_udp_in", k.udp_in - b.udp_in );
-    harden_print_term( role, "cut_udp_noports", k.udp_noports - b.udp_noports );
-    harden_print_term( role, "cut_udp_inerrors", k.udp_inerrors - b.udp_inerrors );
-    harden_print_term( role, "cut_udp_rcvbuf", k.udp_rcvbuf - b.udp_rcvbuf );
-    harden_print_term( role, "cut_udp_out", k.udp_out - b.udp_out );
-    harden_print_term( role, "cut_udp_sndbuf", k.udp_sndbuf - b.udp_sndbuf );
-    harden_print_term( role, "cut_udp_incsum", k.udp_incsum - b.udp_incsum );
-    harden_print_term( role, "cut_icmp_in", k.icmp_in - b.icmp_in );
-    harden_print_term( role, "cut_icmp_out", k.icmp_out - b.icmp_out );
-    harden_print_term( role, "cut_ip_inreceives", k.ip_inreceives - b.ip_inreceives );
-    harden_print_term( role, "cut_ip_indiscards", k.ip_indiscards - b.ip_indiscards );
-    harden_print_term( role, "cut_ip_outrequests", k.ip_outrequests - b.ip_outrequests );
-    harden_print_term( role, "cut_ip_outdiscards", k.ip_outdiscards - b.ip_outdiscards );
+    harden_print_cut_term( role, cut, "kernel_read", k.read && b.read ? 1 : 0 );
+    harden_print_cut_term( role, cut, "udp_in", k.udp_in - b.udp_in );
+    harden_print_cut_term( role, cut, "udp_noports", k.udp_noports - b.udp_noports );
+    harden_print_cut_term( role, cut, "udp_inerrors", k.udp_inerrors - b.udp_inerrors );
+    harden_print_cut_term( role, cut, "udp_rcvbuf", k.udp_rcvbuf - b.udp_rcvbuf );
+    harden_print_cut_term( role, cut, "udp_out", k.udp_out - b.udp_out );
+    harden_print_cut_term( role, cut, "udp_sndbuf", k.udp_sndbuf - b.udp_sndbuf );
+    harden_print_cut_term( role, cut, "udp_incsum", k.udp_incsum - b.udp_incsum );
+    harden_print_cut_term( role, cut, "icmp_in", k.icmp_in - b.icmp_in );
+    harden_print_cut_term( role, cut, "icmp_out", k.icmp_out - b.icmp_out );
+    harden_print_cut_term( role, cut, "ip_inreceives", k.ip_inreceives - b.ip_inreceives );
+    harden_print_cut_term( role, cut, "ip_indiscards", k.ip_indiscards - b.ip_indiscards );
+    harden_print_cut_term( role, cut, "ip_outrequests", k.ip_outrequests - b.ip_outrequests );
+    harden_print_cut_term( role, cut, "ip_outdiscards", k.ip_outdiscards - b.ip_outdiscards );
     if ( !o.dev.empty() )
     {
         const harden_link_t l = harden_link_read( o.dev );
         const harden_link_t & lb = harden_link_base;
-        harden_print_term( role, "cut_tc_sent", l.tc_sent - lb.tc_sent );
-        harden_print_term( role, "cut_tc_dropped", l.tc_dropped - lb.tc_dropped );
-        harden_print_term( role, "cut_dev_tx_packets", l.tx_packets - lb.tx_packets );
-        harden_print_term( role, "cut_dev_tx_dropped", l.tx_dropped - lb.tx_dropped );
-        harden_print_term( role, "cut_dev_rx_packets", l.rx_packets - lb.rx_packets );
-        harden_print_term( role, "cut_dev_rx_dropped", l.rx_dropped - lb.rx_dropped );
+        harden_print_cut_term( role, cut, "tc_sent", l.tc_sent - lb.tc_sent );
+        harden_print_cut_term( role, cut, "tc_dropped", l.tc_dropped - lb.tc_dropped );
+        harden_print_cut_term( role, cut, "dev_tx_packets", l.tx_packets - lb.tx_packets );
+        harden_print_cut_term( role, cut, "dev_tx_dropped", l.tx_dropped - lb.tx_dropped );
+        harden_print_cut_term( role, cut, "dev_rx_packets", l.rx_packets - lb.rx_packets );
+        harden_print_cut_term( role, cut, "dev_rx_dropped", l.rx_dropped - lb.rx_dropped );
     }
+    fflush( stdout );
 }
 
-// the kernel's UDP counts again, a quiet interval after the cut: equal to
-// the cut's unless something sent across it
+// sleeps until the wall clock reaches when
 
-static void harden_print_settle( const char * role )
+static void harden_sleep_until_wall( double when )
 {
-    const harden_kernel_t k = harden_kernel_read();
-    const harden_kernel_t & b = harden_kernel_base;
-    harden_print_term( role, "settle_udp_in", k.udp_in - b.udp_in );
-    harden_print_term( role, "settle_udp_out", k.udp_out - b.udp_out );
-    harden_print_term( role, "settle_udp_noports", k.udp_noports - b.udp_noports );
-    harden_print_term( role, "settle_udp_inerrors", k.udp_inerrors - b.udp_inerrors );
-    fflush( stdout );
+    for ( ;; )
+    {
+        const double left = when - harden_wall();
+        if ( left <= 0.0 )
+        {
+            return;
+        }
+        rocketnet_sleep( left > 0.05 ? 0.05 : left );
+    }
 }
 
 static int harden_netstat_main( const harden_options_t & o )
@@ -1015,13 +1025,22 @@ static int harden_server_main( const harden_options_t & o )
     bool draining = false;
     std::vector<uint8_t> big( (size_t) o.big_bytes );
 
-    // the end is a cut (the method of load's counters_agree): at end_at the
-    // writes stop and the clients stop sending, so client to server drains;
-    // at end_at + quiet the server stops sending too, so server to client
-    // drains; at end_at + 2 quiet every process reads its terms with nothing
-    // in flight. The cleanup traffic after the cut is outside the equations.
+    // the end is two cuts, one per direction (the method of load's
+    // counters_agree), each read while its direction is silent. An update
+    // sends keep-alives, so silence is a frozen sender: no update, no send.
+    //   T0 end_at        the clients freeze; the server stops writing and
+    //                    runs on, so client to server drains
+    //   T1 T0 + q        client to server cut: every role reads its terms;
+    //                    then the server freezes
+    //   T2 T1 + q/2      the clients run again, update and receive only, so
+    //                    server to client drains into them
+    //   T3 T2 + q        server to client cut: every role reads its terms
+    //   T4 T3 + q/2      the cleanup: the server stops, the clients leave
+    // The cleanup's traffic is outside the equations.
     const double end_at = o.end_at > 0.0 ? o.end_at : harden_wall() + o.seconds;
-    bool sending = true;
+    const double cut_c2s_at = end_at + o.quiet_seconds;
+    const double cut_s2c_at = cut_c2s_at + 1.5 * o.quiet_seconds;
+    const double cleanup_at = cut_s2c_at + 0.5 * o.quiet_seconds;
     for ( ;; )
     {
         const double frame_start = harden_now();
@@ -1033,14 +1052,7 @@ static int harden_server_main( const harden_options_t & o )
             printf( "harden_phase: role=server phase=writes_stop t=%.1f utc=%s\n", frame_start - started, utc );
             fflush( stdout );
         }
-        if ( sending && wall >= end_at + o.quiet_seconds )
-        {
-            sending = false;
-            harden_utc( utc, sizeof( utc ) );
-            printf( "harden_phase: role=server phase=sends_stop t=%.1f utc=%s\n", frame_start - started, utc );
-            fflush( stdout );
-        }
-        if ( wall >= end_at + 2.0 * o.quiet_seconds )
+        if ( wall >= cut_c2s_at )
         {
             break;
         }
@@ -1150,10 +1162,7 @@ static int harden_server_main( const harden_options_t & o )
         }
         const double t_write = harden_now();
 
-        if ( sending )
-        {
-            rocketnet_server_send_packets( server );
-        }
+        rocketnet_server_send_packets( server );
         const double t_send = harden_now();
 
         const double work = t_send - frame_start;
@@ -1262,44 +1271,29 @@ static int harden_server_main( const harden_options_t & o )
     const int64_t library_end = harden_library_bytes();
     const double run_seconds = harden_now() - resources_started_at;
 
-    // the cut: nothing in flight either way; every term read here
+    // T1, client to server cut: what the server took, then it freezes
     {
         struct rocketnet_server_stats_t cut;
         rocketnet_server_stats( server, &cut );
         harden_utc( utc, sizeof( utc ) );
-        printf( "harden_phase: role=server phase=cut utc=%s\n", utc );
-        harden_print_term( role, "cut_packets_sent", (int64_t) cut.packets_sent );
-        harden_print_term( role, "cut_packets_received", (int64_t) cut.packets_received );
-        harden_print_counters( "cut_transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
-        harden_print_cut_network( role, o );
-        fflush( stdout );
+        printf( "harden_phase: role=server phase=cut_c2s utc=%s\n", utc );
+        harden_print_term( role, "c2s_packets_received", (int64_t) cut.packets_received );
+        harden_print_counters( "c2s_transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
+        harden_print_cut_network( role, "c2s", o );
     }
-    // the clients read their own cut now; the server's stop (its disconnects)
-    // waits until they have. Half way, before the clients' cleanup sends
-    // anything, the server's library and kernel counts are read again with
-    // the frame still running (update and receive, no sends): a library count
-    // that grows here was held across the quiet, not lost
-    const double settle_at = harden_now() + 0.5 * o.quiet_seconds;
-    uint64_t settle_messages = 0;
-    while ( harden_now() < settle_at )
+    // T3, server to client cut: what the frozen server sent
+    harden_sleep_until_wall( cut_s2c_at );
     {
-        rocketnet_server_update( server, harden_now() );
-        const struct rocketnet_message_batch_t * held;
-        while ( ( held = rocketnet_server_receive_messages( server ) ) != NULL )
-        {
-            settle_messages += (uint64_t) held->num_messages;
-        }
-        rocketnet_sleep( 1.0 / o.hz );
+        struct rocketnet_server_stats_t cut;
+        rocketnet_server_stats( server, &cut );
+        harden_utc( utc, sizeof( utc ) );
+        printf( "harden_phase: role=server phase=cut_s2c utc=%s\n", utc );
+        harden_print_term( role, "s2c_packets_sent", (int64_t) cut.packets_sent );
+        harden_print_counters( "s2c_transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
+        harden_print_cut_network( role, "s2c", o );
     }
-    {
-        struct rocketnet_server_stats_t settle;
-        rocketnet_server_stats( server, &settle );
-        harden_print_term( role, "settle_packets_received", (int64_t) settle.packets_received );
-        harden_print_term( role, "settle_packets_sent", (int64_t) settle.packets_sent );
-        harden_print_term( role, "settle_messages", (int64_t) settle_messages );
-        harden_print_settle( role );
-    }
-    rocketnet_sleep( 0.5 * o.quiet_seconds );
+    // T4, the cleanup
+    harden_sleep_until_wall( cleanup_at );
 
     rocketnet_server_stop( server );
     const double stop_deadline = harden_now() + 10.0;
@@ -1415,8 +1409,10 @@ struct harden_client_totals_t
     std::mutex mutex;
     harden_verify_t verify;
     uint64_t counters[HARDEN_CLIENT_SLOTS] = {};
-    uint64_t cut_counters[HARDEN_CLIENT_SLOTS] = {};
-    int cut_threads = 0;
+    uint64_t c2s_counters[HARDEN_CLIENT_SLOTS] = {};
+    uint64_t s2c_counters[HARDEN_CLIENT_SLOTS] = {};
+    int c2s_threads = 0;
+    int s2c_threads = 0;
     double end_at = 0.0;
     uint64_t joins = 0, connects = 0, connect_seconds_max_us = 0;
     uint64_t clean_leaves = 0, silent_stops = 0, reconnects = 0;
@@ -1514,24 +1510,33 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
 
     const double step = 1.0 / o->hz;
     double next = harden_now();
-    bool cut_done = false;
+    // the two cuts (harden_server_main has the timeline): frozen from end_at
+    // to T2, the client to server read half way through that; update and
+    // receive only from T2, the server to client read at T3
+    const double end_at = totals->end_at;
+    const double read_c2s_at = end_at + 0.5 * o->quiet_seconds;
+    const double thaw_at = end_at + 1.5 * o->quiet_seconds;
+    const double read_s2c_at = thaw_at + o->quiet_seconds;
+    bool read_c2s = false, read_s2c = false;
     while ( !totals->quit.load() )
     {
         const double t = harden_now();
         const double wall = harden_wall();
         const bool cleanup = totals->stop_traffic.load();
-        // from end_at to the cleanup: no writes, no connects, no send_packets
-        // (the cut's first half); the cleanup after the cut sends again
-        const bool stop_traffic = cleanup || wall >= totals->end_at;
-        const bool sends = cleanup || wall < totals->end_at;
+        // from end_at to the cleanup: no writes, no connects, no send_packets;
+        // the cleanup sends again
+        const bool stop_traffic = cleanup || wall >= end_at;
+        const bool sends = cleanup || wall < end_at;
+        const bool frozen = !cleanup && wall >= end_at && wall < thaw_at;
         // the last churn event leaves room for a silent stop to time out
         // and its client to come back before the end
-        const bool churn_open = wall < totals->end_at - (double) o->token_timeout - 6.0;
+        const bool churn_open = wall < end_at - (double) o->token_timeout - 6.0;
         int connected = 0;
 
-        if ( !cut_done && wall >= totals->end_at + 2.0 * o->quiet_seconds )
+        if ( ( !read_c2s && wall >= read_c2s_at ) || ( !read_s2c && wall >= read_s2c_at ) )
         {
-            // the cut: the connections read so far, and every one still open
+            // a cut: the connections read so far, and every one still open
+            const bool c2s = !read_c2s;
             std::vector<uint64_t> cut = counters;
             for ( harden_client_t & c : clients )
             {
@@ -1542,12 +1547,29 @@ static void harden_clients_thread( const harden_options_t * o, const uint8_t * k
                 }
             }
             std::lock_guard<std::mutex> lock( totals->mutex );
+            uint64_t * into = c2s ? totals->c2s_counters : totals->s2c_counters;
             for ( int k = 0; k < HARDEN_CLIENT_SLOTS; k++ )
             {
-                totals->cut_counters[k] += cut[(size_t) k];
+                into[k] += cut[(size_t) k];
             }
-            totals->cut_threads++;
-            cut_done = true;
+            if ( c2s )
+            {
+                totals->c2s_threads++;
+                read_c2s = true;
+            }
+            else
+            {
+                totals->s2c_threads++;
+                read_s2c = true;
+            }
+        }
+
+        if ( frozen )
+        {
+            // a frozen client sends nothing, keep-alives included
+            rocketnet_sleep( step );
+            next = harden_now();
+            continue;
         }
 
         if ( churn_interval > 0.0 && my_churners > 0 && churn_open && !stop_traffic && t >= next_churn )
@@ -1881,52 +1903,56 @@ static int harden_clients_main( const harden_options_t & o )
 
     double last_report = started;
     uint64_t last_delivered = 0;
-    for ( ;; )
+    for ( int cut = 0; cut < 2; cut++ )
     {
-        rocketnet_sleep( 0.05 );
+        // wait for every thread's read of this cut, printing the players
+        // each second meanwhile
+        for ( ;; )
         {
-            std::lock_guard<std::mutex> lock( totals.mutex );
-            if ( totals.cut_threads == o.threads )
+            rocketnet_sleep( 0.02 );
             {
-                break;
+                std::lock_guard<std::mutex> lock( totals.mutex );
+                if ( ( cut == 0 ? totals.c2s_threads : totals.s2c_threads ) == o.threads )
+                {
+                    break;
+                }
+            }
+            const double t_now = harden_now();
+            if ( t_now - last_report < 1.0 )
+            {
+                continue;
+            }
+            int connected = 0;
+            uint64_t delivered = 0;
+            for ( int t = 0; t < o.threads; t++ )
+            {
+                connected += totals.connected[t].load();
+                delivered += totals.delivered_live[t].load();
+            }
+            printf( "harden_clients_tick: t=%.1f connected=%d delivered_ps=%.0f\n", t_now - started, connected, (double) ( delivered - last_delivered ) / ( t_now - last_report ) );
+            fflush( stdout );
+            last_delivered = delivered;
+            last_report = t_now;
+        }
+        // the threads have read their connections; the namespace's kernel
+        // terms now, while this cut's direction is still silent
+        const char * name = cut == 0 ? "c2s" : "s2c";
+        const uint64_t * counts = cut == 0 ? totals.c2s_counters : totals.s2c_counters;
+        harden_utc( utc, sizeof( utc ) );
+        printf( "harden_phase: role=clients phase=cut_%s utc=%s\n", name, utc );
+        harden_print_cut_term( role, name, cut == 0 ? "packets_sent" : "packets_received", (int64_t) counts[cut == 0 ? HARDEN_SLOT_PACKETS_SENT : HARDEN_SLOT_PACKETS_RECEIVED] );
+        for ( int k = 0; k < rocketnet_num_counters() && k < HARDEN_COUNTER_SLOTS; k++ )
+        {
+            if ( counts[k] )
+            {
+                printf( "harden_term: role=clients %s_transport_%s=%" PRIu64 "\n", name, rocketnet_counter_name( k ), counts[k] );
             }
         }
-        const double t_now = harden_now();
-        if ( t_now - last_report < 1.0 )
-        {
-            continue;
-        }
-        int connected = 0;
-        uint64_t delivered = 0;
-        for ( int t = 0; t < o.threads; t++ )
-        {
-            connected += totals.connected[t].load();
-            delivered += totals.delivered_live[t].load();
-        }
-        printf( "harden_clients_tick: t=%.1f connected=%d delivered_ps=%.0f\n", t_now - started, connected, (double) ( delivered - last_delivered ) / ( t_now - last_report ) );
-        fflush( stdout );
-        last_delivered = delivered;
-        last_report = t_now;
+        harden_print_cut_network( role, name, o );
     }
 
-    // the cut: every thread has read its connections, nothing is in flight
-    harden_utc( utc, sizeof( utc ) );
-    printf( "harden_phase: role=clients phase=cut utc=%s\n", utc );
-    harden_print_term( role, "cut_packets_sent", (int64_t) totals.cut_counters[HARDEN_SLOT_PACKETS_SENT] );
-    harden_print_term( role, "cut_packets_received", (int64_t) totals.cut_counters[HARDEN_SLOT_PACKETS_RECEIVED] );
-    for ( int k = 0; k < rocketnet_num_counters() && k < HARDEN_COUNTER_SLOTS; k++ )
-    {
-        if ( totals.cut_counters[k] )
-        {
-            printf( "harden_term: role=clients cut_transport_%s=%" PRIu64 "\n", rocketnet_counter_name( k ), totals.cut_counters[k] );
-        }
-    }
-    harden_print_cut_network( role, o );
-    fflush( stdout );
-
-    // the cleanup, after the server's own cut read: every client leaves
-    rocketnet_sleep( o.quiet_seconds );
-    harden_print_settle( role );
+    // T4, the cleanup: every client leaves
+    harden_sleep_until_wall( totals.end_at + 3.0 * o.quiet_seconds );
     harden_utc( utc, sizeof( utc ) );
     printf( "harden_phase: role=clients phase=leave utc=%s\n", utc );
     fflush( stdout );
@@ -2509,35 +2535,35 @@ static int harden_reconcile_main( const harden_options_t & o )
             return 2;
         }
     }
-    if ( !t.has( "server.cut_packets_sent" ) || !t.has( "clients.cut_packets_sent" ) )
+    if ( !t.has( "server.s2c_packets_sent" ) || !t.has( "clients.c2s_packets_sent" ) || !t.has( "server.c2s_packets_received" ) || !t.has( "clients.s2c_packets_received" ) )
     {
         printf( "harden_reconcile: verdict=FAIL reason=missing_cut (a role ended before its cut)\n" );
         return 1;
     }
 
     harden_chain_t up;
-    up.library_sent = t.get( "clients.cut_packets_sent" ) + t.get( "hostile.sent" );
-    up.kernel_out = t.get( "clients.cut_udp_out" );
-    up.kernel_sndbuf = t.get( "clients.cut_udp_sndbuf" );
-    up.qdisc_dropped = t.get( "clients.cut_tc_dropped" );
-    up.device_dropped = t.get( "clients.cut_dev_tx_dropped" );
-    up.arrived_in = t.get( "server.cut_udp_in" );
-    up.arrived_inerrors = t.get( "server.cut_udp_inerrors" );
-    up.arrived_noports = t.get( "server.cut_udp_noports" );
-    up.arrived_ipdiscards = t.get( "server.cut_ip_indiscards" );
-    up.library_received = t.get( "server.cut_packets_received" );
+    up.library_sent = t.get( "clients.c2s_packets_sent" ) + t.get( "hostile.sent" );
+    up.kernel_out = t.get( "clients.c2s_udp_out" );
+    up.kernel_sndbuf = t.get( "clients.c2s_udp_sndbuf" );
+    up.qdisc_dropped = t.get( "clients.c2s_tc_dropped" );
+    up.device_dropped = t.get( "clients.c2s_dev_tx_dropped" );
+    up.arrived_in = t.get( "server.c2s_udp_in" );
+    up.arrived_inerrors = t.get( "server.c2s_udp_inerrors" );
+    up.arrived_noports = t.get( "server.c2s_udp_noports" );
+    up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
+    up.library_received = t.get( "server.c2s_packets_received" );
 
     harden_chain_t down;
-    down.library_sent = t.get( "server.cut_packets_sent" );
-    down.kernel_out = t.get( "server.cut_udp_out" );
-    down.kernel_sndbuf = t.get( "server.cut_udp_sndbuf" );
-    down.qdisc_dropped = t.get( "server.cut_tc_dropped" );
-    down.device_dropped = t.get( "server.cut_dev_tx_dropped" );
-    down.arrived_in = t.get( "clients.cut_udp_in" );
-    down.arrived_inerrors = t.get( "clients.cut_udp_inerrors" );
-    down.arrived_noports = t.get( "clients.cut_udp_noports" );
-    down.arrived_ipdiscards = t.get( "clients.cut_ip_indiscards" );
-    down.library_received = t.get( "clients.cut_packets_received" ) + t.get( "hostile.received" );
+    down.library_sent = t.get( "server.s2c_packets_sent" );
+    down.kernel_out = t.get( "server.s2c_udp_out" );
+    down.kernel_sndbuf = t.get( "server.s2c_udp_sndbuf" );
+    down.qdisc_dropped = t.get( "server.s2c_tc_dropped" );
+    down.device_dropped = t.get( "server.s2c_dev_tx_dropped" );
+    down.arrived_in = t.get( "clients.s2c_udp_in" );
+    down.arrived_inerrors = t.get( "clients.s2c_udp_inerrors" );
+    down.arrived_noports = t.get( "clients.s2c_udp_noports" );
+    down.arrived_ipdiscards = t.get( "clients.s2c_ip_indiscards" );
+    down.library_received = t.get( "clients.s2c_packets_received" ) + t.get( "hostile.received" );
 
     const bool up_ok = harden_chain_print( "clients_to_server", up, o.netem_duplicates );
     const bool down_ok = harden_chain_print( "server_to_clients", down, o.netem_duplicates );
