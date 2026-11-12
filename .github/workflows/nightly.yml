@@ -511,9 +511,10 @@ jobs:
 
   # THE SODIUM AEAD SWEEP AND DIFFERENTIAL (sodium/README.md, "AEAD dispatch
   # and AArch64"). bin/test_sodium_dispatch --sweep-full: every message
-  # length 0-2000, every associated data length 0-64, every alignment 0-15 of
-  # the message and of the associated data, in place and out of place,
-  # 66,593,280 cases per implementation set against the portable reference;
+  # length 0-4096, every associated data length 0-64, every alignment 0-15 of
+  # the message and of the associated data, in place and out of place, with
+  # guard bytes after every output, 136,345,600 cases per implementation set
+  # against the portable reference;
   # per commit the same test runs a subset. --diff 10000000 <seed>: ten
   # million random cases per set (keys, nonces, lengths, alignments, in place
   # or not), each also forged and refused; the seed is the run number, printed,

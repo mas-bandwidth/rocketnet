@@ -35,16 +35,27 @@ result, 0 or -1, which is the public outcome the caller is told.
   `h + 5`, never by a branch (proved for every input by
   `proofs/cbmc/proof_poly1305_mul64.c`).
 - **Tag check**: `crypto_verify_16`, the bundle's constant-time compare.
-- **Wiping**: `sodium_memzero` clears, before each function returns, every
-  stack copy of key or keystream material the AArch64 code makes: the input
-  words and working state of each ChaCha20 step (`in_v` and `x` in the
-  four-block step and in the one-pass step, `a_in`, `b_in`, `x` and `y` in
-  the eight-block step, `in` and `x` in the scalar block), the transposed
-  keystream rows (`row`), the partial-chunk and partial-block buffers, the
-  key block, the Poly1305 key, state and pads, and the computed tag. The
-  portable reference wipes less (its block words and `tmp` stay on the
-  stack). Values held only in vector or general registers are not wiped, as
-  on every other path.
+- **Wiping.** The guarantee is the portable reference's: named buffers of
+  key, state and keystream are cleared, and nothing more is promised.
+  - *Cleared with `sodium_memzero` before return:*
+    - the ChaCha20 state (the key words) and the Poly1305 key, accumulator
+      and pads;
+    - the key block, the computed tag, and the partial-chunk and
+      partial-block buffers (`ks`, `block`, `tmp`);
+    - the named arrays of each ChaCha20 step: `in_v` and `x` (four-block
+      and one-pass steps), `a_in`, `b_in`, `x` and `y` (eight-block step),
+      `in` and `x` (scalar block), and the transposed keystream rows
+      (`row`).
+  - *Not cleared:*
+    - values the compiler keeps in vector or general registers;
+    - values it spills to unnamed stack slots. The eight-block step holds
+      more live vectors than there are registers, so it spills.
+    - scalar locals: the Poly1305 limbs `h0`-`h2`, `r0`, `r1`, `s1`, and
+      the counters. At `-O0` these live on the stack.
+  - *The portable reference* clears its ChaCha20 context, the AEAD's key
+    block, its Poly1305 state and its computed tag. It leaves its block
+    words, its `tmp` partial block and any spills. Neither path promises
+    that no key-derived value survives in a stack frame.
 - **Speculation**: open checks the tag before it computes any plaintext. It
   MACs the ciphertext, compares in constant time, and only on success runs
   `ACQUIRE_FENCE` and then the NEON keystream from block 1 over the
@@ -56,36 +67,73 @@ result, 0 or -1, which is the public outcome the caller is told.
 ## A refused open
 
 `crypto_aead_chacha20poly1305_ietf_decrypt` returns -1 without writing a
-byte of plaintext under either implementation (`local/dispatch.h.in`): the
-composed AEAD zeroes the output as upstream does, the AArch64 open leaves it
-as it was. Input and output are exactly in place or apart; partial overlap is
-unsupported, stated in `local/dispatch.h.in` and asserted at the SDK's seal
+byte of plaintext under either implementation (`local/dispatch.h.in`):
+- the composed AEAD zeroes the output, as upstream does;
+- the AArch64 open leaves the output as it was.
+
+Input and output must be exactly in place or apart; partial overlap is not
+supported. `local/dispatch.h.in` states this, and the SDK asserts it at seal
 and open (`sdk/rocketnet_protocol.cpp`).
+
+The associated data may lie inside the output: seal absorbs it before
+writing any byte, as the composed seal does.
+
+Above upstream's bound of 64 * (2^32 - 1) bytes, the AArch64 seal and open
+call `sodium_misuse()` before touching any data.
 
 ## Checks
 
-- `bin/test_sodium_dispatch`, on every commit on the macOS arm64 runners in
-  Debug (the unit row), Release and asan + ubsan (the `sodium-arm64` rows),
-  and on every x86 row:
-  - RFC 8439 and 316 Wycheproof vectors, the Poly1305 carry edges, and
-    every implementation set against the composed reference at every length
-    0 to 4096;
-  - forgery (a tag, ciphertext or associated data bit) at every length 0 to
-    4096 that is 0, 1 or 15 mod 16: refused, length 0, the output's poison
-    pattern untouched by the AArch64 open (zeroed by the composed one), and
-    nothing past the output written; apart, exactly in place, detached;
-  - the sweep: every length 0 to 4096, seal and open, apart and exactly in
-    place, with 16 guard bytes after every output checked untouched;
-  - the ChaCha20 entry points the AEAD does not use (the 8-byte-nonce
-    stream, and the 64-bit counter across the word-12 to word-13 carry and
-    its wrap; the IETF counter to its last blocks), against the reference.
-- Nightly: the exhaustive sweep (`--sweep-full`) and a 10,000,000-case
-  differential on macOS arm64 and Linux x64.
-- A DEV build with the bundled pair poisons an apart output before
-  `rocketnet_open_sealed_packet` opens, and asserts a refusal left only
-  poison or zeros; every DEV build then poisons a refused output
-  (`sdk/rocketnet_protocol.h`), which `test_sealed_packet_refusals` and
-  `test_server_payload_capacity_uses_live_session_path` check.
+### `bin/test_sodium_dispatch`, every commit
+
+It runs on the macOS arm64 runners in Debug (the unit row), Release and
+asan + ubsan (the `sodium-arm64` rows), and on every x86 row. It checks:
+
+- **Vectors:** RFC 8439, the 316 Wycheproof vectors, and the Poly1305 carry
+  edges.
+- **Agreement:** every implementation set against the composed reference at
+  every length 0 to 4096.
+- **Forgery:** a flipped bit in the tag, the ciphertext or the associated
+  data, at every length 0 to 4096 that is 0, 1 or 15 mod 16; apart, exactly
+  in place, and detached. Each must be refused with length 0, and nothing
+  outside the output may be written.
+  - *AArch64 open:* the output is read-only for the call, so a write that is
+    undone before return still faults by name.
+  - *Composed open:* the output ends zeroed, and the open runs no ChaCha20
+    over the message (the test seam counts its IETF xor calls, and a good
+    open counts one).
+- **Associated data inside the output:** seal gives the same bytes as with a
+  separate copy.
+- **The sweep:** every length 0 to 4096, seal and open, apart and exactly in
+  place. The 16 guard bytes after every output must be untouched.
+- **ChaCha20 entry points the AEAD does not use**, against the reference:
+  - the 8-byte-nonce stream;
+  - the 64-bit counter started at 0xFFFFFFFB to 0xFFFFFFFF, so the carry
+    from word 12 to word 13 falls inside both four-block halves of the
+    eight-block step, and its wrap at 2^64;
+  - the IETF counter at its last blocks.
+- **The bound:** the length check at 64 * (2^32 - 1) and one byte above it,
+  through a seam and with no data. Above the bound, `sodium_misuse()` must be
+  called for seal and open.
+- **Built and picked:** on 64-bit ARM Linux and macOS, the AArch64
+  implementations must be built and, unless the forced fallback is on,
+  picked. Otherwise the test fails by name. `tools/check_sodium.py` asserts
+  the same picks for the oracle library.
+
+### Nightly
+
+The exhaustive sweep (`--sweep-full`) and a 10,000,000-case differential,
+on macOS arm64 and Linux x64.
+
+### The SDK
+
+A DEV build with the bundled pair poisons an apart output before
+`rocketnet_open_sealed_packet` opens. It then asserts that a refusal left
+every byte poison under neon-fused, or zero under the composed AEAD, going
+by the pick the pair reports.
+
+Every DEV build then poisons a refused output (`sdk/rocketnet_protocol.h`).
+`test_sealed_packet_refusals` and
+`test_server_payload_capacity_uses_live_session_path` check this.
 
 ## By tool: secret tracking
 
@@ -107,4 +155,38 @@ the repository variable `ROCKETNET_LINUX_ARM64_RUNNER`; until a runner
 exists, the receipts below are the evidence, and a change to
 `local/arm64.c.in` needs a new pair of them by hand.
 
-Receipts at the committed code (RECEIPTS_PENDING).
+### Receipts at 3a90b5d89 (2026-11-12)
+
+Four runs: Neoverse-V2 and Neoverse-N1, each built with gcc and with clang. All four exit 0 with this valgrind summary:
+
+    ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+
+**Tools**
+- gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+- Ubuntu clang version 21.1.8 (6ubuntu1)
+- valgrind-3.26.0
+- Linux 7.0.0-1016-aws
+
+**Environment.** Every run had `GLIBC_TUNABLES=glibc.malloc.hugetlb=0`. Secret tracking is on because CMake found `valgrind/memcheck.h` and defined `ROCKETNET_SODIUM_SECRET_TRACKING=1` on `test_sodium_secrets`.
+
+**Commands.** Configure, build and run, with `<cc>` either `gcc`/`g++` or `clang`/`clang++`:
+
+    cmake -S src -B <w> -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON \
+      -DCMAKE_COMPILE_WARNING_AS_ERROR=ON -DCMAKE_C_COMPILER=<cc> \
+      -DCMAKE_CXX_COMPILER=<c++> -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=<w>/bin
+    cmake --build <w> --parallel 16 --target test_sodium_secrets test_sodium_dispatch
+    valgrind --error-exitcode=1 <w>/bin/test_sodium_secrets
+
+The build had 0 warnings.
+
+**Sets.** Every run covered five sets, with 15 sizes each:
+- composed, ref, ref
+- composed, neon, ref
+- composed, ref, mul64
+- composed, neon, mul64
+- neon-fused, neon, mul64
+
+| host | instance | gcc run (UTC) | clang run (UTC) |
+|---|---|---|---|
+| Neoverse-V2, m8g.4xlarge | i-0ebc69c9a8290548e | 22:53:32Z, exit 0 | 22:53:32Z, exit 0 |
+| Neoverse-N1, c6gn.4xlarge | i-0970835fe02a146fe | 22:54:30Z, exit 0 | 22:54:30Z, exit 0 |
