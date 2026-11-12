@@ -1841,7 +1841,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         return false;
     }
 
-    // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+    // Refuse protocol_id 0 in every build and with any keys: a title has its own non-zero protocol_id
 
     if ( config->protocol_id == 0 )
     {
