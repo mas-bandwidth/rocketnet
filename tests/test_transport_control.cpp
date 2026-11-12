@@ -48,6 +48,11 @@ struct control_fixture_t
     uint16_t unreachable_port;
     int accepted[4];
     int num_accepted;
+    rocketnet_server_socket_process_packets_t * crafted;    // the staged view a guard case hands the update, NULL for none
+    int crafted_count;                                      // the count an unstaged guard case's receive_batch returns
+    int crafted_entries;                                    // the leading entries whose byte counts crafted_bytes gives
+    int crafted_bytes[8];
+    int crafted_capacity;                                   // the slots the update asked receive_batch for
 };
 #if defined( _MSC_VER )
 #pragma warning( pop )
@@ -921,6 +926,268 @@ static void test_deferred_accept_reads_only_this_batch()
     printf( "test_deferred_accept_reads_only_this_batch\n" );
 }
 
+// The receive guards (rocketnet_server_transport_update, both receive paths):
+// what the I/O core hands the update is checked before the protocol sees it.
+// A missing view, a negative count or a count past the view's capacity, and
+// a byte count that is negative or past the bound, is a transport fault: it
+// is counted in transport_faults, the bad entry is not processed and gets no
+// reply, and every good entry around it is processed exactly once. Each good
+// entry here is the fixture's connection request, so each one processed is
+// one response; the trailing slots past the count hold requests too, so a
+// walk past the count shows as an extra response. Time is an argument.
+
+#define GUARD_BYTES 16
+#define GUARD_FILL 0xEE
+
+struct guard_expect_t
+{
+    uint64_t faults;
+    uint64_t too_large;
+    uint64_t received;      // packets the update counted received (stats and PACKETS_RECEIVED)
+    uint64_t bytes;         // their bytes, wire header included
+    int responses;
+};
+
+struct guard_counts_t
+{
+    uint64_t faults;
+    uint64_t too_large;
+    uint64_t packets_received;
+};
+
+static guard_counts_t guard_counts( rocketnet_server_transport_t * server )
+{
+    guard_counts_t counts;
+    counts.faults = server->transport_faults;
+    counts.too_large = server->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
+    counts.packets_received = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+    return counts;
+}
+
+// one update of a fresh server; its one stats frame holds this update's receives
+
+static void guard_check( rocketnet_server_transport_t * server, control_fixture_t * f, const guard_counts_t & before, const guard_expect_t & expect )
+{
+    const guard_counts_t after = guard_counts( server );
+    const rocketnet_server_stats_frame_t * stats = &server->stats_frames[server->current_stats_index];
+    CHECK( after.faults - before.faults == expect.faults );
+    CHECK( after.too_large - before.too_large == expect.too_large );
+    CHECK( after.packets_received - before.packets_received == expect.received );
+    CHECK( stats->packets_received == expect.received );
+    CHECK( stats->bytes_received == expect.bytes );
+    CHECK( f->responses == expect.responses );
+    CHECK( f->aborts == 0 );
+}
+
+static rocketnet_server_transport_t * guard_server( control_fixture_t * f, rocketnet_server_transport_io_operations_t * operations, bool staged )
+{
+    auto * server = make_server( f, operations, 1, staged );
+
+    // client 0's keep-alive is not due, so the requests' responses are the only sends
+
+    auto * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map,
+                                                     rocketnet_client_slots_mapping_index( server->protocol.client_slots, 0 ) );
+    mapping->last_keep_alive_send_time = 1.0;
+    return server;
+}
+
+// The staged view: each entry's buffer is its own allocation holding the
+// request (or the entry's whole count, when that is larger and within the
+// ceiling), followed by guard bytes that must be untouched after the update.
+
+#define STAGED_GUARD_CAPACITY 6
+
+struct staged_guard_batch_t
+{
+    rocketnet_server_socket_process_packets_t view;
+    rocketnet_address_t from[STAGED_GUARD_CAPACITY];
+    int bytes[STAGED_GUARD_CAPACITY];
+    uint8_t * data[STAGED_GUARD_CAPACITY];
+    int sizes[STAGED_GUARD_CAPACITY];
+};
+
+static rocketnet_server_socket_process_packets_t * receive_crafted( void * p )
+{
+    return ( (control_fixture_t *) p )->crafted;
+}
+
+static void staged_guard_run( int num_packets, const int * bytes, int entries, const guard_expect_t & expect, bool null_view = false )
+{
+    auto * f = new control_fixture_t();
+    f->capacity = 64;
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = guard_server( f, &operations, true );
+    operations.receive = receive_crafted;
+
+    const int request_bytes = (int) sizeof( f->request );
+    auto * batch = new staged_guard_batch_t();
+    for ( int i = 0; i < STAGED_GUARD_CAPACITY; ++i )
+    {
+        batch->from[i] = f->request_address;
+        batch->bytes[i] = i < entries ? bytes[i] : request_bytes;
+        const int claimed = batch->bytes[i];
+        batch->sizes[i] = claimed > request_bytes && claimed <= ROCKETNET_RECEIVE_CEILING ? claimed : request_bytes;
+        batch->data[i] = (uint8_t *) malloc( (size_t) ( batch->sizes[i] + GUARD_BYTES ) );
+        CHECK( batch->data[i] );
+        memset( batch->data[i], 0x5A, (size_t) batch->sizes[i] );
+        memcpy( batch->data[i], f->request, (size_t) request_bytes );
+        memset( batch->data[i] + batch->sizes[i], GUARD_FILL, GUARD_BYTES );
+    }
+    batch->view.num_packets = num_packets;
+    batch->view.capacity = STAGED_GUARD_CAPACITY;
+    batch->view.from = batch->from;
+    batch->view.packet_bytes = batch->bytes;
+    batch->view.packet_data = batch->data;
+    f->crafted = null_view ? NULL : &batch->view;
+
+    const guard_counts_t before = guard_counts( server );
+    rocketnet_server_transport_update( server, 2.0 );
+    guard_check( server, f, before, expect );
+
+    for ( int i = 0; i < STAGED_GUARD_CAPACITY; ++i )
+    {
+        for ( int j = 0; j < GUARD_BYTES; ++j )
+        {
+            CHECK( batch->data[i][batch->sizes[i] + j] == GUARD_FILL );
+        }
+        free( batch->data[i] );
+    }
+    delete batch;
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+static void test_staged_receive_guards()
+{
+    const int r = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    const int ceiling = ROCKETNET_RECEIVE_CEILING;
+    const uint64_t header = (uint64_t) rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 );
+    const uint64_t request = (uint64_t) r + header;
+    const int none[1] = { 0 };
+
+    // a missing view, and a negative count: nothing processed, one fault
+    staged_guard_run( 0, none, 0, { 1, 0, 0, 0, 0 }, true );
+    staged_guard_run( -1, none, 0, { 1, 0, 0, 0, 0 } );
+
+    // an empty view, and a full one: no fault, every entry once
+    staged_guard_run( 0, none, 0, { 0, 0, 0, 0, 0 } );
+    staged_guard_run( STAGED_GUARD_CAPACITY, none, 0, { 0, 0, STAGED_GUARD_CAPACITY, STAGED_GUARD_CAPACITY * request, STAGED_GUARD_CAPACITY } );
+
+    // a count one past the capacity, and far past it: one fault, the capacity processed once
+    staged_guard_run( STAGED_GUARD_CAPACITY + 1, none, 0, { 1, 0, STAGED_GUARD_CAPACITY, STAGED_GUARD_CAPACITY * request, STAGED_GUARD_CAPACITY } );
+    staged_guard_run( INT32_MAX, none, 0, { 1, 0, STAGED_GUARD_CAPACITY, STAGED_GUARD_CAPACITY * request, STAGED_GUARD_CAPACITY } );
+
+    // one bad entry first, in the middle and last of five: negative, one past the ceiling, far past it
+    const int bad_first[5] = { -1, r, r, r, r };
+    const int bad_middle[5] = { r, r, ceiling + 1, r, r };
+    const int bad_last[5] = { r, r, r, r, 1 << 20 };
+    staged_guard_run( 5, bad_first, 5, { 1, 0, 4, 4 * request, 4 } );
+    staged_guard_run( 5, bad_middle, 5, { 1, 1, 4, 4 * request, 4 } );
+    staged_guard_run( 5, bad_last, 5, { 1, 1, 4, 4 * request, 4 } );
+
+    // the bounds themselves are good: an empty datagram and one of exactly
+    // the ceiling are processed (neither is a request, so no response)
+    const int edges[3] = { 0, ceiling, r };
+    staged_guard_run( 3, edges, 3, { 0, 0, 3, (uint64_t) ceiling + request + 2 * header, 1 } );
+
+    printf( "test_staged_receive_guards\n" );
+}
+
+// The unstaged receive: receive_batch writes into the server's own receive
+// buffer, a request in every slot it was given; the guard case sets the count
+// it returns and the leading entries' byte counts.
+
+static int receive_batch_crafted( void * p, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int capacity )
+{
+    auto * f = (control_fixture_t *) p;
+    f->crafted_capacity = capacity;
+    for ( int i = 0; i < capacity; ++i )
+    {
+        from[i] = f->request_address;
+        memcpy( data + stride * i, f->request, sizeof( f->request ) );
+        bytes[i] = i < f->crafted_entries ? f->crafted_bytes[i] : (int) sizeof( f->request );
+    }
+    // INT32_MAX stands for one past the slots asked for, whatever their number
+    return f->crafted_count == INT32_MAX ? capacity + 1 : f->crafted_count;
+}
+
+static void unstaged_guard_run( int count, const int * bytes, int entries, const guard_expect_t & expect )
+{
+    auto * f = new control_fixture_t();
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = guard_server( f, &operations, false );
+    operations.receive_batch = receive_batch_crafted;
+
+    f->crafted_count = count;
+    f->crafted_entries = entries;
+    for ( int i = 0; i < entries; ++i )
+    {
+        f->crafted_bytes[i] = bytes[i];
+    }
+
+    const guard_counts_t before = guard_counts( server );
+    rocketnet_server_transport_update( server, 2.0 );
+    guard_check( server, f, before, expect );
+
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// the capacity the update asks receive_batch for, read from one empty update
+
+static int unstaged_guard_capacity()
+{
+    auto * f = new control_fixture_t();
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = guard_server( f, &operations, false );
+    operations.receive_batch = receive_batch_crafted;
+    rocketnet_server_transport_update( server, 2.0 );
+    const int capacity = f->crafted_capacity;
+    CHECK( capacity > 5 );
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    return capacity;
+}
+
+static void test_unstaged_receive_guards()
+{
+    const int r = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
+    const int ceiling = ROCKETNET_RECEIVE_CEILING;
+    const int datagram = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES;
+    CHECK( datagram > ceiling );
+    const uint64_t header = (uint64_t) rocketnet_wire_header_bytes( ROCKETNET_ADDRESS_IPV4 );
+    const uint64_t request = (uint64_t) r + header;
+    const int none[1] = { 0 };
+    const int capacity = unstaged_guard_capacity();
+    const uint64_t all = (uint64_t) capacity;
+
+    // a negative count: nothing processed, one fault; an empty read: no fault
+    unstaged_guard_run( -1, none, 0, { 1, 0, 0, 0, 0 } );
+    unstaged_guard_run( 0, none, 0, { 0, 0, 0, 0, 0 } );
+
+    // exactly the slots asked for: no fault; one past them: one fault, the
+    // slots processed once
+    unstaged_guard_run( capacity, none, 0, { 0, 0, all, all * request, capacity } );
+    unstaged_guard_run( INT32_MAX, none, 0, { 1, 0, all, all * request, capacity } );
+
+    // one bad entry first, in the middle and last of five: negative, one past
+    // the datagram bound, far past it
+    const int bad_first[5] = { -1, r, r, r, r };
+    const int bad_middle[5] = { r, r, datagram + 1, r, r };
+    const int bad_last[5] = { r, r, r, r, 1 << 20 };
+    unstaged_guard_run( 5, bad_first, 5, { 1, 0, 4, 4 * request, 4 } );
+    unstaged_guard_run( 5, bad_middle, 5, { 1, 1, 4, 4 * request, 4 } );
+    unstaged_guard_run( 5, bad_last, 5, { 1, 1, 4, 4 * request, 4 } );
+
+    // the bounds: an empty datagram and one of exactly the ceiling are
+    // processed; one of exactly the datagram bound is no fault, but past the
+    // stored prefix it is counted received and too large and not processed
+    const int edges[4] = { 0, ceiling, datagram, r };
+    unstaged_guard_run( 4, edges, 4, { 0, 1, 4, (uint64_t) ceiling + (uint64_t) datagram + request + 3 * header, 1 } );
+
+    printf( "test_unstaged_receive_guards\n" );
+}
+
 int main( int argc, char ** argv )
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
@@ -961,6 +1228,8 @@ int main( int argc, char ** argv )
     test_staged_link_address_taught_at_view_zero();
     test_staged_refused_response_is_counted();
     test_deferred_accept_reads_only_this_batch();
+    test_staged_receive_guards();
+    test_unstaged_receive_guards();
     CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 }
