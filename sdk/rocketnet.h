@@ -1588,8 +1588,18 @@ struct rocketnet_server_config_t
     /// Zero, the default, selects the transport's own. Range is 1 .. 1024;
     /// gso and io_uring refuse a value above 32.
     /// The Windows iocp transport ignores it and always runs one completion
-    /// worker plus one send worker; the Windows rio transport ignores it and
-    /// runs one I/O worker.
+    /// worker plus one send worker. The Windows rio transport runs that many
+    /// lanes, each its own socket and I/O worker on the server's port, and
+    /// refuses a value above 32. A frame leaves on the lane its destination's
+    /// address and port hash to. One lane (zero or 1) binds the port
+    /// exclusively, as before. More than one lane needs a specific local
+    /// address and a nonzero port: create refuses a wildcard address (0.0.0.0
+    /// or ::) or port 0. The lane sockets share the port (SO_REUSEADDR), so
+    /// while the lanes run, a process of any account on the machine can bind
+    /// that address and port too. Windows does not document which socket then
+    /// receives; measured, the lanes keep every datagram. That is the trade
+    /// for spreading the work: use one lane where nothing on the machine can
+    /// be trusted with the port.
 
     int num_xdp_queues;
 
