@@ -1328,6 +1328,22 @@ if(ROCKETNET_BUILD_TOOLS)
     target_link_libraries(dst PRIVATE rocketnet_dev)
     rocketnet_use_sodium(dst)
     target_compile_features(dst PRIVATE cxx_std_11)
+    # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
+    # of a layer's code writes its trace for TLC. Each layer is one file,
+    # tests/tla_trace_<layer>.cpp, that registers itself; both binaries take
+    # every such file. tla_trace_plant compiles them with ROCKETNET_TLA_PLANT,
+    # and each layer's file then includes its own code with its plant, in
+    # place of the library's.
+    file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
+    add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
+    target_link_libraries(tla_trace PRIVATE rocketnet_dev)
+    rocketnet_use_sodium(tla_trace)
+    target_compile_features(tla_trace PRIVATE cxx_std_11)
+    add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
+    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_TLA_PLANT=1)
+    target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
+    rocketnet_use_sodium(tla_trace_plant)
+    target_compile_features(tla_trace_plant PRIVATE cxx_std_11)
     add_executable(keygen tools/keygen.cpp)
     add_executable(transport_memory benchmarks/transport_memory.cpp)
     add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)

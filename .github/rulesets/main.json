@@ -39,6 +39,7 @@
           {"context": "macos / Release / functional_production", "integration_id": 15368},
           {"context": "static analysis (clang-tidy, cppcheck)", "integration_id": 15368},
           {"context": "static analysis (gcc -fanalyzer)", "integration_id": 15368},
+          {"context": "TLA+ trace check (fixed seeds)", "integration_id": 15368},
           {"context": "tsan (loopback soak)", "integration_id": 15368},
           {"context": "ubuntu-24.04 / Release / ROCKETNET_DEV=ON / unit", "integration_id": 15368},
           {"context": "unreleased wire changes", "integration_id": 15368},
