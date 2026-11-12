@@ -123,9 +123,9 @@ CountErrorDrops == TRUE
 ErrorBound == 1
 
 (* the positions of the first k packets a flush may see refused by hard  *)
-(* errors, within ErrorBound                                              *)
-ErrorSets(k) ==
-    { e \in SUBSET ( 1 .. k ) : Len(txErrDropped) + Cardinality(e) <= ErrorBound }
+(* errors, within ErrorBound when n were dropped already                 *)
+ErrorSets(k, n) ==
+    { e \in SUBSET ( 1 .. k ) : n + Cardinality(e) <= ErrorBound }
 
 (* The first k packets of a held bank c that one flush gave the kernel,   *)
 (* with the positions in e refused by a hard error: Accepted is what was  *)
@@ -414,7 +414,7 @@ TxSend ==
     /\ ~shut.full \/ txContent[txHeld] = << >>
     \* any message may meet a hard error: dropped, counted, and the flush
     \* goes on (rocketnet_server_gso_flush after sendmmsg returns -1)
-    /\ \E e \in ErrorSets( Len(txContent[txHeld]) ) :
+    /\ \E e \in ErrorSets( Len(txContent[txHeld]), Len(txErrDropped) ) :
           /\ txSent' = txSent \o Accepted(txContent[txHeld], Len(txContent[txHeld]), e)
           /\ txErrDropped' = txErrDropped \o Refused(txContent[txHeld], Len(txContent[txHeld]), e)
     /\ txContent' = [ txContent EXCEPT ![txHeld] = << >> ]
@@ -457,7 +457,7 @@ TxSendFull ==
            r1 == IF Counting THEN shut.refusals + 1 ELSE shut.refusals IN
        \E k \in 0 .. Len(c) - 1 :
        \E d \in ( IF FullDrops THEN 1 .. Len(c) - k ELSE { 0 } ) :
-       \E e \in ErrorSets( k ) :
+       \E e \in ErrorSets( k, Len(txErrDropped) ) :
           LET rest == SubSeq( c, k + d + 1, Len(c) ) IN
           /\ txSent' = txSent \o Accepted( c, k, e )
           /\ txErrDropped' = txErrDropped \o Refused( c, k, e )
