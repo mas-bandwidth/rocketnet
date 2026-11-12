@@ -3189,11 +3189,6 @@ static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t
         committed = ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
     }
 
-    if ( !destination )
-    {
-        destination = rocketnet_client_transport_fill_destination( client_transport );
-    }
-
     const int stats_index = client_transport->current_stats_index;
     const rocketnet_address_t * to = destination ? destination : rocketnet_client_transport_fill_destination( client_transport );
     const int address_type = to->type;
