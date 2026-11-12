@@ -39,4 +39,4 @@ const char * rocketnet_echo_payload_refusal( const uint8_t * payload, int bytes 
 }
 #endif
 
-#endif // #ifndef ROCKETNET_TESTS_ECHO_PAYLOAD_H
+#endif // ROCKETNET_TESTS_ECHO_PAYLOAD_H
