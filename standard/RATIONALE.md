@@ -232,9 +232,8 @@ not, can substitute for it.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 *Where such a whitelist gets its addresses is the design decision that matters, and this
-protocol makes the better answer available.* Steam Datagram Relay populates its relay
-whitelist with the client address the backend observed during the backend conversation,
-which assumes a client reaches the backend and the server from the same address —
+protocol makes the better answer available.* A whitelist filled with the client address a
+backend observed during the backend conversation assumes a client reaches the backend and the server from the same address —
 usually true, and not always: some carrier-grade NAT deployments egress from an address
 pool, and a dual-stack client may reach an HTTPS backend over IPv6 while reaching a game
 server over IPv4. A RocketNet server does not need to guess: the address-validated
@@ -303,11 +302,10 @@ to detect it — the incentive does the enforcement, and detection and bans are 
 only for the abusive tail.
 
 [RN-1 t6 Connect token](TRANSPORT.md#t6)
-*This is stated as strongly as it is because the protocol this one descends from does
-not do it, and the omission is a real defect rather than a scope choice. netcode 1.02
-binds a token to a server address and an expiry and stops there; a token is transferable
-for its whole lifetime and nothing in the protocol notices. Every later refinement of
-token security is downstream of getting this one right.*
+*This is stated as strongly as it is because a token bound only to a server address and
+an expiry is transferable for its whole lifetime, and nothing in the protocol would
+notice. Every later refinement of token security is downstream of getting this one
+right.*
 
 [RN-1 t6 Connect token](TRANSPORT.md#t6)
 **So this standard specifies no client address field in the connect token**, and a
@@ -460,6 +458,13 @@ faster than the client's retransmit rate would ensure every request the client s
 carries an unusable cookie, so it never passes the gate — a permanent connect denial
 against a named player for a few bytes every hundred milliseconds. With the salt
 checked, an off-path attacker must guess an eight-byte random value it has never seen.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+**Every packet limit derives from a 1500-byte MTU.** The maximum packet size, 1452
+bytes, is what an IPv6 header (40 bytes) and a UDP header (8 bytes) leave of a
+1500-byte frame, so a packet at the limit crosses an Ethernet path unfragmented over
+either family. Both ends hold the same limit, which is why a change to it is a change
+to the wire.
 
 <a id="t9"></a>
 ## t9. Packet protection
@@ -949,7 +954,7 @@ again until it expires**: from the address it is bound to; from a second address
 held a mapping for it before the first response bound it; or from any address once the
 history has dropped its entry. That is the accepted residual risk of this design, and
 the token's expiry bounds it: a deployment should mint tokens that expire 30 seconds
-after they are created, as a netcode.io token does by default; the server places no
+after they are created; the server places no
 limit of its own on a token's lifetime, and refuses only a token created more than the
 creation skew in its future. The expire timestamp is signed and sits at a fixed offset
 in the clear, so an expired token is the cheapest refusal on the request path, before
@@ -996,7 +1001,7 @@ needs an identifier only at the moment the path changes, not on every packet. It
 added later as a new packet type: sealed under the existing session keys, carrying an
 identifier so the server need not trial-decrypt against every connected client, and
 followed by the same cookie round trip to the new address that the connection made at
-connect time — which is the anti-redirection protection QUIC's path validation provides.
+connect time, so a connection cannot be redirected to an address that never answered.
 Cost on ordinary packets: nothing. Cost when it fires: one round trip, rarely. **Packet
 types 9 through 255 are reserved and must be ignored by a conforming receiver**, so a
 later implementation adding migration degrades gracefully against an earlier one: the
@@ -1029,7 +1034,7 @@ test below. The flag keeps its own job, which is telling the server whether it h
 from a slot at all.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
-**A client processes payloads only once connected, as netcode.io's client does.** The
+**A client processes payloads only once connected.** The
 session keys derive at the challenge, so a client in _sending connection response_ could
 open a payload, and an earlier revision delivered it. That let the application read a
 message and reply before the client held its index and could send: on the XDP server the
@@ -1241,14 +1246,20 @@ its keys and its sequence and replay state, the mapping being their only home. A
 released slot is immediately available for reuse. An implementation must zero the key
 material rather than merely marking the slot free.
 
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**A client is confirmed by the confirmed flag and ack-carried elicitation, not by a
+keep-alive put in front of every payload.** Session keys exist from the challenge, so a
+payload needs no prefix to open; confirmation that rides on payloads would strand a
+client that has nothing else to send.
+
 <a id="t14"></a>
 ## t14. Replay protection
 
 [RN-1 t14 Replay protection](TRANSPORT.md#t14)
 **A server and a client must each count the sealed packets that fail to open on a
 connection, across all of that connection's keys, and must disconnect it on reaching
-2^36 failures.** ChaCha20-Poly1305's integrity limit is 2^36 invalid packets; both QUIC
-and DTLS 1.3 make counting them mandatory and name the same number, because a datagram
+2^36 failures.** ChaCha20-Poly1305's integrity limit is 2^36 invalid packets (RFC 9001
+section 6.6, RFC 9147 section 4.5.3). Counting them is mandatory because a datagram
 protocol silently discards what it cannot authenticate and therefore grants an attacker
 unlimited forgery attempts where a stream protocol would have torn down the connection
 on the first one.
@@ -1385,8 +1396,8 @@ that. A cookie lifetime shorter than two send intervals makes that race likely a
 wastes a round trip; a few seconds against a 10 Hz send rate leaves ample margin.
 
 [RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
-**The client's attempt deadline is the token's lifetime from the attempt start, as in
-netcode 1.02.** The deadline is the difference between the token's expire and create
+**The client's attempt deadline is the token's lifetime from the attempt start.**
+The deadline is the difference between the token's expire and create
 timestamps, so an attempt begun after the create timestamp runs past the expire
 timestamp; the server's own expiry refusal at the connection request ([RN-1 t12 Handshake: server](TRANSPORT.md#t12), rule 5) still bounds when a token is admitted.
 
@@ -1631,8 +1642,8 @@ attack it opens.
 
 [RN-1 t19 Security considerations](TRANSPORT.md#t19)
 **No stateless reset, for a structural reason rather than an oversight.** A crash at the
-other side of the connection is discovered here by timeout, where QUIC discovers it
-immediately via a stateless reset token. That mechanism requires a static key shared
+other side of the connection is discovered here by timeout. Discovering it at once
+needs a stateless reset token, and that mechanism requires a static key shared
 across a server fleet — which is exactly the fleet-wide shared secret this design exists
 to eliminate. Omitting it follows from the central commitment. Graceful close is already
 covered by the sealed, redundantly sent _connection disconnect_; only the crash case
@@ -1726,35 +1737,6 @@ server-side implementation also verifies its signature against the test backend 
 key, opens its sealed block with the test server keypair, and recovers the private
 fields listed in the fixed inputs. The token identifier printed above is the 16-byte
 unkeyed `crypto_generichash` of its first 576 bytes and is deterministic.
-
-<a id="tb"></a>
-## tb. Appendix B: changes from netcode 1.02
-
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
-The departures from netcode 1.02 are deliberate and each removes a defect rather than
-adding a feature. Netcode binds a token to a server address and an expiry and stops
-there; this standard binds a token to one live connection per player, which turns
-sharing from a way to multiply access into a way to lose it. The connect token carries
-no client address, so it survives NAT and a server-side address change, and a token
-handed to another party transfers the seat rather than multiplying it.
-
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
-Netcode's sizes derive from a 1280-byte MTU; this standard derives every packet limit
-from a 1500-byte MTU and sets the maximum packet size to 1452 bytes, which is not backward
-compatible and is why both ends update together. The 32-bit wire sequence is
-reconstructed to a 64-bit packet sequence. The replay window retains between 4096
-and 32768 sequences; RN-2's 24-bit reliable message numbers belong to a different
-layer. Keep-alive prefixing for unconfirmed clients was removed in favour of the confirmed flag and the
-ack-carried elicitation described in the session section, because the prefixing could
-strand a client that had nothing else to send.
-
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
-The standard also declines connection migration, 0-RTT, session resumption and stateless
-reset, each for a reason stated in its own section: migration needs an
-address-independent identifier this version does not carry, and the other three add
-replay or state surfaces this design does not need. A connect token is a JWT for game
-servers in role, not in format; the format here has no algorithm field and no extension
-point, which removes the places JWT deployments have historically gone wrong.
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
