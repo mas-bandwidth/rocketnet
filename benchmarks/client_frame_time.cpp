@@ -431,6 +431,22 @@ static int cft_server( int argc, char ** argv )
     config.transport = transport;
     config.per_client_send_kbps = 100000;
 
+    // where the platform refuses a specific bind beside an existing wildcard
+    // bind of the same port, --relay-first 1 binds the relay's side first
+
+    const bool relay_first = strcmp( cft_arg( argc, argv, "--relay-first", "0" ), "1" ) == 0;
+    const char * colon = strrchr( bind_address, ':' );
+    const uint16_t bind_port = (uint16_t) atoi( colon ? colon + 1 : "0" );
+    cft_socket_t relay_client_side = CFT_BAD_SOCKET;
+    if ( relay_forward && relay_first )
+    {
+        relay_client_side = cft_udp_bind( "127.0.0.1", bind_port, true );
+        if ( relay_client_side == CFT_BAD_SOCKET )
+        {
+            cft_fail( "relay bind 127.0.0.1 before the server" );
+        }
+    }
+
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, bind_address, NULL, &config, &status );
     if ( server && status == ROCKETNET_STATUS_OK )
@@ -454,11 +470,15 @@ static int cft_server( int argc, char ** argv )
     {
         relay = new cft_relay_t;
         const uint16_t port = rocketnet_server_port( server );
-        relay->client_side = cft_udp_bind( "127.0.0.1", port, true );
+        relay->client_side = relay_first ? relay_client_side : cft_udp_bind( "127.0.0.1", port, true );
         relay->server_side = cft_udp_bind( relay_forward, 0, false );
-        if ( relay->client_side == CFT_BAD_SOCKET || relay->server_side == CFT_BAD_SOCKET )
+        if ( relay->client_side == CFT_BAD_SOCKET )
         {
-            cft_fail( "relay bind" );
+            cft_fail( "relay bind 127.0.0.1 beside the server's wildcard bind (try --relay-first 1)" );
+        }
+        if ( relay->server_side == CFT_BAD_SOCKET )
+        {
+            cft_fail( "relay bind of the forward address" );
         }
         memset( &relay->server_address, 0, sizeof( relay->server_address ) );
         relay->server_address.sin_family = AF_INET;
