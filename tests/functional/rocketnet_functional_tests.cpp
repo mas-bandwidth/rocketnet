@@ -9721,16 +9721,37 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
     const int count = 8;
     int server_received = 0, client_received = 0, sent_to_server = 0, sent_to_client = 0;
 
+    // the link can drop one (tests/kernel_drops.h): what either side is still
+    // short of at the deadline is sent again, by the same transports, only when
+    // the kernel counted that many receive drops; a count above `count` fails
+    // at once
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "max size packet crosses" );
+    int quota_to_server = count;
+    int quota_to_client = count;
+    double wait = 5.0;
+
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
-        if ( sent_to_server < count )
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "max size packet crosses: server received %d of %d, client received %d of %d\n", server_received, count, client_received, count );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, ( count - server_received ) + ( count - client_received ) ) );
+            quota_to_server += count - server_received;
+            quota_to_client += count - client_received;
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        if ( sent_to_server < quota_to_server )
         {
             rocketnet_client_transport_send_packet( client, to_server, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             sent_to_server++;
         }
 
-        if ( sent_to_client < count )
+        if ( sent_to_client < quota_to_client )
         {
             rocketnet_server_transport_send_packet( server, 0, to_client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             sent_to_client++;
@@ -9761,7 +9782,10 @@ static void rocketnet_test_max_size_packet_crosses( const char * host_env, const
             client_received++;
         }
 
-        if ( server_received >= count && client_received >= count )
+        rocketnet_check( server_received <= count );
+        rocketnet_check( client_received <= count );
+
+        if ( server_received == count && client_received == count && sent_to_server == quota_to_server && sent_to_client == quota_to_client )
         {
             break;
         }
