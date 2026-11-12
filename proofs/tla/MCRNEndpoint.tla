@@ -13,10 +13,9 @@
 (*                             sends, ack silence, timeouts at any time,   *)
 (*                             under MCOneTimeout and MCOneWay             *)
 (*   MCRNEndpointTwoWay.cfg    safety with both ends sending, N = 2, under *)
-(*                             MCOneTimeout only (bench: over budget)      *)
+(*                             MCOneTimeout only                           *)
 (*   MCRNEndpointPartial.cfg   the safety case with WriteAll = FALSE, so a *)
 (*                             later ordered message can arrive first      *)
-(*                             (bench: over budget)                        *)
 (*   MCRNEndpointLive.cfg      liveness under LiveSpec, each link losing   *)
 (*                             its first packet                            *)
 (*   MCRNEndpointBrokenConfigUnreliable.cfg  ConfigReliable = FALSE:       *)
@@ -26,10 +25,22 @@
 (*   MCRNEndpointBrokenOrderIgnored.cfg      the Partial case with         *)
 (*                             OrderChecked = FALSE: OrderedInOrder fails  *)
 (*   MCRNEndpointTimeoutOff.cfg  the safety case with the reliable timeout *)
-(*                             off (the default): NoEndBeforeT holds       *)
+(*                             off (the default) and Clocked, T = 3: every *)
+(*                             safety invariant, NoEndBeforeSilenceT and   *)
+(*                             SilenceEndsAtT hold                         *)
 (*   MCRNEndpointBrokenConfigWaitOnTimeout.cfg  the same with the CONFIG   *)
-(*                             wait keeping its clock: NoEndBeforeT fails  *)
-(* Every other case runs TimeoutConfigured = TRUE.                         *)
+(*                             wait on a zero timeout (before v1.1.0):     *)
+(*                             NoEndBeforeSilenceT fails                   *)
+(*   MCRNEndpointBrokenSilenceEarly.cfg  the same with the silence end at  *)
+(*                             T - 1: NoEndBeforeSilenceT fails            *)
+(*   MCRNEndpointBrokenOptedInInsideT.cfg  the timeout configured,         *)
+(*                             reliable timeout 2 < T = 3: the reliable    *)
+(*                             clock ends a connection inside T            *)
+(*                             (EndsNeedSilenceT fails; opted in carries   *)
+(*                             no tolerance guarantee)                     *)
+(* Every other case runs TimeoutConfigured = TRUE.  The four passing      *)
+(* safety cases run under MCSafetyView (below).  Only the clocked cases   *)
+(* set Clocked = TRUE.                                                     *)
 (* README-RNEndpoint.md has the traces and the action-to-section map.      *)
 (***************************************************************************)
 EXTENDS RNEndpoint
@@ -58,5 +69,21 @@ MCOneTimeout == Cardinality({e \in E : err[e] = "RELIABLE_TIMEOUT"}) <= 1
 \* records an end sent with the records it received passes under MCOneWay,
 \* so MCRNEndpointTwoWay.cfg checks both ends sending, at N = 2.
 MCOneWay == nextMsg["b"] = 1
+
+\* The safety cases' view: every variable but the links' send counters
+\* (abSent, baSent) and delivery pulses (abPulse, baPulse).  Exact for
+\* invariant checking when both links run "arbitrary" loss: Link reads sent
+\* only in NextCount (to compute sent') and LostAtSend(NextCount), which is
+\* FALSE under "arbitrary" whatever the count; pulse is read only by Deliver
+\* to compute pulse', and exists for fairness (a Deliver step is never a
+\* Drop step), which Spec does not have.  No RNEndpoint action and no
+\* invariant reads either, so two states equal in the view have the same
+\* enabled steps, the same successors in the view, and the same verdict on
+\* every invariant: the quotient is a bisimulation.  Under any other
+\* pattern the counter decides losses, so the view is then every variable.
+MCSafetyView ==
+    IF ABPattern = "arbitrary" /\ BAPattern = "arbitrary"
+      THEN <<epVars, clockVars, abWire, baWire>>
+      ELSE vars
 
 =============================================================================

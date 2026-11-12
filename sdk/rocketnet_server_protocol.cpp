@@ -1879,7 +1879,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
         if ( control->timeout_seconds > 0 && current_time >= control->last_receive_time + control->timeout_seconds )
         {
-            // an established mapping always holds its slot: established is
+            // proofs/tla/RNEndpoint.tla Elapse, the silence end. An established mapping always holds its slot: established is
             // set only beside client_index, and a reset removes the mapping
             const int client_index = control->client_index;
             rocketnet_assert( client_index != -1 );
