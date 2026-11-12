@@ -729,7 +729,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
     // one update; every valid payload that arrived is checked and counted
 
-    auto pump = [&]() {
+    auto pump = [&]()
+    {
         posix_pair_update( &pair );
 
         if ( at_server )
@@ -761,7 +762,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         }
     };
 
-    auto send_valid = [&]( int index ) {
+    auto send_valid = [&]( int index )
+    {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
                                     : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
@@ -780,7 +782,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         }
     };
 
-    auto send_kept = [&]( int i ) {
+    auto send_kept = [&]( int i )
+    {
         // the oversize datagram is above the loopback MTU with dont-fragment
         // set; lifted for that send only
         if ( chunk_bytes[i] > 1500 )
@@ -796,7 +799,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
     // send a datagram and keep it in the chunk (counted into expect)
 
-    auto send_and_keep = [&]( const uint8_t * data, int bytes, bool counted ) {
+    auto send_and_keep = [&]( const uint8_t * data, int bytes, bool counted )
+    {
         posix_check( chunk_count < POSIX_WEATHER_CHUNK );
         const int i = chunk_count++;
         memcpy( chunk_data[i], data, (size_t) bytes );
@@ -814,7 +818,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         expect.transport_size += chunk_class[i].transport_size;
     };
 
-    auto print_short = [&]( const char * what, int updates, const struct posix_expect_t * now ) {
+    auto print_short = [&]( const char * what, int updates, const struct posix_expect_t * now )
+    {
         printf( "round %d %s after %d updates: too_short %llu/%llu too_large %llu/%llu wrong_epoch %llu/%llu wrong_value %llu/%llu transport_size %llu/%llu valid %d/%d\n",
                 round, what, updates, (unsigned long long) now->too_short, (unsigned long long) expect.too_short,
                 (unsigned long long) now->too_large, (unsigned long long) expect.too_large, (unsigned long long) now->wrong_epoch,
@@ -825,7 +830,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     // wait until the counters reach expect (and, with all_valid, every valid
     // payload has arrived); resend what is missing, bounded; then forget the chunk
 
-    auto settle = [&]( bool all_valid ) {
+    auto settle = [&]( bool all_valid )
+    {
         for ( int attempt = 0;; attempt++ )
         {
             const double deadline = rocketnet_platform_time() + POSIX_WEATHER_CHUNK_WAIT;
@@ -3723,7 +3729,8 @@ static void posix_xdp_weather( int ipv6 )
     // one update; every valid payload that arrived is checked and counted, and
     // the other port's socket is read once its datagram is in flight
 
-    auto pump = [&]() {
+    auto pump = [&]()
+    {
         posix_xdp_update( server, client );
 
         const int num_payloads = rocketnet_server_transport_num_payloads( server );
@@ -3748,7 +3755,8 @@ static void posix_xdp_weather( int ipv6 )
         }
     };
 
-    auto send_valid = [&]( int index ) {
+    auto send_valid = [&]( int index )
+    {
         struct rocketnet_packet_context_t context;
         uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
         posix_check( frame != NULL );
@@ -3757,7 +3765,8 @@ static void posix_xdp_weather( int ipv6 )
         rocketnet_client_transport_send_packets( client );
     };
 
-    auto send_kept = [&]( int i ) {
+    auto send_kept = [&]( int i )
+    {
         // a datagram above the veth MTU leaves with dont-fragment lifted, for
         // that send only
         if ( chunk_fragmented[i] )
@@ -3775,7 +3784,8 @@ static void posix_xdp_weather( int ipv6 )
     // filter's counters goes into expect
 
     auto send_and_keep = [&]( const uint8_t * data, int bytes, const struct sockaddr_storage * where, bool fragmented,
-                              const struct posix_xdp_expect_t * adds ) {
+                              const struct posix_xdp_expect_t * adds )
+    {
         posix_check( chunk_count < POSIX_WEATHER_CHUNK );
         const int i = chunk_count++;
         memcpy( chunk_data[i], data, (size_t) bytes );
@@ -3792,7 +3802,8 @@ static void posix_xdp_weather( int ipv6 )
     // what is missing when the far veth counted its loss, bounded; then forget
     // the chunk
 
-    auto settle = [&]( bool all_valid ) {
+    auto settle = [&]( bool all_valid )
+    {
         for ( int attempt = 0;; attempt++ )
         {
             const double deadline = rocketnet_platform_time() + POSIX_WEATHER_CHUNK_WAIT;
