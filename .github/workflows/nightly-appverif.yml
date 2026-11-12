@@ -1,0 +1,198 @@
+# THE NIGHTLY APPLICATION VERIFIER RUN.
+#
+# tools/windows/appverif_run.py runs one executable under the Application
+# Verifier Basics layers (Handles, Heaps, Locks, Memory, TLS, Threadpool,
+# Leak) with every stop active and logged with its stack trace, on a private
+# copy of the executable (<stem>_appverif_<pid>.exe) whose settings it takes
+# back on every exit path, so nothing stays enabled machine wide. Until
+# 2026-11-12 no workflow ran it, and it configured every stop with
+# ErrorReport=0x2, which disables the stop: every "0 verifier stops" it printed
+# was the only count it could print (VERIFY-1B A9, AV-1 to AV-3). This job runs
+# it every night, and it can fail:
+#
+#   1. the runner's account can write Image File Execution Options (appverif
+#      writes there); APPVERIF-REFUSED otherwise;
+#   2. the IFEO key is exported before anything runs;
+#   3. a DEV=OFF Debug build (docs/BUILD-REFERENCE.md: the development build's
+#      full-capacity cases commit tens of GB each, which page heap makes larger
+#      still), with the three self-check programs;
+#   4. --self-check: a planted double CloseHandle must yield a Handles stop, a
+#      planted heap overrun a Heaps stop, and a clean control none, under the
+#      settings every later step uses; it writes a stamp the later steps must
+#      present, so no step reports PASS from a tool that has not shown it sees
+#      a stop in this build;
+#   5. test_iocp.exe, the unit suite test.exe, and the functional suite in eight
+#      shards (one run per shard, so one red case stops only its shard), with
+#      the Debug per-case peak-RSS bound ROCKETNET_TEST_MAX_CASE_RSS_MB=2048 as
+#      nightly.yml's windows / Debug, under the verifier; a stop, a stop the log
+#      does not hold, an unreadable log, or a test failure is red;
+#   6. the IFEO key is exported again and must be identical to step 2.
+#
+# Sizing (captain, 160 GB commit limit, beside normal CI): ROCKETNET_TEST_JOBS=4
+# cases at once, each held under 2048 MB peak RSS by the bound, so the run's
+# cases hold at most about 8 GB beside the runner's other jobs. Measured with
+# the verifier's layers on (2026-11-12, captain, JOBS=16): the unit suite
+# 130 s over 645 processes, functional shards 11-110 s each; at four jobs the
+# whole run is well under an hour.
+#
+# The runner service runs as NT AUTHORITY\NETWORK SERVICE, which holds only
+# ReadKey on HKLM\...\Image File Execution Options; until the fleet play gives
+# this job an account that may write there, step 1 is red with APPVERIF-REFUSED
+# and says so. Every step after it is then skipped, never passed.
+
+name: nightly-appverif
+
+on:
+  schedule:
+    - cron: "40 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+jobs:
+  appverif-windows:
+    name: windows / Application Verifier
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    # keyed by the event as well as the ref: a dispatch never cancels or
+    # displaces the scheduled night, and the night never cancels a dispatch
+    concurrency:
+      group: nightly-appverif-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash --noprofile --norc -euo pipefail {0}
+    env:
+      ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
+      ROCKETNET_TEST_JOBS: 4
+      BUILD_DIR: build-appverif
+      BIN: build-appverif/bin/Debug
+      STAMP: logs/appverif-selfcheck-stamp.json
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Application Verifier can be enabled by this runner's account
+        run: |
+          av=/c/Windows/System32/appverif.exe
+          if [ ! -x "$av" ]; then echo "APPVERIF-MISSING $av on $RUNNER_NAME: install Application Verifier for x64"; exit 1; fi
+          probe="rocketnet_appverif_probe_appverif_$$.exe"
+          if out=$("$av" -enable Heaps -for "$probe" 2>&1); then rc=0; else rc=$?; fi
+          # take the probe's settings back whatever the enable did; a failure
+          # here is printed, and a refused enable is the verdict below
+          if ! "$av" -disable '*' -for "$probe" > /dev/null 2>&1; then echo "appverif -disable for $probe did not succeed"; fi
+          if ! "$av" -delete settings -for "$probe" > /dev/null 2>&1; then echo "appverif -delete settings for $probe did not succeed"; fi
+          # appverif leaves the probe's own key behind, empty (appverif_run.py
+          # remove_image_key); it goes with the probe, so the night adds no key
+          if [ "$rc" = 0 ]; then
+            MSYS_NO_PATHCONV=1 reg.exe delete "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\$probe" /f > /dev/null
+          fi
+          if [ "$rc" != 0 ]; then
+            echo "APPVERIF-REFUSED on $RUNNER_NAME as $(whoami): appverif -enable exit $rc: $(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ')"
+            echo "Application Verifier writes HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options; this runner's account may not."
+            exit 1
+          fi
+          echo "APPVERIF-OK on $RUNNER_NAME as $(whoami)"
+
+      - name: Image File Execution Options before the run
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          reg.exe export "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options" logs\ifeo-before.reg /y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Output ("IFEO before: {0} lines" -f (Get-Content logs\ifeo-before.reg).Count)
+
+      - name: Configure (DEV=OFF Debug)
+        run: cmake -B "$BUILD_DIR" -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin"
+
+      - name: Build Debug
+        id: build
+        run: cmake --build "$BUILD_DIR" --config Debug --parallel 4
+
+      - name: Self-check, a planted handle fault and heap fault must each be logged
+        id: selfcheck
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          python tools/windows/appverif_run.py --self-check --plants "$BIN" --write-stamp "$STAMP" --xml logs/appverif.xml 2>&1 | tr -d '\r' | tee selfcheck.log
+          grep -q '^appverif_run: self-check PASS' selfcheck.log
+
+      - name: IOCP and RIO transport suite under Application Verifier
+        if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
+        run: |
+          python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml logs/appverif-iocp.xml -- "$BIN/test_iocp.exe" 2>&1 | tr -d '\r' | tee iocp.log
+          grep -q '^appverif_run: PASS' iocp.log
+
+      - name: Unit suite under Application Verifier
+        if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
+        run: |
+          python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml logs/appverif-unit.xml -- "$BIN/test.exe" 2>&1 | tr -d '\r' | tee unit.log
+          grep -q '^appverif_run: PASS' unit.log
+
+      - name: Functional suite under Application Verifier, eight shards
+        if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
+        run: |
+          failed=0
+          ran=0
+          for shard in 0 1 2 3 4 5 6 7; do
+            log="functional-$shard.log"
+            if python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml "logs/appverif-functional-$shard.xml" -- "$BIN/functional.exe" --shard "$shard/8" 2>&1 | tr -d '\r' > "$log"; then rc=0; else rc=$?; fi
+            ran=$((ran + 1))
+            if [ "$rc" = 0 ] && grep -q '^appverif_run: PASS' "$log"; then
+              echo "PASS shard $shard/8 ($(grep -o 'appverif_run: PASS.*' "$log"))"
+            else
+              echo "FAIL shard $shard/8 (exit $rc)"
+              grep -E 'appverif_run: (STOP|FAIL|LOG)|check failed|FAIL' "$log" | sed 's/^/    /' || echo "    (no STOP, FAIL or check line)"
+              tail -n 5 "$log" | sed 's/^/    /'
+              failed=1
+            fi
+          done
+          echo "appverif functional: $ran shard runs"
+          [ "$ran" = 8 ] || { echo "FAIL expected 8 shard runs, ran $ran"; exit 1; }
+          exit "$failed"
+
+      - name: Image File Execution Options after the run are unchanged
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          if (-not (Test-Path logs\ifeo-before.reg)) { Write-Output "no IFEO export from before the run"; exit 1 }
+          reg.exe export "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options" logs\ifeo-after.reg /y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $diff = Compare-Object (Get-Content logs\ifeo-before.reg) (Get-Content logs\ifeo-after.reg)
+          if ($diff) {
+            Write-Output "FAIL Image File Execution Options changed during the run (<= before only, => after only):"
+            $diff | ForEach-Object { Write-Output ("    {0} {1}" -f $_.SideIndicator, $_.InputObject) }
+            exit 1
+          }
+          Write-Output ("IFEO unchanged: {0} lines before and after" -f (Get-Content logs\ifeo-after.reg).Count)
+
+      # GitHub expressions have no replace(): the artifact name's ref slug is made here
+      - name: Artifact name for the ref
+        id: slug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          s="$REF"; s=${s//\//-}
+          echo "slug=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-appverif-logs-${{ steps.slug.outputs.slug }}
+          path: |
+            *.log
+            logs/
+          if-no-files-found: ignore

@@ -224,7 +224,20 @@ static int64_t windows_heap_bytes( windows_resource_counts_t * counts )
         summary.cb = sizeof( summary );
         if ( !HeapSummary( heaps[i], 0, &summary ) )
         {
-            return -1;
+            // Under Application Verifier's page heap, HeapSummary fails for the
+            // heaps the page heap wraps (2026-11-12, captain, DEV=OFF Debug:
+            // server_restart_1000 read library_heap_bytes -1 before and after
+            // with every other count flat). There the heap is recorded as
+            // unreadable and the library's bytes are judged by the allocator
+            // callbacks alone (windows_heap_bytes_diagnostic); anywhere else an
+            // unreadable heap fails the case as before.
+            if ( !counts->verifier )
+            {
+                return -1;
+            }
+            counts->heap_handles[i] = heaps[i];
+            counts->heap_used_bytes[i] = -1;
+            continue;
         }
         counts->heap_handles[i] = heaps[i];
         counts->heap_used_bytes[i] = (int64_t) summary.cbAllocated;
@@ -333,11 +346,26 @@ static bool windows_private_bytes_diagnostic( const windows_resource_counts_t * 
     return counts->asan || counts->verifier;
 }
 
+// Whether the case heap's bytes cannot be read: under the verifier's page
+// heap HeapSummary fails for the case heap (windows_heap_bytes), so its bytes
+// are -1 before and after. The allocator callbacks' count of the library's
+// live bytes (library_allocated_bytes) is still judged with the same
+// allowance, so a retained library allocation still fails the case.
+static bool windows_heap_bytes_diagnostic( const windows_resource_counts_t * before, const windows_resource_counts_t * after )
+{
+    return before->verifier && after->verifier && before->heap_bytes < 0 && after->heap_bytes < 0;
+}
+
 static bool windows_counts_flat( const windows_resource_counts_t * before, const windows_resource_counts_t * after, double seconds )
 {
+    const bool heap_diagnostic = windows_heap_bytes_diagnostic( before, after );
     if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 ||
-         before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
-         after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
+         before->handles < 0 || before->threads < 0 || before->private_bytes < 0 ||
+         after->handles < 0 || after->threads < 0 || after->private_bytes < 0 )
+    {
+        return false;
+    }
+    if ( !heap_diagnostic && ( before->heap_bytes < 0 || after->heap_bytes < 0 ) )
     {
         return false;
     }
@@ -353,8 +381,8 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     const int64_t allowance = windows_memory_allowance_bytes( seconds );
     const bool memory_flat = windows_private_bytes_diagnostic( before ) ||
                              after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
-    return after->heap_bytes <= before->heap_bytes + allowance &&
-           after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat;
+    const bool heap_flat = heap_diagnostic || after->heap_bytes <= before->heap_bytes + allowance;
+    return heap_flat && after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat;
 }
 
 // A transport's threads are joined inside destroy, and a joined thread leaves
@@ -660,10 +688,11 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
 {
     const bool flat = windows_counts_flat( before, after, seconds );
 
-    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld)",
+    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld%s)",
             case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) before->threads,
             (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
-            (long long) windows_memory_allowance_bytes( seconds ) );
+            (long long) windows_memory_allowance_bytes( seconds ),
+            windows_heap_bytes_diagnostic( before, after ) ? "; unreadable under the Application Verifier page heap, not judged" : "" );
     printf( ", library_allocated_bytes %lld -> %lld (allowed +%lld)",
             (long long) before->library_allocated_bytes, (long long) after->library_allocated_bytes,
             (long long) windows_memory_allowance_bytes( seconds ) );

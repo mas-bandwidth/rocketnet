@@ -372,13 +372,36 @@ commands are where to look when one does. With clang-cl
 (`cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=MinSizeRel -DROCKETNET_SANITIZE_ADDRESS=ON`)
 the build links clang's own dynamic runtime and copies its DLL beside the executables in `bin\`.
 
-`py -3 tools\windows\appverif_run.py -- bin\Debug\test_iocp.exe` runs one
+Correction, 2026-11-12: until this date `appverif_run.py` configured every stop
+with `ErrorReport=0x2`, which Application Verifier reads as "stop disabled" (bit
+0x1 clear), so no stop was ever raised or logged and every "0 verifier stops" it
+printed, in any run before this date, is void. No workflow ran it either. It now
+sets `ErrorReport=0x181`, refuses to report a pass before a self-check has shown
+it logs a planted stop, and runs nightly (`.github/workflows/nightly-appverif.yml`).
+
+`py -3 tools\windows\appverif_run.py --self-check -- bin\Debug\test_iocp.exe` runs one
 executable under the Application Verifier Basics layers (Handles, Heaps, Locks,
-Memory, TLS, Threadpool and Leak) with every stop logged and no debugger
-attached (a stop ends the run once it is logged), exports the verifier log of
+Memory, TLS, Threadpool and Leak) with every stop active and logged with its
+stack trace and no debugger attached (`ErrorReport=0x181`: a continuable stop is
+logged and the program goes on; a non-continuable one is logged and ends the
+process with `STATUS_VERIFIER_STOP`), exports the verifier log of
 every process it starts with that image name (the suite runners start one child
 per case), and exits non-zero naming each stop's layer, stop code and top frames; it disables
-verification for the executable again on every exit path. Verifier settings and logs are keyed by
+verification for the executable again on every exit path. A stop fails the run
+three independent ways: a stop parsed from a log (exit 1); an exit status of
+`STATUS_VERIFIER_STOP` (0xC0000421) with no stop in any log, "verifier stop not
+logged" (exit 3); and an exported log that is empty, does not parse or holds no
+session, "verifier log unreadable" (exit 3), since a log that cannot be read is
+not zero stops. `--self-check` first runs the three programs of
+`tools\windows\appverif_selfcheck\` (built beside the tests on Windows) under the
+same settings: a double `CloseHandle` must yield a Handles stop, one byte written
+past a 17-byte `HeapAlloc` block a Heaps stop, and a clean control none; anything
+else ends the invocation with exit 3 before the executable runs. Without
+`--self-check` the run reports its stops but never PASS (exit 3), unless
+`--self-check-passed-at <stamp>` names the stamp a passing
+`--self-check --write-stamp <stamp>` wrote for the same tool, the same
+`appverif.exe` and the same build (the self-check programs beside the executable,
+unchanged). Verifier settings and logs are keyed by
 image name across the whole machine, so it runs a copy of the executable beside it under a name of
 its own (`test_iocp_appverif_<pid>.exe`), which keeps another `test_iocp.exe` on the host (a CI
 leg, another build) out of the run's logs, and removes the copy afterwards. It needs Application Verifier for x64 from
@@ -391,9 +414,10 @@ appverif's own `-disable` and `-delete settings` leave behind empty, and a key i
 
 The functional binary is verified in shards, one run per shard:
 
-    py -3 tools\windows\appverif_run.py -- build-prod\bin\Debug\functional.exe --shard 0/8
+    py -3 tools\windows\appverif_run.py --self-check --plants build-prod\bin\Debug --write-stamp stamp.json
+    py -3 tools\windows\appverif_run.py --self-check-passed-at stamp.json -- build-prod\bin\Debug\functional.exe --shard 0/8
     ...
-    py -3 tools\windows\appverif_run.py -- build-prod\bin\Debug\functional.exe --shard 7/8
+    py -3 tools\windows\appverif_run.py --self-check-passed-at stamp.json -- build-prod\bin\Debug\functional.exe --shard 7/8
 
 with `ROCKETNET_TEST_MAX_CASE_RSS_MB=2048` set, as CI's Debug leg does. Shards 0/8 to 7/8 together are the whole
 suite, and a case that fails stops only its own shard, where a single whole-suite run stops at its first failure.
@@ -401,7 +425,9 @@ The Windows lifecycle stress cases are where such a run used to stop: they held 
 flat, and under the verifier its page heap and stack-trace bookkeeping grow private bytes by 3 to 6 MB over
 1000 cycles while the library's bytes, handles and threads stay flat. They read private bytes as a diagnostic
 when `verifier.dll` is loaded, as they do under ASan, and judge the library's own bytes, handles and the SDK
-identity ledger. Run it
+identity ledger. The page heap also answers no `HeapSummary` for the case's own heap, so under the verifier
+its bytes are printed as unreadable and the allocator callbacks' count of the library's live bytes is judged
+alone. Run it
 from a DEV=OFF Debug build (`build-prod`): the development Debug build's full-capacity cases commit tens of GB
 each, which page heap makes larger still.
 

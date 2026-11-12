@@ -1137,6 +1137,14 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         add_executable(windows_no_dialogs tests/windows_no_dialogs.cpp)
         target_include_directories(windows_no_dialogs PRIVATE tests sdk)
         rocketnet_warning_floor(windows_no_dialogs)
+        # tools/windows/appverif_run.py --self-check runs these under the
+        # verifier before it reports any run: a double CloseHandle and a heap
+        # overrun that must each yield a logged stop, and a clean control that
+        # must yield none. They link nothing of the library.
+        foreach(plant appverif_plant_double_close appverif_plant_heap_overrun appverif_plant_clean)
+            add_executable(${plant} tools/windows/appverif_selfcheck/${plant}.c)
+            rocketnet_warning_floor(${plant})
+        endforeach()
         if(NOT ROCKETNET_DEV)
             # The same source has a DEV=0-only main that uses ordinary IOCP and
             # RIO constructors, real loopback datagrams and bounded shutdown.
