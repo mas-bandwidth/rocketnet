@@ -378,3 +378,46 @@ static void test_ack_block_walk_bits_match_ring()
     rocketnet_free( NULL, ep );
 }
 REGISTER_UNIT_TEST( test_ack_block_walk_bits_match_ring );
+
+// test_ack_block_walk_reports_only_message_packets: only a sealed payload frame
+// is recorded with a packet id (has_packet_id 1); keep-alives, standalone acks
+// and the other session packets are recorded without one. An ack block that
+// covers both kinds acknowledges every sequence and surfaces the message
+// packets' ids alone, and one that covers only a session packet surfaces
+// none, so the message layer's silence rule (standard/MESSAGES.md m9.2: "an
+// update that acknowledges a message packet") never sees it.
+
+static void test_ack_block_walk_reports_only_message_packets()
+{
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
+    rocketnet_unit_check( ep );
+    rocketnet_ack_endpoint_reset( ep );
+
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( ep, 1, 100, 7001, 1, 1000.0 ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( ep, 2, 40, 0, 0, 1000.1 ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( ep, 3, 100, 7003, 1, 1000.2 ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
+    rocketnet_unit_check( rocketnet_ack_endpoint_record_sent_classified( ep, 4, 40, 0, 0, 1000.3 ) != ROCKETNET_ACK_SENT_REFUSED_STALE );
+
+    uint64_t acked[8];
+    int acked_count = 0;
+    uint64_t unknown = 0, batch_full = 0;
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof( block ) );
+    block.largest = 3;
+    block.first_range_length = 3;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 1001.0, acked, 8, &acked_count, &unknown, &batch_full ) == 3 );
+    rocketnet_unit_check( acked_count == 2 );
+    rocketnet_unit_check( ( acked[0] == 7001 && acked[1] == 7003 ) || ( acked[0] == 7003 && acked[1] == 7001 ) );
+
+    acked_count = 0;
+    block.largest = 4;
+    block.first_range_length = 1;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 1001.5, acked, 8, &acked_count, &unknown, &batch_full ) == 1 );
+    rocketnet_unit_check( acked_count == 0 );
+    rocketnet_unit_check( unknown == 0 );
+    rocketnet_unit_check( batch_full == 0 );
+
+    rocketnet_free( NULL, ep );
+}
+REGISTER_UNIT_TEST( test_ack_block_walk_reports_only_message_packets );

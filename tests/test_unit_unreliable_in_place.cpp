@@ -1715,6 +1715,200 @@ static void test_unreliable_packed_build_dropped_over_budget_at_seal()
     ip_pair_teardown( &pair );
 }
 
+// a client pair past its CONFIG exchange, uncapped or at `kbps`
+static rn_message_connection_t * ip_settled_client( ip_pair_t * pair, int kbps )
+{
+    ip_pair_setup( pair );
+    ip_step( pair, NULL, NULL );
+    ip_step( pair, NULL, NULL );
+    if ( kbps > 0 )
+    {
+        check( rocketnet_message_client_set_send_kbps( pair->client, kbps ) == 1 );
+    }
+    return rn_message_object_connection( &pair->client->object, 0 );
+}
+
+static void ip_client_finish( ip_pair_t * pair, uint8_t * p, uint32_t id, int bytes )
+{
+    check( p != NULL );
+    ip_fill( p, id, bytes );
+    check( rocketnet_message_client_finish( pair->client, bytes ) != 0 );
+}
+
+// The packed build's size edges (RNOutgoingBuild StartInPlace): the largest
+// message a packed record holds is ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 -
+// header (the form byte is the 1); a record of exactly the space left in the
+// open build joins it; after a finish the build stays open while one more
+// record of a byte would fit (space >= ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1)
+// and is sealed when it would not.
+static void test_unreliable_packed_size_and_space_edges()
+{
+    const int fixed = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+
+    // the largest packed record: a sequenced one on channel 1 (header 3 + 3 + 3 + 1)
+    {
+        ip_pair_t pair;
+        ip_settled_client( &pair, 0 );
+        const int bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 - 10;
+        uint8_t * p = rocketnet_message_client_start( pair.client, 1, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes );
+        check( pair.client->object.in_place == 2 );
+        ip_client_finish( &pair, p, 800, bytes );
+        rocketnet_message_client_send_packets( pair.client );
+        check( pair.net->client.finished.back().bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+        std::vector<ip_received_t> got;
+        ip_step( &pair, &got, NULL );
+        check( ip_got( got, 1, 800, bytes ) );
+        ip_pair_teardown( &pair );
+    }
+
+    // a record of exactly the space left joins the open build
+    {
+        ip_pair_t pair;
+        rn_message_connection_t * connection = ip_settled_client( &pair, 0 );
+        ip_end_t * client = &pair.net->client;
+        uint8_t * first = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
+        ip_client_finish( &pair, first, 801, 100 );
+
+        const size_t handed = client->handed.size();
+        const int space = rocketnet_message_writer_space( &connection->unreliable_build.writer );
+        const int bytes = space - fixed;
+        uint8_t * second = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+        check( pair.client->object.in_place == 2 );
+        check( client->handed.size() == handed );
+        check( second == first + 100 + fixed );
+        ip_client_finish( &pair, second, 802, bytes );
+        rocketnet_message_client_send_packets( pair.client );
+        check( client->finished.back().bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        ip_pair_teardown( &pair );
+    }
+
+    // after a finish: open with fixed + 1 bytes of space left, sealed with fixed
+    for ( int left = fixed + 1; left >= fixed; left-- )
+    {
+        ip_pair_t pair;
+        rn_message_connection_t * connection = ip_settled_client( &pair, 0 );
+        ip_end_t * client = &pair.net->client;
+        uint8_t * first = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
+        ip_client_finish( &pair, first, 803, 100 );
+
+        const size_t finished = client->finished.size();
+        const int bytes = rocketnet_message_writer_space( &connection->unreliable_build.writer ) - fixed - left;
+        uint8_t * second = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+        check( pair.client->object.in_place == 2 );
+        ip_client_finish( &pair, second, 804, bytes );
+        if ( left == fixed + 1 )
+        {
+            check( connection->unreliable_build.writer.payload != NULL );
+            check( rocketnet_message_writer_space( &connection->unreliable_build.writer ) == fixed + 1 );
+            check( client->finished.size() == finished );
+        }
+        else
+        {
+            check( connection->unreliable_build.writer.payload == NULL );
+            check( client->finished.size() == finished + 1 );
+        }
+
+        rocketnet_message_client_send_packets( pair.client );
+        std::vector<ip_received_t> got;
+        ip_step( &pair, &got, NULL );
+        check( ip_got( got, 0, 803, 100 ) && ip_got( got, 0, 804, bytes ) );
+        ip_pair_teardown( &pair );
+    }
+}
+
+// the bucket holds exactly `tokens` at this update's time (the refill a start
+// makes at the same time adds nothing)
+static void ip_set_tokens( ip_pair_t * pair, rn_message_connection_t * connection, double tokens )
+{
+    rocketnet_send_budget_refill( &connection->budget, pair->time );
+    check( tokens <= connection->budget.tokens );
+    connection->budget.tokens = tokens;
+    check( !connection->budget.reliable_waiting );
+}
+
+// The budget edges of the in-place start: each start asks the bucket for its
+// declared maximum, header + bytes + the form byte, at
+// rocketnet_send_budget_max_wire_bytes; a bucket holding exactly that is
+// enough and one byte less is not. A new packed frame (header 3), a record
+// joining an open build (the build's bytes in front of it), and a whole frame
+// (no record header) each at their edge. Sizes are small, where the maximum
+// wire size grows one byte per payload byte.
+static void test_unreliable_in_place_budget_edges()
+{
+    const int fixed = ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+    const int bytes = 100;
+
+    // a new packed frame: exactly affordable packs; one byte short takes the
+    // whole frame instead (its request is fixed bytes smaller)
+    for ( int short_by = 0; short_by < 2; short_by++ )
+    {
+        ip_pair_t pair;
+        rn_message_connection_t * connection = ip_settled_client( &pair, 8 );
+        const int packed = rocketnet_send_budget_max_wire_bytes( fixed + bytes + 1 );
+        check( rocketnet_send_budget_max_wire_bytes( bytes + 1 ) == packed - fixed );
+        ip_set_tokens( &pair, connection, (double) ( packed - short_by ) );
+
+        uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+        check( pair.client->object.in_place == ( short_by == 0 ? 2 : 1 ) );
+        ip_client_finish( &pair, p, 810, bytes );
+        rocketnet_message_client_send_packets( pair.client );
+        ip_pair_teardown( &pair );
+    }
+
+    // a record joining an open build: exactly affordable joins it; one byte
+    // short seals the build first
+    for ( int short_by = 0; short_by < 2; short_by++ )
+    {
+        ip_pair_t pair;
+        rn_message_connection_t * connection = ip_settled_client( &pair, 8 );
+        ip_end_t * client = &pair.net->client;
+        uint8_t * first = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
+        check( pair.client->object.in_place == 2 );
+        ip_client_finish( &pair, first, 811, 50 );
+
+        const int open = connection->unreliable_build.writer.bytes;
+        check( open == 50 + fixed );
+        const int joined = rocketnet_send_budget_max_wire_bytes( open + fixed + bytes + 1 );
+        ip_set_tokens( &pair, connection, (double) ( joined - short_by ) );
+
+        const size_t finished = client->finished.size();
+        uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+        check( p != NULL );
+        if ( short_by == 0 )
+        {
+            check( client->finished.size() == finished );
+            check( p == first + 50 + fixed );
+        }
+        else
+        {
+            check( client->finished.size() == finished + 1 );
+            check( !ip_inside( p, bytes, client->finished.back() ) );
+        }
+        ip_client_finish( &pair, p, 812, bytes );
+        rocketnet_message_client_send_packets( pair.client );
+        ip_pair_teardown( &pair );
+    }
+
+    // a whole frame, packed refused: exactly affordable takes the frame; one
+    // byte short queues the message for the write pass
+    for ( int short_by = 0; short_by < 2; short_by++ )
+    {
+        ip_pair_t pair;
+        rn_message_connection_t * connection = ip_settled_client( &pair, 8 );
+        const int whole = rocketnet_send_budget_max_wire_bytes( bytes + 1 );
+        ip_set_tokens( &pair, connection, (double) ( whole - short_by ) );
+
+        uint8_t * p = rocketnet_message_client_start( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+        check( pair.client->object.in_place == ( short_by == 0 ? 1 : 0 ) );
+        ip_client_finish( &pair, p, 813, bytes );
+        rocketnet_message_client_send_packets( pair.client );
+        ip_pair_teardown( &pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_unreliable_packed_size_and_space_edges );
+REGISTER_UNIT_TEST( test_unreliable_in_place_budget_edges );
 REGISTER_UNIT_TEST( test_unreliable_whole_frame_sent_inside_the_budget_window );
 REGISTER_UNIT_TEST( test_unreliable_packed_build_dropped_over_budget_at_seal );
 REGISTER_UNIT_TEST( test_unreliable_packing_abort_and_short_finish );

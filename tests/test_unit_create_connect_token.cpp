@@ -133,6 +133,81 @@ static void test_create_connect_token_decodes_to_its_inputs()
     check( memcmp( reference, token, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
 }
 
+// standard/TRANSPORT.md t6 (writer, 3): fresh session keys for every token.
+// Two tokens minted from one config carry four different session keys, none
+// all zero, each the same in the clear copy and in the sealed block. A token
+// minted with no user data seals all-zero user data: the private fields start
+// cleared. This runs in the production build too, where the seal is the
+// DEV=OFF branch of rocketnet_write_connect_token_sealed. The standard gives
+// the keys the range "any", so no endpoint refuses an all-zero key; the check
+// here is on the writer's draw.
+
+static bool create_token_all_zero( const uint8_t * bytes, size_t count )
+{
+    for ( size_t i = 0; i < count; i++ )
+    {
+        if ( bytes[i] != 0 )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void create_token_open( const create_token_keys_t * keys, const struct rocketnet_connect_token_config_t * config, struct rocketnet_connect_token_t * parsed,
+                               struct rocketnet_connect_token_private_t * private_fields )
+{
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rocketnet_create_connect_token( config, token_string ) == ROCKETNET_STATUS_OK );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_base64_decode_data( token_string, token, sizeof( token ) ) == ROCKETNET_CONNECT_TOKEN_BYTES );
+    rocketnet_read_connect_token( parsed, token );
+    check( rocketnet_open_connect_token_private( private_fields, parsed->signed_connect_data, keys->server_public, keys->server_secret ) == 1 );
+    check( memcmp( private_fields->client_to_server_key, parsed->client_to_server_key, ROCKETNET_KEY_BYTES ) == 0 );
+    check( memcmp( private_fields->server_to_client_key, parsed->server_to_client_key, ROCKETNET_KEY_BYTES ) == 0 );
+}
+
+static void test_create_connect_token_draws_fresh_session_keys()
+{
+    create_token_keys_t keys;
+    create_token_keys( &keys );
+
+    struct rocketnet_connect_token_config_t config;
+    create_token_config( &config, &keys );
+
+    struct rocketnet_connect_token_t parsed[2];
+    struct rocketnet_connect_token_private_t private_fields[2];
+    create_token_open( &keys, &config, &parsed[0], &private_fields[0] );
+    create_token_open( &keys, &config, &parsed[1], &private_fields[1] );
+
+    const uint8_t * session_keys[4] = { parsed[0].client_to_server_key, parsed[0].server_to_client_key, parsed[1].client_to_server_key,
+                                        parsed[1].server_to_client_key };
+    for ( int i = 0; i < 4; i++ )
+    {
+        check( !create_token_all_zero( session_keys[i], ROCKETNET_KEY_BYTES ) );
+        for ( int j = i + 1; j < 4; j++ )
+        {
+            check( memcmp( session_keys[i], session_keys[j], ROCKETNET_KEY_BYTES ) != 0 );
+        }
+    }
+
+    const char * const addresses[] = { config.server_address_ipv4 };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( keys.backend_secret, keys.server_public, CREATE_TOKEN_PROTOCOL, addresses, 1,
+                                                     CREATE_TOKEN_CLIENT_ID, CREATE_TOKEN_TIMESTAMP, CREATE_TOKEN_TIMESTAMP + 30, 10,
+                                                     NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_connect_token_t no_user_data;
+    rocketnet_read_connect_token( &no_user_data, token );
+    struct rocketnet_connect_token_private_t opened;
+    check( rocketnet_open_connect_token_private( &opened, no_user_data.signed_connect_data, keys.server_public, keys.server_secret ) == 1 );
+    check( opened.client_id == CREATE_TOKEN_CLIENT_ID );
+    check( create_token_all_zero( opened.user_data, sizeof( opened.user_data ) ) );
+    check( !create_token_all_zero( opened.client_to_server_key, ROCKETNET_KEY_BYTES ) );
+    check( !create_token_all_zero( opened.server_to_client_key, ROCKETNET_KEY_BYTES ) );
+}
+
 // every refusal returns its status and leaves the output unchanged
 
 static void create_token_refused( const struct rocketnet_connect_token_config_t * config, enum rocketnet_status_t expected )
@@ -265,6 +340,7 @@ static void test_create_connect_token_development_keys()
 
 REGISTER_UNIT_TEST( test_create_connect_token_defaults );
 REGISTER_UNIT_TEST( test_create_connect_token_decodes_to_its_inputs );
+REGISTER_UNIT_TEST( test_create_connect_token_draws_fresh_session_keys );
 REGISTER_UNIT_TEST( test_create_connect_token_refusals );
 REGISTER_UNIT_TEST( test_create_connect_token_development_keys );
 
