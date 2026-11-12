@@ -99,6 +99,11 @@ LAYERS = {
             "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
         },
     },
+    "xdp-reply-macs": {
+        "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 STEPS = 400

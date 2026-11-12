@@ -1236,7 +1236,14 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
                     oldest_answered = candidate;
                 }
             }
+            // the trace check's plant (tests/tla_trace_xdp_reply_macs.cpp):
+            // the eviction takes the live entry learned last, the reversed
+            // witness MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg
+#if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
+            else if ( !oldest || candidate->learned > oldest->learned )
+#else  // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
             else if ( !oldest || candidate->learned < oldest->learned )
+#endif // #if defined( ROCKETNET_TLA_PLANT_XDP_REPLY_MACS )
             {
                 oldest = candidate;
             }
