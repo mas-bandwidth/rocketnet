@@ -466,8 +466,16 @@ static void test_receive_allowance_ack_credit()
     fixture.server.acks = rocketnet_server_acks_create( NULL, 4 );
     check( fixture.server.acks != NULL );
     uint64_t * counters = fixture.counters.values;
-    fixture.allowances[0].bytes = 0.0;
-    fixture.allowances[1].bytes = 0.0;
+
+    // the connections start with their session sequences anywhere (as the
+    // DEV start seam puts them by a 32-bit wrap): the credit counts from there
+    for ( int c = 0; c < ALLOWANCE_FIXTURE_CLIENTS; c++ )
+    {
+        fixture.mappings[c]->send_sequence_session = ( 1ULL << 32 ) - 3;
+        rocketnet_server_receive_allowance_start( &fixture.allowances[c], 1000.0, 1, 1000.0, fixture.mappings[c]->send_sequence_session );
+        fixture.allowances[c].bytes = 0.0;
+        fixture.allowances[c].control = 0.0;
+    }
 
     // nothing sent to client 0: no credit
     allowance_send( &fixture, 0, ROCKETNET_CONNECTION_ACK_PACKET, 0, 1000.0 );
@@ -520,14 +528,16 @@ static void test_receive_allowance_ack_credit()
 
 static void test_receive_allowance_control_tokens()
 {
+    // 100 bytes a second (the lowest setting is 250): a keep-alive a tick
+    // would be 410
     static struct allowance_fixture_t fixture;
-    allowance_fixture_setup( &fixture, 1000.0, 1000.0 );
+    allowance_fixture_setup( &fixture, 100.0, 1000.0 );
     uint64_t * counters = fixture.counters.values;
 
     // a one-second timeout: 2 x 10 x 1 + 2 = 22 tokens, refilled at 20 a second
     for ( int c = 0; c < ALLOWANCE_FIXTURE_CLIENTS; c++ )
     {
-        rocketnet_server_receive_allowance_start( &fixture.allowances[c], 1000.0, 1, 1000.0, fixture.mappings[c]->send_sequence_session );
+        rocketnet_server_receive_allowance_start( &fixture.allowances[c], 100.0, 1, 1000.0, fixture.mappings[c]->send_sequence_session );
         check( fixture.allowances[c].control == 22.0 );
         fixture.allowances[c].bytes = 0.0;
     }
