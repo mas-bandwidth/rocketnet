@@ -3263,6 +3263,11 @@ jobs:
           python3 tools/check_wire_paths.py --self-test
           python3 tools/check_wire_paths.py
 
+      - name: Every LeakSanitizer suppression names a live function
+        run: |
+          python3 tools/check_lsan_supp.py --self-test
+          python3 tools/check_lsan_supp.py
+
       # Every job a push or pull request runs is bounded to two minutes
       # (timeout-minutes: 2, or ${{ inputs.full && N || 2 }} in this file), so
       # a per-commit job that overruns fails instead of slowing the gate.

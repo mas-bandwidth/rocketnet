@@ -75,6 +75,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build
+        id: build
         run: cmake --build build --parallel 8
 
       - name: Run unit tests under LSan
@@ -86,7 +87,10 @@ jobs:
           set -o pipefail
           ./bin/test 2>&1 | tee test.log
 
+      # runs after a red unit step too, so one red does not hide the other
+      # suite's leaks; not after a failed build
       - name: Run functional suite under LSan
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         env:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1
