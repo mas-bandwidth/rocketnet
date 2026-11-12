@@ -7,7 +7,8 @@
     shape: one line per test, its name, in suite order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails. The functional runner keeps 120s in every build; the unit runner
+    fails; `--run <case>` on its own is held to the same limit and names the
+    case ("check failed: <case> exceeded Ns (--run)"). The functional runner keeps 120s in every build; the unit runner
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
     a suite passes in; the nightly macOS TSAN functional runs set 30 (one hour),
@@ -139,6 +140,29 @@ inline bool suite_case_limit( double case_limit_s, double * limit_s )
     *limit_s = unbounded ? std::numeric_limits<double>::infinity() : case_limit_s * scale;
 
     return true;
+}
+
+// The case limit for `<suite> --run <case>` run on its own (a script, the
+// transport matrix, a bench): the same limit a suite run holds the case to,
+// from a thread in the case's own process, which prints the case's name and
+// exits 1 when it passes. Infinite (ROCKETNET_NIGHTLY_NO_TIMEOUT=1) starts no
+// thread. A case the suite runs needs none: its parent kills it at the limit.
+
+inline void suite_run_watchdog_thread( std::string case_name, double limit_s )
+{
+    std::this_thread::sleep_for( std::chrono::duration<double>( limit_s ) );
+    printf( "check failed: %s exceeded %.0fs (--run)\n", case_name.c_str(), limit_s );
+    fflush( stdout );
+    std::_Exit( 1 );
+}
+
+inline void suite_run_watchdog( const char * name, double limit_s )
+{
+    if ( !( limit_s < std::numeric_limits<double>::infinity() ) )
+    {
+        return;
+    }
+    std::thread( suite_run_watchdog_thread, std::string( name ), limit_s ).detach();
 }
 
 struct suite_exec
@@ -1320,7 +1344,7 @@ inline void suite_drain( int fd, std::string & output )
 // its children, so `--run <case>` does not leak a passing case's diagnostics
 // without ROCKETNET_TEST_VERBOSE.
 
-inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
+inline int suite_run_names_only( int ( *worker )( const char * ), const char * name, double limit_s )
 {
     fflush( stdout );
     fflush( stderr );
@@ -1328,6 +1352,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
     {
+        suite_run_watchdog( name, limit_s );
         return worker( name );
     }
 
@@ -1336,6 +1361,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     {
         close( pipefd[0] );
         close( pipefd[1] );
+        suite_run_watchdog( name, limit_s );
         return worker( name );
     }
 
@@ -1351,6 +1377,8 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
+        // in the case's process, so its line reaches the pipe the parent prints
+        suite_run_watchdog( name, limit_s );
         const int rc = worker( name );
         fflush( stdout );
         fflush( stderr );
@@ -1443,10 +1471,17 @@ inline int suite_main( int argc, char ** argv,
             return worker( argv[2] );
         }
 
+        // on its own, the case is held to the limit a suite run holds it to
+        double run_limit_s = case_limit_s;
+        if ( !suite_case_limit( case_limit_s, &run_limit_s ) )
+        {
+            return 1;
+        }
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
         {
-            return suite_run_names_only( worker, argv[2] );
+            return suite_run_names_only( worker, argv[2], run_limit_s );
         }
+        suite_run_watchdog( argv[2], run_limit_s );
         return worker( argv[2] );
     }
 
@@ -1856,6 +1891,14 @@ inline int suite_main( int argc, char ** argv,
                 return suite_usage( argv );
             }
         }
+        // the case is held to the limit a suite run holds it to (a case the
+        // suite spawned is also killed by its parent at that limit)
+        double run_limit_s = case_limit_s;
+        if ( !suite_case_limit( case_limit_s, &run_limit_s ) )
+        {
+            return 1;
+        }
+        suite_run_watchdog( argv[2], run_limit_s );
         return worker( argv[2] );
     }
 
