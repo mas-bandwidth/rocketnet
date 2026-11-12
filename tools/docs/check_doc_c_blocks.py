@@ -52,7 +52,7 @@ FRAGMENTS = {
         "",
 }
 
-COMPILE = ["-std=c11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror",
+COMPILE = ["-std=c11", "-fsyntax-only", "-ffp-contract=off", "-Wall", "-Wextra", "-Werror",
            "-Wno-unused-function", "-Wno-unused-parameter", "-Wno-unused-variable",
            "-Wno-unused-but-set-variable", "-x", "c", "-"]
 
