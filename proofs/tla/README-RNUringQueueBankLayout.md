@@ -29,7 +29,7 @@ functions named below are the design's, and the code will cite this model.
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
 | MCRNUringQueueBankLayout.cfg | pass | pass | 36,237,895 (7,837,115), depth 43, 2 min 28 s |
-| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | - |
+| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated (7 states) | 185 (81) |
 | MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 863 (336) |
 | MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 33 (20) |
 | MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 29 (20) |
