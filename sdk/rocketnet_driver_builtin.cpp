@@ -2253,7 +2253,9 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };
+#if !( defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portable_server_operations, &portable_client_operations };
+#endif // #if !( defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 
 #define ROCKETNET_STAGED_ADAPTER( name, type, prefix ) \
     static uint8_t * name##_start( void * transport, const rocketnet_address_t * to, uint64_t * id ) \
@@ -2267,6 +2269,72 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
     { prefix##_receive_packets( (type*) transport ); return prefix##_process_packets( (type*) transport ); } \
     static int name##_send_room( void * transport ) { return prefix##_send_room( (type*) transport ); } \
     static bool name##_send_idle( void * transport ) { return prefix##_send_idle( (type*) transport ); }
+
+#if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#include "rocketnet_server_msgx.h"
+
+// the macOS batched server, staged: a connected socket per client sent with
+// sendmsg_x from per-queue transmit workers (sdk/rocketnet_server_msgx_darwin.cpp).
+// The replay walk's forget and mark feed its socket table (the high water is
+// not used: the table only needs to know which addresses hold a connected
+// client); its client side is the portable one, which batches with msgx.
+
+static void * msgx_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
+{
+    return rocketnet_server_msgx_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients,
+                                         config->transport->packet_filter, config->status );
+}
+
+static void msgx_destroy( void * transport ) { rocketnet_server_msgx_destroy( (rocketnet_server_msgx_t *) transport ); }
+static void msgx_stop( void * transport ) { rocketnet_server_msgx_stop( (rocketnet_server_msgx_t *) transport ); }
+static bool msgx_stopped( void * transport ) { return rocketnet_server_msgx_stopped( (rocketnet_server_msgx_t *) transport ); }
+
+ROCKETNET_STAGED_ADAPTER( msgx, rocketnet_server_msgx_t, rocketnet_server_msgx )
+
+static bool msgx_replay_forget( void * transport, const rocketnet_address_t * address )
+{
+    return rocketnet_server_msgx_forget( (rocketnet_server_msgx_t *) transport, address );
+}
+
+static bool msgx_replay_mark( void * transport, const rocketnet_address_t * address, uint32_t high_water )
+{
+    (void) high_water;
+    return rocketnet_server_msgx_mark( (rocketnet_server_msgx_t *) transport, address );
+}
+
+static void msgx_replay_commit( void * transport ) { rocketnet_server_msgx_commit( (rocketnet_server_msgx_t *) transport ); }
+
+static uint64_t msgx_send_failures( void * transport ) { return rocketnet_server_msgx_send_failures( (rocketnet_server_msgx_t *) transport ); }
+
+static void msgx_begin_shutdown( void * transport ) { rocketnet_server_msgx_begin_shutdown( (rocketnet_server_msgx_t *) transport ); }
+
+static void msgx_receive_drop_totals( void * transport, uint64_t * values )
+{
+    rocketnet_server_msgx_receive_drop_totals( (rocketnet_server_msgx_t *) transport, values );
+}
+
+static int msgx_send_queues( void * transport ) { return rocketnet_server_msgx_send_queues( (rocketnet_server_msgx_t *) transport ); }
+
+static int msgx_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_msgx_send_queue_of( (rocketnet_server_msgx_t *) transport, to );
+}
+
+static int msgx_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_msgx_send_room_queue( (rocketnet_server_msgx_t *) transport, queue );
+}
+
+static const rocketnet_server_transport_io_operations_t msgx_server_operations = {
+    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
+    msgx_create, msgx_destroy, msgx_stop, msgx_stopped,
+    msgx_start, msgx_finish, msgx_abort, msgx_flush, msgx_receive, NULL, NULL,
+    NULL, msgx_replay_forget, msgx_replay_mark, msgx_replay_commit, NULL, msgx_send_failures, NULL, msgx_send_room, msgx_send_idle,
+    msgx_begin_shutdown, msgx_receive_drop_totals, msgx_send_queues, msgx_send_queue_of, msgx_send_room_queue
+};
+
+extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_server_operations, &portable_client_operations };
+#endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
