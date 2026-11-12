@@ -1208,6 +1208,52 @@ static void test_reservation_counts_the_held_run_past_2_to_the_24()
     node_free( b );
 }
 
+// The reservation is exact, never more (proofs/tla/RNOrderingWrap.tla
+// NeverDeferWithRoom): with exactly the deliveries a packet needs left, it is
+// taken. An in-turn record that releases one held record needs two; a record
+// ahead of its turn needs one, whatever is held behind it.
+
+static void test_reservation_takes_a_packet_that_fits_exactly()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+
+    node_t * a = node_new( &config, 8 );
+    node_t * b = node_new( &config, 8 );
+
+    wire_packet_t packet[3];
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( send_message( a, 0, (uint32_t) ( 24 + i ) ) != 0 );
+        check( write_packets( a, 1.0, &packet[i], 1 ) == 1 );
+    }
+
+    rn_channels_t * channels = &b->ordered.channels;
+
+    // ordering 2 held, then ordering 1 ahead of its turn with one delivery left: held, not deferred
+
+    check( open_packet( b, &packet[2] ) );
+    channels->deliveries = channels->delivery_capacity - 1;
+    check( rn_ordered_receive( &b->ordered, packet[1].data, packet[1].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( channels->deliveries == channels->delivery_capacity - 1 );
+    check( b->region->held_count == 2 );
+    channels->deliveries = 0;
+    rn_ordered_end_update( &b->ordered );
+
+    // ordering 0 in turn releases both held: three deliveries, exactly three left
+
+    channels->deliveries = channels->delivery_capacity - 3;
+    check( rn_ordered_receive( &b->ordered, packet[0].data, packet[0].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( channels->deliveries == channels->delivery_capacity );
+    check( b->region->channel_receive[0].ordered_read == 3 );
+    check( b->region->held_count == 0 );
+    check( !rn_region_exhausted( b->region ) );
+    check( b->violations == 0 );
+
+    node_free( a );
+    node_free( b );
+}
+
 static void test_large_between_small_keeps_order()
 {
     boundary_sizes_leg();
@@ -3648,6 +3694,7 @@ REGISTER_UNIT_TEST( test_large_between_small_keeps_order );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_one_payload_per_write );
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_with_refused_packets );
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
+REGISTER_UNIT_TEST( test_reservation_takes_a_packet_that_fits_exactly );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( test_no_partial_delivery );
 REGISTER_UNIT_TEST( test_hostile_chunk_count_or_index_kicks );
