@@ -4111,6 +4111,14 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran 3 tests' <<<"$output"
 
+      # scripts/lan-proof and lan-proof-remote through fake tools: the dry
+      # run, the row parser, the per-OS host facts, load and build. Opens no
+      # socket and contacts no host; about 2 s (2026-11-12, vision). It ran
+      # nowhere before (VERIFY-3 C-21).
+      - name: Test the LAN proof driver
+        if: ${{ !cancelled() }}
+        run: bash scripts/lan-proof-selftest
+
       - if: always()
         uses: ./.github/actions/ccache-stats
 
