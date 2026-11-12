@@ -458,12 +458,16 @@ static void test_client_ranking_pin_is_honoured()
     ranking_env_put_back( &env );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// Linux only, and registered only there: elsewhere the body would be empty and
+// the case would pass having checked nothing
+
 static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 {
     ranking_env_t env;
     ranking_env_set_aside( &env );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // "iocp" is a known Windows client: on a Linux client it is skipped, the
     // list names no candidate, and the endpoint falls back to auto (gso,portable)
     {
@@ -488,10 +492,11 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
         check( ranking_log_count( "names no transport for this endpoint on this platform. using auto" ) == 1 );
         check( result.destroy_calls == 1 );
     }
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     ranking_env_put_back( &env );
 }
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 // an operator memory budget below a pinned client's plan exhausts the ladder
 // before any create: the list's first candidate is judged against the budget
@@ -520,5 +525,7 @@ REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );
 REGISTER_UNIT_TEST( test_client_ranking_budget_judges_the_first_candidate );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 REGISTER_UNIT_TEST( test_client_ladder_parse_iocp_on_linux_takes_auto );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #endif // #if ROCKETNET_DEV
