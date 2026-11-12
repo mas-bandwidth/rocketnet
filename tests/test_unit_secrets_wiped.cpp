@@ -1201,6 +1201,153 @@ static void test_secrets_wiped_token_block_on_refused_open()
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_open );
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 
+// ---------------------------------------------------------------------------
+// the token writers' secret staging and their holds on the crypto source
+// (sdk/rocketnet_connect_token.cpp, sdk/rocketnet.cpp)
+// ---------------------------------------------------------------------------
+
+// each staging the writers wipe is seen after its wipe: its size is recorded
+// in order, and any byte the wipe left is remembered. The keys and the 0xA5
+// user data the cases pass are the canary a skipped wipe leaves behind.
+static int secrets_wiped_writer_exits = 0;
+static int secrets_wiped_writer_bytes[8];
+static bool secrets_wiped_writer_zero = true;
+
+static void secrets_wiped_writer_seen( const void * staging, int bytes )
+{
+    if ( secrets_wiped_writer_exits < 8 )
+    {
+        secrets_wiped_writer_bytes[secrets_wiped_writer_exits] = bytes;
+    }
+    secrets_wiped_writer_exits++;
+    secrets_wiped_writer_zero = secrets_wiped_writer_zero && secrets_wiped_all_zero( (const uint8_t *) staging, bytes );
+}
+
+static void secrets_wiped_writer_arm()
+{
+    secrets_wiped_writer_exits = 0;
+    memset( secrets_wiped_writer_bytes, 0, sizeof( secrets_wiped_writer_bytes ) );
+    secrets_wiped_writer_zero = true;
+    rocketnet_token_writer_wipe_hook = secrets_wiped_writer_seen;
+}
+
+static const int secrets_wiped_private_bytes = (int) sizeof( struct rocketnet_connect_token_private_t );
+
+// the test-only deterministic writer: the seal's nonce and hash state, then
+// the private block and its fields
+static void test_secrets_wiped_token_writer_deterministic()
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
+    signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
+    signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof( private_fields ) );
+    private_fields.client_id = 0x5EC12E7ULL;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, ROCKETNET_KEY_BYTES );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, ROCKETNET_KEY_BYTES );
+    memset( private_fields.user_data, 0xA5, ROCKETNET_USER_DATA_BYTES );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    secrets_wiped_writer_arm();
+    const int written = rocketnet_write_connect_token_deterministic( &signed_fields, &private_fields, rocketnet_test_backend_secret_key,
+                                                                     rocketnet_test_token_vector_ephemeral_secret[0], token_data );
+    rocketnet_token_writer_wipe_hook = NULL;
+
+    check( written == 1 );
+    check( secrets_wiped_writer_exits == 4 );
+    check( secrets_wiped_writer_bytes[0] == crypto_box_NONCEBYTES );
+    check( secrets_wiped_writer_bytes[1] == (int) sizeof( crypto_generichash_state ) );
+    check( secrets_wiped_writer_bytes[2] == ROCKETNET_PRIVATE_BLOCK_BYTES );
+    check( secrets_wiped_writer_bytes[3] == secrets_wiped_private_bytes );
+    check( secrets_wiped_writer_zero );
+}
+
+// the production writer, minted and refused (a server public key of zero
+// cannot be sealed to): the private block and its fields, then the writer's
+// own private fields, and the hold on the crypto source released either way
+static void test_secrets_wiped_token_writer_production()
+{
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xA5, sizeof( user_data ) );
+    const char * const addresses[1] = { "203.0.113.10:40000" };
+    const uint8_t zero_server_key[ROCKETNET_KEY_BYTES] = { 0 };
+    const uint8_t * const server_keys[2] = { rocketnet_test_server_public_key, zero_server_key };
+    const enum rocketnet_status_t expected[2] = { ROCKETNET_STATUS_OK, ROCKETNET_STATUS_CRYPTO_INIT_FAILED };
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+        const int holders = rocketnet_dev_crypto_holders();
+        secrets_wiped_writer_arm();
+        const enum rocketnet_status_t status = rocketnet_write_production_connect_token( rocketnet_test_backend_secret_key, server_keys[i],
+                                                                                         ROCKETNET_TEST_PROTOCOL_ID, addresses, 1, 0x5EC12E7ULL,
+                                                                                         ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS,
+                                                                                         ROCKETNET_TEST_TIMEOUT, user_data, token_data, sizeof( token_data ) );
+        rocketnet_token_writer_wipe_hook = NULL;
+
+        check( status == expected[i] );
+        check( rocketnet_dev_crypto_holders() == holders );
+        check( secrets_wiped_writer_exits == 3 );
+        check( secrets_wiped_writer_bytes[0] == ROCKETNET_PRIVATE_BLOCK_BYTES );
+        check( secrets_wiped_writer_bytes[1] == secrets_wiped_private_bytes );
+        check( secrets_wiped_writer_bytes[2] == secrets_wiped_private_bytes );
+        check( secrets_wiped_writer_zero );
+    }
+}
+
+// the development token: the production writer's three, then the config
+// copy that carried the development backend secret
+static void test_secrets_wiped_token_writer_dev_config()
+{
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xA5, sizeof( user_data ) );
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+
+    secrets_wiped_writer_arm();
+    const enum rocketnet_status_t status = rocketnet_create_dev_connect_token( "203.0.113.10:40000", NULL, rocketnet_dev_server_public_key,
+                                                                               ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
+                                                                               0x5EC12E7ULL, ROCKETNET_DEV_PROTOCOL_ID, 1000, user_data, token_string );
+    rocketnet_token_writer_wipe_hook = NULL;
+
+    check( status == ROCKETNET_STATUS_OK );
+    check( secrets_wiped_writer_exits == 4 );
+    check( secrets_wiped_writer_bytes[3] == (int) sizeof( struct rocketnet_connect_token_config_t ) );
+    check( secrets_wiped_writer_zero );
+}
+
+// each key pair generator releases the hold it took on the crypto source
+static void test_secrets_wiped_keypair_generators_release_the_source()
+{
+    uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+    uint8_t seed[32];
+    memset( seed, 0x5E, sizeof( seed ) );
+
+    const int holders = rocketnet_dev_crypto_holders();
+
+    check( rocketnet_generate_backend_keypair( public_key, secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_dev_crypto_holders() == holders );
+
+    check( rocketnet_generate_backend_keypair_from_seed( seed, public_key, secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_dev_crypto_holders() == holders );
+
+    check( rocketnet_generate_server_keypair( public_key, secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_dev_crypto_holders() == holders );
+
+    sodium_memzero( secret_key, sizeof( secret_key ) );
+}
+
+REGISTER_UNIT_TEST( test_secrets_wiped_token_writer_deterministic );
+REGISTER_UNIT_TEST( test_secrets_wiped_token_writer_production );
+REGISTER_UNIT_TEST( test_secrets_wiped_token_writer_dev_config );
+REGISTER_UNIT_TEST( test_secrets_wiped_keypair_generators_release_the_source );
+
 #endif // #if ROCKETNET_DEV
 
 // Unassigned token-user-data storage has no secret to erase. Only live slots
