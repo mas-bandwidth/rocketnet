@@ -209,6 +209,7 @@ struct suite_exec
     const char * file;
     const char * argument;
     bool check_rss;
+    double limit_s; // the row's own limit before the environment's scale; 0: the suite's
 };
 
 struct suite_case
@@ -217,6 +218,7 @@ struct suite_case
     std::string exec_path; // empty: re-exec this binary with --run name
     std::string exec_argument;
     bool check_rss;
+    double limit_s; // 0: the suite's limit
     int group; // suite_main's group_of: cases of different groups never run at once
 };
 
@@ -232,8 +234,15 @@ struct suite_result
     long plan_rss_mb; // the bound the case process reported from its plan (tests/plan_rss.h); -1: none
     bool rss_over_bound;
     bool check_rss;
+    double limit_s; // after the environment's scale (suite_main); 0: the suite's limit
     std::string output;
 };
+
+// a result's limit: its row's own when it has one, else the suite's
+inline double suite_result_limit( const suite_result & result, double suite_limit_s )
+{
+    return result.limit_s > 0 ? result.limit_s : suite_limit_s;
+}
 
 // The bound in MiB, or 0 when it is not enforced (a sanitizer build with no
 // environment override: sanitizer shadow memory is not the case's footprint).
@@ -1295,6 +1304,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
         item.check_rss = true;
+        item.limit_s = 0;
         item.group = 0;
     }
 
@@ -1305,6 +1315,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         item.exec_path = dir + "/" + execs[i].file + exe_suffix;
         item.exec_argument = execs[i].argument ? execs[i].argument : "";
         item.check_rss = execs[i].check_rss;
+        item.limit_s = execs[i].limit_s;
         item.group = 0;
         if ( !suite_file_exists( item.exec_path ) )
         {
@@ -1386,6 +1397,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         result.plan_rss_mb = -1;
         result.rss_over_bound = false;
         result.check_rss = pending[i].check_rss;
+        result.limit_s = pending[i].limit_s;
         results.push_back( result );
     }
 
@@ -1993,6 +2005,14 @@ inline int suite_main( int argc, char ** argv,
     {
         return 1;
     }
+    for ( suite_result & result : results )
+    {
+        // a row with a limit of its own takes the same environment scale
+        if ( result.limit_s > 0 && !suite_case_limit( result.limit_s, &result.limit_s ) )
+        {
+            return 1;
+        }
+    }
 
     int uring_slots = jobs;
 
@@ -2168,7 +2188,7 @@ inline int suite_main( int argc, char ** argv,
             {
                 suite_drain( running[i].out_fd, result.output );
 
-                if ( !running[i].killed && seconds > limit_s )
+                if ( !running[i].killed && seconds > suite_result_limit( result, limit_s ) )
                 {
                     kill( -running[i].pid, SIGKILL );
                     kill( running[i].pid, SIGKILL );
@@ -2192,10 +2212,10 @@ inline int suite_main( int argc, char ** argv,
                 result.failed = true;
                 result.detail = result.name + " wait failed";
             }
-            else if ( running[i].killed || seconds > limit_s )
+            else if ( running[i].killed || seconds > suite_result_limit( result, limit_s ) )
             {
                 result.failed = true;
-                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                snprintf( text, sizeof( text ), " exceeded %.0fs", suite_result_limit( result, limit_s ) );
                 result.detail = result.name + text;
             }
             else if ( WIFEXITED( status ) && WEXITSTATUS( status ) != 0 )
@@ -2447,6 +2467,14 @@ inline int suite_main( int argc, char ** argv,
     {
         return 1;
     }
+    for ( suite_result & result : results )
+    {
+        // a row with a limit of its own takes the same environment scale
+        if ( result.limit_s > 0 && !suite_case_limit( result.limit_s, &result.limit_s ) )
+        {
+            return 1;
+        }
+    }
     (void) bound_io_uring; // no io_uring on Windows
 
     struct running_t
@@ -2604,7 +2632,7 @@ inline int suite_main( int argc, char ** argv,
             const DWORD wait = WaitForSingleObject( running[i].process, 0 );
             if ( wait == WAIT_TIMEOUT )
             {
-                if ( !running[i].killed && seconds > limit_s )
+                if ( !running[i].killed && seconds > suite_result_limit( result, limit_s ) )
                 {
                     TerminateProcess( running[i].process, 124 );
                     running[i].killed = true;
@@ -2635,10 +2663,10 @@ inline int suite_main( int argc, char ** argv,
 
             char text[64];
 
-            if ( running[i].killed || seconds > limit_s )
+            if ( running[i].killed || seconds > suite_result_limit( result, limit_s ) )
             {
                 result.failed = true;
-                snprintf( text, sizeof( text ), " exceeded %.0fs", limit_s );
+                snprintf( text, sizeof( text ), " exceeded %.0fs", suite_result_limit( result, limit_s ) );
                 result.detail = result.name + text;
             }
             else if ( code != 0 )

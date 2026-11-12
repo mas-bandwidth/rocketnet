@@ -121,9 +121,13 @@ verdict. The functional suite enforces the bound and fails with the same values.
 `test_unit_case_memory` is a functional sibling row that runs the complete unit
 binary in enforcement mode. The unit binary therefore supplies the case list,
 the suite-wide fallback, every case-specific declaration and every measured
-peak directly; there is no second bound table. The outer functional row keeps
-the 120-second limit but does not compare the unit controller's aggregate child
-usage with one case's bound. Its inner runner retains the 120-second per-case
+peak directly; there is no second bound table. The outer functional row has a
+limit of its own, 99 seconds, not a functional case's 120: it is the whole unit
+suite, and under `ROCKETNET_TEST_NIGHTLY=1` its slowest case takes 34 to 36 s in
+Debug. The slowest measured wall, 59 s (Debug, nightly tier, three 4-cpu slots
+running it at once), is 60% of 99 (the margin rule; the measurements are in
+`tests/functional/unit_case_memory.cpp`). It does not
+compare the unit controller's aggregate child usage with one case's bound. Its inner runner retains the 120-second per-case
 Release limit, including the existing Debug and sanitizer scaling, and enforces
 each unit case separately. A sanitizer build enforces no bound unless
 `ROCKETNET_TEST_MAX_CASE_RSS_MB` sets one, so there the row would check nothing;
