@@ -39,6 +39,10 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
+    "bank": {
+        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+        "quiet": True,
+    },
     "gather": {
         "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
         "quiet": False,

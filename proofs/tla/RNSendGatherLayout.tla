@@ -3,20 +3,25 @@
 (* The transport-neutral send gather (X2, sdk/rocketnet_send_gather.cpp)   *)
 (* at the code's layout.  A send worker hands it one bank of S staged      *)
 (* slots, each with a destination and a size (0: aborted).  The gather     *)
-(* makes two passes over the slots:                                        *)
+(* groups the slots by destination with a stable counting placement, no   *)
+(* links (docs/SEQUENCE-BUFFERS.md):                                       *)
 (*                                                                         *)
-(*   scan  slot by slot, a destination's first slot (its head) takes a     *)
-(*         bucket of an open-addressed table of Buckets entries, found by  *)
-(*         linear probing from Hash(dest) with the index taken modulo      *)
-(*         Buckets; a later slot to the same destination is appended to    *)
-(*         its head's chain (next[tail[head]] = slot, tail[head] = slot).  *)
-(*         An aborted slot is skipped.                                     *)
-(*   emit  slot by slot again, each head's chain is written to order and   *)
-(*         cut into runs: a run takes the next packet of its chain while   *)
-(*         it holds fewer than MaxSeg, the total stays within MaxBytes and *)
-(*         the packet is no larger than the run's first; a smaller packet  *)
-(*         ends the run.  A packet larger than MaxBytes is a run of its    *)
-(*         own.                                                            *)
+(*   scan    slot by slot, a staged slot finds its destination's group in  *)
+(*           an open-addressed table of Buckets entries, by linear probing *)
+(*           from Hash(dest) with the index taken modulo Buckets; a        *)
+(*           destination not yet seen takes a new group, numbered in order *)
+(*           of its first slot.  The slot's group is recorded and the      *)
+(*           group's count goes up.  An aborted slot has no group.         *)
+(*   prefix  group by group, each count becomes the group's start in the   *)
+(*           output: the sum of the counts before it.                      *)
+(*   place   slot by slot again, each staged slot goes to its group's next *)
+(*           position, which moves on; after it, each group's start is the *)
+(*           end of its range.                                             *)
+(*   emit    group by group, the group's range is written to order and cut *)
+(*           into runs: a run takes the next packet while it holds fewer   *)
+(*           than MaxSeg, the total stays within MaxBytes and the packet  *)
+(*           is no larger than the run's first; a smaller packet ends the  *)
+(*           run.  A packet larger than MaxBytes is a run of its own.     *)
 (*                                                                         *)
 (* Every input is checked: Init chooses each slot's destination and size.  *)
 (* The checked claims, at the end of the gather:                           *)
@@ -38,9 +43,9 @@
 (*   MatchRule   "dest" takes a bucket only for its own destination (the   *)
 (*               code); "any" joins the first occupied bucket, so a run    *)
 (*               crosses destinations (RunOneDest).                        *)
-(*   AppendRule  "tail" appends at the chain's tail (the code); "head"     *)
-(*               pushes after the head, reversing a destination's later    *)
-(*               slots (Grouped).                                          *)
+(*   PlaceRule   "forward" places the slots first to last (the code);      *)
+(*               "reverse" places them last to first, reversing each       *)
+(*               destination's slots (Grouped).                            *)
 (*   CapRule     "bytes" keeps MaxBytes (the code); "none" ignores it      *)
 (*               (RunCaps).                                                *)
 (*   ShortRule   "close" ends a run at a smaller packet (the code);        *)
@@ -55,35 +60,43 @@ CONSTANTS S,          \* slots in the bank
           Hash(_),    \* a destination's home bucket
           MaxSeg,     \* most packets in a run
           MaxBytes,   \* most bytes in a run of more than one packet
-          ProbeRule, MatchRule, AppendRule, CapRule, ShortRule
+          ProbeRule, MatchRule, PlaceRule, CapRule, ShortRule
 
 ASSUME S >= 1 /\ Buckets >= S + 1 /\ MaxSeg >= 1 /\ MaxBytes >= 1
 ASSUME 0 \in Sizes /\ \A d \in Dests : Hash(d) \in 0..(Buckets - 1)
 ASSUME ProbeRule \in {"mod", "nomod"} /\ MatchRule \in {"dest", "any"}
-ASSUME AppendRule \in {"tail", "head"} /\ CapRule \in {"bytes", "none"}
+ASSUME PlaceRule \in {"forward", "reverse"} /\ CapRule \in {"bytes", "none"}
 ASSUME ShortRule \in {"close", "open"}
 
 Slots == 0..(S - 1)
 NoRun == [count |-> 0]
 
 VARIABLES dest, size,       \* the bank: each slot's destination and size
-          bucket,           \* the table: a head slot or -1
-          next, tail,       \* chains: the next slot, and a head's last slot (-1: not a head)
-          pc, i, k,         \* the pass, its slot, and the probe's bucket
-          c,                \* the slot emit is at in a chain, or -1
+          bucket,           \* the table: a group or -1
+          head,             \* each group's first slot
+          group,            \* each slot's group, -1 for an aborted slot
+          start,            \* each group's count, then start, then end
+          ng,               \* groups so far
+          pos,              \* the placed output: a slot per position, or -1
+          pc, i, k,         \* the pass, its slot or group, the probe's bucket
+          acc,              \* the prefix's running sum
+          j,                \* the position emit is at in a group, or -1
           order, runs,      \* the output
           run,              \* the run being built: first, count, seg, total, last, closed
           oob               \* a probe read outside the table
 
-vars == <<dest, size, bucket, next, tail, pc, i, k, c, order, runs, run, oob>>
+vars == <<dest, size, bucket, head, group, start, ng, pos, pc, i, k, acc, j, order, runs, run, oob>>
 
 Init ==
     /\ dest \in [Slots -> Dests]
     /\ size \in [Slots -> Sizes]
     /\ bucket = [b \in 0..(Buckets - 1) |-> -1]
-    /\ next = [s \in Slots |-> -1]
-    /\ tail = [s \in Slots |-> -1]
-    /\ pc = "scan" /\ i = 0 /\ k = 0 /\ c = -1
+    /\ head = [g \in Slots |-> -1]
+    /\ group = [s \in Slots |-> -1]
+    /\ start = [g \in Slots |-> 0]
+    /\ ng = 0
+    /\ pos = [p \in Slots |-> -1]
+    /\ pc = "scan" /\ i = 0 /\ k = 0 /\ acc = 0 /\ j = -1
     /\ order = <<>> /\ runs = <<>> /\ run = NoRun
     /\ oob = FALSE
 
@@ -93,57 +106,80 @@ Fixed == UNCHANGED <<dest, size>>
 Scan ==
     /\ pc = "scan"
     /\ IF i = S
-         THEN /\ pc' = "emit" /\ i' = 0
+         THEN /\ pc' = "prefix" /\ i' = 0
               /\ UNCHANGED <<k>>
          ELSE IF size[i] = 0
                 THEN /\ i' = i + 1 /\ UNCHANGED <<pc, k>>
                 ELSE /\ pc' = "probe" /\ k' = Hash(dest[i]) /\ UNCHANGED <<i>>
     /\ Fixed
-    /\ UNCHANGED <<bucket, next, tail, c, order, runs, run, oob>>
-
-Owner(b) == IF b \in DOMAIN bucket THEN bucket[b] ELSE -1
+    /\ UNCHANGED <<bucket, head, group, start, ng, pos, acc, j, order, runs, run, oob>>
 
 \* probe bucket k for slot i's destination
 Probe ==
     /\ pc = "probe"
-    /\ LET h == Owner(k)
-       IN IF k \notin DOMAIN bucket
-            THEN /\ oob' = TRUE /\ pc' = "done"
-                 /\ UNCHANGED <<bucket, next, tail, i, k>>
-          ELSE IF h = -1
-            THEN \* a new destination: slot i is its head
-                 /\ bucket' = [bucket EXCEPT ![k] = i]
-                 /\ tail' = [tail EXCEPT ![i] = i]
-                 /\ i' = i + 1 /\ pc' = "scan"
-                 /\ UNCHANGED <<next, k, oob>>
-          ELSE IF MatchRule = "any" \/ dest[h] = dest[i]
-            THEN \* slot i joins head h's chain
-                 /\ IF AppendRule = "tail"
-                      THEN /\ next' = [next EXCEPT ![tail[h]] = i]
-                           /\ tail' = [tail EXCEPT ![h] = i]
-                      ELSE /\ next' = [next EXCEPT ![h] = i, ![i] = next[h]]
-                           /\ tail' = tail
-                 /\ i' = i + 1 /\ pc' = "scan"
-                 /\ UNCHANGED <<bucket, k, oob>>
-            ELSE \* another destination's bucket: probe on
-                 /\ k' = IF ProbeRule = "mod" THEN (k + 1) % Buckets ELSE k + 1
-                 /\ UNCHANGED <<bucket, next, tail, i, pc, oob>>
+    /\ IF k \notin DOMAIN bucket
+         THEN /\ oob' = TRUE /\ pc' = "done"
+              /\ UNCHANGED <<bucket, head, group, start, ng, i, k>>
+       ELSE IF bucket[k] = -1
+         THEN \* a new destination: a new group, slot i its first
+              /\ bucket' = [bucket EXCEPT ![k] = ng]
+              /\ head' = [head EXCEPT ![ng] = i]
+              /\ group' = [group EXCEPT ![i] = ng]
+              /\ start' = [start EXCEPT ![ng] = 1]
+              /\ ng' = ng + 1
+              /\ i' = i + 1 /\ pc' = "scan"
+              /\ UNCHANGED <<k, oob>>
+       ELSE IF MatchRule = "any" \/ dest[head[bucket[k]]] = dest[i]
+         THEN \* slot i joins the bucket's group
+              /\ group' = [group EXCEPT ![i] = bucket[k]]
+              /\ start' = [start EXCEPT ![bucket[k]] = @ + 1]
+              /\ i' = i + 1 /\ pc' = "scan"
+              /\ UNCHANGED <<bucket, head, ng, k, oob>>
+         ELSE \* another destination's bucket: probe on
+              /\ k' = IF ProbeRule = "mod" THEN (k + 1) % Buckets ELSE k + 1
+              /\ UNCHANGED <<bucket, head, group, start, ng, i, pc, oob>>
     /\ Fixed
-    /\ UNCHANGED <<c, order, runs, run>>
+    /\ UNCHANGED <<pos, acc, j, order, runs, run>>
 
-Close(r, rs) == IF r.count > 0 THEN Append(rs, [first |-> r.first, count |-> r.count,
-                                                 seg |-> r.seg, last |-> r.last]) ELSE rs
+\* prefix: group i's count becomes its start
+Prefix ==
+    /\ pc = "prefix"
+    /\ IF i = ng
+         THEN /\ pc' = "place"
+              /\ i' = IF PlaceRule = "forward" THEN 0 ELSE S - 1
+              /\ UNCHANGED <<start, acc>>
+         ELSE /\ start' = [start EXCEPT ![i] = acc]
+              /\ acc' = acc + start[i]
+              /\ i' = i + 1 /\ UNCHANGED pc
+    /\ Fixed
+    /\ UNCHANGED <<bucket, head, group, ng, pos, k, j, order, runs, run, oob>>
 
-\* emit: at a head, start its chain with a fresh run; past the last slot, done
+\* place: slot i goes to its group's next position
+Place ==
+    /\ pc = "place"
+    /\ IF i < 0 \/ i = S
+         THEN /\ pc' = "emit" /\ i' = 0
+              /\ UNCHANGED <<pos, start>>
+         ELSE /\ IF group[i] = -1
+                   THEN UNCHANGED <<pos, start>>
+                   ELSE /\ pos' = [pos EXCEPT ![start[group[i]]] = i]
+                        /\ start' = [start EXCEPT ![group[i]] = @ + 1]
+              /\ i' = IF PlaceRule = "forward" THEN i + 1 ELSE i - 1
+              /\ UNCHANGED pc
+    /\ Fixed
+    /\ UNCHANGED <<bucket, head, group, ng, k, acc, j, order, runs, run, oob>>
+
+\* the first position of group g: the end of the group before it
+From(g) == IF g = 0 THEN 0 ELSE start[g - 1]
+
+\* emit: start group i's range with a fresh run; past the last group, done
 Emit ==
     /\ pc = "emit"
-    /\ IF i = S
-         THEN /\ pc' = "done" /\ UNCHANGED <<i, c>>
-         ELSE IF tail[i] # -1
-                THEN /\ pc' = "walk" /\ c' = i /\ UNCHANGED i
-                ELSE /\ i' = i + 1 /\ UNCHANGED <<pc, c>>
+    /\ IF i = ng
+         THEN /\ pc' = "done" /\ UNCHANGED <<i, j>>
+         ELSE /\ pc' = "walk" /\ j' = From(i) /\ UNCHANGED i
     /\ Fixed
-    /\ UNCHANGED <<bucket, next, tail, k, order, runs, run, oob>>
+    /\ UNCHANGED <<bucket, head, group, start, ng, pos, k, acc, order, runs, run, oob>>
 
 Fits(b) ==
     /\ run.count > 0
@@ -152,10 +188,15 @@ Fits(b) ==
     /\ (CapRule = "none" \/ run.total + b <= MaxBytes)
     /\ b <= run.seg
 
-\* walk: slot c goes to order and into the run, or ends the run and starts one
+Close(r, rs) == IF r.count > 0 THEN Append(rs, [first |-> r.first, count |-> r.count,
+                                                 seg |-> r.seg, last |-> r.last]) ELSE rs
+
+\* walk: the slot at position j goes to order and into the run, or ends the
+\* run and starts one
 Walk ==
     /\ pc = "walk"
-    /\ LET b == size[c]
+    /\ LET c == pos[j]
+           b == size[c]
            at == Len(order) + 1
            r2 == IF Fits(b)
                    THEN [run EXCEPT !.count = @ + 1, !.total = @ + b, !.last = b,
@@ -163,20 +204,20 @@ Walk ==
                    ELSE [first |-> at, count |-> 1, seg |-> b, total |-> b, last |-> b, closed |-> FALSE]
            rs2 == IF Fits(b) THEN runs ELSE Close(run, runs)
        IN /\ order' = Append(order, c)
-          /\ IF next[c] = -1
-               THEN \* the chain ends: so does its run
+          /\ IF j + 1 = start[i]
+               THEN \* the group ends: so does its run
                     /\ runs' = Close(r2, rs2) /\ run' = NoRun
-                    /\ c' = -1 /\ i' = i + 1 /\ pc' = "emit"
+                    /\ j' = -1 /\ i' = i + 1 /\ pc' = "emit"
                ELSE /\ runs' = rs2 /\ run' = r2
-                    /\ c' = next[c] /\ UNCHANGED <<i, pc>>
+                    /\ j' = j + 1 /\ UNCHANGED <<i, pc>>
     /\ Fixed
-    /\ UNCHANGED <<bucket, next, tail, k, oob>>
+    /\ UNCHANGED <<bucket, head, group, start, ng, pos, k, acc, oob>>
 
 Done ==
     /\ pc = "done"
     /\ UNCHANGED vars
 
-Next == Scan \/ Probe \/ Emit \/ Walk \/ Done
+Next == Scan \/ Probe \/ Prefix \/ Place \/ Emit \/ Walk \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -186,7 +227,7 @@ LiveSpec == Spec /\ WF_vars(Next)
 
 Staged == {s \in Slots : size[s] > 0}
 Pos == 1..Len(order)
-Members(r) == [j \in 1..r.count |-> order[r.first + j - 1]]
+Members(r) == [x \in 1..r.count |-> order[r.first + x - 1]]
 FirstSlot(d) == CHOOSE s \in Staged : dest[s] = d /\ \A t \in Staged : dest[t] = d => s <= t
 
 AtEnd(P) == pc = "done" /\ ~oob => P
@@ -195,7 +236,7 @@ InBounds == ~oob
 
 Permutation == AtEnd(
     /\ Len(order) = Cardinality(Staged)
-    /\ {order[j] : j \in Pos} = Staged)
+    /\ {order[x] : x \in Pos} = Staged)
 
 Grouped == AtEnd(
     /\ \A a, b, e \in Pos : a < b /\ b < e /\ dest[order[a]] = dest[order[e]] => dest[order[b]] = dest[order[a]]
@@ -203,30 +244,30 @@ Grouped == AtEnd(
     /\ \A a, b \in Pos : a < b /\ dest[order[a]] # dest[order[b]] => FirstSlot(dest[order[a]]) < FirstSlot(dest[order[b]]))
 
 RunsTile == AtEnd(
-    /\ \A j \in 1..Len(runs) : runs[j].count >= 1
+    /\ \A x \in 1..Len(runs) : runs[x].count >= 1
     /\ (Len(runs) = 0 => Len(order) = 0)
     /\ (Len(runs) > 0 => runs[1].first = 1 /\ runs[Len(runs)].first + runs[Len(runs)].count - 1 = Len(order))
-    /\ \A j \in 1..(Len(runs) - 1) : runs[j + 1].first = runs[j].first + runs[j].count)
+    /\ \A x \in 1..(Len(runs) - 1) : runs[x + 1].first = runs[x].first + runs[x].count)
 
 RunOneDest == AtEnd(
-    \A j \in 1..Len(runs) : \A a, b \in 1..runs[j].count :
-        runs[j].first + runs[j].count - 1 <= Len(order) =>
-            dest[Members(runs[j])[a]] = dest[Members(runs[j])[b]])
+    \A x \in 1..Len(runs) : \A a, b \in 1..runs[x].count :
+        runs[x].first + runs[x].count - 1 <= Len(order) =>
+            dest[Members(runs[x])[a]] = dest[Members(runs[x])[b]])
 
 RunBytes(r) == LET m == Members(r) IN
-    LET Sum[j \in 0..r.count] == IF j = 0 THEN 0 ELSE Sum[j - 1] + size[m[j]] IN Sum[r.count]
+    LET Sum[x \in 0..r.count] == IF x = 0 THEN 0 ELSE Sum[x - 1] + size[m[x]] IN Sum[r.count]
 
 RunCaps == AtEnd(
-    \A j \in 1..Len(runs) :
-        /\ runs[j].count <= MaxSeg
-        /\ (runs[j].count = 1 \/ RunBytes(runs[j]) <= MaxBytes))
+    \A x \in 1..Len(runs) :
+        /\ runs[x].count <= MaxSeg
+        /\ (runs[x].count = 1 \/ RunBytes(runs[x]) <= MaxBytes))
 
 RunShape == AtEnd(
-    \A j \in 1..Len(runs) : LET m == Members(runs[j]) IN
-        /\ runs[j].seg = size[m[1]]
-        /\ runs[j].last = size[m[runs[j].count]]
-        /\ \A a \in 1..(runs[j].count - 1) : size[m[a]] = runs[j].seg
-        /\ size[m[runs[j].count]] <= runs[j].seg)
+    \A x \in 1..Len(runs) : LET m == Members(runs[x]) IN
+        /\ runs[x].seg = size[m[1]]
+        /\ runs[x].last = size[m[runs[x].count]]
+        /\ \A a \in 1..(runs[x].count - 1) : size[m[a]] = runs[x].seg
+        /\ size[m[runs[x].count]] <= runs[x].seg)
 
 \* the gather always ends
 Terminates == <>(pc = "done")

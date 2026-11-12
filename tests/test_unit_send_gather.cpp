@@ -88,7 +88,7 @@ static void test_send_gather_refuses_bad_arguments()
     check( !rocketnet_send_gather_scratch_init( &scratch, memory, 0 ) );
     check( rocketnet_send_gather_scratch_init( &scratch, memory, 4 ) );
     check( scratch.buckets == 8 );
-    check( rocketnet_send_gather_scratch_bytes( 4 ) == ( 8 + 2 * 4 ) * sizeof( int ) );
+    check( rocketnet_send_gather_scratch_bytes( 4 ) == ( 8 + 3 * 4 ) * sizeof( int ) );
 
     gather_test_t t( 4 );
     for ( int i = 0; i < 5; i++ )
@@ -111,7 +111,7 @@ REGISTER_UNIT_TEST( test_send_gather_refuses_bad_arguments );
 
 // interleaved staging to three destinations: each destination's packets
 // are one run, in staged order, destinations in order of their first slot;
-// an aborted slot is in no run (witnesses MatchAny and AppendHead)
+// an aborted slot is in no run (witnesses MatchAny and PlaceReverse)
 
 static void test_send_gather_groups_in_staged_order()
 {

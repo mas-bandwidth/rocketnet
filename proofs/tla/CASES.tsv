@@ -929,7 +929,7 @@ MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg	MCTraceRNGsoQueueBankLayoutSelf.tl
 MCRNSendGatherLayout.cfg	MCRNSendGatherLayout.tla	pass	-	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenNoProbeMod.cfg	MCRNSendGatherLayout.tla	invariant	InBounds	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenMatchAny.cfg	MCRNSendGatherLayout.tla	invariant	RunOneDest	check	rnsendgatherlayout	required	-
-MCRNSendGatherLayoutBrokenAppendHead.cfg	MCRNSendGatherLayout.tla	invariant	Grouped	check	rnsendgatherlayout	required	-
+MCRNSendGatherLayoutBrokenPlaceReverse.cfg	MCRNSendGatherLayout.tla	invariant	Grouped	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenNoByteCap.cfg	MCRNSendGatherLayout.tla	invariant	RunCaps	check	rnsendgatherlayout	required	-
 MCRNSendGatherLayoutBrokenShortOpen.cfg	MCRNSendGatherLayout.tla	invariant	RunShape	check	rnsendgatherlayout	required	-
 MCRNSendReserve.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
