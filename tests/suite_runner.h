@@ -37,6 +37,21 @@
 #include "portable_crt.h"
 #include "time_scale.h"
 #include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
+
+// LeakSanitizer (alone or inside AddressSanitizer): a case child that ends
+// with _exit skips the exit-time leak check, so it runs the check itself
+// (suite_run_names_only).
+#if defined( __SANITIZE_ADDRESS__ )
+#define SUITE_RUNNER_LSAN 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer ) || __has_feature( leak_sanitizer )
+#define SUITE_RUNNER_LSAN 1
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( leak_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ )
+#if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+#include <sanitizer/lsan_interface.h>
+#endif // #if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -1351,7 +1366,17 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
-        const int rc = worker( name );
+        int rc = worker( name );
+#if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+        // _exit skips LeakSanitizer's exit-time check: run it here, so a
+        // single `--run <case>` reports a leak as the whole suite would. It
+        // does nothing when detect_leaks is off.
+        if ( __lsan_do_recoverable_leak_check() != 0 && rc == 0 )
+        {
+            printf( "check failed: %s leaked (LeakSanitizer, above)\n", name );
+            rc = 1;
+        }
+#endif // #if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
         fflush( stdout );
         fflush( stderr );
         _exit( rc );
