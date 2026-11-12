@@ -122,7 +122,7 @@ VARIABLES
     seq,        \* the server's session sequences taken per client (its next)
     pend,       \* each correct client's eliciting packets in flight to it
     debt,       \* each correct client's ack debt
-    kaAt,       \* the tick of each correct client's last keep-alive (-1: none)
+    kaAt,       \* one past the tick of each correct client's last keep-alive (0: none)
     bye,        \* each correct client has sent its disconnect
     elicited,   \* eliciting packets the server sent each client, this connection
     credited,   \* each client's acks paid by the ack credit, this connection
@@ -143,7 +143,7 @@ TypeOK ==
     /\ ctl \in [Keys -> 0..CtlCap] /\ ctlLast \in [Keys -> 0..Horizon]
     /\ spent \in [Keys -> Nat] /\ seq \in [Clients -> Nat]
     /\ pend \in [Correct -> Nat] /\ debt \in [Correct -> Nat]
-    /\ kaAt \in [Correct -> -1..Horizon] /\ bye \in [Correct -> BOOLEAN]
+    /\ kaAt \in [Correct -> 0..Horizon + 1] /\ bye \in [Correct -> BOOLEAN]
     /\ elicited \in [Clients -> Nat] /\ credited \in [Clients -> Nat] /\ tokens \in [Clients -> Nat]
     /\ shadow \in [Clients -> [a : 0..Cap, l : 0..Horizon, k : 0..CtlCap, kl : 0..Horizon, s : Nat]]
     /\ refused \in [Clients -> Nat] /\ acc \in [Clients -> Nat] /\ start \in [Clients -> 0..Horizon]
@@ -160,7 +160,7 @@ Init ==
     /\ seq = [c \in Clients |-> 1]
     /\ pend = [c \in Correct |-> 0]
     /\ debt = [c \in Correct |-> 0]
-    /\ kaAt = [c \in Correct |-> -1]
+    /\ kaAt = [c \in Correct |-> 0]
     /\ bye = [c \in Correct |-> FALSE]
     /\ elicited = [c \in Clients |-> 0]
     /\ credited = [c \in Clients |-> 0]
@@ -274,8 +274,8 @@ SendAck(c) ==
                     kaAt, bye, elicited, credited, tokens, shadow, refused, acc, start >>
 
 SendKeepAlive(c) ==
-    /\ "ka" \in Kinds /\ CanSend(c) /\ kaAt[c] # now
-    /\ kaAt' = [kaAt EXCEPT ![c] = now]
+    /\ "ka" \in Kinds /\ CanSend(c) /\ kaAt[c] # now + 1
+    /\ kaAt' = [kaAt EXCEPT ![c] = now + 1]
     /\ Sent(c, MaxPkt, "ka")
     /\ UNCHANGED << now, srv, hi, backs, reconnects, fl, sb, allow, last, ctl, ctlLast, spent, seq, pend,
                     bye, elicited, credited, tokens, shadow, refused, acc, start >>
@@ -323,7 +323,7 @@ Reconnect(c) ==
     /\ net' = IF c \in Correct THEN [net EXCEPT ![c] = << >>] ELSE net
     /\ pend' = IF c \in Correct THEN [pend EXCEPT ![c] = 0] ELSE pend
     /\ debt' = IF c \in Correct THEN [debt EXCEPT ![c] = 0] ELSE debt
-    /\ kaAt' = IF c \in Correct THEN [kaAt EXCEPT ![c] = -1] ELSE kaAt
+    /\ kaAt' = IF c \in Correct THEN [kaAt EXCEPT ![c] = 0] ELSE kaAt
     /\ bye' = IF c \in Correct THEN [bye EXCEPT ![c] = FALSE] ELSE bye
     /\ UNCHANGED << now, srv, hi, backs, fl, seq >>
 
