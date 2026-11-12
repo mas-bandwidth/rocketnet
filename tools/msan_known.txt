@@ -22,11 +22,11 @@
 #   MSan-instrumented libc++ (tools/build_msan_libcxx.sh).
 # - three tests compared or scanned bytes nothing had written (a region's
 #   unused memory, a caller's arena block, a reassembly set's staging); each
-#   now starts those bytes zeroed. Two more of that shape (2026-11-12):
-#   test_unreliable_store_full_is_refused_and_counted and
-#   test_send_room_watch_crosses_once_and_rearms_below_half compared a whole
-#   connection region around a refused send; both now build their objects in
-#   zeroed blocks (mo_pair_setup_zeroed, rn_unit_arena_create_zeroed).
+#   now starts those bytes zeroed. More of that shape (2026-11-12): every
+#   case that compares a whole connection region around a refused send
+#   (mo_send_side_check_refused, and the room-watch case's own compare) now
+#   builds its objects in zeroed blocks (mo_pair_setup_zeroed,
+#   rn_unit_arena_create_zeroed).
 #
 # A new entry is a finding with a written cause, never a line to make the
 # gate green: fix the cause where it can be fixed.

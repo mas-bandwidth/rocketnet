@@ -562,21 +562,22 @@ static void * mo_zeroed_block( mo_pair_t * pair, int which, uint64_t bytes )
     return (void *) ( ( (uintptr_t) allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
 }
 
-static void mo_pair_setup_zeroed( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config )
+static void mo_pair_setup_zeroed( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config,
+                                  int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->net = mo_net_new();
     pair->num_clients = num_clients;
     const uint64_t server_bytes = rn_message_object_required_bytes( config, MO_MAX_SLOTS, 1 );
     void * server_block = mo_zeroed_block( pair, 0, server_bytes );
-    pair->server = mo_server_create( pair->net, config, MO_MAX_SLOTS, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, server_block, server_bytes );
+    pair->server = mo_server_create( pair->net, config, MO_MAX_SLOTS, server_kbps, server_block, server_bytes );
     check( pair->server );
 
     for ( int i = 0; i < num_clients; i++ )
     {
         const uint64_t client_bytes = rn_message_object_required_bytes( config, 1, 0 );
         void * client_block = mo_zeroed_block( pair, 1 + i, client_bytes );
-        pair->clients[i] = mo_client_create( pair->net, i, config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, client_block, client_bytes );
+        pair->clients[i] = mo_client_create( pair->net, i, config, client_kbps, client_block, client_bytes );
         check( pair->clients[i] );
         mo_net_connect( pair->net, i );
     }
@@ -1832,7 +1833,7 @@ static void test_server_kicks_exhausted_client_others_unaffected()
     config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 2, &config, 0, 0 );
+    mo_pair_setup_zeroed( &pair, 2, &config, 0, 0 );
     mo_step( &pair );
 
     // the server queues to slot 0 without sending until its region has no room:
@@ -1940,7 +1941,7 @@ static void test_client_disconnects_itself_on_exhaustion()
     mo_small_config( &config );
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup_zeroed( &pair, 1, &config );
     mo_step( &pair );
 
     rocketnet_message_client_t * client = pair.clients[0];
@@ -2034,7 +2035,7 @@ static void test_slot_reuse_starts_clean()
     config.server_send_kbps = 7000;                                   // R6: a reused slot starts at the config field
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0 );
+    mo_pair_setup_zeroed( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0 );
     mo_step( &pair );
 
     rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
@@ -3009,7 +3010,7 @@ static void test_rnslots_witness_replays()
         mo_small_config( &small );
 
         mo_pair_t pair;
-        mo_pair_setup( &pair, 1, &small );
+        mo_pair_setup_zeroed( &pair, 1, &small );
         mo_step( &pair );
         mo_send_up( &pair, 0, 0, 1 );
         mo_send_up( &pair, 0, 0, 2 );
