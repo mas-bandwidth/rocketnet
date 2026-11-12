@@ -2288,6 +2288,15 @@ jobs:
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
 
+      # The replay and AEAD checks against the committed corpora
+      # (tools/check_fuzz_mutants.py): each mutant removes one check from the
+      # packet-open path, is linked ahead of the library and replayed; a
+      # mutant no input tells from the library is a red, unless the tool
+      # marks it EQUIVALENT or UNCOVERED with its reason (and a mark an
+      # input now kills is red too). About 17 s at four jobs.
+      - name: The committed corpora kill the replay and AEAD mutants
+        run: python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4
+
       - name: Upload crash reproducers
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
