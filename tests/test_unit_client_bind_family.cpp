@@ -931,6 +931,244 @@ static void test_client_race_partial_fanout_shutdown_attempts_only_missing_copy(
 }
 REGISTER_UNIT_TEST( test_client_race_partial_fanout_shutdown_attempts_only_missing_copy );
 
+// The family adapter's batch send on each side of the commit, for either
+// winner. Before it, a packet for the primary server leaves on both sockets,
+// each copy addressed to its own family's server. After it, a batch all for
+// the kept server is handed to the kept socket whole, in one call; a batch
+// that also holds packets queued for the losing server sends only the kept
+// ones, in order, wherever in the batch the losing ones sit, and the losing
+// socket sends nothing more.
+
+static void race_check_sent( const rocketnet_fake_client_transport_io_t * fake, int first, const rocketnet_address_t * to,
+                             const uint8_t * data, int count )
+{
+    rocketnet_unit_check( fake->num_sent == first + count );
+    for ( int i = 0; i < count && first + i < fake->num_sent; i++ )
+    {
+        rocketnet_unit_check( rocketnet_address_equal( &fake->sent[first + i].address, to ) );
+        rocketnet_unit_check( fake->sent[first + i].bytes == 1 );
+        rocketnet_unit_check( fake->sent[first + i].data[0] == data[i] );
+    }
+}
+
+static void test_client_race_committed_batch_sends_only_the_kept_family()
+{
+    for ( int winner = 0; winner < 2; winner++ )
+    {
+        race_harness_t * storage = new race_harness_t();
+        race_harness_t & h = *storage;
+        race_harness_setup( &h, true );
+        const rocketnet_client_transport_io_t * io = h.io->transport;
+        const rocketnet_address_t * server[2] = { &h.ipv6_server, &h.ipv4_server };
+        const rocketnet_address_t * kept = server[winner];
+        const rocketnet_address_t * lost = server[1 - winner];
+
+        // before the commit: one copy per family, each to its own server
+
+        const uint8_t fanout = 30;
+        rocketnet_platform_send_t before = { &h.ipv6_server, &fanout, 1 };
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &before, 1 ) == 1 );
+        race_check_sent( &h.pair.fake[0], 0, &h.ipv6_server, &fanout, 1 );
+        race_check_sent( &h.pair.fake[1], 0, &h.ipv4_server, &fanout, 1 );
+
+        rocketnet_unit_check( rocketnet_client_transport_commit_race_for_test( h.transport, winner ) );
+        rocketnet_address_t from;
+        uint8_t receive[16];
+        rocketnet_unit_check( io->operations->receive( io->instance, &from, receive, sizeof( receive ) ) == 0 );
+        rocketnet_unit_check( h.pair.fake[1 - winner].close_calls == 1 );
+
+        // all for the kept server: one call on the kept socket, whole
+
+        const uint8_t whole[3] = { 1, 2, 3 };
+        rocketnet_platform_send_t all_kept[3] = { { kept, &whole[0], 1 }, { kept, &whole[1], 1 }, { kept, &whole[2], 1 } };
+        const int calls = h.pair.progress_calls[winner];
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, all_kept, 3 ) == 3 );
+        rocketnet_unit_check( h.pair.progress_calls[winner] == calls + 1 );
+        rocketnet_unit_check( h.pair.progress_calls[1 - winner] == 1 );
+        race_check_sent( &h.pair.fake[winner], 1, kept, whole, 3 );
+
+        // the losing server's packet first, then a kept one
+
+        const uint8_t head[2] = { 20, 21 };
+        rocketnet_platform_send_t lost_first[2] = { { lost, &head[0], 1 }, { kept, &head[1], 1 } };
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, lost_first, 2 ) == 2 );
+        race_check_sent( &h.pair.fake[winner], 4, kept, &head[1], 1 );
+
+        // losing and kept packets interleaved
+
+        const uint8_t mixed[4] = { 10, 11, 12, 13 };
+        rocketnet_platform_send_t interleaved[4] = { { kept, &mixed[0], 1 }, { lost, &mixed[1], 1 }, { kept, &mixed[2], 1 }, { lost, &mixed[3], 1 } };
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, interleaved, 4 ) == 4 );
+        const uint8_t expected[2] = { 10, 12 };
+        race_check_sent( &h.pair.fake[winner], 5, kept, expected, 2 );
+
+        rocketnet_unit_check( h.pair.fake[1 - winner].num_sent == 1 );
+        rocketnet_unit_check( h.pair.progress_calls[1 - winner] == 1 );
+
+        race_harness_teardown( &h );
+        delete storage;
+    }
+}
+REGISTER_UNIT_TEST( test_client_race_committed_batch_sends_only_the_kept_family );
+
+// The family adapter's plain batch send, the one the I/O thread's quit path
+// uses, on each side of the commit. Before it, the primary socket takes the
+// batch whole and the second socket a copy of each packet for the primary
+// server, addressed to its own server. A head left half sent by a refused
+// progress call is settled first, its missing copy only, and the rest of the
+// batch follows. After the commit, a batch all for the kept server goes to
+// the kept socket whole; a mixed one sends the kept packets one by one, in
+// order, and nothing on the losing socket. Each array carries one more kept
+// packet past the count handed over, which must never be sent.
+
+static void test_client_race_shutdown_batch_sends_each_family_its_own()
+{
+    for ( int winner = 0; winner < 2; winner++ )
+    {
+        race_harness_t * storage = new race_harness_t();
+        race_harness_t & h = *storage;
+        race_harness_setup( &h, true );
+        const rocketnet_client_transport_io_t * io = h.io->transport;
+        rocketnet_fake_client_transport_io_t * fake = h.pair.fake;
+
+        // a head the second socket refused: the primary sent it, the second owes it
+
+        const uint8_t pending = 50;
+        rocketnet_platform_send_t head = { &h.ipv6_server, &pending, 1 };
+        h.pair.progress_refusals[1] = 1;
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &head, 1 ) == 0 );
+        race_check_sent( &fake[0], 0, &h.ipv6_server, &pending, 1 );
+        rocketnet_unit_check( fake[1].num_sent == 0 );
+
+        // the head alone: its missing copy, and nothing else
+
+        int batch_calls[2] = { fake[0].send_batch_calls, fake[1].send_batch_calls };
+        io->operations->send_batch( io->instance, &head, 1 );
+        rocketnet_unit_check( fake[0].num_sent == 1 && fake[0].send_batch_calls == batch_calls[0] );
+        race_check_sent( &fake[1], 0, &h.ipv4_server, &pending, 1 );
+        rocketnet_unit_check( fake[1].send_batch_calls == batch_calls[1] + 1 );
+
+        // a new head half sent, then a batch of it and two more
+
+        const uint8_t second = 51;
+        rocketnet_platform_send_t second_head = { &h.ipv6_server, &second, 1 };
+        h.pair.progress_refusals[1] = 1;
+        rocketnet_unit_check( io->operations->send_batch_progress( io->instance, &second_head, 1 ) == 0 );
+        race_check_sent( &fake[0], 1, &h.ipv6_server, &second, 1 );
+        rocketnet_unit_check( fake[1].num_sent == 1 );
+
+        const uint8_t tail[4] = { 51, 52, 53, 99 };
+        rocketnet_platform_send_t with_head[4] = { second_head, { &h.ipv6_server, &tail[1], 1 }, { &h.ipv6_server, &tail[2], 1 }, { &h.ipv6_server, &tail[3], 1 } };
+        batch_calls[0] = fake[0].send_batch_calls;
+        batch_calls[1] = fake[1].send_batch_calls;
+        int send_calls[2] = { fake[0].send_calls, fake[1].send_calls };
+        io->operations->send_batch( io->instance, with_head, 3 );
+        race_check_sent( &fake[0], 2, &h.ipv6_server, &tail[1], 2 );
+        race_check_sent( &fake[1], 1, &h.ipv4_server, tail, 3 );
+        rocketnet_unit_check( fake[0].send_batch_calls == batch_calls[0] + 1 && fake[0].send_calls == send_calls[0] );
+        rocketnet_unit_check( fake[1].send_batch_calls == batch_calls[1] + 1 && fake[1].send_calls == send_calls[1] + 2 );
+
+        // no head waiting: the primary takes the batch whole, the second a copy of each
+
+        const uint8_t plain[3] = { 60, 61, 98 };
+        rocketnet_platform_send_t fanout[3] = { { &h.ipv6_server, &plain[0], 1 }, { &h.ipv6_server, &plain[1], 1 }, { &h.ipv6_server, &plain[2], 1 } };
+        batch_calls[0] = fake[0].send_batch_calls;
+        batch_calls[1] = fake[1].send_batch_calls;
+        send_calls[0] = fake[0].send_calls;
+        send_calls[1] = fake[1].send_calls;
+        io->operations->send_batch( io->instance, fanout, 2 );
+        race_check_sent( &fake[0], 4, &h.ipv6_server, plain, 2 );
+        race_check_sent( &fake[1], 4, &h.ipv4_server, plain, 2 );
+        rocketnet_unit_check( fake[0].send_batch_calls == batch_calls[0] + 1 && fake[0].send_calls == send_calls[0] );
+        rocketnet_unit_check( fake[1].send_batch_calls == batch_calls[1] && fake[1].send_calls == send_calls[1] + 2 );
+
+        // the commit, and the losing socket's close on the next read
+
+        rocketnet_unit_check( rocketnet_client_transport_commit_race_for_test( h.transport, winner ) );
+        rocketnet_address_t from;
+        uint8_t receive[16];
+        rocketnet_unit_check( io->operations->receive( io->instance, &from, receive, sizeof( receive ) ) == 0 );
+        rocketnet_unit_check( fake[1 - winner].close_calls == 1 );
+
+        const rocketnet_address_t * server[2] = { &h.ipv6_server, &h.ipv4_server };
+        const rocketnet_address_t * kept = server[winner];
+        const rocketnet_address_t * lost = server[1 - winner];
+        const int lost_sent = fake[1 - winner].num_sent;
+
+        // all for the kept server: whole, in one call
+
+        const uint8_t whole[3] = { 1, 2, 97 };
+        rocketnet_platform_send_t all_kept[3] = { { kept, &whole[0], 1 }, { kept, &whole[1], 1 }, { kept, &whole[2], 1 } };
+        batch_calls[winner] = fake[winner].send_batch_calls;
+        send_calls[winner] = fake[winner].send_calls;
+        io->operations->send_batch( io->instance, all_kept, 2 );
+        race_check_sent( &fake[winner], 6, kept, whole, 2 );
+        rocketnet_unit_check( fake[winner].send_batch_calls == batch_calls[winner] + 1 && fake[winner].send_calls == send_calls[winner] );
+
+        // the losing server's packet first, then a kept one
+
+        const uint8_t first[3] = { 20, 21, 96 };
+        rocketnet_platform_send_t lost_first[3] = { { lost, &first[0], 1 }, { kept, &first[1], 1 }, { kept, &first[2], 1 } };
+        io->operations->send_batch( io->instance, lost_first, 2 );
+        race_check_sent( &fake[winner], 8, kept, &first[1], 1 );
+
+        // interleaved, a kept packet first
+
+        const uint8_t mixed[5] = { 10, 11, 12, 13, 95 };
+        rocketnet_platform_send_t interleaved[5] = { { kept, &mixed[0], 1 }, { lost, &mixed[1], 1 }, { kept, &mixed[2], 1 }, { lost, &mixed[3], 1 }, { kept, &mixed[4], 1 } };
+        batch_calls[winner] = fake[winner].send_batch_calls;
+        send_calls[winner] = fake[winner].send_calls;
+        io->operations->send_batch( io->instance, interleaved, 4 );
+        const uint8_t expected[2] = { 10, 12 };
+        race_check_sent( &fake[winner], 9, kept, expected, 2 );
+        rocketnet_unit_check( fake[winner].send_batch_calls == batch_calls[winner] && fake[winner].send_calls == send_calls[winner] + 2 );
+
+        rocketnet_unit_check( fake[1 - winner].num_sent == lost_sent );
+
+        race_harness_teardown( &h );
+        delete storage;
+    }
+}
+REGISTER_UNIT_TEST( test_client_race_shutdown_batch_sends_each_family_its_own );
+
+// SEND_FAILED across the losing socket's close (proofs/tla/RNClientRace.tla
+// SendFailedMonotonic): the commit keeps the losing family's count so far,
+// and the close, on the next read, keeps it again with the failures that
+// arrived in between, so none of them is lost from the count.
+
+static void test_client_race_close_keeps_the_losing_familys_late_failures()
+{
+    for ( int winner = 0; winner < 2; winner++ )
+    {
+        race_harness_t * storage = new race_harness_t();
+        race_harness_t & h = *storage;
+        race_harness_setup( &h, true );
+        const rocketnet_client_transport_io_t * io = h.io->transport;
+
+        h.pair.send_failures[winner] = 2;
+        h.pair.send_failures[1 - winner] = 5;
+        rocketnet_unit_check( io->operations->send_failures( io->instance ) == 7 );
+
+        rocketnet_unit_check( rocketnet_client_transport_commit_race_for_test( h.transport, winner ) );
+        rocketnet_unit_check( io->operations->send_failures( io->instance ) == 7 );
+
+        h.pair.send_failures[1 - winner] = 9;
+
+        rocketnet_address_t from;
+        uint8_t receive[16];
+        rocketnet_unit_check( io->operations->receive( io->instance, &from, receive, sizeof( receive ) ) == 0 );
+        rocketnet_unit_check( h.pair.fake[1 - winner].close_calls == 1 );
+        rocketnet_unit_check( io->operations->send_failures( io->instance ) == 11 );
+
+        h.pair.send_failures[winner] = 3;
+        rocketnet_unit_check( io->operations->send_failures( io->instance ) == 12 );
+
+        race_harness_teardown( &h );
+        delete storage;
+    }
+}
+REGISTER_UNIT_TEST( test_client_race_close_keeps_the_losing_familys_late_failures );
+
 // The race to its end with one fake per family, for both outcomes
 // (TRANSPORT.md t11 rule 3; proofs/tla/RNClientRace.tla CallerSend, CallerRead,
 // ReaderStep, CallerCommit, CallerDestroy). The winning family's server
