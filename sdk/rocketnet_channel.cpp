@@ -1936,12 +1936,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // Rotate off the ready list before the dequeue, while the membership
         // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
 
-        const uint32_t ready_ticket = send->ready_ticket;
-        const uint32_t ready_generation = send->ready_generation;
-        if ( !rn_ready_remove_named( channels, channel, ready_ticket, ready_generation ) && send->ready_ticket != 0 )
-        {
-            rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
-        }
+        rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
 
         // dequeue: the descriptor leaves its channel's FIFO
 
