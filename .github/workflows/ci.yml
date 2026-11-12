@@ -3235,6 +3235,10 @@ jobs:
         run: sh .github/scripts/check-runs-on.sh --self-test && sh .github/scripts/check-runs-on.sh
       - name: Every main commit gets its own concurrency group
         run: sh .github/scripts/check-main-concurrency.sh --self-test && sh .github/scripts/check-main-concurrency.sh
+      # The administrator runner that Application Verifier needs (label rocketnet-appverif) runs only
+      # nightly-appverif.yml, on schedule or dispatch: never a pull request's or a branch's code.
+      - name: Only the nightly Application Verifier job targets the privileged runner
+        run: python3 tools/check_privileged_runner.py --self-test && python3 tools/check_privileged_runner.py
 
       # Every job a push or pull request runs is bounded to two minutes
       # (timeout-minutes: 2, or ${{ inputs.full && N || 2 }} in this file), so

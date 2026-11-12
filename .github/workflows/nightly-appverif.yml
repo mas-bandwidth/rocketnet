@@ -35,10 +35,14 @@
 # 130 s over 645 processes, functional shards 11-110 s each; at four jobs the
 # whole run is well under an hour.
 #
-# The runner service runs as NT AUTHORITY\NETWORK SERVICE, which holds only
-# ReadKey on HKLM\...\Image File Execution Options; until the fleet play gives
-# this job an account that may write there, step 1 is red with APPVERIF-REFUSED
-# and says so. Every step after it is then skipped, never passed.
+# The fleet's ordinary Windows runners run as NT AUTHORITY\NETWORK SERVICE,
+# which holds only ReadKey on HKLM\...\Image File Execution Options, and giving
+# it CreateSubKey there would let any of its processes set a Debugger for an
+# image SYSTEM starts. So this job runs on its own runner instance, label
+# rocketnet-appverif, under an administrator account, on schedule and dispatch
+# only. Until that instance exists the job waits for it; on any runner that
+# cannot write IFEO, step 1 is red with APPVERIF-REFUSED and every later step
+# is skipped, never passed.
 
 name: nightly-appverif
 
@@ -58,7 +62,12 @@ env:
 jobs:
   appverif-windows:
     name: windows / Application Verifier
-    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    # the privileged runner: its own instance on captain under an administrator
+    # account (appverif writes HKLM Image File Execution Options, which the
+    # NETWORK SERVICE runners may not), taking only this job;
+    # tools/check_privileged_runner.py refuses the label anywhere else and any
+    # trigger here but schedule and dispatch
+    runs-on: [self-hosted, Windows, X64, rocketnet-appverif]
     timeout-minutes: 7200
     strategy:
       fail-fast: false
