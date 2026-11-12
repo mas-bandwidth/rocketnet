@@ -39,6 +39,10 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
+    "rio-lane": {
+        "modules": ["RNRioLaneLayout.tla", "TraceRNRioLaneLayout.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
