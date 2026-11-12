@@ -181,6 +181,10 @@ enum rocketnet_server_iocp_test_fault_t
 };
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
+// the seed this transport's refused-destination table hashes with
+// (sdk/rocketnet_segment_refused.h, drawn at create), so a test can pick
+// destinations that take distinct entries
+uint32_t rocketnet_server_iocp_test_segment_seed( rocketnet_server_iocp_t * iocp );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

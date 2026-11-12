@@ -2616,6 +2616,12 @@ int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int 
     return iocp->test_faults[fault].load( std::memory_order_acquire );
 }
 
+uint32_t rocketnet_server_iocp_test_segment_seed( rocketnet_server_iocp_t * iocp )
+{
+    rocketnet_assert( iocp );
+    return iocp->segment_refused.seed;
+}
+
 // proofs/tla/MCRNIocpRetryStopBrokenRefuseRetires.cfg, its trace driven
 // through rocketnet_iocp_post_receive itself with no socket, port or worker:
 // two receive operations and a retry queue of two cells, every post refused

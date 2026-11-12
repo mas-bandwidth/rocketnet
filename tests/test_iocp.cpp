@@ -1737,6 +1737,53 @@ static void iocp_segment_round( rocketnet_server_iocp_t * transport, rocketnet_p
     CHECK( rocketnet_server_iocp_test_faults_left( transport, ROCKETNET_IOCP_TEST_FAULT_SEND_POST ) == 0 );
 }
 
+// The refusing clients a case uses, held open until the case ends so the
+// host never reuses one's port for the next. Each one takes an entry of the
+// transport's refused table that no earlier one took (the entry follows the
+// transport's random seed), so the transport's count of distinct refusing
+// destinations rises by one a refusal. Two clients on one entry would count
+// once (sdk/rocketnet_segment_refused.h), and USO would stay on past the
+// threshold'th client: one run in three on a random seed.
+struct iocp_refusers_t
+{
+    rocketnet_segment_refused_t table;
+    bool taken[ROCKETNET_SEGMENT_REFUSED_ENTRIES];
+    rocketnet_platform_socket_t * sockets[4 * ROCKETNET_SEGMENT_REFUSED_ENTRIES];
+    int count;
+};
+
+static rocketnet_platform_socket_t * iocp_refuser( rocketnet_server_iocp_t * transport, iocp_refusers_t * refusers,
+                                                   rocketnet_address_t * refusing_address )
+{
+    if ( refusers->count == 0 )
+    {
+        memset( refusers, 0, sizeof( *refusers ) );
+        refusers->table.seed = rocketnet_server_iocp_test_segment_seed( transport );
+    }
+    while ( refusers->count < (int) ( sizeof( refusers->sockets ) / sizeof( refusers->sockets[0] ) ) )
+    {
+        rocketnet_platform_socket_t * refusing = fault_client( refusing_address );
+        refusers->sockets[refusers->count++] = refusing;
+        const int entry = rocketnet_segment_refused_entry( &refusers->table, refusing_address );
+        if ( !refusers->taken[entry] )
+        {
+            refusers->taken[entry] = true;
+            return refusing;
+        }
+    }
+    CHECK( !"no refusing client found a free entry" );
+    return NULL;
+}
+
+static void iocp_refusers_destroy( iocp_refusers_t * refusers )
+{
+    for ( int i = 0; i < refusers->count; ++i )
+    {
+        rocketnet_platform_socket_destroy( refusers->sockets[i] );
+    }
+    refusers->count = 0;
+}
+
 static void test_iocp_uso_refusal_is_per_destination()
 {
     rocketnet_address_t bind;
@@ -1780,13 +1827,15 @@ static void test_iocp_uso_refusal_is_per_destination()
     // once a segmented send was accepted, no number of refusing destinations
     // turns USO off
 
+    static iocp_refusers_t refusers;
+    refusers.count = 0;
     for ( int d = 0; d < IOCP_SEGMENT_REFUSAL_THRESHOLD; ++d )
     {
         rocketnet_address_t refusing_address;
-        rocketnet_platform_socket_t * refusing = fault_client( &refusing_address );
+        rocketnet_platform_socket_t * refusing = iocp_refuser( transport, &refusers, &refusing_address );
         iocp_segment_round( transport, refusing, &refusing_address, d % 2 ? WSAEOPNOTSUPP : WSAEINVAL );
-        rocketnet_platform_socket_destroy( refusing );
     }
+    iocp_refusers_destroy( &refusers );
     iocp_segment_round( transport, a, &a_address, 0 );
     CHECK( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_USO );
     CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 5 );
@@ -1810,12 +1859,13 @@ static void test_iocp_uso_refused_everywhere_turns_off()
         return;
     }
 
+    static iocp_refusers_t refusers;
+    refusers.count = 0;
     for ( int d = 0; d < IOCP_SEGMENT_REFUSAL_THRESHOLD; ++d )
     {
         rocketnet_address_t refusing_address;
-        rocketnet_platform_socket_t * refusing = fault_client( &refusing_address );
+        rocketnet_platform_socket_t * refusing = iocp_refuser( transport, &refusers, &refusing_address );
         iocp_segment_round( transport, refusing, &refusing_address, WSAEINVAL );
-        rocketnet_platform_socket_destroy( refusing );
         const bool on = ( rocketnet_server_iocp_features( transport ) & ROCKETNET_IOCP_FEATURE_USO ) != 0;
         printf( "    %d destinations refused: USO %s\n", d + 1, on ? "on" : "off" );
         CHECK( on == ( d + 1 < IOCP_SEGMENT_REFUSAL_THRESHOLD ) );
@@ -1829,6 +1879,7 @@ static void test_iocp_uso_refused_everywhere_turns_off()
     iocp_segment_round( transport, a, &a_address, 0 );
     CHECK( iocp_counter( transport, ROCKETNET_IOCP_USO_SENDS ) == 0 );
 
+    iocp_refusers_destroy( &refusers );
     iocp_all_frames_free( transport, &a_address );
     iocp_finish( transport, a );
     printf( "test_iocp_transport_uso_refused_everywhere_turns_off\n" );
