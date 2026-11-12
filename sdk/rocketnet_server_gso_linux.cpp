@@ -984,18 +984,16 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
     return published;
 }
 
-// the worker's screen of one datagram before it takes a bank slot: the
-// server's stateless prefilter (sdk/rocketnet_receive_prefilter.h) when the
-// transport has the packet filter, so garbage never evicts a player's
-// packet and is counted exactly as main's ladder would count it; without
-// it, the size pass every transport makes, below the smallest packet a
-// server reads or above the receive ceiling
+// the worker's screen of one datagram before it takes a bank slot. First the
+// size pass every transport makes, below the smallest packet a server reads
+// or above the receive ceiling, so a size drop reads the same on every
+// transport (PREFILTER_TOO_SHORT or _TOO_LARGE and the transport's
+// RECEIVE_DROPPED_SIZE); then, when the transport has the packet filter, the
+// server's stateless prefilter (sdk/rocketnet_receive_prefilter.h), so
+// garbage never evicts a player's packet and is counted exactly as main's
+// ladder would count it.
 static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct rocketnet_server_gso_t * gso, const uint8_t * packet_data, int packet_bytes )
 {
-    if ( gso->has_filter )
-    {
-        return rocketnet_receive_prefilter( packet_data, packet_bytes, gso->packet_filter );
-    }
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
     {
         return ROCKETNET_RECEIVE_DROP_TOO_SHORT;
@@ -1003,6 +1001,10 @@ static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct r
     if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
     {
         return ROCKETNET_RECEIVE_DROP_TOO_LARGE;
+    }
+    if ( gso->has_filter )
+    {
+        return rocketnet_receive_prefilter( packet_data, packet_bytes, gso->packet_filter );
     }
     return ROCKETNET_RECEIVE_ACCEPT;
 }
