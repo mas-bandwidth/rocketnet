@@ -1,0 +1,14 @@
+diff --git a/tools/xdp_packet_blaster.c b/tools/xdp_packet_blaster.c
+index 079c56817..9c9021a7c 100644
+--- a/tools/xdp_packet_blaster.c
++++ b/tools/xdp_packet_blaster.c
+@@ -1103,7 +1103,8 @@ static bool rn_blaster_reply_port_case( const char * server_text, const char * c
+     {
+         return false;
+     }
+-    return rn_blaster_reply_destination_port( frame, packet ) == wanted_port;
++    (void) rn_blaster_reply_destination_port;
++    return (uint16_t) ( ( (uint16_t) frame[header_bytes - 6] << 8 ) | frame[header_bytes - 5] ) == wanted_port;
+ }
+ 
+ static int rn_blaster_self_test()
