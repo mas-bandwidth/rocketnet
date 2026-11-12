@@ -78,6 +78,7 @@ static void usage( void )
         "  --results PATH          where the result lines go\n"
         "  --status PATH           one line per state change, for the orchestrator\n"
         "  --transport T           pin the transport (e.g. xdp); the in-tree i40e refuses\n"
+        "  --xdp-queues N          the xdp transport's queue count (xdp thread k pins to cpu 1 + k)\n"
         "  --self-test-result FILE write a sample result file without any socket and exit\n"
         "  --help                  this message\n"
         "environment:\n"
@@ -1137,6 +1138,7 @@ int main( int argc, char ** argv )
     double update_hz = 1000.0;
     uint32_t seed = 0;
     uint32_t send_kbps = 500;
+    int xdp_queues = 0;
 
     for ( int i = 1; i < argc; i++ )
     {
@@ -1194,6 +1196,15 @@ int main( int argc, char ** argv )
         {
             transport = argv[++i];
         }
+        else if ( strcmp( a, "--xdp-queues" ) == 0 && i + 1 < argc )
+        {
+            xdp_queues = (int) strtol( argv[++i], NULL, 10 );
+            if ( xdp_queues < 1 || xdp_queues > 1024 )
+            {
+                fprintf( stderr, "server: --xdp-queues must be 1 to 1024\n" );
+                return 1;
+            }
+        }
         else if ( strcmp( a, "--self-test-result" ) == 0 && i + 1 < argc )
         {
             self_test = 1;
@@ -1234,6 +1245,10 @@ int main( int argc, char ** argv )
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = max_clients;
+    if ( xdp_queues > 0 )
+    {
+        config.num_xdp_queues = xdp_queues;
+    }
 
     char env_transport[sizeof config.transport];
 
