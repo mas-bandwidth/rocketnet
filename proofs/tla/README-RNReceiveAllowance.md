@@ -8,10 +8,17 @@ the fill when a slot is assigned in `rocketnet_server_process_connection_respons
 the rate and capacity in sdk/rocketnet_server_protocol.h, and the slot's
 zeroing in `rocketnet_server_connection_reset`.
 
-`proofs/tla/MCRNReceiveAllowance.tla` and `proofs/tla/MCRNReceiveAllowance.cfg`
-are the small instance. The four `proofs/tla/MCRNReceiveAllowanceBroken*.cfg`
-files are the reversed witnesses. The cases are rows of `proofs/tla/CASES.tsv`
-(group `rnreceiveallowance`) with measured records in `proofs/tla/RUNS.tsv`.
+The credits are `rocketnet_server_receive_allowance_take_packet` and
+`rocketnet_server_receive_allowance_start` beside it, and the ack credit the
+server's own standalone ack spends in `rocketnet_server_protocol_write_ack_if_due`.
+
+`proofs/tla/MCRNReceiveAllowance.tla` is the module every case runs. Three
+passing files: `MCRNReceiveAllowance.cfg` (the bytes),
+`MCRNReceiveAllowanceCredit.cfg` (the credits, a correct client) and
+`MCRNReceiveAllowanceFlood.cfg` (the credits, a flooder). The eight
+`proofs/tla/MCRNReceiveAllowanceBroken*.cfg` files are the reversed witnesses.
+The cases are rows of `proofs/tla/CASES.tsv` (group `rnreceiveallowance`) with
+measured records in `proofs/tla/RUNS.tsv`.
 
 ## The rule
 
@@ -29,6 +36,22 @@ files are the reversed witnesses. The cases are rows of `proofs/tla/CASES.tsv`
   dropped, counted (the type's `OVER_ALLOWANCE`, and the slot's
   `receive_refused_packets` and `receive_refused_bytes`), and spends nothing.
   Nothing ends the connection.
+- **The ack credit.** A standalone ack is sent only while the client owes an
+  ack, and it owes one only for a packet of the server's that asks for one
+  (a keep-alive, a payload, a disconnect; not the server's own standalone
+  ack). So the server credits one standalone ack for each such packet: the
+  session sequences it has taken for the connection (`send_sequence_session`)
+  less a mark that starts at the connection's first sequence and moves up by
+  one for each of the server's own standalone acks and each ack credited. An
+  ack past the credit pays bytes. The credit is not capped: an ack held up
+  for the timeout and delivered late still has its packet's credit. A
+  flooder's acks are bounded by what the server sent it.
+- **The control tokens.** A keep-alive goes only on the client's send tick
+  (`ROCKETNET_DEFAULT_SEND_RATE`, ten a second) and a disconnect ends the
+  connection. Tokens refill at twice that rate from the time argument, like
+  the bytes, up to twice the rate times the timeout plus two (one for the
+  keep-alive that starts an interval, one for the disconnect), and start full.
+  A keep-alive or disconnect past the tokens pays bytes.
 
 ## The instance
 
@@ -36,8 +59,20 @@ One correct client `c1` and one flooder `f1`; the setting B = 1 byte a tick at
 Factor 2 (R = 2); one maximum packet of 2, which is also the correct client's
 bucket depth; a timeout of T = 2 ticks, so the correct client's packets arrive
 up to one tick late and may arrive together; five ticks; two flood packets a
-tick; one step back of the server's time argument; one slot reuse. The control
-checks TypeOK, UnderRateNeverRefused, Isolated and NoMint.
+tick; one step back of the server's time argument; one slot reuse. The server
+sends nothing and the clients send payload only (`MaxElicit = 0`,
+`Kinds = {"pay"}`). The control checks every invariant.
+
+`MCRNReceiveAllowanceCredit.cfg`: one correct client, the same setting and
+packet, three ticks, up to two session packets from the server (eliciting,
+received or lost at once, the worst case for the credit; or the server's own
+standalone ack), all four kinds, its acks, keep-alives and disconnect at a
+maximum packet each (the worst for the bytes), up to two in flight, one slot
+reuse. `MCRNReceiveAllowanceFlood.cfg`: one flooder sending any kind at any
+size, one a tick, five ticks, up to three session packets, one step back, one
+slot reuse. The flooder instance has no correct client: the slots are one
+struct indexed by the client in the code, so isolation is the first instance's
+and `BrokenShared`'s.
 
 | Configuration | Flip | Must fail | What it shows |
 |---|---|---|---|
@@ -45,21 +80,22 @@ checks TypeOK, UnderRateNeverRefused, Isolated and NoMint.
 | `MCRNReceiveAllowanceBrokenSmallCap.cfg` | `CapFull = FALSE` | `UnderRateNeverRefused` | the burst after a silence is refused |
 | `MCRNReceiveAllowanceBrokenShared.cfg` | `PerClient = FALSE` | `Isolated` | refusing client A changes client B |
 | `MCRNReceiveAllowanceBrokenTimeBack.cfg` | `Monotone = FALSE` | `NoMint` | time going back mints bytes |
+| `MCRNReceiveAllowanceBrokenNoAckCredit.cfg` | `AckCredit = FALSE` | `UnderRateNeverRefused` | a correct client's acks are refused |
+| `MCRNReceiveAllowanceBrokenNoControl.cfg` | `Control = FALSE` | `UnderRateNeverRefused` | a correct client's keep-alives are refused |
+| `MCRNReceiveAllowanceBrokenFreeAcks.cfg` | `CreditBound = FALSE` | `AcksBounded` | a flooder's acks are never refused |
+| `MCRNReceiveAllowanceBrokenServerAckCredits.cfg` | `ServerAckSpends = FALSE` | `AcksBounded` | the server's own acks pay for a flooder's |
 
 ## What is not modelled
 
-The client's send budget counts its payload packets only. Its keep-alives (only
-when it has sent nothing for a tenth of a second: at most ten a second, 41
-bytes) and its standalone acks (at most one per client update while it owes an
-ack, sized by the ranges of the server's packets it holds, up to 1053 bytes)
-are outside it, and outside this model: they are what the second share of the
-rate is for. They fit while they stay under the setting. Measured on the
-loopback transport (2026-11-11): at 8 kbps and up a client sending maximum
-packets with a one-second timeout has nothing refused, at 4 and 6 kbps some;
-a client that sends nothing while it receives a 10% lossy stream at the
-server's default 10 Mbps, updated at 100 Hz, sends about 680 kbps of
-standalone acks, and a setting of 64 kbps refuses most of them (lost acks, the
-connection stays up).
+Packet sizes beyond one maximum packet: the credits pay by count, not bytes,
+so an ack of any size is one credit. The client's update rate: it changes how
+many acks a client sends only within what it owes. Measured on the loopback
+transport before the credits (2026-11-11): a client sending nothing while it
+received a 10% lossy stream at the server's default 10 Mbps, updated at 100
+Hz, sent about 680 kbps of standalone acks, and a setting of 64 kbps refused
+most of them; with the credits, `tests/test_unit_receive_allowance.cpp`
+streams 60 s at 4, 8, 64, 256 and 1000 kbps under 0, 1, 10 and 30% loss and
+refuses nothing.
 
 ## Reading the counterexamples against the code
 
