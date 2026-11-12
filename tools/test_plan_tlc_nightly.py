@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from plan_tlc_nightly import SLICES, choose, day_slice, declared_debt, plan, rerun, slice_key
+from plan_tlc_nightly import (NIGHTLY_DEBT_COLUMNS, SLICES, choose, day_slice, declared_debt, nightly_debt, plan,
+                              rerun, slice_key)
 
 TOOL = Path(__file__).resolve().parent / "plan_tlc_nightly.py"
 
@@ -101,7 +102,7 @@ class RerunSliceTests(unittest.TestCase):
     def test_full_rerun_is_every_non_debt_case_in_declaration_order(self):
         cases = [case("z"), case("debt", gate="bench", debt="over-budget"), case("b0", "beta"), case("a")]
         self.assertEqual(rerun(cases, [run("debt", "FAIL", "124")]), [
-            ("alpha", 3, 0, "z"), ("alpha", 3, 2, "a"), ("beta", 1, 0, "b0")])
+            ("alpha", 3, 0, "z", "0"), ("alpha", 3, 2, "a", "0"), ("beta", 1, 0, "b0", "0")])
 
     def test_every_case_is_in_exactly_one_slice(self):
         cases = many(200) + [case(f"MCb{i}.cfg", "beta") for i in range(50)]
@@ -130,7 +131,7 @@ class RerunSliceTests(unittest.TestCase):
     def test_slice_keeps_the_full_group_shard_index(self):
         cases = many(40)
         for index in range(SLICES):
-            for group, count, shard, config in rerun(cases, [], index, SLICES):
+            for group, count, shard, config, _ in rerun(cases, [], index, SLICES):
                 self.assertEqual((count, config), (40, f"MC{shard}.cfg"))
 
     def test_day_slice_is_the_utc_day_number_mod_n(self):
@@ -164,13 +165,31 @@ class RerunSliceTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaisesRegex(ValueError, "outside"):
                 rerun(many(10), [], index)
 
+    def test_nightly_debt_refuses_every_problem_at_once(self):
+        cases = [case("a"), case("d", gate="bench", debt="over-budget"), case("e", gate="bench", debt="over-budget")]
+        runs = [run("a"), run("d", "FAIL", "124"), run("e", "PASS", "0")]
+
+        def row(config, budget="900", measured="300"):
+            return dict(config=config, budget_s=budget, measured_s=measured, host="bench", generated="10", distinct="5")
+
+        good = nightly_debt([row("d")], cases, runs)
+        self.assertEqual(list(good), ["d"])
+        with self.assertRaises(ValueError) as caught:
+            nightly_debt([row("a"), row("e"), row("d", "500"), row("d")], cases, runs)
+        text = str(caught.exception)
+        for want in ("a: not declared timeout debt", "e: its RUNS.tsv record is not the bounded FAIL/124",
+                     "d: budget_s 500 is under twice measured_s 300", "d: listed twice"):
+            self.assertIn(want, text)
+        with self.assertRaisesRegex(ValueError, "columns"):
+            nightly_debt([], cases, runs, ("config", "budget_s"))
+
     def test_declared_debt_lists_cases_whatever_their_records(self):
         cases = [case("a"), case("d", gate="bench", debt="over-budget"), case("b", gate="bench")]
         self.assertEqual(declared_debt(cases), ["d"])
 
 
 class CommandLineTests(unittest.TestCase):
-    def run_tool(self, *args, cases=None, runs=None):
+    def run_tool(self, *args, cases=None, runs=None, nightly=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
@@ -179,10 +198,58 @@ class CommandLineTests(unittest.TestCase):
             (root / "RUNS.tsv").write_text("config\tresult\texit\tseconds\n" + "".join(
                 f"{c}\t{r}\t{e}\t1\n" for c, r, e in runs))
             (root / "stale.json").write_text("[]")
+            if nightly is not None:
+                (root / "NIGHTLY-DEBT.tsv").write_text("\t".join(NIGHTLY_DEBT_COLUMNS) + "\n" + "".join(
+                    "\t".join(row) + "\n" for row in nightly))
             return subprocess.run(
                 [sys.executable, str(TOOL), "--cases", str(root / "CASES.tsv"), "--runs", str(root / "RUNS.tsv"),
+                 "--nightly-debt", str(root / "NIGHTLY-DEBT.tsv"),
                  *[str(root / "stale.json") if a == "STALE" else a for a in args]],
                 capture_output=True, text=True, check=False)
+
+    def test_nightly_debt_runs_in_every_slice_first_and_leaves_the_weekly_watch(self):
+        cases = [(f"MC{i}.cfg", "alpha", "required", "-") for i in range(30)]
+        cases += [("Fast.cfg", "alpha", "bench", "over-budget"), ("Slow.cfg", "alpha", "bench", "over-budget")]
+        runs = [("Fast.cfg", "FAIL", "124"), ("Slow.cfg", "FAIL", "124")]
+        nightly = [("Fast.cfg", "900", "380.3", "bench", "2837306", "474351")]
+        for k in range(SLICES):
+            done = self.run_tool("--select", "rerun", "--day", str(k), cases=cases, runs=runs, nightly=nightly)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            lines = done.stdout.splitlines()
+            self.assertEqual(lines[0], "alpha 32 30 Fast.cfg 900")
+            self.assertNotIn("Slow.cfg", done.stdout)
+            self.assertTrue(all(line.endswith(" 0") for line in lines[1:]), lines)
+            self.assertIn("(1 nightly debt)", done.stderr)
+        # Plant: without the file the case is not re-run at all, and is weekly debt again.
+        bare = self.run_tool("--select", "rerun", "--full", cases=cases, runs=runs)
+        self.assertNotIn("Fast.cfg", bare.stdout)
+        weekly = self.run_tool("--select", "debt", "--stale", "STALE", cases=cases, runs=runs, nightly=nightly)
+        self.assertEqual((weekly.returncode, weekly.stdout), (0, "alpha 32 31\n"), weekly.stderr)
+        self.assertIn("TLC-DEBT Fast.cfg is nightly debt (tlc.yml re-run, budget 900 s)", weekly.stderr)
+        both = self.run_tool("--select", "debt", "--stale", "STALE", cases=cases, runs=runs)
+        self.assertEqual(both.stdout, "alpha 32 30\nalpha 32 31\n")
+
+    def test_all_debt_nightly_leaves_the_weekly_watch_green_with_a_line(self):
+        cases = [("a.cfg", "alpha", "required", "-"), ("d.cfg", "alpha", "bench", "over-budget")]
+        done = self.run_tool("--select", "debt", "--stale", "STALE", cases=cases,
+                             runs=[("a.cfg", "PASS", "0"), ("d.cfg", "FAIL", "124")],
+                             nightly=[("d.cfg", "900", "300", "bench", "10", "5")])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("TLC-DEBT CASES.tsv declares no weekly timeout debt: nothing to run this week", done.stderr)
+
+    def test_nightly_debt_refusals_are_named_and_stop_the_plan(self):
+        cases = [("a.cfg", "alpha", "required", "-"), ("d.cfg", "alpha", "bench", "over-budget")]
+        runs = [("a.cfg", "PASS", "0"), ("d.cfg", "FAIL", "124")]
+        for row, want in (
+                (("a.cfg", "900", "300", "bench", "10", "5"), "a.cfg: not declared timeout debt"),
+                (("d.cfg", "599", "300", "bench", "10", "5"), "d.cfg: budget_s 599 is under twice measured_s 300"),
+                (("d.cfg", "900", "-", "bench", "10", "5"), "must be positive numbers of seconds"),
+                (("d.cfg", "900", "300", "bench", "0", "5"), "must be the positive counts of a complete run")):
+            for select in (("--select", "rerun", "--full"), ("--select", "debt", "--stale", "STALE")):
+                with self.subTest(row=row, select=select):
+                    done = self.run_tool(*select, cases=cases, runs=runs, nightly=[row])
+                    self.assertNotEqual(done.returncode, 0)
+                    self.assertIn(want, done.stderr)
 
     def test_outputs_name_the_job(self):
         cases = [(f"MC{i}.cfg", "alpha", "required", "-") for i in range(60)]
@@ -199,10 +266,10 @@ class CommandLineTests(unittest.TestCase):
     def test_only_names_cases_and_refuses_unknown_ones(self):
         cases = [(f"MC{i}.cfg", "alpha", "required", "-") for i in range(5)]
         done = self.run_tool("--select", "rerun", "--full", "--only", "MC3.cfg", cases=cases, runs=[])
-        self.assertEqual((done.returncode, done.stdout), (0, "alpha 5 3 MC3.cfg\n"), done.stderr)
+        self.assertEqual((done.returncode, done.stdout), (0, "alpha 5 3 MC3.cfg 0\n"), done.stderr)
         bad = self.run_tool("--select", "rerun", "--full", "--only", "MCtypo.cfg", cases=cases, runs=[])
         self.assertNotEqual(bad.returncode, 0)
-        self.assertIn("--only names no non-debt case: MCtypo.cfg", bad.stderr)
+        self.assertIn("--only names no re-run case: MCtypo.cfg", bad.stderr)
 
     def test_empty_rerun_exits_non_zero(self):
         done = self.run_tool("--select", "rerun", "--full", cases=[], runs=[])
@@ -220,7 +287,7 @@ class CommandLineTests(unittest.TestCase):
         done = self.run_tool("--select", "debt", "--stale", "STALE",
                              cases=[("a.cfg", "alpha", "required", "-")], runs=[("a.cfg", "PASS", "0")])
         self.assertEqual(done.returncode, 0, done.stderr)
-        self.assertIn("TLC-DEBT CASES.tsv declares no timeout debt: nothing to run this week", done.stderr)
+        self.assertIn("TLC-DEBT CASES.tsv declares no weekly timeout debt: nothing to run this week", done.stderr)
         self.assertIn("TLC-PLAN cases=0", done.stderr)
 
 

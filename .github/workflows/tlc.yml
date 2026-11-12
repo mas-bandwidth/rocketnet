@@ -21,9 +21,18 @@
 # stopped failing, a count typed in) goes red within N nights. An empty slice
 # is red.
 #
-# Neither job runs a timeout-debt case: those have taken up to 87 hours each
-# (run 41337755290). They run in tlc-debt.yml, a weekly watch that is not a
-# release gate.
+# Nightly debt: timeout debt that finishes in minutes (over the pinned
+# tlacheck's 110 s record cap, so its bounded record stays FAIL/124) is listed
+# in proofs/tla/NIGHTLY-DEBT.tsv and runs in every slice, first, each under
+# `timeout` at its budget_s (at least twice its slowest measurement; 900 s for
+# the three listed, measured 292 to 380 s), held to the completed result and
+# counts its row records. That adds about 1010 s of measured time a night,
+# about 505 s at two at once (they ran in 167 to 178 s each on a 4-CPU bench
+# slot). tools/check_tla_records.py checks the file on every commit.
+#
+# Neither job runs any other timeout-debt case: those have taken up to 87
+# hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch that
+# is not a release gate.
 # Finite models, configured properties, pinned engine/JAR, worker/heap limits
 # and bounded committed RUNS.tsv records are unchanged. Separate nightly JSON
 # evidence records outcomes; it must never be merged as a bounded measurement.

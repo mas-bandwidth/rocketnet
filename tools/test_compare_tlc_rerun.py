@@ -31,7 +31,7 @@ def fresh(config, violated=(("Invariant", "LiveSpansDisjoint"),), exit=12, worke
 
 
 class ComparerTests(unittest.TestCase):
-    def check(self, rec, got, config="MCWitness.cfg"):
+    def check(self, rec, got, config="MCWitness.cfg", budget="0", nightly=None):
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
             if got is not None:
@@ -39,13 +39,33 @@ class ComparerTests(unittest.TestCase):
                 run.mkdir()
                 (run / "result.json").write_text(json.dumps(got))
             out = io.StringIO()
-            failed = compare([("ring", 5, 1, config)], {config: rec} if rec else {}, evidence, out)
+            failed = compare([("ring", 5, 1, config, budget)], {config: rec} if rec else {}, evidence, out, nightly)
             return failed, out.getvalue()
 
     def assertRed(self, rec, got, field):
         failed, text = self.check(rec, got)
         self.assertEqual(failed, ["MCWitness.cfg"], text)
         self.assertIn(f"TLC-RERUN MISMATCH MCWitness.cfg {field}:", text)
+
+    def test_nightly_debt_is_held_to_its_completed_counts(self):
+        # The bounded record of a debt case: FAIL/124 with the counts at its 110 s cap.
+        rec = record("MCWitness.cfg", "pass", "-", "124", "2", "1000", "900", "FAIL")
+        row = {"config": "MCWitness.cfg", "generated": "2837306", "distinct": "474351"}
+        done = fresh("MCWitness.cfg", (), 0, 2, "2837306", "474351")
+        failed, text = self.check(rec, done, budget="900", nightly={"MCWitness.cfg": row})
+        self.assertEqual(failed, [], text)
+        # Plants: a count off by one, a run its budget stopped, a budget with no NIGHTLY-DEBT.tsv row,
+        # and the same evidence held to the bounded record (budget 0) instead.
+        for got, budget, nightly, field in (
+                (fresh("MCWitness.cfg", (), 0, 2, "2837306", "474352"), "900", {"MCWitness.cfg": row}, "distinct"),
+                (dict(fresh("MCWitness.cfg", (), 124, 2, "500", "400", "FAIL"), interrupted=True), "900",
+                 {"MCWitness.cfg": row}, "budget"),
+                (done, "900", {}, "nightly-debt"),
+                (done, "0", {"MCWitness.cfg": row}, "result")):
+            with self.subTest(field=field):
+                failed, text = self.check(rec, got, budget=budget, nightly=nightly)
+                self.assertEqual(failed, ["MCWitness.cfg"], text)
+                self.assertIn(f"TLC-RERUN MISMATCH MCWitness.cfg {field}:", text)
 
     def test_identical_witness_is_green(self):
         failed, text = self.check(record("MCWitness.cfg"), fresh("MCWitness.cfg"))
@@ -115,14 +135,14 @@ class ComparerTests(unittest.TestCase):
             plan.write_text("")
             with self.assertRaisesRegex(ValueError, "zero cases"):
                 read_plan(plan)
-            plan.write_text("ring 5 1\n")
-            with self.assertRaisesRegex(ValueError, "want 'group cardinality shard config'"):
+            plan.write_text("ring 5 1 MCWitness.cfg\n")
+            with self.assertRaisesRegex(ValueError, "want 'group cardinality shard config budget'"):
                 read_plan(plan)
 
     def test_main_exit_status_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "plan").write_text("ring 5 1 MCWitness.cfg\n")
+            (root / "plan").write_text("ring 5 1 MCWitness.cfg 0\n")
             rec = record("MCWitness.cfg")
             (root / "RUNS.tsv").write_text("\t".join(rec) + "\n" + "\t".join(rec.values()) + "\n")
             run = root / "run-ring-1"

@@ -431,6 +431,18 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
                     f"{cfg}: failure without declared timeout debt (result={row['result']!r}, exit={row['exit']!r}, gate={case['gate']!r}, debt={case['debt']!r})"
                 )
 
+    # NIGHTLY-DEBT.tsv beside CASES.tsv: the timeout debt tlc.yml re-runs every
+    # night under its own budget. Each row must be a declared timeout-debt
+    # case with a FAIL/124 record, listed once, with budget_s at least twice
+    # measured_s and positive completed counts (plan_tlc_nightly.nightly_debt,
+    # the planner's own check). No file is no nightly debt.
+    from plan_tlc_nightly import read_nightly_debt  # pylint: disable=import-outside-toplevel
+    nightly_debt_path = Path(cases_path).parent / "NIGHTLY-DEBT.tsv"
+    try:
+        read_nightly_debt(nightly_debt_path, cases, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{nightly_debt_path}: {error}")
+
     for cfg in plan:
         if cfg not in seen_runs:
             errors.append(f"{cfg}: present in CASES.tsv but missing from RUNS.tsv")

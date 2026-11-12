@@ -9,6 +9,10 @@
 # case. tlc.yml still requires each one to stay declared as debt with its
 # reason.
 #
+# Debt that finishes in minutes is not run here: proofs/tla/NIGHTLY-DEBT.tsv
+# lists it, and tlc.yml's nightly re-run runs it every night under its own
+# budget_s (tools/plan_tlc_nightly.py --select debt leaves it out).
+#
 # The plan job lists the debt cases (red when CASES.tsv declares debt and none
 # is planned; green with a TLC-DEBT line when none is declared); each case is
 # then its own job, two at a
