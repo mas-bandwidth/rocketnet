@@ -457,8 +457,9 @@ static inline bool rocketnet_xdp_frame_parse(
 //                   ESP): never parsed at the UDP offsets
 //   other_family    a frame of the family this server does not serve
 //   malformed       an IPv4 or IPv6 frame the parse refuses (IPv4 options, a
-//                   next header that is not UDP) or one too short for the
-//                   smallest server packet
+//                   next header that is not UDP), one too short for the
+//                   smallest server packet, or an IPv6 frame from an
+//                   IPv4-mapped source (sdk/rocketnet_address.h)
 //   descriptor      a receive descriptor rocketnet_xdp_receive_descriptor
 //                   refuses before the frame is read (below)
 //
@@ -545,6 +546,16 @@ static inline bool rocketnet_xdp_frame_receive(
     int payload_bytes = 0;
 
     if ( !rocketnet_xdp_frame_parse( frame, frame_bytes, &from, &payload, &payload_bytes ) || payload_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
+    {
+        drops->malformed++;
+        return false;
+    }
+
+    // the real IPv6 header is seen here, so an IPv4-mapped source is spoofed
+    // and dropped (rocketnet_address_accept_received_source, as every socket
+    // transport drops it); counted with the frames whose header is refused
+
+    if ( !rocketnet_address_accept_received_source( &from, false ) )
     {
         drops->malformed++;
         return false;
