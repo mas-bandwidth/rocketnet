@@ -2824,6 +2824,37 @@ static void test_windows_sockets_not_inherited()
     printf( "test_windows_sockets_not_inherited\n" );
 }
 
+// The platform socket is non-blocking (its one mode,
+// ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING; the create sets FIONBIO). Windows
+// has no getter for the mode, so a receive on the empty socket tells: a
+// non-blocking socket answers WSAEWOULDBLOCK at once. A one-second receive
+// timeout is set first, so a blocking socket fails WSAETIMEDOUT instead of
+// hanging the case (VERIFY-4 W10: the unit tier's non-blocking check,
+// tests/test_unit_platform_nits.cpp, is excluded on Windows).
+
+static void test_platform_socket_is_non_blocking()
+{
+    const int baseline = live_allocations.load();
+    const char * binds[] = { "127.0.0.1:0", "[::1]:0" };
+
+    for ( int family = 0; family < 2; ++family )
+    {
+        rocketnet_address_t bind = address( binds[family] );
+        rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+        CHECK( socket );
+        const DWORD timeout_ms = 1000;
+        CHECK( setsockopt( (SOCKET) socket->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *) &timeout_ms, (int) sizeof( timeout_ms ) ) == 0 );
+        char byte = 0;
+        const int got = recv( (SOCKET) socket->handle, &byte, 1, 0 );
+        const int error = got == SOCKET_ERROR ? WSAGetLastError() : 0;
+        printf( "test_platform_socket_is_non_blocking %s recv=%d error=%d\n", binds[family], got, error );
+        CHECK( got == SOCKET_ERROR && error == WSAEWOULDBLOCK );
+        rocketnet_platform_socket_destroy( socket );
+        CHECK( live_allocations.load() == baseline );
+    }
+}
+
 // A create that fails after posting receives drains them inline before it
 // frees the region: closesocket cancels the posted receives and the drain
 // accounts for every one. Stage 6 fails after the first receive is posted,
@@ -2948,6 +2979,7 @@ static const fault_case_t fault_cases[] = {
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
+    { "test_platform_socket_is_non_blocking", test_platform_socket_is_non_blocking },
     { "test_windows_transports_sized_by_max_clients", test_windows_transports_sized_by_max_clients },
 };
 
