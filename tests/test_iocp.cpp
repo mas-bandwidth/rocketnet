@@ -3104,9 +3104,27 @@ static void test_rio_send_waits_counted()
 
 // ---- RIO lanes ----
 
+// A loopback port nothing holds right now: lanes take a nonzero port.
+static uint16_t rio_free_port()
+{
+    SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( s != INVALID_SOCKET );
+    BOOL enabled = TRUE;
+    CHECK( setsockopt( s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    CHECK( bind( s, (sockaddr *) &a, sizeof( a ) ) == 0 );
+    int bytes = sizeof( a );
+    CHECK( getsockname( s, (sockaddr *) &a, &bytes ) == 0 );
+    closesocket( s );
+    return ntohs( a.sin_port );
+}
+
 static rocketnet_server_rio_t * rio_open_lanes( rocketnet_address_t * bind, int lanes, const uint8_t * packet_filter )
 {
     *bind = address( "127.0.0.1:0" );
+    bind->port = rio_free_port();
     rocketnet_server_rio_options_t options;
     options.lanes = lanes;
     options.packet_filter = packet_filter;
@@ -3287,9 +3305,12 @@ static void test_rio_lanes_refuse_a_held_port()
 }
 
 // With lanes the sockets share the port with SO_REUSEADDR, so a later socket
-// of the same user may bind it too. Windows does not document which socket
-// gets a datagram once a second binds; measured, the first bound keeps
-// everything. This pins that: a change in Windows shows here first.
+// of the same user may bind it too: on the lanes' own address, or on the
+// wildcard at that port. Windows does not document which socket gets a
+// datagram once a second binds the same address; measured, the first bound
+// keeps everything, and a wildcard binder is less specific than the lanes.
+// This pins both: a change in Windows shows here first. (A binder before the
+// lanes is refused by the probe: test_rio_lanes_refuse_a_held_port.)
 static void test_rio_lanes_later_binder_receives_nothing()
 {
     CHECK( rocketnet_server_rio_available() );
@@ -3302,9 +3323,60 @@ static void test_rio_lanes_later_binder_receives_nothing()
     const bool bound = port_thief_binds( &target, &thief );
     const int stolen = bound ? port_thief_steals( &target, thief ) : 0;
     closesocket( thief );
+
+    rocketnet_address_t wildcard = address( "0.0.0.0:0" );
+    wildcard.port = bind.port;
+    SOCKET wild_thief;
+    const bool wild_bound = port_thief_binds( &wildcard, &wild_thief );
+    const int wild_stolen = wild_bound ? port_thief_steals( &target, wild_thief ) : 0;
+    closesocket( wild_thief );
+
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d\n", bound ? 1 : 0, stolen );
+    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d wildcard_bound=%d wildcard_stolen=%d\n",
+            bound ? 1 : 0, stolen, wild_bound ? 1 : 0, wild_stolen );
     CHECK( stolen == 0 );
+    CHECK( wild_stolen == 0 );
+}
+
+// More than one lane refuses the wildcard address (either family) and port 0
+// with their named statuses; one lane takes both, as before.
+static void test_rio_lanes_refuse_wildcard_and_port_zero()
+{
+    CHECK( rocketnet_server_rio_available() );
+
+    const uint16_t port = rio_free_port();
+    const char * wildcards[] = { "0.0.0.0:0", "[::]:0" };
+    for ( const char * text : wildcards )
+    {
+        rocketnet_address_t at = address( text );
+        at.port = port;
+        rocketnet_server_rio_options_t options;
+        options.lanes = 2;
+        options.packet_filter = NULL;
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
+        CHECK( status == ROCKETNET_STATUS_INVALID_ADDRESS );
+    }
+    {
+        rocketnet_address_t at = address( "127.0.0.1:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = 2;
+        options.packet_filter = NULL;
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
+        CHECK( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
+    }
+    {
+        rocketnet_address_t at = address( "0.0.0.0:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = 1;
+        options.packet_filter = NULL;
+        int status = ROCKETNET_STATUS_OK;
+        rocketnet_server_rio_t * rio = rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options );
+        CHECK( rio && at.port != 0 );
+        rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
+    }
+    printf( "test_rio_transport_lanes_refuse_wildcard_and_port_zero\n" );
 }
 
 // With a packet filter every lane worker runs the prefilter before banking:
@@ -3433,6 +3505,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_lanes_later_binder_receives_nothing", test_rio_lanes_later_binder_receives_nothing },
     { "test_rio_transport_lanes_prefilter_counts_drops", test_rio_lanes_prefilter_counts_drops },
     { "test_rio_transport_lanes_finish_refuses_foreign_ids", test_rio_lanes_finish_refuses_foreign_ids },
+    { "test_rio_transport_lanes_refuse_wildcard_and_port_zero", test_rio_lanes_refuse_wildcard_and_port_zero },
 };
 
 // With no argument every case runs; with names, only those cases run.

@@ -2904,12 +2904,28 @@ static uint64_t rocketnet_rio_outer_bytes()
     return sizeof( rocketnet_server_rio_t );
 }
 
+// The unspecified address, 0.0.0.0 or ::.
+static bool rocketnet_rio_address_is_wildcard( const rocketnet_address_t * address )
+{
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        return address->data.ip == 0;
+    }
+    for ( int i = 0; i < 8; ++i )
+    {
+        if ( address->data.ipv6[i] != 0 )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Binds a plain socket to the address with SO_EXCLUSIVEADDRUSE and closes
 // it: refused when anything already holds the address and port, so lanes
 // that share the port with SO_REUSEADDR never join a socket someone else
-// bound first. Port 0 resolves to the port the probe was given, written to
-// bind_address.
-static bool rocketnet_rio_exclusive_probe( rocketnet_address_t * bind_address, int * status )
+// bound first. The port is never 0 here (create refuses it with lanes).
+static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_address, int * status )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     SOCKADDR_INET address;
@@ -2917,7 +2933,7 @@ static bool rocketnet_rio_exclusive_probe( rocketnet_address_t * bind_address, i
     {
         return false;
     }
-    int address_bytes = ipv6 ? (int) sizeof( sockaddr_in6 ) : (int) sizeof( sockaddr_in );
+    const int address_bytes = ipv6 ? (int) sizeof( sockaddr_in6 ) : (int) sizeof( sockaddr_in );
     SOCKET probe = WSASocketW( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
     {
@@ -2937,12 +2953,6 @@ static bool rocketnet_rio_exclusive_probe( rocketnet_address_t * bind_address, i
         rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
         rocketnet_warn( "rio transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
                         bind_address->port, WSAGetLastError() );
-    }
-    if ( bound )
-    {
-        address_bytes = sizeof( address );
-        bound = getsockname( probe, (sockaddr *) &address, &address_bytes ) != SOCKET_ERROR &&
-                rocketnet_rio_address_read( &address, ipv6, bind_address );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, generation ) )
@@ -2979,6 +2989,24 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     }
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
     {
+        return NULL;
+    }
+    // More than one lane shares the port with SO_REUSEADDR, so the lanes take
+    // a specific local address (a squatter on that exact address and port is
+    // refused by the probe below, and one on the wildcard is less specific
+    // than the lanes) and a nonzero port (no ephemeral port resolved by a
+    // probe that closes before the lanes bind). One lane binds exclusively and
+    // takes either.
+    if ( lanes > 1 && rocketnet_rio_address_is_wildcard( bind_address ) )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_warn( "rio transport refused: %d lanes need a specific local address, not the wildcard", lanes );
+        return NULL;
+    }
+    if ( lanes > 1 && bind_address->port == 0 )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
+        rocketnet_warn( "rio transport refused: %d lanes need a nonzero port", lanes );
         return NULL;
     }
     const uint8_t * packet_filter = options ? options->packet_filter : NULL;
