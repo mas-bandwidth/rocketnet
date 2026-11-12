@@ -48,6 +48,7 @@ typedef size_t cft_length_t;
 #endif // #if defined( _WIN32 )
 
 #if defined( __linux__ )
+#include <errno.h>
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
 #endif // #if defined( __linux__ )
@@ -164,6 +165,7 @@ static void cft_syscalls_open()
             cft_syscall_source = "perf-tracepoint-game-thread";
             return;
         }
+        fprintf( stderr, "client_frame_time: perf_event_open on %s (id %llu) refused: %s\n", path, id, strerror( errno ) );
     }
 #elif defined( __APPLE__ ) // #if defined( __linux__ )
     cft_syscall_source = "task-events-whole-process";
