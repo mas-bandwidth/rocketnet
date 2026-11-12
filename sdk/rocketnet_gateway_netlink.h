@@ -18,7 +18,14 @@
 //                 whose output interface is this interface: its RTA_GATEWAY
 //                 is the gateway. An IPv4 multipath default route answers
 //                 with its first next hop, as /proc/net/route (netstat -rn)
-//                 shows it.
+//                 shows it. A default route that names only a nexthop
+//                 object (RTA_NH_ID, as the kernel dumps it when
+//                 net.ipv4.nexthop_compat_mode is 0) is answered after the
+//                 dump by an RTM_GETNEXTHOP query for that id (ip nexthop
+//                 get id N): an object on this interface with an
+//                 NHA_GATEWAY is the route. A group, a blackhole, an object
+//                 on another interface or without a gateway, or the
+//                 kernel refusing the query, is no default route.
 //   RTM_GETNEIGH  no dump: the one neighbour entry of the family on this
 //                 interface whose NDA_DST is the gateway (ip neigh get), in
 //                 a state ip(8) shows (reachable, stale, delay, probe or
