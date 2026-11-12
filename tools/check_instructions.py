@@ -10,7 +10,9 @@ benchmarks/instruction_baseline.json.
 Exit codes:
   0: PASS (every region within 2.0% of the baseline, either side)
   1: FAIL (any region more than 2.0% over the baseline, or more than 2.0% under
-     it: a stale-high baseline, re-pin it; build_type mismatch; runner error)
+     it: a stale-high baseline, re-pin it; build_type mismatch; runner error;
+     a baseline whose recorded commit is not an ancestor of HEAD, or a
+     re-pin from a tree with changes HEAD does not hold)
   2: NOT COMPARABLE (toolchain_id, compiler_id or valgrind_version differs from
      baseline; outputs 'not comparable: <local> vs <pinned> verdict=FAIL' and
      names the pinned toolchain to measure with)
@@ -128,6 +130,65 @@ def get_git_head_commit() -> str:
     if proc.returncode != 0:
         return "unknown"
     return proc.stdout.strip() or "unknown"
+
+
+COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def baseline_commit_problem(commit: str, repo: Optional[str] = None) -> Optional[str]:
+    """
+    None when the baseline's recorded commit is a full hash and an ancestor
+    of HEAD (or HEAD itself); otherwise why not. A baseline measured on a
+    commit that was later rebased or squashed away records code nobody can
+    check out again, so its numbers have no provenance.
+    """
+    if not COMMIT_RE.match(str(commit or "")):
+        return f"baseline records no full commit hash (commit={commit!r})"
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=execution_timeout(30),
+    )
+    if proc.returncode == 0:
+        return None
+    if proc.returncode == 1:
+        return f"baseline commit {commit} is not an ancestor of HEAD; re-pin on a commit in this history"
+    return (f"baseline commit {commit} is not in this history (a rewritten branch, or a shallow "
+            f"checkout): {proc.stderr.strip()}")
+
+
+def tree_dirty(baseline_path: str, repo: Optional[str] = None) -> Optional[str]:
+    """The tracked changes, other than the baseline file, or None when clean."""
+    proc = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=execution_timeout(30),
+    )
+    if proc.returncode != 0:
+        return f"git status failed: {proc.stderr.strip()}"
+    keep = os.path.basename(baseline_path)
+    lines = [line for line in proc.stdout.splitlines() if line.strip() and not line.endswith(keep)]
+    return "; ".join(lines) if lines else None
+
+
+def repin_refusal(baseline_path: str, env: Dict[str, str], repo: Optional[str] = None) -> Optional[str]:
+    """
+    Why a re-pin here could not record the commit it measured, or None. The
+    2026-10-31 baseline recorded 182347fc, the pull request merge ref CI
+    measured on, which never landed: a pull request run's HEAD is that
+    synthetic merge. A tree with changes HEAD does not hold is not HEAD.
+    """
+    if env.get("GITHUB_REF", "").startswith("refs/pull/"):
+        return ("--repin in a pull request run would record its merge ref, a commit that never lands; "
+                "re-pin on a branch commit")
+    dirty = tree_dirty(baseline_path, repo)
+    if dirty:
+        return f"--repin records HEAD as the commit measured, and the tree has changes: {dirty}"
+    return None
 
 
 def check_toolchain_comparable(
@@ -268,6 +329,8 @@ def write_repin_baseline(
     clean_reason = (reason or "").strip()
     if not clean_reason:
         raise ValueError("--repin requires a non-empty --reason <text>")
+    if not COMMIT_RE.match(str(commit or "")):
+        raise ValueError(f"--repin records the commit measured, and HEAD is not a commit here ({commit!r})")
     if not toolchain_id or toolchain_id == UNPINNED_TOOLCHAIN_ID:
         raise ValueError("--repin requires --toolchain <prefix> from tools/build_pinned_toolchain.sh")
 
@@ -447,6 +510,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.repin:
         commit = get_git_head_commit()
+        refusal = repin_refusal(args.baseline, os.environ)
+        if refusal is not None:
+            print(f"error: {refusal} verdict=FAIL", file=sys.stderr)
+            return 1
         try:
             baseline = write_repin_baseline(
                 baseline_path=args.baseline,
@@ -467,6 +534,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         with open(args.baseline, "r", encoding="utf-8") as f:
             baseline = json.load(f)
+        provenance = baseline_commit_problem(str(baseline.get("commit", "")))
+        if provenance is not None:
+            print(f"{provenance} verdict=FAIL")
+            return 1
 
     not_comparable = check_toolchain_comparable(
         baseline=baseline,

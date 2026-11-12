@@ -254,6 +254,61 @@ class TestCheckInstructions(unittest.TestCase):
             self.assertEqual(saved["reason"], "pin after loopback batch change")
             self.assertEqual(saved["regions"]["client_frame"]["ir"], 1234500)
             self.assertEqual(saved["regions"]["server_tick"]["ir"], 2345600)
+            with self.assertRaises(ValueError):
+                ci.write_repin_baseline(
+                    baseline_path=path,
+                    measured=measured,
+                    compiler_id="GNU-13.3.0",
+                    valgrind_version="valgrind-3.26.0",
+                    build_type="Release",
+                    toolchain_id=PINNED,
+                    commit="unknown",
+                    reason="a re-pin outside any checkout",
+                )
+
+    def test_baseline_commit_must_be_an_ancestor_of_head(self) -> None:
+        # a git history in a temp dir: main has A <- B; side branches off A
+        # with S, then main is checked out again (S is the rebased-away
+        # measurement the 2026-10-31 baseline recorded)
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as repo:
+            env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+                       GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
+                       GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+            def git(*args: str) -> str:
+                return subprocess.run(["git", *args], cwd=repo, env=env, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            with open(os.path.join(repo, "f"), "w", encoding="utf-8") as f:
+                f.write("a\n")
+            git("add", "f")
+            git("commit", "-q", "-m", "A")
+            a = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "side")
+            git("commit", "-q", "--allow-empty", "-m", "S")
+            s = git("rev-parse", "HEAD")
+            git("checkout", "-q", "main")
+            git("commit", "-q", "--allow-empty", "-m", "B")
+            b = git("rev-parse", "HEAD")
+
+            self.assertIsNone(ci.baseline_commit_problem(a, repo))
+            self.assertIsNone(ci.baseline_commit_problem(b, repo))
+            self.assertIn("not an ancestor", ci.baseline_commit_problem(s, repo) or "")
+            self.assertIn("not in this history", ci.baseline_commit_problem("1" * 40, repo) or "")
+            self.assertIn("no full commit hash", ci.baseline_commit_problem("unknown", repo) or "")
+            self.assertIn("no full commit hash", ci.baseline_commit_problem(a[:9], repo) or "")
+
+            # a re-pin records HEAD, so the tree must be what HEAD holds; the
+            # baseline file itself may differ
+            baseline = os.path.join(repo, "instruction_baseline.json")
+            self.assertIsNone(ci.repin_refusal(baseline, {"GITHUB_REF": "refs/heads/main"}, repo))
+            self.assertIn("merge ref", ci.repin_refusal(baseline, {"GITHUB_REF": "refs/pull/798/merge"}, repo) or "")
+            with open(os.path.join(repo, "f"), "w", encoding="utf-8") as f:
+                f.write("changed\n")
+            self.assertIn("tree has changes", ci.repin_refusal(baseline, {}, repo) or "")
 
 
 if __name__ == "__main__":
