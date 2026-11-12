@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+#
+# outage-pair-real: path outages on real UDP sockets, one below the connection
+# timeout T and one above it.
+#
+# Two network namespaces joined by a veth pair, netem on both ends (the delay
+# and the loss given), bin/outage_pair server in one and bin/outage_pair client
+# in the other. An outage is `tc qdisc change ... netem ... loss 100%` on the
+# egress of one veth end or both, held, then changed back. T is the
+# development connect token timeout, 10 s.
+#
+#   survive: three outages of T - 1 = 9 s, 5 s apart: client->server dark,
+#            then server->client dark, then both dark. Both sides send
+#            RELIABLE_ORDERED and UNRELIABLE messages throughout through
+#            can_send_message / start_message / finish_message and count
+#            refusals. Passes when neither side's connection ends and every
+#            accepted reliable message is delivered exactly once, in order.
+#   timeout: one outage of T + 2 = 12 s, both dark. Passes when, before the
+#            path comes back, the server's one end is TIMED_OUT and the
+#            client's one end is CONNECTION_TIMED_OUT, and nothing else.
+#
+# Linux only. It needs root for the namespaces and tc, and gets it the way the
+# nightly's other namespace cells do: --vm runs the cases as root inside a
+# virtme-ng guest of the host's own kernel (`vng`,
+# ~/vm-kernels/vmlinuz-$(uname -r), a writable /dev/kvm; docs/TESTING.md, "CI
+# hosts"), with no root on the host. The nightly (nightly-soak.yml) runs
+#
+#   scripts/outage-pair-real --vm
+#
+# Without --vm it must already be root (for example inside such a guest). It
+# runs nothing outside its own two namespaces, creates only the namespaces it
+# names below, deletes only what it created, and kills only the processes it
+# started.
+#
+# Options:
+#   --vm              run the cases as root in a virtme-ng guest of this kernel
+#   --delay-ms D      one-way delay on each end of the pair, in ms (default 50)
+#   --loss P          one-way loss on each end outside an outage, such as 1% (default 1%)
+#   --bin-dir DIR     where bin/outage_pair is (default: ../bin of this script)
+#   --log-dir DIR     write the logs here instead of a new temporary directory
+#
+# Exit status: 0 only when both cases passed; 1 names the failed check.
+
+set -u
+
+NAME=outage-pair-real
+VM=0
+DELAY_MS=50
+LOSS=1%
+LOG_DIR=
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPT="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+BIN_DIR="$SCRIPT_DIR/../bin"
+
+TIMEOUT_SECONDS=10
+SURVIVE_OUTAGE_SECONDS=$((TIMEOUT_SECONDS - 1))
+TIMEOUT_OUTAGE_SECONDS=$((TIMEOUT_SECONDS + 2))
+GAP_SECONDS=5
+# the client sends for this long after it connects: past the three outages
+# (3 x (5 + 9) = 42 s) with time to recover before its STOP
+SEND_SECONDS=60
+
+fail()
+{
+    echo "$NAME: check failed: $*" >&2
+    exit 1
+}
+
+usage()
+{
+    sed -n '2,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --vm)         VM=1; shift ;;
+        --delay-ms)   [ $# -ge 2 ] || fail "--delay-ms needs a value"; DELAY_MS=$2; shift 2 ;;
+        --loss)       [ $# -ge 2 ] || fail "--loss needs a value"; LOSS=$2; shift 2 ;;
+        --bin-dir)    [ $# -ge 2 ] || fail "--bin-dir needs a value"; BIN_DIR=$2; shift 2 ;;
+        --log-dir)    [ $# -ge 2 ] || fail "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            fail "unknown option $1 (see --help)" ;;
+    esac
+done
+
+case "$DELAY_MS" in ''|*[!0-9]*) fail "--delay-ms must be a non-negative integer" ;; esac
+printf '%s' "$LOSS" | grep -Eq '^[0-9]+(\.[0-9]+)?%$' || fail "--loss must be a percentage such as 1%"
+
+[ "$(uname -s)" = Linux ] || fail "this host is $(uname -s): the run needs Linux network namespaces and tc netem"
+BIN_DIR=$(cd "$BIN_DIR" 2>/dev/null && pwd) || fail "no directory $BIN_DIR"
+[ -x "$BIN_DIR/outage_pair" ] || fail "no executable $BIN_DIR/outage_pair (run make)"
+
+# ------------------------------------------------------------------------
+# --vm: the same script, as root, inside a virtme-ng guest
+# ------------------------------------------------------------------------
+
+if [ "$VM" -eq 1 ]; then
+    vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+    if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+        fail "no VM tier on this host: needs vng, a readable $vm_kernel and a writable /dev/kvm"
+    fi
+    if [ -z "$LOG_DIR" ]; then
+        LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${NAME}.XXXXXX") || fail "cannot create a log directory"
+    fi
+    mkdir -p "$LOG_DIR" || fail "cannot create $LOG_DIR"
+    rm -f "$LOG_DIR/status"
+    # vng from a short directory: its virtiofs socket path must stay under 108
+    # bytes. 1G covers the pair (the server's plan is under 50 MB) and fits a
+    # bench slot; stdin is closed so the guest never waits on a terminal.
+    short=$(mktemp -d /tmp/rnoutage.XXXXXX) || fail "cannot create a short directory for vng"
+    ( cd "$short" && vng --run "$vm_kernel" --memory 1G --cpus 4 --rwdir "$LOG_DIR" -- \
+        sudo bash "$SCRIPT" --bin-dir "$BIN_DIR" --log-dir "$LOG_DIR" --delay-ms "$DELAY_MS" --loss "$LOSS" ) \
+        < /dev/null > "$LOG_DIR/vm.log" 2>&1 || echo "vng exit=$?" >> "$LOG_DIR/vm.log"
+    rmdir "$short" 2>/dev/null
+    cat "$LOG_DIR/vm.log"
+    status=$(sed -nE 's/^exit=([0-9]+)$/\1/p' "$LOG_DIR/status" 2>/dev/null | tail -n 1)
+    echo "$NAME: logs in $LOG_DIR"
+    [ -n "$status" ] || fail "the guest wrote no status (see $LOG_DIR/vm.log)"
+    exit "$status"
+fi
+
+# ------------------------------------------------------------------------
+# the run, as root
+# ------------------------------------------------------------------------
+
+[ "$(id -u)" -eq 0 ] || fail "needs root for network namespaces and tc: run it with --vm"
+command -v ip >/dev/null 2>&1 || fail "ip (iproute2) not found"
+command -v tc >/dev/null 2>&1 || fail "tc (iproute2) not found"
+
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/${NAME}.XXXXXX") || fail "cannot create a log directory"
+fi
+mkdir -p "$LOG_DIR" || fail "cannot create $LOG_DIR"
+
+TAG="rnout$$"
+NS_SERVER="${TAG}s"
+NS_CLIENT="${TAG}c"
+VETH_SERVER="rno$$a"
+VETH_CLIENT="rno$$b"
+SERVER_ADDRESS=10.77.5.1
+CLIENT_ADDRESS=10.77.5.2
+
+CREATED_NS_SERVER=0
+CREATED_NS_CLIENT=0
+PIDS=()
+
+cleanup()
+{
+    local rc=$? pid
+    # stop only what this run started
+    for pid in "${PIDS[@]:-}"; do
+        [ -n "$pid" ] && kill -KILL "$pid" 2>/dev/null
+    done
+    for pid in "${PIDS[@]:-}"; do
+        [ -n "$pid" ] && wait "$pid" 2>/dev/null
+    done
+    # delete only the namespaces this run created (their veth ends go with them)
+    [ "$CREATED_NS_CLIENT" -eq 1 ] && ip netns del "$NS_CLIENT" 2>/dev/null
+    [ "$CREATED_NS_SERVER" -eq 1 ] && ip netns del "$NS_SERVER" 2>/dev/null
+    echo "exit=$rc" > "$LOG_DIR/status"
+    echo "$NAME: logs in $LOG_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+ip netns add "$NS_SERVER" || fail "ip netns add $NS_SERVER"
+CREATED_NS_SERVER=1
+ip netns add "$NS_CLIENT" || fail "ip netns add $NS_CLIENT"
+CREATED_NS_CLIENT=1
+
+ip link add "$VETH_SERVER" type veth peer name "$VETH_CLIENT" || fail "ip link add veth pair"
+ip link set "$VETH_SERVER" netns "$NS_SERVER" || fail "move $VETH_SERVER into $NS_SERVER"
+ip link set "$VETH_CLIENT" netns "$NS_CLIENT" || fail "move $VETH_CLIENT into $NS_CLIENT"
+
+ip netns exec "$NS_SERVER" ip addr add "$SERVER_ADDRESS/24" dev "$VETH_SERVER" || fail "address the server end"
+ip netns exec "$NS_CLIENT" ip addr add "$CLIENT_ADDRESS/24" dev "$VETH_CLIENT" || fail "address the client end"
+ip netns exec "$NS_SERVER" ip link set lo up || fail "bring up lo in $NS_SERVER"
+ip netns exec "$NS_CLIENT" ip link set lo up || fail "bring up lo in $NS_CLIENT"
+ip netns exec "$NS_SERVER" ip link set "$VETH_SERVER" up || fail "bring up $VETH_SERVER"
+ip netns exec "$NS_CLIENT" ip link set "$VETH_CLIENT" up || fail "bring up $VETH_CLIENT"
+
+# netem on each end shapes only that end's egress: the client end carries
+# client->server, the server end server->client
+netem()
+{
+    # $1 = namespace, $2 = device, $3 = add or change, $4 = loss
+    ip netns exec "$1" tc qdisc "$3" dev "$2" root netem limit 100000 delay "${DELAY_MS}ms" loss "$4"
+}
+
+netem "$NS_SERVER" "$VETH_SERVER" add "$LOSS" || fail "tc qdisc add netem on the server end (is sch_netem available?)"
+netem "$NS_CLIENT" "$VETH_CLIENT" add "$LOSS" || fail "tc qdisc add netem on the client end"
+
+# $1 = c2s, s2c or both; $2 = the loss to set
+set_path()
+{
+    case "$1" in
+        c2s)  netem "$NS_CLIENT" "$VETH_CLIENT" change "$2" ;;
+        s2c)  netem "$NS_SERVER" "$VETH_SERVER" change "$2" ;;
+        both) netem "$NS_CLIENT" "$VETH_CLIENT" change "$2" && netem "$NS_SERVER" "$VETH_SERVER" change "$2" ;;
+    esac
+}
+
+stamp()
+{
+    echo "$NAME: $(date +%s.%N | cut -c1-14) $*"
+}
+
+# $1 = log, $2 = line prefix, $3 = seconds: wait until the log has the line
+wait_for_line()
+{
+    local waited=0
+    while ! grep -q "^$2" "$1" 2>/dev/null; do
+        [ "$waited" -ge $(( $3 * 10 )) ] && return 1
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
+# $1 = case name, $2 = server/client mode; the client's extra arguments follow
+start_pair()
+{
+    local case_name=$1 mode=$2 port=$3
+    shift 3
+    local server_log="$LOG_DIR/$case_name-server.log" client_log="$LOG_DIR/$case_name-client.log" key
+    ip netns exec "$NS_SERVER" "$BIN_DIR/outage_pair" server "$SERVER_ADDRESS:$port" "$mode" > "$server_log" 2>&1 &
+    SERVER_PID=$!
+    PIDS+=("$SERVER_PID")
+    wait_for_line "$server_log" "outage_pair server public key " 10 || fail "$case_name: the server printed no public key"
+    key=$(sed -n 's/^outage_pair server public key //p' "$server_log" | head -n 1)
+    ip netns exec "$NS_CLIENT" "$BIN_DIR/outage_pair" client "$SERVER_ADDRESS:$port" "$key" "$mode" "$@" > "$client_log" 2>&1 &
+    CLIENT_PID=$!
+    PIDS+=("$CLIENT_PID")
+    wait_for_line "$client_log" "outage_pair client connected" 15 || fail "$case_name: the client did not connect"
+    stamp "$case_name: connected"
+}
+
+# $1 = case name: wait for both programs and require both to pass
+finish_pair()
+{
+    local case_name=$1 server_rc client_rc
+    wait "$SERVER_PID"
+    server_rc=$?
+    wait "$CLIENT_PID"
+    client_rc=$?
+    grep -h '^outage_pair ' "$LOG_DIR/$case_name-server.log" "$LOG_DIR/$case_name-client.log"
+    [ "$server_rc" -eq 0 ] || fail "$case_name: the server exited $server_rc"
+    [ "$client_rc" -eq 0 ] || fail "$case_name: the client exited $client_rc"
+    stamp "$case_name: PASS"
+}
+
+echo "$NAME: delay_ms=$DELAY_MS (each way) loss=$LOSS (each way) T=${TIMEOUT_SECONDS}s survive_outage=${SURVIVE_OUTAGE_SECONDS}s timeout_outage=${TIMEOUT_OUTAGE_SECONDS}s"
+ip netns exec "$NS_SERVER" tc qdisc show dev "$VETH_SERVER"
+ip netns exec "$NS_CLIENT" tc qdisc show dev "$VETH_CLIENT"
+
+# survive: T - 1 in each direction, then both
+
+start_pair survive survive 40000 "$SEND_SECONDS"
+for direction in c2s s2c both; do
+    sleep "$GAP_SECONDS"
+    set_path "$direction" 100% || fail "survive: darken $direction"
+    stamp "survive: $direction dark"
+    sleep "$SURVIVE_OUTAGE_SECONDS"
+    set_path "$direction" "$LOSS" || fail "survive: restore $direction"
+    stamp "survive: $direction restored"
+done
+finish_pair survive
+
+# timeout: T + 2, both dark; both ends must come before the path does
+
+start_pair timeout timeout 40001
+sleep "$GAP_SECONDS"
+set_path both 100% || fail "timeout: darken both"
+stamp "timeout: both dark"
+sleep "$TIMEOUT_OUTAGE_SECONDS"
+server_up=0
+client_up=0
+kill -0 "$SERVER_PID" 2>/dev/null && server_up=1
+kill -0 "$CLIENT_PID" 2>/dev/null && client_up=1
+set_path both "$LOSS" || fail "timeout: restore both"
+stamp "timeout: both restored"
+[ "$server_up" -eq 0 ] || fail "timeout: the server had not ended when the path came back"
+[ "$client_up" -eq 0 ] || fail "timeout: the client had not ended when the path came back"
+finish_pair timeout
+
+echo "$NAME: PASS (T-1 outages c2s, s2c and both survived with every reliable message delivered once in order; T+2 ended TIMED_OUT and CONNECTION_TIMED_OUT)"
+exit 0

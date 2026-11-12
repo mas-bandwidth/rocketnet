@@ -11,7 +11,7 @@
 #   preflight <commit> <nic> <queues> <address>
 #   arm <nic>
 #   start server <commit> <label> <address> <seed> <kbps> <max-clients> <update-hz> <counters-every> <queues> <results> <status>
-#   start client <commit> <label> <address> <duration> <cycles> <stagger> <seed> <kbps> <max-packets> <update-hz> <counters-every> <results>
+#   start client <commit> <label> <address> <duration> <cycles> <stagger> <seed> <kbps> <update-hz> <counters-every> <results>
 #   alive client <label>
 #   stop server <label>
 #   stop client <label>
@@ -278,14 +278,14 @@ cmd_stop_server()
 cmd_start_client()
 {
     local commit=$1 label=$2 address=$3 duration=$4 cycles=$5 stagger=$6 seed=$7 kbps=$8
-    local max_packets=$9 update_hz=${10} counters_every=${11} results=${12}
+    local update_hz=$9 counters_every=${10} results=${11}
     local bin="$BASE/$commit/bin/client"
 
     [ -x "$bin" ] || fail "start client: no executable $bin (run build first)"
 
     local args=( --matrix --address "$address" --label "$label" --duration "$duration"
                  --cycles "$cycles" --stagger "$stagger" --seed "$seed" --send-kbps "$kbps"
-                 --max-packets-per-update "$max_packets" --update-hz "$update_hz"
+                 --update-hz "$update_hz"
                  --counters-every "$counters_every" --results "$results" )
 
     case "$( uname -s )" in
@@ -398,7 +398,7 @@ case "$command" in
         kind=$1; shift
         case "$kind" in
             server) [ $# -eq 11 ] || usage; cmd_start_server "$@" ;;
-            client) [ $# -eq 12 ] || usage; cmd_start_client "$@" ;;
+            client) [ $# -eq 11 ] || usage; cmd_start_client "$@" ;;
             *) usage ;;
         esac
         ;;

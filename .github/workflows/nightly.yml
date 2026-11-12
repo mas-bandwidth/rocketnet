@@ -169,6 +169,13 @@ jobs:
           cmake -S . -B build-production -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
           cmake --build build-production --target functional_production --parallel 8
 
+      # the unit suite with its nightly tier (tests/test.cpp,
+      # rocketnet_unit_nightly_cases): the 1000-client per-client isolation case
+      - name: Unit suite, nightly tier
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+        run: ./bin/test
+
       - name: Functional suite, nightly tier
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
@@ -224,6 +231,11 @@ jobs:
 
       # serial: the Linux tier holds the XDP cases, which share the host's XDP
       # state and cannot run beside other cases
+      - name: Unit suite, nightly tier
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+        run: ./bin/test
+
       - name: Functional suite, nightly tier (serial)
         env:
           ROCKETNET_TEST_NIGHTLY: "1"

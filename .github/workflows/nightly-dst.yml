@@ -94,7 +94,12 @@ jobs:
             test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
             test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
             test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
+            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
+            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
+            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
+            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
+            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -192,6 +197,38 @@ jobs:
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
+      - name: Schedule outage seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage | tr -d '\r' | tee dst-schedule-outage.log
+          if grep -q '^FAIL' dst-schedule-outage.log; then echo "dst schedule outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage seeds=1-50 fired=$fired"
+
+      - name: Schedule outage-past seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage-past | tr -d '\r' | tee dst-schedule-outage-past.log
+          if grep -q '^FAIL' dst-schedule-outage-past.log; then echo "dst schedule outage-past printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage-past.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
+
+      # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
+      # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
+      - name: Outage scenarios seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --outage all --seeds 1-50 | tr -d '\r' | tee dst-outage.log
+          if grep -q '^FAIL' dst-outage.log; then echo "dst outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
         shell: bash
@@ -247,7 +284,12 @@ jobs:
             test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
             test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
             test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
+            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
+            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
+            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
+            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
+            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -345,6 +387,38 @@ jobs:
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
+      - name: Schedule outage seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage | tr -d '\r' | tee dst-schedule-outage.log
+          if grep -q '^FAIL' dst-schedule-outage.log; then echo "dst schedule outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage seeds=1-50 fired=$fired"
+
+      - name: Schedule outage-past seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage-past | tr -d '\r' | tee dst-schedule-outage-past.log
+          if grep -q '^FAIL' dst-schedule-outage-past.log; then echo "dst schedule outage-past printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage-past.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
+
+      # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
+      # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
+      - name: Outage scenarios seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --outage all --seeds 1-50 | tr -d '\r' | tee dst-outage.log
+          if grep -q '^FAIL' dst-outage.log; then echo "dst outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
         shell: bash
@@ -428,7 +502,12 @@ jobs:
             test_dst_check_stale_session_payload_fails test_dst_check_clean_sequence_passes \
             test_dst_witness_ordered_swap_fails test_dst_witness_foreign_ack_fails \
             test_dst_budget_queued_sequenced_seed_69363 test_dst_budget_queued_sequenced_seed_71434 \
-            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289; do
+            test_dst_budget_queued_sequenced_seed_84959 test_dst_budget_queued_sequenced_seed_93289 \
+            test_dst_reliable_timeout_ends_connections_cleanly test_dst_outage_holds_dark_sessions \
+            test_dst_outage_past_times_out_both_ends test_dst_witness_outage_bright_fails \
+            test_dst_check_reliable_owed_by_step_fails test_dst_check_reliable_in_flight_slack_passes \
+            test_dst_check_unscheduled_end_fails test_dst_check_refusals_agree_and_floor \
+            test_dst_check_probe_paced_bound test_dst_check_bright_and_outage_end; do
             "$DST_BIN/test$DST_EXE" --run "$c"
           done
 
@@ -520,6 +599,38 @@ jobs:
           fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
           if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
           echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
+      - name: Schedule outage seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage | tr -d '\r' | tee dst-schedule-outage.log
+          if grep -q '^FAIL' dst-schedule-outage.log; then echo "dst schedule outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage seeds=1-50 fired=$fired"
+
+      - name: Schedule outage-past seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule outage-past | tr -d '\r' | tee dst-schedule-outage-past.log
+          if grep -q '^FAIL' dst-schedule-outage-past.log; then echo "dst schedule outage-past printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-outage-past.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=outage-past fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED outage-past fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=outage-past seeds=1-50 fired=$fired"
+
+      # the outage scenarios (docs/DST.md, "Outage scenarios"): every set over
+      # seeds 1-50, 17450 rows; about 6 minutes on the macOS runner
+      - name: Outage scenarios seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --outage all --seeds 1-50 | tr -d '\r' | tee dst-outage.log
+          if grep -q '^FAIL' dst-outage.log; then echo "dst outage printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          if ! tail -n 1 dst-outage.log | grep -q '^PASS outage=all seeds=1-50 rows=17450$'; then echo "dst outage did not print its PASS line on $RUNNER_OS"; exit 1; fi
 
       - name: Sweep the nightly seed range
         shell: bash

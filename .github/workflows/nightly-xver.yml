@@ -1,0 +1,188 @@
+# Nightly cross-version check: a client of one release against a server of
+# another, over real loopback UDP.
+#
+# The release notes promise that every v1.x release interoperates with every
+# other, both ways. This workflow builds tools/xver/xver.c three times, each
+# against one source tree and that tree's own library: the checked-out ref
+# (the newest), the previous release (the newest v* tag without a preview
+# suffix that is an ancestor of the ref and is not the ref itself), and
+# v1.0.0, the first release. tools/xver/xver.go then runs every case of the
+# harness for each older version as the client of the newest server and as
+# the server of the newest client, and the newest against itself, all on the
+# portable server transport; then every client version against every server
+# version on the gso and io_uring server transports. The client is portable
+# throughout.
+#
+# The cases (tools/xver/xver.c): basic (connect; every reliability mode both
+# ways, lengths up to the largest message so the big ones fragment, with
+# content, reported reliability and channel, order and receipts checked;
+# clean disconnect), weather (the development
+# link simulator at latency, jitter, loss and duplication on both ends),
+# outage-c2s, outage-s2c and outage-both (every packet one way, or both,
+# dropped for T-1 seconds, then traffic resumes and is checked), die (the
+# client is killed, the server times the slot out, and a new client takes the
+# freed slot), lifecycle (client disconnect, server disconnect, client
+# silence, server silence, then a reconnect into the slot).
+#
+# Every run that does not pass prints one line, XVER FAIL case=.. client=..
+# server=.. transport=..: <reason>, and the job fails. The one stated
+# difference between versions is in tools/xver/xver.go (silentClientEnd): a
+# v1.0.x server may end a silent client with RELIABLE_TIMED_OUT or TIMED_OUT
+# (its reliable timeout and T are both 10 s and race), as the v1.1.0 notes
+# document; every other server must say TIMED_OUT.
+#
+# What it does not cover: the xdp server transport (it needs root and a veth
+# pair; ci.yml's transport matrix covers it on the current tree only), a
+# client transport other than portable, releases between v1.0.0 and the
+# previous one (v1.0.0 to v1.1.3 were each run against each other by hand on
+# 2026-11-11, all passing), and a network beyond loopback. It is not a
+# per-commit gate; the main build compiles xver.c against the current tree so
+# a public API change that breaks it fails per commit. A red night is a
+# finding to read.
+#
+# Reader: whoever takes the run the next morning.
+#
+# Schedule: 50 11 * * * UTC. nightly-bigendian-system.yml is 11:15 UTC and
+# nightly-watch.yml is 13:30 UTC, so this run's result is in when the watch
+# reads the night. Runs have no repository execution-time cap, so these
+# workflows can overlap.
+
+name: nightly cross-version
+
+on:
+  schedule:
+    - cron: "50 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+jobs:
+  xver:
+    name: cross-version / Linux
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-xver-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+      # the tags are needed to find the previous release
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+          fetch-depth: 0
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Check the fleet's Go is on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          # tools/xver/go.mod says go 1.22: any Go at or above 1.23 builds it (the fleet pins 1.26 on Linux and macOS)
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go >= 1.23 (missing) on $RUNNER_NAME"
+            exit 1
+          fi
+          got="$(go version)"
+          echo "$got"
+          minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
+          if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
+            echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
+          fi
+
+      # xver.c shares the directory with the Go tool, so name the .go files
+      - name: Test the grading
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd tools/xver
+          go test -timeout=0 xver.go xver_test.go
+
+      - name: Build the harness against the newest, the previous release and v1.0.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP:-/tmp}/xver"
+          rm -rf "$work"
+          git worktree prune
+          mkdir -p "$work"
+          head="$(git rev-parse HEAD)"
+          previous=""
+          for tag in $(git tag --merged HEAD --list 'v*' --sort=-v:refname); do
+            case "$tag" in
+              *-*) continue ;;
+            esac
+            if [ "$(git rev-parse "$tag^{commit}")" != "$head" ]; then
+              previous="$tag"
+              break
+            fi
+          done
+          if [ -z "$previous" ]; then
+            echo "XVER FAIL no release tag is an ancestor of $head"
+            exit 1
+          fi
+          echo "previous release: $previous"
+          versions="$previous"
+          if [ "$previous" != v1.0.0 ]; then
+            versions="$versions v1.0.0"
+          fi
+          bins="-bin newest=$work/build-newest/xver"
+          cd tools/xver
+          go run xver.go build -tree ../.. -build "$work/build-newest"
+          for tag in $versions; do
+            git worktree add --detach "$work/tree-$tag" "$tag"
+            go run xver.go build -tree "$work/tree-$tag" -build "$work/build-$tag"
+            bins="$bins -bin $tag=$work/build-$tag/xver"
+          done
+          echo "XVER_BINS=$bins" >> "$GITHUB_ENV"
+
+      - name: Run every case both ways, then on the gso and io_uring servers
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP:-/tmp}/xver"
+          transports="gso"
+          disabled="$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)"
+          if [ "$disabled" = 0 ]; then
+            transports="gso,io_uring"
+          else
+            echo "SKIP transport=io_uring: kernel.io_uring_disabled=$disabled on $RUNNER_NAME"
+          fi
+          cd tools/xver
+          # XVER_BINS holds only -bin flags and paths under RUNNER_TEMP, split on spaces
+          # shellcheck disable=SC2086
+          go run xver.go run $XVER_BINS -new newest -transports "$transports" -parallel 4 -out "$work/runs"
+
+      - name: Remove the release worktrees
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP:-/tmp}/xver"
+          git worktree prune

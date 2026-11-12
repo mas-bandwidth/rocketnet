@@ -44,6 +44,8 @@ besides the build dependencies each job checks by name:
   `qemu-s390x-static`;
 - for `distro-container`: rootless podman.
 
+The nightly soak's real-socket outage cell, `scripts/outage-pair-real --vm` (its header says what it proves), runs in that VM tier: T - 1 outages each way and both ways must end no connection and lose no reliable message, a T + 2 outage must end both sides by timeout.
+
 ### Big-endian checks
 
 Every big-endian run is emulated s390x. [PLATFORMS.md, Big-endian
@@ -94,6 +96,50 @@ small for the fragmented message.
 Not covered on big-endian: the XDP data plane (no big-endian host attaches the
 program; the guest has no clang, so XDP is compiled out there), the io_uring
 rung, and real hardware.
+
+### Cross-version checks
+
+Nightly, `nightly-xver.yml` on a Linux fleet runner: the release notes
+promise that every v1.x release interoperates with every other, both ways.
+`tools/xver/xver.c` is one end of a real connection; `tools/xver/xver.go`
+builds it against three source trees, each with that tree's own library (the
+checked-out ref, the previous release tag and v1.0.0), then runs each case
+with each older version as the client of the newest server and as the server
+of the newest client, and the newest against itself, on the portable server
+transport; then every client version against every server version on the
+gso and io_uring server transports (io_uring is reported as SKIP with its
+reason when the kernel gates it off). The client is portable throughout.
+
+The cases: basic (every reliability mode both ways, lengths up to the
+largest message, content, reported reliability and channel, order and
+receipts checked, then a clean disconnect), weather (the development link
+simulator on both ends), outage-c2s, outage-s2c and outage-both (every
+packet one way or both dropped for T - 1 seconds while traffic flows; the
+connection must survive), die (the client is killed; a new client takes the
+freed slot) and lifecycle (client disconnect, server disconnect, client
+silence, server silence, reconnect). A run passes only when both ends exit
+0, neither reports a failure, the server verified every session and its end
+reasons are exactly the case's list. Each run that does not pass prints
+`XVER FAIL case=... client=... server=... transport=...: <reason>` and the job
+fails. `go test xver.go xver_test.go` in `tools/xver` checks the grading.
+
+One difference between versions is expected, and stated in
+`silentClientEnd` in `xver.go`: a v1.0.x server may end a client that went
+silent with `RELIABLE_TIMED_OUT` as well as `TIMED_OUT`, because its default
+reliable-message timeout equals the connect token's timeout and the two
+clocks race (documented in the v1.1.0 release notes; on 2026-11-11, 21 of 24
+such ends named `RELIABLE_TIMED_OUT`, the other 3 on the io_uring server).
+Only v1.0.x servers get that expectation; every other server must say
+`TIMED_OUT`.
+
+Per commit, the main build compiles `xver.c` against the current tree, so a
+public API change that breaks it fails at once.
+
+Not covered: the xdp server transport (ci.yml's transport matrix covers it on
+the current tree), client transports other than portable, releases between
+v1.0.0 and the previous one (v1.0.0, v1.1.0, v1.1.1, v1.1.2 and v1.1.3 were
+each run against each other on 2026-11-11, all passing), and links beyond
+loopback.
 
 ### Static-analysis evidence limit
 

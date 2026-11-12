@@ -284,7 +284,7 @@ server_command="ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_PRINT_COUNTERS=1
 client_command()
 {
     local label=$1 address=$2 stagger=$3 each=$4 results=$5
-    echo "~/rocketnet-live/$commit/bin/client --matrix --address $address --label $label --duration $window_seconds --cycles $cycles --stagger $stagger --seed $seed --send-kbps $each --max-packets-per-update 64 --update-hz 1000 --counters-every 60 --results $results"
+    echo "~/rocketnet-live/$commit/bin/client --matrix --address $address --label $label --duration $window_seconds --cycles $cycles --stagger $stagger --seed $seed --send-kbps $each --update-hz 1000 --counters-every 60 --results $results"
 }
 
 print_host_common()
@@ -320,7 +320,7 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     echo
     echo "== client $label ($ssh_name, $shape, $site, $path) cap $cap kbps total ($each kbps each way) =="
     print_host_common "$ssh_name"
-    echo "  start:   ssh $ssh_name $remote_path start client $commit $label $server_address $window_seconds $cycles $stagger $seed $each 64 1000 60 $results"
+    echo "  start:   ssh $ssh_name $remote_path start client $commit $label $server_address $window_seconds $cycles $stagger $seed $each 1000 60 $results"
     echo "  command: $( client_command "$label" "$server_address" "$stagger" "$each" "$results" )"
     echo "  stop:    ssh $ssh_name $remote_path stop client $label"
     echo "  collect: ssh $ssh_name $remote_path collect $results > $run_dir/$label.tsv"
@@ -445,7 +445,7 @@ ssh_run "$server_ssh" grep -q '^listening' "$server_status" || fail "no listenin
 # 5. the clients, once the server is listening.
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     results="~/rocketnet-live/results/$run_id/$label.tsv"
-    ssh_run "$ssh_name" "$remote_path" start client "$commit" "$label" "$server_address" "$window_seconds" "$cycles" "$stagger" "$seed" "$each" 64 1000 60 "$results" || fail "cannot start client $label"
+    ssh_run "$ssh_name" "$remote_path" start client "$commit" "$label" "$server_address" "$window_seconds" "$cycles" "$stagger" "$seed" "$each" 1000 60 "$results" || fail "cannot start client $label"
     started_clients=1
 done < "$tmp/sorted.tsv"
 

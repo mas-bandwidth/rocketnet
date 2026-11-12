@@ -10849,6 +10849,8 @@ extern void ordered_256k_chunked_stream_over_lossy_reordering_link();
 extern void ordered_small_and_large_interleaved();
 extern void config_mismatch_over_loopback();
 extern void config_equal_over_lossy_loopback();
+extern void config_mismatch_over_loopback_default();
+extern void config_equal_over_lossy_loopback_default();
 extern void reliable_receive_full_ordered_gap_recovers();
 extern void reliable_receive_full_recovers_all_modes();
 extern void reliable_receive_full_partial_packet_recovers();
@@ -10867,6 +10869,7 @@ extern void unreliable_small_messages_pack_in_place();
 extern void unreliable_over_receive_budget_dropped_and_counted();
 extern void reliable_delivered_when_unreliable_budget_full();
 extern void resend_timing_table_over_lossy_links();
+extern void resend_timing_table_over_lossy_links_default();
 extern void block_resend_cost_over_long_path();
 extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
@@ -13454,6 +13457,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_ordered_small_and_large_interleaved", ordered_small_and_large_interleaved, NULL },
     { "test_loopback_transport_config_mismatch", config_mismatch_over_loopback, NULL },
     { "test_loopback_transport_config_equal_over_lossy", config_equal_over_lossy_loopback, NULL },
+    { "test_loopback_transport_config_mismatch_default", config_mismatch_over_loopback_default, NULL },
+    { "test_loopback_transport_config_equal_over_lossy_default", config_equal_over_lossy_loopback_default, NULL },
     { "test_reliable_receive_full_ordered_gap_recovers", reliable_receive_full_ordered_gap_recovers, NULL },
     { "test_reliable_receive_full_recovers_all_modes", reliable_receive_full_recovers_all_modes, NULL },
     { "test_reliable_receive_full_partial_packet_recovers", reliable_receive_full_partial_packet_recovers, NULL },
@@ -13472,6 +13477,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted, NULL },
     { "test_reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full, NULL },
     { "test_resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links, NULL },
+    { "test_resend_timing_table_over_lossy_links_default", resend_timing_table_over_lossy_links_default, NULL },
     { "test_block_resend_cost_over_long_path", block_resend_cost_over_long_path, NULL },
 #endif // production excludes channel harness (network simulator) cases
     { "test_wire_totals_count_every_packet_and_byte", wire_totals_count_every_packet_and_byte, NULL },

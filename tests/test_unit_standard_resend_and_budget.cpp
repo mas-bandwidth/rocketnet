@@ -41,10 +41,10 @@ struct resend_trace_fixture_t
     resend_trace_fixture_t() : send( ordered.send ), ack( ordered.ack ) {}
 };
 
-static void resend_trace_open( resend_trace_fixture_t * f )
+static void resend_trace_open( resend_trace_fixture_t * f, int reliable_timeout_ms = 10000 )
 {
     rocketnet_message_default_config( &f->config );
-    f->config.reliable_message_timeout_ms = 10000;          // the vector states the 10 s reliable timeout (m9.5); the default 0 has none
+    f->config.reliable_message_timeout_ms = reliable_timeout_ms; // the vector states the 10 s reliable timeout (m9.5); the default 0 has none
     check( rocketnet_message_validate_config( &f->config ) );
 
     f->arena = rn_arena_create( NULL, &f->config, 1, NULL );
@@ -261,3 +261,56 @@ static void test_standard_resend_and_budget_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_resend_and_budget_vectors );
+
+// The m9.resend-trace inputs under the default configuration (reliable
+// timeout 0, off): the resend passes give the vector's counts (each path has
+// one number on the wire, so probe pacing holds nothing), no timeout check
+// ends the connection, at the vector's 10 s or long after, and the oldest
+// number is still resent at its delay.
+static void test_standard_resend_trace_inputs_at_the_default()
+{
+    const double t0 = 1000.0;
+
+    // short path: a 20 ms sample, the adaptive resend delay of 150 ms
+    {
+        resend_trace_fixture_t f;
+        resend_trace_open( &f, 0 );
+        check( f.ack.reliable_timeout == 0.0 );
+        resend_trace_send( &f, t0 );
+        const uint64_t second = resend_trace_send( &f, t0 );
+        check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.020 ) == 1 );
+
+        check( resend_trace_pass( &f, t0 + 0.040 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 0.109 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 0.111 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 0.221 ) == 1 );
+        check( rn_window_ack_check_timeout( &f.ack, t0 + 9.999 ) == 0 );
+        check( rn_window_ack_check_timeout( &f.ack, t0 + 10.000 ) == 0 );
+        check( rn_window_ack_check_timeout( &f.ack, t0 + 1000.000 ) == 0 );
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( resend_trace_pass( &f, t0 + 1000.000 ) == 1 );
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        resend_trace_close( &f );
+    }
+
+    // long path: a 400 ms sample, the delay capped at the default 2 s
+    {
+        resend_trace_fixture_t f;
+        resend_trace_open( &f, 0 );
+        resend_trace_send( &f, t0 );
+        const uint64_t second = resend_trace_send( &f, t0 );
+        check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.400 ) == 1 );
+
+        check( resend_trace_pass( &f, t0 + 0.400 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 1.629 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 1.631 ) == 0 );
+        check( resend_trace_pass( &f, t0 + 2.001 ) == 1 );
+        check( rn_window_ack_check_timeout( &f.ack, t0 + 10.000 ) == 0 );
+        check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        resend_trace_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_standard_resend_trace_inputs_at_the_default );

@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cinttypes>
 #include <climits>
@@ -34,10 +35,12 @@
 #include <cstring>
 #include <sodium.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined( __linux__ )
 #include <arpa/inet.h>
+#include <sched.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <linux/ethtool.h>
@@ -69,6 +72,9 @@
 #define RN_BLASTER_CONNECT_TIMEOUT_SECONDS 30u
 
 static_assert( RN_BLASTER_FRAME_BYTES == ROCKETNET_XDP_FRAME_SIZE, "the benchmark preserves RocketNet's 4096-byte XDP frame" );
+static_assert( RN_BLASTER_MAX_PAYLOAD_BYTES + 4u == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+               "one record of the largest body fills one packet payload" );
+static_assert( 37u + RN_BLASTER_MAX_PAYLOAD_BYTES <= ROCKETNET_SEND_BUDGET, "the largest packet stays inside the send budget" );
 static_assert( RN_BLASTER_FILL_RING_SIZE >= 2u * RN_BLASTER_RX_FRAMES,
                "the fill ring retains a slot past the kernel's cached batch" );
 
@@ -86,6 +92,8 @@ struct rn_blaster_options_t
     std::string packet_filter_text;
     std::string owned_confirmation;
     std::string xdp_mode;
+    std::string cpus_text;
+    std::vector<uint32_t> cpus;
     bool execute;
     bool self_test;
 };
@@ -659,12 +667,13 @@ static void rn_blaster_usage( const char * program )
              "usage: %s [--dry-run|--execute] --interface IFACE --queue N --xdp-mode native|skb\n"
              "  --source IP:PORT --server PRIVATE_IP:PORT --source-mac XX:.. --next-hop-mac XX:..\n"
              "  --packet-filter 8hex --token-file FILE --manifest FILE --clients N --duration 1..600\n"
-             "  --rate-pps N --payload-bytes 1..1200 --source-port 1024.. --seed N\n"
+             "  --rate-pps N --payload-bytes 1..%u --source-port 1024.. --seed N\n"
              "  --mode throughput|robustness --server-transport-profile xdp|gso|io_uring|msgx|iocp|rio\n"
              "  --direction c2s|s2c|both --bind auto|copy|zero-copy\n"
+             "  [--threads 1..%u] [--cpus LIST, one CPU per thread, e.g. 1-6 or 0-7,32-39]\n"
              "  --owned-bench-confirm %s\n"
              "       %s --self-test\n",
-             program, RN_BLASTER_OWNED_CONFIRM, program );
+             program, RN_BLASTER_MAX_PAYLOAD_BYTES, RN_BLASTER_MAX_THREADS, RN_BLASTER_OWNED_CONFIRM, program );
 }
 
 static bool rn_blaster_next( int argc, char ** argv, int * i, const char ** value )
@@ -683,6 +692,7 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
     options->plan.mode = RN_BLASTER_MODE_THROUGHPUT;
     options->plan.direction = RN_BLASTER_DIRECTION_CLIENT_TO_SERVER;
     options->plan.bind = RN_BLASTER_BIND_AUTO;
+    options->plan.threads = 1;
     options->execute = false;
     options->self_test = false;
     for ( int i = 1; i < argc; ++i )
@@ -765,6 +775,13 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
         else if ( strcmp( arg, "--queue" ) == 0 && rn_blaster_parse_u32( value, 0, 65535, &options->plan.queue ) )
         {
         }
+        else if ( strcmp( arg, "--threads" ) == 0 && rn_blaster_parse_u32( value, 1, RN_BLASTER_MAX_THREADS, &options->plan.threads ) )
+        {
+        }
+        else if ( strcmp( arg, "--cpus" ) == 0 )
+        {
+            options->cpus_text = value;
+        }
         else if ( strcmp( arg, "--source-port" ) == 0 )
         {
             uint32_t parsed = 0;
@@ -830,6 +847,17 @@ static bool rn_blaster_parse_args( int argc, char ** argv, rn_blaster_options_t 
     {
         *error = "plan values are absent or out of bounds";
         return false;
+    }
+    if ( !options->cpus_text.empty() )
+    {
+        uint32_t cpus[RN_BLASTER_MAX_THREADS];
+        const uint32_t count = rn_blaster_parse_cpu_list( options->cpus_text.c_str(), cpus, RN_BLASTER_MAX_THREADS );
+        if ( count == 0 || count != options->plan.threads )
+        {
+            *error = "--cpus must list exactly one distinct CPU per thread";
+            return false;
+        }
+        options->cpus.assign( cpus, cpus + count );
     }
     if ( options->interface_name.empty() || options->source_text.empty() || options->server_text.empty() ||
          options->source_mac_text.empty() || options->next_hop_mac_text.empty() || options->token_file.empty() ||
@@ -955,9 +983,13 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
     printf( "PLAN manifest_cases=%u nominal_valid_rocketnet_bytes=%u nominal_valid_frame_bytes=%u"
             " nominal_valid_wire_slot_bytes=%u\n",
             manifest.count, nominal_wire, frame, wire_slot );
+    printf( "PLAN threads=%u cpus=%s queues=0-%u reply_steering=%s\n", options.plan.threads,
+            options.cpus_text.empty() ? "unpinned" : options.cpus_text.c_str(), options.plan.threads - 1u,
+            options.plan.threads == 1 ? "one_queue" : "source_port_rss_hash" );
     printf( "PLAN protocol=rocketnet_client_protocol crypto=production_helpers message_config=default record=unreliable\n" );
     printf( "PLAN endpoint_arena_required_bytes=%" PRIu64 "\n", arena_required );
-    printf( "PLAN downstream=controlled_server_workload_contract rss=externally_provisioned_one_queue\n" );
+    printf( "PLAN downstream=controlled_server_workload_contract rss=%s\n",
+            options.plan.threads == 1 ? "externally_provisioned_one_queue" : "nic_toeplitz_read_at_execute" );
     if ( options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS )
     {
         printf( "PLAN robustness_family=ipv4 oversize_rocketnet_bytes=%u\n", ROCKETNET_RECEIVE_CEILING + 1u );
@@ -1014,8 +1046,26 @@ static int rn_blaster_self_test()
     plan.payload_bytes = 1200;
     plan.source_port = 1024;
     plan.address_family = 4;
+    plan.threads = 1;
     plan.direction = RN_BLASTER_DIRECTION_BIDIRECTIONAL;
     RN_BLASTER_CHECK( rn_blaster_plan_valid( &plan ) );
+    plan.threads = 0;
+    RN_BLASTER_CHECK( !rn_blaster_plan_valid( &plan ) );
+    plan.threads = RN_BLASTER_MAX_THREADS + 1u;
+    RN_BLASTER_CHECK( !rn_blaster_plan_valid( &plan ) );
+    plan.threads = RN_BLASTER_MAX_THREADS;
+    RN_BLASTER_CHECK( rn_blaster_plan_valid( &plan ) );
+    plan.clients = RN_BLASTER_MAX_THREADS - 1u;
+    RN_BLASTER_CHECK( !rn_blaster_plan_valid( &plan ) );
+    plan.clients = 1000;
+    plan.mode = RN_BLASTER_MODE_ROBUSTNESS;
+    RN_BLASTER_CHECK( !rn_blaster_plan_valid( &plan ) );
+    plan.threads = 1;
+    RN_BLASTER_CHECK( rn_blaster_plan_valid( &plan ) );
+    plan.mode = RN_BLASTER_MODE_THROUGHPUT;
+    plan.payload_bytes = RN_BLASTER_MAX_PAYLOAD_BYTES;
+    RN_BLASTER_CHECK( rn_blaster_plan_valid( &plan ) );
+    plan.payload_bytes = 1200;
     plan.duration_seconds = 0;
     RN_BLASTER_CHECK( !rn_blaster_plan_valid( &plan ) );
     plan.duration_seconds = 601;
@@ -1128,6 +1178,155 @@ static int rn_blaster_self_test()
     rocketnet_message_writer_begin( &writer, payload, sizeof( payload ) );
     RN_BLASTER_CHECK( rocketnet_message_writer_add( &writer, &record ) );
     RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) > (int) sizeof( body ) );
+
+    /* The largest body fills one packet payload exactly; one byte more does not fit. */
+    {
+        static uint8_t largest[RN_BLASTER_MAX_PAYLOAD_BYTES + 1u];
+        uint8_t packet_payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        rocketnet_message_record_t unreliable = {};
+        unreliable.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+        unreliable.data = largest;
+        unreliable.bytes = (int) RN_BLASTER_MAX_PAYLOAD_BYTES;
+        rocketnet_message_writer_begin( &writer, packet_payload, sizeof( packet_payload ) );
+        RN_BLASTER_CHECK( rocketnet_message_writer_add( &writer, &unreliable ) );
+        RN_BLASTER_CHECK( rocketnet_message_writer_finish( &writer ) == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        unreliable.bytes = (int) RN_BLASTER_MAX_PAYLOAD_BYTES + 1;
+        rocketnet_message_writer_begin( &writer, packet_payload, sizeof( packet_payload ) );
+        RN_BLASTER_CHECK( !rocketnet_message_writer_add( &writer, &unreliable ) );
+    }
+
+    /* Toeplitz against Microsoft's published RSS verification suite: the
+     * IPv4 two-tuple and four-tuple hashes of its five vectors. */
+    {
+        static const uint8_t key[40] = { 0x6d, 0x5a, 0x56, 0xda, 0x25, 0x5b, 0x0e, 0xc2, 0x41, 0x67, 0x25, 0x3d, 0x43, 0xa3,
+                                         0x8f, 0xb0, 0xd0, 0xca, 0x2b, 0xcb, 0xae, 0x7b, 0x30, 0xb4, 0x77, 0xcb, 0x2d, 0xa3,
+                                         0x80, 0x30, 0xf2, 0x0c, 0x6a, 0x42, 0xb7, 0x3b, 0xbe, 0xac, 0x01, 0xfa };
+        struct vector_t
+        {
+            uint8_t source[4];
+            uint16_t source_port;
+            uint8_t destination[4];
+            uint16_t destination_port;
+            uint32_t addresses_hash;
+            uint32_t ports_hash;
+        };
+        static const vector_t vectors[] = {
+            { { 66, 9, 149, 187 }, 2794, { 161, 142, 100, 80 }, 1766, 0x323e8fc2u, 0x51ccc178u },
+            { { 199, 92, 111, 2 }, 14230, { 65, 69, 140, 83 }, 4739, 0xd718262au, 0xc626b0eau },
+            { { 24, 19, 198, 95 }, 12898, { 12, 22, 207, 184 }, 38024, 0xd2d0a5deu, 0x5c2b394au },
+            { { 38, 27, 205, 30 }, 48228, { 209, 142, 163, 6 }, 2217, 0x82989176u, 0xafc7327fu },
+            { { 153, 39, 163, 191 }, 44251, { 202, 188, 127, 2 }, 1303, 0x5d1809c5u, 0x10e828a2u },
+        };
+        for ( const vector_t & vector : vectors )
+        {
+            uint8_t input[36];
+            const size_t input_bytes = rn_blaster_rss_input( 4, vector.source, vector.source_port, vector.destination,
+                                                             vector.destination_port, input );
+            RN_BLASTER_CHECK( input_bytes == 12u );
+            RN_BLASTER_CHECK( rn_blaster_toeplitz( key, sizeof( key ), input, 8u ) == vector.addresses_hash );
+            RN_BLASTER_CHECK( rn_blaster_toeplitz( key, sizeof( key ), input, input_bytes ) == vector.ports_hash );
+        }
+        uint8_t short_input[36] = {};
+        RN_BLASTER_CHECK( rn_blaster_toeplitz( key, 15u, short_input, 12u ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_rss_input( 6, short_input, 1, short_input, 2, short_input ) == 36u );
+
+        /* Port selection: every chosen port's reply hashes to its owner's
+         * queue, shares are balanced, ports ascend within a thread, and a
+         * table that names no owned queue exhausts the port space. */
+        uint32_t indirection[128];
+        for ( uint32_t i = 0; i < 128u; ++i )
+        {
+            indirection[i] = i % 6u;
+        }
+        const uint8_t server_ip[4] = { 10, 42, 0, 1 };
+        const uint8_t client_ip[4] = { 10, 42, 0, 2 };
+        static uint16_t ports[1000];
+        static uint8_t owner[65536];
+        RN_BLASTER_CHECK( rn_blaster_assign_ports( key, sizeof( key ), indirection, 128u, 4, server_ip, 40000, client_ip, 42000,
+                                                   4u, 1000u, ports, owner ) );
+        uint32_t owned[4] = { 0, 0, 0, 0 };
+        uint32_t offset = 0;
+        for ( uint32_t thread = 0; thread < 4u; ++thread )
+        {
+            const uint32_t share = rn_blaster_thread_share( 1000u, 4u, thread );
+            for ( uint32_t i = 0; i < share; ++i )
+            {
+                const uint16_t port = ports[offset + i];
+                RN_BLASTER_CHECK( port >= 42000u );
+                RN_BLASTER_CHECK( owner[port] == thread );
+                RN_BLASTER_CHECK( rn_blaster_rss_queue( key, sizeof( key ), indirection, 128u, 4, server_ip, 40000, client_ip, port ) == thread );
+                RN_BLASTER_CHECK( i == 0 || port > ports[offset + i - 1u] );
+            }
+            offset += share;
+        }
+        for ( uint32_t port = 0; port <= UINT16_MAX; ++port )
+        {
+            if ( owner[port] != RN_BLASTER_PORT_UNOWNED )
+            {
+                RN_BLASTER_CHECK( owner[port] < 4u );
+                ++owned[owner[port] < 4u ? owner[port] : 0u];
+            }
+        }
+        RN_BLASTER_CHECK( owned[0] == 250u && owned[1] == 250u && owned[2] == 250u && owned[3] == 250u );
+        RN_BLASTER_CHECK( owner[41999] == RN_BLASTER_PORT_UNOWNED );
+        RN_BLASTER_CHECK( rn_blaster_assign_ports( NULL, 0, NULL, 0, 4, server_ip, 40000, client_ip, 42000, 1u, 7u, ports, owner ) );
+        for ( uint32_t i = 0; i < 7u; ++i )
+        {
+            RN_BLASTER_CHECK( ports[i] == 42000u + i && owner[42000u + i] == 0u );
+        }
+        RN_BLASTER_CHECK( owner[42007] == RN_BLASTER_PORT_UNOWNED );
+        for ( uint32_t i = 0; i < 128u; ++i )
+        {
+            indirection[i] = 5u;
+        }
+        RN_BLASTER_CHECK( !rn_blaster_assign_ports( key, sizeof( key ), indirection, 128u, 4, server_ip, 40000, client_ip, 42000,
+                                                    4u, 8u, ports, owner ) );
+        RN_BLASTER_CHECK( !rn_blaster_assign_ports( key, sizeof( key ), indirection, 128u, 4, server_ip, 40000, client_ip, 42000,
+                                                    4u, 3u, ports, owner ) );
+    }
+
+    /* Shares, seeds, CPU lists and the summed counters. */
+    RN_BLASTER_CHECK( rn_blaster_thread_share( 1000u, 6u, 0 ) == 167u && rn_blaster_thread_share( 1000u, 6u, 3 ) == 167u &&
+                      rn_blaster_thread_share( 1000u, 6u, 4 ) == 166u && rn_blaster_thread_share( 1000u, 6u, 6 ) == 0u );
+    {
+        uint32_t sum = 0;
+        for ( uint32_t thread = 0; thread < 7u; ++thread )
+        {
+            sum += rn_blaster_thread_share( 20000000u, 7u, thread );
+        }
+        RN_BLASTER_CHECK( sum == 20000000u );
+    }
+    RN_BLASTER_CHECK( rn_blaster_thread_share( 5u, 0u, 0u ) == 0u );
+    RN_BLASTER_CHECK( rn_blaster_thread_seed( 0x1234u, 0 ) == 0x1234u );
+    RN_BLASTER_CHECK( rn_blaster_thread_seed( 0x1234u, 1 ) != rn_blaster_thread_seed( 0x1234u, 2 ) );
+    {
+        uint32_t cpus[RN_BLASTER_MAX_THREADS];
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "1-6", cpus, RN_BLASTER_MAX_THREADS ) == 6u && cpus[0] == 1u && cpus[5] == 6u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "0-7,32-39", cpus, RN_BLASTER_MAX_THREADS ) == 16u && cpus[8] == 32u &&
+                          cpus[15] == 39u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "5", cpus, RN_BLASTER_MAX_THREADS ) == 1u && cpus[0] == 5u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "1-3,2", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "3-1", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "1,", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "1-", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "a", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "1024", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+        RN_BLASTER_CHECK( rn_blaster_parse_cpu_list( "0-32", cpus, RN_BLASTER_MAX_THREADS ) == 0u );
+    }
+    {
+        rn_blaster_results_t total = {};
+        rn_blaster_results_t part = {};
+        part.submitted = 3;
+        part.receive_wrong_thread = 1;
+        part.physical_wire_bytes = 501;
+        part.transmit_wakeups = 2;
+        rn_blaster_results_add( &total, &part );
+        part.submitted = 4;
+        rn_blaster_results_add( &total, &part );
+        RN_BLASTER_CHECK( total.submitted == 7u && total.receive_wrong_thread == 2u && total.physical_wire_bytes == 1002u &&
+                          total.transmit_wakeups == 4u && total.offered == 0u );
+    }
 #undef RN_BLASTER_CHECK
     if ( failures == 0 )
     {
@@ -1228,6 +1427,12 @@ int main( int argc, char ** argv )
 
 #if defined( __linux__ )
 
+/* ethtool's hfunc bit for Toeplitz (the kernel's ETH_RSS_HASH_TOP, BIT(0));
+ * the uapi header names the field but not its values. */
+#define RN_BLASTER_RSS_HASH_TOEPLITZ 1u
+#define RN_BLASTER_TRANSMIT_BATCH 64u
+#define RN_BLASTER_DRAIN_NANOSECONDS UINT64_C( 500000000 )
+
 struct rn_blaster_xsk_t
 {
     void * buffer;
@@ -1239,7 +1444,10 @@ struct rn_blaster_xsk_t
     struct xsk_ring_prod transmit;
     std::vector<uint64_t> free_transmit;
     std::vector<uint64_t> pending_fill;
+    uint32_t pending_transmit;
+    uint32_t queue;
     int interface_index;
+    bool owns_attach;
     bool zero_copy;
     bool cleanup_empty;
     bool rlimit_changed;
@@ -1265,26 +1473,49 @@ struct rn_blaster_session_t
     uint64_t payload_errors;
 };
 
-struct rn_blaster_results_t
+/* What every sender thread reads. Setup writes the plain fields before any
+ * thread starts; the atomics are the only state threads share afterwards, and
+ * none of them is touched on the send path. */
+struct rn_blaster_shared_t
 {
-    uint64_t offered;
-    uint64_t submitted;
-    uint64_t backpressure;
-    uint64_t not_ready;
-    uint64_t received_frames;
-    uint64_t received_protocol;
-    uint64_t received_application;
-    uint64_t receive_refused;
-    uint64_t descriptor_refused;
-    uint64_t protocol_bytes;
-    uint64_t ethernet_frame_bytes;
-    uint64_t physical_wire_bytes;
-    uint64_t application_queued_bytes;
-    uint64_t application_received_bytes;
-    uint64_t payload_errors;
-    uint64_t ownership_errors;
-    uint64_t robustness_cases;
-    uint64_t recovery_offers;
+    const rn_blaster_options_t * options;
+    const rn_blaster_manifest_t * manifest;
+    rocketnet_address_t source;
+    rocketnet_address_t server;
+    uint8_t source_mac[6];
+    uint8_t next_hop_mac[6];
+    uint8_t packet_filter[4];
+    const std::vector<rn_blaster_token_t> * tokens;
+    std::vector<uint16_t> ports;
+    std::vector<uint8_t> port_owner;
+    uint64_t start_ns;
+    std::atomic<uint32_t> create_turn;
+    std::atomic<uint32_t> ready;
+    std::atomic<uint64_t> workload_start_ns;
+    std::atomic<bool> failed;
+    std::atomic<bool> zero_copy;
+};
+
+struct rn_blaster_worker_t
+{
+    uint32_t index;
+    uint32_t queue;
+    int cpu;
+    int running_cpu;
+    uint32_t first_client;
+    uint32_t clients;
+    rn_blaster_xsk_t xsk;
+    bool opened;
+    std::string error;
+    rn_blaster_results_t results;
+    rn_blaster_results_t disconnect_results;
+    bool sessions_ok;
+    bool all_sessions_ready;
+    bool schedule_complete;
+    bool robustness_complete;
+    uint64_t offer_ordinal;
+    uint64_t total_offers;
+    uint64_t workload_ns;
 };
 
 static bool rn_blaster_now_nanoseconds( uint64_t * nanoseconds )
@@ -1349,7 +1580,7 @@ static bool rn_blaster_mac_on_interface( const std::string & interface_name, con
     return matches;
 }
 
-static bool rn_blaster_interface_one_queue( const std::string & interface_name )
+static bool rn_blaster_ethtool( const std::string & interface_name, void * data )
 {
     const int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd < 0 )
@@ -1357,18 +1588,95 @@ static bool rn_blaster_interface_one_queue( const std::string & interface_name )
         return false;
     }
     struct ifreq request;
-    struct ethtool_channels channels;
     memset( &request, 0, sizeof( request ) );
-    memset( &channels, 0, sizeof( channels ) );
-    channels.cmd = ETHTOOL_GCHANNELS;
     strncpy( request.ifr_name, interface_name.c_str(), sizeof( request.ifr_name ) - 1u );
-    request.ifr_data = (char *) &channels;
-    const bool queried = ioctl( fd, SIOCETHTOOL, &request ) == 0;
-    const bool one_combined = channels.combined_count == 1u && channels.rx_count == 0u && channels.tx_count == 0u;
-    const bool split_pair = channels.combined_count == 0u && channels.rx_count == 1u && channels.tx_count == 1u;
-    const bool ok = queried && ( one_combined || split_pair );
+    request.ifr_data = (char *) data;
+    const bool ok = ioctl( fd, SIOCETHTOOL, &request ) == 0;
     close( fd );
     return ok;
+}
+
+static bool rn_blaster_interface_channels( const std::string & interface_name, struct ethtool_channels * channels )
+{
+    memset( channels, 0, sizeof( *channels ) );
+    channels->cmd = ETHTOOL_GCHANNELS;
+    return rn_blaster_ethtool( interface_name, channels );
+}
+
+static bool rn_blaster_interface_one_queue( const std::string & interface_name )
+{
+    struct ethtool_channels channels;
+    const bool queried = rn_blaster_interface_channels( interface_name, &channels );
+    const bool one_combined = channels.combined_count == 1u && channels.rx_count == 0u && channels.tx_count == 0u;
+    const bool split_pair = channels.combined_count == 0u && channels.rx_count == 1u && channels.tx_count == 1u;
+    return queried && ( one_combined || split_pair );
+}
+
+/* A wide run needs a receive and a transmit queue per thread. */
+static bool rn_blaster_interface_queues( const std::string & interface_name, uint32_t threads )
+{
+    struct ethtool_channels channels;
+    if ( !rn_blaster_interface_channels( interface_name, &channels ) )
+    {
+        return false;
+    }
+    return channels.combined_count + channels.rx_count >= threads && channels.combined_count + channels.tx_count >= threads;
+}
+
+/* The NIC's RSS for UDP must hash both ports, or every reply from the one
+ * server address lands on one queue whatever source port a client uses. */
+static bool rn_blaster_rss_hashes_ports( const std::string & interface_name, int family )
+{
+    struct ethtool_rxnfc flow;
+    memset( &flow, 0, sizeof( flow ) );
+    flow.cmd = ETHTOOL_GRXFH;
+    flow.flow_type = family == ROCKETNET_ADDRESS_IPV6 ? UDP_V6_FLOW : UDP_V4_FLOW;
+    if ( !rn_blaster_ethtool( interface_name, &flow ) )
+    {
+        return false;
+    }
+    const uint64_t wanted = RXH_IP_SRC | RXH_IP_DST | RXH_L4_B_0_1 | RXH_L4_B_2_3;
+    return ( flow.data & wanted ) == wanted;
+}
+
+/* The RSS key and indirection table, read from the NIC. Toeplitz only. */
+static bool rn_blaster_rss_read( const std::string & interface_name, std::vector<uint8_t> * key, std::vector<uint32_t> * indirection,
+                                 std::string * error )
+{
+    struct ethtool_rxfh sizes;
+    memset( &sizes, 0, sizeof( sizes ) );
+    sizes.cmd = ETHTOOL_GRSSH;
+    if ( !rn_blaster_ethtool( interface_name, &sizes ) )
+    {
+        *error = "cannot read the RSS key and indirection table (ETHTOOL_GRSSH)";
+        return false;
+    }
+    if ( sizes.key_size == 0 || sizes.key_size > RN_BLASTER_MAX_RSS_KEY_BYTES || sizes.indir_size == 0 ||
+         sizes.indir_size > RN_BLASTER_MAX_RSS_INDIRECTION )
+    {
+        *error = "the RSS key or indirection table size is outside what the tool can model";
+        return false;
+    }
+    const size_t bytes = sizeof( struct ethtool_rxfh ) + sizes.indir_size * sizeof( uint32_t ) + sizes.key_size;
+    std::vector<uint64_t> storage( ( bytes + sizeof( uint64_t ) - 1u ) / sizeof( uint64_t ), 0 );
+    struct ethtool_rxfh * table = (struct ethtool_rxfh *) storage.data();
+    table->cmd = ETHTOOL_GRSSH;
+    table->indir_size = sizes.indir_size;
+    table->key_size = sizes.key_size;
+    if ( !rn_blaster_ethtool( interface_name, table ) )
+    {
+        *error = "cannot read the RSS key and indirection table (ETHTOOL_GRSSH)";
+        return false;
+    }
+    if ( table->hfunc != 0 && ( table->hfunc & RN_BLASTER_RSS_HASH_TOEPLITZ ) == 0 )
+    {
+        *error = "the NIC's RSS hash function is not Toeplitz";
+        return false;
+    }
+    indirection->assign( table->rss_config, table->rss_config + table->indir_size );
+    const uint8_t * key_bytes = (const uint8_t *) ( table->rss_config + table->indir_size );
+    key->assign( key_bytes, key_bytes + table->key_size );
+    return true;
 }
 
 static void rn_blaster_print_host( const std::string & interface_name )
@@ -1380,22 +1688,13 @@ static void rn_blaster_print_host( const std::string & interface_name )
         strcpy( system_name.release, "unknown" );
     }
     char driver[sizeof( ( (struct ethtool_drvinfo *) 0 )->driver )] = "unknown";
-    const int fd = socket( AF_INET, SOCK_DGRAM, 0 );
-    if ( fd >= 0 )
+    struct ethtool_drvinfo info;
+    memset( &info, 0, sizeof( info ) );
+    info.cmd = ETHTOOL_GDRVINFO;
+    if ( rn_blaster_ethtool( interface_name, &info ) )
     {
-        struct ifreq request;
-        struct ethtool_drvinfo info;
-        memset( &request, 0, sizeof( request ) );
-        memset( &info, 0, sizeof( info ) );
-        info.cmd = ETHTOOL_GDRVINFO;
-        strncpy( request.ifr_name, interface_name.c_str(), sizeof( request.ifr_name ) - 1u );
-        request.ifr_data = (char *) &info;
-        if ( ioctl( fd, SIOCETHTOOL, &request ) == 0 )
-        {
-            memcpy( driver, info.driver, sizeof( driver ) );
-            driver[sizeof( driver ) - 1u] = '\0';
-        }
-        close( fd );
+        memcpy( driver, info.driver, sizeof( driver ) );
+        driver[sizeof( driver ) - 1u] = '\0';
     }
     printf( "RUNTIME kernel=%s interface=%s driver=%s\n", system_name.release, interface_name.c_str(), driver );
 }
@@ -1418,6 +1717,8 @@ static void rn_blaster_print_xdp_ids( const char * phase, const rocketnet_xdp_at
             attached.drv_prog_id, attached.skb_prog_id, attached.hw_prog_id );
 }
 
+/* Only the socket that made the attachment judges the interface clean and
+ * restores RLIMIT_MEMLOCK; it is closed after every other socket. */
 static void rn_blaster_xsk_close( rn_blaster_xsk_t * xsk )
 {
     if ( xsk->socket )
@@ -1435,7 +1736,7 @@ static void rn_blaster_xsk_close( rn_blaster_xsk_t * xsk )
         free( xsk->buffer );
         xsk->buffer = NULL;
     }
-    xsk->cleanup_empty = xsk->interface_index <= 0 ||
+    xsk->cleanup_empty = !xsk->owns_attach || xsk->interface_index <= 0 ||
                          ( rn_blaster_xdp_query( xsk->interface_index, &xsk->after ) && !rocketnet_xdp_attached_any( &xsk->after ) );
     if ( xsk->rlimit_changed )
     {
@@ -1449,9 +1750,11 @@ static bool rn_blaster_xsk_attempt( rn_blaster_xsk_t * xsk, const rn_blaster_opt
     const size_t buffer_bytes = (size_t) RN_BLASTER_UMEM_FRAMES * RN_BLASTER_FRAME_BYTES;
     if ( posix_memalign( &xsk->buffer, (size_t) getpagesize(), buffer_bytes ) != 0 )
     {
+        xsk->buffer = NULL;
         *error = "UMEM allocation failed";
         return false;
     }
+    /* first touch: the calling thread is already on its CPU, so the pages land on its node */
     memset( xsk->buffer, 0, buffer_bytes );
     struct xsk_umem_config umem_config = {};
     umem_config.fill_size = RN_BLASTER_FILL_RING_SIZE;
@@ -1469,10 +1772,11 @@ static bool rn_blaster_xsk_attempt( rn_blaster_xsk_t * xsk, const rn_blaster_opt
     socket_config.xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST |
                               ( options.xdp_mode == "skb" ? XDP_FLAGS_SKB_MODE : XDP_FLAGS_DRV_MODE );
     socket_config.bind_flags = (uint16_t) ( XDP_USE_NEED_WAKEUP | ( zero_copy ? XDP_ZEROCOPY : XDP_COPY ) );
-    const int create_result = xsk_socket__create( &xsk->socket, options.interface_name.c_str(), options.plan.queue,
+    const int create_result = xsk_socket__create( &xsk->socket, options.interface_name.c_str(), xsk->queue,
                                                   xsk->umem, &xsk->receive, &xsk->transmit, &socket_config );
     if ( create_result != 0 )
     {
+        xsk->socket = NULL;
         *error = std::string( zero_copy ? "zero-copy" : "copy" ) + " AF_XDP bind refused: " + strerror( -create_result );
         return false;
     }
@@ -1514,11 +1818,21 @@ static bool rn_blaster_xsk_attempt( rn_blaster_xsk_t * xsk, const rn_blaster_opt
     return true;
 }
 
-static bool rn_blaster_xsk_open( rn_blaster_xsk_t * xsk, const rn_blaster_options_t & options, std::string * error )
+static void rn_blaster_xsk_reset( rn_blaster_xsk_t * xsk, const rn_blaster_options_t & options, uint32_t queue, bool owns_attach )
 {
     *xsk = rn_blaster_xsk_t();
     xsk->rlimit_restored = true;
+    xsk->queue = queue;
+    xsk->owns_attach = owns_attach;
     xsk->interface_index = (int) if_nametoindex( options.interface_name.c_str() );
+}
+
+/* The first socket refuses an occupied interface, raises RLIMIT_MEMLOCK and
+ * may fall back from zero-copy to copy; its attachment then carries every
+ * later socket, which binds in the mode the first one got. */
+static bool rn_blaster_xsk_open_first( rn_blaster_xsk_t * xsk, const rn_blaster_options_t & options, uint32_t queue, std::string * error )
+{
+    rn_blaster_xsk_reset( xsk, options, queue, true );
     if ( xsk->interface_index <= 0 )
     {
         *error = "interface does not exist";
@@ -1560,9 +1874,7 @@ static bool rn_blaster_xsk_open( rn_blaster_xsk_t * xsk, const rn_blaster_option
         *error = first_error + "; failed attempt left an XDP attachment; refusing blind detach";
         return false;
     }
-    *xsk = rn_blaster_xsk_t();
-    xsk->rlimit_restored = true;
-    xsk->interface_index = (int) if_nametoindex( options.interface_name.c_str() );
+    rn_blaster_xsk_reset( xsk, options, queue, true );
     if ( options.plan.bind != RN_BLASTER_BIND_AUTO )
     {
         return false;
@@ -1589,6 +1901,18 @@ static bool rn_blaster_xsk_open( rn_blaster_xsk_t * xsk, const rn_blaster_option
     return true;
 }
 
+static bool rn_blaster_xsk_open_more( rn_blaster_xsk_t * xsk, const rn_blaster_options_t & options, uint32_t queue,
+                                      bool zero_copy, std::string * error )
+{
+    rn_blaster_xsk_reset( xsk, options, queue, false );
+    if ( xsk->interface_index <= 0 )
+    {
+        *error = "interface does not exist";
+        return false;
+    }
+    return rn_blaster_xsk_attempt( xsk, options, zero_copy, error );
+}
+
 static void rn_blaster_complete( rn_blaster_xsk_t * xsk, rn_blaster_results_t * results )
 {
     uint32_t index = 0;
@@ -1612,18 +1936,73 @@ static void rn_blaster_complete( rn_blaster_xsk_t * xsk, rn_blaster_results_t * 
     }
 }
 
+/* Publish every reserved descriptor at once, with at most one wakeup. */
+static void rn_blaster_flush( rn_blaster_xsk_t * xsk, rn_blaster_results_t * results )
+{
+    if ( xsk->pending_transmit == 0 )
+    {
+        return;
+    }
+    xsk_ring_prod__submit( &xsk->transmit, xsk->pending_transmit );
+    xsk->pending_transmit = 0;
+    ++results->transmit_batches;
+    if ( xsk_ring_prod__needs_wakeup( &xsk->transmit ) )
+    {
+        ++results->transmit_wakeups;
+        (void) sendto( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
+    }
+}
+
+static bool rn_blaster_take_frame( rn_blaster_xsk_t * xsk, rn_blaster_results_t * results, uint64_t * address )
+{
+    if ( xsk->free_transmit.empty() )
+    {
+        rn_blaster_complete( xsk, results );
+    }
+    if ( xsk->free_transmit.empty() )
+    {
+        return false;
+    }
+    *address = xsk->free_transmit.back();
+    xsk->free_transmit.pop_back();
+    return true;
+}
+
+static bool rn_blaster_queue_frame( rn_blaster_xsk_t * xsk, uint64_t address, int frame_bytes, int packet_bytes,
+                                    rn_blaster_results_t * results )
+{
+    uint32_t index = 0;
+    if ( xsk_ring_prod__reserve( &xsk->transmit, 1, &index ) != 1 )
+    {
+        xsk->free_transmit.push_back( address );
+        ++results->backpressure;
+        return false;
+    }
+    struct xdp_desc * descriptor = xsk_ring_prod__tx_desc( &xsk->transmit, index );
+    descriptor->addr = address;
+    descriptor->len = (uint32_t) frame_bytes;
+    ++xsk->pending_transmit;
+    if ( xsk->pending_transmit == RN_BLASTER_TRANSMIT_BATCH )
+    {
+        rn_blaster_flush( xsk, results );
+    }
+    ++results->submitted;
+    results->protocol_bytes += (uint64_t) packet_bytes;
+    results->ethernet_frame_bytes += (uint64_t) frame_bytes;
+    results->physical_wire_bytes += (uint64_t) rn_blaster_physical_wire_bytes( (uint32_t) frame_bytes );
+    return true;
+}
+
 static bool rn_blaster_send( rn_blaster_xsk_t * xsk, const uint8_t * packet, int packet_bytes,
                              const rocketnet_address_t & source, const rocketnet_address_t & server,
                              const uint8_t source_mac[6], const uint8_t next_hop_mac[6], rn_blaster_results_t * results )
 {
-    rn_blaster_complete( xsk, results );
-    if ( xsk->free_transmit.empty() )
+    uint64_t address = 0;
+    if ( !rn_blaster_take_frame( xsk, results, &address ) )
     {
         ++results->backpressure;
         return false;
     }
-    const uint64_t address = xsk->free_transmit.back();
-    xsk->free_transmit.pop_back();
     uint8_t * frame = (uint8_t *) xsk->buffer + address;
     uint64_t refused = 0;
     const int copied = rocketnet_xdp_send_copy( frame, RN_BLASTER_FRAME_BYTES, source.type, packet, (size_t) packet_bytes, &refused );
@@ -1636,26 +2015,7 @@ static bool rn_blaster_send( rn_blaster_xsk_t * xsk, const uint8_t * packet, int
         ++results->backpressure;
         return false;
     }
-    uint32_t index = 0;
-    if ( xsk_ring_prod__reserve( &xsk->transmit, 1, &index ) != 1 )
-    {
-        xsk->free_transmit.push_back( address );
-        ++results->backpressure;
-        return false;
-    }
-    struct xdp_desc * descriptor = xsk_ring_prod__tx_desc( &xsk->transmit, index );
-    descriptor->addr = address;
-    descriptor->len = (uint32_t) frame_bytes;
-    xsk_ring_prod__submit( &xsk->transmit, 1 );
-    if ( xsk_ring_prod__needs_wakeup( &xsk->transmit ) )
-    {
-        (void) sendto( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
-    }
-    ++results->submitted;
-    results->protocol_bytes += (uint64_t) packet_bytes;
-    results->ethernet_frame_bytes += (uint64_t) frame_bytes;
-    results->physical_wire_bytes += (uint64_t) rn_blaster_physical_wire_bytes( (uint32_t) frame_bytes );
-    return true;
+    return rn_blaster_queue_frame( xsk, address, frame_bytes, packet_bytes, results );
 }
 
 /* The one intentional packet beyond RocketNet's receive ceiling. IPv4 still
@@ -1674,14 +2034,12 @@ static bool rn_blaster_send_robustness( rn_blaster_xsk_t * xsk, const uint8_t * 
     {
         return false;
     }
-    rn_blaster_complete( xsk, results );
-    if ( xsk->free_transmit.empty() )
+    uint64_t address = 0;
+    if ( !rn_blaster_take_frame( xsk, results, &address ) )
     {
         ++results->backpressure;
         return false;
     }
-    const uint64_t address = xsk->free_transmit.back();
-    xsk->free_transmit.pop_back();
     uint8_t * frame = (uint8_t *) xsk->buffer + address;
     const int header_bytes = rocketnet_xdp_frame_header_bytes( source.type );
     if ( header_bytes <= 0 || (size_t) header_bytes + (size_t) packet_bytes > RN_BLASTER_FRAME_BYTES )
@@ -1706,26 +2064,7 @@ static bool rn_blaster_send_robustness( rn_blaster_xsk_t * xsk, const uint8_t * 
     rocketnet_xdp_frame_write_be16( frame + header_bytes - 4,
                                     (uint16_t) ( ROCKETNET_UDP_HEADER_BYTES + packet_bytes ) );
     ++frame_bytes;
-    uint32_t index = 0;
-    if ( xsk_ring_prod__reserve( &xsk->transmit, 1, &index ) != 1 )
-    {
-        xsk->free_transmit.push_back( address );
-        ++results->backpressure;
-        return false;
-    }
-    struct xdp_desc * descriptor = xsk_ring_prod__tx_desc( &xsk->transmit, index );
-    descriptor->addr = address;
-    descriptor->len = (uint32_t) frame_bytes;
-    xsk_ring_prod__submit( &xsk->transmit, 1 );
-    if ( xsk_ring_prod__needs_wakeup( &xsk->transmit ) )
-    {
-        (void) sendto( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
-    }
-    ++results->submitted;
-    results->protocol_bytes += (uint64_t) packet_bytes;
-    results->ethernet_frame_bytes += (uint64_t) frame_bytes;
-    results->physical_wire_bytes += (uint64_t) rn_blaster_physical_wire_bytes( (uint32_t) frame_bytes );
-    return true;
+    return rn_blaster_queue_frame( xsk, address, frame_bytes, packet_bytes, results );
 }
 
 static uint16_t rn_blaster_frame_destination_port( const uint8_t * frame, int frame_bytes, int family )
@@ -1762,16 +2101,23 @@ static void rn_blaster_fill_returned( rn_blaster_xsk_t * xsk )
     }
 }
 
+/* Receive for one thread. port_owner names the thread that owns each client
+ * port and session_of_port that thread's session index; a reply for another
+ * thread's client means RSS steered it here: counted, never processed. */
 static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_session_t> * sessions,
-                                const rocketnet_address_t & server, uint16_t first_port, uint32_t expected_payload_bytes,
-                                double now,
-                                rn_blaster_results_t * results )
+                                const rocketnet_address_t & server, const std::vector<uint8_t> & port_owner,
+                                const std::vector<uint16_t> & session_of_port, uint32_t thread,
+                                uint32_t expected_payload_bytes, double now, rn_blaster_results_t * results )
 {
     uint32_t index = 0;
     const uint32_t count = xsk_ring_cons__peek( &xsk->receive, 256, &index );
     if ( count == 0 )
     {
         rn_blaster_fill_returned( xsk );
+        if ( xsk_ring_prod__needs_wakeup( &xsk->fill ) )
+        {
+            (void) recvfrom( xsk_socket__fd( xsk->socket ), NULL, 0, MSG_DONTWAIT, NULL, NULL );
+        }
         return;
     }
     for ( uint32_t i = 0; i < count; ++i )
@@ -1809,15 +2155,18 @@ static void rn_blaster_receive( rn_blaster_xsk_t * xsk, std::vector<rn_blaster_s
             continue;
         }
         const uint16_t destination_port = rn_blaster_frame_destination_port( frame, (int) descriptor->len, from.type );
-        const uint32_t destination = destination_port;
-        const uint32_t first = first_port;
-        const uint32_t past = first + (uint32_t) sessions->size();
-        if ( destination < first || destination >= past )
+        const uint8_t owner = port_owner[destination_port];
+        if ( owner == RN_BLASTER_PORT_UNOWNED )
         {
             ++results->receive_refused;
             continue;
         }
-        rn_blaster_session_t & session = ( *sessions )[(size_t) ( destination_port - first_port )];
+        if ( owner != thread )
+        {
+            ++results->receive_wrong_thread;
+            continue;
+        }
+        rn_blaster_session_t & session = ( *sessions )[session_of_port[destination_port]];
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
         if ( rocketnet_client_protocol_process_packet( &session.protocol, packet, packet_bytes, now,
@@ -1959,93 +2308,123 @@ static bool rn_blaster_endpoint_packet( rn_blaster_xsk_t * xsk, rn_blaster_sessi
     return true;
 }
 
-static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_blaster_manifest_t & manifest,
-                               const rocketnet_address_t & source, const rocketnet_address_t & server,
-                               const uint8_t source_mac[6], const uint8_t next_hop_mac[6], const uint8_t packet_filter[4],
-                               const std::vector<rn_blaster_token_t> & tokens )
+/* A disconnect burst waits a bounded time for completions instead of being
+ * dropped when the transmit ring is full at the end of a run. */
+static void rn_blaster_send_drained( rn_blaster_xsk_t * xsk, const uint8_t * packet, int packet_bytes,
+                                     const rocketnet_address_t & source, const rocketnet_address_t & server,
+                                     const uint8_t source_mac[6], const uint8_t next_hop_mac[6], uint64_t deadline_ns,
+                                     rn_blaster_results_t * results )
 {
-    if ( geteuid() != 0 )
+    while ( true )
     {
-        fprintf( stderr, "xdp_packet_blaster: --execute requires root on the reserved owned bench\n" );
-        return 2;
+        rn_blaster_results_t attempt = {};
+        if ( rn_blaster_send( xsk, packet, packet_bytes, source, server, source_mac, next_hop_mac, &attempt ) )
+        {
+            rn_blaster_results_add( results, &attempt );
+            return;
+        }
+        uint64_t now_ns = 0;
+        if ( !rn_blaster_now_nanoseconds( &now_ns ) || now_ns >= deadline_ns )
+        {
+            rn_blaster_results_add( results, &attempt );
+            return;
+        }
+        rn_blaster_flush( xsk, results );
+        rn_blaster_complete( xsk, results );
+        sched_yield();
     }
-    if ( !rn_blaster_source_on_interface( options.interface_name, source ) )
+}
+
+static bool rn_blaster_pin( int cpu )
+{
+    cpu_set_t set;
+    CPU_ZERO( &set );
+    CPU_SET( (size_t) cpu, &set );
+    return sched_setaffinity( 0, sizeof( set ), &set ) == 0;
+}
+
+/* One sender thread: its own queue, socket, UMEM, arena and clients. */
+static void rn_blaster_worker_run( rn_blaster_shared_t * shared, rn_blaster_worker_t * worker )
+{
+    const rn_blaster_options_t & options = *shared->options;
+    const rn_blaster_manifest_t & manifest = *shared->manifest;
+    const rocketnet_address_t & server = shared->server;
+    const uint32_t threads = options.plan.threads;
+    worker->sessions_ok = true;
+    if ( worker->cpu >= 0 && !rn_blaster_pin( worker->cpu ) )
     {
-        fprintf( stderr, "xdp_packet_blaster: source address is not assigned to the named interface\n" );
-        return 2;
+        worker->error = "cannot pin the sender thread to its CPU";
+        worker->sessions_ok = false;
+        shared->failed.store( true );
     }
-    if ( !rn_blaster_mac_on_interface( options.interface_name, source_mac ) )
+    worker->running_cpu = sched_getcpu();
+
+    while ( shared->create_turn.load() != worker->index && !shared->failed.load() )
     {
-        fprintf( stderr, "xdp_packet_blaster: source MAC does not match the named interface\n" );
-        return 2;
+        sched_yield();
     }
-    if ( options.plan.queue != 0 || !rn_blaster_interface_one_queue( options.interface_name ) )
+    if ( !shared->failed.load() )
     {
-        fprintf( stderr, "xdp_packet_blaster: qualification requires externally provisioned one-queue RSS and queue 0\n" );
-        return 2;
+        if ( worker->index == 0 )
+        {
+            worker->opened = rn_blaster_xsk_open_first( &worker->xsk, options, worker->queue, &worker->error );
+            shared->zero_copy.store( worker->opened && worker->xsk.zero_copy );
+        }
+        else
+        {
+            worker->opened = rn_blaster_xsk_open_more( &worker->xsk, options, worker->queue, shared->zero_copy.load(), &worker->error );
+        }
+        if ( !worker->opened )
+        {
+            worker->sessions_ok = false;
+            shared->failed.store( true );
+        }
     }
-    rn_blaster_print_host( options.interface_name );
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
-    {
-        fprintf( stderr, "xdp_packet_blaster: rocketnet_init failed\n" );
-        return 1;
-    }
-    rn_blaster_xsk_t xsk = {};
-    std::string error;
-    if ( !rn_blaster_xsk_open( &xsk, options, &error ) )
-    {
-        fprintf( stderr, "xdp_packet_blaster: %s\n", error.c_str() );
-        rn_blaster_xsk_close( &xsk );
-        (void) rocketnet_term();
-        return 1;
-    }
-    printf( "RUNTIME attached=true selected_bind=%s queue=%u\n", xsk.zero_copy ? "zero-copy" : "copy", options.plan.queue );
+    shared->create_turn.store( worker->index + 1u );
 
     rocketnet_message_config_t message_config;
     rocketnet_message_default_config( &message_config );
-    const uint64_t arena_required = rn_arena_required_bytes( &message_config, (int) options.plan.clients );
-    if ( arena_required == 0 )
+    const uint64_t arena_required = worker->sessions_ok ? rn_arena_required_bytes( &message_config, (int) worker->clients ) : 0;
+    if ( worker->sessions_ok && arena_required == 0 )
     {
-        fprintf( stderr, "xdp_packet_blaster: endpoint arena memory plan is invalid\n" );
-        rn_blaster_xsk_close( &xsk );
-        (void) rocketnet_term();
-        return 1;
+        worker->error = "endpoint arena memory plan is invalid";
+        worker->sessions_ok = false;
+        shared->failed.store( true );
     }
-    printf( "RUNTIME endpoint_config=default clients=%u arena_required_bytes=%" PRIu64 "\n",
-            options.plan.clients, arena_required );
     rocketnet_counters_t message_counters = {};
-    std::vector<uint8_t> message_arena_storage( (size_t) arena_required + ROCKETNET_ALLOCATION_ALIGNMENT );
+    std::vector<uint8_t> message_arena_storage( worker->sessions_ok ? (size_t) arena_required + ROCKETNET_ALLOCATION_ALIGNMENT : 0u );
     uint8_t * message_arena_block = (uint8_t *) ( ( (uintptr_t) message_arena_storage.data() + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) &
                                                   ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
-    rn_arena_t * message_arena = rn_arena_create_in_block( message_arena_block, arena_required, &message_config,
-                                                           (int) options.plan.clients, &message_counters );
-    std::vector<rn_blaster_session_t> sessions( options.plan.clients );
-    bool sessions_ok = true;
+    rn_arena_t * message_arena = worker->sessions_ok ? rn_arena_create_in_block( message_arena_block, arena_required, &message_config,
+                                                                                 (int) worker->clients, &message_counters )
+                                                     : NULL;
+    if ( worker->sessions_ok && !message_arena )
+    {
+        worker->error = "endpoint arena creation failed";
+        worker->sessions_ok = false;
+        shared->failed.store( true );
+    }
+    std::vector<rn_blaster_session_t> sessions( worker->clients );
+    std::vector<uint16_t> session_of_port( 65536u, 0 );
     uint32_t initialized_sessions = 0;
     const time_t wall_time = time( NULL );
     const uint64_t unix_time = wall_time >= 0 ? (uint64_t) wall_time : 0;
     if ( wall_time < 0 )
     {
-        sessions_ok = false;
+        worker->sessions_ok = false;
     }
-    if ( !message_arena )
+    for ( uint32_t i = 0; i < worker->clients && worker->sessions_ok; ++i )
     {
-        sessions_ok = false;
-    }
-    for ( uint32_t i = 0; i < options.plan.clients; ++i )
-    {
-        if ( !sessions_ok )
-        {
-            break;
-        }
+        const uint32_t client = worker->first_client + i;
         rn_blaster_session_t & session = sessions[i];
         memset( &session, 0, sizeof( session ) );
         rocketnet_client_protocol_init( &session.protocol, &session.counters );
         ++initialized_sessions;
-        memcpy( session.protocol.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+        memcpy( session.protocol.packet_filter, shared->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
         session.protocol.defer_payload_acks = 1;
-        session.source = source;
-        session.source.port = (uint16_t) ( options.plan.source_port + i );
+        session.source = shared->source;
+        session.source.port = shared->ports[client];
+        session_of_port[session.source.port] = (uint16_t) i;
         session.next_packet_id = 1;
         rn_endpoint_config_t endpoint_config = {};
         endpoint_config.config = &message_config;
@@ -2053,24 +2432,27 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
         rn_endpoint_init( &session.endpoint, rn_arena_region( message_arena, (int) i ), &endpoint_config );
         rn_endpoint_reset( &session.endpoint, 0.0 );
-        if ( !rocketnet_client_protocol_connect( &session.protocol, tokens[i].bytes.data(), 0.0, unix_time ) ||
+        if ( !rocketnet_client_protocol_connect( &session.protocol, ( *shared->tokens )[client].bytes.data(), 0.0, unix_time ) ||
              !rocketnet_address_equal( &session.protocol.server_address, &server ) )
         {
-            sessions_ok = false;
+            worker->sessions_ok = false;
             break;
         }
     }
-    rn_blaster_results_t results = {};
-    uint64_t start_ns = 0;
-    if ( !rn_blaster_now_nanoseconds( &start_ns ) )
+    if ( !worker->sessions_ok )
     {
-        sessions_ok = false;
+        shared->failed.store( true );
     }
+
+    rn_blaster_results_t & results = worker->results;
+    const uint64_t start_ns = shared->start_ns;
     const uint64_t connect_deadline_ns = start_ns + RN_BLASTER_CONNECT_TIMEOUT_SECONDS * UINT64_C( 1000000000 );
-    const uint64_t total_offers = rn_blaster_offered_packets( options.plan.duration_seconds, options.plan.rate_pps );
+    const uint32_t rate_pps = rn_blaster_thread_share( options.plan.rate_pps, threads, worker->index );
+    const uint64_t seed = rn_blaster_thread_seed( options.plan.seed, worker->index );
+    worker->total_offers = rn_blaster_offered_packets( options.plan.duration_seconds, rate_pps );
     uint64_t workload_start_ns = 0;
     uint64_t workload_end_ns = 0;
-    uint64_t offer_ordinal = 0;
+    uint64_t last_now_ns = 0;
     uint32_t robustness_index = 0;
     std::array<uint8_t, ROCKETNET_SEND_BUDGET> scratch_packet = {};
     int scratch_packet_bytes = 0;
@@ -2079,15 +2461,26 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
     uint64_t robustness_wait_ack = 0;
     bool robustness_baseline_sent = false;
     bool robustness_waiting_recovery = false;
-    bool all_sessions_ready = false;
+    bool counted_ready = false;
     uint64_t last_handshake_step_ns = 0;
-    while ( sessions_ok )
+    rn_blaster_xsk_t * xsk = &worker->xsk;
+    while ( worker->sessions_ok && !shared->failed.load( std::memory_order_relaxed ) )
     {
         uint64_t now_ns = 0;
         if ( !rn_blaster_now_nanoseconds( &now_ns ) )
         {
-            sessions_ok = false;
+            worker->sessions_ok = false;
             break;
+        }
+        last_now_ns = now_ns;
+        if ( workload_start_ns == 0 )
+        {
+            const uint64_t shared_start = shared->workload_start_ns.load( std::memory_order_acquire );
+            if ( shared_start != 0 )
+            {
+                workload_start_ns = shared_start;
+                workload_end_ns = workload_start_ns + (uint64_t) options.plan.duration_seconds * UINT64_C( 1000000000 );
+            }
         }
         if ( workload_start_ns != 0 && now_ns >= workload_end_ns )
         {
@@ -2095,7 +2488,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         }
         if ( workload_start_ns == 0 && now_ns >= connect_deadline_ns )
         {
-            sessions_ok = false;
+            worker->sessions_ok = false;
             break;
         }
         const double now = (double) ( now_ns - start_ns ) / 1000000000.0;
@@ -2103,11 +2496,12 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
         {
             (void) rn_endpoint_begin_update( &session.endpoint );
         }
-        rn_blaster_receive( &xsk, &sessions, server, options.plan.source_port, options.plan.payload_bytes, now, &results );
+        rn_blaster_receive( xsk, &sessions, server, shared->port_owner, session_of_port, worker->index,
+                            options.plan.payload_bytes, now, &results );
         if ( now_ns - last_handshake_step_ns >= UINT64_C( 1000000 ) )
         {
             last_handshake_step_ns = now_ns;
-            for ( uint32_t i = 0; i < options.plan.clients; ++i )
+            for ( uint32_t i = 0; i < worker->clients; ++i )
             {
                 rn_blaster_session_t & session = sessions[i];
                 uint8_t packet[ROCKETNET_SEND_BUDGET];
@@ -2115,7 +2509,8 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 rocketnet_client_protocol_update( &session.protocol, now, packet, &packet_bytes );
                 if ( packet_bytes > 0 )
                 {
-                    (void) rn_blaster_send( &xsk, packet, packet_bytes, session.source, server, source_mac, next_hop_mac, &results );
+                    (void) rn_blaster_send( xsk, packet, packet_bytes, session.source, server, shared->source_mac,
+                                            shared->next_hop_mac, &results );
                 }
                 const bool connected = session.protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
                 if ( connected && !session.endpoint_announced )
@@ -2127,45 +2522,55 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 rn_endpoint_config_tick( &session.endpoint, connected ? 1 : 0, now );
                 if ( rn_endpoint_error( &session.endpoint ) != ROCKETNET_DISCONNECT_REASON_NONE )
                 {
-                    sessions_ok = false;
+                    if ( worker->error.empty() )
+                    {
+                        worker->error = "message endpoint failed with disconnect reason " +
+                                        std::to_string( (int) rn_endpoint_error( &session.endpoint ) );
+                    }
+                    worker->sessions_ok = false;
                 }
                 if ( connected )
                 {
-                    (void) rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
+                    (void) rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac, shared->next_hop_mac,
                                                        &results, &scratch_packet, &scratch_packet_bytes, NULL );
                 }
             }
+            rn_blaster_flush( xsk, &results );
         }
-        all_sessions_ready = sessions_ok;
+        bool ready = worker->sessions_ok;
         for ( const rn_blaster_session_t & session : sessions )
         {
-            all_sessions_ready = all_sessions_ready &&
-                                 session.protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                 session.endpoint.ordered.config_received;
+            ready = ready && session.protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                    session.endpoint.ordered.config_received;
         }
-        if ( all_sessions_ready && workload_start_ns == 0 )
+        worker->all_sessions_ready = ready;
+        if ( ready && !counted_ready )
         {
-            workload_start_ns = now_ns;
-            workload_end_ns = workload_start_ns +
-                              (uint64_t) options.plan.duration_seconds * UINT64_C( 1000000000 );
-            printf( "RUNTIME workload=started connected_clients=%u\n", options.plan.clients );
+            counted_ready = true;
+            if ( shared->ready.fetch_add( 1u ) + 1u == threads )
+            {
+                shared->workload_start_ns.store( now_ns, std::memory_order_release );
+                printf( "RUNTIME workload=started connected_clients=%u threads=%u\n", options.plan.clients, threads );
+                fflush( stdout );
+            }
         }
-        if ( workload_start_ns != 0 && options.plan.mode == RN_BLASTER_MODE_THROUGHPUT )
+        if ( workload_start_ns != 0 && now_ns >= workload_start_ns && options.plan.mode == RN_BLASTER_MODE_THROUGHPUT )
         {
             const uint64_t elapsed_ns = now_ns - workload_start_ns;
             if ( ( options.plan.direction & RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ) == 0 )
             {
-                const uint64_t due = std::min( total_offers,
-                                               UINT64_C( 1 ) + elapsed_ns * options.plan.rate_pps / UINT64_C( 1000000000 ) );
-                results.offered += due - offer_ordinal;
-                offer_ordinal = due;
+                const uint64_t due = std::min( worker->total_offers,
+                                               UINT64_C( 1 ) + elapsed_ns * rate_pps / UINT64_C( 1000000000 ) );
+                results.offered += due - worker->offer_ordinal;
+                worker->offer_ordinal = due;
             }
             uint32_t burst = 0;
-            while ( offer_ordinal < total_offers && burst < RN_BLASTER_TX_RING_SIZE &&
-                    rn_blaster_schedule_nanoseconds( offer_ordinal, options.plan.rate_pps ) <= elapsed_ns )
+            while ( worker->offer_ordinal < worker->total_offers && burst < RN_BLASTER_TX_RING_SIZE &&
+                    rn_blaster_schedule_nanoseconds( worker->offer_ordinal, rate_pps ) <= elapsed_ns )
             {
-                const uint32_t client = rn_blaster_schedule_client( options.plan.seed, offer_ordinal, options.plan.clients );
-                rn_blaster_session_t & session = sessions[client];
+                const uint32_t local = rn_blaster_schedule_client( seed, worker->offer_ordinal, worker->clients );
+                const uint32_t client = worker->first_client + local;
+                rn_blaster_session_t & session = sessions[local];
                 ++results.offered;
                 if ( ( options.plan.direction & RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ) != 0 )
                 {
@@ -2176,7 +2581,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                            ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 )
                     {
                         results.application_queued_bytes += options.plan.payload_bytes;
-                        (void) rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
+                        (void) rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac, shared->next_hop_mac,
                                                            &results, &scratch_packet, &scratch_packet_bytes, NULL );
                     }
                     else
@@ -2184,11 +2589,11 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                         ++results.not_ready;
                     }
                 }
-                ++offer_ordinal;
+                ++worker->offer_ordinal;
                 ++burst;
             }
         }
-        else if ( workload_start_ns != 0 && robustness_index < manifest.count )
+        else if ( workload_start_ns != 0 && now_ns >= workload_start_ns && robustness_index < manifest.count )
         {
             rn_blaster_session_t & session = sessions[0];
             if ( robustness_wait_ack != 0 && session.watched_packet_acked )
@@ -2207,7 +2612,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                                 ++session.application_sequence, options.plan.seed );
                 if ( rn_endpoint_send( &session.endpoint, baseline, (int) options.plan.payload_bytes,
                                        ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 &&
-                     rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
+                     rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac, shared->next_hop_mac,
                                                  &results, &case_valid, &case_valid_bytes, &robustness_wait_ack ) )
                 {
                     robustness_baseline_sent = true;
@@ -2234,7 +2639,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                          !rn_blaster_endpoint_prepare( &session, now, &fresh_valid, &fresh_valid_bytes,
                                                        &unsent_packet_id ) )
                     {
-                        sessions_ok = false;
+                        worker->sessions_ok = false;
                         continue;
                     }
                     rn_endpoint_packet_failed( &session.endpoint, unsent_packet_id, now );
@@ -2249,8 +2654,8 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 const uint32_t mutation_copies = item.operation == RN_BLASTER_CASE_REPLAY ? item.argument : 1u;
                 for ( uint32_t copy = 0; copy < mutation_copies && mutation_sent; ++copy )
                 {
-                    mutation_sent = rn_blaster_send_robustness( &xsk, mutated, mutated_bytes, session.source, server,
-                                                                source_mac, next_hop_mac, &results );
+                    mutation_sent = rn_blaster_send_robustness( xsk, mutated, mutated_bytes, session.source, server,
+                                                                shared->source_mac, shared->next_hop_mac, &results );
                 }
                 uint8_t recovery_payload[RN_BLASTER_MAX_PAYLOAD_BYTES];
                 rn_blaster_application_message( recovery_payload, options.plan.payload_bytes, 0,
@@ -2259,11 +2664,12 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                                                (int) options.plan.payload_bytes, ROCKETNET_RELIABILITY_UNRELIABLE,
                                                                ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0;
                 const bool recovery_sent = recovery_queued &&
-                                           rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
-                                                                       &results, &case_valid, &case_valid_bytes, &robustness_wait_ack );
+                                           rn_blaster_endpoint_packet( xsk, &session, now, server, shared->source_mac,
+                                                                       shared->next_hop_mac, &results, &case_valid,
+                                                                       &case_valid_bytes, &robustness_wait_ack );
                 if ( !mutation_sent || !recovery_sent )
                 {
-                    sessions_ok = false;
+                    worker->sessions_ok = false;
                 }
                 else
                 {
@@ -2276,27 +2682,271 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 }
             }
         }
+        rn_blaster_flush( xsk, &results );
         if ( options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS && robustness_index == manifest.count &&
              robustness_wait_ack == 0 )
         {
             break;
         }
     }
+    if ( !worker->sessions_ok )
+    {
+        shared->failed.store( true );
+    }
+    rn_blaster_flush( xsk, &results );
+    worker->workload_ns = workload_start_ns != 0 && last_now_ns > workload_start_ns ? last_now_ns - workload_start_ns : 0;
+    worker->schedule_complete = options.plan.mode != RN_BLASTER_MODE_THROUGHPUT || worker->offer_ordinal == worker->total_offers;
+    worker->robustness_complete = options.plan.mode != RN_BLASTER_MODE_ROBUSTNESS ||
+                                  ( robustness_index == manifest.count && robustness_wait_ack == 0 &&
+                                    results.robustness_cases == manifest.count );
 
+    uint64_t drain_start_ns = 0;
+    const bool clock_ok = rn_blaster_now_nanoseconds( &drain_start_ns );
+    const uint64_t drain_deadline_ns = clock_ok ? drain_start_ns + RN_BLASTER_DRAIN_NANOSECONDS : 0;
+    for ( uint32_t i = 0; i < initialized_sessions; ++i )
+    {
+        rn_blaster_session_t & session = sessions[i];
+        uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+        int burst_count = 0;
+        int burst_bytes = 0;
+        rocketnet_client_protocol_disconnect( &session.protocol, burst, &burst_count, &burst_bytes );
+        for ( int packet = 0; packet < burst_count && worker->opened; ++packet )
+        {
+            rn_blaster_send_drained( xsk, burst + packet * ROCKETNET_SEND_BUDGET, burst_bytes, session.source, server,
+                                     shared->source_mac, shared->next_hop_mac, drain_deadline_ns, &worker->disconnect_results );
+        }
+        sodium_memzero( burst, sizeof( burst ) );
+    }
+    if ( worker->opened )
+    {
+        rn_blaster_flush( xsk, &worker->disconnect_results );
+    }
+    sodium_memzero( scratch_packet.data(), scratch_packet.size() );
+    sodium_memzero( case_valid.data(), case_valid.size() );
+    if ( !worker->error.empty() )
+    {
+        // name the message-layer refusal behind a failed endpoint
+        for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; ++counter )
+        {
+            const char * name = rocketnet_counter_name( counter );
+            if ( message_counters.values[counter] != 0 && name && strncmp( name, "MESSAGE_", 8 ) == 0 )
+            {
+                fprintf( stderr, "xdp_packet_blaster: thread %u: counter %s %" PRIu64 "\n", worker->index, name,
+                         message_counters.values[counter] );
+            }
+        }
+    }
+    if ( message_arena )
+    {
+        rn_arena_destroy( message_arena );
+    }
+}
+
+static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_blaster_manifest_t & manifest,
+                               const rocketnet_address_t & source, const rocketnet_address_t & server,
+                               const uint8_t source_mac[6], const uint8_t next_hop_mac[6], const uint8_t packet_filter[4],
+                               const std::vector<rn_blaster_token_t> & tokens )
+{
+    const uint32_t threads = options.plan.threads;
+    if ( geteuid() != 0 )
+    {
+        fprintf( stderr, "xdp_packet_blaster: --execute requires root on the reserved owned bench\n" );
+        return 2;
+    }
+    if ( !rn_blaster_source_on_interface( options.interface_name, source ) )
+    {
+        fprintf( stderr, "xdp_packet_blaster: source address is not assigned to the named interface\n" );
+        return 2;
+    }
+    if ( !rn_blaster_mac_on_interface( options.interface_name, source_mac ) )
+    {
+        fprintf( stderr, "xdp_packet_blaster: source MAC does not match the named interface\n" );
+        return 2;
+    }
+    if ( threads == 1 && ( options.plan.queue != 0 || !rn_blaster_interface_one_queue( options.interface_name ) ) )
+    {
+        fprintf( stderr, "xdp_packet_blaster: qualification requires externally provisioned one-queue RSS and queue 0\n" );
+        return 2;
+    }
+    rn_blaster_shared_t shared;
+    shared.options = &options;
+    shared.manifest = &manifest;
+    shared.source = source;
+    shared.server = server;
+    memcpy( shared.source_mac, source_mac, 6 );
+    memcpy( shared.next_hop_mac, next_hop_mac, 6 );
+    memcpy( shared.packet_filter, packet_filter, 4 );
+    shared.tokens = &tokens;
+    shared.ports.assign( options.plan.clients, 0 );
+    shared.port_owner.assign( 65536u, RN_BLASTER_PORT_UNOWNED );
+    shared.start_ns = 0;
+    shared.create_turn.store( 0 );
+    shared.ready.store( 0 );
+    shared.workload_start_ns.store( 0 );
+    shared.failed.store( false );
+    shared.zero_copy.store( false );
+    std::vector<uint8_t> rss_key;
+    std::vector<uint32_t> rss_indirection;
+    if ( threads > 1 )
+    {
+        std::string rss_error;
+        if ( !rn_blaster_interface_queues( options.interface_name, threads ) )
+        {
+            fprintf( stderr, "xdp_packet_blaster: --threads %u needs at least %u receive and transmit queues on the interface\n",
+                     threads, threads );
+            return 2;
+        }
+        if ( !rn_blaster_rss_hashes_ports( options.interface_name, source.type ) )
+        {
+            fprintf( stderr, "xdp_packet_blaster: --threads above 1 needs the interface's UDP RSS hash to include both ports"
+                             " (ethtool -N IFACE rx-flow-hash udp4 sdfn)\n" );
+            return 2;
+        }
+        if ( !rn_blaster_rss_read( options.interface_name, &rss_key, &rss_indirection, &rss_error ) )
+        {
+            fprintf( stderr, "xdp_packet_blaster: %s\n", rss_error.c_str() );
+            return 2;
+        }
+    }
+    uint8_t server_bytes[16] = {};
+    uint8_t source_bytes[16] = {};
+    const int family = source.type == ROCKETNET_ADDRESS_IPV6 ? 6 : 4;
+    for ( int i = 0; i < ( family == 6 ? 8 : 0 ); ++i )
+    {
+        server_bytes[2 * i] = (uint8_t) ( server.data.ipv6[i] >> 8 );
+        server_bytes[2 * i + 1] = (uint8_t) server.data.ipv6[i];
+        source_bytes[2 * i] = (uint8_t) ( source.data.ipv6[i] >> 8 );
+        source_bytes[2 * i + 1] = (uint8_t) source.data.ipv6[i];
+    }
+    if ( family == 4 )
+    {
+        memcpy( server_bytes, server.data.ipv4, 4 );
+        memcpy( source_bytes, source.data.ipv4, 4 );
+    }
+    if ( !rn_blaster_assign_ports( rss_key.data(), rss_key.size(), rss_indirection.data(), (uint32_t) rss_indirection.size(),
+                                   family, server_bytes, server.port, source_bytes, options.plan.source_port, threads,
+                                   options.plan.clients, shared.ports.data(), shared.port_owner.data() ) )
+    {
+        fprintf( stderr, "xdp_packet_blaster: the source port space ran out before every thread had clients whose replies hash to its queue\n" );
+        return 2;
+    }
+    rn_blaster_print_host( options.interface_name );
+    if ( threads > 1 )
+    {
+        printf( "RUNTIME rss=toeplitz key_bytes=%u indirection_entries=%u udp_hash=sdfn\n", (unsigned) rss_key.size(),
+                (unsigned) rss_indirection.size() );
+    }
+    std::vector<rn_blaster_worker_t> workers( threads );
+    uint32_t next_client = 0;
+    for ( uint32_t t = 0; t < threads; ++t )
+    {
+        rn_blaster_worker_t & worker = workers[t];
+        worker = rn_blaster_worker_t();
+        worker.index = t;
+        worker.queue = threads == 1 ? options.plan.queue : t;
+        worker.cpu = options.cpus.empty() ? -1 : (int) options.cpus[t];
+        worker.running_cpu = -1;
+        worker.first_client = next_client;
+        worker.clients = rn_blaster_thread_share( options.plan.clients, threads, t );
+        next_client += worker.clients;
+        printf( "RUNTIME thread=%u queue=%u cpu=%d clients=%u ports=%u..%u\n", t, worker.queue, worker.cpu, worker.clients,
+                (unsigned) shared.ports[worker.first_client], (unsigned) shared.ports[worker.first_client + worker.clients - 1u] );
+    }
+    fflush( stdout );
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "xdp_packet_blaster: rocketnet_init failed\n" );
+        return 1;
+    }
+    if ( !rn_blaster_now_nanoseconds( &shared.start_ns ) )
+    {
+        (void) rocketnet_term();
+        return 1;
+    }
+    if ( threads == 1 && options.cpus.empty() )
+    {
+        rn_blaster_worker_run( &shared, &workers[0] );
+    }
+    else
+    {
+        std::vector<std::thread> running;
+        running.reserve( threads );
+        for ( uint32_t t = 0; t < threads; ++t )
+        {
+            running.emplace_back( rn_blaster_worker_run, &shared, &workers[t] );
+        }
+        for ( std::thread & thread : running )
+        {
+            thread.join();
+        }
+    }
+    for ( uint32_t t = 0; t < threads; ++t )
+    {
+        if ( !workers[t].error.empty() )
+        {
+            fprintf( stderr, "xdp_packet_blaster: thread %u: %s\n", t, workers[t].error.c_str() );
+        }
+    }
+    if ( workers[0].opened )
+    {
+        printf( "RUNTIME attached=true selected_bind=%s queue=%u\n", workers[0].xsk.zero_copy ? "zero-copy" : "copy",
+                workers[0].queue );
+    }
+
+    rn_blaster_results_t results = {};
+    rn_blaster_results_t disconnect_results = {};
+    bool sessions_ok = true;
+    bool all_sessions_ready = true;
+    bool schedule_complete = true;
+    bool robustness_complete = true;
+    uint64_t workload_ns = 0;
+    for ( uint32_t t = 0; t < threads; ++t )
+    {
+        const rn_blaster_worker_t & worker = workers[t];
+        rn_blaster_results_add( &results, &worker.results );
+        rn_blaster_results_add( &disconnect_results, &worker.disconnect_results );
+        sessions_ok = sessions_ok && worker.sessions_ok && worker.opened;
+        all_sessions_ready = all_sessions_ready && worker.all_sessions_ready;
+        schedule_complete = schedule_complete && worker.schedule_complete;
+        robustness_complete = robustness_complete && worker.robustness_complete;
+        workload_ns = std::max( workload_ns, worker.workload_ns );
+        if ( threads > 1 )
+        {
+            printf( "RESULT_THREAD thread=%u queue=%u cpu=%d running_cpu=%d clients=%u offered=%" PRIu64 " submitted=%" PRIu64
+                    " backpressure=%" PRIu64 " not_ready=%" PRIu64 " rx_frames=%" PRIu64 " rx_wrong_thread=%" PRIu64
+                    " rx_refused=%" PRIu64 " physical_wire_bytes=%" PRIu64 " tx_batches=%" PRIu64 " tx_wakeups=%" PRIu64
+                    " workload_ns=%" PRIu64 "\n",
+                    t, worker.queue, worker.cpu, worker.running_cpu, worker.clients, worker.results.offered, worker.results.submitted,
+                    worker.results.backpressure, worker.results.not_ready, worker.results.received_frames,
+                    worker.results.receive_wrong_thread, worker.results.receive_refused, worker.results.physical_wire_bytes,
+                    worker.results.transmit_batches, worker.results.transmit_wakeups, worker.workload_ns );
+        }
+    }
     printf( "RESULT work_units_offered=%" PRIu64 " submitted=%" PRIu64 " backpressure=%" PRIu64 " not_ready=%" PRIu64
             " rx_frames=%" PRIu64 " rx_protocol=%" PRIu64 " rx_application=%" PRIu64
             " rx_refused=%" PRIu64 " descriptor_refused=%" PRIu64
             " protocol_bytes=%" PRIu64 " ethernet_frame_bytes=%" PRIu64 " physical_wire_bytes=%" PRIu64
             " application_queued_bytes=%" PRIu64 " application_received_bytes=%" PRIu64
             " payload_errors=%" PRIu64 " ownership_errors=%" PRIu64
-            " robustness_cases=%" PRIu64 " recovery_offers=%" PRIu64 "\n",
+            " robustness_cases=%" PRIu64 " recovery_offers=%" PRIu64
+            " threads=%u rx_wrong_thread=%" PRIu64 " tx_batches=%" PRIu64 " tx_wakeups=%" PRIu64
+            " schedule_complete=%d workload_ns=%" PRIu64 "\n",
             results.offered, results.submitted, results.backpressure, results.not_ready, results.received_frames,
             results.received_protocol, results.received_application, results.receive_refused,
             results.descriptor_refused, results.protocol_bytes,
             results.ethernet_frame_bytes, results.physical_wire_bytes,
             results.application_queued_bytes, results.application_received_bytes,
             results.payload_errors, results.ownership_errors,
-            results.robustness_cases, results.recovery_offers );
+            results.robustness_cases, results.recovery_offers,
+            threads, results.receive_wrong_thread, results.transmit_batches, results.transmit_wakeups,
+            schedule_complete ? 1 : 0, workload_ns );
+    if ( workload_ns > 0 )
+    {
+        const double seconds = (double) workload_ns / 1000000000.0;
+        printf( "RESULT_RATE seconds=%.3f submitted_pps=%.0f physical_wire_gbps=%.3f ethernet_frame_gbps=%.3f\n", seconds,
+                (double) results.submitted / seconds, (double) results.physical_wire_bytes * 8.0 / seconds / 1e9,
+                (double) results.ethernet_frame_bytes * 8.0 / seconds / 1e9 );
+    }
     for ( uint32_t i = 0; i < manifest.count && options.plan.mode == RN_BLASTER_MODE_ROBUSTNESS; ++i )
     {
         const int profile = rn_blaster_server_transport_profile( options.server_transport_profile );
@@ -2309,44 +2959,24 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 manifest.cases[i].expected_recovery );
     }
 
-    rn_blaster_results_t disconnect_results = {};
-    for ( uint32_t i = 0; i < initialized_sessions; ++i )
+    /* every other socket first: the attaching socket judges the interface clean */
+    for ( uint32_t t = threads; t-- > 1; )
     {
-        rn_blaster_session_t & session = sessions[i];
-        uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
-        int burst_count = 0;
-        int burst_bytes = 0;
-        rocketnet_client_protocol_disconnect( &session.protocol, burst, &burst_count, &burst_bytes );
-        for ( int packet = 0; packet < burst_count; ++packet )
-        {
-            (void) rn_blaster_send( &xsk, burst + packet * ROCKETNET_SEND_BUDGET, burst_bytes,
-                                    session.source, server, source_mac, next_hop_mac, &disconnect_results );
-        }
-        sodium_memzero( burst, sizeof( burst ) );
+        rn_blaster_xsk_close( &workers[t].xsk );
     }
-    sodium_memzero( scratch_packet.data(), scratch_packet.size() );
-    sodium_memzero( case_valid.data(), case_valid.size() );
-    if ( message_arena )
-    {
-        rn_arena_destroy( message_arena );
-    }
-    rn_blaster_xsk_close( &xsk );
-    rn_blaster_print_xdp_ids( "after", xsk.after );
-    const bool clean = xsk.cleanup_empty;
-    const bool rlimit_restored = xsk.rlimit_restored;
+    rn_blaster_xsk_close( &workers[0].xsk );
+    rn_blaster_print_xdp_ids( "after", workers[0].xsk.after );
+    const bool clean = workers[0].xsk.cleanup_empty;
+    const bool rlimit_restored = workers[0].xsk.rlimit_restored;
     const int term = rocketnet_term();
     printf( "CLEANUP disconnect_packets=%" PRIu64 " disconnect_backpressure=%" PRIu64
             " disconnect_ownership_errors=%" PRIu64
             " secrets=protocol-reset xdp_program=%s queue=closed umem=freed rlimit=%s"
-            " process=single settings=unchanged\n",
+            " process=%s settings=unchanged\n",
             disconnect_results.submitted, disconnect_results.backpressure, disconnect_results.ownership_errors,
-            clean ? "absent" : "present", rlimit_restored ? "restored" : "restore-failed" );
-    const bool robustness_complete = options.plan.mode != RN_BLASTER_MODE_ROBUSTNESS ||
-                                     ( robustness_index == manifest.count && robustness_wait_ack == 0 &&
-                                       results.robustness_cases == manifest.count );
+            clean ? "absent" : "present", rlimit_restored ? "restored" : "restore-failed", threads == 1 ? "single" : "threads" );
     const bool downstream_observed = ( options.plan.direction & RN_BLASTER_DIRECTION_SERVER_TO_CLIENT ) == 0 ||
                                      results.received_application > 0;
-    const bool schedule_complete = options.plan.mode != RN_BLASTER_MODE_THROUGHPUT || offer_ordinal == total_offers;
     const bool upstream_observed = ( options.plan.direction & RN_BLASTER_DIRECTION_CLIENT_TO_SERVER ) == 0 ||
                                    results.application_queued_bytes > 0;
     if ( !sessions_ok || !all_sessions_ready || !schedule_complete || !upstream_observed ||

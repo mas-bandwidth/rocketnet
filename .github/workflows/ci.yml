@@ -1951,7 +1951,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: ${{ fromJSON('["unit suite","functional suite"]') }}
+        # the unit leg in two shards (test --shard i/2, tests/suite_runner.h):
+        # build 47 s plus 68 s of cases met the two-minute cap under fleet load
+        # (v1.1.5's PR); shard 0/2 also lists the whole suite on full runs
+        include:
+          - leg: unit suite 0/2
+            shard: 0/2
+          - leg: unit suite 1/2
+            shard: 1/2
+          - leg: functional suite
+            shard: none
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1984,7 +1993,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the sanitized unit suite
-        if: matrix.leg == 'unit suite'
+        if: startsWith(matrix.leg, 'unit suite')
         run: cmake --build build --target test --parallel
 
       - name: Build the sanitized functional suite and the lifecycle binaries
@@ -1992,17 +2001,17 @@ jobs:
         run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
 
       - name: Start combined unit and functional timing (unit rows)
-        if: matrix.leg == 'unit suite'
+        if: startsWith(matrix.leg, 'unit suite')
         shell: bash
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
-        if: inputs.full && matrix.leg == 'unit suite'
+        if: inputs.full && matrix.shard == '0/2'
         shell: bash
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
-        if: inputs.full && matrix.leg == 'unit suite'
+        if: inputs.full && matrix.shard == '0/2'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: unit-cases-Linux-asan
@@ -2010,11 +2019,11 @@ jobs:
           if-no-files-found: error
 
       - name: Run unit tests
-        if: matrix.leg == 'unit suite'
+        if: startsWith(matrix.leg, 'unit suite')
         env:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
-        run: ./bin/test
+        run: ./bin/test --shard ${{ matrix.shard }}
 
       # the same locked-memory check as build-and-test; this leg does not
       # build transport_memory, so it checks the limit without measuring

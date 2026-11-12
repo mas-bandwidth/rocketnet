@@ -76,12 +76,19 @@ static void rocketnet_config_print_failure( const char * name, rocketnet_channel
 // is given a different num_channels before its reset announces its CONFIG, so
 // the two objects on the wire disagree exactly as two differently configured
 // builds do.
-void config_mismatch_over_loopback()
+//
+// Each case runs twice: opted in to the 10 s reliable timeout (the CONFIG
+// wait has a clock) and at the default (0, no reliable timeout, probe pacing
+// and the round-trip filter on). Both legs bound their waits by the same 10 s.
+
+static const int rocketnet_config_wait_ms = 10000;
+
+static void config_mismatch_over_loopback_leg( int reliable_timeout_ms )
 {
     rocketnet_channel_harness_t h;
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.reliable_message_timeout_ms = 10000;                 // the wait below is bounded by the reliable timeout: set one
+    config.reliable_message_timeout_ms = reliable_timeout_ms;
     if ( !rocketnet_channel_harness_create_with_config( &h, &config ) )
     {
         rocketnet_config_check( 0 );
@@ -90,7 +97,8 @@ void config_mismatch_over_loopback()
 
     h.message_server->object.config.num_channels = 3;
 
-    const double timeout = (double) h.message_config.reliable_message_timeout_ms / 1000.0;
+    rocketnet_config_check( h.message_config.reliable_message_timeout_ms == reliable_timeout_ms );
+    const double timeout = (double) rocketnet_config_wait_ms / 1000.0;
     const double start = h.now;
     int client_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     int server_reason = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -168,17 +176,27 @@ void config_mismatch_over_loopback()
     rocketnet_channel_harness_destroy( &h );
 }
 
+void config_mismatch_over_loopback()
+{
+    config_mismatch_over_loopback_leg( rocketnet_config_wait_ms );
+}
+
+void config_mismatch_over_loopback_default()
+{
+    config_mismatch_over_loopback_leg( 0 );
+}
+
 // RNEndpoint ConfigReliable (standard/MESSAGES.md m11): CONFIG is reliable
 // number 0 and is resent until acknowledged. Holding every payload packet
 // while the transport connects drops the first CONFIG each way; once the wire
 // passes again the resends must verify both ends, which then exchange 32
 // reliable-ordered messages each way over a 10% loss link.
-void config_equal_over_lossy_loopback()
+static void config_equal_over_lossy_loopback_leg( int reliable_timeout_ms )
 {
     rocketnet_channel_harness_t h;
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    config.reliable_message_timeout_ms = 10000;                 // the wait below is bounded by the reliable timeout: set one
+    config.reliable_message_timeout_ms = reliable_timeout_ms;
     if ( !rocketnet_channel_harness_create_with_config( &h, &config ) )
     {
         rocketnet_config_check( 0 );
@@ -188,7 +206,8 @@ void config_equal_over_lossy_loopback()
     rocketnet_channel_harness_set_link( &h, 0.020, 0.010, rocketnet_config_loss_percent( 10.0f ), 0.0f );
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS );
 
-    const double timeout = (double) h.message_config.reliable_message_timeout_ms / 1000.0;
+    rocketnet_config_check( h.message_config.reliable_message_timeout_ms == reliable_timeout_ms );
+    const double timeout = (double) rocketnet_config_wait_ms / 1000.0;
     const double start = h.now;
     int updates = 0;
     int held_to_server = 0;
@@ -324,4 +343,14 @@ void config_equal_over_lossy_loopback()
     rocketnet_config_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
 
     rocketnet_channel_harness_destroy( &h );
+}
+
+void config_equal_over_lossy_loopback()
+{
+    config_equal_over_lossy_loopback_leg( rocketnet_config_wait_ms );
+}
+
+void config_equal_over_lossy_loopback_default()
+{
+    config_equal_over_lossy_loopback_leg( 0 );
 }
