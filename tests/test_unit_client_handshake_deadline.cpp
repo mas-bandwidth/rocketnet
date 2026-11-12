@@ -8,10 +8,10 @@
 // (TRANSPORT.md t11 rule 6: the attempt is abandoned for connect token
 // expired once expire_timestamp - create_timestamp has elapsed since it
 // began). The client refuses to begin at or after expire
-// (sdk/rocketnet_client_protocol.cpp:160), gives the attempt the whole
-// lifetime (sdk/rocketnet_client_protocol.cpp:201) and ends it once that
+// (sdk/rocketnet_client_protocol.cpp (rocketnet_client_protocol_connect)), gives the attempt the
+// whole lifetime (the same function) and ends it once that
 // lifetime has elapsed since the attempt began
-// (sdk/rocketnet_client_protocol.cpp:220-222).
+// (sdk/rocketnet_client_protocol.cpp (rocketnet_client_check_deadlines)).
 //
 // The clock is an argument: the test starts at 1000.0 and uses no socket, no
 // network and no real clock.
@@ -70,8 +70,8 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // it. An update just before five
 // seconds is still requesting cookie (1), past the token's expire timestamp on
 // the token's own clock; the update at five seconds is connect token expired
-// (-7). These are sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222,
-// and TRANSPORT.md t11 rule 6.
+// (-7). These are sdk/rocketnet_client_protocol.cpp (rocketnet_client_protocol_connect)
+// and its rocketnet_client_check_deadlines, and TRANSPORT.md t11 rule 6.
 
 static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 {
@@ -103,8 +103,8 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 // A token whose expire timestamp is not later than the current time is refused
 // before an attempt begins, with connect token expired (-7) and nothing on the
 // wire: connect at C + 5 for a token that expires at C + 5. These are
-// sdk/rocketnet_client_protocol.cpp:160, :201 and :220-222, and
-// TRANSPORT.md t11 rule 6.
+// sdk/rocketnet_client_protocol.cpp (rocketnet_client_protocol_connect) and its
+// rocketnet_client_check_deadlines, and TRANSPORT.md t11 rule 6.
 
 static void test_client_connect_at_the_expire_timestamp_is_refused()
 {

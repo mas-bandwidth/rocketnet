@@ -3958,6 +3958,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tools/check_tla_views.py --self-test && python3 tools/check_tla_views.py
 
+      # Every pull request: the citation scan covers sdk/ and tests/, so a
+      # rename there must fail here, not in the daily tlc.yml (VERIFY-6 A4/A5).
+      - name: Model coverage rows and citations are true
+        if: ${{ !cancelled() }}
+        run: python3 tools/test_check_tla_coverage.py && python3 tools/check_tla_coverage.py --all --actions-strict
+
       - name: Test and check the fuzz regression corpus
         if: ${{ !cancelled() }}
         run: |

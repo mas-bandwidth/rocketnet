@@ -270,7 +270,7 @@ probe `[][Refuse => UNCHANGED vars]_vars` passed on
 
 - Every start (`Enqueue(cap)` or `Refuse(cap)`, `StartAny`) takes the
   transport cap `cap` from `TransportCaps` and is written in the order of
-  `rn_endpoint_start` (`sdk/rocketnet_endpoint.cpp:390`): an unreliable start
+  `rn_endpoint_start` (`sdk/rocketnet_endpoint.cpp`): an unreliable start
   writes `max_payload_bytes` (441) before the over-max check (444) and before
   the room refusal; a channels start finding no room counts `send_refused`
   (466; the unreliable path 491). `maxPayload`, `sendRefused` (mod 3) and the
@@ -291,7 +291,7 @@ probe `[][Refuse => UNCHANGED vars]_vars` passed on
   `StepPossibleIsEnabled` checks it against `ENABLED`.
 - Reversed witnesses: `Broken = "CountersAtStart"` advances the sequence
   counters at the start (the code assigns them in `rn_channels_finish`,
-  `sdk/rocketnet_channel.cpp:1380`; `rn_channels_start`, 1325, writes nothing
+  `sdk/rocketnet_channel.cpp`; `rn_channels_start` writes nothing
   before the take); `Broken = "StaleStepPossible"` drops the refusal
   disjunct.
 
@@ -312,7 +312,7 @@ probe `[][Refuse => UNCHANGED vars]_vars` passed on
 CountersAtStart's trace, checked by hand: two sends fill the send capacity;
 the third offered send, a sequenced one, is refused and advances
 `sequenced_write` from `<<0, 0>>` to `<<1, 0>>`. In the code the counters are
-assigned in `rn_channels_finish` (`sdk/rocketnet_channel.cpp:1380`), after a
+assigned in `rn_channels_finish` (`sdk/rocketnet_channel.cpp`), after a
 start that succeeded; `rn_channels_start` (1325) checks the pending start,
 the type and the exhaustion and then takes, writing nothing before the take,
 and `rn_endpoint_start` returns at 473 on a refusal.

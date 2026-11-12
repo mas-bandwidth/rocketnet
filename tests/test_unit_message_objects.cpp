@@ -4196,10 +4196,10 @@ REGISTER_UNIT_TEST( test_start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( test_receive_view_is_the_record );
 REGISTER_UNIT_TEST( test_release_returns_room );
 
-// the message object reads no environment (sdk/rocketnet_message_server.cpp:154):
+// the message object reads no environment (sdk/rocketnet_message_server.cpp):
 // the public budget variables are
 // ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
-// the public creates (sdk/rocketnet_api.cpp:139 and :183).
+// the public creates (sdk/rocketnet_api.cpp (rn_apply_message_and_budget_env)).
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // The helpers set and unset the unit environment table on every platform.
 
