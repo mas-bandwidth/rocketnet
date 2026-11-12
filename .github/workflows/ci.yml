@@ -3395,6 +3395,15 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      - name: Test the TLA+ re-run comparer
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_compare_tlc_rerun.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+          bash -n tools/tlc_rerun.sh
+
       - name: Test and check the TLA+ run records
         shell: bash
         run: |
