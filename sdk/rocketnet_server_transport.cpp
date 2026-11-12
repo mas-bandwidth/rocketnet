@@ -2062,6 +2062,124 @@ struct rocketnet_server_transport_resolved_t
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
+// The local address the server binds. Unset, the served family's wildcard on
+// the served port (both families share the IPv6 wildcard). Set
+// (bind_ipv4_address or bind_ipv6_address), that address on the served port:
+// the address clients connect to and the address the server binds differ
+// behind NAT. Refused with INVALID_ADDRESS, one log line each: an address
+// that does not parse, of the other family, with a port (":0" included),
+// multicast, the IPv4 broadcast, IPv4-mapped IPv6 or IPv6 link-local (no
+// scope to carry); a bind address for a family the server does not serve; and
+// any bind address on a server that serves both families, whose one
+// dual-stack socket cannot bind two specific addresses.
+bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const rocketnet_address_t * public_address,
+                                                      int serves_both, rocketnet_address_t * bind_address, int * status )
+{
+    rocketnet_assert( config );
+    rocketnet_assert( public_address );
+    rocketnet_assert( bind_address );
+
+    const bool ipv4_set = config->bind_ipv4_address[0] != '\0';
+    const bool ipv6_set = config->bind_ipv6_address[0] != '\0';
+
+    memset( bind_address, 0, sizeof( *bind_address ) );
+
+    if ( serves_both )
+    {
+        if ( ipv4_set || ipv6_set )
+        {
+            if ( status )
+            {
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            }
+            rocketnet_error( "server bind address refused: a server that serves both families binds the IPv6 wildcard; serve one family to bind a specific address" );
+            return false;
+        }
+
+        // Both families share the IPv6 wildcard on the one port, with
+        // IPV6_V6ONLY off: the bind a "[::]" server takes.
+        bind_address->type = ROCKETNET_ADDRESS_IPV6;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds [::]:%d, both families", (int) public_address->port );
+        return true;
+    }
+
+    const bool ipv4 = public_address->type == ROCKETNET_ADDRESS_IPV4;
+    const char * field = ipv4 ? "bind_ipv4_address" : "bind_ipv6_address";
+    const char * text = ipv4 ? config->bind_ipv4_address : config->bind_ipv6_address;
+
+    if ( ( ipv4 && ipv6_set ) || ( !ipv4 && ipv4_set ) )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s is set, but the server serves only %s", ipv4 ? "bind_ipv6_address" : "bind_ipv4_address", ipv4 ? "IPv4" : "IPv6" );
+        return false;
+    }
+
+    if ( text[0] == '\0' )
+    {
+        bind_address->type = public_address->type;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds the %s wildcard, port %d", ipv4 ? "IPv4" : "IPv6", (int) public_address->port );
+        return true;
+    }
+
+    rocketnet_address_t parsed;
+    const char * refusal = NULL;
+    if ( !rocketnet_address_parse( &parsed, text ) )
+    {
+        refusal = "does not parse";
+    }
+    else if ( parsed.type != public_address->type )
+    {
+        refusal = ipv4 ? "is not an IPv4 address" : "is not an IPv6 address";
+    }
+    else if ( parsed.port != 0 || ( ipv4 ? strchr( text, ':' ) != NULL : strstr( text, "]:" ) != NULL ) )
+    {
+        refusal = "carries a port; the port is the served address's";
+    }
+    else if ( ipv4 && parsed.data.ipv4[0] >= 224 && parsed.data.ipv4[0] <= 239 )
+    {
+        refusal = "is a multicast address";
+    }
+    else if ( ipv4 && parsed.data.ipv4[0] == 255 && parsed.data.ipv4[1] == 255 && parsed.data.ipv4[2] == 255 && parsed.data.ipv4[3] == 255 )
+    {
+        refusal = "is the broadcast address";
+    }
+    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xff00 ) == 0xff00 )
+    {
+        refusal = "is a multicast address";
+    }
+    else if ( !ipv4 && parsed.data.ipv6[0] == 0 && parsed.data.ipv6[1] == 0 && parsed.data.ipv6[2] == 0 && parsed.data.ipv6[3] == 0 && parsed.data.ipv6[4] == 0 &&
+              parsed.data.ipv6[5] == 0xffff )
+    {
+        refusal = "is an IPv4-mapped address; set bind_ipv4_address and serve IPv4";
+    }
+    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xffc0 ) == 0xfe80 )
+    {
+        refusal = "is link-local; its bind needs an interface scope, which the field cannot carry";
+    }
+
+    if ( refusal )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s \"%s\" %s", field, text, refusal );
+        return false;
+    }
+
+    *bind_address = parsed;
+    bind_address->port = public_address->port;
+
+    char bound[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "server transport binds %s (%s)", rocketnet_address_to_string( bind_address, bound ), field );
+    return true;
+}
+
 static bool rocketnet_server_transport_resolve_staged( const char * public_address_string,
                                                        const struct rocketnet_server_transport_config_t * config,
                                                        const uint64_t * resolved_memory_budget,
@@ -2253,26 +2371,9 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     }
 
     rocketnet_address_t bind_address;
-
-    if ( serves_both )
+    if ( !rocketnet_server_transport_resolve_bind_address( &effective_config, &public_address, serves_both, &bind_address, status ) )
     {
-        // Both families share the IPv6 wildcard on the one port, with
-        // IPV6_V6ONLY off: the bind a "[::]" server takes.
-        memset( &bind_address, 0, sizeof( bind_address ) );
-        bind_address.type = ROCKETNET_ADDRESS_IPV6;
-        bind_address.port = public_address.port;
-    }
-    else
-    {
-        bind_address = public_address;
-        if ( bind_address.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            memset( bind_address.data.ipv4, 0, sizeof( bind_address.data.ipv4 ) );
-        }
-        else
-        {
-            memset( bind_address.data.ipv6, 0, sizeof( bind_address.data.ipv6 ) );
-        }
+        return false;
     }
 
     // the operator memory budget: each candidate's pre-allocation plan
