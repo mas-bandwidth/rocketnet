@@ -47,7 +47,14 @@ besides the build dependencies each job checks by name:
   `ROCKETNET_NIGHTLY_NO_TIMEOUT=1` lifts the limits on test cases and never
   the boot deadline, and nothing bounds a guest's cases once it has started.
   The nightly s390x full-system guest has the same rule with a 1200 s
-  deadline (its boot takes about 4 minutes under TCG);
+  deadline (its boot takes about 4 minutes under TCG). `vng` carries its
+  guest command on the guest kernel's command line, which x86 cuts at 2048
+  bytes (a longer one panics the kernel before its console is up and the
+  guest halts silently), so every caller writes the guest's commands to a
+  script file and hands `vng` only its path, and `scripts/vm-boot-guard`
+  measures the line with `vng --dry-run`, prints it, and refuses one over
+  1900 bytes by name. The nightly cells job runs one xdp repetition from a
+  work directory over 100 characters long to hold that;
 - a locked-memory limit that covers the io_uring cases ([LINUX.md, section 8](LINUX.md#8-limits-for-1000-clients));
 - for `big endian s390x`: the s390x cross compilers, the s390x multiarch
   libsodium, libbpf, libxdp and libstdc++, and `qemu-s390x` or

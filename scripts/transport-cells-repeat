@@ -308,6 +308,9 @@ run_xdp_cell() { # server client
             if [ $? = 125 ]; then
                 echo "XDP-GUEST-DID-NOT-BOOT cell=$1/$2 run=$run: $(tail -n 1 "$prefix.vm.log")"
             fi
+            if [ "$run" = 1 ]; then
+                echo "XDP-GUEST cell=$1/$2 run=1: $(grep -a -o -m 1 'guest kernel command line [0-9]* bytes' "$prefix.vm.log")"
+            fi
             rm -f "$prefix.started" "$prefix.guest.sh"
             for case in $xdp_cases; do
                 if [ -f "$prefix.$case.rc" ]; then

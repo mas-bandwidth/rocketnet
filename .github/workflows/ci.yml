@@ -776,6 +776,9 @@ jobs:
                     > "$logs/$server.$client.vm$guest.log" 2>&1 &
                 done
                 wait
+                for guest in $(seq 0 $((xdp_guests - 1))); do
+                  echo "XDP-GUEST $guest: $(grep -a -o -m 1 'guest kernel command line [0-9]* bytes' "$logs/$server.$client.vm$guest.log")"
+                done
                 for case in $xdp_cases_run; do
                   [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs"/"$server.$client".vm*.log > "$logs/$server.$client.$case.log"; }
                 done

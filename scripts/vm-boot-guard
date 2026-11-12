@@ -102,6 +102,7 @@ trap 'stop 129' HUP
 # long paths in a guest script file and pass vng only its short path.
 max_cmdline=1900
 vng_at=0
+cmdline_note=""
 n=0
 for word in "$@"; do
     n=$((n + 1))
@@ -114,6 +115,9 @@ if [ "$vng_at" -gt 0 ]; then
         echo "VM-BOOT-GUARD could not read the guest kernel command line from ${*:vng_at:1} --dry-run; booting with the boot deadline only" >&2
     else
         bytes=${#append}
+        # qemu reopens the caller's log (/proc/self/fd/1) and truncates it, so
+        # the length is said again on every line written after a boot
+        cmdline_note="; guest kernel command line $bytes bytes"
         echo "VM-BOOT-GUARD guest kernel command line $bytes bytes (limit 2048, refused above $max_cmdline)" >&2
         if [ "$bytes" -gt "$max_cmdline" ]; then
             echo "VM-BOOT-GUARD guest did not boot: guest kernel command line is $bytes bytes, limit 2048 (refused above $max_cmdline): put the guest's commands in a script file and pass vng its short path" >&2
@@ -133,7 +137,7 @@ while [ "$attempt" -le "$attempts" ]; do
         sleep 1
     done
     if [ -e "$marker" ]; then
-        echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started (marker after about $((SECONDS - start)) s); no deadline from here" >&2
+        echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started (marker after about $((SECONDS - start)) s$cmdline_note); no deadline from here" >&2
         wait "$child"
         rc=$?
         child=""
@@ -148,7 +152,7 @@ while [ "$attempt" -le "$attempts" ]; do
         # the marker may land in the moment between the last look and the exit
         if [ -e "$marker" ]; then
             child=""
-            echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started and finished" >&2
+            echo "VM-BOOT-GUARD attempt $attempt/$attempts: guest started and finished$cmdline_note" >&2
             exit "$rc"
         fi
         why="the command exited ($rc) before writing the marker $marker"
@@ -158,5 +162,5 @@ while [ "$attempt" -le "$attempts" ]; do
     attempt=$((attempt + 1))
 done
 
-echo "VM-BOOT-GUARD guest did not boot in $attempts attempts (deadline $deadline s each): $*" >&2
+echo "VM-BOOT-GUARD guest did not boot in $attempts attempts (deadline $deadline s each$cmdline_note): $*" >&2
 exit 125

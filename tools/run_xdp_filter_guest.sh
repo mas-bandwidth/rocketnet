@@ -386,8 +386,8 @@ fi
 host_snapshot "after" >> "$ARTIFACT_DIR/cleanup.txt"
 
 GUEST_EXIT=$(sed -nE 's/^guest_test_exit=([0-9]+)$/\1/p' "$GUEST_STATUS" 2>/dev/null | tail -n 1)
-if [ -z "$GUEST_EXIT" ] && [ "$VNG_EXIT" -eq 125 ] && grep -q '^VM-BOOT-GUARD guest did not boot' "$ARTIFACT_DIR/vng.log"; then
-    fail_qualification "$(grep '^VM-BOOT-GUARD guest did not boot' "$ARTIFACT_DIR/vng.log" | tail -n 1) (see $ARTIFACT_DIR/vng.log)"
+if [ -z "$GUEST_EXIT" ] && [ "$VNG_EXIT" -eq 125 ] && grep -a -q 'VM-BOOT-GUARD guest did not boot' "$ARTIFACT_DIR/vng.log"; then
+    fail_qualification "$(grep -a -o 'VM-BOOT-GUARD guest did not boot.*' "$ARTIFACT_DIR/vng.log" | tail -n 1) (see $ARTIFACT_DIR/vng.log)"
 fi
 if [ -z "$GUEST_EXIT" ]; then
     fail_qualification "virtme-ng guest did not record a test_xdp_filter exit status (vng exit=$VNG_EXIT; see $ARTIFACT_DIR/vng.log)"
