@@ -401,7 +401,7 @@ if(ROCKETNET_BUILD_SHARED)
     add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 endif()
 # The development library: the same source compiled with ROCKETNET_DEV=1,
-# so the dev flow (examples, functional suite, soak, serialize) keeps the
+# so the dev flow (examples, functional suite, soak) keeps the
 # development token minting and accepts the published development keys that the
 # production library refuses. Never installed: it is a build-tree dev aid.
 if(ROCKETNET_BUILD_DEV_LIBRARIES)
