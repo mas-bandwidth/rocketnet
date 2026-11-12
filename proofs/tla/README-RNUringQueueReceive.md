@@ -29,8 +29,10 @@ The queues share nothing, so one queue is the machine. Two models cover it:
 (README-TraceCheck.md). `tests/tla_trace_uring_receive.cpp` walks the real module with
 fake completions and logs every variable at every call. Its plant,
 `ROCKETNET_URING_RECEIVE_QUEUE_PLANT`, is the ReleaseAtTake witness in the code: the
-drain stores head as the end of what it takes. When it fires, the walk prints
-`EARLY-RELEASES N` with N > 0.
+drain stores head as the end of what it takes. The plant build (`ROCKETNET_TLA_PLANT`)
+includes the module's .cpp with that define set. The walk prints `PLANT-FIRED N`, the
+drains that released the slots they took: N > 0 from the plant build and 0 from the
+clean one, so the layer is quiet.
 
 ## The claims
 

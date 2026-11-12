@@ -22,7 +22,14 @@
 //
 // writes DIR/MCTraceReceiveSeed<seed>.tla and .cfg
 // (MCTraceReceivePlantSeed<seed> from the plant build, whose drain releases
-// the slots it hands main: ROCKETNET_URING_RECEIVE_QUEUE_PLANT).
+// the slots it hands main: ROCKETNET_URING_RECEIVE_QUEUE_PLANT). It prints
+// PLANT-FIRED n, the drains that released the slots they took: n > 0 from
+// the plant build, 0 from the clean one (the layer is quiet).
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_URING_RECEIVE_QUEUE_PLANT 1
+#include "../sdk/rocketnet_uring_receive_queue.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_uring_receive_queue.h"
@@ -533,7 +540,7 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
 
     // the plant build must fire for its trace to be a witness; the clean
     // build never does
-    printf( "EARLY-RELEASES %d\n", walk.early_releases );
+    printf( "PLANT-FIRED %d\n", walk.early_releases );
 
     char constants[1024];
     snprintf( constants, sizeof( constants ),
