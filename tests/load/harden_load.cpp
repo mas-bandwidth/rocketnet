@@ -758,7 +758,48 @@ struct harden_link_t
 {
     int64_t tc_sent = 0, tc_dropped = 0;
     int64_t tx_packets = -1, tx_dropped = -1, rx_packets = -1, rx_dropped = -1;
+    // a cloud NIC's own counters (ethtool -S), 0 where the device has none:
+    // packets the provider queued or dropped past the instance's packet and
+    // bandwidth allowances, printed beside the chain to name a gap on a real
+    // link
+    int64_t pps_allowance = 0, bw_in_allowance = 0, bw_out_allowance = 0;
 };
+
+#if defined( __linux__ )
+static void harden_ethtool_read( const std::string & dev, harden_link_t * l )
+{
+    char command[256];
+    snprintf( command, sizeof( command ), "ethtool -S %s 2>/dev/null", dev.c_str() );
+    FILE * pipe = popen( command, "r" );
+    if ( !pipe )
+    {
+        return;
+    }
+    char line[512];
+    while ( fgets( line, sizeof( line ), pipe ) )
+    {
+        char name[128];
+        long long value = 0;
+        if ( sscanf( line, " %127[^:]: %lld", name, &value ) != 2 )
+        {
+            continue;
+        }
+        if ( strcmp( name, "pps_allowance_exceeded" ) == 0 )
+        {
+            l->pps_allowance = (int64_t) value;
+        }
+        else if ( strcmp( name, "bw_in_allowance_exceeded" ) == 0 )
+        {
+            l->bw_in_allowance = (int64_t) value;
+        }
+        else if ( strcmp( name, "bw_out_allowance_exceeded" ) == 0 )
+        {
+            l->bw_out_allowance = (int64_t) value;
+        }
+    }
+    pclose( pipe );
+}
+#endif // #if defined( __linux__ )
 
 static harden_link_t harden_link_read( const std::string & dev )
 {
@@ -792,6 +833,7 @@ static harden_link_t harden_link_read( const std::string & dev )
         }
         pclose( pipe );
     }
+    harden_ethtool_read( dev, &l );
 #endif // #if defined( __linux__ )
     l.tx_packets = harden_sys_value( dev.c_str(), "tx_packets" );
     l.tx_dropped = harden_sys_value( dev.c_str(), "tx_dropped" );
@@ -842,6 +884,9 @@ static void harden_print_cut_network( const char * role, const char * cut, const
         harden_print_cut_term( role, cut, "dev_tx_dropped", l.tx_dropped - lb.tx_dropped );
         harden_print_cut_term( role, cut, "dev_rx_packets", l.rx_packets - lb.rx_packets );
         harden_print_cut_term( role, cut, "dev_rx_dropped", l.rx_dropped - lb.rx_dropped );
+        harden_print_cut_term( role, cut, "nic_pps_allowance", l.pps_allowance - lb.pps_allowance );
+        harden_print_cut_term( role, cut, "nic_bw_in_allowance", l.bw_in_allowance - lb.bw_in_allowance );
+        harden_print_cut_term( role, cut, "nic_bw_out_allowance", l.bw_out_allowance - lb.bw_out_allowance );
     }
     fflush( stdout );
 }
@@ -2585,14 +2630,14 @@ static bool harden_terms_load( const std::string & path, harden_terms_t * terms 
 struct harden_chain_t
 {
     int64_t library_sent, kernel_out, kernel_sndbuf, qdisc_sent, qdisc_dropped, device_dropped;
-    int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards;
+    int64_t arrived_in, arrived_inerrors, arrived_noports, arrived_ipdiscards, arrived_device_dropped;
     int64_t library_received;
 };
 
 static bool harden_chain_print( const char * direction, const harden_chain_t & c, int duplicates_expected )
 {
     const int64_t send_gap = c.library_sent - ( c.kernel_out + c.kernel_sndbuf );
-    const int64_t path_gap = c.kernel_out - ( c.arrived_in + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped );
+    const int64_t path_gap = c.kernel_out - ( c.arrived_in + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped );
     const int64_t receive_gap = c.arrived_in - c.library_received;
     // netem's duplicates are not counted anywhere: they are the path's
     // excess of arrivals, and must be zero unless the row duplicates
@@ -2602,7 +2647,7 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     // printed beside it: they count an skb, so a GSO send of N datagrams is
     // one in them (and in qdisc drops), and a step gap there names where a
     // library gap went
-    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped;
+    const int64_t named_drops = c.kernel_sndbuf + c.arrived_inerrors + c.arrived_noports + c.arrived_ipdiscards + c.qdisc_dropped + c.device_dropped + c.arrived_device_dropped;
     const int64_t library_gap = c.library_sent - ( c.library_received + named_drops );
     const bool ok = duplicates_expected ? library_gap <= 0 : library_gap == 0;
     printf( "harden_chain: %s library_sent=%" PRId64 " = library_received=%" PRId64 " + named_drops=%" PRId64 " (library_gap=%" PRId64 "%s)\n", direction, c.library_sent,
@@ -2610,8 +2655,8 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
     printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
             c.kernel_sndbuf, send_gap );
     printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
-            " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
-            direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, path_gap,
+            " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
+            direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
             duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
     printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction, c.arrived_in, c.library_received, receive_gap );
     // the qdisc counts each GSO segment it sends and each skb it drops: with
@@ -2654,6 +2699,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_inerrors = t.get( "server.c2s_udp_inerrors" );
     up.arrived_noports = t.get( "server.c2s_udp_noports" );
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
+    up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
     up.library_received = t.get( "server.c2s_packets_received" );
 
     harden_chain_t down;
@@ -2667,10 +2713,17 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.arrived_inerrors = t.get( "clients.s2c_udp_inerrors" );
     down.arrived_noports = t.get( "clients.s2c_udp_noports" );
     down.arrived_ipdiscards = t.get( "clients.s2c_ip_indiscards" );
+    down.arrived_device_dropped = t.get( "clients.s2c_dev_rx_dropped" );
     down.library_received = t.get( "clients.s2c_packets_received" ) + t.get( "hostile.received" );
 
     const bool up_ok = harden_chain_print( "clients_to_server", up, o.netem_duplicates );
     const bool down_ok = harden_chain_print( "server_to_clients", down, o.netem_duplicates );
+    // a cloud NIC's allowance counters, not judged (the provider counts a
+    // packet queued or dropped): nonzero beside a library gap names the link
+    printf( "harden_nic: clients pps_allowance=%" PRId64 " bw_in_allowance=%" PRId64 " bw_out_allowance=%" PRId64 " server pps_allowance=%" PRId64 " bw_in_allowance=%" PRId64
+            " bw_out_allowance=%" PRId64 "\n",
+            t.get( "clients.s2c_nic_pps_allowance" ), t.get( "clients.s2c_nic_bw_in_allowance" ), t.get( "clients.s2c_nic_bw_out_allowance" ), t.get( "server.s2c_nic_pps_allowance" ),
+            t.get( "server.s2c_nic_bw_in_allowance" ), t.get( "server.s2c_nic_bw_out_allowance" ) );
 
     // the players: delivery verified, nobody stable dropped, the frame held
     const int64_t p99 = t.get( "server.work_p99_us" );
