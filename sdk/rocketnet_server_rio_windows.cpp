@@ -3032,6 +3032,17 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         rocketnet_warn( "rio transport refused: %d lanes need a specific local address; set bind_ipv4_address or bind_ipv6_address in the server config", lanes );
         return NULL;
     }
+    // An IPv4-mapped address (::ffff:a.b.c.d, ::ffff:0.0.0.0 among them)
+    // gives lane 0 a dual-stack socket whose bound name comes back as IPv4,
+    // so the other lanes would bind IPv4 sockets beside it, on the IPv4
+    // wildcard for ::ffff:0.0.0.0. The lanes take the IPv4 address itself.
+    rocketnet_address_t unmapped = *bind_address;
+    if ( lanes > 1 && unmapped.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &unmapped ) )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
+        rocketnet_warn( "rio transport refused: %d lanes need a specific local address, not an IPv4-mapped one; set bind_ipv4_address in the server config", lanes );
+        return NULL;
+    }
     const uint8_t * packet_filter = options ? options->packet_filter : NULL;
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_rio_t ) );
     if ( !storage )
@@ -3059,7 +3070,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         rio->lanes[i] = rocketnet_rio_lane_create( context, bind_address, max_clients, lanes > 1, packet_filter
 #if ROCKETNET_DEV
                                                    ,
-                                                   fail_stage
+                                                   ( fail_stage >> 4 ) == i ? ( fail_stage & 15 ) : 0
 #endif // #if ROCKETNET_DEV
                                                    ,
                                                    status );

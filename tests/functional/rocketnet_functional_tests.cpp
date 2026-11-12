@@ -5395,8 +5395,9 @@ void rocketnet_test_server_rio_send_full()
 // The public server on RIO lanes, through the driver: with num_xdp_queues 4
 // and no bind address the server binds the wildcard, so start refuses and no
 // lane is made; with bind_ipv4_address set, start makes exactly four lanes
-// (counted as the transport made them, not as asked) and clients on different
-// ports, so on different lanes, all connect and are served.
+// (counted as the transport made them, not as asked) and eight clients all
+// connect and are served. Which lane each client's sends take is not checked
+// here; test_rio_transport_lanes_send_and_receive checks the spread.
 void rocketnet_test_server_rio_lanes_through_the_server()
 {
     rocketnet_check( rocketnet_server_rio_available() );

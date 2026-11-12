@@ -2892,6 +2892,20 @@ static void test_rio_create_failure_drains_posted_receives()
         CHECK( live_allocations.load() == baseline );
     }
 
+    // a lane after the first fails: the lanes already made and running stop,
+    // drain and are freed, and create returns NULL with nothing left behind
+    for ( int stage : { 1, 7 } )
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_rio_options_t options;
+        options.lanes = 4;
+        options.packet_filter = NULL;
+        const uint64_t made = rocketnet_server_rio_test_lanes_made();
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage + 16 * 2, NULL, &options ) );
+        CHECK( rocketnet_server_rio_test_lanes_made() - made == 2 );
+        CHECK( live_allocations.load() == baseline );
+    }
+
     printf( "test_rio_transport_create_failure_drains_posted_receives\n" );
 }
 
@@ -3300,7 +3314,15 @@ static void test_rio_lanes_refuse_a_held_port()
             rocketnet_server_rio_options_t options;
             options.lanes = lanes;
             options.packet_filter = NULL;
-            CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options ) );
+            int status = ROCKETNET_STATUS_OK;
+#if ROCKETNET_DEV
+            const uint64_t made = rocketnet_server_rio_test_lanes_made();
+#endif // #if ROCKETNET_DEV
+            CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
+            CHECK( status != ROCKETNET_STATUS_OK );
+#if ROCKETNET_DEV
+            CHECK( rocketnet_server_rio_test_lanes_made() == made );
+#endif // #if ROCKETNET_DEV
         }
         closesocket( holder );
     }
@@ -3312,9 +3334,36 @@ static void test_rio_lanes_refuse_a_held_port()
         rocketnet_server_rio_options_t options;
         options.lanes = lanes;
         options.packet_filter = NULL;
-        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, NULL, &options ) );
+        int status = ROCKETNET_STATUS_OK;
+        CHECK( !rocketnet_server_rio_create( NULL, &at, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status, &options ) );
+        CHECK( status != ROCKETNET_STATUS_OK );
     }
     printf( "test_rio_transport_lanes_refuse_a_held_port\n" );
+}
+
+// The lanes' receives of port_thief_steals' 8 datagrams (marked 0x5A, 0..7):
+// how many distinct ones the transport hands up within a second.
+static int rio_lanes_take( rocketnet_server_rio_t * rio, int n )
+{
+    std::vector<bool> seen( (size_t) n, false );
+    int count = 0;
+    const double deadline = rocketnet_platform_time() + 1.0;
+    while ( count < n && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_server_rio_receive_packets( rio );
+        rocketnet_server_socket_process_packets_t * batch = rocketnet_server_rio_process_packets( rio );
+        for ( int i = 0; i < batch->num_packets; ++i )
+        {
+            const int index = fault_index( batch->packet_data[i], batch->packet_bytes[i], 0x5A );
+            if ( index >= 0 && index < n && !seen[(size_t) index] )
+            {
+                seen[(size_t) index] = true;
+                ++count;
+            }
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    return count;
 }
 
 // With lanes the sockets share the port with SO_REUSEADDR, so a later socket
@@ -3335,6 +3384,7 @@ static void test_rio_lanes_later_binder_receives_nothing()
     SOCKET thief;
     const bool bound = port_thief_binds( &target, &thief );
     const int stolen = bound ? port_thief_steals( &target, thief ) : 0;
+    const int kept = rio_lanes_take( rio, 8 );
     closesocket( thief );
 
     rocketnet_address_t wildcard = address( "0.0.0.0:0" );
@@ -3342,17 +3392,21 @@ static void test_rio_lanes_later_binder_receives_nothing()
     SOCKET wild_thief;
     const bool wild_bound = port_thief_binds( &wildcard, &wild_thief );
     const int wild_stolen = wild_bound ? port_thief_steals( &target, wild_thief ) : 0;
+    const int wild_kept = rio_lanes_take( rio, 8 );
     closesocket( wild_thief );
 
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d wildcard_bound=%d wildcard_stolen=%d\n",
-            bound ? 1 : 0, stolen, wild_bound ? 1 : 0, wild_stolen );
-    CHECK( stolen == 0 );
-    CHECK( wild_stolen == 0 );
+    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d kept=%d wildcard_bound=%d wildcard_stolen=%d wildcard_kept=%d\n",
+            bound ? 1 : 0, stolen, kept, wild_bound ? 1 : 0, wild_stolen, wild_kept );
+    // both binds must succeed, or nothing here was tested; the lanes keep all 8 each time
+    CHECK( bound );
+    CHECK( wild_bound );
+    CHECK( stolen == 0 && kept == 8 );
+    CHECK( wild_stolen == 0 && wild_kept == 8 );
 }
 
-// More than one lane refuses the wildcard address (either family) with
-// ROCKETNET_STATUS_INVALID_ADDRESS, and takes a specific address on port 0
+// More than one lane refuses the wildcard address (either family) and any
+// IPv4-mapped address with ROCKETNET_STATUS_INVALID_ADDRESS, and takes a specific address on port 0
 // (lane 0 is given the port, the others join it) or on an explicit port (the
 // probe first); one lane takes the wildcard, as before.
 static void test_rio_lanes_bind_forms()
@@ -3360,7 +3414,7 @@ static void test_rio_lanes_bind_forms()
     CHECK( rocketnet_server_rio_available() );
 
     const uint16_t port = rio_free_port();
-    const char * wildcards[] = { "0.0.0.0:0", "[::]:0" };
+    const char * wildcards[] = { "0.0.0.0:0", "[::]:0", "[::ffff:0.0.0.0]:0", "[::ffff:127.0.0.1]:0" };
     for ( const char * text : wildcards )
     {
         for ( const uint16_t at_port : { (uint16_t) 0, port } )
@@ -3518,8 +3572,9 @@ static void test_rio_lanes_prefilter_counts_drops()
     printf( "test_rio_transport_lanes_prefilter_counts_drops\n" );
 }
 
-// finish refuses an id past the last lane's last slot, the largest id, and
-// an id that names another slot than the frame's, as SEND_FAILED; the
+// finish refuses an id past the last lane's last slot, the largest id, an id
+// that names another slot of the frame's lane, and one that names the same
+// slot on another lane, as SEND_FAILED; the
 // reserved slot is skipped, nothing is sent and the lanes go idle.
 static void test_rio_lanes_finish_refuses_foreign_ids()
 {
@@ -3553,7 +3608,17 @@ static void test_rio_lanes_finish_refuses_foreign_ids()
         rocketnet_server_rio_finish_packet( rio, other, frame, FAULT_BYTES );
         rocketnet_server_rio_abort_packet( rio, other, frame );
     }
-    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED ) == 3 );
+    // an id that names the same slot on another lane
+    {
+        uint64_t id;
+        uint8_t * frame = rio_reserve( rio, &client_address, &id );
+        CHECK( frame && id < (uint64_t) lanes * slots );
+        fault_mark( frame + ROCKETNET_FRAME_WIRE_OFFSET, 1, 0 );
+        const uint64_t other = ( id + slots ) % ( (uint64_t) lanes * slots );
+        rocketnet_server_rio_finish_packet( rio, other, frame, FAULT_BYTES );
+        rocketnet_server_rio_abort_packet( rio, other, frame );
+    }
+    CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED ) == 4 );
     rio_flush( rio );
     CHECK( rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT ) == sent );
 
