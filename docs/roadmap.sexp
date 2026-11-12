@@ -100,6 +100,11 @@
    :text "No ruleset requires any check on main (audit 44)."
    :date "2026-10-31" :origin "Audit item 44")
 
+  (item "apply-main-ruleset" :group "decisions" :area "github"
+   :title "Apply the main ruleset before the first outside pull request"
+   :text "Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now (owner, 2026-11-12)."
+   :date "2026-11-12" :origin "Owner, 2026-11-12")
+
   (item "frame-budget-runner-label" :group "decisions" :area "fleet"
    :title "A runner label for the nightly frame budget held only by amd-2 and amd-3"
    :text "rocketnet-quiet also covers hetzner2; the frame budget is a wall-clock gate that compares only on one machine class."
