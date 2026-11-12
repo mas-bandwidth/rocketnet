@@ -273,6 +273,9 @@ static void allowance_fixture_setup( struct allowance_fixture_t * fixture, doubl
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( fixture->server.encryption_map, index );
         memcpy( mapping->keys.session_client_to_server, fixture->keys[c], ROCKETNET_KEY_BYTES );
         memcpy( mapping->connection_salt, allowance_salt, ROCKETNET_CONNECTION_SALT_BYTES );
+        uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+        memset( user_data, 0, sizeof( user_data ) );
+        check( rocketnet_client_slots_assign( fixture->server.client_slots, (uint64_t) c + 1, index, (uint64_t) c + 1, user_data ) == c );
         mapping->control->client_index = c;
         mapping->control->timeout_seconds = 1;
         mapping->control->last_receive_time = time;
