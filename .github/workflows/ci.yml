@@ -652,6 +652,18 @@ jobs:
             exit 1
           fi
 
+      # The load harness's resource census (tests/load/load_census.h) is the
+      # oracle behind load's and load_split's resource_baseline verdict; its
+      # self-test plants a file left open, a reused descriptor number, the
+      # random device and a thread left running.
+      - name: "Functional: load harness census self-test"
+        if: matrix.leg == 'functional'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/test_load_census | tee load-census.log
+          grep -qx 'test_load_census' load-census.log
+
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
