@@ -1313,6 +1313,52 @@ inline void suite_drain( int fd, std::string & output )
     }
 }
 
+// A case run by `--run <case>` with no suite parent (CI's XDP cases, run as
+// root one at a time inside virtme-ng guests) holds itself to the bound the
+// parent would hold it to: suite_case_rss_mb of the bound it reported from
+// its plan (tests/plan_rss.h), or of none, against its own peak resident set
+// read as wait4 would read it (the larger of its own and its waited-for
+// children's). A passed case over its bound fails by name. Under a suite
+// parent (ROCKETNET_TEST_SUITE_CAPTURE) the parent checks, and this does not
+// run; a tier that does not enforce its bounds (the unit suite) skips it.
+
+inline int suite_check_own_rss( const char * name, int rc, bool enforce )
+{
+    if ( rc != 0 || !enforce )
+    {
+        return rc;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+
+    struct rusage self;
+    struct rusage children;
+    memset( &self, 0, sizeof( self ) );
+    memset( &children, 0, sizeof( children ) );
+    getrusage( RUSAGE_SELF, &self );
+    getrusage( RUSAGE_CHILDREN, &children );
+    const long maxrss = self.ru_maxrss > children.ru_maxrss ? self.ru_maxrss : children.ru_maxrss;
+#if defined( __APPLE__ )
+    const long peak_mb = maxrss / ( 1024 * 1024 ); // bytes on macOS
+#else
+    const long peak_mb = maxrss / 1024; // kilobytes on Linux
+#endif // #if defined( __APPLE__ )
+    const long bound_mb = suite_case_rss_mb( name, plan_rss_reported() ? plan_rss_bound_mb() : -1 );
+
+    const long long check_us = (long long) std::chrono::duration_cast<std::chrono::microseconds>( std::chrono::steady_clock::now() - start ).count();
+    printf( "own rss %s: peak_mb=%ld bound_mb=%ld (checked in %lld us)\n", name, peak_mb, bound_mb, check_us );
+
+    if ( bound_mb > 0 && peak_mb > bound_mb )
+    {
+        printf( "check failed: %s peaked at %ld MiB resident, over its bound of %ld MiB (tests/plan_rss.h)\n", name, peak_mb, bound_mb );
+        fflush( stdout );
+        return 1;
+    }
+
+    fflush( stdout );
+    return rc;
+}
+
 // Runs one case in a child with its stdout and stderr read through a pipe,
 // then prints every line when it failed and only the name lines when it
 // passed. The child may exit(1), abort or be killed and the parent still has
@@ -1320,7 +1366,7 @@ inline void suite_drain( int fd, std::string & output )
 // its children, so `--run <case>` does not leak a passing case's diagnostics
 // without ROCKETNET_TEST_VERBOSE.
 
-inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
+inline int suite_run_names_only( int ( *worker )( const char * ), const char * name, bool enforce_rss )
 {
     fflush( stdout );
     fflush( stderr );
@@ -1328,7 +1374,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
     {
-        return worker( name );
+        return suite_check_own_rss( name, worker( name ), enforce_rss );
     }
 
     const pid_t pid = fork();
@@ -1336,7 +1382,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     {
         close( pipefd[0] );
         close( pipefd[1] );
-        return worker( name );
+        return suite_check_own_rss( name, worker( name ), enforce_rss );
     }
 
     if ( pid == 0 )
@@ -1351,7 +1397,7 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
-        const int rc = worker( name );
+        const int rc = suite_check_own_rss( name, worker( name ), enforce_rss );
         fflush( stdout );
         fflush( stderr );
         _exit( rc );
@@ -1445,9 +1491,9 @@ inline int suite_main( int argc, char ** argv,
 
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
         {
-            return suite_run_names_only( worker, argv[2] );
+            return suite_run_names_only( worker, argv[2], enforce_case_rss );
         }
-        return worker( argv[2] );
+        return suite_check_own_rss( argv[2], worker( argv[2] ), enforce_case_rss );
     }
 
     for ( int i = 1; i < argc; i++ )

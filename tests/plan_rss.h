@@ -226,8 +226,18 @@ inline long plan_rss_bound_mb()
 
 // the report line of a case process that kept the counter
 
+// true once the case process reported its bound (a case run alone holds
+// itself to it: tests/suite_runner.h suite_check_own_rss)
+
+inline bool & plan_rss_reported()
+{
+    static bool reported = false;
+    return reported;
+}
+
 inline void plan_rss_report()
 {
+    plan_rss_reported() = true;
     printf( PLAN_RSS_LINE "%ld\n", plan_rss_bound_mb() );
     fflush( stdout );
 }
