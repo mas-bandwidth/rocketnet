@@ -163,7 +163,7 @@ static bool tla_write_trace( const char * dir, const std::string & name, const c
 #define BANK_THREADS 2
 #define BANK_DESTS 3
 #define BANK_DEMAND 4
-#define BANK_MAX_FLUSH 4
+#define BANK_MAX_FLUSH 6
 
 static const int bank_skew[] = { -1, 0, 1 };
 
@@ -189,6 +189,7 @@ struct bank_walk_t
     bool shared;
     bool foreign;
     bool route_bad;
+    int stale_turns;    // turns onto a bank whose count was not zero: the plant firing
 };
 
 // the byte offset of a pointer past the first bank: the model's address
@@ -364,7 +365,20 @@ static void bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packe
 // RNUringQueueBankLayout Flush: the code's turn, the fill joined
 static void bank_flush( bank_walk_t & walk )
 {
+    int before[BANK_QUEUES];
+    for ( int q = 0; q < BANK_QUEUES; q++ )
+    {
+        before[q] = walk.queues->queue[q].producer;
+    }
     (void) rocketnet_uring_send_queues_turn( walk.queues );
+    for ( int q = 0; q < BANK_QUEUES; q++ )
+    {
+        const struct rocketnet_uring_send_queue_t * queue = &walk.queues->queue[q];
+        if ( queue->producer != before[q] && queue->bank[queue->producer].num_packets.load() != 0 )
+        {
+            walk.stale_turns++;
+        }
+    }
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
         for ( int b = 0; b < ROCKETNET_URING_SEND_BANKS; b++ )
@@ -485,6 +499,10 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
 
     rocketnet_uring_send_queues_destroy( walk.queues );
 
+    // the plant build must fire for its trace to be a witness; the clean
+    // build never does
+    printf( "STALE-TURNS %d\n", walk.stale_turns );
+
     std::string queue_of = "MCQueueOf(d) == CASE ";
     for ( int i = 1; i <= BANK_DESTS; i++ )
     {
@@ -525,7 +543,7 @@ int main( int argc, char ** argv )
     const char * out = NULL;
     uint64_t seed = 0;
     bool have_seed = false;
-    int steps = 80;
+    int steps = 400;
 
     for ( int i = 1; i < argc; i++ )
     {
