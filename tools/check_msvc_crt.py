@@ -94,12 +94,9 @@ WRAPPERS = {"tests/portable_crt.h": "the _s wrappers themselves", "tests/resourc
 ALLOW = {
     "tests/test_xdp_filter.cpp": "CMake builds test_xdp_filter only with ROCKETNET_BPF_CLANG (Linux XDP)",
     "tests/fuzz/rocketnet_fuzz_xdp_filter.cpp": "Linux-only fuzz leg (LINUX_ONLY_TARGETS); no Windows fuzz matrix row",
-    "tools/differential/decide.h": "the netcode differential: tools/differential/run.sh and the Linux fuzz leg only",
-    "tools/differential/netcode_decisions.cpp": "the netcode differential: tools/differential/run.sh only",
     "tools/xdp_packet_blaster.c": "CMake builds it only on Linux with ROCKETNET_XDP",
     "tools/xver/xver.c": "CMake: if(NOT WIN32), POSIX only (getpid, unistd.h)",
     "tools/testdata/nightly_suite_timeout.cpp": "an orphan fixture (b316f8450): no build, script or workflow names it",
-    "tests/serialize.h:getenv": "vendored serialize; its getenv is under SERIALIZE_ENABLE_TESTS, which no build defines",
 }
 
 SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".inc")

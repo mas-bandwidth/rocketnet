@@ -2575,13 +2575,6 @@ jobs:
         timeout-minutes: 1
         run: cmake --build build-fuzz --target rocketnet_dev --parallel 8
 
-      - name: Check out the pinned netcode reference (the differential harness)
-        shell: bash
-        run: |
-          set -euo pipefail
-          git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
-          git -C netcode-ref checkout --quiet 1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
-
       - name: Build every fuzzer with NDEBUG
         timeout-minutes: 2
         run: |
@@ -2597,10 +2590,9 @@ jobs:
               -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
-          # Every fuzzer means these two as well, built as fuzz-nightly.yml
-          # builds them: the XDP filter harness links the filter program as
-          # host C (CMake's rocketnet_xdp_filter_host), and the differential
-          # links the pinned netcode reference (the step before).
+          # Every fuzzer means this one as well, built as fuzz-nightly.yml
+          # builds it: the XDP filter harness links the filter program as
+          # host C (CMake's rocketnet_xdp_filter_host).
           cmake --build build-fuzz --target rocketnet_xdp_filter_host --parallel 8
           xdp_host="$(find build-fuzz -name librocketnet_xdp_filter_host.a | head -n 1)"
           [ -n "$xdp_host" ] || { echo "librocketnet_xdp_filter_host.a was not built"; exit 1; }
@@ -2608,13 +2600,7 @@ jobs:
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
             -Isodium -Isdk -Itests tests/fuzz/rocketnet_fuzz_xdp_filter.cpp "$xdp_host" build-fuzz/librocketnet_dev.a \
             -lbpf -lxdp -luring -lpthread -o bin/rocketnet_fuzz_xdp_filter_ndebug
-          cc -O2 -DNDEBUG -ffp-contract=off -c netcode-ref/netcode.c -o bin/netcode_ref.o -I netcode-ref -I sodium
-          clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1 -DNDEBUG \
-            -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isodium -Isdk -Itests -Itools/differential -Inetcode-ref -DROCKETNET_DIFFERENTIAL_NETCODE_DIR \
-            tests/fuzz/rocketnet_fuzz_differential.cpp bin/netcode_ref.o build-fuzz/librocketnet_dev.a \
-            -lbpf -lxdp -luring -lpthread -o bin/rocketnet_fuzz_differential_ndebug
-          echo "NDEBUG_HARNESSES=$harnesses rocketnet_fuzz_xdp_filter rocketnet_fuzz_differential" >> "$GITHUB_ENV"
+          echo "NDEBUG_HARNESSES=$harnesses rocketnet_fuzz_xdp_filter" >> "$GITHUB_ENV"
 
       - name: Replay all corpora under NDEBUG
         env:

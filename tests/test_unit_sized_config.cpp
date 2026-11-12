@@ -894,8 +894,9 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
 
 // a transport name shorter than the default "auto" is copied whole, its
 // terminator included, so nothing of the default is left behind it, on
-// the client and on the server
+// the client and on the server (the resolve calls are ROCKETNET_DEV only)
 
+#if ROCKETNET_DEV
 static void test_public_config_short_transport_name_is_copied_whole()
 {
     const char * names[] = { "gso", "xdp", "portable", "auto" };
@@ -920,6 +921,7 @@ static void test_public_config_short_transport_name_is_copied_whole()
         check( strcmp( server_transport.transport, names[i] ) == 0 );
     }
 }
+#endif // #if ROCKETNET_DEV
 
 static void test_public_config_bytes_newer_larger_ignores_the_tail()
 {
@@ -1236,7 +1238,9 @@ REGISTER_UNIT_TEST( test_sized_config_server_create_checks_the_config );
 REGISTER_UNIT_TEST( test_public_config_bytes_zeroed_is_refused );
 REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_short_transport_name_is_copied_whole );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
 REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );

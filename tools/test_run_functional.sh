@@ -24,7 +24,7 @@ export ROCKETNET_EXPECTED_SKIPS="$work/list.txt"
 # --functional-log) holds the run to: test_a under p_root, test_b everywhere.
 printf '%s\n' '{ "test_a", rocketnet_test_a, p_root },' '{ "test_b", rocketnet_test_b, NULL },' > "$work/registry.cpp"
 export ROCKETNET_FUNCTIONAL_REGISTRY="$work/registry.cpp"
-unset ROCKETNET_SERVER_TRANSPORT || true
+unset ROCKETNET_SERVER_TRANSPORT
 
 # fake <name> <exit> <lines...>: a suite that prints the lines and exits
 fake() {
