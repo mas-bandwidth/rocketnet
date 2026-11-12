@@ -3497,11 +3497,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for checker in check_fuzz_stats check_fuzz_coverage; do
-            output="$(python3 "tools/$checker.py" --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-            printf '%s\n' "$output"
-            grep -Eq "^$checker self-test: [1-9][0-9]* cases, 0 failed\$" <<<"$output"
-          done
+          output="$(python3 tools/check_fuzz_stats.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_stats self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+          output="$(python3 tools/check_fuzz_coverage.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_coverage self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
 
       # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
       # a case list of blanks, a skipped io_uring cell and a failing case must
