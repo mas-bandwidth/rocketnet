@@ -62,8 +62,11 @@ CONSTANTS
     M,          \* reliable numbers on the wire at most
     P,          \* packets in flight at most
     Rule,       \* "owed" (the code), "gap" (v1.1.0) or "none" (no filter)
-    FirstAck    \* TRUE: no update has acknowledged a packet yet (has_last_ack = 0),
+    FirstAck,   \* TRUE: no update has acknowledged a packet yet (has_last_ack = 0),
                 \* the estimator seeded (m9.2); FALSE: a sparse sender's previous ack
+    DupSample   \* TRUE: the code, one sample per acknowledged packet, a packet whose
+                \* number was already acknowledged included; FALSE: m9.1, a sample
+                \* only for a number still unacknowledged
 
 ASSUME /\ Probe \in Nat \ {0}
        /\ RttLow \in Nat /\ RttHigh \in Nat /\ RttLow <= RttHigh /\ RttHigh < Probe
@@ -71,6 +74,7 @@ ASSUME /\ Probe \in Nat \ {0}
        /\ M \in Nat \ {0} /\ P \in Nat \ {0}
        /\ Rule \in {"owed", "gap", "none"}
        /\ FirstAck \in BOOLEAN
+       /\ DupSample \in BOOLEAN
 
 \* Ages saturate where no comparison can tell them apart: a packet is never
 \* older than RttHigh + OutageMax (outages are separated by an update that
@@ -175,8 +179,9 @@ EndsSilence ==
 \* The acknowledgement of the packet in slot s arrives
 \* (rn_window_ack_on_acks, then rn_window_ack_on_ack for it).  A second ack
 \* in the same update finds last_ack = now (age 0), as the batch does.  A
-\* packet whose number already left the window still gives its sample (its
-\* sent-map entry is still there) and acknowledges nothing.
+\* packet whose number was already acknowledged acknowledges nothing; the
+\* code still samples it (its sent-map entry is still there: DupSample),
+\* m9.1 does not.
 Ack(s) ==
     /\ s \in InFlight
     /\ ~dark
@@ -192,6 +197,9 @@ Ack(s) ==
            pos    == CHOOSE i \in 0..Len(nums) :
                         \/ i = 0 /\ \A j \in 1..Len(nums) : NumAt(j) # p.num
                         \/ i > 0 /\ NumAt(i) = p.num
+           \* m9.1: the packet carries a number still unacknowledged
+           fresh  == pos > 0 /\ ~nums[pos].acked
+           sampled == DupSample \/ fresh
            marked == IF pos > 0 THEN [nums EXCEPT ![pos].acked = TRUE] ELSE nums
            \* the acked prefix leaves the window: U moves past k numbers
            k      == CHOOSE j \in 0..Len(marked) :
@@ -204,7 +212,9 @@ Ack(s) ==
        /\ silenceEndAge' = sEnd
        /\ lastAckAge' = 0
        /\ hasLastAck' = TRUE
-       /\ IF ~hasRtt
+       /\ IF ~sampled
+          THEN UNCHANGED <<srtt, hasRtt>>
+          ELSE IF ~hasRtt
           THEN srtt' = Min(p.age, SrttMax) /\ hasRtt' = TRUE
           ELSE IF take
                THEN srtt' \in Toward(srtt, Min(p.age, SrttMax)) /\ UNCHANGED hasRtt
@@ -223,8 +233,8 @@ Ack(s) ==
                      ELSE pkts[o]]
        /\ owedQuiet' = 0
        /\ realEndAge' = rEnd
-       /\ badSample' = (badSample \/ (hasRtt /\ take /\ across))
-       /\ badRefusal' = (badRefusal \/ (hasRtt /\ ~take /\ ~across))
+       /\ badSample' = (badSample \/ (sampled /\ hasRtt /\ take /\ across))
+       /\ badRefusal' = (badRefusal \/ (sampled /\ hasRtt /\ ~take /\ ~across))
     /\ UNCHANGED pathVars
 
 \* The update ends and time moves on one tick.  While the path delivers,
