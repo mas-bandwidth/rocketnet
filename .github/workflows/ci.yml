@@ -739,11 +739,25 @@ jobs:
                   vm_timeout=()
                   nightly_no_timeout=1
                 fi
-                ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
-                  sh -c 'for case in '"$xdp_cases_run"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
-                  > "$logs/$server.$client.vm.log" 2>&1
+                # the cases run in series inside a guest; xdp_guests guests, each
+                # its own VM with its own namespace and veth pair, run at once,
+                # case n in guest n % xdp_guests (in series one guest took
+                # about 60 s, most of the step)
+                xdp_guests=3
+                for guest in $(seq 0 $((xdp_guests - 1))); do
+                  guest_cases=""
+                  n=0
+                  for case in $xdp_cases_run; do
+                    if [ $((n % xdp_guests)) = "$guest" ]; then guest_cases="$guest_cases $case"; fi
+                    n=$((n + 1))
+                  done
+                  ${vm_timeout[@]+"${vm_timeout[@]}"} vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                    sh -c 'for case in '"$guest_cases"'; do sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT='"$nightly_no_timeout"' '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                    > "$logs/$server.$client.vm$guest.log" 2>&1 &
+                done
+                wait
                 for case in $xdp_cases_run; do
-                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
+                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs"/"$server.$client".vm*.log > "$logs/$server.$client.$case.log"; }
                 done
               ) &
               continue
