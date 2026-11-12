@@ -40,6 +40,9 @@ bounded evidence below do not establish a refinement proof of the C++ code.
 - **Tick** (`rn_endpoint_tick`): the reliable timeout. An end still waiting
   for the remote endpoint's CONFIG, or holding an unacked reliable record, enters
   `RELIABLE_TIMEOUT`.
+- **Elapse** (revision 1.1.2, `Clocked` only): one update passes; the
+  silence clocks count it, and the transport ends an end that has heard
+  nothing for `SilenceT` updates (`TIMED_OUT`).
 - The transport's own steps: **WriteAck** sends pending acks with no message
   records (a keepalive); **AckSilence** drops pending acks unsent (ack history
   overflow, P5).
@@ -201,29 +204,33 @@ witness run Link capacity 1; the two CONFIG witnesses run capacity 2.
 
 ### Measured records
 
-Measured with the pinned runner and JAR on a 16-CPU Linux bench under a
-one-minute load of 5 to 20, each case its own 110-second shard on two
-workers, merged into `proofs/tla/RUNS.tsv` with `tlacheck merge --keep proofs/tla/RUNS.tsv` (`groups --stale` prints `[]`):
+Measured for revision 1.1.2 with the pinned runner and JAR on an 8-CPU
+Linux bench under a one-minute load of 3 to 5, each case its own
+110-second shard on two workers, merged into `proofs/tla/RUNS.tsv` with
+`tlacheck merge --keep proofs/tla/RUNS.tsv` (`groups --stale` prints `[]`):
 
 | Case | Gate | Exit | Result | Generated | Distinct | Seconds |
 |---|---|---:|---|---:|---:|---:|
-| `MCRNEndpoint.cfg` | required | 0 | PASS | 5708001 | 736909 | 44.018 |
-| `MCRNEndpointLive.cfg` | required | 0 | PASS | 61813 | 24370 | 35.673 |
-| `MCRNEndpointBrokenConfigUnreliable.cfg` | required | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 7.317 |
-| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 1.605 |
-| `MCRNEndpointBrokenOrderIgnored.cfg` | required | 12 | PASS (invariant `OrderedInOrder`) | 47823 | 10350 | 3.283 |
-| `MCRNEndpointTwoWay.cfg` | bench | 124 | FAIL (debt `endpoint-two-way-safety-over-budget`) | - | - | 110.332 |
-| `MCRNEndpointPartial.cfg` | bench | 124 | FAIL (debt `endpoint-partial-write-safety-over-budget`) | - | - | 110.335 |
+| `MCRNEndpoint.cfg` | required | 0 | PASS | 288930 | 36785 | 6.714 |
+| `MCRNEndpointLive.cfg` | required | 0 | PASS | 61813 | 24370 | 30.411 |
+| `MCRNEndpointBrokenConfigUnreliable.cfg` | required | 13 | PASS (temporal `ConfigVerifiedDespiteFirstLoss`) | 24935 | 11165 | 6.554 |
+| `MCRNEndpointBrokenConfigNotCompared.cfg` | required | 12 | PASS (invariant `MismatchErrorsBothEnds`) | 41 | 33 | 0.934 |
+| `MCRNEndpointTwoWay.cfg` | required | 0 | PASS | 1904460 | 255524 | 25.259 |
+| `MCRNEndpointPartial.cfg` | required | 0 | PASS | 1581460 | 170452 | 20.226 |
+| `MCRNEndpointBrokenOrderIgnored.cfg` | required | 12 | PASS (invariant `OrderedInOrder`) | 47823 | 10350 | 2.820 |
+| `MCRNEndpointTimeoutOff.cfg` | required | 0 | PASS | 1153656 | 148324 | 17.020 |
+| `MCRNEndpointBrokenConfigWaitOnTimeout.cfg` | required | 12 | PASS (invariant `NoEndBeforeSilenceT`) | 6 | 6 | 0.924 |
+| `MCRNEndpointBrokenSilenceEarly.cfg` | required | 12 | PASS (invariant `NoEndBeforeSilenceT`) | 67 | 34 | 0.950 |
+| `MCRNEndpointBrokenOptedInInsideT.cfg` | required | 12 | PASS (invariant `EndsNeedSilenceT`) | 295 | 127 | 0.986 |
 
-The two bench cases complete outside the budget. Run on the same bench
-with the same JAR, TLC on two workers with `-deadlock` and no budget:
-`MCRNEndpointTwoWay.cfg` completes with no error, 37543692 states
-generated, 5082866 distinct, in 4 min 12 s; `MCRNEndpointPartial.cfg`
-completes with no error, 30828410 generated, 3326097 distinct, in
-2 min 56 s. Those runs are evidence for this document, not records: the
-records stay the 110-second debt rows. The one-way safety control took
-89 s of 110 under a one-minute load of 35 to 55; a refresh on a heavily
-loaded bench may need a quieter one.
+The two-way and partial cases were timeout debt until revision 1.1.2
+(exit 124 at 110 s); `MCSafetyView` brings them in with nothing else
+changed. The same model without the view, run once on the same bench with
+two workers and no budget: the partial case completes with no error,
+30828410 generated, 3326097 distinct, in 5 min 21 s (the count the
+revision 1.1 run without the view found, so the unclocked model is
+unchanged by the clocks); the two-way case's no-budget run is in the
+revision 1.1.2 report.
 
 ## Reversed witnesses, each checked by hand
 
@@ -284,6 +291,7 @@ message on its channel is received; with that check, message 2 waits in
 | `OnPayload(e, p)` | `rn_endpoint_on_payload` | 13.3 (receiver's checks in order); 6.5 (duplicates); 7.2 (dispatch, holds); R6 |
 | `ConfigCompare(e)` | the CONFIG comparison inside `rn_endpoint_on_payload` | 10.3; 13.4 (every field compared, mismatch is `DISCONNECT_REASON_CONFIG_MISMATCH`) |
 | `Tick(e)` | `rn_endpoint_tick` | 10.3 (no CONFIG within `reliable_timeout` is `RELIABLE_TIMEOUT`); 6.4 |
+| `Elapse` | the transport silence end (`rocketnet_server_protocol_update`, `rocketnet_client_check_deadlines`) | MESSAGES.md m1.9 rule 1; TRANSPORT.md t13.2 |
 | `err` | `rn_endpoint_error` | 10.1; 12 (`ROCKETNET_DISCONNECT_REASON_*`) |
 | `WriteAck(e)`, `AckSilence(e)` | the transport (not the endpoint) | section 2, P2 and P5 |
 
@@ -298,7 +306,9 @@ seven existing configurations set it `TRUE` and their records are unchanged.
 
 New invariant `NoEndBeforeT == ~TimeoutConfigured => \A e : err[e] #
 "RELIABLE_TIMEOUT"`: with the timeout off neither end ends with the reliable
-timeout, whatever the paths lose.
+timeout, whatever the paths lose. (Vacuous, and replaced in revision 1.1.2 by
+`NoEndBeforeSilenceT`; see below. The table and trace here are the revision
+1.1 records.)
 
 | Case | Gate | Exit | Distinct | Seconds |
 |---|---|---:|---:|---:|
@@ -321,3 +331,63 @@ true at the first update after the wait starts. The code now tests
 run's shard also held a case that exhausted the shard's budget, so the merged
 record is the later run's timeout (exit 124). Its record is owed a re-measure
 on a quieter bench.
+
+## Revision 1.1.2: the silence clock, and `NoEndBeforeT` given its T
+
+`NoEndBeforeT` (above) could not fail in its passing case: with
+`TimeoutConfigured = FALSE` the one action that writes `RELIABLE_TIMEOUT`
+(`Tick`) is disabled by that same constant. Checked: in
+`MCRNEndpointTimeoutOff.cfg` at revision 1.1.1, the invariant
+`\A e : ~ENABLED Tick(e)` holds over all 285,095 distinct states. And the
+module had no clock, so the T in its name was not stated anywhere.
+
+Revision 1.1.2 gives the module time (`Clocked`, a constant: the passing
+timing case and the timing witnesses set it; the other cases keep the
+untimed model, their state counts unchanged). `Elapse` is one update: each
+live end's silence clock `quiet[e]` (updates since that end last heard any
+packet from the other side; `OnPayload` resets it, as every accepted packet
+sets `last_receive_time`) counts it, and the transport ends an end whose
+silence reaches `SilenceT` at that update, `TIMED_OUT`
+(`rocketnet_server_protocol_update`'s `current_time >= last_receive_time +
+timeout_seconds`; the client's `rocketnet_client_check_deadlines`, state
+`CONNECTION_TIMED_OUT`). With the reliable timeout configured the two
+reliable clocks run on the same updates: the CONFIG wait (`cwait`, from
+`Reset`) and each record's age since its first send (`fs`; `WritePacket`
+starts it, `PacketFailed` does not, as `rn_window_ack_packet_failed` keeps
+a never-sent number never sent), and `Tick` fires when the CONFIG wait or
+the age of the record at U, the oldest unacked number, reaches `ReliableT`
+(`rn_window_ack_refresh_oldest`). An end in error keeps its clocks.
+
+The properties, as the design states them:
+
+| Property | Statement | Fails when (checked) |
+|---|---|---|
+| `NoEndBeforeSilenceT` | (S) timeout off: every timing end (`RELIABLE_TIMEOUT`, `TIMED_OUT`) has `quiet >= SilenceT`: an outage shorter than T ends nothing | the CONFIG wait on a zero timeout (`MCRNEndpointBrokenConfigWaitOnTimeout.cfg`); the silence end at T - 1 (`MCRNEndpointBrokenSilenceEarly.cfg`); the window half on a zero timeout (a probe: an unacked record that has been sent ends at the next check, quiet 0); the bound replaced by `FALSE` (fails at T = 3 by the silence end) |
+| `SilenceEndsAtT` | (K) no live end has gone `SilenceT` updates unheard: the update that brings the silence to T ends it | the silence end one update late, or never (probes; both fail at quiet = 3 with both ends live) |
+| `EndsNeedSilenceT` | the same bound without the gate; with the timeout configured it fails, the reachability witness that the opted-in clock ends a connection inside T | `MCRNEndpointBrokenOptedInInsideT.cfg`: reliable timeout 2 < T = 3, the CONFIG wait ends at quiet 2 |
+
+Witness traces, read by hand against the code:
+
+- `MCRNEndpointBrokenConfigWaitOnTimeout.cfg` (2 states): from `Init`, `Tick`
+  at a: `err[a] = RELIABLE_TIMEOUT` with `quiet[a] = 0`. The code before
+  v1.1.0, `rn_endpoint_config_tick` (sdk/rocketnet_endpoint.cpp, the
+  comparison `now - endpoint->config_wait_start >= reliable_timeout` without
+  the `reliable_timeout > 0.0` test, commit 55daea990), with a timeout of 0
+  ends the wait at the first update after it starts.
+- `MCRNEndpointBrokenSilenceEarly.cfg` (3 states): two `Elapse` steps with
+  nothing opened; at quiet 2 both ends are `TIMED_OUT`. The code's
+  comparison is `>=` with `timeout_seconds` (server) and `>=` with
+  `(double) client->timeout_seconds` (client); one update short is this
+  trace.
+- `MCRNEndpointBrokenOptedInInsideT.cfg` (4 states): two `Elapse` steps,
+  `cwait = 2 = ReliableT`, `Tick` at a with `quiet[a] = 2 < 3`. Opted in,
+  `rn_endpoint_config_tick` ends the CONFIG wait at `reliable_timeout`
+  whatever was heard: the design's "opted in carries no tolerance
+  guarantee".
+
+`MCRNEndpointTimeoutOff.cfg` now runs clocked (T = 3) and lists every
+safety invariant with `NoEndBeforeSilenceT` and `SilenceEndsAtT`; the
+record is in the table above. A clocked opted-in passing case was tried and
+dropped: at N = 2 the per-record first-send ages did not finish in 150 s.
+Safety with the timeout configured is `MCRNEndpoint.cfg`, where `Tick`
+fires at any moment, a superset of the clocked firing times.
