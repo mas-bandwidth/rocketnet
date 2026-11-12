@@ -1319,6 +1319,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak tests/soak/soak.c)
     add_executable(load tests/load/load.c)
     add_executable(load_split tests/load/load_split.c)
+    # the load harness census self-test (tools/test_load_census.c): a
+    # functional test of the OS census, run per commit (ci.yml functional leg)
+    add_executable(test_load_census tools/test_load_census.c)
+    target_link_libraries(test_load_census PRIVATE Threads::Threads)
+    rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
@@ -1446,7 +1451,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split soak_sim)
+foreach(harness client server soak load load_split soak_sim test_load_census)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
