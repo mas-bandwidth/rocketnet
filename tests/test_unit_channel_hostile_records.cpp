@@ -511,6 +511,30 @@ static void test_hostile_reliable_delivery_on_a_full_table_exhausts()
     rn_unit_arena_destroy( h.arena );
 }
 
+// rn_channels_set_payload_capacity at both bounds: a chunk's record (the
+// longest header, then F bytes) and the form byte is the least capacity
+// taken, one byte less is refused; the largest payload is taken, one byte
+// more is refused. A refusal leaves the capacity as it was.
+
+static void test_hostile_payload_capacity_at_its_bounds()
+{
+    hostile_t h;
+    hostile_create( &h, 64, 4 * (int) HOSTILE_F, 8 * (int) HOSTILE_F );
+    const uint32_t least = ROCKETNET_MESSAGE_FRAGMENT_BYTES + ROCKETNET_MESSAGE_RECORD_MAX_HEADER_BYTES + 1;
+
+    check( rn_channels_set_payload_capacity( &h.channels, least ) );
+    check( h.channels.payload_capacity == least );
+    check( !rn_channels_set_payload_capacity( &h.channels, least - 1 ) );
+    check( h.channels.payload_capacity == least );
+    check( rn_channels_set_payload_capacity( &h.channels, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) );
+    check( h.channels.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    check( !rn_channels_set_payload_capacity( &h.channels, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 ) );
+    check( h.channels.payload_capacity == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+    rn_unit_arena_destroy( h.arena );
+}
+
+REGISTER_UNIT_TEST( test_hostile_payload_capacity_at_its_bounds );
 REGISTER_UNIT_TEST( test_hostile_reliable_delivery_on_a_full_table_exhausts );
 REGISTER_UNIT_TEST( test_hostile_held_reliable_sequenced_span_at_the_ring_end );
 REGISTER_UNIT_TEST( test_hostile_held_state_waits_for_its_epoch );
