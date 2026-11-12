@@ -90,6 +90,12 @@ static void public_not_released_client_operations_init()
     public_not_released_client_operations.wake = public_not_released_wake;
 }
 
+// The reliable timeout the pair gives: 0, the shipped default (no reliable
+// timeout; probe pacing and the round-trip filter on);
+// test_public_not_released_cases_opted_in reruns the cases at 120000, the
+// opted-in rule (every due number resent, as in v1.0).
+static int g_not_released_reliable_timeout_ms = 0;
+
 static bool public_not_released_pair_setup( struct public_not_released_pair_t * pair )
 {
     memset( pair, 0, sizeof( *pair ) );
@@ -152,7 +158,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     message_config.message_resend_delay_initial_ms = 100;
     message_config.message_resend_delay_min_ms = 20;
     message_config.message_resend_delay_max_ms = 400;
-    message_config.reliable_message_timeout_ms = 120000;
+    message_config.reliable_message_timeout_ms = g_not_released_reliable_timeout_ms;
 
     struct rn_message_link_t server_link;
     rn_message_server_link( &server_link, server_transport );
@@ -424,3 +430,24 @@ static void test_public_not_released_batch_released_by_update()
 }
 
 REGISTER_UNIT_TEST( test_public_not_released_batch_released_by_update );
+
+// The cases above, rerun with the pair opted in at 120000 (no probe pacing,
+// no round-trip filter: the v1.0 resend rule), in one process. The
+// registered cases run them at the default.
+static void test_public_not_released_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_public_not_released_counter_client,
+        test_public_not_released_counter_server,
+        test_public_not_released_counter_starts_at_zero,
+        test_public_not_released_batch_released_by_update,
+    };
+    g_not_released_reliable_timeout_ms = 120000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_not_released_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_public_not_released_cases_opted_in );

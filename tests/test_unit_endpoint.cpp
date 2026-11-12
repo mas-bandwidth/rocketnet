@@ -116,6 +116,12 @@ static void ep_hash( uint64_t * trace, const void * data, size_t bytes )
     }
 }
 
+// The reliable timeout ep_config gives: 0, the shipped default (no reliable
+// timeout; probe pacing and the round-trip filter on);
+// test_endpoint_cases_opted_in reruns the cases at 600000, the opted-in rule
+// (every due number resent, as in v1.0).
+static int g_ep_reliable_timeout_ms = 0;
+
 static void ep_config( rocketnet_message_config_t * config )
 {
     rocketnet_message_default_config( config );
@@ -129,7 +135,7 @@ static void ep_config( rocketnet_message_config_t * config )
     config->message_resend_delay_min_ms = 20;
     config->message_resend_delay_initial_ms = 100;
     config->message_resend_delay_max_ms = 250;
-    config->reliable_message_timeout_ms = 600000;
+    config->reliable_message_timeout_ms = g_ep_reliable_timeout_ms;
 }
 
 static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t * config )
@@ -517,7 +523,18 @@ static void test_endpoint_back_to_back_over_lossy_array()
     check( a->endpoint.ordered.config_received && b->endpoint.ordered.config_received );
 
     // an end whose CONFIG from the other side never arrives is a RELIABLE_TIMEOUT reliable_timeout
-    // after the wait began
+    // after the wait began; at the default (no reliable timeout) the wait never ends it
+    if ( config.reliable_message_timeout_ms == 0 )
+    {
+        const double start = 1000.0 + steps * EP_STEP;
+        rn_endpoint_reset( &b->endpoint, start );
+        rn_endpoint_config_tick( &b->endpoint, 1, start );
+        check( b->endpoint.config_wait_start == start );
+        rn_endpoint_config_tick( &b->endpoint, 0, start + 600.0 );
+        check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        rn_endpoint_reset( &b->endpoint, start + 600.0 );
+    }
+    else
     {
         const double start = 1000.0 + steps * EP_STEP;
         const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
@@ -1589,3 +1606,32 @@ REGISTER_UNIT_TEST( test_endpoint_partial_ack_stall_requests_no_frame );
 REGISTER_UNIT_TEST( test_endpoint_probe_hold_requests_frame_only_for_u );
 REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
 REGISTER_UNIT_TEST( test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap );
+
+// The cases above that take ep_config's timeout, rerun opted in at 600000
+// (no probe pacing, no round-trip filter: the v1.0 resend rule), in one
+// process. The registered cases run them at the default; the three that set
+// their own timeout (test_endpoint_default_never_times_out_a_heard_stream,
+// test_endpoint_opted_in_timeout_ends_the_stall_and_the_config_wait,
+// test_endpoint_probe_hold_requests_frame_only_for_u) run the same either way.
+static void test_endpoint_cases_opted_in()
+{
+    static void ( *const cases[] )() = {
+        test_endpoint_back_to_back_over_lossy_array,
+        test_endpoint_uncapped_large_sequenced_skips_the_bucket,
+        test_endpoint_never_allocates_or_reads_a_clock,
+        test_endpoint_capacity_cut_starts_new_write_pass,
+        test_endpoint_dropped_large_sequenced_is_not_a_written_packet,
+        test_endpoint_reliable_continues_after_capacity_cut,
+        test_endpoint_stalled_window_requests_no_frame,
+        test_endpoint_ended_pass_stays_ended_until_the_next_flush,
+        test_endpoint_unreliable_tombstone_never_revives_after_ticket_wrap,
+    };
+    g_ep_reliable_timeout_ms = 600000;
+    for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
+    {
+        cases[i]();
+    }
+    g_ep_reliable_timeout_ms = 0;
+}
+
+REGISTER_UNIT_TEST( test_endpoint_cases_opted_in );

@@ -150,7 +150,12 @@ visible; no numerical tolerance is defined here, so do not round it away or add
 an acceptance threshold. A below-target workload is not evidence that the
 requested rate was sustained. Fixed-rate runs report
 `application_offers_accepted=FAIL` and fail the verdict if either direction
-refuses an offered message.
+refuses an offered message. In every profile, a client that offered sends in a
+direction and had every one of them refused for the whole run fails the
+verdict: the summary prints `sends_accepted=FAIL` with
+`clients_c2s_refused_whole_run=` and `clients_s2c_refused_whole_run=` counts
+and `failed_criterion=sends_refused_whole_run`, and stderr names the first
+eight such clients.
 
 Run one fixed-rate rung with the profiling helper on a clean Linux checkout
 and a unique output path. This example selects native GSO for the server:

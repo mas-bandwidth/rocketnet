@@ -595,6 +595,8 @@ if(ROCKETNET_BUILD_EXAMPLES)
     # .github/workflows/nightly-bigendian-system.yml
     add_executable(bigendian_interop tools/bigendian/interop.c)
     target_link_libraries(bigendian_interop PRIVATE rocketnet_dev)
+    add_executable(outage_pair tools/outage_pair/outage_pair.c)
+    target_link_libraries(outage_pair PRIVATE rocketnet_dev)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
