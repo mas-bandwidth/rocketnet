@@ -47,7 +47,8 @@ struct sp_transport_t
     int aborts;                             // frames aborted this flush
     int capacity;                           // frame starts allowed per flush (send_capacity_available)
     int started;                            // frames started this flush
-    std::vector<int> acked_slot;            // the last flush's frames, acknowledged at this update
+    int pad[2];                             // written out so frame needs no compiler padding (MSVC C4324)
+    std::vector<int> acked_slot;           // the last flush's frames, acknowledged at this update
     std::vector<uint64_t> acked;
     std::vector<int> pending_slot;          // this flush's frames
     std::vector<uint64_t> pending;
