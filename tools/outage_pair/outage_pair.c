@@ -174,6 +174,34 @@ static double frame_time( double wall_start )
     return 1000.0 + ( rocketnet_time() - wall_start );
 }
 
+// ---- timeline ----
+//
+// Every OUTAGE_PAIR_TIMELINE_SECONDS each side prints one line on the wall
+// clock the script stamps its outages with (seconds since the epoch), so a
+// failure shows, per side, when packets last went out and came in against
+// when the path went dark and came back. The script prints these lines only
+// when a case fails.
+
+#define OUTAGE_PAIR_TIMELINE_SECONDS 0.1
+
+static double wall_clock_seconds( void )
+{
+    struct timespec ts;
+    if ( timespec_get( &ts, TIME_UTC ) != TIME_UTC )
+    {
+        return 0.0;
+    }
+    return (double) ts.tv_sec + (double) ts.tv_nsec / 1.0e9;
+}
+
+static void print_timeline( const char * who, double now, uint64_t sent, uint64_t received, const struct rocketnet_conditions_t * conditions )
+{
+    printf( "outage_timeline %s wall %.3f now %.3f sent %llu received %llu heard %.3f progress %.3f in_flight %llu\n", who,
+            wall_clock_seconds(), now, (unsigned long long) sent, (unsigned long long) received, conditions->seconds_since_heard,
+            conditions->seconds_since_progress, (unsigned long long) conditions->reliable_in_flight );
+    fflush( stdout );
+}
+
 // ---- server ----
 
 static int server_send( struct rocketnet_server_t * server, enum rocketnet_reliability_t reliability, int kind, uint32_t sequence )
@@ -236,6 +264,7 @@ static int run_server( const char * address, int expect_timeout )
     memset( &side, 0, sizeof( side ) );
 
     const double wall_start = rocketnet_time();
+    double next_timeline = 0.0;
     double connected_at = 0.0;
     int connected = 0;
     enum rocketnet_disconnect_reason_t end_reason = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -256,6 +285,19 @@ static int run_server( const char * address, int expect_timeout )
             {
                 receive_one( &side, batch->data[i], batch->bytes[i] );
             }
+        }
+
+        if ( now >= next_timeline )
+        {
+            struct rocketnet_server_stats_t stats;
+            struct rocketnet_conditions_t conditions;
+            rocketnet_server_stats( server, &stats );
+            if ( !rocketnet_server_client_conditions( server, 0, &conditions, (int) sizeof( conditions ) ) )
+            {
+                memset( &conditions, 0, sizeof( conditions ) );
+            }
+            print_timeline( "server", now, stats.packets_sent, stats.packets_received, &conditions );
+            next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
         }
 
         const int is_connected = rocketnet_server_client_connected( server, 0 );
@@ -473,6 +515,7 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
     memset( &side, 0, sizeof( side ) );
 
     const double wall_start = rocketnet_time();
+    double next_timeline = 0.0;
     double connected_at = 0.0;
     int connected = 0;
     int end_state = 0;
@@ -493,6 +536,19 @@ static int run_client( const char * address, const char * key_hex, int expect_ti
             {
                 receive_one( &side, batch->data[i], batch->bytes[i] );
             }
+        }
+
+        if ( now >= next_timeline )
+        {
+            struct rocketnet_client_stats_t stats;
+            struct rocketnet_conditions_t conditions;
+            rocketnet_client_stats( client, &stats );
+            if ( !rocketnet_client_conditions( client, &conditions, (int) sizeof( conditions ) ) )
+            {
+                memset( &conditions, 0, sizeof( conditions ) );
+            }
+            print_timeline( "client", now, stats.packets_sent, stats.packets_received, &conditions );
+            next_timeline = now + OUTAGE_PAIR_TIMELINE_SECONDS;
         }
 
         const int state = rocketnet_client_state( client );
