@@ -766,6 +766,161 @@ static void test_staged_link_address_hooks()
     printf( "test_staged_link_address_hooks\n" );
 }
 
+static void test_staged_link_address_taught_at_view_zero()
+{
+    // The reply-MAC rule at the first receive view: the payload that opens
+    // under client 0's keys is view 0 of the update and the unknown address's
+    // packet is view 1. The transport is told about view 0 and only view 0,
+    // so the client's link-layer source is learnt wherever its packet sits
+    // in the batch. Time is an argument; the clock starts at 1000.0.
+
+    auto * f = new control_fixture_t();
+    f->capacity = 16;
+
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server( f, &operations, 1, true );
+    operations.client_accepted = client_accepted;
+
+    auto * protocol = &server->protocol;
+    const double time = 1000.0;
+    protocol->connection_ids[0] = ++protocol->next_connection_id;
+
+    auto * mapping = rocketnet_encryption_map_entry( protocol->encryption_map,
+                                                     rocketnet_client_slots_mapping_index( protocol->client_slots, 0 ) );
+    mapping->control->last_receive_time = time;
+
+    rocketnet_replay_protection_t replay;
+    memset( &replay, 0, sizeof( replay ) );
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 4];
+    const int block = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &replay );
+    CHECK( block > 0 );
+    memset( plaintext + block, 0xA0, 4 );
+    CHECK( rocketnet_address_parse( &f->feed_from[0], "127.0.0.1:1000" ) );
+    f->feed_bytes[0] = rocketnet_write_sealed_packet( f->feed_data[0], ROCKETNET_CONNECTION_PAYLOAD_PACKET,
+                                                      protocol->packet_filter, 1, NULL, plaintext, block + 4, protocol->protocol_id,
+                                                      mapping->connection_salt, NULL, mapping->keys.session_client_to_server );
+    CHECK( f->feed_bytes[0] > 0 );
+
+    CHECK( rocketnet_address_parse( &f->feed_from[1], "127.0.0.1:3000" ) );
+    memset( f->feed_data[1], 0x5A, 64 );
+    f->feed_bytes[1] = 64;
+    f->feed_count = 2;
+
+    rocketnet_server_transport_update( server, time + 0.001 );
+    CHECK( f->num_accepted == 1 && f->accepted[0] == 0 );
+
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_staged_link_address_taught_at_view_zero\n" );
+}
+
+static void test_staged_refused_response_is_counted()
+{
+    // A connection request elicits a response; the staged transport refuses
+    // its frame. Every refused start is counted once, by what refused it: a
+    // full staging is SEND_RING_FULL, a refusal for want of a link-layer
+    // destination is SEND_NO_LINK_ADDRESS, and nothing is sent. Then the
+    // transport has room and the response goes out uncounted. Client 0's
+    // keep-alive is kept not due so the receive path's response is the only
+    // start. Mutation that must bite: drop the receive path's count of a
+    // refused response frame. Time is an argument.
+
+    auto * f = new control_fixture_t();
+    f->capacity = 0;
+
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server( f, &operations, 1, true );
+
+    auto * protocol = &server->protocol;
+    const uint64_t * counters = protocol->counters->values;
+    auto * mapping = rocketnet_encryption_map_entry( protocol->encryption_map,
+                                                     rocketnet_client_slots_mapping_index( protocol->client_slots, 0 ) );
+
+    for ( int step = 0; step < 3; ++step )
+    {
+        const double now = 1.0 + step;
+        mapping->last_keep_alive_send_time = now;
+
+        if ( step == 1 )
+        {
+            f->capacity = 16;
+            f->unreachable_port = f->request_address.port;
+        }
+        else if ( step == 2 )
+        {
+            f->unreachable_port = 0;
+        }
+
+        const uint64_t ring_full = counters[ROCKETNET_COUNTER_SEND_RING_FULL];
+        const uint64_t no_link = counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS];
+        const int start_calls = f->start_calls;
+
+        f->feed_from[0] = f->request_address;
+        memcpy( f->feed_data[0], f->request, sizeof( f->request ) );
+        f->feed_bytes[0] = (int) sizeof( f->request );
+        f->feed_count = 1;
+        rocketnet_server_transport_update( server, now );
+
+        CHECK( f->start_calls == start_calls + 1 );
+        CHECK( counters[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full + ( step == 0 ? 1 : 0 ) );
+        CHECK( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] == no_link + ( step == 1 ? 1 : 0 ) );
+        CHECK( f->responses == ( step == 2 ? 1 : 0 ) );
+    }
+
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_staged_refused_response_is_counted\n" );
+}
+
+static void test_deferred_accept_reads_only_this_batch()
+{
+    // A deferring application accepts payloads by their index in this
+    // update's batch. An index outside the batch accepts nothing, even where a
+    // slot past the batch still holds an entry for the same live connection
+    // from an earlier update: no sequence is marked received and no ACK is
+    // owed. The entry inside the batch is accepted once. Mutation that must
+    // bite: let the index reach the slot past the batch. Time is an argument.
+
+    auto * f = new control_fixture_t();
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server( f, &operations, 1, false );
+    seed_stats_connection_ids( server, 1 );
+    rocketnet_server_transport_defer_payload_acks( server );
+    rocketnet_server_transport_update( server, 1.0 );
+
+    auto * protocol = &server->protocol;
+    auto * mapping = rocketnet_encryption_map_entry( protocol->encryption_map,
+                                                     rocketnet_client_slots_mapping_index( protocol->client_slots, 0 ) );
+    const uint64_t connection_id = protocol->connection_ids[0];
+
+    struct rocketnet_server_payloads_t * batch = &server->payloads;
+    CHECK( batch->capacity >= 2 );
+    batch->client_index[0] = 0;
+    batch->connection_id[0] = connection_id;
+    batch->sequence[0] = 5;
+    batch->client_index[1] = 0;
+    batch->connection_id[1] = connection_id;
+    batch->sequence[1] = 9;
+    batch->num_payloads = 1;
+
+    const auto debt = protocol->acks->endpoints[0].ack_debt;
+    rocketnet_server_transport_accept_payload( server, 1 );
+    rocketnet_server_transport_accept_payload( server, -1 );
+    CHECK( protocol->acks->endpoints[0].ack_debt == debt );
+    CHECK( !rocketnet_replay_already_received( &mapping->accepted_session, 9 ) );
+
+    rocketnet_server_transport_accept_payload( server, 0 );
+    CHECK( protocol->acks->endpoints[0].ack_debt == debt + 1 );
+    CHECK( rocketnet_replay_already_received( &mapping->accepted_session, 5 ) );
+    CHECK( !rocketnet_replay_already_received( &mapping->accepted_session, 9 ) );
+
+    batch->num_payloads = 0;
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_deferred_accept_reads_only_this_batch\n" );
+}
+
 int main( int argc, char ** argv )
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
@@ -803,6 +958,9 @@ int main( int argc, char ** argv )
     test_entries_carry_connection_id( false );
     test_entries_carry_connection_id( true );
     test_staged_link_address_hooks();
+    test_staged_link_address_taught_at_view_zero();
+    test_staged_refused_response_is_counted();
+    test_deferred_accept_reads_only_this_batch();
     CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 }

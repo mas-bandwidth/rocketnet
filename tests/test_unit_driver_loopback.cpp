@@ -1872,6 +1872,112 @@ static void test_loopback_queue_restarts_at_slot_zero_when_empty()
     rocketnet_client_transport_io_close( &client );
 }
 
+static void loopback_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+}
+
+// The server transport's read surface on a live server: a NULL output is a
+// counted no-op that returns nothing and writes nothing, and a payload index
+// outside this update's batch reads no entry, even one a slot past the batch
+// still holds from an earlier update (client -1, 0 bytes, NULL). A zeroed
+// packet context resolves to no lease: NULL with capacity 0. Mutation that
+// must bite: drop any output's NULL guard, or read the index past the batch.
+// The clock is an argument, starting at 1000.0.
+
+static void test_server_transport_reads_refuse_null_outputs_and_stale_indexes()
+{
+    rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config_current( &config );
+    config.max_clients = 4;
+    config.protocol_id = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( config.backend_public_key, 0xAB, 32 );
+    memset( config.server_public_key, 0xCD, 32 );
+    memset( config.server_secret_key, 0xEF, 32 );
+
+    int create_status = -1;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_unit_check( server );
+
+    rocketnet_assert_function( loopback_quiet_assert );
+
+    const int * client_ids = NULL;
+    uint8_t * const * payload_data = NULL;
+    const int * payload_sizes = NULL;
+    const uint64_t * ids = NULL;
+    int client_index = 7;
+    int payload_bytes = 9;
+    int capacity = 11;
+
+    uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_unit_check( rocketnet_server_transport_payloads( server, NULL, &payload_data, &payload_sizes ) == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_payloads( server, &client_ids, NULL, &payload_sizes ) == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_payloads( server, &client_ids, &payload_data, NULL ) == 0 );
+    rocketnet_unit_check( client_ids == NULL && payload_data == NULL && payload_sizes == NULL );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 3 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_unit_check( rocketnet_server_transport_payload( server, 0, NULL, &payload_bytes ) == NULL );
+    rocketnet_unit_check( rocketnet_server_transport_payload( server, 0, &client_index, NULL ) == NULL );
+    rocketnet_unit_check( client_index == 7 && payload_bytes == 9 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_unit_check( rocketnet_server_transport_acked_packets( server, NULL, &ids ) == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_acked_packets( server, &client_ids, NULL ) == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_acked_connection_ids( server, NULL ) == 0 );
+    rocketnet_unit_check( rocketnet_server_transport_payload_connection_ids( server, NULL ) == 0 );
+    rocketnet_unit_check( client_ids == NULL && ids == NULL );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 4 );
+
+    rocketnet_packet_context_t context;
+    memset( &context, 0, sizeof( context ) );
+    before = rocketnet_api_misuse_count();
+    rocketnet_unit_check( rocketnet_server_transport_packet_payload( server, NULL, &capacity ) == NULL );
+    rocketnet_unit_check( rocketnet_server_transport_packet_payload( server, &context, NULL ) == NULL );
+    rocketnet_unit_check( capacity == 11 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_unit_check( rocketnet_server_transport_packet_payload( server, &context, &capacity ) == NULL );
+    rocketnet_unit_check( capacity == 0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+
+    rocketnet_assert_function( NULL );
+
+    // a batch of one, as an update's drain leaves it, with the slot past it
+    // still holding another client's entry from an earlier update
+
+    struct rocketnet_server_payloads_t * batch = &server->payloads;
+    rocketnet_unit_check( batch->capacity >= 2 );
+    batch->client_index[0] = 1;
+    batch->payload_data[0] = server->payload_storage;
+    batch->payload_bytes[0] = 4;
+    batch->client_index[1] = 2;
+    batch->payload_data[1] = server->payload_storage + ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES;
+    batch->payload_bytes[1] = 8;
+    batch->num_payloads = 1;
+
+    rocketnet_unit_check( rocketnet_server_transport_payload( server, 0, &client_index, &payload_bytes ) == server->payload_storage );
+    rocketnet_unit_check( client_index == 1 && payload_bytes == 4 );
+
+    const int outside[3] = { 1, -1, INT32_MAX };
+    for ( int i = 0; i < 3; ++i )
+    {
+        client_index = 7;
+        payload_bytes = 9;
+        rocketnet_unit_check( rocketnet_server_transport_payload( server, outside[i], &client_index, &payload_bytes ) == NULL );
+        rocketnet_unit_check( client_index == -1 && payload_bytes == 0 );
+    }
+
+    batch->num_payloads = 0;
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_server_transport_reads_refuse_null_outputs_and_stale_indexes );
 REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );
 REGISTER_UNIT_TEST( test_loopback_queue_restarts_at_slot_zero_when_empty );
 
