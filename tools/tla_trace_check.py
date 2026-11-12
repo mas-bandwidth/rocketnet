@@ -39,7 +39,7 @@ LAYERS = {
         "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
         "quiet": True,
     },
-    "fill_phase": {
+    "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
         "quiet": False,
     },

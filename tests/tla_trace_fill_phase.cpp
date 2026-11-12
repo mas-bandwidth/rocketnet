@@ -415,6 +415,13 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     int fired = 0;
     bool unknown = false;
 
+    // a filler that has loaded the epoch is often held back for a while, so
+    // a main operation and another filler's whole call run inside its call:
+    // the interleaving the stale-claim rule is for, which a uniform schedule
+    // almost never makes. Holding only orders steps: every step is still the
+    // code's own, and the record after it is still checked.
+    int hold[FP_ACTORS] = {};
+
     {
         std::unique_lock<std::mutex> lock( walk->mutex );
         walk->changed.wait( lock, [&] {
@@ -433,18 +440,29 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
         {
             int live[FP_ACTORS];
             int num_live = 0;
+            int free_live[FP_ACTORS];
+            int num_free = 0;
             for ( int a = 0; a < FP_ACTORS; a++ )
             {
                 if ( walk->state[a] != FP_DONE )
                 {
                     live[num_live++] = a;
+                    if ( hold[a] == 0 )
+                    {
+                        free_live[num_free++] = a;
+                    }
                 }
             }
             if ( num_live == 0 )
             {
                 break;
             }
-            const int a = live[random.below( num_live )];
+            const int a = num_free > 0 ? free_live[random.below( num_free )] : live[random.below( num_live )];
+            for ( int b = 0; b < FP_ACTORS; b++ )
+            {
+                hold[b] -= hold[b] > 0 ? 1 : 0;
+            }
+            hold[a] = 0;
 
             if ( a > 0 && walk->state[a] == FP_READY )
             {
@@ -473,6 +491,10 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 if ( !fp_apply( walk, a, &walk->step[a] ) )
                 {
                     unknown = true;
+                }
+                if ( a > 0 && walk->fpc[a - 1] == FP_BEGUN && random.below( 2 ) == 0 )
+                {
+                    hold[a] = 8 + random.below( 16 );
                 }
                 records.push_back( fp_record( walk ) );
             }
@@ -538,4 +560,4 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     return written && !unknown ? 0 : 1;
 }
 
-TLA_TRACE_LAYER( "fill_phase", trace_fill_phase );
+TLA_TRACE_LAYER( "fillphase", trace_fill_phase );
