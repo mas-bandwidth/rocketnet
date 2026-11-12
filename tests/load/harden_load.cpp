@@ -392,6 +392,7 @@ struct harden_options_t
     int netem_duplicates = 0;
     int frame_p99_us = 12000;
     double min_delivery = 99.9;
+    uint64_t protocol_id = HARDEN_PROTOCOL_ID;
 };
 
 static bool harden_parse_sizes( const char * text, harden_options_t * o )
@@ -572,6 +573,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--netem-duplicates" ) == 0 )
         {
             o->netem_duplicates = atoi( v );
+        }
+        else if ( strcmp( a, "--protocol-id" ) == 0 )
+        {
+            o->protocol_id = (uint64_t) strtoull( v, NULL, 0 );
         }
         else if ( strcmp( a, "--min-delivery" ) == 0 )
         {
@@ -1008,7 +1013,7 @@ static int harden_server_main( const harden_options_t & o )
 
     struct rocketnet_server_config_t config;
     rocketnet_server_default_config( &config );
-    config.protocol_id = HARDEN_PROTOCOL_ID;
+    config.protocol_id = o.protocol_id;
     config.max_clients = o.max_clients;
     config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     config.handshake_deadline_seconds = 10;
@@ -1509,7 +1514,7 @@ struct harden_client_totals_t
 
 static bool harden_make_token( const harden_options_t & o, const uint8_t * key, uint64_t client_id, int timeout_seconds, char * token )
 {
-    return rocketnet_create_dev_connect_token( o.address.c_str(), NULL, key, 3600, timeout_seconds, client_id, HARDEN_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, token ) == ROCKETNET_STATUS_OK;
+    return rocketnet_create_dev_connect_token( o.address.c_str(), NULL, key, 3600, timeout_seconds, client_id, o.protocol_id, (uint64_t) time( NULL ), NULL, token ) == ROCKETNET_STATUS_OK;
 }
 
 // reads the connection's transport counters into the totals, once its
@@ -2151,7 +2156,7 @@ static bool harden_parse_address( const std::string & text, struct sockaddr_in *
 static bool harden_build_request( const harden_options_t & o, const uint8_t * key, uint64_t timestamp, int expire_seconds, bool corrupt_signature, std::vector<uint8_t> * out )
 {
     char token_text[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    if ( rocketnet_create_dev_connect_token( o.address.c_str(), NULL, key, expire_seconds, 5, UINT64_C( 0x7fff000000000000 ) + ( timestamp & 0xffff ), HARDEN_PROTOCOL_ID, timestamp, NULL, token_text ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_create_dev_connect_token( o.address.c_str(), NULL, key, expire_seconds, 5, UINT64_C( 0x7fff000000000000 ) + ( timestamp & 0xffff ), o.protocol_id, timestamp, NULL, token_text ) != ROCKETNET_STATUS_OK )
     {
         return false;
     }
