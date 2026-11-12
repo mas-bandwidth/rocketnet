@@ -21,7 +21,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DEFINITION = re.compile(r"^static inline [^(]*?\b(rocketnet_dst_check_\w+)\s*\(", re.M)
+# a definition starts at column 0 with any return type and qualifiers
+# (static inline, static, inline static, a bare type ...), so a check spelled
+# without "static inline" is still a function of the file
+DEFINITION = re.compile(r"^(?:[A-Za-z_][\w]*[ \t*]+)+(rocketnet_dst_check_\w+)\s*\(", re.M)
 CALL = re.compile(r"\b(rocketnet_dst_check_\w+)\s*\(")
 
 
@@ -110,6 +113,13 @@ static inline void rocketnet_dst_check_dead( int * st ) { rocketnet_dst_check_fa
     if dead:
         print("check_dst_checks_wired self-test FAILED: a called check reported dead: %r" % dead)
         return 1
+    # a dead check spelled without "static inline" is still found
+    for spelling in ("static int", "inline static int", "int", "static inline const char *", "static bool"):
+        planted = checks + "%s rocketnet_dst_check_spelled( int * st )\n{\n    return 0;\n}\n" % spelling
+        dead, _ = unreached(planted, [harness])
+        if dead != ["rocketnet_dst_check_dead", "rocketnet_dst_check_spelled"]:
+            print("check_dst_checks_wired self-test FAILED: a dead check spelled %r not reported (got %r)" % (spelling, dead))
+            return 1
     print("ok check_dst_checks_wired self-test: a planted uncalled check is refused, a called one passes")
     return 0
 
