@@ -561,6 +561,324 @@ struct crypto_onetimeauth_poly1305_implementation crypto_onetimeauth_poly1305_rn
     poly_onetimeauth, poly_verify, poly_init, poly_update, poly_final,
 };
 
+/* ---------- Poly1305, vector ("vec"): radix 2^26, two lanes ----------
+
+   For a run of blocks m1..mn (n a multiple of 4) the MAC contribution is
+   sum m_i r^(n-i+1). Two lanes split it: lane 0 takes the odd-numbered
+   blocks, lane 1 the even, each a Horner chain in r^2, and the result is
+   A r^2 + B r. Four blocks per step: H = H r^4 + (m1, m2) r^2 + (m3, m4),
+   so the two products are independent and each lane's chain advances four
+   blocks per multiply-carry. The incoming accumulator h is added to m1.
+   Limbs are 26 bits in u32 lanes; products accumulate in u64 lanes (at most
+   10 terms of < 2^56.4, so < 2^60). */
+
+struct rn_vpoly_state
+{
+    struct rn_poly_state s;
+    uint32_t r1l[5], r2l[5], r4l[5];
+};
+
+#define P26_MASK 0x3ffffffU
+
+static void p26_from_u128( uint32_t l[5], uint64_t lo, uint64_t hi, uint64_t top )
+{
+    l[0] = (uint32_t) ( lo & P26_MASK );
+    l[1] = (uint32_t) ( ( lo >> 26 ) & P26_MASK );
+    l[2] = (uint32_t) ( ( ( lo >> 52 ) | ( hi << 12 ) ) & P26_MASK );
+    l[3] = (uint32_t) ( ( hi >> 14 ) & P26_MASK );
+    l[4] = (uint32_t) ( ( hi >> 40 ) | ( top << 24 ) );
+}
+
+/* out = a * b mod p, fully carried (limbs < 2^26 but limb 1 by a carry bit) */
+static void p26_mul( uint32_t out[5], const uint32_t a[5], const uint32_t b[5] )
+{
+    const uint64_t s1 = 5 * (uint64_t) b[1], s2 = 5 * (uint64_t) b[2], s3 = 5 * (uint64_t) b[3], s4 = 5 * (uint64_t) b[4];
+    uint64_t d0 = (uint64_t) a[0] * b[0] + a[1] * s4 + a[2] * s3 + a[3] * s2 + a[4] * s1;
+    uint64_t d1 = (uint64_t) a[0] * b[1] + (uint64_t) a[1] * b[0] + a[2] * s4 + a[3] * s3 + a[4] * s2;
+    uint64_t d2 = (uint64_t) a[0] * b[2] + (uint64_t) a[1] * b[1] + (uint64_t) a[2] * b[0] + a[3] * s4 + a[4] * s3;
+    uint64_t d3 = (uint64_t) a[0] * b[3] + (uint64_t) a[1] * b[2] + (uint64_t) a[2] * b[1] + (uint64_t) a[3] * b[0] + a[4] * s4;
+    uint64_t d4 = (uint64_t) a[0] * b[4] + (uint64_t) a[1] * b[3] + (uint64_t) a[2] * b[2] + (uint64_t) a[3] * b[1] + (uint64_t) a[4] * b[0];
+    d1 += d0 >> 26;
+    d0 &= P26_MASK;
+    d2 += d1 >> 26;
+    d1 &= P26_MASK;
+    d3 += d2 >> 26;
+    d2 &= P26_MASK;
+    d4 += d3 >> 26;
+    d3 &= P26_MASK;
+    d0 += ( d4 >> 26 ) * 5;
+    d4 &= P26_MASK;
+    d1 += d0 >> 26;
+    d0 &= P26_MASK;
+    out[0] = (uint32_t) d0;
+    out[1] = (uint32_t) d1;
+    out[2] = (uint32_t) d2;
+    out[3] = (uint32_t) d3;
+    out[4] = (uint32_t) d4;
+}
+
+static int vpoly_init( crypto_onetimeauth_poly1305_state * state, const unsigned char * key )
+{
+    struct rn_vpoly_state * v = (struct rn_vpoly_state *) (void *) state;
+    COMPILER_ASSERT( sizeof( struct rn_vpoly_state ) <= sizeof( crypto_onetimeauth_poly1305_state ) );
+    poly_init( state, key );
+    p26_from_u128( v->r1l, v->s.r0, v->s.r1, 0 );
+    p26_mul( v->r2l, v->r1l, v->r1l );
+    p26_mul( v->r4l, v->r2l, v->r2l );
+    return 0;
+}
+
+/* two blocks at m as 26-bit limbs, one block per lane, high bit set */
+static inline void p26_load2( const unsigned char * m, uint32x2_t l[5] )
+{
+    const uint64x2_t qa = vreinterpretq_u64_u8( vld1q_u8( m ) ), qb = vreinterpretq_u64_u8( vld1q_u8( m + 16 ) );
+    const uint64x2x2_t w = { { vuzp1q_u64( qa, qb ), vuzp2q_u64( qa, qb ) } }; /* {lo a, lo b}, {hi a, hi b} */
+    const uint64x2_t mask = vdupq_n_u64( P26_MASK );
+    const uint64x2_t lo = w.val[0], hi = w.val[1];
+    l[0] = vmovn_u64( vandq_u64( lo, mask ) );
+    l[1] = vmovn_u64( vandq_u64( vshrq_n_u64( lo, 26 ), mask ) );
+    l[2] = vmovn_u64( vandq_u64( vorrq_u64( vshrq_n_u64( lo, 52 ), vshlq_n_u64( hi, 12 ) ), mask ) );
+    l[3] = vmovn_u64( vandq_u64( vshrq_n_u64( hi, 14 ), mask ) );
+    l[4] = vmovn_u64( vorrq_u64( vshrq_n_u64( hi, 40 ), vdupq_n_u64( 1ULL << 24 ) ) );
+}
+
+/* d[i] += a * b mod p limb products, b given with its 5x multiples */
+#define P26_MAC( d, a, b, s )                                                                                                  \
+    do                                                                                                                         \
+    {                                                                                                                          \
+        d[0] = vmlal_u32( d[0], a[0], b[0] );                                                                                  \
+        d[0] = vmlal_u32( d[0], a[1], s[4] );                                                                                  \
+        d[0] = vmlal_u32( d[0], a[2], s[3] );                                                                                  \
+        d[0] = vmlal_u32( d[0], a[3], s[2] );                                                                                  \
+        d[0] = vmlal_u32( d[0], a[4], s[1] );                                                                                  \
+        d[1] = vmlal_u32( d[1], a[0], b[1] );                                                                                  \
+        d[1] = vmlal_u32( d[1], a[1], b[0] );                                                                                  \
+        d[1] = vmlal_u32( d[1], a[2], s[4] );                                                                                  \
+        d[1] = vmlal_u32( d[1], a[3], s[3] );                                                                                  \
+        d[1] = vmlal_u32( d[1], a[4], s[2] );                                                                                  \
+        d[2] = vmlal_u32( d[2], a[0], b[2] );                                                                                  \
+        d[2] = vmlal_u32( d[2], a[1], b[1] );                                                                                  \
+        d[2] = vmlal_u32( d[2], a[2], b[0] );                                                                                  \
+        d[2] = vmlal_u32( d[2], a[3], s[4] );                                                                                  \
+        d[2] = vmlal_u32( d[2], a[4], s[3] );                                                                                  \
+        d[3] = vmlal_u32( d[3], a[0], b[3] );                                                                                  \
+        d[3] = vmlal_u32( d[3], a[1], b[2] );                                                                                  \
+        d[3] = vmlal_u32( d[3], a[2], b[1] );                                                                                  \
+        d[3] = vmlal_u32( d[3], a[3], b[0] );                                                                                  \
+        d[3] = vmlal_u32( d[3], a[4], s[4] );                                                                                  \
+        d[4] = vmlal_u32( d[4], a[0], b[4] );                                                                                  \
+        d[4] = vmlal_u32( d[4], a[1], b[3] );                                                                                  \
+        d[4] = vmlal_u32( d[4], a[2], b[2] );                                                                                  \
+        d[4] = vmlal_u32( d[4], a[3], b[1] );                                                                                  \
+        d[4] = vmlal_u32( d[4], a[4], b[0] );                                                                                  \
+    } while ( 0 )
+
+/* lazy carry of five u64x2 limbs back to < 2^26 (+ a carry bit in 1 and 4) */
+static inline void p26_carry( uint64x2_t d[5] )
+{
+    const uint64x2_t mask = vdupq_n_u64( P26_MASK );
+    uint64x2_t c;
+    c = vshrq_n_u64( d[0], 26 );
+    d[0] = vandq_u64( d[0], mask );
+    d[1] = vaddq_u64( d[1], c );
+    c = vshrq_n_u64( d[3], 26 );
+    d[3] = vandq_u64( d[3], mask );
+    d[4] = vaddq_u64( d[4], c );
+    c = vshrq_n_u64( d[1], 26 );
+    d[1] = vandq_u64( d[1], mask );
+    d[2] = vaddq_u64( d[2], c );
+    c = vshrq_n_u64( d[4], 26 );
+    d[4] = vandq_u64( d[4], mask );
+    d[0] = vaddq_u64( d[0], vaddq_u64( c, vshlq_n_u64( c, 2 ) ) );
+    c = vshrq_n_u64( d[2], 26 );
+    d[2] = vandq_u64( d[2], mask );
+    d[3] = vaddq_u64( d[3], c );
+    c = vshrq_n_u64( d[0], 26 );
+    d[0] = vandq_u64( d[0], mask );
+    d[1] = vaddq_u64( d[1], c );
+    c = vshrq_n_u64( d[3], 26 );
+    d[3] = vandq_u64( d[3], mask );
+    d[4] = vaddq_u64( d[4], c );
+}
+
+/* Absorb `blocks` (a multiple of 4, >= 4) full blocks into st's radix-2^64
+   accumulator through the two-lane path. */
+static void vpoly_blocks4( struct rn_vpoly_state * v, const unsigned char * m, size_t blocks )
+{
+    uint32x2_t r2[5], s2[5], r4[5], s4[5], h[5], a[5], b[5];
+    for ( int i = 0; i < 5; i++ )
+    {
+        r2[i] = vdup_n_u32( v->r2l[i] );
+        s2[i] = vdup_n_u32( v->r2l[i] * 5 );
+        r4[i] = vdup_n_u32( v->r4l[i] );
+        s4[i] = vdup_n_u32( v->r4l[i] * 5 );
+    }
+    /* the incoming accumulator joins block 1 (lane 0) */
+    uint32_t hl[5];
+    p26_from_u128( hl, v->s.h0, v->s.h1, v->s.h2 );
+    const uint32_t zero[5] = { 0, 0, 0, 0, 0 };
+    for ( int i = 0; i < 5; i++ )
+    {
+        h[i] = vdup_n_u32( 0 );
+    }
+    int first = 1;
+    while ( blocks >= 4 )
+    {
+        p26_load2( m, a );
+        p26_load2( m + 32, b );
+        if ( first )
+        {
+            for ( int i = 0; i < 5; i++ )
+            {
+                const uint32_t add[2] = { hl[i], zero[i] };
+                a[i] = vadd_u32( a[i], vld1_u32( add ) );
+            }
+            first = 0;
+        }
+        uint64x2_t d[5];
+        for ( int i = 0; i < 5; i++ )
+        {
+            d[i] = vmovl_u32( b[i] ); /* + (m3, m4) */
+        }
+        P26_MAC( d, h, r4, s4 ); /* + H r^4 */
+        P26_MAC( d, a, r2, s2 ); /* + (m1, m2) r^2 */
+        p26_carry( d );
+        for ( int i = 0; i < 5; i++ )
+        {
+            h[i] = vmovn_u64( d[i] );
+        }
+        m += 64;
+        blocks -= 4;
+    }
+    /* A r^2 + B r: lane 0 by r^2, lane 1 by r */
+    uint32x2_t mult[5], smult[5];
+    for ( int i = 0; i < 5; i++ )
+    {
+        const uint32_t mv[2] = { v->r2l[i], v->r1l[i] };
+        const uint32_t sv[2] = { v->r2l[i] * 5, v->r1l[i] * 5 };
+        mult[i] = vld1_u32( mv );
+        smult[i] = vld1_u32( sv );
+    }
+    uint64x2_t d[5];
+    for ( int i = 0; i < 5; i++ )
+    {
+        d[i] = vdupq_n_u64( 0 );
+    }
+    P26_MAC( d, h, mult, smult );
+    uint64_t t[5];
+    for ( int i = 0; i < 5; i++ )
+    {
+        t[i] = vgetq_lane_u64( d[i], 0 ) + vgetq_lane_u64( d[i], 1 );
+    }
+    /* full carry, then back to radix 2^64 */
+    t[1] += t[0] >> 26;
+    t[0] &= P26_MASK;
+    t[2] += t[1] >> 26;
+    t[1] &= P26_MASK;
+    t[3] += t[2] >> 26;
+    t[2] &= P26_MASK;
+    t[4] += t[3] >> 26;
+    t[3] &= P26_MASK;
+    t[0] += ( t[4] >> 26 ) * 5;
+    t[4] &= P26_MASK;
+    t[1] += t[0] >> 26;
+    t[0] &= P26_MASK;
+    const rn_u128 acc = (rn_u128) t[0] + ( (rn_u128) t[1] << 26 ) + ( (rn_u128) t[2] << 52 ) + ( (rn_u128) t[3] << 78 );
+    const rn_u128 x = (rn_u128) ( t[4] & 0xffffffU ) << 104;
+    const rn_u128 sum = acc + x;
+    uint64_t h2 = ( t[4] >> 24 ) + ( sum < x ? 1u : 0u ); /* t[4] < 2^26: h2 <= 4 */
+    uint64_t h0 = (uint64_t) sum, h1 = (uint64_t) ( sum >> 64 );
+    /* fold bits 130 and up: h2 <= 3 after this, plus a carry */
+    const uint64_t c = ( h2 >> 2 ) * 5;
+    h2 &= 3;
+    rn_u128 tt = (rn_u128) h0 + c;
+    h0 = (uint64_t) tt;
+    tt = (rn_u128) h1 + (uint64_t) ( tt >> 64 );
+    h1 = (uint64_t) tt;
+    h2 += (uint64_t) ( tt >> 64 );
+    v->s.h0 = h0;
+    v->s.h1 = h1;
+    v->s.h2 = h2;
+    sodium_memzero( t, sizeof( t ) );
+    sodium_memzero( hl, sizeof( hl ) );
+}
+
+int rn_arm64_vpoly_min_blocks = 8; /* tracer knob: shortest run that takes the lanes */
+
+static int vpoly_update( crypto_onetimeauth_poly1305_state * state, const unsigned char * in, unsigned long long inlen )
+{
+    struct rn_vpoly_state * v = (struct rn_vpoly_state *) (void *) state;
+    struct rn_poly_state * st = &v->s;
+    if ( st->leftover != 0 )
+    {
+        unsigned long long want = 16 - st->leftover;
+        if ( want > inlen )
+        {
+            want = inlen;
+        }
+        memcpy( st->buffer + st->leftover, in, (size_t) want );
+        in += want;
+        inlen -= want;
+        st->leftover += want;
+        if ( st->leftover < 16 )
+        {
+            return 0;
+        }
+        poly_blocks( st, st->buffer, 1, 1 );
+        st->leftover = 0;
+    }
+    size_t blocks = (size_t) ( inlen / 16 );
+    if ( blocks >= (size_t) rn_arm64_vpoly_min_blocks && blocks >= 4 )
+    {
+        const size_t vb = blocks & ~(size_t) 3;
+        vpoly_blocks4( v, in, vb );
+        in += 16 * vb;
+        inlen -= 16 * vb;
+        blocks -= vb;
+    }
+    if ( blocks > 0 )
+    {
+        poly_blocks( st, in, blocks, 1 );
+        in += 16 * blocks;
+        inlen -= 16 * blocks;
+    }
+    if ( inlen > 0 )
+    {
+        memcpy( st->buffer, in, (size_t) inlen );
+        st->leftover = inlen;
+    }
+    return 0;
+}
+
+static int vpoly_final( crypto_onetimeauth_poly1305_state * state, unsigned char * out )
+{
+    const int ret = poly_final( state, out ); /* wipes the scalar part */
+    sodium_memzero( state, sizeof( struct rn_vpoly_state ) );
+    return ret;
+}
+
+static int vpoly_onetimeauth( unsigned char * out, const unsigned char * in, unsigned long long inlen, const unsigned char * k )
+{
+    crypto_onetimeauth_poly1305_state state;
+    vpoly_init( &state, k );
+    vpoly_update( &state, in, inlen );
+    vpoly_final( &state, out );
+    return 0;
+}
+
+static int vpoly_verify( const unsigned char * h, const unsigned char * in, unsigned long long inlen, const unsigned char * k )
+{
+    unsigned char correct[16];
+    vpoly_onetimeauth( correct, in, inlen, k );
+    const int ret = crypto_verify_16( h, correct );
+    sodium_memzero( correct, sizeof( correct ) );
+    return ret;
+}
+
+struct crypto_onetimeauth_poly1305_implementation crypto_onetimeauth_poly1305_rn_vec_implementation = {
+    vpoly_onetimeauth, vpoly_verify, vpoly_init, vpoly_update, vpoly_final,
+};
+
 /* ---------- Fused ChaCha20-Poly1305 (RFC 8439 2.8), one pass ----------
 
    The composed AEAD runs ChaCha20 over the message and then Poly1305 over the

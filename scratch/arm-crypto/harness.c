@@ -21,17 +21,18 @@
 
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
 extern int rn_arm64_chacha8;
+extern struct crypto_onetimeauth_poly1305_implementation crypto_onetimeauth_poly1305_rn_vec_implementation;
 #endif
 
 /* 0: portable; 1: arm64 composed, four ChaCha20 blocks in flight; 2: arm64
    composed, eight; 3: arm64 fused AEAD pass (the primitives as in 2) */
-#define NPATHS 4
+#define NPATHS 5 /* 4: arm64 composed, eight ChaCha20 blocks, vector Poly1305 */
 static int use_arm( int on )
 {
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
     rn_arm64_chacha8 = on >= 2;
     implementation__cc20 = on ? &crypto_stream_chacha20_rn_neon_implementation : &crypto_stream_chacha20_ref_implementation;
-    implementation__poly = on ? &crypto_onetimeauth_poly1305_rn_mul64_implementation : &crypto_onetimeauth_poly1305_donna_implementation;
+    implementation__poly = on == 4 ? &crypto_onetimeauth_poly1305_rn_vec_implementation : on ? &crypto_onetimeauth_poly1305_rn_mul64_implementation : &crypto_onetimeauth_poly1305_donna_implementation;
     implementation__aead = on == 3 ? &rn_aead_ietf_fused_implementation : NULL;
     return 1;
 #else
@@ -63,6 +64,10 @@ static const char * picked_poly1305( void )
         return "mul64";
     }
 #endif
+    if ( implementation__poly == &crypto_onetimeauth_poly1305_rn_vec_implementation )
+    {
+        return "vec";
+    }
     return implementation__poly == &crypto_onetimeauth_poly1305_donna_implementation ? "ref" : "other";
 }
 
@@ -287,7 +292,7 @@ static int diff( long cases, uint64_t seed )
         unsigned long long clen = 0, plen = 0;
         use_arm( 0 );
         crypto_aead_chacha20poly1305_ietf_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-        use_arm( 1 + (int) ( i % 3 ) );
+        use_arm( 1 + (int) ( i % 4 ) );
         unsigned char * const c_arm = c_arm_buf + ( i % 13 ); /* unaligned output */
         unsigned char * const m_un = m_un_buf + ( i % 11 ); /* unaligned input */
         memcpy( m_un, m, mlen );
@@ -319,7 +324,7 @@ static int diff( long cases, uint64_t seed )
         }
         for ( int path = 0; path < NPATHS; path++ )
         {
-            use_arm( path == 0 ? 0 : 1 + (int) ( i % 3 ) );
+            use_arm( path == 0 ? 0 : 1 + (int) ( i % 4 ) );
             if ( crypto_aead_chacha20poly1305_ietf_decrypt( p, &plen, NULL, c_arm, clen, aad, alen, nonce, key ) == 0 )
             {
                 forged_accepted++;
@@ -327,7 +332,7 @@ static int diff( long cases, uint64_t seed )
         }
         /* every 1000th case: the raw streams across the 32-bit counter
            boundary, both layouts, so the carry into word 13 matches */
-        if ( i % 1000 <= 2 )
+        if ( i % 1000 <= 3 )
         {
             const uint32_t ic32 = 0xFFFFFFFFu - (uint32_t) ( next_u64() % 8 );
             const uint64_t ic64 = 0xFFFFFFFFull - ( next_u64() % 8 );
@@ -343,7 +348,7 @@ static int diff( long cases, uint64_t seed )
             /* the original (non-IETF) AEAD too */
             use_arm( 0 );
             crypto_aead_chacha20poly1305_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-            use_arm( 1 + (int) ( i % 3 ) );
+            use_arm( 1 + (int) ( i % 4 ) );
             crypto_aead_chacha20poly1305_encrypt( c_arm, &clen, m, mlen, aad, alen, NULL, nonce, key );
             stream_mismatch += memcmp( c_ref, c_arm, mlen + 16 ) != 0;
         }
@@ -589,7 +594,7 @@ int main( int argc, char ** argv )
                 printf( "no arm64 path in this build\n" );
                 break;
             }
-            static const char * const names[NPATHS] = { "portable", "arm64-4", "arm64-8", "arm64-fused" };
+            static const char * const names[NPATHS] = { "portable", "arm64-4", "arm64-8", "arm64-fused", "arm64-8-vec" };
             const char * name = names[path];
             rfc_vectors( name );
             wycheproof( argv[2], name );
