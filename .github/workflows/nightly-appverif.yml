@@ -31,9 +31,11 @@
 # Sizing (captain, 160 GB commit limit, beside normal CI): ROCKETNET_TEST_JOBS=4
 # cases at once, each held under 2048 MB peak RSS by the bound, so the run's
 # cases hold at most about 8 GB beside the runner's other jobs. Measured with
-# the verifier's layers on (2026-11-12, captain, JOBS=16): the unit suite
-# 130 s over 645 processes, functional shards 11-110 s each; at four jobs the
-# whole run is well under an hour.
+# this job's settings (2026-11-12, captain, JOBS=4, the fixed tool, DEV=OFF
+# Debug): self-check 3 s, test_iocp 39 s, the unit suite 133 s over 645
+# processes (3 min 13 s with setup and export), functional shards 14-85 s
+# each (8 min 2 s for unit plus shards 0-6, 61 s for shard 7): about ten
+# minutes of runs beside the build.
 #
 # The fleet's ordinary Windows runners run as NT AUTHORITY\NETWORK SERVICE,
 # which holds only ReadKey on HKLM\...\Image File Execution Options, and giving
