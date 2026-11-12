@@ -1128,11 +1128,15 @@ static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protoco
 {
     (void) type_data_bytes;         // the open sized the eight type bytes
 
-    const uint8_t * p = type_data;
-    int client_index = (int) rocketnet_read_uint32( &p );
-    int max_clients = (int) rocketnet_read_uint32( &p );
+    // both fields are u32 (t10 step 17, t13.1): the index below the slot
+    // count, which is then at least 1; compared as read, so a value with the
+    // top bit set is no negative int
 
-    if ( client_index < 0 || client_index >= max_clients )
+    const uint8_t * p = type_data;
+    const uint32_t client_index = rocketnet_read_uint32( &p );
+    const uint32_t max_clients = rocketnet_read_uint32( &p );
+
+    if ( client_index >= max_clients )
     {
         rocketnet_spam( "client rejected keep-alive. invalid index" );
 
