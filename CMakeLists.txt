@@ -805,6 +805,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/source_audit_counter_classes.cpp
         tests/source_audit_example_send_safety.cpp
         tests/source_audit_functional_integrity.cpp
+        tests/source_audit_platform_text.cpp
         tests/source_audit_sequence_buffers.cpp
         tests/source_audit_xdp_filter_host.cpp)
     file( GLOB ROCKETNET_EXAMPLE_MANIFEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -826,6 +827,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     set_property( SOURCE tests/source_audit_xdp_filter_host.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_sequence_buffers.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
+    set_property( SOURCE tests/source_audit_platform_text.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_functional_integrity.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
