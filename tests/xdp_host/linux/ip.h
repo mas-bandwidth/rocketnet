@@ -3,11 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The host shim for <linux/ip.h>: the IPv4 header (RFC 791 section 3.1) in
-// the kernel's little-endian bitfield order, ihl in the low nibble of the
-// first byte and version in the high. The shim asserts a little-endian host
-// in linux/bpf.h. Packed so a header at any frame offset is read safely; the
-// layout has no padding either way.
+// The host shim for <linux/ip.h>: the IPv4 header (RFC 791 section 3.1) with
+// the kernel's bitfield order for the target's byte order (linux/bpf.h), so
+// ihl is the low nibble of the first byte and version the high on either.
+// Packed so a header at any frame offset is read safely; the layout has no
+// padding either way.
 
 #pragma once
 
@@ -18,8 +18,13 @@
 
 struct iphdr
 {
+#if defined( __LITTLE_ENDIAN_BITFIELD )
     __u8 ihl:4,
          version:4;
+#else // #if defined( __LITTLE_ENDIAN_BITFIELD )
+    __u8 version:4,
+         ihl:4;
+#endif // #if defined( __LITTLE_ENDIAN_BITFIELD )
     __u8 tos;
     __be16 tot_len;
     __be16 id;

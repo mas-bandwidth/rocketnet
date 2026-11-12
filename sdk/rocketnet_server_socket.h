@@ -64,35 +64,45 @@ inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool stalled
 // errno (a zero-copy queue whose link lost carrier while the interface stays
 // up, a copy-mode queue whose device queue stays stopped), run once per pass.
 // pending: the worker holds frames the ring's consumer has not taken (its
-// batch, a claimed buffer, or descriptors on the ring). passes counts the
-// passes since the consumer index last moved while frames were pending. Once
-// it reaches bound during a stop (draining), stalled is set and the call
+// batch, a claimed buffer, or descriptors on the ring). During a stop
+// (draining) the watch starts timing at the first pass that finds frames
+// pending and the consumer where it was, and once bound_seconds have passed
+// since then with the consumer still there, stalled is set and the call
 // returns true, once per stall, for the worker to count and log what it
-// abandons; the consumer moving again, or nothing pending, clears it
-// (proofs/tla/RNXdpSendDrain.tla Pass).
+// abandons; the consumer moving again, or nothing pending, clears it and
+// stops the timing. Outside a stop nothing is timed, and now is not read.
+// now is the platform monotonic clock (rocketnet_platform_time), an
+// argument so a unit case drives it (proofs/tla/RNXdpSendDrain.tla Pass).
 struct rocketnet_xdp_send_stall_t
 {
     uint32_t consumer;
-    uint32_t passes;
+    bool timing;
+    double since;
 };
 
-inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, uint32_t consumer, bool pending, bool draining, uint32_t bound, std::atomic<bool> & stalled )
+inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, uint32_t consumer, bool pending, bool draining, double now, double bound_seconds, std::atomic<bool> & stalled )
 {
     if ( !pending || consumer != stall.consumer )
     {
         stall.consumer = consumer;
-        stall.passes = 0;
+        stall.timing = false;
         if ( stalled.load( std::memory_order_relaxed ) )
         {
             stalled.store( false, std::memory_order_relaxed );
         }
         return false;
     }
-    if ( stall.passes < bound )
+    if ( !draining )
     {
-        stall.passes++;
+        return false;
     }
-    if ( stall.passes < bound || !draining || stalled.load( std::memory_order_relaxed ) )
+    if ( !stall.timing )
+    {
+        stall.timing = true;
+        stall.since = now;
+        return false;
+    }
+    if ( now - stall.since < bound_seconds || stalled.load( std::memory_order_relaxed ) )
     {
         return false;
     }
@@ -100,15 +110,18 @@ inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, u
     return true;
 }
 
-// The bound of that watch, in worker passes. A healthy NIC takes descriptors
-// from its 4096-entry TX ring at every NAPI poll; the longest healthy pause is
-// an 802.3x PAUSE of 65535 quanta, 33.6 ms at 1 Gb/s, or a few interrupt
-// moderation intervals. A pass is at least one poll call and the ring reads:
-// at a floor of 100 ns a pass, 2^24 passes are at least 1.68 s, fifty times
-// that pause; at a more usual 1 us a pass the stop gives up about 17 s after
-// the ring stopped. Chosen, not measured. Passes, not wakeup attempts: a
-// zero-copy driver that clears the ring's need-wakeup flag is never woken.
-#define ROCKETNET_XDP_SEND_STALL_PASSES ( 1u << 24 )
+// The bound of that watch: a stop gives up on a queue whose TX ring has
+// taken no descriptor for one second while it held frames, counted from the
+// stop's start or from the ring's last move during the stop, whichever is
+// later, so rocketnet_server_stopped turns true about one second after a
+// stop on a dead link. A healthy NIC takes descriptors from its 4096-entry
+// TX ring at every NAPI poll; the longest healthy pause is an 802.3x PAUSE of
+// 65535 quanta, 33.6 ms at 1 Gb/s, or a few interrupt moderation intervals:
+// one second is thirty times that pause. A bound in time, not in worker
+// passes, whose length varies with the core and the mode (a copy-mode poll
+// runs the kernel's transmit path). Not yet checked on a NIC whose carrier is
+// dropped during a stop.
+#define ROCKETNET_XDP_SEND_STALL_SECONDS 1.0
 
 // The worker's accounting of one TX wakeup that failed with error, into
 // failures, which the public SEND_FAILED counter sums (unit: datagrams).

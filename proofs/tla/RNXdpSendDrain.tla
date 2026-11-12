@@ -16,9 +16,12 @@
 (*                                                                         *)
 (* Each worker pass (Pass) submits the batch when the ring has room, then  *)
 (* runs the stall watch: pending is the batch or descriptors past the      *)
-(* consumer; still counts the passes since the consumer index last moved   *)
-(* while frames were pending, up to Bound; during a stop (draining, set by *)
-(* BeginShutdown) a count at Bound sets stalled.  The main thread's stop   *)
+(* consumer; during a stop (draining, set by BeginShutdown) still is the   *)
+(* time since the consumer index last moved while frames were pending, or  *)
+(* since the stop began, up to Bound, and a time at Bound sets stalled;    *)
+(* outside a stop nothing is timed.  Time is counted in passes: a pass is  *)
+(* one tick of the platform clock the worker reads (the code's bound is    *)
+(* ROCKETNET_XDP_SEND_STALL_SECONDS of that clock).  The main thread's stop *)
 (* drain (SendIdle) releases the queue when it is stalled or nothing is    *)
 (* pending.                                                                *)
 (*                                                                         *)
@@ -41,8 +44,8 @@ CONSTANTS
     Modulus,        \* the index range (2^32 in the code)
     BatchMax,       \* frames the worker holds before the ring takes them (ROCKETNET_XDP_SEND_BATCH_SIZE)
     MaxFrames,      \* exploration bound: frames loaded over the run
-    Bound,          \* ROCKETNET_XDP_SEND_STALL_PASSES
-    SlowGap,        \* the most passes a healthy NIC lets pass with frames waiting
+    Bound,          \* ROCKETNET_XDP_SEND_STALL_SECONDS, in ticks
+    SlowGap,        \* the most ticks a healthy NIC lets pass with frames waiting
     Defect
 
 ASSUME Defect \in {"none", "norelease", "noreset", "noring"}
@@ -59,7 +62,7 @@ VARIABLES
     batch,          \* frames in the worker's batch
     loaded,         \* ghost: frames loaded so far
     watchCons,      \* rocketnet_xdp_send_stall_t consumer
-    still,          \* rocketnet_xdp_send_stall_t passes
+    still,          \* rocketnet_xdp_send_stall_t timing and since: the ticks timed, 0 when not timing
     stalled,        \* send_stalled
     pendingFlag,    \* send_pending as the last pass published it
     dead,           \* environment: the NIC takes no more descriptors
@@ -123,7 +126,7 @@ Pass ==
            b == IF fits THEN 0 ELSE batch
            pending == b > 0 \/ (p + Modulus - cons) % Modulus > 0
            moved == cons # watchCons /\ Defect # "noreset"
-           s == IF ~pending \/ moved THEN 0
+           s == IF ~pending \/ moved \/ phase # "DRAINING" THEN 0
                 ELSE IF still < Bound THEN still + 1 ELSE still
        IN /\ prod' = p
           /\ batch' = b

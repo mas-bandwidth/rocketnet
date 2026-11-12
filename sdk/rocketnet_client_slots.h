@@ -39,12 +39,14 @@ int rocketnet_client_slots_num_free( const struct rocketnet_client_slots_t * slo
 
 int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, uint64_t client_id );
 
-// Assigns a free slot from the free list (LIFO): unconfirmed, identity copied
-// in, bound to the mapping index and its exact nonzero owner generation.
+// Assigns a free slot from the free list (LIFO; slots held since the last
+// publish are not taken): unconfirmed, identity copied in, bound to the
+// mapping index and its exact nonzero owner generation.
 // owner_generation names this ownership instance and must differ from the
 // generation last held by a reused numeric slot. Production passes the
 // encryption mapping generation; standalone fixtures pass an explicit fresh
-// synthetic generation. Returns the client index, or -1 when full. The caller
+// synthetic generation. Returns the client index, or -1 when no slot is
+// available (full, or every free slot held). The caller
 // checks for a duplicate client id before assigning; assigning a duplicate is
 // a bug, and asserts.
 
@@ -80,11 +82,24 @@ int rocketnet_client_slots_confirmed( const struct rocketnet_client_slots_t * sl
 
 void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, int client_index );
 
-// Releases a slot: identity cleared, user data zeroed, immediately available
-// for reuse. The caller destroys the associated encryption mapping; the slot
-// does not reach into it.
+// Releases a slot: identity cleared, user data zeroed, held until the next
+// rocketnet_client_slots_publish. The caller destroys the associated
+// encryption mapping; the slot does not reach into it.
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index );
+
+// Makes every slot released since the last call available to assign. The
+// server calls it once per update, after the receive batch and the timeout
+// sweep, so a slot freed in an update is assigned no sooner than the next
+// update and the update that ended its connection reports that end, with its
+// reason, first. num_free counts held slots: a full server with one held
+// refuses no one for it.
+
+void rocketnet_client_slots_publish( struct rocketnet_client_slots_t * slots );
+
+// the number of slots released since the last publish
+
+int rocketnet_client_slots_num_held( const struct rocketnet_client_slots_t * slots );
 
 #if ROCKETNET_DEV
 // Unit-test poison/release/reuse witness for the private slot arrays.

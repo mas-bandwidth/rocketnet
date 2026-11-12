@@ -15,10 +15,12 @@ generation tests that keep a stale owner from a reused slot.
 | `connected[i]`, `cid[i]` | `slots->connected[i]`, `slots->client_id[i]` (0 when free) |
 | `gen[i]` | `slots->slot_generation[i]`: the owner generation the slot last held, 0 before its first assign |
 | `stack[k]`, `top` | `slots->free_stack[k]`, `slots->free_stack_count`; the top entry is `free_stack[count - 1]` |
+| `held` | `slots->free_stack_held`: the entries released since the last publish, at `free_stack[count .. count + held)`, not yet poppable |
 | `numConnected` | `slots->num_connected` |
 | `nextGen` | the caller's next fresh owner generation (the encryption mapping's generation) |
 | `handles` | ghost: every tenure's `rocketnet_client_slot_handle_t` (client id, index, generation), kept for release at any later time |
 | `tenure[i]` | ghost: the tenure the slot holds |
+| `freed`, `earlyTake` | ghost: the slots released since the last publish, and whether an assign took one of them |
 
 The full-id index (open addressing with backward-shift deletion) is
 abstracted to a lookup by client id over the connected slots;
@@ -38,21 +40,34 @@ Functions in `sdk/rocketnet_client_slots.cpp`.
   last one. The caller has checked the id is not connected. The top entry
   `free_stack[count - 1]` is read; a slot whose `slot_generation` equals the
   owner generation is refused before any state changes; else
-  `--free_stack_count`, the slot marked connected under the id and the
-  generation.
+  `--free_stack_count`, the last held entry moved down into the popped one
+  (`free_stack[count] = free_stack[count + held]`, so the held entries stay
+  contiguous), the slot marked connected under the id and the generation.
 - **`ReleaseHandle(h)`**: `rocketnet_client_slots_release_exact` through
   `rocketnet_client_slots_release_handle`: released only when the slot is
   connected under the handle's client id and generation; the slot cleared
-  and its index pushed at `free_stack[free_stack_count++]`.
+  and its index held at `free_stack[free_stack_count + free_stack_held++]`.
 - **`Release(i)`**: `rocketnet_client_slots_release`: a slot not connected is
   refused before anything is touched, then `release_exact` of the slot's
   current identity.
+- **`Publish`**: `rocketnet_client_slots_publish`, called once at the end of
+  every `rocketnet_server_protocol_update` (after the receive batch and the
+  sweep, before the message layer reads the slots): `free_stack_count +=
+  free_stack_held`, `free_stack_held = 0`. A slot freed in an update is not
+  given to another client until that update has ended, so the game sees the
+  end and its reason before the slot is reused. The model allows a publish
+  at any step.
 
 ## Invariants
 
-- **`StackExact`**: the stack holds each free slot exactly once and nothing
-  else, no push runs past the array's end, and `free_stack_count` plus
-  `num_connected` is `max_clients`.
+- **`StackExact`**: the stack (poppable and held entries) holds each free
+  slot exactly once and nothing else, no push runs past the array's end, and
+  `free_stack_count` plus `free_stack_held` plus `num_connected` is
+  `max_clients`.
+- **`HeldAreFreed`**: the held entries are exactly the slots released since
+  the last publish.
+- **`NoTakeBeforePublish`**: no assign takes a slot released since the last
+  publish.
 - **`OneClientPerSlot`**: no assign takes a slot a client holds.
 - **`HandleReleasesOwnTenure`**: a handle releases only the tenure it was
   taken from, never the slot's next one.
@@ -91,16 +106,27 @@ counterexample below was checked against the C by hand.
    FALSE`): `rocketnet_client_slots_release_exact` without
    `slots->slot_generation[client_index] != generation`. Violates
    `HandleReleasesOwnTenure`: client 1 takes slot 0 under generation 1 and a
-   handle is kept; the slot is released; client 1 reconnects under generation
-   2 and the LIFO pop gives it slot 0 again; the old handle (client 1, slot 0,
+   handle is kept; the slot is released and published; client 1 reconnects
+   under generation 2 and the LIFO pop gives it slot 0 again; the old handle (client 1, slot 0,
    generation 1) passes the connected and client id tests and releases the
    new tenure.
 4. **`MCRNClientSlotsLayoutBrokenNoAssignGenCheck.cfg`** (`AssignGenCheck =
    FALSE`): `rocketnet_client_slots_assign` without the
    `slot_generation[client_index] == owner_generation` refusal. Violates
-   `TenureGenerationsDistinct`: slot 0 is taken under generation 1 and
-   released, and an assign offering generation 1 again (stale ownership)
+   `TenureGenerationsDistinct`: slot 0 is taken under generation 1,
+   released and published, and an assign offering generation 1 again (stale ownership)
    takes it, so a handle of the first tenure would also name the second.
+5. **`MCRNClientSlotsLayoutBrokenNoHold.cfg`** (`HoldReleased = FALSE`):
+   `rocketnet_client_slots_release_exact` pushing at
+   `free_stack[free_stack_count++]`, the code before 1.1.2. Violates
+   `NoTakeBeforePublish`: slot 0 is assigned and released, and the next
+   assign, with no publish between, pops slot 0 straight back.
+6. **`MCRNClientSlotsLayoutBrokenPopLeavesHeld.cfg`** (`PopMovesHeld =
+   FALSE`): `rocketnet_client_slots_assign` without
+   `free_stack[count] = free_stack[count + held]`. Violates `StackExact`:
+   slot 0 is assigned and released (held at `free_stack[2]`), an assign pops
+   slot 1 from `free_stack[1]`, and the held region `free_stack[1..2)` now
+   names the connected slot 1 while slot 0 is on no list.
 
 ## Runs
 

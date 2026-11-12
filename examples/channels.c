@@ -212,8 +212,9 @@ int main( void )
                 }
                 else
                 {
-                    uint32_t position;
-                    memcpy( &position, batch->data[i], sizeof( position ) );
+                    // the position's four bytes, little-endian, as they were written
+                    const uint8_t * b = batch->data[i];
+                    const uint32_t position = (uint32_t) b[0] | ( (uint32_t) b[1] << 8 ) | ( (uint32_t) b[2] << 16 ) | ( (uint32_t) b[3] << 24 );
                     in_order &= position > last_position;
                     last_position = position;
                     positions_received++;
@@ -244,7 +245,13 @@ int main( void )
                 uint8_t * p = rocketnet_client_start_message( client, POSITION_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (int) sizeof( position_sent ) );
                 if ( p )
                 {
-                    memcpy( p, &position_sent, sizeof( position_sent ) );
+                    // one byte at a time, little-endian: a server of either
+                    // byte order reads the same position (a memcpy of the
+                    // uint32_t would send this host's byte order)
+                    p[0] = (uint8_t) ( position_sent & 0xff );
+                    p[1] = (uint8_t) ( ( position_sent >> 8 ) & 0xff );
+                    p[2] = (uint8_t) ( ( position_sent >> 16 ) & 0xff );
+                    p[3] = (uint8_t) ( ( position_sent >> 24 ) & 0xff );
 
                     const uint32_t serial = rocketnet_client_finish_message( client, (int) sizeof( position_sent ) );
                     (void) serial;

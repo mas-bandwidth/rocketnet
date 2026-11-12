@@ -58,20 +58,44 @@ static double percentile( double p )
     return max_us;
 }
 
+// A payload's integers are written and read one byte at a time, in one
+// byte order (little-endian here), so a client and a server of different
+// byte orders read the same numbers. Copying a uint32_t into a payload with
+// memcpy would send the host's byte order.
+
+static void write_u32( uint8_t * p, uint32_t value )
+{
+    p[0] = (uint8_t) ( value & 0xff );
+    p[1] = (uint8_t) ( ( value >> 8 ) & 0xff );
+    p[2] = (uint8_t) ( ( value >> 16 ) & 0xff );
+    p[3] = (uint8_t) ( ( value >> 24 ) & 0xff );
+}
+
+static uint32_t read_u32( const uint8_t * p )
+{
+    return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 );
+}
+
+// a float goes as the u32 of its bits
+static void write_f32( uint8_t * p, float value )
+{
+    uint32_t bits;
+    memcpy( &bits, &value, 4 );
+    write_u32( p, bits );
+}
+
 // a message is the frame it was queued in, then a position
 static int write_message( uint8_t * p, uint32_t frame )
 {
-    const float position[2] = { 1.0f, 2.0f };
-
-    memcpy( p, &frame, 4 );
-    memcpy( p + 4, position, 8 );
+    write_u32( p, frame );
+    write_f32( p + 4, 1.0f );
+    write_f32( p + 8, 2.0f );
     return MESSAGE_BYTES;
 }
 
 static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * data )
 {
-    uint32_t queued;
-    memcpy( &queued, data, 4 );
+    const uint32_t queued = read_u32( data );
 
     const uint32_t frames = frame - queued;     // 0 is the frame it was queued in
     l->min = l->count == 0 || frames < l->min ? frames : l->min;

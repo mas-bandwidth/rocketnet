@@ -346,8 +346,11 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     rocketnet_unit_check( disconnect_count == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     rocketnet_unit_check( connection_ids[slot_a] == 0 );
 
-    // B's response in the same tick takes the freed slot 0 under B's own key,
-    // salt, and connection generation (even when B connects from addr_a).
+    // the update's end publishes the freed slot; B's response then takes slot 0
+    // under B's own key, salt, and connection generation (even when B connects
+    // from addr_a), while A's packets are still on the wire.
+
+    rocketnet_client_slots_publish( server.client_slots );
 
     int map_b = rocketnet_encryption_map_add( server.encryption_map, &addr_b, 100.0 );
     rocketnet_unit_check( map_b != -1 );

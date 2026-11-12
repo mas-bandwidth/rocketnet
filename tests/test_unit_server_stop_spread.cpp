@@ -607,10 +607,12 @@ static void test_server_kick_at_steady_cap_counts_dropped_burst()
     rocketnet_unit_check( server->disconnect_burst_count == clients );
     rocketnet_unit_check( counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED] == dropped );
 
-    // the last slot freed is the first reused (the free list is LIFO): it
-    // connects again and is kicked with the ring at its steady cap
+    // the last slot freed is the first reused (the free list is LIFO, its freed
+    // slots published as an update's end publishes them): it connects again
+    // and is kicked with the ring at its steady cap
 
     const int again = clients - 1;
+    rocketnet_client_slots_publish( server->protocol.client_slots );
     stop_spread_connect( server, again );
 
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
@@ -895,6 +897,7 @@ static void test_server_kick_at_steady_cap_log_reentry_does_not_repeat()
     rocketnet_unit_check( server->disconnect_burst_count == clients );
 
     const int again = clients - 1;
+    rocketnet_client_slots_publish( server->protocol.client_slots );    // as an update's end does
     stop_spread_connect( server, again );
 
     const uint64_t dropped = counters[ROCKETNET_COUNTER_DISCONNECT_BURST_DROPPED];

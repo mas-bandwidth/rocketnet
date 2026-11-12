@@ -540,7 +540,11 @@ stack reserve and kernel socket queues.
 Server quality stats are maintained as packets and acknowledgements are
 processed; there is no stats worker thread. After a successful start, stop
 requests transport shutdown; `rocketnet_server_stopped` remains false until
-transport I/O has exited.
+transport I/O has exited. On the Linux `xdp` transport, a queue whose TX ring
+takes no descriptor for one second while it holds frames (a link whose
+carrier dropped, with no error to say so) is given up on: its frames are
+counted as send failures and logged, and the stop finishes about one second
+after it began, or after that ring last moved.
 Destroy normally follows completion and synchronously joins the transport
 worker before freeing its storage. An early destroy asserts in a debug build;
 in a release build it logs and counts the misuse, requests shutdown and polls

@@ -209,6 +209,8 @@ struct rocketnet_server_uring_t
     int send_pending[ROCKETNET_URING_SEND_PHASES];      // per phase: its sends submitted with no CQE reaped
     int fill_bank;                              // the bank receive CQEs are copied into; the other is exposed
     int features;                               // ROCKETNET_SERVER_URING_FEATURE_*: UDP_SEGMENT in use now
+    struct rocketnet_segment_refused_t segment_refused;    // main thread only: the destinations that refused a segmented send
+    bool segment_refusal_warned;                // main thread only: the first refused run warns, later ones are spam
 
     // the run builder's view of the slots ahead, main thread only: the
     // bytes, destination and wire pointer of at most a run's worth of slots
@@ -1106,6 +1108,56 @@ static void rocketnet_server_uring_copy_held( struct rocketnet_server_uring_t * 
     }
 }
 
+// a segmented run its destination refused, resent as one plain SENDMSG per
+// slot, and submitted at once. the run's CQE handed its slots back, but its
+// phase is not complete: each resend is pending in the phase before this
+// returns, so no reset of the index can reuse a slot the kernel holds again
+// (proofs/tla/RNSegmentRefusal.tla Refuse, proofs/tla/RNUringSendPhases.tla
+// ReapRefused). returns the slots resent; a slot that finds no
+// submission entry is not resent and the caller counts it dropped.
+
+static int rocketnet_server_uring_resend_plain( struct rocketnet_server_uring_t * uring, int first_slot, int run_packets )
+{
+    const int phase = first_slot / ROCKETNET_URING_SEND_QUEUE_SIZE;
+
+    int resent = 0;
+    for ( int i = 0; i < run_packets; i++ )
+    {
+        const int index = first_slot + i;
+        struct rocketnet_server_uring_send_info_t * info = &uring->send.info[index];
+
+        const socklen_t namelen = rocketnet_server_uring_address_to_sockaddr( &info->to, uring->ipv6, &info->name );
+        struct io_uring_sqe * sqe = namelen != 0 ? rocketnet_server_uring_get_sqe( uring ) : NULL;
+        if ( !sqe )
+        {
+            continue;
+        }
+
+        memset( &info->message, 0, sizeof( info->message ) );
+        info->message.msg_name = &info->name;
+        info->message.msg_namelen = namelen;
+        info->message.msg_iov = &uring->send.iovecs[index];
+        info->message.msg_iovlen = 1;
+        info->run_packets = 1;
+
+        const int queue_index = (int) ( uring->send_rotation++ % (uint64_t) uring->num_queues );
+        io_uring_prep_sendmsg( sqe, uring->queues[queue_index].fd, &info->message, MSG_DONTWAIT );
+        io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, queue_index, (uint32_t) index ) );
+
+        uring->sends_pending++;
+        uring->send_pending[phase]++;
+        resent++;
+    }
+
+    if ( resent > 0 )
+    {
+        rocketnet_server_uring_ring_submit( uring );
+        uring->counters[ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS]++;
+    }
+
+    return resent;
+}
+
 // proofs/tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag
 
 static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
@@ -1138,25 +1190,47 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
         if ( cqe->res < 0 )
         {
-            if ( run_packets > 1 && ( cqe->res == -EINVAL || cqe->res == -EIO || cqe->res == -EOPNOTSUPP ) &&
-                 ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) )
+            if ( run_packets > 1 && ( cqe->res == -EINVAL || cqe->res == -EIO || cqe->res == -EOPNOTSUPP ) && !uring->destroying )
             {
-                // the kernel accepted the UDP_SEGMENT probe but refused a live
-                // segmented send. unlike the gso transport's sendmmsg the run
-                // cannot be resent: its CQE has handed the slots back, and a
-                // resend would put them in the kernel again after this call
-                // may reset the index. so the run is dropped, counted, and
-                // every later flush sends plain, one SENDMSG per slot
+                // the kernel accepted the UDP_SEGMENT probe but this
+                // destination refused a segmented send. it is that
+                // destination's: it is remembered, so its later runs leave
+                // plain, and this run is resent plain; other destinations keep
+                // segmenting. segmentation turns off for the transport only
+                // when the threshold of destinations refused with none ever
+                // accepted: a kernel that cannot segment at all
+                // (proofs/tla/RNSegmentRefusal.tla Refuse)
 
-                uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
-                uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
-                rocketnet_warn( "io_uring transport: live segmented send refused (%s). degrading to one SENDMSG per packet", strerror( -cqe->res ) );
+                const char * reason = strerror( -cqe->res );
+                if ( rocketnet_segment_refused_add( &uring->segment_refused, &uring->send.info[slot].to ) &&
+                     ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) )
+                {
+                    uring->features &= ~ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+                    uring->counters[ROCKETNET_SERVER_URING_COUNTER_GSO_FALLBACKS]++;
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). %d destinations refused and none accepted, degrading to one SENDMSG per packet", reason, uring->segment_refused.destinations );
+                }
+                else if ( !uring->segment_refusal_warned )
+                {
+                    uring->segment_refusal_warned = true;
+                    rocketnet_warn( "io_uring transport: live segmented send refused (%s). resending that run plain", reason );
+                }
+                else
+                {
+                    rocketnet_spam( "io_uring transport: live segmented send refused (%s). resending that run plain", reason );
+                }
+
+                run_packets -= rocketnet_server_uring_resend_plain( uring, slot, run_packets );
             }
 
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED] += (uint64_t) run_packets;
         }
         else
         {
+            if ( run_packets > 1 )
+            {
+                uring->segment_refused.accepted = true;
+            }
+
             uring->counters[ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT] += (uint64_t) run_packets;
         }
 
@@ -1467,6 +1541,13 @@ bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * 
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter )
 {
     return uring->counters[counter];
+}
+
+void rocketnet_server_uring_test_send_slot( struct rocketnet_server_uring_t * uring, int slot, uint16_t * port, int * run_packets )
+{
+    rocketnet_assert( slot >= 0 && slot < ROCKETNET_URING_SEND_SLOTS );
+    *port = uring->send.info[slot].to.port;
+    *run_packets = uring->send.info[slot].run_packets;
 }
 
 int rocketnet_server_uring_test_wait_calls( rocketnet_server_uring_t * uring )
@@ -2176,10 +2257,12 @@ static bool rocketnet_server_uring_submit_phase( struct rocketnet_server_uring_t
 
             // the run from this slot: the slots ahead in this phase copied
             // out for the builder, at most a segmented send's worth, one slot
-            // when segmentation is off
+            // when segmentation is off or the destination refused a
+            // segmented send (proofs/tla/RNSegmentRefusal.tla Run)
 
             int ahead = num_slots - slot;
-            if ( ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 )
+            if ( ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) == 0 ||
+                 rocketnet_segment_refused_contains( &uring->segment_refused, &info->to ) )
             {
                 ahead = 1;
             }

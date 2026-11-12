@@ -23,7 +23,8 @@
 // The TX ring cases add a fake ring and the worker's stall watch: every stop
 // step's send_idle first runs passes_per_poll worker passes, in each of which
 // the ring's consumer takes one descriptor every drain_every passes (0:
-// never, a ring that has stopped draining) and the watch runs on the result
+// never, a ring that has stopped draining), each pass takes pass_seconds of
+// the fake clock, and the watch runs on the result
 // (rocketnet_xdp_send_stall_pass, with a small bound), as the worker loop does.
 
 static struct
@@ -40,7 +41,9 @@ static struct
     uint32_t consumer;
     int drain_every;
     int passes_per_poll;
-    uint32_t bound;
+    double bound_seconds;
+    double pass_seconds;
+    double now;                         // the fake clock, advanced pass_seconds each pass
     int pass;
     rocketnet_xdp_send_stall_t stall;
     std::atomic<bool> stalled;
@@ -61,13 +64,14 @@ static bool xdp_stop_fixture_worker_passes()
     for ( int i = 0; i < xdp_stop_fixture.passes_per_poll; i++ )
     {
         xdp_stop_fixture.pass++;
+        xdp_stop_fixture.now += xdp_stop_fixture.pass_seconds;
         if ( xdp_stop_fixture.drain_every > 0 && xdp_stop_fixture.pass % xdp_stop_fixture.drain_every == 0 && pending )
         {
             xdp_stop_fixture.consumer++;
         }
         pending = xdp_stop_fixture.consumer != xdp_stop_fixture.producer;
         if ( rocketnet_xdp_send_stall_pass( xdp_stop_fixture.stall, xdp_stop_fixture.consumer, pending, xdp_stop_fixture.draining,
-                                            xdp_stop_fixture.bound, xdp_stop_fixture.stalled ) )
+                                            xdp_stop_fixture.now, xdp_stop_fixture.bound_seconds, xdp_stop_fixture.stalled ) )
         {
             xdp_stop_fixture.abandoned.fetch_add( xdp_stop_fixture.producer - xdp_stop_fixture.consumer );
         }
@@ -112,7 +116,8 @@ static struct
     uint32_t frames;
     int drain_every;
     int passes_per_poll;
-    uint32_t bound;
+    double bound_seconds;
+    double pass_seconds;
 } xdp_stop_tx_next;
 
 // Stop one server over the fake staged io with the given queue state. Returns
@@ -132,9 +137,11 @@ static bool xdp_stop_scenario( int hard_error, bool buffer_empty, bool handoff_i
     xdp_stop_fixture.consumer = 0;
     xdp_stop_fixture.drain_every = xdp_stop_tx_next.drain_every;
     xdp_stop_fixture.passes_per_poll = xdp_stop_tx_next.passes_per_poll;
-    xdp_stop_fixture.bound = xdp_stop_tx_next.bound;
+    xdp_stop_fixture.bound_seconds = xdp_stop_tx_next.bound_seconds;
+    xdp_stop_fixture.pass_seconds = xdp_stop_tx_next.pass_seconds;
+    xdp_stop_fixture.now = 1000.0;
     xdp_stop_fixture.pass = 0;
-    xdp_stop_fixture.stall = rocketnet_xdp_send_stall_t{ 0, 0 };
+    xdp_stop_fixture.stall = rocketnet_xdp_send_stall_t{ 0, false, 0.0 };
     xdp_stop_fixture.stalled.store( false );
     xdp_stop_fixture.abandoned.store( 0 );
     xdp_stop_fixture.released_while_draining = false;
@@ -220,19 +227,20 @@ REGISTER_UNIT_TEST( test_xdp_transport_stop_gives_up_on_hard_send_error );
 
 // A TX ring whose consumer never moves, with no errno to say so (carrier lost
 // on a zero-copy queue while the interface stays up): the stop gives up on
-// the queue once the worker has run the bound's passes with frames pending,
-// and counts the ten frames it abandons. Bound 8, three passes a stop step:
-// the stop call and the first stopped poll run six passes and wait; one more
-// poll reaches the bound.
+// the queue once the bound has passed with frames pending, and counts the ten
+// frames it abandons. Bound 8 s, one second a pass, three passes a stop step:
+// the timing starts at the stop's first pass; the stop call and the first
+// stopped poll run six passes and wait; one more poll reaches the bound at
+// the ninth pass.
 static void test_xdp_transport_stop_gives_up_on_a_ring_that_never_drains()
 {
     bool stopped = false;
-    xdp_stop_tx_next = { 10, 0, 3, 8 };
+    xdp_stop_tx_next = { 10, 0, 3, 8.0, 1.0 };
     rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 0, &stopped ) );
     rocketnet_unit_check( !stopped );
     rocketnet_unit_check( xdp_stop_fixture.abandoned.load() == 0 );
 
-    xdp_stop_tx_next = { 10, 0, 3, 8 };
+    xdp_stop_tx_next = { 10, 0, 3, 8.0, 1.0 };
     rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 1, &stopped ) );
     rocketnet_unit_check( stopped );
     rocketnet_unit_check( xdp_stop_fixture.stops == 1 );
@@ -242,18 +250,35 @@ static void test_xdp_transport_stop_gives_up_on_a_ring_that_never_drains()
 
 REGISTER_UNIT_TEST( test_xdp_transport_stop_gives_up_on_a_ring_that_never_drains );
 
+// The production bound, with worker passes of 10 us each (a pass that is not
+// on an isolated core, or a copy-mode poll): a ring that never drains is
+// given up on within one second of worker time after the stop begins, and
+// the ten frames it held are counted. 1000 passes a stop step, at most 110
+// steps: 1.1 s.
+static void test_xdp_transport_stop_bound_is_one_second()
+{
+    bool stopped = false;
+    xdp_stop_tx_next = { 10, 0, 1000, ROCKETNET_XDP_SEND_STALL_SECONDS, 10e-6 };
+    rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 110, &stopped ) );
+    rocketnet_unit_check( stopped );
+    rocketnet_unit_check( xdp_stop_fixture.pass * 10e-6 <= 1.1 );
+    rocketnet_unit_check( xdp_stop_fixture.abandoned.load() == 10 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_stop_bound_is_one_second );
+
 // A TX ring that drains slowly, one descriptor every four passes against a
 // bound of eight, is never given up on: the stop waits until the consumer has
 // taken all ten, then completes with nothing abandoned.
 static void test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly()
 {
     bool stopped = false;
-    xdp_stop_tx_next = { 10, 4, 3, 8 };
+    xdp_stop_tx_next = { 10, 4, 3, 8.0, 1.0 };
     rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 5, &stopped ) );
     rocketnet_unit_check( !stopped );
     rocketnet_unit_check( !xdp_stop_fixture.released_while_draining );
 
-    xdp_stop_tx_next = { 10, 4, 3, 8 };
+    xdp_stop_tx_next = { 10, 4, 3, 8.0, 1.0 };
     rocketnet_unit_check( xdp_stop_scenario( 0, true, true, 20, &stopped ) );
     rocketnet_unit_check( stopped );
     rocketnet_unit_check( xdp_stop_fixture.consumer == 10 );
@@ -265,34 +290,35 @@ static void test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly()
 REGISTER_UNIT_TEST( test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly );
 
 // The watch itself: no stall outside a stop, however long the ring has not
-// moved; a stop that begins on a ring already past the bound stalls at the
-// next pass, reported once; the consumer moving, or nothing pending, clears
-// it, and a new stall is a new report.
+// moved; during a stop the timing starts at the first pass, and the stall is
+// reported once the bound has passed, once; the consumer moving, or nothing
+// pending, clears it, and a new stall is a new report. Time is the argument.
 static void test_xdp_send_stall_watch()
 {
-    rocketnet_xdp_send_stall_t stall = { 0, 0 };
+    rocketnet_xdp_send_stall_t stall = { 0, false, 0.0 };
     std::atomic<bool> stalled( false );
 
     for ( int i = 0; i < 20; i++ )
     {
-        rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, false, 8, stalled ) );
+        rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, false, 1000.0 + i, 1.0, stalled ) );
     }
     rocketnet_unit_check( !stalled.load() );
 
-    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 5, true, true, 8, stalled ) );
-    rocketnet_unit_check( stalled.load() );
-    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 8, stalled ) );
-    rocketnet_unit_check( stalled.load() );
-
-    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 1020.0, 1.0, stalled ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 1020.999, 1.0, stalled ) );
     rocketnet_unit_check( !stalled.load() );
-    for ( int i = 0; i < 7; i++ )
-    {
-        rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
-    }
-    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 6, true, true, 8, stalled ) );
+    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 5, true, true, 1021.0, 1.0, stalled ) );
+    rocketnet_unit_check( stalled.load() );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 1030.0, 1.0, stalled ) );
+    rocketnet_unit_check( stalled.load() );
 
-    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, false, true, 8, stalled ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1030.5, 1.0, stalled ) );
+    rocketnet_unit_check( !stalled.load() );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1030.75, 1.0, stalled ) );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1031.5, 1.0, stalled ) );
+    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1031.75, 1.0, stalled ) );
+
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, false, true, 1032.0, 1.0, stalled ) );
     rocketnet_unit_check( !stalled.load() );
 }
 

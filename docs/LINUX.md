@@ -215,13 +215,16 @@ refuses either is a tier, not an error: no `UDP_SEGMENT` means plain
 `sendmmsg` batching, no `UDP_GRO` means plain `recvmmsg`
 (`sdk/rocketnet_server_gso.h`). The create line names the tier:
 `gso transport: <n> queue reuseport group on port <p>, UDP_SEGMENT yes|no (plain sendmmsg), UDP_GRO yes|no (plain recvmmsg)`
-(`sdk/rocketnet_server_gso_linux.cpp`). A kernel that accepted the
-probe but refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`) logs
-`gso transport: live GSO send refused (...). resending that run plain`,
-resends that one run as plain packets, and keeps segmentation on for later
-runs. After `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8) refused
-segmented sends in a row, with no accepted one between them, it logs
-`gso transport: live GSO send refused (...). <n> consecutive refusals, degrading to plain sendmmsg`,
+(`sdk/rocketnet_server_gso_linux.cpp`). A destination that
+refuses a live GSO send (`EINVAL`, `EIO`, `EOPNOTSUPP`; its route, an IPsec
+policy say) logs
+`gso transport: live GSO send refused (...). resending that run plain`
+(once; later refusals are spam), resends that one run as plain packets, and
+is remembered so its later runs leave plain; every other destination keeps
+segmenting. Only when `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8)
+destinations have refused and no segmented send was ever accepted (a kernel
+that cannot segment) it logs
+`gso transport: live GSO send refused (...). <n> destinations refused and none accepted, degrading to plain sendmmsg`,
 turns segmentation off for the life of the transport, and resends from the
 refused run plain (`sdk/rocketnet_server_gso_linux.cpp`, `sdk/rocketnet_server_gso.h`).
 The degradation is inside the transport, below the ladder (`BUILDING.md`).
@@ -331,10 +334,11 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
 | R6 | SMT off | `:78-81` |
 | R7 | the NIC's combined channel count equals the queue count | `:82-85` |
-| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:87-91` |
+| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12; checked by the script only (below) | `:86-95` |
+| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:97-101` |
 
 The script's modes are `provision` (the default), `verify`, `sweep` and
-`selftest` (`scripts/rocketnet-provision:93-117`, parsed at `:125-146`). The
+`selftest` (`scripts/rocketnet-provision:103-127`, parsed at `:135-156`). The
 boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 `BUILDING.md` walks a fresh box: boot tier, then
 `scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
@@ -419,6 +423,35 @@ For i40e the queue IRQ names are `i40e-eno1-TxRx-0` and `i40e-eno1-TxRx-1` in
 `1` and `2`. If using `smp_affinity` instead, the hexadecimal masks are `2`
 and `4`: mask `1` means CPU 0. Re-discover IRQ numbers after reboot, driver
 reload or channel changes. Keep other configurable IRQs on CPU 0.
+
+**Turn off the real-time throttle on kernels before 6.12 (R8).** Each XDP
+worker spins at `SCHED_RR` without sleeping. Kernels before 6.12 let
+real-time threads run `kernel.sched_rt_runtime_us` out of every
+`kernel.sched_rt_period_us` (stock: 950000 of 1000000 microseconds), then
+stop them, whether or not anything else wants the CPU. While a worker is
+stopped its queue receives and sends nothing. Measured with a thread spinning
+as the worker does on a 6.8 kernel: about 50 ms in every second on an
+ordinary CPU, and 0.2 to 1 s at a time, about a quarter of the time, on a
+`nohz_full` CPU as in this layout. This covers Ubuntu 22.04 (5.15, and the
+6.5 and 6.8 hardware enablement kernels) and Ubuntu 24.04 (6.8 and 6.11).
+Check with `sysctl kernel.sched_rt_runtime_us` (-1 is off); the kernel log
+says `sched: RT throttling activated` the first time it stops a thread. Turn
+it off now and across reboots:
+
+```sh
+sudo sysctl -w kernel.sched_rt_runtime_us=-1
+echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/90-rocketnet-xdp.conf
+```
+
+`scripts/rocketnet-provision` sets the running value and `verify` reports it
+unmet; only the file keeps it across a reboot. The library's pre-flight does
+not check it. What it costs: an ordinary task on a worker's CPU no longer
+gets any time while the worker spins. On the isolated CPUs of this layout
+that leaves only per-CPU kernel work there, which waits too, so keep every
+other thread and IRQ off the worker CPUs. From 6.12 the throttle is gone: a
+worker alone on its CPU is never stopped, but any ordinary task runnable on
+that CPU takes 50 ms in every second from it, and this setting does not
+change that. On every kernel, nothing else belongs on a worker's CPU.
 
 **Place the application's threads to match.** The constants of this layout are
 `NumOsCpus=1`, `NumXdpQueues=2` and `NumXdpCpus=NumXdpQueues`. In the server

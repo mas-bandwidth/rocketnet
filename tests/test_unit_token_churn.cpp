@@ -210,7 +210,7 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
 }
 
 // the client leaves cleanly: its disconnect burst reaches the server, which
-// frees the slot and the mapping at once
+// frees the slot and the mapping at once; the update's end publishes the slot
 
 static void tc_disconnect( struct tc_server_t * t, struct tc_client_t * c, uint64_t now )
 {
@@ -233,6 +233,7 @@ static void tc_disconnect( struct tc_server_t * t, struct tc_client_t * c, uint6
         t->time += 0.001;
     }
 
+    rocketnet_client_slots_publish( t->server.client_slots );
     t->time += 0.2;
 }
 

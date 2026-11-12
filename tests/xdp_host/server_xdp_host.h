@@ -9,9 +9,9 @@
 // the two helpers are host functions with the kernel's semantics.
 //
 // Built (and ROCKETNET_XDP_FILTER_HOST defined for the unit suite) only where
-// the C compiler is GCC or Clang on a little-endian host, because the filter
-// is GNU C (void pointer arithmetic, typeof) and the shim's IPv4 bitfields
-// model a little-endian machine.
+// the C compiler is GCC or Clang on a non-Windows host, because the filter is
+// GNU C (void pointer arithmetic, typeof). Either byte order: the shim takes
+// the target's (linux/bpf.h).
 
 #pragma once
 
