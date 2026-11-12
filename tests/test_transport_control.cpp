@@ -53,6 +53,9 @@ struct control_fixture_t
     int crafted_entries;                                    // the leading entries whose byte counts crafted_bytes gives
     int crafted_bytes[8];
     int crafted_capacity;                                   // the slots the update asked receive_batch for
+    int room;                                               // send_room's answer on the buffered path (sweep cases)
+    int sent_count;                                         // keep-alives and acks recorded, in send order
+    uint16_t sent_ports[512];                               // the port each one went to
 };
 #if defined( _MSC_VER )
 #pragma warning( pop )
@@ -68,6 +71,11 @@ static void record( control_fixture_t * f, const rocketnet_address_t * to, const
 
     const int client = to->port - 1000;
     CHECK( client >= 0 && client < ROCKETNET_MAX_CLIENTS );
+    if ( ( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || packet[0] == ROCKETNET_CONNECTION_ACK_PACKET ) &&
+         f->sent_count < (int) ( sizeof( f->sent_ports ) / sizeof( f->sent_ports[0] ) ) )
+    {
+        f->sent_ports[f->sent_count++] = to->port;
+    }
     if ( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET )
     {
         ++f->keep_alives[client];
@@ -1257,6 +1265,725 @@ static void test_unstaged_receive_guards()
     printf( "test_unstaged_receive_guards\n" );
 }
 
+// The maintenance sweep's resume point (rocketnet_server_transport_update;
+// proofs/tla/RNServerMaintenanceSweep.tla). Each update visits the slots in
+// ring order from the cursor; an update that runs out of room stops on the
+// first due slot it cannot serve, and the next update starts on it; a pass
+// that visits every slot leaves the cursor where it began. A wrong resume
+// point (one slot past, or the same slot again) still serves every client in
+// most runs, so these cases check the exact order of service, update by
+// update, against an independent model of the rule, under the three ways a
+// sweep can run out of room: a staged transport refusing the reserve, a
+// staged transport reporting its room, and the portable control buffer
+// against the room the transport reports. Time is an argument; keep-alives
+// fall due every 1 / ROCKETNET_DEFAULT_SEND_RATE seconds, so an update a
+// second later finds every client due again and one a millisecond later
+// finds due only those not yet served. The disconnect allowance is held
+// below one burst, so every disconnect waits in the ring and no burst takes
+// the room a sweep is given.
+
+#define SWEEP_SLOTS 8
+
+enum
+{
+    SWEEP_STAGED_FULL,      // staged, no send_room: the refused reserve ends the sweep
+    SWEEP_STAGED_ROOM,      // staged, send_room = frames left: the room test ends it before a reserve
+    SWEEP_BUFFERED_ROOM,    // the portable control buffer, send_room = this update's budget
+    SWEEP_MODES
+};
+
+struct sweep_model_t
+{
+    int slots;
+    int mode;
+    int cursor;
+    double interval;                    // the keep-alive interval, 1 / the server's send rate
+    bool connected[SWEEP_SLOTS];
+    bool mapped[SWEEP_SLOTS];
+    bool internal_error[SWEEP_SLOTS];
+    bool held[SWEEP_SLOTS];             // released; assignable after the next update's publish
+    bool assignable[SWEEP_SLOTS];
+    uint16_t port[SWEEP_SLOTS];
+    double last_keep_alive[SWEEP_SLOTS];
+};
+
+struct sweep_step_t
+{
+    int served[SWEEP_SLOTS];
+    int served_count;
+    int ended[SWEEP_SLOTS];
+    int ended_count;
+    int missing;            // SLOT_WITHOUT_MAPPING counted
+    int no_link;            // SEND_NO_LINK_ADDRESS counted
+};
+
+static bool sweep_due( const sweep_model_t * m, int slot, double now )
+{
+    return now - m->last_keep_alive[slot] >= m->interval;
+}
+
+// The rule. Slots released before the update are published by the protocol
+// update that opens it; a slot ended inside the sweep is published by the next.
+static void sweep_model_update( sweep_model_t * m, double now, int budget, uint16_t unreachable_port, sweep_step_t * out )
+{
+    *out = {};
+    for ( int slot = 0; slot < m->slots; ++slot )
+    {
+        if ( m->held[slot] )
+        {
+            m->held[slot] = false;
+            m->assignable[slot] = true;
+        }
+    }
+
+    const int first = m->cursor;
+    int cursor = first;
+    for ( int offset = 0; offset < m->slots; ++offset )
+    {
+        const int i = ( first + offset ) % m->slots;
+        const int next = ( i + 1 ) % m->slots;
+        cursor = i;
+        if ( !m->connected[i] )
+        {
+            continue;
+        }
+        if ( m->internal_error[i] )
+        {
+            m->internal_error[i] = false;
+            m->connected[i] = false;
+            m->held[i] = true;
+            out->ended[out->ended_count++] = i;
+            cursor = next;
+            continue;
+        }
+        if ( !m->mapped[i] )
+        {
+            out->missing++;
+            cursor = next;
+            continue;
+        }
+        if ( !sweep_due( m, i, now ) )
+        {
+            cursor = next;
+            continue;
+        }
+        const bool unreachable = unreachable_port != 0 && m->port[i] == unreachable_port;
+        if ( m->mode != SWEEP_STAGED_FULL && out->served_count >= budget )
+        {
+            break;
+        }
+        if ( unreachable )
+        {
+            out->no_link++;
+            cursor = next;
+            continue;
+        }
+        if ( out->served_count >= budget )
+        {
+            break;
+        }
+        out->served[out->served_count++] = i;
+        m->last_keep_alive[i] = now;
+        cursor = next;
+    }
+    m->cursor = cursor;
+}
+
+struct sweep_run_t
+{
+    control_fixture_t * f;
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server;
+    sweep_model_t model;
+    uint64_t next_client_id;
+    uint64_t next_generation;
+    uint16_t next_port;
+    int served_in_round[SWEEP_SLOTS];
+    bool whole_round[SWEEP_SLOTS];      // connected, mapped and reachable through this whole round
+};
+
+static int sweep_send_room( void * p )
+{
+    auto * f = (control_fixture_t *) p;
+    return f->staged ? f->capacity - f->used : f->room;
+}
+
+static sweep_run_t * sweep_create( int mode, int slots )
+{
+    CHECK( slots >= 2 && slots <= SWEEP_SLOTS );
+    auto * run = new sweep_run_t();
+    run->f = new control_fixture_t();
+    run->server = make_server( run->f, &run->operations, slots, mode != SWEEP_BUFFERED_ROOM );
+    if ( mode != SWEEP_STAGED_FULL )
+    {
+        run->operations.send_room = sweep_send_room;
+    }
+    run->server->disconnect_packets_per_update = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS - 1;
+    run->server->disconnect_seals_left = run->server->disconnect_packets_per_update;
+    CHECK( run->server->maintenance_next_client == 0 );
+
+    run->model.slots = slots;
+    run->model.mode = mode;
+    run->model.interval = 1.0 / ( run->server->protocol.send_rate > 0.0 ? run->server->protocol.send_rate : ROCKETNET_DEFAULT_SEND_RATE );
+    CHECK( run->model.interval >= 0.1 );
+    for ( int slot = 0; slot < slots; ++slot )
+    {
+        auto * mapping = rocketnet_encryption_map_entry( run->server->protocol.encryption_map,
+                                                         rocketnet_client_slots_mapping_index( run->server->protocol.client_slots, slot ) );
+        CHECK( mapping );
+        run->model.connected[slot] = true;
+        run->model.mapped[slot] = true;
+        run->model.port[slot] = (uint16_t) ( 1000 + slot );
+        run->model.last_keep_alive[slot] = mapping->last_keep_alive_send_time;
+    }
+    run->next_client_id = 1000;
+    run->next_generation = 1ull << 40;
+    run->next_port = 1100;
+    return run;
+}
+
+static void sweep_destroy( sweep_run_t * run )
+{
+    rn_native_server_transport_stop_and_destroy( run->server );
+    delete run->f;
+    delete run;
+}
+
+// A client connects into a slot the server has published free: with an
+// address (as a handshake leaves it), or with none (a connected slot with
+// mapping index -1, which the slot API permits and the sweep counts).
+static int sweep_join( sweep_run_t * run, bool mapped )
+{
+    auto * server = run->server;
+    int mapping_index = -1;
+    uint64_t generation = run->next_generation++;
+    rocketnet_address_t address;
+    CHECK( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+    address.port = run->next_port;
+    if ( mapped )
+    {
+        mapping_index = rocketnet_encryption_map_add( server->protocol.encryption_map, &address, 100.0 );
+        CHECK( mapping_index >= 0 );
+        generation = rocketnet_encryption_map_owner_generation( server->protocol.encryption_map, mapping_index );
+    }
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
+    const int slot = rocketnet_client_slots_assign( server->protocol.client_slots, run->next_client_id++, mapping_index, generation, user_data );
+    CHECK( slot >= 0 && slot < run->model.slots && run->model.assignable[slot] );
+    if ( mapped )
+    {
+        auto * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, mapping_index );
+        mapping->control->client_index = slot;
+        mapping->client_id = run->next_client_id - 1;
+        mapping->control->established = 1;
+        mapping->control->timeout_seconds = 1000;
+        memset( &mapping->keys, slot + 1, sizeof( mapping->keys ) );
+        run->model.last_keep_alive[slot] = mapping->last_keep_alive_send_time;
+        run->next_port++;
+    }
+    server->protocol.acks->endpoints[slot].internal_error = 0;
+
+    run->model.assignable[slot] = false;
+    run->model.connected[slot] = true;
+    run->model.mapped[slot] = mapped;
+    run->model.port[slot] = mapped ? address.port : 0;
+    run->whole_round[slot] = false;
+    return slot;
+}
+
+static void sweep_leave( sweep_run_t * run, int slot )
+{
+    rocketnet_server_transport_disconnect_client( run->server, slot );
+    CHECK( !rocketnet_client_slots_connected( run->server->protocol.client_slots, slot ) );
+    run->model.connected[slot] = false;
+    run->model.internal_error[slot] = false;
+    run->model.held[slot] = true;
+    run->whole_round[slot] = false;
+}
+
+static void sweep_print( const char * what, const int * slots, int count, const uint16_t * ports, int port_count )
+{
+    fprintf( stderr, "sweep %s:", what );
+    for ( int k = 0; k < count; ++k )
+    {
+        fprintf( stderr, " %d", slots[k] );
+    }
+    fprintf( stderr, " | ports" );
+    for ( int k = 0; k < port_count; ++k )
+    {
+        fprintf( stderr, " %d", (int) ports[k] );
+    }
+    fprintf( stderr, "\n" );
+}
+
+// One update with this budget of frames: the slots served, in order, and the
+// counters and ends, exactly as the model has them.
+static void sweep_update( sweep_run_t * run, double now, int budget )
+{
+    auto * f = run->f;
+    auto * server = run->server;
+    if ( run->model.mode == SWEEP_BUFFERED_ROOM )
+    {
+        f->room = budget;
+    }
+    else
+    {
+        f->capacity = budget;
+    }
+
+    sweep_step_t want;
+    sweep_model_update( &run->model, now, budget, run->model.mode == SWEEP_BUFFERED_ROOM ? 0 : f->unreachable_port, &want );
+
+    const uint64_t * counters = server->protocol.counters->values;
+    const uint64_t missing = counters[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING];
+    const uint64_t no_link = counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS];
+    f->sent_count = 0;
+
+    rocketnet_server_transport_update( server, now );
+
+    bool same = f->sent_count == want.served_count;
+    for ( int k = 0; same && k < want.served_count; ++k )
+    {
+        same = f->sent_ports[k] == run->model.port[want.served[k]];
+    }
+    if ( !same )
+    {
+        fprintf( stderr, "sweep mode %d, %d slots, budget %d at %.3f\n", run->model.mode, run->model.slots, budget, now );
+        sweep_print( "want", want.served, want.served_count, f->sent_ports, f->sent_count );
+    }
+    CHECK( f->sent_count == want.served_count );
+    for ( int k = 0; k < want.served_count; ++k )
+    {
+        CHECK( f->sent_ports[k] == run->model.port[want.served[k]] );
+        run->served_in_round[want.served[k]]++;
+    }
+    CHECK( counters[ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING] - missing == (uint64_t) want.missing );
+    CHECK( counters[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS] - no_link == (uint64_t) want.no_link );
+    for ( int k = 0; k < want.ended_count; ++k )
+    {
+        CHECK( server->protocol.end_reasons[want.ended[k]] == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+        run->whole_round[want.ended[k]] = false;
+    }
+    for ( int slot = 0; slot < run->model.slots; ++slot )
+    {
+        CHECK( ( rocketnet_client_slots_connected( server->protocol.client_slots, slot ) != 0 ) == run->model.connected[slot] );
+    }
+}
+
+// Slots still owed a keep-alive this round that the sweep can serve.
+static int sweep_owed( const sweep_run_t * run, double now )
+{
+    int owed = 0;
+    for ( int slot = 0; slot < run->model.slots; ++slot )
+    {
+        const bool unreachable = run->model.mode != SWEEP_BUFFERED_ROOM && run->f->unreachable_port != 0 &&
+                                 run->model.port[slot] == run->f->unreachable_port;
+        if ( run->model.connected[slot] && run->model.mapped[slot] && !unreachable && sweep_due( &run->model, slot, now ) )
+        {
+            ++owed;
+        }
+    }
+    return owed;
+}
+
+// A pass that visits every slot leaves the cursor where it began, whatever
+// the last slot it visited was: served, not due, without a mapping, ended for
+// an internal fault, or refused for want of a link-layer address. Four slots;
+// slot 3 is put in the given state, the first update (room for all) passes
+// over every slot from slot 0, and the next update, with every client due and
+// room for one frame, serves slot 0. A resume point one past (or, where the
+// last visit served or skipped a due-later client, the same slot again)
+// serves slot 1 or slot 3 instead. A pass that visited slot 0 twice ends one
+// past it as well.
+
+enum
+{
+    SWEEP_LAST_SERVED,
+    SWEEP_LAST_NOT_DUE,
+    SWEEP_LAST_NO_MAPPING,
+    SWEEP_LAST_INTERNAL_ERROR,
+    SWEEP_LAST_UNREACHABLE,
+    SWEEP_LAST_KINDS
+};
+
+static void test_sweep_full_pass_keeps_its_start()
+{
+    for ( int mode = 0; mode < SWEEP_MODES; ++mode )
+    {
+        for ( int kind = 0; kind < SWEEP_LAST_KINDS; ++kind )
+        {
+            if ( kind == SWEEP_LAST_UNREACHABLE && mode == SWEEP_BUFFERED_ROOM )
+            {
+                continue;       // the control buffer never refuses an address
+            }
+            sweep_run_t * run = sweep_create( mode, 4 );
+            auto * server = run->server;
+            const int last = 3;
+            if ( kind == SWEEP_LAST_NOT_DUE )
+            {
+                auto * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map,
+                                                                 rocketnet_client_slots_mapping_index( server->protocol.client_slots, last ) );
+                mapping->last_keep_alive_send_time = 0.95;
+                run->model.last_keep_alive[last] = 0.95;
+            }
+            else if ( kind == SWEEP_LAST_NO_MAPPING )
+            {
+                rocketnet_client_slots_release( server->protocol.client_slots, last );
+                rocketnet_client_slots_publish( server->protocol.client_slots );
+                run->model.connected[last] = false;
+                run->model.assignable[last] = true;
+                CHECK( sweep_join( run, false ) == last );
+            }
+            else if ( kind == SWEEP_LAST_INTERNAL_ERROR )
+            {
+                server->protocol.acks->endpoints[last].internal_error = 1;
+                run->model.internal_error[last] = true;
+            }
+            else if ( kind == SWEEP_LAST_UNREACHABLE )
+            {
+                run->f->unreachable_port = run->model.port[last];
+            }
+
+            sweep_update( run, 1.0, 4 );
+            CHECK( run->f->sent_count == ( kind == SWEEP_LAST_SERVED ? 4 : 3 ) );
+            sweep_update( run, 2.0, 1 );
+            CHECK( run->f->sent_count == 1 && run->f->sent_ports[0] == 1000 );
+            sweep_destroy( run );
+        }
+    }
+    printf( "test_sweep_full_pass_keeps_its_start\n" );
+}
+
+// N clients, every one due at each round, and a budget of 1, 2, N - 1 or N
+// frames per update: each round serves every client exactly once, in ring
+// order, across the wrap, and ends when nobody is owed; each update serves
+// exactly what the model does.
+
+static void test_sweep_each_client_once_per_round()
+{
+    const int sizes[] = { 3, 4, 5, 7 };
+    for ( int mode = 0; mode < SWEEP_MODES; ++mode )
+    {
+        for ( int s = 0; s < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); ++s )
+        {
+            const int n = sizes[s];
+            const int budgets[] = { 1, 2, n - 1, n };
+            for ( int b = 0; b < (int) ( sizeof( budgets ) / sizeof( budgets[0] ) ); ++b )
+            {
+                const int budget = budgets[b];
+                sweep_run_t * run = sweep_create( mode, n );
+                const int updates = ( n + budget - 1 ) / budget;
+                int expect_first = 0;
+                for ( int round = 0; round < 2 * n; ++round )
+                {
+                    memset( run->served_in_round, 0, sizeof( run->served_in_round ) );
+                    int order[SWEEP_SLOTS];
+                    int order_count = 0;
+                    for ( int u = 0; u < updates; ++u )
+                    {
+                        const double now = 1.0 + round + 0.001 * u;
+                        sweep_update( run, now, budget );
+                        for ( int k = 0; k < run->f->sent_count && order_count < SWEEP_SLOTS; ++k )
+                        {
+                            order[order_count++] = run->f->sent_ports[k] - 1000;
+                        }
+                    }
+                    CHECK( sweep_owed( run, 1.0 + round + 0.001 * updates ) == 0 );
+                    CHECK( order_count == n );
+                    for ( int k = 0; k < n; ++k )
+                    {
+                        CHECK( run->served_in_round[k] == 1 );
+                        CHECK( order[k] == ( order[0] + k ) % n );
+                    }
+                    // the next round starts where this round's last update began:
+                    // that update's pass visited every slot
+                    CHECK( order[0] == expect_first );
+                    expect_first = order[( updates - 1 ) * budget];
+                }
+                sweep_destroy( run );
+            }
+        }
+    }
+    printf( "test_sweep_each_client_once_per_round\n" );
+}
+
+// Clients connect and leave mid-round, slots end for an internal fault, a slot
+// connects with no mapping, and (staged) one address at a time has no
+// link-layer destination; budgets vary from 0 to 3 frames. Each update
+// serves exactly what the model does; each round ends with nobody owed; a
+// client connected, mapped and reachable through a whole round is served
+// exactly once in it; every waiting disconnect burst leaves at last.
+
+static uint32_t sweep_random( uint32_t * state )
+{
+    *state = *state * 1664525u + 1013904223u;
+    return *state >> 8;
+}
+
+static int sweep_pick( const sweep_run_t * run, uint32_t * state, bool connected, bool mapped )
+{
+    int candidates[SWEEP_SLOTS];
+    int count = 0;
+    for ( int slot = 0; slot < run->model.slots; ++slot )
+    {
+        if ( connected ? ( run->model.connected[slot] && ( !mapped || run->model.mapped[slot] ) ) : run->model.assignable[slot] )
+        {
+            candidates[count++] = slot;
+        }
+    }
+    return count == 0 ? -1 : candidates[sweep_random( state ) % (uint32_t) count];
+}
+
+static int sweep_connected( const sweep_run_t * run )
+{
+    int count = 0;
+    for ( int slot = 0; slot < run->model.slots; ++slot )
+    {
+        count += run->model.connected[slot] ? 1 : 0;
+    }
+    return count;
+}
+
+static void test_sweep_follows_the_rule_as_clients_come_and_go()
+{
+    const int sizes[] = { 4, 5, 7 };
+    uint32_t state = 12345;
+    for ( int mode = 0; mode < SWEEP_MODES; ++mode )
+    {
+        for ( int s = 0; s < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); ++s )
+        {
+            const int n = sizes[s];
+            sweep_run_t * run = sweep_create( mode, n );
+            bool unmapped_joined = false;
+            for ( int round = 0; round < 8; ++round )
+            {
+                const double start = 1.0 + round;
+                memset( run->served_in_round, 0, sizeof( run->served_in_round ) );
+                for ( int slot = 0; slot < n; ++slot )
+                {
+                    run->whole_round[slot] = run->model.connected[slot] && run->model.mapped[slot] &&
+                                             !( mode != SWEEP_BUFFERED_ROOM && run->f->unreachable_port != 0 &&
+                                                run->model.port[slot] == run->f->unreachable_port );
+                }
+                int u = 0;
+                for ( ; u < 8 * n && ( u == 0 || sweep_owed( run, start + 0.001 * u ) > 0 ); ++u )
+                {
+                    const uint32_t event = sweep_random( &state ) % 10;
+                    if ( event == 0 && sweep_connected( run ) > 2 )
+                    {
+                        sweep_leave( run, sweep_pick( run, &state, true, false ) );
+                    }
+                    else if ( event == 1 && sweep_pick( run, &state, false, false ) >= 0 )
+                    {
+                        sweep_join( run, true );
+                    }
+                    else if ( event == 2 && sweep_connected( run ) > 2 )
+                    {
+                        const int slot = sweep_pick( run, &state, true, true );
+                        if ( slot >= 0 )
+                        {
+                            run->server->protocol.acks->endpoints[slot].internal_error = 1;
+                            run->model.internal_error[slot] = true;
+                            run->whole_round[slot] = false;
+                        }
+                    }
+                    else if ( event == 3 && !unmapped_joined && sweep_pick( run, &state, false, false ) >= 0 )
+                    {
+                        sweep_join( run, false );
+                        unmapped_joined = true;
+                    }
+                    else if ( event == 4 && mode != SWEEP_BUFFERED_ROOM )
+                    {
+                        const int slot = sweep_pick( run, &state, true, true );
+                        const uint16_t port = ( sweep_random( &state ) % 2 == 0 || slot < 0 ) ? (uint16_t) 0 : run->model.port[slot];
+                        for ( int k = 0; k < n; ++k )
+                        {
+                            if ( run->model.port[k] != 0 && ( run->model.port[k] == port || run->model.port[k] == run->f->unreachable_port ) )
+                            {
+                                run->whole_round[k] = false;
+                            }
+                        }
+                        run->f->unreachable_port = port;
+                    }
+                    const int budget = (int) ( sweep_random( &state ) % 4 );
+                    sweep_update( run, start + 0.001 * u, budget );
+                }
+                CHECK( sweep_owed( run, start + 0.001 * u ) == 0 );
+                for ( int slot = 0; slot < n; ++slot )
+                {
+                    if ( run->whole_round[slot] && run->model.connected[slot] )
+                    {
+                        CHECK( run->served_in_round[slot] == 1 );
+                    }
+                    CHECK( run->served_in_round[slot] <= 1 );
+                }
+            }
+
+            // the waiting bursts leave in later updates with room and nobody due
+
+            run->f->unreachable_port = 0;
+            for ( int u = 0; u < 64 && run->server->disconnect_burst_count > 0; ++u )
+            {
+                sweep_update( run, 9.0 + 0.0001 * u, 8 );
+            }
+            CHECK( run->server->disconnect_burst_count == 0 );
+            sweep_destroy( run );
+        }
+    }
+    printf( "test_sweep_follows_the_rule_as_clients_come_and_go\n" );
+}
+
+// The disconnect allowance (rocketnet_server_transport_update, after the
+// sweep; proofs/tla/ServerSession.tla SealWaiting, ServerStopSpread.tla
+// SealOne): a direct transport update opens disconnect_packets_per_update
+// and seals no more waiting disconnect packets than that allowance, the send
+// room, and the packets waiting. Every burst here waits (it is made while the
+// transport reports no room), the portable control buffer takes the frames,
+// and nobody's keep-alive is due in the drain updates. Each update seals
+// exactly min( allowance, room, waiting ): the allowance at 1, one burst less
+// one, one burst, one burst and one, and two bursts either side; the room one
+// under, at and over the allowance; a single waiting burst.
+
+struct burst_case_t
+{
+    int allowance;
+    int room;
+    int bursts;
+};
+
+static void test_disconnect_seals_per_update_at_each_bound()
+{
+    const int burst = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+    const burst_case_t cases[] = {
+        { 1, 1000, 1 },
+        { 1, 0, 1 },
+        { burst - 1, 1000, 1 },
+        { burst, 1000, 1 },
+        { burst + 1, 1000, 1 },
+        { 2 * burst - 1, 1000, 2 },
+        { 2 * burst, 1000, 2 },
+        { 2 * burst + 1, 1000, 2 },
+        { burst, burst - 1, 2 },
+        { burst, burst, 2 },
+        { burst, burst + 1, 2 },
+        { 2, 1, 3 },
+        { ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1000, 6 },
+    };
+
+    for ( int c = 0; c < (int) ( sizeof( cases ) / sizeof( cases[0] ) ); ++c )
+    {
+        const burst_case_t * test = &cases[c];
+        auto * f = new control_fixture_t();
+        rocketnet_server_transport_io_operations_t operations;
+        auto * server = make_server( f, &operations, 6, false );
+        operations.send_room = sweep_send_room;
+        server->disconnect_packets_per_update = test->allowance;
+        f->room = 1000;
+        rocketnet_server_transport_update( server, 1.0 );
+        CHECK( f->sent_count == 6 && f->disconnects == 0 );
+
+        f->room = 0;
+        for ( int k = 0; k < test->bursts; ++k )
+        {
+            rocketnet_server_transport_disconnect_client( server, k );
+        }
+        CHECK( server->disconnect_burst_count == test->bursts );
+        CHECK( server->disconnect_seals == 0 );
+
+        int waiting = test->bursts * burst;
+        int room = test->room;
+        for ( int u = 1; u <= 4 * burst && waiting > 0; ++u )
+        {
+            if ( room == 0 && u == 3 )
+            {
+                room = 1000;    // nothing leaves without room; then it all does
+            }
+            f->room = room;
+            const uint64_t seals = server->disconnect_seals;
+            const int disconnects = f->disconnects;
+            rocketnet_server_transport_update( server, 1.0 + 0.001 * u );
+            int want = test->allowance < room ? test->allowance : room;
+            want = want < waiting ? want : waiting;
+            const int sealed = (int) ( server->disconnect_seals - seals );
+            if ( sealed != want )
+            {
+                fprintf( stderr, "disconnect allowance %d, room %d, %d bursts: update %d sealed %d, want %d\n",
+                         test->allowance, room, test->bursts, u, sealed, want );
+            }
+            CHECK( sealed == want );
+            CHECK( f->disconnects - disconnects == want );
+            CHECK( f->sent_count == 6 );    // no keep-alive was due: the drain had the room alone
+            waiting -= want;
+        }
+        CHECK( waiting == 0 );
+        CHECK( server->disconnect_burst_count == 0 );
+        CHECK( f->disconnects == test->bursts * burst );
+
+        rn_native_server_transport_stop_and_destroy( server );
+        delete f;
+    }
+    printf( "test_disconnect_seals_per_update_at_each_bound\n" );
+}
+
+// One allowance per update, shared with the message layer's kicks: the
+// message update opens it (rocketnet_server_transport_begin_message_update)
+// before its kicks, and the transport update that follows drains only what
+// they left; the next direct update opens a fresh one. What a drain spends is
+// gone until the next update opens the allowance again, so a kick between
+// updates whose burst the rest cannot cover waits: from one opening to the
+// next, no more than the allowance is sealed.
+
+static void test_disconnect_allowance_shared_with_the_message_update()
+{
+    const int burst = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+    const int allowance = burst + burst / 2;
+    auto * f = new control_fixture_t();
+    rocketnet_server_transport_io_operations_t operations;
+    auto * server = make_server( f, &operations, 6, false );
+    operations.send_room = sweep_send_room;
+    server->disconnect_packets_per_update = allowance;
+    f->room = 1000;
+    rocketnet_server_transport_update( server, 1.0 );
+    CHECK( f->sent_count == 6 );
+
+    // the message update opens the allowance; its first kick seals a whole
+    // burst at once, the second waits for what is left of it
+
+    rocketnet_server_transport_begin_message_update( server );
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    CHECK( server->disconnect_seals == (uint64_t) burst );
+    rocketnet_server_transport_disconnect_client( server, 1 );
+    CHECK( server->disconnect_burst_count == 1 );
+    CHECK( server->disconnect_seals == (uint64_t) burst );
+
+    rocketnet_server_transport_update( server, 1.001 );
+    CHECK( server->disconnect_seals == (uint64_t) allowance );
+
+    // a kick between updates finds the allowance spent and waits; the next
+    // direct update opens a whole allowance for both waiting bursts
+
+    rocketnet_server_transport_disconnect_client( server, 2 );
+    CHECK( server->disconnect_burst_count == 2 );
+    CHECK( server->disconnect_seals == (uint64_t) allowance );
+    rocketnet_server_transport_update( server, 1.002 );
+    CHECK( server->disconnect_seals == (uint64_t) ( 2 * allowance ) );
+    CHECK( server->disconnect_burst_count == 0 );
+
+    // that update's drain spent its allowance: this kick waits for the next one
+
+    rocketnet_server_transport_disconnect_client( server, 3 );
+    CHECK( server->disconnect_burst_count == 1 );
+    CHECK( server->disconnect_seals == (uint64_t) ( 2 * allowance ) );
+    rocketnet_server_transport_update( server, 1.003 );
+    CHECK( server->disconnect_seals == (uint64_t) ( 2 * allowance + burst ) );
+    CHECK( server->disconnect_burst_count == 0 );
+    CHECK( f->disconnects == 4 * burst );
+    CHECK( f->sent_count == 6 );
+
+    rn_native_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_disconnect_allowance_shared_with_the_message_update\n" );
+}
+
 int main( int argc, char ** argv )
 {
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
@@ -1300,6 +2027,11 @@ int main( int argc, char ** argv )
     test_staged_receive_guards();
     test_unstaged_receive_guards();
     test_staged_malformed_flood_takes_no_lookup();
+    test_sweep_full_pass_keeps_its_start();
+    test_sweep_each_client_once_per_round();
+    test_sweep_follows_the_rule_as_clients_come_and_go();
+    test_disconnect_seals_per_update_at_each_bound();
+    test_disconnect_allowance_shared_with_the_message_update();
     CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 }
