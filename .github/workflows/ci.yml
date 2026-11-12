@@ -693,7 +693,7 @@ jobs:
           # and the receive-weather pair, registered in development builds
           # only
           xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000"
-          if [ "$XDP_DEV" = ON ]; then
+          if [ "${XDP_DEV:-OFF}" = ON ]; then
             xdp_root_cases="$xdp_root_cases test_xdp_transport_linux_receive_weather_ipv4 test_xdp_transport_linux_receive_weather_ipv6"
           fi
           if [ "${ROCKETNET_NIGHTLY_NO_TIMEOUT:-0}" = 1 ]; then
