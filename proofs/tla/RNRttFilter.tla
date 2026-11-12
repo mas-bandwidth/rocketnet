@@ -47,7 +47,9 @@
 (*   SlowPathRaisesEstimate: after the path slows (and the bad intervals    *)
 (*     end), the estimate reaches the new round trip, for a sparse sender   *)
 (*     too.                                                                 *)
-(* Rule "owed" is the code (v1.1.1); the reversed witnesses: "gap" (v1.1.0: *)
+(* Rule "owed" is the code (v1.1.4); the reversed witnesses: "owedlast"     *)
+(* (v1.1.1: no silence ends before the first ack) takes the first ack of  *)
+(* a connection across an owed outage; "gap" (v1.1.0:                      *)
 (* any Probe ticks with no ack is a silence, owed or not) never raises a    *)
 (* sparse sender's estimate and refuses samples no outage delayed; "none"   *)
 (* (no filter) takes the outage's samples and the estimate is poisoned.     *)
@@ -61,18 +63,18 @@ CONSTANTS
     OutageMax,  \* the longest outage, ticks
     M,          \* reliable numbers on the wire at most
     P,          \* packets in flight at most
-    Rule,       \* "owed" (the code), "gap" (v1.1.0) or "none" (no filter)
+    Rule,       \* "owed" (the code), "owedlast" (v1.1.1), "gap" (v1.1.0) or "none" (no filter)
     FirstAck,   \* TRUE: no update has acknowledged a packet yet (has_last_ack = 0),
                 \* the estimator seeded (m9.2); FALSE: a sparse sender's previous ack
-    DupSample   \* TRUE: the code, one sample per acknowledged packet, a packet whose
-                \* number was already acknowledged included; FALSE: m9.1, a sample
-                \* only for a number still unacknowledged
+    DupSample   \* FALSE: the code (v1.1.4) and m9.1, a sample only from a packet that
+                \* acknowledges a number; TRUE: v1.1.1, one sample per acknowledged
+                \* packet, a packet whose number was already acknowledged included
 
 ASSUME /\ Probe \in Nat \ {0}
        /\ RttLow \in Nat /\ RttHigh \in Nat /\ RttLow <= RttHigh /\ RttHigh < Probe
        /\ OutageMax \in Nat
        /\ M \in Nat \ {0} /\ P \in Nat \ {0}
-       /\ Rule \in {"owed", "gap", "none"}
+       /\ Rule \in {"owed", "owedlast", "gap", "none"}
        /\ FirstAck \in BOOLEAN
        /\ DupSample \in BOOLEAN
 
@@ -167,11 +169,14 @@ Lose(s) ==
 Toward(s, r) == IF r > s THEN (s + 1)..r ELSE IF r < s THEN r..(s - 1) ELSE {s}
 
 \* rn_window_ack_on_acks: the silence test, before this update's acks.
-\* "owed": has_last_ack, has_oldest, U < next, and now - max(last_ack,
-\* oldest_first_send) >= RN_PROBE_SECONDS.  "gap": has_last_ack and
+\* "owed": has_oldest, U < next, and now - max(last_ack, oldest_first_send)
+\* >= RN_PROBE_SECONDS, from oldest_first_send alone before the first ack.
+\* "owedlast": the same, and has_last_ack.  "gap": has_last_ack and
 \* now - last_ack >= RN_PROBE_SECONDS.  "none": never (no filter).
 EndsSilence ==
-    CASE Rule = "owed" -> hasLastAck /\ hasOldest /\ Len(nums) > 0
+    CASE Rule = "owed" -> hasOldest /\ Len(nums) > 0
+                          /\ (IF hasLastAck THEN Min(lastAckAge, oldestFirstAge) ELSE oldestFirstAge) >= Probe
+      [] Rule = "owedlast" -> hasLastAck /\ hasOldest /\ Len(nums) > 0
                           /\ Min(lastAckAge, oldestFirstAge) >= Probe
       [] Rule = "gap"  -> hasLastAck /\ lastAckAge >= Probe
       [] OTHER         -> FALSE
@@ -179,9 +184,10 @@ EndsSilence ==
 \* The acknowledgement of the packet in slot s arrives
 \* (rn_window_ack_on_acks, then rn_window_ack_on_ack for it).  A second ack
 \* in the same update finds last_ack = now (age 0), as the batch does.  A
-\* packet whose number was already acknowledged acknowledges nothing; the
-\* code still samples it (its sent-map entry is still there: DupSample),
-\* m9.1 does not.
+\* packet whose number was already acknowledged acknowledges nothing and,
+\* by m9.1 and the code, gives no sample (DupSample TRUE: v1.1.1, which
+\* sampled it).  A packet carries one reliable number here, never receipts
+\* alone.
 Ack(s) ==
     /\ s \in InFlight
     /\ ~dark
