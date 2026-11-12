@@ -573,6 +573,7 @@ bool rocketnet_server_iocp_test_retry_receive_keeps_operation( bool * boundary_a
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #include "rocketnet_coalesce.h"
+#include "rocketnet_send_gather.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <mstcpip.h>
@@ -734,13 +735,6 @@ struct rocketnet_iocp_run_slot_t
     bool occupied = false;
 };
 
-// a run of a bank: order[first .. first + count - 1] are its slots
-struct rocketnet_iocp_run_t
-{
-    int first;
-    int count;
-};
-
 // A send lane: its own staging banks, operation pool, run ring and TX worker.
 // Operations [base, base + send_queue_size) of the transport's sends are the
 // lane's, so an operation's index names its lane.
@@ -771,7 +765,8 @@ struct rocketnet_iocp_lane_t
     int * run_bytes = NULL;                     // send_queue_size entries
     rocketnet_address_t * run_to = NULL;
     int * order = NULL;                         // send_queue_size entries
-    rocketnet_iocp_run_t * runs = NULL;         // send_queue_size entries
+    rocketnet_send_gather_run_t * runs = NULL;  // send_queue_size entries
+    rocketnet_send_gather_scratch_t gather = {}; // over send_queue_size slots, in the sized allocation
 };
 
 struct rocketnet_server_iocp_t
@@ -1734,7 +1729,7 @@ struct rocketnet_iocp_sized_layout_t
     uint64_t free_cells[ROCKETNET_IOCP_MAX_LANES], run_refs[ROCKETNET_IOCP_MAX_LANES];
     uint64_t staged[ROCKETNET_IOCP_MAX_LANES][ROCKETNET_IOCP_SEND_BANKS];
     uint64_t run_bytes[ROCKETNET_IOCP_MAX_LANES], run_to[ROCKETNET_IOCP_MAX_LANES];
-    uint64_t order[ROCKETNET_IOCP_MAX_LANES], runs[ROCKETNET_IOCP_MAX_LANES];
+    uint64_t order[ROCKETNET_IOCP_MAX_LANES], runs[ROCKETNET_IOCP_MAX_LANES], gather[ROCKETNET_IOCP_MAX_LANES];
     uint64_t process_from, process_packet_bytes, process_packet_data;
     uint64_t bank_data[ROCKETNET_IOCP_MAX_WORKERS][ROCKETNET_IOCP_RECEIVE_BANKS];
     uint64_t bank_from[ROCKETNET_IOCP_MAX_WORKERS][ROCKETNET_IOCP_RECEIVE_BANKS];
@@ -1773,7 +1768,8 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
         layout->run_bytes[l] = rocketnet_carve( carve, send, sizeof( int ) );
         layout->run_to[l] = rocketnet_carve( carve, send, sizeof( rocketnet_address_t ) );
         layout->order[l] = rocketnet_carve( carve, send, sizeof( int ) );
-        layout->runs[l] = rocketnet_carve( carve, send, sizeof( rocketnet_iocp_run_t ) );
+        layout->runs[l] = rocketnet_carve( carve, send, sizeof( rocketnet_send_gather_run_t ) );
+        layout->gather[l] = rocketnet_carve( carve, rocketnet_send_gather_scratch_bytes( layout->send_queue_size ), 1 );
     }
     layout->process_from = rocketnet_carve( carve, process, sizeof( rocketnet_address_t ) );
     layout->process_packet_bytes = rocketnet_carve( carve, process, sizeof( int ) );
@@ -1938,7 +1934,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
             lane->run_bytes = (int *) ( base + layout.run_bytes[l] );
             lane->run_to = (rocketnet_address_t *) ( base + layout.run_to[l] );
             lane->order = (int *) ( base + layout.order[l] );
-            lane->runs = (rocketnet_iocp_run_t *) ( base + layout.runs[l] );
+            lane->runs = (rocketnet_send_gather_run_t *) ( base + layout.runs[l] );
+            const bool gather = rocketnet_send_gather_scratch_init( &lane->gather, base + layout.gather[l], layout.send_queue_size );
+            rocketnet_assert( gather );
+            (void) gather;
         }
         iocp->process.num_packets = 0;
         iocp->process.capacity = layout.process_capacity;
@@ -2583,32 +2582,42 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
 // The lane's view of a bank, cut into the runs its posts carry: run r is
 // slots order[runs[r].first .. runs[r].first + runs[r].count - 1] of the
-// bank, one destination and one stride; an aborted slot is in no run. With
-// USO off every live slot is a run of one. Returns the number of runs.
+// bank, one destination and one stride; an aborted slot is in no run. The
+// send gather (sdk/rocketnet_send_gather.h) groups the bank by destination,
+// each destination's slots in staged order, so a player's packets make one
+// run wherever they sit in the bank. With USO off every live slot is a run of
+// one. Returns the number of runs.
+// proofs/tla/RNSendGatherLayout.tla; RNIocpSendLanes.tla Post: each
+// destination's packets leave in the order they were started.
 static int rocketnet_iocp_group_bank( rocketnet_iocp_lane_t * lane, int count, bool uso )
 {
-    int num_runs = 0;
-    for ( int i = 0; i < count; )
+    // count is at most the lane's send_queue_size, the scratch's max_slots,
+    // and both limits are positive: the gather does not refuse here
+    const int num_runs = rocketnet_send_gather( lane->run_to, sizeof( rocketnet_address_t ), lane->run_bytes, sizeof( int ), count,
+                                                uso ? ROCKETNET_IOCP_USO_MAX_SEGMENTS : 1, ROCKETNET_IOCP_USO_MAX_SUPER_BYTES,
+                                                &lane->gather, lane->order, lane->runs );
+    rocketnet_assert( num_runs >= 0 );
+    if ( num_runs >= 0 )
     {
-        if ( lane->run_bytes[i] == 0 )
-        {
-            ++i;
-            continue;
-        }
-        const int run = uso ? rocketnet_coalesce_send_run( &lane->run_bytes[i], &lane->run_to[i], count - i,
-                                                           ROCKETNET_IOCP_USO_MAX_SEGMENTS, ROCKETNET_IOCP_USO_MAX_SUPER_BYTES )
-                            : 1;
-        rocketnet_assert( run >= 1 && run <= count - i );
-        for ( int k = 0; k < run; ++k )
-        {
-            lane->order[i + k] = i + k;
-        }
-        lane->runs[num_runs].first = i;
-        lane->runs[num_runs].count = run;
-        ++num_runs;
-        i += run;
+        return num_runs;
     }
-    return num_runs;
+
+    // unreachable by the bound above; were it reached, every live slot is
+    // still sent, as a run of one, so no staged operation is stranded
+    int runs = 0;
+    for ( int i = 0; i < count; ++i )
+    {
+        if ( lane->run_bytes[i] > 0 )
+        {
+            lane->order[runs] = i;
+            lane->runs[runs].first = runs;
+            lane->runs[runs].count = 1;
+            lane->runs[runs].segment_bytes = lane->run_bytes[i];
+            lane->runs[runs].last_bytes = lane->run_bytes[i];
+            ++runs;
+        }
+    }
+    return runs;
 }
 
 static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane, rocketnet_iocp_send_bank_t * bank )

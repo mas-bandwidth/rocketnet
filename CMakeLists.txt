@@ -1123,7 +1123,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # which the worker receive prefilter (rocketnet_receive_prefilter.h) calls;
         # rocketnet_ack.cpp holds the ack block builder that file links to.
         add_executable(test_iocp tests/test_iocp.cpp sdk/rocketnet_server_iocp_windows.cpp sdk/rocketnet_server_rio_windows.cpp
-            sdk/rocketnet.cpp sdk/rocketnet_config.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp sdk/rocketnet_protocol.cpp sdk/rocketnet_ack.cpp ${ROCKETNET_SODIUM_SOURCE})
+            sdk/rocketnet.cpp sdk/rocketnet_config.cpp sdk/rocketnet_platform.cpp sdk/rocketnet_address.cpp sdk/rocketnet_hash.cpp sdk/rocketnet_protocol.cpp sdk/rocketnet_ack.cpp sdk/rocketnet_send_gather.cpp ${ROCKETNET_SODIUM_SOURCE})
         target_compile_definitions(test_iocp PRIVATE ROCKETNET_CONFIG_PARSE_ONLY
             $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
         target_include_directories(test_iocp PRIVATE sdk)
