@@ -108,7 +108,8 @@ static void test_echo_payload_refuses_numbered_messages( void )
     fragment.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
     fragment.block = 1;
     fragment.number = 11;
-    fragment.fragment = 0;
+    fragment.fragment = 1;  // the last of two: any length up to F, its base at ring 0
+    fragment.ring = ROCKETNET_MESSAGE_FRAGMENT_BYTES / ROCKETNET_MESSAGE_RING_UNIT;
     fragment.fragments = 1;
     fragment.data = body;
     fragment.bytes = 1000;
