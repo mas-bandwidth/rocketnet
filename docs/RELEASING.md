@@ -143,8 +143,8 @@ TLC re-run, MemorySanitizer, soak, leaks, macOS sanitizers or channel stress
 run exists on that commit (it was tagged 2.5 hours after soak per transport
 went red).
 
-One policy change for the owner to confirm: MSan, called advisory until
-v1.1.7, is a release gate from v1.1.8; it stays out of the per-PR set.
+MSan, called advisory until v1.1.7, is a release gate from v1.1.8; it stays
+out of the per-PR set.
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the gate covers its selected translation
