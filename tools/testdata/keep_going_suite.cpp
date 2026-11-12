@@ -11,6 +11,13 @@
 
 #include "../../tests/suite_runner.h"
 
+// suite_runner.h's own-RSS check (tests/plan_rss.h) adds the library's direct
+// allocations; this suite links no library and allocates none.
+extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
+{
+    return 0;
+}
+
 static const char * const keep_going_names[] = {
     "test_keep_going_first_passes",
     "test_keep_going_second_fails",
