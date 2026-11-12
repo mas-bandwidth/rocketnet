@@ -448,8 +448,11 @@ jobs:
         if: matrix.build_type == 'Release' && matrix.leg == 'unit'
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
+      # every commit's macOS unit row is arm64, where the vendor picks the
+      # one-pass AEAD (sodium/README.md, "AEAD dispatch and AArch64"), so the
+      # parity check runs there in Debug as well
       - name: Sodium parity against the independent system library
-        if: matrix.build_type == 'Release' && matrix.leg == 'unit'
+        if: ( matrix.build_type == 'Release' || runner.os == 'macOS' ) && matrix.leg == 'unit'
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
