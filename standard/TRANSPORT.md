@@ -3766,6 +3766,8 @@ The registry of counters, in index order, is:
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
 | `CLIENT_RECEIVE_DISCARDED_AT_STOP` | `refusal` | `none` |
+| `XDP_REPLAY_COMMIT_FAILED` | `refusal` | `none` |
+| `XDP_REPLAY_GREETING_HELD` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3878,7 +3880,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
-a1 00 00 00 2d 17 2e 45 00 00 00
+a1 00 00 00 2d 17 2e 45 00 00 00 e3 12 7a fb 00
+00 00 43 67 11 59 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

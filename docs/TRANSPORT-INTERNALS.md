@@ -777,7 +777,10 @@ replay window (`ROCKETNET_HISTORY_PACKETS`, 4096 by default) or more behind
 the high-water the userspace window sets, and never writes the map. The
 kernel window is the userspace window, so a reordered packet that every other
 transport accepts is accepted on XDP too. The transport marks each connected
-client after every update.
+client after every update. A forget or mark the commit cannot apply is kept,
+applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
+keep-alive held because its session's first mark is not yet applied is counted
+as `XDP_REPLAY_GREETING_HELD`.
 
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which

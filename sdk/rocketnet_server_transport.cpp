@@ -43,6 +43,8 @@ bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_
                                                   void * transport, uint64_t * too_short, uint64_t * too_large );
 bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations,
                                                            void * transport, uint64_t * dropped );
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
 
 // One payload slot of the receive batch's storage holds a whole opened
 // packet: the protocol opens each packet into the next free slot and an
@@ -4473,6 +4475,18 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     if ( rocketnet_server_transport_io_receive_frames_dropped( server_transport->io.operations, server_transport->io.instance, &frames_dropped ) )
     {
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED] = frames_dropped;
+    }
+
+    // the xdp replay writer's counts are its own cumulative counts too,
+    // assigned on read; both are written on this thread
+
+    uint64_t replay_commit_failed = 0;
+    uint64_t replay_greetings_held = 0;
+    if ( rocketnet_server_transport_io_replay_counts( server_transport->io.operations, server_transport->io.instance, &replay_commit_failed,
+                                                      &replay_greetings_held ) )
+    {
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] = replay_commit_failed;
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] = replay_greetings_held;
     }
 
     return &server_transport->counters;
