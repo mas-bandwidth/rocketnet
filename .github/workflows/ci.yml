@@ -3425,11 +3425,14 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
-      - name: Test the mutation runner's generator and process cleanup
+      - name: Test the mutation runner's generator and process cleanup; check the survivor baseline
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/mutation/run_mutants.py --self-test
+          # the nightly's reviewed survivor baseline: it parses, its gap count is its
+          # gap-ratchet, and every entry is still a mutant of the source as it is now
+          python3 tools/mutation/run_mutants.py --check-baseline tools/mutation/survivors.tsv
           output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
