@@ -493,7 +493,31 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
     ranking_env_put_back( &env );
 }
 
+// an operator memory budget below a pinned client's plan exhausts the ladder
+// before any create: the list's first candidate is judged against the budget
+// like every other
+
+static void test_client_ranking_budget_judges_the_first_candidate()
+{
+    ranking_env_t env;
+    ranking_env_set_aside( &env );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "1", 1 );
+
+    const ranking_result_t result = ranking_create_client( "portable", NULL, NULL );
+
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+
+    check( !result.created );
+    check( result.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
+    check( ranking_record.num_creates == 0 );
+    check( ranking_log_count( "client transport portable refused: memory plan" ) == 1 );
+    check( result.destroy_calls == 0 );
+
+    ranking_env_put_back( &env );
+}
+
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );
+REGISTER_UNIT_TEST( test_client_ranking_budget_judges_the_first_candidate );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
 REGISTER_UNIT_TEST( test_client_ladder_parse_iocp_on_linux_takes_auto );
