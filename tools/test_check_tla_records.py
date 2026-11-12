@@ -344,8 +344,9 @@ class NightlyDebtTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tla = Path(tmp)
             committed = check_tla_records.DEFAULT_CASES.parent
-            for name in ("CASES.tsv", "RUNS.tsv"):
-                (tla / name).write_bytes((committed / name).read_bytes())
+            for name in ("CASES.tsv", "RUNS.tsv", "BUDGETS.tsv"):
+                if (committed / name).exists():
+                    (tla / name).write_bytes((committed / name).read_bytes())
             if text is not None:
                 (tla / "NIGHTLY-DEBT.tsv").write_text(text, encoding="utf-8")
             out = io.StringIO()
@@ -368,6 +369,67 @@ class NightlyDebtTest(unittest.TestCase):
                 code, text = self.check_with(header + row)
                 self.assertEqual(code, 1, text)
                 self.assertIn(want, text)
+
+
+class BudgetMarginTest(unittest.TestCase):
+    """The budget margin over the committed ledgers: a PASS record over 60% of
+    its budget is refused unless BUDGETS.tsv declares a budget of at least
+    twice its seconds. Green as committed, red for each plant."""
+
+    def check_with(self, budgets, seconds=None):
+        """The committed ledgers, BUDGETS.tsv replaced by `budgets` (None: no
+        file), and RUNS.tsv's seconds replaced per config by `seconds`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            committed = check_tla_records.DEFAULT_CASES.parent
+            for name in ("CASES.tsv", "NIGHTLY-DEBT.tsv"):
+                if (committed / name).exists():
+                    (tla / name).write_bytes((committed / name).read_bytes())
+            lines = (committed / "RUNS.tsv").read_text(encoding="utf-8").splitlines(keepends=True)
+            column = lines[0].rstrip("\n").split("\t").index("seconds")
+            for number, line in enumerate(lines[1:], 1):
+                fields = line.rstrip("\n").split("\t")
+                if fields[0] in (seconds or {}):
+                    fields[column] = seconds[fields[0]]
+                    lines[number] = "\t".join(fields) + "\n"
+            (tla / "RUNS.tsv").write_text("".join(lines), encoding="utf-8")
+            if budgets is not None:
+                (tla / "BUDGETS.tsv").write_text(budgets, encoding="utf-8")
+            out = io.StringIO()
+            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False)
+            return code, out.getvalue()
+
+    def test_committed_budgets_and_plants(self):
+        path = check_tla_records.DEFAULT_CASES.parent / "BUDGETS.tsv"
+        committed = path.read_text(encoding="utf-8") if path.exists() else None
+        code, text = self.check_with(committed)
+        self.assertEqual(code, 0, text)
+        header = "config\tbudget_s\tmeasured_s\tslowest_s\tslowest_host\n"
+        # MCRNRing.cfg is a committed PASS well inside the margin; plant it at 66.5 s of its 110 s.
+        over = {"MCRNRing.cfg": "66.5"}
+        code, text = self.check_with(committed, over)
+        self.assertEqual(code, 1, text)
+        self.assertIn("MCRNRing.cfg: PASS in 66.5 s, over 60% of its 110 s budget (66 s)", text)
+        rows = "".join(line + "\n" for line in (committed or header).splitlines()[1:])
+        code, text = self.check_with(header + rows + "MCRNRing.cfg\t133\t66.5\t1\thetzner2\n", over)
+        self.assertEqual(code, 0, text)
+        self.assertIn("TLC-MARGIN MCRNRing.cfg PASS in 66.5 s of its 110 s budget (over 60%): "
+                      "declared budget 133 s in BUDGETS.tsv", text)
+        for row, want in (
+                ("MCRNRing.cfg\t132\t66.5\t1\thetzner2\n", "MCRNRing.cfg: budget_s 132 is under twice measured_s 66.5"),
+                ("MCRNRing.cfg\t200\t60\t1\thetzner2\n", "MCRNRing.cfg: measured_s 60 is not its RUNS.tsv record's"),
+                ("MCRNRing.cfg\t200\t66.5\t100.5\thetzner2\n", "MCRNRing.cfg: budget_s 200 is under twice slowest_s 100.5"),
+                ("MCReplayWindowMid.cfg\t900\t335.6\thetzner1\n", "MCReplayWindowMid.cfg: has no PASS record")):
+            with self.subTest(want=want):
+                code, text = self.check_with(header + rows + row, over)
+                self.assertEqual(code, 1, text)
+                self.assertIn(want, text)
+        # A declaration the record no longer needs is refused: the list stays the flagged cases.
+        code, text = self.check_with(header + rows + "MCRNRing.cfg\t200\t66.5\t1\thetzner2\n", {"MCRNRing.cfg": "66.5"})
+        self.assertEqual(code, 0, text)
+        code, text = self.check_with(header + rows + "MCRNRing.cfg\t200\t12\t1\thetzner2\n", {"MCRNRing.cfg": "12"})
+        self.assertEqual(code, 1, text)
+        self.assertIn("MCRNRing.cfg: its record (12 s of 110 s) is within 60% of its budget", text)
 
 
 if __name__ == "__main__":

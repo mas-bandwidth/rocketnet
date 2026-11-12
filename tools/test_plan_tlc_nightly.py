@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from plan_tlc_nightly import (NIGHTLY_DEBT_COLUMNS, SLICES, choose, day_slice, declared_debt, nightly_debt, plan,
-                              rerun, slice_key)
+from plan_tlc_nightly import (BUDGETS_COLUMNS, NIGHTLY_DEBT_COLUMNS, SLICES, choose, day_slice, declared_budgets,
+                              declared_debt, margin, nightly_debt, plan, rerun, slice_key)
 
 TOOL = Path(__file__).resolve().parent / "plan_tlc_nightly.py"
 
@@ -183,27 +183,82 @@ class RerunSliceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "columns"):
             nightly_debt([], cases, runs, ("config", "budget_s"))
 
+    def test_margin_refuses_a_pass_over_sixty_percent_without_a_declared_budget(self):
+        def rec(config, seconds, result="PASS", budget="110"):
+            return dict(config=config, result=result, exit="0", seconds=seconds, budget=budget)
+
+        # 66 s is 60% of 110 s: on the line is within it, a millisecond over is not.
+        runs = [rec("on.cfg", "66"), rec("over.cfg", "66.001"), rec("debt.cfg", "110.2", "FAIL")]
+        flagged, problems = margin(runs, {})
+        self.assertEqual(flagged, [])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("over.cfg: PASS in 66.001 s, over 60% of its 110 s budget (66 s)", problems[0])
+        row = dict(config="over.cfg", budget_s="133", measured_s="66.001", slowest_s="66.001", slowest_host="record")
+        flagged, problems = margin(runs, declared_budgets([row], runs))
+        self.assertEqual(problems, [])
+        self.assertEqual(flagged, ["TLC-MARGIN over.cfg PASS in 66.001 s of its 110 s budget (over 60%): "
+                                   "declared budget 133 s in BUDGETS.tsv"])
+        # A PASS record that cannot be measured against its budget is refused, not skipped.
+        self.assertIn("must be positive numbers", margin([rec("bad.cfg", "-")], {})[1][0])
+
+    def test_declared_budgets_refuse_every_problem_at_once(self):
+        runs = [dict(config=c, result=r, exit=e, seconds=s, budget="110")
+                for c, r, e, s in (("a", "PASS", "0", "100"), ("b", "PASS", "0", "50"),
+                                   ("d", "FAIL", "124", "110.1"), ("e", "PASS", "0", "90"),
+                                   ("g", "PASS", "0", "100"))]
+
+        def row(config, budget="200", measured="100", host="hetzner2", slowest="100"):
+            return dict(config=config, budget_s=budget, measured_s=measured, slowest_s=slowest, slowest_host=host)
+
+        self.assertEqual(list(declared_budgets([row("a")], runs)), ["a"])
+        with self.assertRaises(ValueError) as caught:
+            declared_budgets([row("a", "199"), row("a"), row("b", "200", "50"), row("d", "900", "110.1"),
+                              row("e", "200", "80", "-"), row("f"), row("g", slowest="101")], runs)
+        text = str(caught.exception)
+        for want in ("a: budget_s 199 is under twice measured_s 100", "a: listed twice",
+                     "b: its record (50 s of 110 s) is within 60% of its budget: remove the declaration",
+                     "d: has no PASS record", "e: measured_s 80 is not its RUNS.tsv record's seconds 90",
+                     "e: slowest_host must name the machine", "f: has no PASS record",
+                     "g: budget_s 200 is under twice slowest_s 101"):
+            self.assertIn(want, text)
+        with self.assertRaisesRegex(ValueError, "columns"):
+            declared_budgets([], runs, ("config", "budget_s"))
+
+    def test_declared_budget_runs_under_its_budget_in_its_slice(self):
+        cases = [case(f"MC{i}.cfg") for i in range(12)]
+        budgets = {"MC3.cfg": {"budget_s": "220"}}
+        full = rerun(cases, [], budgets=budgets)
+        self.assertEqual([entry[4] for entry in full if entry[3] == "MC3.cfg"], ["220"])
+        self.assertTrue(all(entry[4] == "0" for entry in full if entry[3] != "MC3.cfg"))
+        own = slice_key("alpha", "MC3.cfg") % SLICES
+        for k in range(SLICES):
+            picked = [entry[3] for entry in rerun(cases, [], k, budgets=budgets)]
+            self.assertEqual("MC3.cfg" in picked, k == own)
+
     def test_declared_debt_lists_cases_whatever_their_records(self):
         cases = [case("a"), case("d", gate="bench", debt="over-budget"), case("b", gate="bench")]
         self.assertEqual(declared_debt(cases), ["d"])
 
 
 class CommandLineTests(unittest.TestCase):
-    def run_tool(self, *args, cases=None, runs=None, nightly=None):
+    def run_tool(self, *args, cases=None, runs=None, nightly=None, budgets=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
             (root / "CASES.tsv").write_text(header + "".join(
                 f"{c}\tM.tla\tpass\t-\tcheck\t{g}\t{gate}\t{debt}\n" for c, g, gate, debt in cases))
-            (root / "RUNS.tsv").write_text("config\tresult\texit\tseconds\n" + "".join(
-                f"{c}\t{r}\t{e}\t1\n" for c, r, e in runs))
+            (root / "RUNS.tsv").write_text("config\tresult\texit\tseconds\tbudget\n" + "".join(
+                f"{c}\t{r}\t{e}\t{s[0] if s else 1}\t110\n" for c, r, e, *s in runs))
             (root / "stale.json").write_text("[]")
             if nightly is not None:
                 (root / "NIGHTLY-DEBT.tsv").write_text("\t".join(NIGHTLY_DEBT_COLUMNS) + "\n" + "".join(
                     "\t".join(row) + "\n" for row in nightly))
+            if budgets is not None:
+                (root / "BUDGETS.tsv").write_text("\t".join(BUDGETS_COLUMNS) + "\n" + "".join(
+                    "\t".join(row) + "\n" for row in budgets))
             return subprocess.run(
                 [sys.executable, str(TOOL), "--cases", str(root / "CASES.tsv"), "--runs", str(root / "RUNS.tsv"),
-                 "--nightly-debt", str(root / "NIGHTLY-DEBT.tsv"),
+                 "--nightly-debt", str(root / "NIGHTLY-DEBT.tsv"), "--budgets", str(root / "BUDGETS.tsv"),
                  *[str(root / "stale.json") if a == "STALE" else a for a in args]],
                 capture_output=True, text=True, check=False)
 
@@ -219,7 +274,7 @@ class CommandLineTests(unittest.TestCase):
             self.assertEqual(lines[0], "alpha 32 30 Fast.cfg 900")
             self.assertNotIn("Slow.cfg", done.stdout)
             self.assertTrue(all(line.endswith(" 0") for line in lines[1:]), lines)
-            self.assertIn("(1 nightly debt)", done.stderr)
+            self.assertIn("(1 nightly debt, 0 declared budget)", done.stderr)
         # Plant: without the file the case is not re-run at all, and is weekly debt again.
         bare = self.run_tool("--select", "rerun", "--full", cases=cases, runs=runs)
         self.assertNotIn("Fast.cfg", bare.stdout)
@@ -250,6 +305,24 @@ class CommandLineTests(unittest.TestCase):
                     done = self.run_tool(*select, cases=cases, runs=runs, nightly=[row])
                     self.assertNotEqual(done.returncode, 0)
                     self.assertIn(want, done.stderr)
+
+    def test_declared_budget_reaches_the_plan_and_refusals_stop_it(self):
+        cases = [("a.cfg", "alpha", "required", "-"), ("b.cfg", "alpha", "required", "-")]
+        runs = [("a.cfg", "PASS", "0", "100"), ("b.cfg", "PASS", "0", "10")]
+        done = self.run_tool("--select", "rerun", "--full", cases=cases, runs=runs,
+                             budgets=[("a.cfg", "200", "100", "1", "hetzner2")])
+        self.assertEqual((done.returncode, done.stdout), (0, "alpha 2 0 a.cfg 200\nalpha 2 1 b.cfg 0\n"), done.stderr)
+        self.assertIn("TLC-PLAN rerun a.cfg (alpha shard 0/2) budget 200 s", done.stderr)
+        self.assertIn("(0 nightly debt, 1 declared budget)", done.stderr)
+        # Plant: without the file the case runs with no budget.
+        bare = self.run_tool("--select", "rerun", "--full", cases=cases, runs=runs)
+        self.assertEqual(bare.stdout, "alpha 2 0 a.cfg 0\nalpha 2 1 b.cfg 0\n")
+        for row, want in ((("a.cfg", "199", "100", "1", "hetzner2"), "a.cfg: budget_s 199 is under twice measured_s 100"),
+                          (("b.cfg", "200", "10", "1", "hetzner2"), "b.cfg: its record (10 s of 110 s) is within 60%")):
+            with self.subTest(row=row):
+                refused = self.run_tool("--select", "rerun", "--full", cases=cases, runs=runs, budgets=[row])
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn(want, refused.stderr)
 
     def test_outputs_name_the_job(self):
         cases = [(f"MC{i}.cfg", "alpha", "required", "-") for i in range(60)]

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Self-test for tools/run_xdp_filter_guest.sh's log validation, through its
 # --verify-log mode (no guest, no kernel traffic): a log with a skipped case
-# exits nonzero, a log with every required case ok and the exact summary exits
+# and a log with a FAILED case each exit nonzero by name, a log with every
+# required case ok and the exact summary exits
 # 0, and an empty log or a log with zero case lines exits nonzero. Logs and
 # artifacts live in a temporary directory.
 set -u
@@ -33,12 +34,14 @@ summary="test_xdp_filter: $count cases passed"
     echo "$summary"
 } > "$tmp/clean.log"
 sed '3s/: ok$/: skipped (no XDP support)/' "$tmp/clean.log" > "$tmp/skipped.log"
+sed '3s/: ok$/: FAILED/' "$tmp/clean.log" > "$tmp/failed.log"
 : > "$tmp/empty.log"
 printf 'verifier: server_xdp.o loaded\n%s\n' "$summary" > "$tmp/nocases.log"
 
 expect clean 0 "XDP-FILTER-GUEST PASS (verify-log): $summary" "$tmp/clean.log"
 expect skipped 1 'skipped case(s) detected' "$tmp/skipped.log"
+expect failed 1 'failed case(s) detected' "$tmp/failed.log"
 expect empty 1 'XDP-FILTER-GUEST FAIL' "$tmp/empty.log"
 expect zero-cases 1 'ran 0 case lines' "$tmp/nocases.log"
 
-echo "run_xdp_filter_guest self-test passed: $count cases ok, skipped case, empty log, and zero case lines."
+echo "run_xdp_filter_guest self-test passed: $count cases ok, skipped case, failed case, empty log, and zero case lines."

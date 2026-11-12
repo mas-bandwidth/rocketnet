@@ -31,7 +31,7 @@ def fresh(config, violated=(("Invariant", "LiveSpansDisjoint"),), exit=12, worke
 
 
 class ComparerTests(unittest.TestCase):
-    def check(self, rec, got, config="MCWitness.cfg", budget="0", nightly=None):
+    def check(self, rec, got, config="MCWitness.cfg", budget="0", nightly=None, budgets=None):
         with tempfile.TemporaryDirectory() as tmp:
             evidence = Path(tmp)
             if got is not None:
@@ -39,8 +39,26 @@ class ComparerTests(unittest.TestCase):
                 run.mkdir()
                 (run / "result.json").write_text(json.dumps(got))
             out = io.StringIO()
-            failed = compare([("ring", 5, 1, config, budget)], {config: rec} if rec else {}, evidence, out, nightly)
+            failed = compare([("ring", 5, 1, config, budget)], {config: rec} if rec else {}, evidence, out, nightly,
+                             budgets)
             return failed, out.getvalue()
+
+    def test_declared_budget_is_held_to_its_record(self):
+        # A PASS record over the budget margin with its BUDGETS.tsv row: re-run under budget_s, compared as recorded.
+        rec = record("MCWitness.cfg", "pass", "-", "0", "2", "5000", "4000")
+        budgets = {"MCWitness.cfg": {"config": "MCWitness.cfg", "budget_s": "220"}}
+        done = fresh("MCWitness.cfg", (), 0, 2, "5000", "4000")
+        failed, text = self.check(rec, done, budget="220", budgets=budgets)
+        self.assertEqual(failed, [], text)
+        # Plants: a run its declared budget stopped; a budget with no row; a count off by one.
+        for got, rows, field in (
+                (dict(fresh("MCWitness.cfg", (), 124, 2, "500", "400", "FAIL"), interrupted=True), budgets, "budget"),
+                (done, {}, "budget-declaration"),
+                (fresh("MCWitness.cfg", (), 0, 2, "5000", "4001"), budgets, "distinct")):
+            with self.subTest(field=field):
+                failed, text = self.check(rec, got, budget="220", budgets=rows)
+                self.assertEqual(failed, ["MCWitness.cfg"], text)
+                self.assertIn(f"TLC-RERUN MISMATCH MCWitness.cfg {field}:", text)
 
     def assertRed(self, rec, got, field):
         failed, text = self.check(rec, got)
@@ -60,7 +78,7 @@ class ComparerTests(unittest.TestCase):
                 (fresh("MCWitness.cfg", (), 0, 2, "2837306", "474352"), "900", {"MCWitness.cfg": row}, "distinct"),
                 (dict(fresh("MCWitness.cfg", (), 124, 2, "500", "400", "FAIL"), interrupted=True), "900",
                  {"MCWitness.cfg": row}, "budget"),
-                (done, "900", {}, "nightly-debt"),
+                (done, "900", {}, "budget-declaration"),
                 (done, "0", {"MCWitness.cfg": row}, "result")):
             with self.subTest(field=field):
                 failed, text = self.check(rec, got, budget=budget, nightly=nightly)
