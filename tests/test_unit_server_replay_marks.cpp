@@ -14,6 +14,7 @@
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
+#include "../sdk/rocketnet_xdp_replay_marks.h"
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -776,22 +777,46 @@ static void test_server_replay_marks_queued_forget_supersedes_a_held_mark()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
+// the counting sink queues into the XDP transport's pending buffer
+// (sdk/rocketnet_xdp_replay_marks.h), as the transport's sink does, so the
+// cost case reads the buffer's search too
+
 struct server_replay_marks_counts_t
 {
     int forgets;
     int marks;
+    struct rocketnet_xdp_replay_marks_t * pending;
 };
 
-static bool server_replay_marks_count_forget( void * context, const struct rocketnet_address_t * )
+static bool server_replay_marks_count_forget( void * context, const struct rocketnet_address_t * address )
 {
-    ( (struct server_replay_marks_counts_t *) context )->forgets++;
-    return true;
+    struct server_replay_marks_counts_t * counts = (struct server_replay_marks_counts_t *) context;
+    counts->forgets++;
+    return rocketnet_xdp_replay_marks_forget( counts->pending, address );
 }
 
-static bool server_replay_marks_count_mark( void * context, const struct rocketnet_address_t *, uint32_t )
+static bool server_replay_marks_count_mark( void * context, const struct rocketnet_address_t * address, uint32_t high_water )
 {
-    ( (struct server_replay_marks_counts_t *) context )->marks++;
-    return true;
+    struct server_replay_marks_counts_t * counts = (struct server_replay_marks_counts_t *) context;
+    counts->marks++;
+    return rocketnet_xdp_replay_marks_mark( counts->pending, address, high_water );
+}
+
+static struct rocketnet_server_xdp_replay_key_t server_replay_marks_pending_forgets[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static struct rocketnet_server_xdp_replay_key_t server_replay_marks_pending_mark_keys[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static struct rocketnet_server_xdp_replay_value_t server_replay_marks_pending_mark_values[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static bool server_replay_marks_pending_none[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+static bool server_replay_marks_pending_all[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
+
+// the transport's commit with every forget and mark landing in the kernel
+static void server_replay_marks_pending_commit( struct rocketnet_xdp_replay_marks_t * pending )
+{
+    for ( uint32_t i = 0; i < pending->capacity; i++ )
+    {
+        server_replay_marks_pending_none[i] = false;
+        server_replay_marks_pending_all[i] = true;
+    }
+    rocketnet_xdp_replay_marks_reset_keeping( pending, server_replay_marks_pending_none, server_replay_marks_pending_all );
 }
 
 // A mass disconnect reads each slot once. Every slot's forget is queued, and
@@ -799,6 +824,9 @@ static bool server_replay_marks_count_mark( void * context, const struct rocketn
 // (proofs/tla/RNServerReplaySlots.tla DistinctUnlessOwed), so no queued forget
 // scans the other slots for a record to clear. Scanning for each forget, as
 // v1.0.0 did, reads max_clients records per forget: 1,000,000 at 1000 clients.
+// The XDP pending buffer the forgets are queued into searches only the
+// forgets the last commit kept, none here; searching every forget already
+// queued, as v1.1.0 did, reads 499,500 at 1000 clients.
 
 static void test_server_replay_marks_mass_disconnect_is_linear()
 {
@@ -820,12 +848,19 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
         records[i] = server_replay_marks_add_client( &fixture, &address, (uint64_t) ( 1000 + i ), (uint64_t) i );
     }
 
+    struct rocketnet_xdp_replay_marks_t pending;
+    rocketnet_xdp_replay_marks_bind( &pending, server_replay_marks_pending_forgets, server_replay_marks_pending_mark_keys,
+                                     server_replay_marks_pending_mark_values, rocketnet_xdp_replay_entries( clients ) );
+    rocketnet_unit_check( pending.capacity >= (uint32_t) clients );
+
     struct server_replay_marks_counts_t counts;
     memset( &counts, 0, sizeof( counts ) );
+    counts.pending = &pending;
     struct rocketnet_server_replay_sink_t sink = { &counts, server_replay_marks_count_forget, server_replay_marks_count_mark };
 
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
     rocketnet_unit_check( counts.marks == clients && counts.forgets == 0 );
+    server_replay_marks_pending_commit( &pending );
 
     for ( int i = 0; i < clients; i++ )
     {
@@ -833,9 +868,11 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
         rocketnet_encryption_map_remove_current( fixture.map, records[i].mapping );
     }
 
-    memset( &counts, 0, sizeof( counts ) );
+    counts.forgets = 0;
+    counts.marks = 0;
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
     rocketnet_unit_check( counts.forgets == clients && counts.marks == 0 );
+    rocketnet_unit_check( pending.forget_count == (uint32_t) clients && pending.refused == 0 );
 
 #if ROCKETNET_DEV
     const uint64_t comparisons = rocketnet_server_replay_marks_comparisons_for_test( fixture.marks );
@@ -844,9 +881,16 @@ static void test_server_replay_marks_mass_disconnect_is_linear()
         printf( "mass disconnect of %d clients: supersede scans read %" PRIu64 " records, expected 0\n", clients, comparisons );
     }
     rocketnet_unit_check( comparisons == 0 );
+    if ( pending.comparisons != 0 )
+    {
+        printf( "mass disconnect of %d clients: the pending buffer's forget searches read %" PRIu64 " forgets, expected 0\n", clients, pending.comparisons );
+    }
+    rocketnet_unit_check( pending.comparisons == 0 );
 #endif // #if ROCKETNET_DEV
 
-    memset( &counts, 0, sizeof( counts ) );
+    server_replay_marks_pending_commit( &pending );
+    counts.forgets = 0;
+    counts.marks = 0;
     rocketnet_server_replay_marks_walk( fixture.marks, fixture.slots, fixture.map, &sink );
     rocketnet_unit_check( counts.forgets == 0 && counts.marks == 0 );
 

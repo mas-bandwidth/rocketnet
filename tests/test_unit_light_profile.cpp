@@ -150,7 +150,11 @@
 // bench's own v1.0.1 reading of 15186018). The client pin stays the earlier
 // figure plus 64: the earlier bench read the client 9744 bytes higher, and
 // the check is an upper bound.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110620139ULL )
+// The xdp replay marks count the pending forgets a forget's repeat search
+// reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
+// kept forget count beside it fills existing padding), adding 8 bytes
+// (measured); the probe's actual= line is 3111668723.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110620147ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 

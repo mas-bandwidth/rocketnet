@@ -87,8 +87,10 @@ struct rocketnet_xdp_replay_marks_t
     uint32_t capacity;
     uint32_t forget_count;
     uint32_t mark_count;
+    uint32_t kept_forget_count;         // forgets [0, kept_forget_count) were refused by the last commit
     uint32_t kept_mark_count;           // marks [0, kept_mark_count) were refused by the last commit
     uint32_t refused;
+    uint64_t comparisons;               // development builds: every pending forget a forget's repeat search reads, for the unit cost case
 };
 
 // Binds the buffer to its owner's arrays of capacity entries, empty.
@@ -112,6 +114,7 @@ static inline void rocketnet_xdp_replay_marks_bind( struct rocketnet_xdp_replay_
 static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay_marks_t * marks )
 {
     marks->forget_count = 0;
+    marks->kept_forget_count = 0;
     marks->mark_count = 0;
     marks->kept_mark_count = 0;
     marks->refused = 0;
@@ -162,6 +165,7 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
     }
 
     marks->forget_count = kept;
+    marks->kept_forget_count = kept;
 
     uint32_t kept_marks = 0;
     for ( uint32_t j = 0; j < marks->mark_count; j++ )
@@ -204,15 +208,20 @@ static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_re
     marks->kept_mark_count--;
 }
 
-// Queues one forget per source key, coalescing repeats even when the list is
-// full. Returns false, and counts the refusal, when a new key cannot fit.
-// A queued forget, including a repeat, drops a kept mark
+// Queues one forget per source key, coalescing a repeat of a forget the last
+// commit kept even when the list is full. Returns false, and counts the
+// refusal, when a new key cannot fit. Only the kept forgets are searched:
+// the walk queues each address at most once per update
+// (proofs/tla/RNServerReplaySlots.tla DistinctUnlessOwed), so a repeat can
+// only be a forget the kernel refused, and a mass timeout of n clients reads
+// nothing here, not n(n-1)/2 forgets (the kept prefix is empty in steady
+// state). A queued forget, including a repeat, drops a kept mark
 // of the same key: that mark was taken before the slot let the address go,
 // and the commit applies forgets before marks, so kept it would rewrite the
 // released address's entry (proofs/tla/RNXdpReplay.tla, ForgetDropsKeptMark).
 
-// proofs/tla/RNXdpReplayMarksLayout.tla Forget: search below forget_count before
-// refusing a new key at capacity (InBounds); the kept search stops at
+// proofs/tla/RNXdpReplayMarksLayout.tla Forget: search below kept_forget_count
+// before refusing a new key at capacity (InBounds); the kept search stops at
 // kept_mark_count, never reading stale cells past it (LayoutIsQueue)
 static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
 {
@@ -220,8 +229,11 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
     rocketnet_xdp_replay_key_from_address( address, &key );
 
     bool pending = false;
-    for ( uint32_t i = 0; i < marks->forget_count && !pending; i++ )
+    for ( uint32_t i = 0; i < marks->kept_forget_count && !pending; i++ )
     {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif // #if ROCKETNET_DEV
         pending = memcmp( &marks->forgets[i], &key, sizeof( key ) ) == 0;
     }
 

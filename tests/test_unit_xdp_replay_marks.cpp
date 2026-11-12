@@ -177,6 +177,16 @@ static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity(
     const struct rocketnet_address_t b = replay_marks_ipv6( 50000 );
     const struct rocketnet_address_t c = replay_marks_ipv4( 50001 );
 
+    // the walk queues each address once per update, so a repeat is a forget
+    // the kernel refused at the last commit: that one coalesces, as often as
+    // it comes, and leaves room for a new source
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    const bool refuse_a[1] = { true };
+    const bool no_marks[1] = { false };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, refuse_a, no_marks );
+    rocketnet_unit_check( marks.forget_count == 1 && marks.kept_forget_count == 1 );
+
     for ( int i = 0; i < 4; i++ )
     {
         rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
@@ -185,7 +195,6 @@ static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity(
 
     rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
     rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
     rocketnet_unit_check( marks.forget_count == 2 && marks.refused == 0 );
 
     struct rocketnet_server_xdp_replay_key_t key_a, key_b;
