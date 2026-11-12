@@ -31,6 +31,8 @@ CONSTANTS
     LookFirst,      \* TRUE: each side looks at the other before it announces (reversed witness)
     LoadStore,      \* TRUE: the claim is a load, then a store, not a CAS (reversed witness)
     ResetOnLeave,   \* FALSE: main_end leaves the epoch as it was (reversed witness)
+    StaleClaim,     \* TRUE: the claim refuses only a word of the caller's own epoch, so a stale call overwrites a newer claim (reversed witness)
+    NoEpochLook,    \* TRUE: the look reads main_calls only, not the epoch again (reversed witness)
     NoOwner         \* the thread field of an unclaimed word (0 in the code), not a filler
 
 ASSUME NoOwner \notin Fillers
@@ -171,7 +173,7 @@ FillBegin(f, c) ==
 \* the claim refuses a client another filler is inside, or claimed in this
 \* epoch or a later one: a call that loaded an older epoch is stale (a main
 \* operation ended inside it) and must not overwrite the current phase's claim
-Taken(f, w) == w.th \notin {NoOwner, f} /\ (w.in \/ w.ep >= fepoch[f])
+Taken(f, w) == w.th \notin {NoOwner, f} /\ (w.in \/ IF StaleClaim THEN w.ep = fepoch[f] ELSE w.ep >= fepoch[f])
 
 \* the contract is broken by a second filler on a client in one phase,
 \* whether its claim lands or is refused
@@ -233,7 +235,7 @@ FillLook(f) ==
     /\ \/ ~LookFirst /\ fpc[f] = "claimed"
        \/ LookFirst /\ fpc[f] = "begun"
     /\ violated' = (violated \/ MainBusy)
-    /\ IF mainCalls > 0 \/ epoch # fepoch[f]
+    /\ IF mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f])
           THEN /\ Refuse(f)
                /\ word' = IF LookFirst THEN word ELSE [word EXCEPT ![c] = [@ EXCEPT !.in = FALSE]]
           ELSE /\ fpc' = [fpc EXCEPT ![f] = IF LookFirst THEN "looked" ELSE "in"]
