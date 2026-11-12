@@ -100,7 +100,11 @@ A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
 per-commit Release unit job reads its pin from there), from
-three equal PASS lines.
+three equal PASS lines. The nightly pins the fixed range 1-2050
+(`DST_FIXED_TRACE`, 5ec8156775d05f45) and each fault schedule over seeds
+1-50 (`DST_TRACE_<SCHEDULE>`) beside it, set from the three equal lines of
+run 43203428903, and compares each step's whole PASS line; a change that
+moves one moves its pin by the same rule.
 
 ## The nightly
 

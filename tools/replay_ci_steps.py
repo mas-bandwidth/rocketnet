@@ -40,6 +40,7 @@ are this host's. A green replay says the step commands pass here; only the
 dispatched run says CI is green.
 """
 
+import json
 import os
 import platform
 import re
@@ -153,7 +154,7 @@ def parse(text, job_key):
         if indent(line) == 4 and stripped.startswith("env:"):
             job_env = mapping(lines, i, 4)
         if stripped.startswith("- ") and indent(line) == 6:
-            step = {"name": None, "run": None, "if": None, "env": {}, "shell": None, "uses": None, "wd": None}
+            step = {"name": None, "run": None, "if": None, "env": {}, "shell": None, "uses": None, "wd": None, "id": None}
             # the step's keys: the first sits after "- ", the rest at indent 8
             j = i
             while j < end:
@@ -177,6 +178,8 @@ def parse(text, job_key):
                         step["shell"] = rest
                     elif key == "uses":
                         step["uses"] = rest
+                    elif key == "id":
+                        step["id"] = unquote(rest)
                     elif key == "working-directory":
                         step["wd"] = unquote(rest)
                     elif key == "env":
@@ -201,7 +204,7 @@ def parse(text, job_key):
 
 # --- expressions ---------------------------------------------------------
 
-TOKEN = re.compile(r"\s*(?:(?P<str>'(?:[^']|'')*')|(?P<num>-?\d+(?:\.\d+)?)|(?P<op>==|!=|&&|\|\||<=|>=|[!()<>,])|(?P<id>[A-Za-z_][A-Za-z0-9_\-]*(?:\.[A-Za-z0-9_\-\*]+)*))")
+TOKEN = re.compile(r"\s*(?:(?P<member>(?<=\))\.[A-Za-z_][A-Za-z0-9_\-]*)|(?P<str>'(?:[^']|'')*')|(?P<num>-?\d+(?:\.\d+)?)|(?P<op>==|!=|&&|\|\||<=|>=|[!()<>,])|(?P<id>[A-Za-z_][A-Za-z0-9_\-]*(?:\.[A-Za-z0-9_\-\*]+)*))")
 
 
 def tokenize(text):
@@ -213,7 +216,7 @@ def tokenize(text):
         if not match or match.end() == pos:
             raise ReplayError("cannot read the expression %r at %r" % (text, text[pos:]))
         pos = match.end()
-        for kind in ("str", "num", "op", "id"):
+        for kind in ("member", "str", "num", "op", "id"):
             if match.group(kind) is not None:
                 tokens.append((kind, match.group(kind)))
                 break
@@ -240,6 +243,10 @@ class Context:
     def __init__(self, sets, status="success"):
         self.sets = sets
         self.status = status
+        # steps.<id>.outcome and .conclusion: success, failure or skipped for
+        # a step with an id: that has been reached; a uses: step, which the
+        # replay does not run, counts as success
+        self.outcomes = {}
 
     def lookup(self, name):
         if name in ("true", "false", "null"):
@@ -254,6 +261,9 @@ class Context:
             return None
         if root == "runner" and name == "runner.os":
             return {"Linux": "Linux", "Darwin": "macOS", "Windows": "Windows"}.get(platform.system(), platform.system())
+        parts = name.split(".")
+        if root == "steps" and len(parts) == 3 and parts[2] in ("outcome", "conclusion"):
+            return self.outcomes.get(parts[1], "")
         if root in ("steps", "needs", "env", "vars", "secrets", "github", "runner", "job", "strategy"):
             return None
         raise ReplayError("unknown name %r in an expression" % name)
@@ -299,7 +309,12 @@ def evaluate(text, context):
                     if peek()[1] == ",":
                         take()
                 take(")")
-                return call(value, args)
+                result = call(value, args)
+                # fromJSON(...).field: a member of the call's value
+                while peek()[0] == "member":
+                    field = take()[1][1:]
+                    result = result.get(field) if isinstance(result, dict) else None
+                return result
             return context.lookup(value)
         raise ReplayError("expression %r: unexpected %r" % (text, value))
 
@@ -318,6 +333,11 @@ def evaluate(text, context):
             return loose(args[0]).endswith(loose(args[1]))
         if name == "contains":
             return loose(args[1]) in loose(args[0])
+        if name == "fromJSON":
+            try:
+                return json.loads(args[0])
+            except (TypeError, ValueError) as error:
+                raise ReplayError("expression %r: fromJSON(%r): %s" % (text, args[0], error))
         if name == "format":
             return re.sub(r"\{(\d+)\}", lambda m: "" if args[1 + int(m.group(1))] is None else str(args[1 + int(m.group(1))]), args[0])
         raise ReplayError("expression %r: function %s() is not known to the replay" % (text, name))
@@ -443,8 +463,12 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout):
     for number, step in enumerate(steps, 1):
         if step["run"] is None:
             out.write("-- not run (uses: %s): %s\n" % (step["uses"], step["name"]))
+            if step["id"]:
+                context.outcomes[step["id"]] = "success"
             continue
         go = condition(step, context)
+        if step["id"]:
+            context.outcomes[step["id"]] = "success" if go else "skipped"
         if list_only:
             out.write("%s %s\n" % ("RUN " if go else "skip", step["name"]))
             continue
@@ -475,6 +499,8 @@ def replay(workflow, job_key, sets, logs, list_only=False, out=sys.stdout):
         ran += 1
         out.write("   exit %d after %.1f s (%s)\n" % (status, time.monotonic() - start, log_path))
         if status != 0:
+            if step["id"]:
+                context.outcomes[step["id"]] = "failure"
             context.status = "failure"
             tail = open(log_path, errors="replace").read().split("\n")[-8:]
             out.write("".join("   | %s\n" % line for line in tail))
@@ -522,11 +548,27 @@ jobs:
           echo anchored >> anchor.txt
       - name: Its alias
         run: *shared
+      - name: A member of a fromJSON() value
+        if: contains(fromJSON(matrix.json).target, 'fuzz')
+        run: echo "${{ fromJSON(matrix.json).target }} ${{ fromJSON(matrix.json).absent || 'none' }}" > member.txt
+      - name: A green step with an id
+        id: made
+        run: echo made > made.txt
       - name: A red pipe stage under the default shell passes
         run: false | true
       - name: The same under shell bash is red
+        id: red
         shell: bash
         run: false | true
+      - name: Runs after a red step on the green id's outcome
+        if: ${{ !cancelled() && steps.made.outcome == 'success' }}
+        run: echo on-made > on-made.txt
+      - name: Reads the red id's outcome
+        if: ${{ !cancelled() && steps.red.conclusion == 'failure' }}
+        run: echo on-red > on-red.txt
+      - name: Not run on an outcome the red id does not have
+        if: ${{ !cancelled() && steps.red.outcome == 'success' }}
+        run: echo should-not > red-success.txt
       - name: Skipped after a red step
         run: echo should-not > after.txt
       - name: Runs after a red step when asked
@@ -554,7 +596,7 @@ def self_test():
                     pass
 
             sink = Sink()
-            status = replay(workflow, "demo", {"matrix.leg": "checks"}, os.path.join(directory, "logs"), out=sink)
+            status = replay(workflow, "demo", {"matrix.leg": "checks", "matrix.json": "{\"target\": \"rocketnet_fuzz_x\"}"}, os.path.join(directory, "logs"), out=sink)
 
             def read(name):
                 path = os.path.join(directory, name)
@@ -572,6 +614,10 @@ def self_test():
                 ("shell: bash has pipefail", "FAIL The same under shell bash is red" in sink.text),
                 ("a step after a red one is skipped", read("after.txt") is None),
                 ("if: always() runs after a red one", read("always.txt") == "always"),
+                ("fromJSON(...).field in if: and run:", read("member.txt") == "rocketnet_fuzz_x none"),
+                ("steps.<id>.outcome reads a green step", read("on-made.txt") == "on-made"),
+                ("steps.<id>.conclusion reads a red step", read("on-red.txt") == "on-red"),
+                ("a red step's outcome is not success", read("red-success.txt") is None),
                 ("uses: steps are named, not run", "not run (uses: actions/checkout@v4)" in sink.text),
                 ("only the named job ran", "Not this job" not in sink.text),
             ]
