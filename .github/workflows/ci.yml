@@ -3398,6 +3398,30 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+      # The release and landing gates (tools/release_gates.txt): the release
+      # and landing tools' fixture suites (no network), then the list itself
+      # against the workflows: every workflow and job it names exists, and
+      # every per-commit workflow has a gate row.
+      - name: Test the release and landing tools; check the release gates list
+        shell: bash
+        run: |
+          set -euo pipefail
+          for suite in tools/test_release.py tools/test_land.py; do
+            output="$(python3 "$suite" -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+            printf '%s\n' "$output"
+            grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+          done
+          python3 tools/check_release_gates.py --self-test
+          python3 tools/check_release_gates.py
+
+      # .github/rulesets/main.json (docs/branch-protection.md) requires exactly
+      # the per-commit job names the workflows produce: a new or renamed
+      # per-commit job, or a stale required name, is red here.
+      - name: The main ruleset requires exactly the per-commit jobs
+        run: |
+          python3 tools/check_branch_protection.py --self-test
+          python3 tools/check_branch_protection.py
+
       - name: Test the nightly TLA+ case planner
         shell: bash
         run: |

@@ -2,9 +2,14 @@
 """Every job a push or pull request runs is bounded to two minutes.
 
 The per-commit tier finishes within two minutes of the push (Glenn,
-2026-10-31: one minute ideally, two at most). GitHub fails a job that runs
-past its timeout-minutes, so a bound of two on every per-commit job turns an
-overrun into a red check instead of a slower gate. This checker reads every
+2026-10-31: one minute ideally, two at most). GitHub stops a job that runs
+past its timeout-minutes and concludes it `cancelled`, not `failure`, so a
+bound of two on every per-commit job turns an overrun into a job with no
+verdict instead of a slower gate. The overrun is made red by tools/land.py,
+which refuses to merge a head with any per-commit job not `success` (one
+re-run allowed for a job cancelled at the cap), and by tools/release.py; and
+by the required checks in .github/rulesets/main.json once they are applied
+(docs/branch-protection.md). This checker reads every
 workflow under .github/workflows and, for each one a push or a pull_request
 starts, refuses a job that:
 

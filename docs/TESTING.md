@@ -7,7 +7,7 @@ new feature or test commitments.
 
 ## Required checks
 
-The [release process](RELEASING.md#default-ci-requirements) owns the required
+The [release process](RELEASING.md#the-release-gates) owns the required
 checks. Use the results for the exact commit being delivered; an older green
 run does not qualify a later commit. [Contributor build checks](BUILD-REFERENCE.md)
 provides the local commands and prerequisites.
@@ -22,7 +22,7 @@ provides the local commands and prerequisites.
 | [CBMC](../.github/workflows/cbmc.yml) | The bounded arithmetic properties and assumptions in the [proof harnesses](../proofs/cbmc/) |
 | [Documentation](../.github/workflows/docs.yml) | Links, compiled examples, tutorial excerpts and generated API reference |
 | [Release checks](../.github/workflows/release-check.yml) | Version consistency and declaration of unreleased wire changes |
-| [MemorySanitizer](../.github/workflows/msan.yml) | Instrumented portable unit-suite results; this workflow remains advisory under the release policy |
+| [MemorySanitizer](../.github/workflows/msan.yml) | Instrumented portable unit-suite results; a release gate from v1.1.8 (tools/release_gates.txt), advisory before; not a per-commit check |
 
 ### CI hosts
 
