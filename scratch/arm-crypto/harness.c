@@ -19,9 +19,15 @@
 #include <valgrind/memcheck.h>
 #endif
 
+#if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
+extern int rn_arm64_chacha8;
+#endif
+
+/* 0: portable; 1: arm64, four ChaCha20 blocks in flight; 2: arm64, eight */
 static int use_arm( int on )
 {
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
+    rn_arm64_chacha8 = on == 2;
     implementation__cc20 = on ? &crypto_stream_chacha20_rn_neon_implementation : &crypto_stream_chacha20_ref_implementation;
     implementation__poly = on ? &crypto_onetimeauth_poly1305_rn_mul64_implementation : &crypto_onetimeauth_poly1305_donna_implementation;
     return 1;
@@ -36,7 +42,7 @@ static const char * picked_chacha20( void )
 #if defined(__aarch64__) && defined(__ARM_NEON) && !defined(__ARM_BIG_ENDIAN)
     if ( implementation__cc20 == &crypto_stream_chacha20_rn_neon_implementation )
     {
-        return "neon";
+        return rn_arm64_chacha8 ? "neon8" : "neon4";
     }
 #endif
     return implementation__cc20 == &crypto_stream_chacha20_ref_implementation ? "ref" : "other";
@@ -274,7 +280,7 @@ static int diff( long cases, uint64_t seed )
         unsigned long long clen = 0, plen = 0;
         use_arm( 0 );
         crypto_aead_chacha20poly1305_ietf_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-        use_arm( 1 );
+        use_arm( 1 + (int) ( i & 1 ) );
         crypto_aead_chacha20poly1305_ietf_encrypt( c_arm, &clen, m, mlen, aad, alen, NULL, nonce, key );
         if ( memcmp( c_ref, c_arm, mlen + 16 ) != 0 )
         {
@@ -301,9 +307,9 @@ static int diff( long cases, uint64_t seed )
         {
             aad[where - clen] ^= bit;
         }
-        for ( int path = 0; path < 2; path++ )
+        for ( int path = 0; path < 3; path++ )
         {
-            use_arm( path );
+            use_arm( path == 0 ? 0 : 1 + (int) ( i & 1 ) );
             if ( crypto_aead_chacha20poly1305_ietf_decrypt( p, &plen, NULL, c_arm, clen, aad, alen, nonce, key ) == 0 )
             {
                 forged_accepted++;
@@ -311,7 +317,7 @@ static int diff( long cases, uint64_t seed )
         }
         /* every 1000th case: the raw streams across the 32-bit counter
            boundary, both layouts, so the carry into word 13 matches */
-        if ( i % 1000 == 0 )
+        if ( i % 1000 <= 1 )
         {
             const uint32_t ic32 = 0xFFFFFFFFu - (uint32_t) ( next_u64() % 8 );
             const uint64_t ic64 = 0xFFFFFFFFull - ( next_u64() % 8 );
@@ -327,7 +333,7 @@ static int diff( long cases, uint64_t seed )
             /* the original (non-IETF) AEAD too */
             use_arm( 0 );
             crypto_aead_chacha20poly1305_encrypt( c_ref, &clen, m, mlen, aad, alen, NULL, nonce, key );
-            use_arm( 1 );
+            use_arm( 1 + (int) ( i & 1 ) );
             crypto_aead_chacha20poly1305_encrypt( c_arm, &clen, m, mlen, aad, alen, NULL, nonce, key );
             stream_mismatch += memcmp( c_ref, c_arm, mlen + 16 ) != 0;
         }
@@ -356,7 +362,7 @@ static void bench( int iterations )
     {
         m[i] = (unsigned char) i;
     }
-    for ( int path = 0; path < 2; path++ )
+    for ( int path = 0; path < 3; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 4; s++ )
@@ -405,7 +411,7 @@ static void parts( int iterations )
     static unsigned char m[1400], c[1400];
     memset( key, 7, sizeof( key ) );
     memset( nonce, 1, sizeof( nonce ) );
-    for ( int path = 0; path < 2; path++ )
+    for ( int path = 0; path < 3; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 5; s++ )
@@ -443,7 +449,7 @@ static void ct( void )
     memset( ad, 3, sizeof( ad ) );
     memset( m, 4, sizeof( m ) );
     static const int sizes[6] = { 0, 1, 63, 200, 1200, 1400 };
-    for ( int path = 0; path < 2; path++ )
+    for ( int path = 0; path < 3; path++ )
     {
         use_arm( path );
         for ( int s = 0; s < 6; s++ )
@@ -477,14 +483,14 @@ int main( int argc, char ** argv )
     }
     if ( strcmp( argv[1], "vectors" ) == 0 && argc > 2 )
     {
-        for ( int path = 0; path < 2; path++ )
+        for ( int path = 0; path < 3; path++ )
         {
-            if ( !use_arm( path ) && path == 1 )
+            if ( !use_arm( path ) && path >= 1 )
             {
                 printf( "no arm64 path in this build\n" );
                 break;
             }
-            const char * name = path ? "arm64" : "portable";
+            const char * name = path == 0 ? "portable" : path == 1 ? "arm64-4" : "arm64-8";
             rfc_vectors( name );
             wycheproof( argv[2], name );
         }

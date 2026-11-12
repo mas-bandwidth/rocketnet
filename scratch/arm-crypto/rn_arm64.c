@@ -66,52 +66,11 @@ struct rn_chacha_state
         b = rotl7( veorq_u32( b, c ) );                                                                                        \
     } while ( 0 )
 
-/* Four consecutive blocks, counters ctr..ctr+3 (64-bit across words 12, 13):
-   the first `len` (<= 256) bytes of keystream XOR input go to out. `in` may
-   be NULL (keystream only). */
-static void chacha_blocks4( const struct rn_chacha_state * st, uint64_t ctr, unsigned char * out, const unsigned char * in, size_t len )
+/* Lane b of words 4g..4g+3 is bytes 16g..16g+15 of block b: transpose each
+   group of four words and write the first `len` (<= 256) bytes of keystream
+   XOR input. `in` may be NULL (keystream only). */
+static inline void chacha_out4( const uint32x4_t x[16], unsigned char * out, const unsigned char * in, size_t len )
 {
-    const uint8x16_t r8 = vld1q_u8( rotl8_index );
-    uint32_t c12[4], c13[4];
-    for ( int i = 0; i < 4; i++ )
-    {
-        const uint64_t c = ctr + (uint64_t) i;
-        c12[i] = (uint32_t) c;
-        c13[i] = (uint32_t) ( c >> 32 );
-    }
-    uint32x4_t in_v[16];
-    for ( int i = 0; i < 16; i++ )
-    {
-        in_v[i] = vdupq_n_u32( st->w[i] );
-    }
-    in_v[12] = vld1q_u32( c12 );
-    in_v[13] = vld1q_u32( c13 );
-
-    uint32x4_t x0 = in_v[0], x1 = in_v[1], x2 = in_v[2], x3 = in_v[3];
-    uint32x4_t x4 = in_v[4], x5 = in_v[5], x6 = in_v[6], x7 = in_v[7];
-    uint32x4_t x8 = in_v[8], x9 = in_v[9], x10 = in_v[10], x11 = in_v[11];
-    uint32x4_t x12 = in_v[12], x13 = in_v[13], x14 = in_v[14], x15 = in_v[15];
-
-    for ( int round = 0; round < 10; round++ )
-    {
-        QR4( x0, x4, x8, x12 );
-        QR4( x1, x5, x9, x13 );
-        QR4( x2, x6, x10, x14 );
-        QR4( x3, x7, x11, x15 );
-        QR4( x0, x5, x10, x15 );
-        QR4( x1, x6, x11, x12 );
-        QR4( x2, x7, x8, x13 );
-        QR4( x3, x4, x9, x14 );
-    }
-
-    uint32x4_t x[16] = { x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15 };
-    for ( int i = 0; i < 16; i++ )
-    {
-        x[i] = vaddq_u32( x[i], in_v[i] );
-    }
-
-    /* Transpose each group of four words: lane b of words 4g..4g+3 is bytes
-       16g..16g+15 of block b. */
     for ( int g = 0; g < 4; g++ )
     {
         const uint32x4_t a = x[4 * g + 0], b = x[4 * g + 1], c = x[4 * g + 2], d = x[4 * g + 3];
@@ -144,6 +103,110 @@ static void chacha_blocks4( const struct rn_chacha_state * st, uint64_t ctr, uns
                 sodium_memzero( tmp, sizeof( tmp ) );
             }
         }
+    }
+}
+
+/* The input words as vectors, lane i holding block ctr+i's (64-bit counter
+   across words 12 and 13, as the portable path carries it). */
+static inline void chacha_input4( const struct rn_chacha_state * st, uint64_t ctr, uint32x4_t in_v[16] )
+{
+    uint32_t c12[4], c13[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        const uint64_t c = ctr + (uint64_t) i;
+        c12[i] = (uint32_t) c;
+        c13[i] = (uint32_t) ( c >> 32 );
+    }
+    for ( int i = 0; i < 16; i++ )
+    {
+        in_v[i] = vdupq_n_u32( st->w[i] );
+    }
+    in_v[12] = vld1q_u32( c12 );
+    in_v[13] = vld1q_u32( c13 );
+}
+
+/* Four consecutive blocks from ctr: the first `len` (<= 256) bytes. */
+static void chacha_blocks4( const struct rn_chacha_state * st, uint64_t ctr, unsigned char * out, const unsigned char * in, size_t len )
+{
+    const uint8x16_t r8 = vld1q_u8( rotl8_index );
+    uint32x4_t in_v[16];
+    chacha_input4( st, ctr, in_v );
+
+    uint32x4_t x0 = in_v[0], x1 = in_v[1], x2 = in_v[2], x3 = in_v[3];
+    uint32x4_t x4 = in_v[4], x5 = in_v[5], x6 = in_v[6], x7 = in_v[7];
+    uint32x4_t x8 = in_v[8], x9 = in_v[9], x10 = in_v[10], x11 = in_v[11];
+    uint32x4_t x12 = in_v[12], x13 = in_v[13], x14 = in_v[14], x15 = in_v[15];
+
+    for ( int round = 0; round < 10; round++ )
+    {
+        QR4( x0, x4, x8, x12 );
+        QR4( x1, x5, x9, x13 );
+        QR4( x2, x6, x10, x14 );
+        QR4( x3, x7, x11, x15 );
+        QR4( x0, x5, x10, x15 );
+        QR4( x1, x6, x11, x12 );
+        QR4( x2, x7, x8, x13 );
+        QR4( x3, x4, x9, x14 );
+    }
+
+    uint32x4_t x[16] = { x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15 };
+    for ( int i = 0; i < 16; i++ )
+    {
+        x[i] = vaddq_u32( x[i], in_v[i] );
+    }
+    chacha_out4( x, out, in, len );
+}
+
+/* Eight consecutive blocks from ctr as two interleaved sets of four, so a
+   core with more than two vector pipes has independent work while one set
+   waits on its rotate latency: the first `len` (<= 512) bytes. */
+static void chacha_blocks8( const struct rn_chacha_state * st, uint64_t ctr, unsigned char * out, const unsigned char * in, size_t len )
+{
+    const uint8x16_t r8 = vld1q_u8( rotl8_index );
+    uint32x4_t a_in[16], b_in[16];
+    chacha_input4( st, ctr, a_in );
+    chacha_input4( st, ctr + 4, b_in );
+
+    uint32x4_t x0 = a_in[0], x1 = a_in[1], x2 = a_in[2], x3 = a_in[3];
+    uint32x4_t x4 = a_in[4], x5 = a_in[5], x6 = a_in[6], x7 = a_in[7];
+    uint32x4_t x8 = a_in[8], x9 = a_in[9], x10 = a_in[10], x11 = a_in[11];
+    uint32x4_t x12 = a_in[12], x13 = a_in[13], x14 = a_in[14], x15 = a_in[15];
+    uint32x4_t y0 = b_in[0], y1 = b_in[1], y2 = b_in[2], y3 = b_in[3];
+    uint32x4_t y4 = b_in[4], y5 = b_in[5], y6 = b_in[6], y7 = b_in[7];
+    uint32x4_t y8 = b_in[8], y9 = b_in[9], y10 = b_in[10], y11 = b_in[11];
+    uint32x4_t y12 = b_in[12], y13 = b_in[13], y14 = b_in[14], y15 = b_in[15];
+
+    for ( int round = 0; round < 10; round++ )
+    {
+        QR4( x0, x4, x8, x12 );
+        QR4( y0, y4, y8, y12 );
+        QR4( x1, x5, x9, x13 );
+        QR4( y1, y5, y9, y13 );
+        QR4( x2, x6, x10, x14 );
+        QR4( y2, y6, y10, y14 );
+        QR4( x3, x7, x11, x15 );
+        QR4( y3, y7, y11, y15 );
+        QR4( x0, x5, x10, x15 );
+        QR4( y0, y5, y10, y15 );
+        QR4( x1, x6, x11, x12 );
+        QR4( y1, y6, y11, y12 );
+        QR4( x2, x7, x8, x13 );
+        QR4( y2, y7, y8, y13 );
+        QR4( x3, x4, x9, x14 );
+        QR4( y3, y4, y9, y14 );
+    }
+
+    uint32x4_t x[16] = { x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15 };
+    uint32x4_t y[16] = { y0, y1, y2, y3, y4, y5, y6, y7, y8, y9, y10, y11, y12, y13, y14, y15 };
+    for ( int i = 0; i < 16; i++ )
+    {
+        x[i] = vaddq_u32( x[i], a_in[i] );
+        y[i] = vaddq_u32( y[i], b_in[i] );
+    }
+    chacha_out4( x, out, in, len < 256 ? len : 256 );
+    if ( len > 256 )
+    {
+        chacha_out4( y, out + 256, in != NULL ? in + 256 : NULL, len - 256 );
     }
 }
 
@@ -209,8 +272,22 @@ static void chacha_block1( const struct rn_chacha_state * st, uint64_t ctr, unsi
 
 /* XOR `len` bytes of keystream into c (m may be NULL: keystream only). The
    64-bit counter in words 12/13 starts at ctr. */
+int rn_arm64_chacha8 = 1; /* tracer knob: 1 = eight blocks in flight when >256 bytes remain */
+
 static void chacha_xor( const struct rn_chacha_state * st, uint64_t ctr, unsigned char * c, const unsigned char * m, unsigned long long len )
 {
+    while ( rn_arm64_chacha8 && len > 256 )
+    {
+        const size_t n = len < 512 ? (size_t) len : 512;
+        chacha_blocks8( st, ctr, c, m, n );
+        ctr += 8;
+        len -= n;
+        c += n;
+        if ( m != NULL )
+        {
+            m += n;
+        }
+    }
     while ( len >= 256 )
     {
         chacha_blocks4( st, ctr, c, m, 256 );
