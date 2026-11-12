@@ -13,7 +13,9 @@
 # without gating on a machine that is not reserved quiet. The Windows leg runs
 # report-only on the Windows fleet runner ([self-hosted, Windows, X64,
 # rocketnet-windows]), which also carries other fleet work, so its numbers are
-# recorded without gating.
+# recorded without gating. Report-only is the job's verdict, not the night's: a
+# report-only FAIL exits 0 and annotates REPORT-ONLY-FAIL, and the nightly
+# watch lists it red (REPORT-FAIL); a macOS VOID annotates UNMEASURED.
 #
 # Hosted minutes budget:
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
@@ -77,6 +79,11 @@ jobs:
     # this workflow per ref.
     runs-on: [self-hosted, macOS, ARM64, fleet]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a VOID here exits 0 and annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'report-only on a shared fleet Mac: a host load over cores/4 voids the run (VOID, exit 0)'
+      # a FAIL here exits 0 (report-only, as the header above states) and annotates REPORT-ONLY-FAIL; the watch lists it red
+      ROCKETNET_REPORT_ONLY: 'the fleet Mac is not reserved quiet (header of nightly-frame-budget.yml)'
     strategy:
       fail-fast: false
       matrix:
@@ -136,6 +143,10 @@ jobs:
       run:
         shell: pwsh
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a FAIL here exits 0 (report-only, as the header above
+      # states) and annotates REPORT-ONLY-FAIL; the watch lists it red
+      ROCKETNET_REPORT_ONLY: 'the Windows fleet runner also carries other fleet work (header of nightly-frame-budget.yml)'
     strategy:
       fail-fast: false
       matrix:

@@ -10,6 +10,7 @@ between retries are all injected.
 
 import datetime
 import io
+import json
 import os
 import sys
 import tempfile
@@ -22,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_nightly_dispositions as watch  # noqa: E402
+import nightly_replay  # noqa: E402
 
 REPO = "mas-bandwidth/rocketnet"
 UTC = datetime.timezone.utc
@@ -35,15 +37,27 @@ on:
   schedule:
     - cron: "40 8 * * *"
   workflow_dispatch:
+jobs:
+  unit:
+    name: ${{ matrix.os }} / unit (main)
+    strategy:
+      matrix:
+        os: [linux, macos]
 """
 CBMC = """name: CBMC
 on:
   schedule:
     - cron: '10 5 * * *'   # daily
+jobs:
+  cbmc:
+    name: cbmc
 """
 WEEKLY = """on:
   schedule:
     - cron: "0 6 * * 6"   # weekly, Saturday
+jobs:
+  weekly:
+    name: weekly
 """
 CI = """on:
   push:
@@ -60,8 +74,8 @@ def run(run_id, created, conclusion="success", status="completed", sha=SHA_BAD):
             "conclusion": conclusion if status == "completed" else None, "head_sha": sha}
 
 
-def job(name, conclusion="success", status="completed"):
-    return {"name": name, "conclusion": conclusion, "status": status}
+def job(name, conclusion="success", status="completed", job_id=0):
+    return {"id": job_id, "name": name, "conclusion": conclusion, "status": status}
 
 
 class FakeApi:
@@ -69,8 +83,11 @@ class FakeApi:
     /pulls/<n>, /compare/... . `broken` maps a path to how many times it
     answers HTTP 503 before answering (a large number: always)."""
 
-    def __init__(self, runs=None, jobs=None, pulls=None, broken=None, errors=None, everything=None):
+    def __init__(self, runs=None, jobs=None, pulls=None, broken=None, errors=None, everything=None,
+                 notes=None):
         self.runs = runs or {}
+        # check-run (job) id -> its annotations
+        self.notes = notes or {}
         self.jobs = jobs or {}
         self.pulls = pulls or {}
         self.broken = dict(broken or {})
@@ -107,6 +124,8 @@ class FakeApi:
             return self.pulls[int(rest.split("/")[2])]
         if rest.startswith("/compare/"):
             return {"ahead_by": 7}
+        if rest.startswith("/check-runs/") and rest.endswith("/annotations"):
+            return list(self.notes.get(int(rest.split("/")[2]), []))
         raise AssertionError(f"unexpected GET {url}")
 
 
@@ -499,6 +518,182 @@ class Dispositions(WatchCase):
         rows = watch.read_dispositions(os.path.join(root, "tools", "nightly_dispositions.txt"),
                                        datetime.date(2099, 1, 1), io.StringIO())
         self.assertIsNotNone(rows)
+
+
+BUDGET = """name: frame budget
+on:
+  schedule:
+    - cron: "40 8 * * *"
+jobs:
+  macos-frame-budget:
+    name: macos frame budget
+    env:
+      ROCKETNET_MAY_NOT_MEASURE: 'report-only; a loaded host voids the run'
+  linux-frame-budget:
+    name: linux frame budget
+  windows-frame-budget:
+    name: windows frame budget
+    env:
+      ROCKETNET_REPORT_ONLY: 'the Windows runner carries other work'
+"""
+MAC = "macos frame budget"
+LINUX = "linux frame budget"
+WIN = "windows frame budget"
+FAIL_LINE = ("frame_budget transport=portable P=32 total_us_p99_median=180.25 runs=180.25,181.00,179.50 "
+             "gate=100 verdict=FAIL")
+REPORT_FAIL = [{"title": "REPORT-ONLY-FAIL", "message": FAIL_LINE}]
+VOID = [{"title": "UNMEASURED", "message": "VOID: host load 6.50 over the 4.00 gate; nothing measured"}]
+
+
+def nights(count):
+    """`count` nightly runs of nightly-frame-budget.yml, newest first: ids 101, 100, ...,
+    created 08:45Z on 2026-11-12, 11-11, ...; each has the two jobs, job id = run id * 10 (+1)."""
+    runs = [run(101 - n, (NOW - datetime.timedelta(days=n)).strftime("%Y-%m-%dT08:45:00Z")) for n in range(count)]
+    jobs = {r["id"]: [job(MAC, job_id=r["id"] * 10), job(LINUX, job_id=r["id"] * 10 + 1),
+                       job(WIN, job_id=r["id"] * 10 + 2)] for r in runs}
+    return {"nightly-frame-budget.yml": runs}, jobs
+
+
+class Unmeasured(WatchCase):
+    """A job that declares ROCKETNET_MAY_NOT_MEASURE and ends green without measuring
+    (frame budget VOID on a loaded host, low-tick DISCARDED) is never counted green."""
+
+    def setUp(self):
+        super().setUp()
+        self.workflows({"nightly-frame-budget.yml": BUDGET, "nightly-watch.yml": WATCH})
+
+    def test_derived_from_the_job_env(self):
+        found = watch.may_not_measure(self.root, "nightly-frame-budget.yml")
+        self.assertEqual(1, len(found), found)
+        regex, why = found[0]
+        self.assertRegex(MAC, "^" + regex + "$")
+        self.assertNotRegex(LINUX, "^" + regex + "$")
+        self.assertEqual("report-only; a loaded host voids the run", why)
+
+    def test_void_tonight_after_measured_nights_is_unmeasured_not_green(self):
+        runs, jobs = nights(7)
+        code, out = self.watch(FakeApi(runs, jobs, notes={1010: VOID}))
+        self.assertExit(0, code, out,
+                        "MEASURED nightly-frame-budget.yml :: macos frame budget: measured 6 of the last 7",
+                        "UNMEASURED nightly-frame-budget.yml :: macos frame budget: VOID: host load 6.50",
+                        "UNMEASURED 1, NO-MEASUREMENT 0", "nightly watch: UNMEASURED: 0 ")
+        self.assertIn(", 0 green,", out)
+        self.assertNotIn("nightly watch: green", out)
+
+    def test_void_every_night_for_seven_nights_is_red(self):
+        runs, jobs = nights(7)
+        notes = {r["id"] * 10: VOID for r in runs["nightly-frame-budget.yml"]}
+        code, out = self.watch(FakeApi(runs, jobs, notes=notes))
+        self.assertExit(1, code, out, "measured 0 of the last 7 scheduled nights (window 7)",
+                        "NO-MEASUREMENT nightly-frame-budget.yml :: macos frame budget: no measurement in 7 nights; "
+                        "tonight: VOID: host load 6.50", "nightly watch: RED: 1 ")
+
+    def test_void_every_night_but_fewer_than_seven_runs_is_not_yet_red(self):
+        runs, jobs = nights(6)
+        notes = {r["id"] * 10: VOID for r in runs["nightly-frame-budget.yml"]}
+        code, out = self.watch(FakeApi(runs, jobs, notes=notes))
+        self.assertExit(0, code, out, "measured 0 of the last 6 scheduled nights (window 7)",
+                        "UNMEASURED nightly-frame-budget.yml :: macos frame budget")
+
+    def test_cancelled_earlier_night_does_not_count_as_measured(self):
+        runs, jobs = nights(7)
+        notes = {r["id"] * 10: VOID for r in runs["nightly-frame-budget.yml"][:-1]}
+        jobs[95][0]["conclusion"] = "cancelled"
+        code, out = self.watch(FakeApi(runs, jobs, notes=notes))
+        self.assertExit(1, code, out, "measured 0 of the last 7", "NO-MEASUREMENT nightly-frame-budget.yml")
+
+    def test_measured_tonight_prints_the_history_and_is_green(self):
+        runs, jobs = nights(7)
+        notes = {r["id"] * 10: VOID for r in runs["nightly-frame-budget.yml"][1:]}
+        code, out = self.watch(FakeApi(runs, jobs, notes=notes))
+        self.assertExit(0, code, out, "MEASURED nightly-frame-budget.yml :: macos frame budget: measured 1 of the "
+                        "last 7 scheduled nights (window 7); may not measure because: report-only",
+                        "nightly watch: green: 0 ", "UNMEASURED 0, NO-MEASUREMENT 0")
+
+    def test_gated_job_failing_with_a_measurement_is_new_red(self):
+        runs, jobs = nights(7)
+        jobs[101][0]["conclusion"] = "failure"
+        code, out = self.watch(FakeApi(runs, jobs))
+        self.assertExit(1, code, out, "NEW-RED nightly-frame-budget.yml :: macos frame budget")
+
+    def test_ungated_job_is_not_asked_for_annotations(self):
+        runs, jobs = nights(2)
+        api = FakeApi(runs, jobs)
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green: 0 ")
+        self.assertNotIn(f"/repos/{REPO}/check-runs/1011/annotations", api.calls)
+        self.assertIn(f"/repos/{REPO}/check-runs/1010/annotations", api.calls)
+
+    def test_annotations_unreadable_is_api_error(self):
+        runs, jobs = nights(7)
+        broken = {f"/repos/{REPO}/check-runs/1010/annotations": 99}
+        code, out = self.watch(FakeApi(runs, jobs, broken=broken))
+        self.assertExit(1, code, out, "API-ERROR could not read run state: GET ", "check-runs/1010/annotations")
+
+    def test_replay_of_a_void_output_every_night_is_red(self):
+        # the planted-violations row nightly-watch/void-every-night, without the frame-budget run
+        output = ("VOID load=16.00 cores=16\n"
+                  "::warning title=UNMEASURED::frame budget VOID: host load 16.00 over 4; nothing measured\n")
+        self.assertEqual([{"annotation_level": "warning", "title": "UNMEASURED",
+                           "message": "frame budget VOID: host load 16.00 over 4; nothing measured"}],
+                         nightly_replay.annotations(output))
+        recorded = nightly_replay.replay(self.root, REPO, "nightly-frame-budget.yml", MAC, 7, "success", output, NOW)
+        replay_file = os.path.join(self.root, "replay.json")
+        with open(replay_file, "w", encoding="utf-8") as f:
+            json.dump(recorded, f)
+        out = io.StringIO()
+        code = watch.main(["--root", self.root, "--replay", replay_file], now=NOW, sleep=lambda s: None,
+                          since=lambda name: OLD, out=out)
+        self.assertExit(1, code, out.getvalue(), "measured 0 of the last 7",
+                        "NO-MEASUREMENT nightly-frame-budget.yml :: macos frame budget: no measurement in 7 nights; "
+                        "tonight: frame budget VOID: host load 16.00")
+
+    def test_report_only_fail_is_red(self):
+        runs, jobs = nights(2)
+        code, out = self.watch(FakeApi(runs, jobs, notes={1012: REPORT_FAIL}))
+        self.assertExit(1, code, out, "REPORT-FAIL nightly-frame-budget.yml :: windows frame budget: " + FAIL_LINE +
+                        " (report-only, so the job exited 0: the Windows runner carries other work)",
+                        "REPORT-FAIL 1", "nightly watch: RED: 1 ")
+
+    def test_report_only_pass_is_green(self):
+        runs, jobs = nights(2)
+        api = FakeApi(runs, jobs)
+        code, out = self.watch(api)
+        self.assertExit(0, code, out, "nightly watch: green: 0 ", "REPORT-FAIL 0")
+        self.assertIn(f"/repos/{REPO}/check-runs/1012/annotations", api.calls)
+
+    def test_report_only_fail_owned_by_a_row_is_owned(self):
+        self.rows("nightly-frame-budget.yml\twindows frame budget\tglenn\t2026-11-12\tWindows runner contention\n")
+        runs, jobs = nights(2)
+        code, out = self.watch(FakeApi(runs, jobs, notes={1012: REPORT_FAIL}))
+        self.assertExit(0, code, out, "OWNED nightly-frame-budget.yml :: windows frame budget (report-only FAIL: "
+                        + FAIL_LINE + ") by glenn")
+
+    def test_replay_of_a_report_only_fail_is_red(self):
+        # the planted-violations row nightly-watch/report-only-fail, without the frame-budget run
+        output = FAIL_LINE + "\n::warning title=REPORT-ONLY-FAIL::" + FAIL_LINE + "\n"
+        recorded = nightly_replay.replay(self.root, REPO, "nightly-frame-budget.yml", WIN, 1, "success", output, NOW)
+        replay_file = os.path.join(self.root, "replay.json")
+        with open(replay_file, "w", encoding="utf-8") as f:
+            json.dump(recorded, f)
+        out = io.StringIO()
+        code = watch.main(["--root", self.root, "--replay", replay_file], now=NOW, sleep=lambda s: None,
+                          since=lambda name: OLD, out=out)
+        self.assertExit(1, code, out.getvalue(), "REPORT-FAIL nightly-frame-budget.yml :: windows frame budget: "
+                        + FAIL_LINE)
+
+    def test_every_gated_job_in_the_repository_names_a_reason(self):
+        root = str(Path(__file__).resolve().parent.parent)
+        total = 0
+        for name, _ in watch.scheduled_workflows(root):
+            for regex, why in watch.may_not_measure(root, name):
+                self.assertTrue(why.strip(), (name, regex))
+                total += 1
+        self.assertGreater(total, 0, "no workflow declares ROCKETNET_MAY_NOT_MEASURE")
+        reports = [why for name, _ in watch.scheduled_workflows(root)
+                   for _, why in watch.may_not_measure(root, name, watch.REPORT_ONLY)]
+        self.assertEqual(2, len(reports), "the macOS and Windows frame-budget legs are report-only")
+        self.assertTrue(all(why.strip() for why in reports), reports)
 
 
 class CronParser(unittest.TestCase):
