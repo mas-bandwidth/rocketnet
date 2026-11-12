@@ -1,0 +1,14 @@
+diff --git a/sdk/xdp/server_xdp.c b/sdk/xdp/server_xdp.c
+index 4b9e9fc09..0052403d2 100644
+--- a/sdk/xdp/server_xdp.c
++++ b/sdk/xdp/server_xdp.c
+@@ -503,8 +503,7 @@ int server_xdp_filter( struct xdp_md * ctx )
+             }
+ 
+             const struct rocketnet_server_xdp_config_t * config = server_xdp_config();
+-            if ( config == NULL || config->vlan_id == 0 ||
+-                 ( vlan->tci & __constant_htons( 0x0fff ) ) != config->vlan_id )
++            if ( config == NULL || config->vlan_id == 0 )
+             {
+                 return XDP_PASS;
+             }
