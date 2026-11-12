@@ -3217,7 +3217,8 @@ jobs:
   #   -O0 asserted nothing the Release run had not, at five times the cost
   #   (49s vs 10s on ubuntu).
   #
-  # So the per-OS pair runs ONCE, here, per commit, on the Release build --
+  # So the per-OS pair runs ONCE, here, on the Release build, in the nightly
+  # tier (this job's if: inputs.full; it is not a per-commit job) --
   # every check kept, none moved to a nightly, none weakened. It is a separate
   # job rather than an `if: matrix.build_type == 'Release'` on the existing
   # rows because the ubuntu Release row was itself at 153s: pinning would have
@@ -3300,7 +3301,9 @@ jobs:
       # fail unless the audit aborts -- and prove, in the leg beside them,
       # that the same corruption is SILENT without it. The profile legs
       # double-charge the accounting on purpose and fail unless the profile
-      # refuses to print shares.
+      # refuses to print shares. The delivery, payload, conservation,
+      # refusal and watchdog legs each plant the fault their oracle exists
+      # to catch and fail unless the run goes red naming that oracle.
 
       - name: soak_sim instrument selftest
         run: bash scripts/soak-sim-selftest
@@ -3308,7 +3311,9 @@ jobs:
       # soak's command line and end-of-run summary: every argument refusal
       # exits 2 without a run, a --seconds 3 run ends inside 3..15 s with
       # every summary line, the positional iteration count keeps its meaning,
-      # and a planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) goes red.
+      # a planted verify failure (ROCKETNET_SOAK_FAULT_VERIFY=1) goes red, and
+      # a planted missing, repeated and late payload on a clean link
+      # (ROCKETNET_SOAK_FAULT_SEND) each fail the link witness's verdict.
       # About 8 s of wall time.
 
       - name: soak argument and summary selftest
