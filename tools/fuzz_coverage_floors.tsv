@@ -22,6 +22,9 @@ rocketnet_fuzz_receive_structured	Linux	3545
 rocketnet_fuzz_round_trip	Linux	552
 rocketnet_fuzz_server_transport	Linux	9301
 rocketnet_fuzz_session	Linux	11599
+# rocketnet_fuzz_session_raw, 2026-11-12, the rebased end-to-end-checks tree: Linux bench-nyc-1 (Ubuntu clang 21.1.8,
+# XDP on) covered 12956; Darwin macbook (Apple clang 21.0.0) covered 10247. Nine tenths, rounded down.
+rocketnet_fuzz_session_raw	Linux	11660
 rocketnet_fuzz_token_private	Linux	1233
 rocketnet_fuzz_uring_recvmsg	Linux	144
 rocketnet_fuzz_xdp_filter	Linux	270
@@ -38,6 +41,7 @@ rocketnet_fuzz_receive_structured	Darwin	3545
 rocketnet_fuzz_round_trip	Darwin	552
 rocketnet_fuzz_server_transport	Darwin	6846
 rocketnet_fuzz_session	Darwin	9149
+rocketnet_fuzz_session_raw	Darwin	9222
 rocketnet_fuzz_token_private	Darwin	1233
 rocketnet_fuzz_uring_recvmsg	Darwin	off
 rocketnet_fuzz_xdp_filter	Darwin	off
