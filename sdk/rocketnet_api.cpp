@@ -1047,7 +1047,7 @@ enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( send_kbps, 256 );                                              // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( num_channels, ROCKETNET_LIGHT_NUM_CHANNELS );                  // one channel per reliability mode (fewer in a build of fewer); one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
     RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these
@@ -2478,7 +2478,7 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
-    RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
+    RN_LIGHT_SET( num_channels, ROCKETNET_LIGHT_NUM_CHANNELS );                  // one channel per reliability mode (fewer in a build of fewer); one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
     RN_LIGHT_SET( max_message_bytes, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );   // 1415 bytes, the payload ceiling minus the form byte; packets_per_update sends one of these

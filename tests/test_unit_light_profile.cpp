@@ -176,7 +176,7 @@
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
     check( config->per_client_send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );
@@ -193,7 +193,7 @@ static void light_message_fields_server( const struct rocketnet_server_config_t 
 static void light_message_fields_client( const struct rocketnet_client_config_t * config )
 {
     check( config->send_kbps == 256 );
-    check( config->num_channels == 8 );
+    check( config->num_channels == ( ROCKETNET_MAX_CHANNELS < 8 ? ROCKETNET_MAX_CHANNELS : 8 ) );
     check( config->reliable_messages_in_flight == 256 );
     check( config->receive_message_buffer_bytes == 142400 );
     check( config->max_message_bytes == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 );

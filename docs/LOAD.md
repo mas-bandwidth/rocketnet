@@ -196,7 +196,8 @@ with the actual host link capacity separately. The fixed-rate workload has
 `timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
 share rate, population, transport and measurement scope.
 
-The light profile is the SDK's public light-client geometry: eight channels, a
+The light profile is the SDK's public light-client geometry: eight channels (or
+`ROCKETNET_MAX_CHANNELS` in a build of fewer), a
 256-message in-flight reliability window, a 142,400-byte receive buffer, a
 1415-byte (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`) maximum message, a
 141,500-byte send buffer, a 128-message send queue, 256 packets in flight, 4
@@ -357,7 +358,8 @@ requirements to each configuration group:
 
 - **Runtime `num_channels`** (`rocketnet_*_config_t.num_channels`, environment
   `ROCKETNET_CLIENT_NUM_CHANNELS` / `ROCKETNET_SERVER_NUM_CHANNELS`, range
-  `1 .. ROCKETNET_MAX_CHANNELS`, default `32`, light `8`): each channel owns
+  `1 .. ROCKETNET_MAX_CHANNELS`, default `32`, light `8`, each at most
+  `ROCKETNET_MAX_CHANNELS`): each channel owns
   independent ordered (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED*`) and sequenced
   (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED*`) state.
 - **Tradeoff**: Head-of-line blocking on `RELIABLE_ORDERED` is scoped to a
