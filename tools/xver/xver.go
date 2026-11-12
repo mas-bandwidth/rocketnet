@@ -479,7 +479,7 @@ func splitList(s string) []string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: xver build -tree <source tree> -build <build dir> [-src tools/xver]")
+	fmt.Fprintln(os.Stderr, "usage: xver build -tree <source tree> -build <build dir> [-src .]")
 	fmt.Fprintln(os.Stderr, "       xver run -bin <label>=<path> ... -new <label> [-transports gso,io_uring] [-cases ...] [-parallel 4] [-count 300] [-out dir]")
 	os.Exit(2)
 }
@@ -491,7 +491,7 @@ func main() {
 	switch os.Args[1] {
 	case "build":
 		fs := flag.NewFlagSet("build", flag.ExitOnError)
-		src := fs.String("src", "tools/xver", "the directory holding xver.c and its CMakeLists.txt")
+		src := fs.String("src", ".", "the directory holding xver.c and its CMakeLists.txt (run from tools/xver, as the nightly does)")
 		tree := fs.String("tree", "", "the rocketnet source tree to build against")
 		buildDir := fs.String("build", "", "the build directory; the harness is <build>/xver")
 		_ = fs.Parse(os.Args[2:])
@@ -534,8 +534,16 @@ func main() {
 			}
 		}
 		var labels []string
-		for label := range bins {
+		missing := false
+		for label, path := range bins {
 			labels = append(labels, label)
+			if info, err := os.Stat(path); err != nil || info.IsDir() {
+				fmt.Printf("XVER FAIL version=%s: no harness at %s\n", label, path)
+				missing = true
+			}
+		}
+		if missing {
+			os.Exit(1)
 		}
 		sort.Strings(labels)
 		list := pairings(labels, *newest, splitList(*transports), splitList(*cases))
