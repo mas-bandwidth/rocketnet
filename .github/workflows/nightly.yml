@@ -69,8 +69,8 @@
 #   linux / mutation        tools/mutation/run_mutants.py over every mutant
 #                           of the six core table and ring files and the SDK
 #                           files changed in the last 91 days, one slice of
-#                           90 a night (about 90 minutes), so the whole list
-#                           every 90 nights, less the Windows sources. A
+#                           90 a night (about 60 minutes), so the whole list
+#                           every 90 nights, less test code and Windows sources. A
 #                           risk-class survivor on a line changed since the
 #                           last release fails the job; every other survivor
 #                           is reported. One mutant is one rebuild
@@ -85,7 +85,7 @@ on:
   workflow_dispatch:
     inputs:
       mutation_full:
-        description: "linux / mutation: the campaign as it was: the whole mutant list of every file, every risk-class survivor fails, instead of the day's slice judged on lines changed since the last release (about 130 hours with 4 workers: past the job's 120-hour limit, so raise mutation_workers)"
+        description: "linux / mutation: the campaign with its original rule: the whole mutant list of every file but test code, every risk-class survivor fails, instead of the day's slice judged on lines changed since the last release (41047 mutants, about 99 hours with 4 workers, inside the job's 120-hour limit)"
         type: boolean
         default: false
       mutation_workers:
@@ -909,17 +909,20 @@ jobs:
   # release before HEAD (git describe of HEAD^, then git diff TAG HEAD):
   # code just written without a test that notices it. Every other survivor is
   # reported with file:line and mutation in the job summary and the artifact,
-  # counted, and never fails. io_uring and GSO stay judged.
+  # counted, and never fails. io_uring and GSO stay judged. Test code under
+  # sdk/ (the EXCLUDED list of cmake/RocketnetSources.cmake, rocketnet_tests.cpp
+  # today, and the sdk/rocketnet_test_*.h headers) is left out of every run,
+  # mutation_full too, and printed: mutating it measures nothing.
   #
-  # Over every SDK source at 5d4088727 less the Windows sources (55650
-  # mutants) a slice holds 545 to 711, mean 618: 79 to 103 minutes, mean 90,
+  # Over every SDK source at 45eb05364 less test code and the Windows sources
+  # (37617 mutants) a slice holds 357 to 494, mean 418: 52 to 72 minutes, mean 61,
   # at the measured rate, plus the four workers' first build; the 90 slices
   # cover the whole list every 90 nights, and the 91-day window keeps a
   # changed file in the list for all 90 of them. 90 is also the repository's
   # artifact retention in days, so the slice records of one whole cycle are
   # always there to audit. workflow_dispatch with mutation_full runs the
-  # campaign as it was: the whole list, every file, every risk-class survivor
-  # fails (raise mutation_workers to fit the 120-hour limit). --self-test
+  # campaign with its original rule: every file but test code (41047 mutants),
+  # every risk-class survivor fails, about 99 hours with 4 workers. --self-test
   # does not build; this step is the campaign,
   # which is why it is not on the per-commit gate. The tool is exec'd so a
   # cancelled step's signal reaches it; it then kills every test process it
@@ -960,7 +963,7 @@ jobs:
           if [[ "$MUTATION_FULL" == 1 ]]; then
             slice_args=()
             slice="full (workflow_dispatch mutation_full: every slice, 0..$((slices - 1)) of $slices)"
-            rule="the original rule: every file, every risk-class survivor fails"
+            rule="the original rule: every file but test code, every risk-class survivor fails"
             rule_args=()
           else
             slice_args=(--slice "$((day % slices))/$slices")

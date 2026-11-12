@@ -161,6 +161,28 @@ def xdp_whole_file(text):
     return False
 
 
+TEST_HEADER_RE = re.compile(r"^sdk/rocketnet_test_[^/]*\.(h|hh|hpp|hxx|inc)$")
+
+
+def without_test_code(files, cmake_text):
+    """Leave out test code under sdk/ on every platform: (kept, excluded {file: why}).
+
+    Test code is the ROCKETNET_SDK_SOURCES_EXCLUDED list of
+    cmake/RocketnetSources.cmake (sources compiled into the test binary only)
+    and the sdk/rocketnet_test_*.h headers (test vectors and the test seam).
+    A mutant in it changes what a test checks, not what the library does."""
+    tests = set(cmake_list(cmake_text, "ROCKETNET_SDK_SOURCES_EXCLUDED"))
+    kept, out = [], {}
+    for f in files:
+        if f in tests:
+            out[f] = "ROCKETNET_SDK_SOURCES_EXCLUDED in cmake/RocketnetSources.cmake (the test binary only)"
+        elif TEST_HEADER_RE.match(f):
+            out[f] = "an sdk/rocketnet_test_* header (test vectors or test seam)"
+        else:
+            kept.append(f)
+    return kept, out
+
+
 def linux_judgement(files, cmake_text, texts):
     """Split the files for a Linux runner: (kept, excluded, not_judged).
 
@@ -259,7 +281,7 @@ def summary_markdown(info, chosen):
         for m in rows:
             lines.append(f"- `{m['file']}:{m['line']}` {m['operator']} `{m['original'].strip()}` -> `{m['mutated'].strip()}`")
         lines.append("")
-    for key, title in (("excluded", "Excluded: the Linux build does not compile them"),
+    for key, title in (("excluded", "Excluded: test code, and on Linux what the Linux build does not compile"),
                        ("not_judged", "Not judged here: AF_XDP files (mutated, survivors listed above)")):
         lines.append(f"### {title}: {len(info.get(key) or {})}")
         for f, why in sorted((info.get(key) or {}).items()):
@@ -680,8 +702,18 @@ def self_test():
     if verdict(guard, lines, {}) != "report" or verdict(guard, None, {}) != "report":
         print("self-test FAILED: a rocketnet_assert survivor was not reported")
         return 1
+    # test code is left out on every platform: the cmake EXCLUDED list and the
+    # sdk/rocketnet_test_* headers; a library file is kept
+    test_cmake = cmake + "set(ROCKETNET_SDK_SOURCES_EXCLUDED\n    sdk/a_tests.cpp)\n"
+    kept, gone = without_test_code(["sdk/a_tests.cpp", "sdk/rocketnet_test_seams.h", "sdk/rocketnet_test_vectors.h",
+                                    "sdk/a_common.cpp", "sdk/rocketnet_testing_off.cpp"], test_cmake)
+    if kept != ["sdk/a_common.cpp", "sdk/rocketnet_testing_off.cpp"] or sorted(gone) != [
+            "sdk/a_tests.cpp", "sdk/rocketnet_test_seams.h", "sdk/rocketnet_test_vectors.h"]:
+        print(f"self-test FAILED: test code split kept {kept}, left out {sorted(gone)}")
+        return 1
     print(f"ok run_mutants self-test: {len(first)} planted mutants, risk-class survival fails the gate, "
           "rocketnet_assert survivors do not, slices partition the list and do not move with line numbers, "
+          "test code is left out, "
           "--platform linux leaves out Windows sources and their headers and sets AF_XDP apart, "
           "--changed-since fails only survivors on changed lines")
     return 0
@@ -728,16 +760,22 @@ def main():
         p.error(str(error))
     started = time.monotonic()
 
-    excluded, not_judged = {}, {}
+    cmake_text = (ROOT / "cmake" / "RocketnetSources.cmake").read_text()
+    args.files, excluded = without_test_code(args.files, cmake_text)
+    for f, why in sorted(excluded.items()):
+        print(f"excluded (test code, mutating it measures nothing): {f}: {why}", flush=True)
+    excluded = {f: "test code: " + why for f, why in excluded.items()}
+    not_judged = {}
     if args.platform == "linux":
         texts = {}
         for pattern in ("sdk/*", "sdk/*/*", "tests/*", "tests/*/*"):
             for path in ROOT.glob(pattern):
                 if path.is_file() and path.suffix in (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc"):
                     texts[path.relative_to(ROOT).as_posix()] = path.read_text(errors="replace")
-        cmake_text = (ROOT / "cmake" / "RocketnetSources.cmake").read_text()
-        args.files, excluded, not_judged = linux_judgement(args.files, cmake_text, texts)
-        for f, why in sorted(excluded.items()):
+        args.files, foreign, not_judged = linux_judgement(args.files, cmake_text, texts)
+        excluded.update(foreign)
+        excluded_linux = foreign
+        for f, why in sorted(excluded_linux.items()):
             print(f"excluded (the Linux build does not compile it): {f}: {why}", flush=True)
         for f, why in sorted(not_judged.items()):
             print(f"not judged here (mutated, survivors listed apart, never failing): {f}: {why}", flush=True)
