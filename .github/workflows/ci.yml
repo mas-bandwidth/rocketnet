@@ -410,18 +410,20 @@ jobs:
       - name: Check no thread-local storage in a production build
         if: matrix.leg == 'checks'
         shell: bash
+        # The four reads share nothing and run at once (tools/run_parallel.py):
+        # the step takes its slowest, the preprocessing, not their sum.
         run: |
           set -euo pipefail
-          python3 tools/check_no_thread_local.py --self-test
-          python3 tools/check_no_thread_local.py
+          commands=('python3 tools/check_no_thread_local.py --self-test' 'python3 tools/check_no_thread_local.py')
           if [ "${{ matrix.dev }}" = "OFF" ]; then
-            python3 tools/check_no_thread_local.py --preprocess build/compile_commands.json
             libraries=(build/librocketnet.a)
             for shared in bin/librocketnet.so bin/librocketnet.dylib; do
               if [ -f "$shared" ]; then libraries+=("$shared"); fi
             done
-            python3 tools/check_no_thread_local.py --objects "${libraries[@]}"
+            commands+=('python3 tools/check_no_thread_local.py --preprocess build/compile_commands.json')
+            commands+=("python3 tools/check_no_thread_local.py --objects ${libraries[*]}")
           fi
+          python3 tools/run_parallel.py "${commands[@]}"
 
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
@@ -911,17 +913,19 @@ jobs:
 
       # The other optimized configurations are hardened like Release: each
       # builds the shared library alone in its own directory and the same
-      # checker reads it.
+      # checker reads it. The two share nothing and build at once
+      # (tools/run_parallel.py).
       - name: Check RelWithDebInfo and MinSizeRel hardening
         if: matrix.leg == 'checks' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
+        shell: bash
         run: |
+          set -euo pipefail
+          commands=()
           for config in RelWithDebInfo MinSizeRel; do
             dir="build-harden-$config"
-            cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF \
-              -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/$dir/bin" -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/$dir/bin"
-            cmake --build "$dir" --target rocketnet_shared --parallel 4
-            python3 tools/check_hardening.py "$dir/bin/librocketnet.so"
+            commands+=("cmake -S . -B '$dir' -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF -DCMAKE_LIBRARY_OUTPUT_DIRECTORY='$PWD/$dir/bin' -DCMAKE_RUNTIME_OUTPUT_DIRECTORY='$PWD/$dir/bin'; cmake --build '$dir' --target rocketnet_shared --parallel 4; python3 tools/check_hardening.py '$dir/bin/librocketnet.so'")
           done
+          python3 tools/run_parallel.py "${commands[@]}"
 
       - name: Check every driver row has transport matrix cells
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -1115,11 +1119,11 @@ jobs:
         if: matrix.leg == 'checks'
         run: python3 tools/check_memory.py ./bin/transport_memory
 
+      # The contract and the extension's build share nothing and run at once
+      # (tools/run_parallel.py).
       - name: "Functional: native driver contract and external backend"
         if: matrix.leg == 'checks'
-        run: |
-          ./bin/test_transport
-          python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
+        run: python3 tools/run_parallel.py ./bin/test_transport 'python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}'
 
       - name: Enforce combined unit and functional timing
         shell: bash
@@ -3471,6 +3475,12 @@ jobs:
         run: |
           python3 tools/check_make_jobs.py --self-test
           python3 tools/check_make_jobs.py
+
+      # tools/run_parallel.py runs a checks step's independent commands at
+      # once: its self-test plants a red command, a red pipe stage, no
+      # command, and two commands that only pass when run together.
+      - name: Test the parallel step runner
+        run: python3 tools/run_parallel.py --self-test
 
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
       # diagnostic pragma in sdk/ is listed with a reason in
