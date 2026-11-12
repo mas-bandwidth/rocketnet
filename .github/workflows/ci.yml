@@ -535,7 +535,6 @@ jobs:
       # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
         if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2'
-        shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
@@ -2296,7 +2295,6 @@ jobs:
 
       - name: Save the registered unit cases
         if: inputs.full && matrix.shard == '0/2'
-        shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
@@ -3137,7 +3135,6 @@ jobs:
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
-        shell: bash
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test --list > "unit-cases/Linux-sodium-pinned.txt"

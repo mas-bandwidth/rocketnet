@@ -208,7 +208,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: ${{ !cancelled() }}
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
@@ -463,7 +462,6 @@ jobs:
       - name: Artifact name for the ref
         id: refslug
         if: ${{ !cancelled() }}
-        shell: bash
         env:
           REF: ${{ matrix.ref }}
         run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
