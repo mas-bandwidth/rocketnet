@@ -3557,12 +3557,14 @@ jobs:
       # once: its self-test plants a red command, a red pipe stage, no
       # command, and two commands that only pass when run together.
       - name: Test the parallel step runner
+        if: ${{ !cancelled() }}
         run: python3 tools/run_parallel.py --self-test
 
       # tools/replay_ci_steps.py runs a job's steps on a bench as the runner
       # would, before a dispatch; its self-test holds the if:, env, shell,
       # anchor and red-step rules to a fixture workflow.
       - name: Test the CI step replay
+        if: ${{ !cancelled() }}
         run: python3 tools/replay_ci_steps.py --self-test
 
       # tools/check_suppressions.py: every NOLINT, cppcheck-suppress and
