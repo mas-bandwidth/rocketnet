@@ -125,6 +125,30 @@ class ShapeTests(unittest.TestCase):
                          ["test_a", "test_a"])
 
 
+class FunctionalLogTests(unittest.TestCase):
+    ROWS = {"test_a": (True, None), "test_b": (True, None)}
+
+    def check(self, *middle):
+        lines = ["test_a", "test_b", "skipped: 0", *middle, "", checker.PASSED_LINE, ""]
+        return checker.check_functional_log(lines, self.ROWS, None)
+
+    def test_whole_run_passes(self):
+        self.assertEqual(self.check(), [])
+
+    def test_keep_going_summary_of_a_passing_run_passes(self):
+        self.assertEqual(self.check("keep going: 0 failed; 2 of 2 collected cases ran"), [])
+
+    def test_keep_going_summary_with_a_failure_is_refused(self):
+        self.assertTrue(self.check("keep going: 1 failed; 2 of 2 collected cases ran"))
+
+    def test_keep_going_summary_with_a_case_unrun_is_refused(self):
+        self.assertTrue(self.check("keep going: 0 failed; 1 of 2 collected cases ran"))
+
+    def test_two_keep_going_summaries_are_refused(self):
+        line = "keep going: 0 failed; 2 of 2 collected cases ran"
+        self.assertTrue(self.check(line, line))
+
+
 
 class SelfNamePrintTests(unittest.TestCase):
     def scan(self, text):
