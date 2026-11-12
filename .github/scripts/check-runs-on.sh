@@ -77,7 +77,9 @@ if [ "${1:-}" = "--self-test" ]; then
 fi
 
 if [ $# -eq 0 ]; then
-  set -- $(ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null)
+  for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+    if [ -e "$f" ]; then set -- "$@" "$f"; fi
+  done
   [ $# -gt 0 ] || { echo "check-runs-on: 0 workflow files under .github/workflows: nothing was checked"; exit 1; }
 fi
 if check "$@"; then echo "check-runs-on: every runs-on selects the fleet ($# workflow files)"; exit 0; fi
