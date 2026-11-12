@@ -55,6 +55,15 @@ TARGETS = rocketnet_fuzz \
 # fails on a harness source or a corpus directory that no list names.
 SOURCES = $(addsuffix .cpp,$(TARGETS))
 
+# The TARGETS harnesses that build everywhere but fuzz only on Linux: off
+# Linux their entry point is a no-op (`INITED cov: 1`), so fuzz-nightly.yml's
+# macOS and Windows matrices leave them out (the replays keep them: a replay of
+# a no-op is cheap and keeps the build honest). check_fuzz_harnesses.py holds
+# the macOS and Windows matrices to TARGETS less this list, and each source
+# here to a Linux guard (__linux__ or ROCKETNET_XDP).
+LINUX_ONLY_TARGETS = rocketnet_fuzz_uring_recvmsg \
+                     rocketnet_fuzz_gateway_netlink
+
 # The XDP filter program (sdk/xdp/server_xdp.c) as host C, through the unit
 # suite's shim (tests/xdp_host/), instrumented like the library. GNU C on a
 # non-Windows host only; on Darwin the target is not built. XDP_TARGETS is

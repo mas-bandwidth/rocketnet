@@ -19,7 +19,9 @@ on:
     its replay list, with a CMake fuzz_replay_ driver for each;
   - fuzz-nightly.yml's matrices: the Linux job must fuzz TARGETS, XDP_TARGETS
     and the differential; the NDEBUG job TARGETS and the differential; the
-    macOS, Windows and MSan jobs TARGETS; tools/fuzz_ndebug.sh's ALL_TARGETS
+    macOS and Windows jobs TARGETS less LINUX_ONLY_TARGETS (no-ops off Linux,
+    each guarded to Linux in its source), the MSan job TARGETS;
+    tools/fuzz_ndebug.sh's ALL_TARGETS
     TARGETS and the differential;
   - a count in the guides ("the fourteen harnesses") other than |TARGETS|.
 
@@ -115,6 +117,15 @@ def check(root):
         return report
     known = targets | xdp | NIGHTLY_ONLY
 
+    # the Linux-only TARGETS: a subset of TARGETS, each source guarded to Linux
+    linux_only = makefile_list(root, "LINUX_ONLY_TARGETS")
+    for name in sorted(linux_only - targets):
+        report.fail(f"tests/fuzz/Makefile: LINUX_ONLY_TARGETS names {name}, which TARGETS does not")
+    for name in sorted(linux_only & targets):
+        source = read(root, f"tests/fuzz/{name}.cpp")
+        if not re.search(r"^#if\b.*(__linux__|ROCKETNET_XDP)", source, re.M):
+            report.fail(f"tests/fuzz/{name}.cpp: in LINUX_ONLY_TARGETS but no __linux__ or ROCKETNET_XDP guard")
+
     # every harness source and every corpus directory belongs to a named harness
     sources = [Path(f).stem for f in tracked(root, "tests/fuzz")
                if re.fullmatch(r"tests/fuzz/rocketnet_fuzz(_[a-z_]+)?\.cpp", f)]
@@ -192,7 +203,8 @@ def check(root):
 
     nightly = read(root, ".github/workflows/fuzz-nightly.yml")
     for job, want in (("fuzz", targets | xdp | NIGHTLY_ONLY), ("fuzz-ndebug", targets | NIGHTLY_ONLY),
-                      ("fuzz-macos", targets), ("fuzz-windows", targets), ("fuzz-msan", targets)):
+                      ("fuzz-macos", targets - linux_only), ("fuzz-windows", targets - linux_only),
+                      ("fuzz-msan", targets)):
         block = job_block(nightly, job)
         if block is None:
             report.fail(f".github/workflows/fuzz-nightly.yml: no {job} job")
@@ -300,6 +312,17 @@ def self_test():
         plant("macOS loop loses a harness", "docs/MACOS.md",
               "rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint; do", "rocketnet_fuzz_gateway_netlink; do")
         plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the fourteen harnesses", "the thirteen harnesses")
+        # F-B1: a Linux-only harness fuzzed on macOS is a no-op (cov: 1) that reads green
+        xdp_frame_row = ('rocketnet_fuzz_xdp_frame.dict"}\'\n'
+                         '          - \'{"target":"rocketnet_fuzz_server_transport"')
+        plant("macOS matrix fuzzes a Linux-only no-op", ".github/workflows/fuzz-nightly.yml", xdp_frame_row,
+              'rocketnet_fuzz_xdp_frame.dict"}\'\n'
+              '          - \'{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp"}\'\n'
+              '          - \'{"target":"rocketnet_fuzz_server_transport"')
+        plant("LINUX_ONLY_TARGETS names a harness TARGETS does not", "tests/fuzz/Makefile",
+              "LINUX_ONLY_TARGETS = rocketnet_fuzz_uring_recvmsg", "LINUX_ONLY_TARGETS = rocketnet_fuzz_planted rocketnet_fuzz_uring_recvmsg")
+        plant("a Linux-only harness without its Linux guard", "tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp",
+              "#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT )", "#if defined( IORING_RECV_MULTISHOT )", count=1)
 
     if failures:
         for failure in failures:
