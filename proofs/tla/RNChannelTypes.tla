@@ -23,12 +23,26 @@ EXTENDS Naturals, Sequences, FiniteSets, TLC
 \* supersedes an incomplete in-turn block; nothing in turn is held as future
 \* state. Broken = "BlockInTurnHeld" is the earlier code, which collected an
 \* in-turn block in the one future-state slot and compared it there.
-\* A send the send capacity cannot take is refused (Refuse) and changes
-\* nothing: the connection goes on (standard/MESSAGES.md m1.7). Broken =
-\* "SendKick" is v1.0's MESSAGE_MEMORY_EXHAUSTED end from the send path; the
-\* ghost sendEnded records an end a send caused. The receive side's overflow
-\* in OpenPacket keeps its end (a broken invariant of the receiver).
-CONSTANTS Scenario, Broken, SendCapacity, OrderedCapacity, HoldCapacity
+\* A send the send capacity cannot take is refused (Refuse): the connection
+\* goes on (standard/MESSAGES.md m1.7). The refused start runs the code's
+\* steps (sdk/rocketnet_endpoint.cpp rn_endpoint_start): the route reads;
+\* an unreliable source (0, 1, 5) writes the transport's cap into
+\* max_payload_bytes (maxPayload) before the room is known; the region's
+\* fit refuses before any take (rn_channels_start, rn_region_send_take);
+\* the connection's send_refused counts it (sendRefused, modulo CountMod as
+\* the code's counter wraps). The ghost calls counts the application's
+\* starts, so a refused start is a step even when it changes nothing else.
+\* TransportCaps is the caps the transport may hand a start. Broken =
+\* "SendKick" is v1.0's MESSAGE_MEMORY_EXHAUSTED end from the send path;
+\* "CountersAtStart" assigns the channel's ordering and sequencing counters
+\* at the start, before the room is known, and keeps them on a refusal;
+\* "StaleStepPossible" is the v1.1 StepPossible, written when a refusal was
+\* a stutter. The receive side's overflow in OpenPacket keeps its end (a
+\* broken invariant of the receiver).
+CONSTANTS Scenario, Broken, SendCapacity, OrderedCapacity, HoldCapacity, TransportCaps
+ASSUME TransportCaps \subseteq Nat \ {0} /\ TransportCaps # {}
+CountMod == 3
+UnreliableSources == {0,1,5}
 Channels == 1..2
 Codes == {0,1,2,3,4,5}
 PromotionSources == {0,1,5}
@@ -68,10 +82,15 @@ Max(s) == CHOOSE n \in s : \A k \in s : n >= k
 
 VARIABLES plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason, missed, sendEnded
+          referenceTrace, connected, reason, missed, maxPayload, sendRefused, calls
 vars == <<plan, queue, ordered_write, sequenced_write, written, numbers,
           opened, lost, acked, resend, receiver, orderedInputs,
-          referenceTrace, connected, reason, missed, sendEnded>>
+          referenceTrace, connected, reason, missed, maxPayload, sendRefused, calls>>
+\* everything but max_payload_bytes and the refusal counters
+Kept == <<plan, queue, ordered_write, sequenced_write, written, numbers,
+          opened, lost, acked, resend, receiver, orderedInputs,
+          referenceTrace, connected, reason, missed>>
+Starts == <<maxPayload, sendRefused, calls>>
 
 \* The first three sends of the promote plan are too big for one record, so
 \* each unreliable one is promoted to its reliable twin (the promotion rule). The
@@ -261,18 +280,28 @@ Init ==
     /\ written={} /\ numbers= <<>> /\ opened={} /\ lost={}
     /\ acked={} /\ resend={} /\ receiver=EmptyReceiver /\ orderedInputs={}
     /\ referenceTrace=[c \in Channels |-> <<>>]
-    /\ connected=TRUE /\ reason="NONE" /\ missed={} /\ sendEnded=FALSE
+    /\ connected=TRUE /\ reason="NONE" /\ missed={}
+    /\ maxPayload=0 /\ sendRefused=0 /\ calls=0
 
-Enqueue ==
-    /\ UNCHANGED sendEnded
+\* The channel's ordering and sequencing counters after a send of code k on
+\* channel c joins its queue (rn_channels_finish)
+NextOrdered(k,c) == IF k=3 THEN [ordered_write EXCEPT ![c]=@+1] ELSE ordered_write
+NextSequenced(k,c) == IF k=3 THEN [sequenced_write EXCEPT ![c]=0]
+                      ELSE IF Sequenced(k) THEN [sequenced_write EXCEPT ![c]=@+1]
+                      ELSE sequenced_write
+
+\* rn_endpoint_start and rn_endpoint_finish with room, under the cap the
+\* transport hands the start (an unreliable source keeps it in
+\* max_payload_bytes for its finish)
+Enqueue(cap) ==
+    /\ sendRefused'=sendRefused /\ calls'=(calls+1) % CountMod
     /\ connected /\ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
     /\ LET m == Len(queue)+1 c == plan[m].channel k == plan[m].code
        IN /\ queue'=Append(queue,[code |-> k, channel |-> c,
                   ordering |-> ordered_write[c], sequencing |-> sequenced_write[c]])
-          /\ ordered_write'=IF k=3 THEN [ordered_write EXCEPT ![c]=@+1] ELSE ordered_write
-          /\ sequenced_write'=IF k=3 THEN [sequenced_write EXCEPT ![c]=0]
-                               ELSE IF Sequenced(k) THEN [sequenced_write EXCEPT ![c]=@+1]
-                               ELSE sequenced_write
+          /\ ordered_write'=NextOrdered(k,c)
+          /\ sequenced_write'=NextSequenced(k,c)
+          /\ maxPayload'=IF k \in UnreliableSources THEN cap ELSE maxPayload
     /\ UNCHANGED <<connected,reason,missed>>
     /\ UNCHANGED <<plan,written,numbers,opened,lost,acked,resend,
                     receiver,orderedInputs,referenceTrace>>
@@ -285,7 +314,7 @@ CanWrite(m,attempt) ==
        ELSE Reliable(Code(m)) /\ Packet(m,1) \in written /\ m \notin acked
 
 WritePacket(m,attempt) ==
-    /\ UNCHANGED sendEnded
+    /\ UNCHANGED Starts
     /\ connected /\ CanWrite(m,attempt)
     /\ written'=written \cup {Packet(m,attempt)}
     /\ numbers'=IF Reliable(Code(m)) /\ m \notin Values(numbers) THEN Append(numbers,m) ELSE numbers
@@ -294,7 +323,7 @@ WritePacket(m,attempt) ==
                     acked,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
 OpenPacket(pid) ==
-    /\ UNCHANGED sendEnded
+    /\ UNCHANGED Starts
     /\ connected /\ pid \in written \ (opened \cup lost)
     /\ opened'=opened \cup {pid}
     /\ LET m == PacketMessage(pid)
@@ -314,7 +343,7 @@ OpenPacket(pid) ==
                     lost,acked>>
 
 ReceiveAck(q) ==
-    /\ UNCHANGED sendEnded
+    /\ UNCHANGED Starts
     /\ connected /\ q # {} /\ q \subseteq opened
     /\ \E pid \in q : Reliable(Code(PacketMessage(pid))) /\ PacketMessage(pid) \notin acked
     /\ LET delivered == {PacketMessage(pid) : pid \in q}
@@ -323,23 +352,36 @@ ReceiveAck(q) ==
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,lost,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 LosePacket(pid) ==
-    /\ UNCHANGED sendEnded
+    /\ UNCHANGED Starts
     /\ connected /\ pid \in written \ (opened \cup lost) /\ pid % 2 = 1
     /\ lost'=lost \cup {pid}
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
                     opened,acked,resend,receiver,orderedInputs,referenceTrace,connected,reason,missed>>
 
-\* The application offers the next send while the send capacity is full: the
-\* start is refused and counted, and nothing of the connection changes
-\* (standard/MESSAGES.md m1.7). Broken = "SendKick": v1.0's end of the
-\* connection with MESSAGE_MEMORY_EXHAUSTED from the send path.
-Refuse ==
+\* The application offers the next send while the send capacity is full
+\* (standard/MESSAGES.md m1.7), its steps in the code's order: the route
+\* reads; an unreliable source writes the transport's cap into
+\* max_payload_bytes (sdk/rocketnet_endpoint.cpp, before the route's
+\* OVER_MAX refusal and the region's); rn_channels_start (or the unreliable
+\* path) asks the region, whose fit refuses before any take; the start
+\* returns NULL and send_refused counts it. Nothing else of the connection
+\* changes. Broken = "SendKick": v1.0's end of the connection with
+\* MESSAGE_MEMORY_EXHAUSTED from the send path. Broken = "CountersAtStart":
+\* the channel's ordering and sequencing counters taken at the start, before
+\* the room is known, and kept on the refusal.
+Refuse(cap) ==
     /\ connected /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
+    /\ LET m == Len(queue)+1 c == plan[m].channel k == plan[m].code
+       IN /\ maxPayload'=IF k \in UnreliableSources THEN cap ELSE maxPayload
+          /\ IF Broken = "CountersAtStart"
+             THEN ordered_write'=NextOrdered(k,c) /\ sequenced_write'=NextSequenced(k,c)
+             ELSE UNCHANGED <<ordered_write,sequenced_write>>
+    /\ sendRefused'=(sendRefused+1) % CountMod /\ calls'=(calls+1) % CountMod
     /\ IF Broken = "SendKick"
-       THEN /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED" /\ sendEnded'=TRUE
+       THEN /\ connected'=FALSE /\ reason'="MESSAGE_MEMORY_EXHAUSTED"
             /\ resend'={} /\ receiver'=[receiver EXCEPT !.heldOrdered={}, !.heldSequenced={}, !.inTurn={}]
-       ELSE UNCHANGED <<connected,reason,sendEnded,resend,receiver>>
-    /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
+       ELSE UNCHANGED <<connected,reason,resend,receiver>>
+    /\ UNCHANGED <<plan,queue,written,numbers,
                     opened,lost,acked,orderedInputs,referenceTrace,missed>>
 
 \* A block fragment reaches the receiver. Fragments are reliable numbers whose
@@ -348,7 +390,7 @@ Refuse ==
 \* whose fragments all arrived in its turn, that was Deliverable when the last
 \* one came, and that was not delivered.
 ArriveFragment(m,f) ==
-    /\ UNCHANGED sendEnded
+    /\ UNCHANGED Starts
     /\ connected /\ m \in DOMAIN queue /\ Block(m)
     /\ <<m,f>> \notin receiver.arrived
     /\ LET a == [receiver EXCEPT !.arrived = @ \cup {<<m,f>>},
@@ -367,21 +409,24 @@ OpenAny == \E pid \in Pids : OpenPacket(pid)
 AckAny == \E pid \in Pids : ReceiveAck({pid})
 LoseAny == \E pid \in Pids : LosePacket(pid)
 ArriveAny == \E m \in Messages, f \in Fragments : ArriveFragment(m,f)
-Next == Refuse \/ Enqueue \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
+StartAny == \E cap \in TransportCaps : Enqueue(cap) \/ Refuse(cap)
+Next == StartAny \/ WriteAny \/ OpenAny \/ AckAny \/ LoseAny \/ ArriveAny
 SafetySpec == Init /\ [][Next]_vars
 
 \* ENABLED <<Next>>_vars written out as a state predicate: a step of Next
 \* that changes vars exists. Each disjunct is one action's guard, and each of
 \* those actions changes a variable whenever its guard holds (Enqueue grows
-\* queue, WritePacket grows written, OpenPacket grows opened, ReceiveAck grows
-\* acked, ArriveFragment grows receiver.arrived, Refuse under "SendKick"
-\* clears connected); Refuse otherwise and LosePacket's extra steps add no
+\* queue, Refuse moves the calls ghost and the refusal count, WritePacket
+\* grows written, OpenPacket grows opened, ReceiveAck grows acked,
+\* ArriveFragment grows receiver.arrived); LosePacket's extra steps add no
 \* enabledness. StepPossibleIsEnabled checks the equality in the cheaper
 \* configurations (TLC evaluates ENABLED by computing every successor again).
+\* Broken = "StaleStepPossible" is the v1.1 predicate, whose refusal disjunct
+\* held only under "SendKick" (the refusal was then a stutter otherwise).
 StepPossible ==
     /\ connected
     /\ \/ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
-       \/ Broken = "SendKick" /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
+       \/ Broken # "StaleStepPossible" /\ Len(queue)=SendCapacity /\ Len(queue)<MaxMessages
        \/ \E m \in Messages, attempt \in 1..2 : CanWrite(m,attempt)
        \/ written \ (opened \cup lost) # {}
        \/ \E pid \in opened : Reliable(Code(PacketMessage(pid))) /\ PacketMessage(pid) \notin acked
@@ -425,7 +470,8 @@ TypeOK ==
     /\ receiver.seen \subseteq Values(numbers)
     /\ Values(receiver.trace) \subseteq DOMAIN queue
     /\ connected \in BOOLEAN /\ reason \in {"NONE","MESSAGE_MEMORY_EXHAUSTED"}
-    /\ sendEnded \in BOOLEAN
+    /\ maxPayload \in {0} \cup TransportCaps
+    /\ sendRefused \in 0..(CountMod-1) /\ calls \in 0..(CountMod-1)
 BuffersBounded ==
     /\ Cardinality(receiver.heldOrdered)<=OrderedCapacity
     /\ Cardinality(receiver.heldSequenced)<=HoldCapacity
@@ -466,9 +512,29 @@ InTurnNeverHeldAsFuture == \A m \in receiver.heldSequenced :
     Order(m) > receiver.ordered_read[Channel(m)]
 InTurnDeliveredWhenComplete == missed = {}
 InTurnOneRule == InTurnNeverHeldAsFuture /\ InTurnDeliveredWhenComplete
-\* (N) No send ends the connection: a full send capacity refuses
-\* (standard/MESSAGES.md m1.7). Reversed by Broken = "SendKick".
-SendNeverEnds == ~sendEnded
+\* (N) No send ends the connection: no start step, accepted or refused,
+\* leaves the connection ended (standard/MESSAGES.md m1.7), read on the
+\* state the step leaves. Reversed by Broken = "SendKick".
+SendNeverEnds == [][StartAny => connected']_vars
+
+\* The next send of the plan, which a start offers
+NextCode == plan[Len(queue)+1].code
+
+\* A start the send capacity has no room for (by the state before it)
+\* leaves the connection exactly as it was (standard/MESSAGES.md m1.7, rule
+\* 2), whatever it did on the way: the refusal count moves by one (design
+\* (L)1), and max_payload_bytes may change, only for an unreliable source, to
+\* the cap the transport handed the start. That write is dead while no start
+\* is pending (the route refuses a start while one is), and every read of
+\* max_payload_bytes is rn_endpoint_finish of a pending start whose own
+\* start wrote it (an unreliable source; a reliable one ignores it) or
+\* rn_endpoint_send (tests only) handing it back to the start as its cap.
+\* Reversed by Broken = "CountersAtStart" and "SendKick".
+RefusalLeavesStateUnchanged ==
+    [][StartAny /\ Len(queue)>=SendCapacity /\ Len(queue)<MaxMessages =>
+          /\ UNCHANGED Kept
+          /\ sendRefused'=(sendRefused+1) % CountMod
+          /\ (maxPayload' # maxPayload => NextCode \in UnreliableSources)]_vars
 \* m7.4 (nothing is silent): every sequenced record that arrived is delivered,
 \* still held, superseded, or released and counted. Broken = "DrainStaleSilent"
 \* releases a drained record without delivering or counting it.

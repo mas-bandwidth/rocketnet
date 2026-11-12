@@ -785,8 +785,8 @@ int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t
 
 // The frames the transport accepts before its next flush without a refusal
 // for room, as its send_room operation reports it; a transport without one
-// is unbounded. The staged transports' staging is one server-wide bank,
-// whatever their queue count. proofs/tla/ServerStopSpread.tla Room.
+// is unbounded. gso and io_uring stage one server-wide bank; xdp a bank per
+// queue, reporting the fewest free slots. proofs/tla/ServerStopSpread.tla Room.
 static int rocketnet_server_transport_io_send_room( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport->io.operations || !server_transport->io.operations->send_room )
@@ -828,7 +828,7 @@ static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_t
 // free slots on a buffered transport, the transport's own send room on a
 // staged one, so a full staging stops the fair send pass where the next
 // unserved client waits.
-// proofs/tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
+// proofs/tla/RNServerSendFair.tla FirstVisit and LaterVisit: the shared cap each visit tests, charged per frame start, kept on abort.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )
@@ -1841,7 +1841,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         return false;
     }
 
-    // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+    // Refuse protocol_id 0 in every build and with any keys: a title has its own non-zero protocol_id
 
     if ( config->protocol_id == 0 )
     {
@@ -1849,7 +1849,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         {
             *status = ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
         }
-        rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
+        rocketnet_error( "server config protocol_id 0 is refused: set the title's non-zero protocol_id" );
         return false;
     }
 

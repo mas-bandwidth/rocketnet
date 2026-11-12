@@ -101,6 +101,34 @@ static void test_coalesce_split_refuses_past_max()
     rocketnet_unit_check( lengths[0] == -9 );
 }
 
+// a receive of more segments than the transport takes: its first
+// max_segments are written and the rest are counted one datagram each
+static void test_coalesce_split_prefix_counts_the_segments_past_max()
+{
+    int offsets[64];
+    int lengths[64];
+    int beyond = -1;
+
+    // 128 segments of 100 (a local sender's segmented send): 64 and 64
+
+    rocketnet_unit_check( rocketnet_coalesce_split_prefix( 12800, 100, offsets, lengths, 64, &beyond ) == 64 );
+    rocketnet_unit_check( beyond == 64 );
+    rocketnet_unit_check( offsets[63] == 6300 && lengths[63] == 100 );
+
+    // a short tail past max is one more datagram: 6401 at 100 is 64 and 1
+
+    rocketnet_unit_check( rocketnet_coalesce_split_prefix( 6401, 100, offsets, lengths, 64, &beyond ) == 64 );
+    rocketnet_unit_check( beyond == 1 );
+
+    // within max: the plain split, nothing beyond
+
+    rocketnet_unit_check( rocketnet_coalesce_split_prefix( 6301, 100, offsets, lengths, 64, &beyond ) == 64 );
+    rocketnet_unit_check( beyond == 0 );
+    rocketnet_unit_check( lengths[63] == 1 );
+    rocketnet_unit_check( rocketnet_coalesce_split_prefix( 0, 100, offsets, lengths, 64, &beyond ) == 0 );
+    rocketnet_unit_check( beyond == 0 );
+}
+
 static void test_coalesce_split_near_int_max_writes_only_its_segments()
 {
     // 2147483647 bytes at stride 1073741825: one full segment and a
@@ -208,6 +236,7 @@ static void test_coalesce_send_run_stops_on_destination_and_abort()
 
 REGISTER_UNIT_TEST( test_coalesce_split_by_stride_round_trips );
 REGISTER_UNIT_TEST( test_coalesce_split_refuses_past_max );
+REGISTER_UNIT_TEST( test_coalesce_split_prefix_counts_the_segments_past_max );
 REGISTER_UNIT_TEST( test_coalesce_split_near_int_max_writes_only_its_segments );
 REGISTER_UNIT_TEST( test_coalesce_send_run_equal_sizes_and_tail );
 REGISTER_UNIT_TEST( test_coalesce_send_run_stops_on_destination_and_abort );

@@ -177,6 +177,16 @@ static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity(
     const struct rocketnet_address_t b = replay_marks_ipv6( 50000 );
     const struct rocketnet_address_t c = replay_marks_ipv4( 50001 );
 
+    // the walk queues each address once per update, so a repeat is a forget
+    // the kernel refused at the last commit: that one coalesces, as often as
+    // it comes, and leaves room for a new source
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    const bool refuse_a[1] = { true };
+    const bool no_marks[1] = { false };
+    rocketnet_xdp_replay_marks_reset_keeping( &marks, refuse_a, no_marks );
+    rocketnet_unit_check( marks.forget_count == 1 && marks.kept_forget_count == 1 );
+
     for ( int i = 0; i < 4; i++ )
     {
         rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
@@ -185,7 +195,6 @@ static void test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity(
 
     rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
     rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &b ) );
     rocketnet_unit_check( marks.forget_count == 2 && marks.refused == 0 );
 
     struct rocketnet_server_xdp_replay_key_t key_a, key_b;
@@ -841,7 +850,103 @@ static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
     rocketnet_encryption_map_destroy( map );
 }
 
+// a fake kernel map for the commit's apply: missing[i] stops a batch at
+// entry i, as the kernel's generic batch stops at a missing key (a delete)
+// or a refusal; a single call of a missing entry fails unless absent_ok (a
+// delete answers ENOENT, not a failure). no_batch: a kernel without the
+// batch command, which leaves the count as passed
+
+struct replay_apply_fake_t
+{
+    const bool * missing;
+    bool absent_ok;
+    bool no_batch;
+    uint32_t total;
+    uint32_t calls;
+};
+
+static bool replay_apply_fake_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    replay_apply_fake_t * fake = (replay_apply_fake_t *) context;
+    fake->calls++;
+    if ( fake->no_batch )
+    {
+        return false;
+    }
+    for ( uint32_t i = 0; i < *batch_count; i++ )
+    {
+        if ( fake->missing[first + i] )
+        {
+            *batch_count = i;
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool replay_apply_fake_single( void * context, uint32_t index )
+{
+    replay_apply_fake_t * fake = (replay_apply_fake_t *) context;
+    fake->calls++;
+    return !fake->missing[index] || fake->absent_ok;
+}
+
+// X3: one forget of a key the kernel does not hold no longer turns a commit
+// of 1000 forgets into 1000 single calls (v1.1.0 made 1001): the batch goes
+// on past the key it stopped at
+static void test_xdp_transport_replay_apply_continues_past_a_stopped_batch()
+{
+    static bool missing[1000];
+    static bool refused[1000];
+    memset( missing, 0, sizeof( missing ) );
+    missing[10] = true;
+    missing[500] = true;
+
+    replay_apply_fake_t fake = { missing, true, false, 1000, 0 };
+    uint32_t calls = rocketnet_xdp_replay_apply( 1000, replay_apply_fake_batch, replay_apply_fake_single, &fake, refused );
+    printf( "replay apply: %u calls for 1000 entries with 2 stops\n", calls );
+    rocketnet_unit_check( calls == fake.calls );
+    rocketnet_unit_check( calls == 5 );
+    for ( int i = 0; i < 1000; i++ )
+    {
+        rocketnet_unit_check( !refused[i] );
+    }
+
+    // a refusal (a mark the kernel will not take) is known for its entry alone
+
+    fake.absent_ok = false;
+    fake.calls = 0;
+    calls = rocketnet_xdp_replay_apply( 1000, replay_apply_fake_batch, replay_apply_fake_single, &fake, refused );
+    rocketnet_unit_check( calls == 5 );
+    for ( int i = 0; i < 1000; i++ )
+    {
+        rocketnet_unit_check( refused[i] == ( i == 10 || i == 500 ) );
+    }
+
+    // the last entry stops the batch: one single call ends the walk
+
+    memset( missing, 0, sizeof( missing ) );
+    missing[999] = true;
+    fake.calls = 0;
+    calls = rocketnet_xdp_replay_apply( 1000, replay_apply_fake_batch, replay_apply_fake_single, &fake, refused );
+    rocketnet_unit_check( calls == 2 && refused[999] && !refused[998] );
+
+    // a kernel without the batch command: every entry one single call
+
+    missing[999] = false;
+    fake.no_batch = true;
+    fake.calls = 0;
+    calls = rocketnet_xdp_replay_apply( 1000, replay_apply_fake_batch, replay_apply_fake_single, &fake, refused );
+    rocketnet_unit_check( calls == 1001 );
+
+    // nothing to apply: no call
+
+    fake.calls = 0;
+    rocketnet_unit_check( rocketnet_xdp_replay_apply( 0, replay_apply_fake_batch, replay_apply_fake_single, &fake, refused ) == 0 );
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_replay_key_matches_golden_bytes );
+REGISTER_UNIT_TEST( test_xdp_transport_replay_apply_continues_past_a_stopped_batch );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_commit_forgets_before_marks );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_full_refuses_and_counts );
 REGISTER_UNIT_TEST( test_xdp_transport_replay_marks_duplicate_forgets_preserve_capacity );

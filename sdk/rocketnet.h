@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.3"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.4"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        3
+    #define ROCKETNET_VERSION_PATCH                        4
 
 #else // !ROCKETNET_DEV
 
@@ -276,6 +276,9 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE = -8,
 
+    // -9 is unassigned: no call returns it, and the codes after it keep
+    // their values.
+
     /// Start refused. The server config's backend_public_key is all zeros.
     /// Set it, or set ROCKETNET_SERVER_BACKEND_PUBLIC_KEY.
 
@@ -295,7 +298,8 @@ enum rocketnet_status_t
 
     /// An address string did not parse or cannot be used. Pass "a.b.c.d:port"
     /// for IPv4 or "[v6]:port" for IPv6, within
-    /// ROCKETNET_MAX_ADDRESS_STRING_BYTES.
+    /// ROCKETNET_MAX_ADDRESS_STRING_BYTES. A string with no port parses, as
+    /// port 0.
 
     ROCKETNET_STATUS_INVALID_ADDRESS = -13,
 
@@ -753,7 +757,9 @@ struct rocketnet_client_stats_t
 
     uint64_t messages_dropped_not_connected;
 
-    /// Process-wide. API misuses since the process started.
+    /// Process-wide. API misuses since the process started. Reading it with
+    /// a NULL client or server counts that call as one more misuse, so poll
+    /// it through a live object.
 
     uint64_t api_misuses;
 
@@ -825,7 +831,10 @@ struct rocketnet_server_stats_t
     uint64_t connections_accepted;
 
     /// Connection requests refused because every client slot was taken. A
-    /// client that retries counts once per request.
+    /// client that retries counts once per request. Since v1.1.2 it also
+    /// counts a connection response ignored, not denied, because the only free
+    /// slots were freed in that same update; that client's resend connects in
+    /// the next update.
 
     uint64_t connections_denied_full;
 
@@ -867,7 +876,9 @@ struct rocketnet_server_stats_t
 
     uint64_t messages_dropped_not_connected;
 
-    /// Process-wide. API misuses since the process started.
+    /// Process-wide. API misuses since the process started. Reading it with
+    /// a NULL client or server counts that call as one more misuse, so poll
+    /// it through a live object.
 
     uint64_t api_misuses;
 
@@ -1589,7 +1600,9 @@ struct rocketnet_server_config_t
     int num_os_cpus;
 
     /// ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS sets the maximum timeout. Units
-    /// are seconds. Range is 1 .. 3600. Default is 60.
+    /// are seconds. Range is 1 .. 3600. Default is 60. It caps a connect
+    /// token's timeout_seconds on this server only: the client keeps the
+    /// token's value, so mint timeout_seconds at or below this cap.
 
     int max_timeout_seconds;
 
@@ -1944,7 +1957,8 @@ struct rocketnet_connect_token_config_t
     int expire_seconds;
 
     /// The longest silence the connection allows, in seconds. Must be
-    /// positive. Default is 10.
+    /// positive. Default is 10. The client uses it as given; the server
+    /// caps it at its max_timeout_seconds.
 
     int timeout_seconds;
 
@@ -2791,7 +2805,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
 /// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
 /// Port 0 requests an ephemeral port. Read it after start with
-/// rocketnet_server_port.
+/// rocketnet_server_port. An address with no port ("a.b.c.d" or "[v6]") is
+/// not refused: it is port 0.
 ///
 /// context is passed to allocator callbacks. Returns, status and lifetime
 /// follow rocketnet_client_create.

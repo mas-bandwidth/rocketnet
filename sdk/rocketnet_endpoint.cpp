@@ -1456,7 +1456,53 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
     return count;
 }
 
+// the written records' room returns to the region (9.3 step 3): one forward
+// pass, not one scan per taken record (proofs/tla/RNChannelQueues.tla)
+static void rn_endpoint_unreliable_unlink_taken( rn_endpoint_t * endpoint, const struct rn_endpoint_taken_t * taken )
+{
+    rn_region_t * region = endpoint->region;
+    rn_unreliable_walk_t walk;
+    rn_unreliable_walk_begin( endpoint, &walk );
+    int unlinked = 0;
+    uint32_t d;
+    while ( unlinked < taken->count && ( d = rn_unreliable_walk_next( endpoint, &walk ) ) != RN_DESCRIPTOR_NONE )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+
+        const bool match = d == taken->index[unlinked] &&
+                           descriptor->generation == taken->generation[unlinked] &&
+                           rn_descriptor_schedule_live( descriptor );
+        if ( match )
+        {
+            rn_endpoint_unreliable_unlink( endpoint, d );
+            unlinked++;
+        }
+    }
+}
+
+static int rn_endpoint_write_packet_taken( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now, struct rn_endpoint_taken_t * held );
+
 int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now )
+{
+    return rn_endpoint_write_packet_taken( endpoint, payload, capacity, packet_id, now, NULL );
+}
+
+int rn_endpoint_write_packet_first( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, double now, struct rn_endpoint_taken_t * taken )
+{
+    taken->count = 0;
+    return rn_endpoint_write_packet_taken( endpoint, payload, capacity, 0, now, taken );
+}
+
+void rn_endpoint_packet_started( struct rn_endpoint_t * endpoint, const struct rn_endpoint_taken_t * taken )
+{
+    if ( endpoint->packet_written == 2 )
+    {
+        rn_endpoint_unreliable_unlink_taken( endpoint, taken );
+        endpoint->packet_written = 1;
+    }
+}
+
+static int rn_endpoint_write_packet_taken( struct rn_endpoint_t * endpoint, uint8_t * payload, int capacity, uint64_t packet_id, double now, struct rn_endpoint_taken_t * held )
 {
     // proofs/tla/RNEndpoint.tla WritePacket: the planned packet written by layer 6
     // in place (THE COPIES (a)) into the frame the caller started for
@@ -1540,12 +1586,13 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 
             endpoint->packet_records = endpoint->unreliable_builder.packet[0].records;
 
-            // the written records' room returns to the region (9.3 step 3):
-            // one forward pass, not one scan per taken record (proofs/tla/RNChannelQueues.tla).
+            // the written records leave the queue now, or, for a packet
+            // written before its frame, once a frame takes it
+            // (rn_endpoint_packet_started)
 
-            uint32_t taken_index[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            uint32_t taken_generation[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            int taken_count = 0;
+            struct rn_endpoint_taken_t now_taken;
+            struct rn_endpoint_taken_t * taken = held ? held : &now_taken;
+            taken->count = 0;
             for ( int i = 0; i < count; i++ )
             {
                 if ( !items[i].taken )
@@ -1553,30 +1600,20 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
                     continue;
                 }
 
-                taken_index[taken_count] = descriptors[i];
-                taken_generation[taken_count] = generations[i];
-                taken_count++;
+                taken->index[taken->count] = descriptors[i];
+                taken->generation[taken->count] = generations[i];
+                taken->count++;
             }
 
-            rn_unreliable_walk_t walk;
-            rn_unreliable_walk_begin( endpoint, &walk );
-            int taken = 0;
-            uint32_t d;
-            while ( taken < taken_count && ( d = rn_unreliable_walk_next( endpoint, &walk ) ) != RN_DESCRIPTOR_NONE )
+            if ( held )
             {
-                const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-
-                const bool match = d == taken_index[taken] &&
-                                   descriptor->generation == taken_generation[taken] &&
-                                   rn_descriptor_schedule_live( descriptor );
-                if ( match )
-                {
-                    rn_endpoint_unreliable_unlink( endpoint, d );
-                    taken++;
-                }
+                endpoint->packet_written = 2;
             }
-
-            endpoint->packet_written = 1;
+            else
+            {
+                rn_endpoint_unreliable_unlink_taken( endpoint, taken );
+                endpoint->packet_written = 1;
+            }
             return (int) endpoint->unreliable_builder.packet[0].payload_bytes;
         }
 
@@ -1687,6 +1724,8 @@ void rn_endpoint_packet_sent( struct rn_endpoint_t * endpoint, uint64_t packet_i
         return;
     }
 
+    rocketnet_assert( endpoint->packet_written == 1 );                 // a packet written first was started (rn_endpoint_packet_started)
+
     switch ( endpoint->packet_kind )
     {
         case RN_ENDPOINT_PACKET_ORDERED:
@@ -1743,6 +1782,19 @@ void rn_endpoint_packet_failed( struct rn_endpoint_t * endpoint, uint64_t packet
         }
 
         endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
+        return;
+    }
+
+    if ( endpoint->packet_written == 2 )
+    {
+        // an unreliable packet written first and refused a frame: its records
+        // never left the queue. As with no frame for the plan, nothing is
+        // counted and the pass ends; the charge is refunded
+        rn_packet_builder_settle( &endpoint->unreliable_builder, 0, 0 );
+        endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
+        endpoint->packet_written = 0;
+        endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
+        endpoint->receipt_count = 0;
         return;
     }
 

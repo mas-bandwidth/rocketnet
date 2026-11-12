@@ -260,3 +260,59 @@ ended the connection with that reason. The code now returns no pointer from
 the start and counts the refusal in `send_refused`
 (`rn_endpoint_start`); a start while the receive side has exhausted
 the region still ends the connection.
+
+## Revision 1.1.2: the refused start in the code's order
+
+Revision 1.1's `Refuse` was `UNCHANGED vars` and the ghost `sendEnded` behind
+the invariant `SendNeverEnds` was never written on the passing instance (a
+probe `[][Refuse => UNCHANGED vars]_vars` passed on
+`MCRNChannelTypesRefuse.cfg`, 61 distinct). The ghost is removed.
+
+- Every start (`Enqueue(cap)` or `Refuse(cap)`, `StartAny`) takes the
+  transport cap `cap` from `TransportCaps` and is written in the order of
+  `rn_endpoint_start` (`sdk/rocketnet_endpoint.cpp:390`): an unreliable start
+  writes `max_payload_bytes` (441) before the over-max check (444) and before
+  the room refusal; a channels start finding no room counts `send_refused`
+  (466; the unreliable path 491). `maxPayload`, `sendRefused` (mod 3) and the
+  ghost `calls` (every start, so a refused start is never a stutter) are the
+  variables a start may change; `Kept` is every other variable.
+- `RefusalLeavesStateUnchanged`: a start with the send capacity full (named by
+  the state before the step) leaves `Kept` as it was, moves `sendRefused` by
+  one, and changes `maxPayload` only for an unreliable start
+  (`NextCode \in UnreliableSources`). That write is the one change a refusal
+  makes outside the count, and it is harmless: its readers are the finish
+  (572), which runs only after a start that succeeded and wrote the same
+  field, and `rn_endpoint_send` (961, used by the tests), which passes it as
+  the next start's cap.
+- `SendNeverEnds` is an action property read on the resulting state: every
+  start leaves the connection connected.
+- `StepPossible`'s refusal disjunct names the refusal's guard
+  (`Len(queue) = SendCapacity /\ Len(queue) < MaxMessages`);
+  `StepPossibleIsEnabled` checks it against `ENABLED`.
+- Reversed witnesses: `Broken = "CountersAtStart"` advances the sequence
+  counters at the start (the code assigns them in `rn_channels_finish`,
+  `sdk/rocketnet_channel.cpp:1380`; `rn_channels_start`, 1325, writes nothing
+  before the take); `Broken = "StaleStepPossible"` drops the refusal
+  disjunct.
+
+| Property | Fails when | Witness |
+|---|---|---|
+| `SendNeverEnds` | a refused start ends the connection | `MCRNChannelBrokenSendKick.cfg` |
+| `RefusalLeavesStateUnchanged` | a refused start advances the send counters | `MCRNChannelBrokenCountersAtStart.cfg` |
+| `StepPossibleIsEnabled` | `StepPossible` omits the refusal | `MCRNChannelBrokenStaleStepPossible.cfg` |
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
+|---|---|---:|---:|---:|
+| `MCRNChannelTypes.cfg` (`TransportCaps = {1}`) | pass | 0 | 400234 | 73.3 |
+| `MCRNChannelTypesRefuse.cfg` (`TransportCaps = {1, 2}`) | pass | 0 | 345 | 1.4 |
+| `MCRNChannelBrokenSendKick.cfg` | `SendNeverEnds` | 13 | 8 | 1.1 |
+| `MCRNChannelBrokenCountersAtStart.cfg` | `RefusalLeavesStateUnchanged` | 13 | 8 | 1.1 |
+| `MCRNChannelBrokenStaleStepPossible.cfg` | `StepPossibleIsEnabled` | 12 | 110 | 1.1 |
+
+CountersAtStart's trace, checked by hand: two sends fill the send capacity;
+the third offered send, a sequenced one, is refused and advances
+`sequenced_write` from `<<0, 0>>` to `<<1, 0>>`. In the code the counters are
+assigned in `rn_channels_finish` (`sdk/rocketnet_channel.cpp:1380`), after a
+start that succeeded; `rn_channels_start` (1325) checks the pending start,
+the type and the exhaustion and then takes, writing nothing before the take,
+and `rn_endpoint_start` returns at 473 on a refusal.

@@ -164,7 +164,11 @@
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured, gcc Release: the check read exactly this figure plus
 // the slack, 3111676715).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628139ULL )
+// The xdp replay marks count the pending forgets a forget's repeat search
+// reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
+// kept forget count beside it fills existing padding), adding 8 bytes
+// (measured with the writer list: the probe's actual= line is 3111676723).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
 #endif // #if defined( _WIN32 )
 

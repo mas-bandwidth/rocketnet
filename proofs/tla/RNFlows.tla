@@ -119,36 +119,36 @@ Unsubscribe(id, s) ==
 \* nobody. A free or kicked slot is skipped: its send path refuses it and
 \* counts that (not a flow refusal). The model checks the send with no connection-tag test,
 \* so the drop at Observe alone has to keep it safe.
+\* full is the set of subscriber slots whose message memory has no room for
+\* the copy: each refuses its copy, counts the refusal on its connection
+\* (send_refused, not modelled here) and goes on (standard/MESSAGES.md
+\* m1.7), so no step of the application phase changes a slot's connection.
+\* The broken variant "sendkick" restores v1.0's rn_message_object_kick from
+\* the send path on the main thread, in the middle of the flow send: a slot
+\* whose memory refused the copy is ended at once (the transport drops the
+\* connection) and its endpoint takes nothing more. Connections end in the
+\* transport phase only (Disconnect), where a receive-side exhaustion,
+\* silence or an explicit disconnect ends them.
+Receivers(i) == {s \in Slots : Live(s) /\ \E x \in subs[i] : x.slot = s}
 Send(id) ==
     /\ phase = "application" /\ nextMsg <= MaxMessages
     /\ LET i == IndexOf(id)
            m == nextMsg
        IN IF i = 0 THEN Refuse("FLOW_UNKNOWN")
-          ELSE /\ queue' = [s \in Slots |->
-                     IF Live(s) /\ \E x \in subs[i] : x.slot = s
+          ELSE \E full \in SUBSET Receivers(i) :
+               /\ queue' = [s \in Slots |->
+                     IF s \in Receivers(i) \ full
                      THEN queue[s] \cup {[conn |-> bound[s], id |-> id, msg |-> m]}
+                     ELSE IF s \in full /\ "sendkick" \in Broken THEN {}
                      ELSE queue[s]]
+               /\ owner' = IF "sendkick" \in Broken
+                           THEN [s \in Slots |-> IF s \in full THEN 0 ELSE owner[s]]
+                           ELSE owner
                /\ entitled' = entitled \cup
                      {[conn |-> w.conn, id |-> id, msg |-> m] : w \in {v \in wants : v.id = id}}
                /\ nextMsg' = nextMsg + 1
-               /\ UNCHANGED <<phase, owner, nextConn, bound, table, nextId, subs,
+               /\ UNCHANGED <<phase, nextConn, bound, table, nextId, subs,
                               clientFlows, wants, delivered>>
-
-\* The send path ends no connection (standard/MESSAGES.md m1.7): a send to a
-\* subscriber whose memory is full is refused for that slot and counted, and
-\* the connection goes on, so no step of the application phase changes a
-\* slot's connection. The broken variant "sendkick" restores v1.0's
-\* rn_message_object_kick from the send path (region exhausted) on the main
-\* thread, possibly in the middle of a flow send: the transport ended the
-\* connection at once and the endpoint took nothing more. Connections end in
-\* the transport phase only (Disconnect), where a receive-side exhaustion,
-\* silence or an explicit disconnect ends them.
-Kick(s) ==
-    /\ "sendkick" \in Broken
-    /\ phase = "application" /\ Live(s)
-    /\ owner' = [owner EXCEPT ![s] = 0]
-    /\ queue' = [queue EXCEPT ![s] = {}]
-    /\ UNCHANGED <<phase, nextConn, bound, delivered>> /\ UNCHANGED app
 
 BeginUpdate ==
     /\ phase = "application"
@@ -198,7 +198,7 @@ Next ==
     \/ Create \/ BeginUpdate \/ Observe
     \/ \E id \in Issued : Destroy(id) \/ Send(id)
     \/ \E id \in Issued, s \in Slots : Subscribe(id, s) \/ Unsubscribe(id, s)
-    \/ \E s \in Slots : Connect(s) \/ Disconnect(s) \/ Kick(s)
+    \/ \E s \in Slots : Connect(s) \/ Disconnect(s)
     \/ \E s \in Slots : \E c \in queue[s] : Deliver(s, c)
 
 Spec == Init /\ [][Next]_vars
@@ -213,7 +213,9 @@ TypeOK ==
     /\ wants \subseteq Want /\ entitled \subseteq Copy /\ delivered \subseteq Copy
 
 \* (N) Nothing the application does between updates, flow sends included,
-\* ends a connection (standard/MESSAGES.md m1.7). Reversed by "sendkick".
+\* ends a connection (standard/MESSAGES.md m1.7): read on the state each
+\* application-phase step leaves. Reversed by "sendkick" (a flow send whose
+\* copy a full slot refused ends that slot).
 SendNeverEnds ==
     [][phase = "application" => owner' = owner]_vars
 

@@ -32,7 +32,18 @@
 (*                          not its successor's prev link;                 *)
 (*   RefuseExhausts = TRUE  a span with no room exhausts the region, the   *)
 (*                          v1.0 send-side kick (standard/MESSAGES.md      *)
-(*                          m1.7 makes it a refusal that changes nothing). *)
+(*                          m1.7 makes it a refusal that changes nothing); *)
+(*   LinkFirst     = TRUE   the start takes a descriptor and links its span *)
+(*                          (rn_span_link) before the floor test, and on   *)
+(*                          no room undoes it with rn_span_unlink.         *)
+(*                                                                         *)
+(* A refused start runs the code's steps in the code's order:              *)
+(* rn_region_send_fit_span takes a const region (exhausted, then           *)
+(* descriptors_free, then rn_span_place, all reads) and                   *)
+(* rn_region_send_refuse counts the refusal: refused is the region's       *)
+(* refusal counters summed, modulo CountMod as the code's counters wrap,   *)
+(* and the ghost calls counts the application's starts, so that a start is *)
+(* a step even when it changes nothing else.  CountMod = 1 drops both.     *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -43,11 +54,14 @@ CONSTANTS
     FloorAtOldest,  \* TRUE in the code
     PadOnWrap,      \* TRUE in the code
     SpliceBoth,     \* TRUE in the code
-    RefuseExhausts  \* FALSE in the code (TRUE: v1.0's send-side kick)
+    RefuseExhausts, \* FALSE in the code (TRUE: v1.0's send-side kick)
+    LinkFirst,      \* FALSE in the code (TRUE: link before the floor test, unlink on no room)
+    CountMod        \* the refusal counter and the calls ghost run 0..CountMod-1
 
 ASSUME SR > 0 /\ SR % 16 = 0
 ASSUME Lengths \subseteq 1..SR
 ASSUME Q \in Nat \ {0}
+ASSUME LinkFirst \in BOOLEAN /\ CountMod \in Nat \ {0}
 
 NONE == 0
 D == 1..Q
@@ -63,11 +77,20 @@ VARIABLES
     nxt,        \* descriptor->span_next: the next newer live span, NONE at last
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
-    exhausted   \* the region's sticky exhausted flag (sticky until Reset); only
+    exhausted,  \* the region's sticky exhausted flag (sticky until Reset); only
                 \* the receive side sets it in the code, so here only the broken
                 \* RefuseExhausts does
+    refused,    \* the region's refusal counters, summed, modulo CountMod
+    calls       \* ghost: the application's span starts, modulo CountMod
 
-vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted>>
+vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted, refused, calls>>
+
+\* The ring as the code reads it: a start, a link and a free read start and
+\* len of live spans only (a descriptor's span fields are written by the
+\* link before any read), so those of a descriptor that is not live are
+\* left out.
+Ring == <<head, tail, first, last, live, order, prv, nxt,
+          [d \in live |-> start[d]], [d \in live |-> len[d]], exhausted>>
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -97,6 +120,12 @@ Init ==
     /\ live = {}
     /\ order = <<>>
     /\ exhausted = FALSE
+    /\ refused = 0
+    /\ calls = 0
+
+\* rn_region_send_fit_span's decision, read off a const region before
+\* anything is taken: not exhausted, a free descriptor, and rn_span_place
+FitOK(l) == ~exhausted /\ D \ live # {} /\ Place(Round16(l)).ok
 
 \* rn_region_send_alloc_span with room: rn_span_place then rn_span_link
 Alloc(l, d) ==
@@ -119,18 +148,40 @@ Alloc(l, d) ==
     /\ tail'  = IF e = SR THEN 0 ELSE e
     /\ live'  = live \cup {d}
     /\ order' = Append(order, d)
-    /\ UNCHANGED exhausted
+    /\ calls' = (calls + 1) % CountMod
+    /\ UNCHANGED <<exhausted, refused>>
 
-\* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, counted
-\* by rn_region_send_refuse. The ring, its links and the region are as they
-\* were, and the connection goes on (standard/MESSAGES.md m1.7).
+\* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL (or a
+\* start on an exhausted region), counted by rn_region_send_refuse. In the
+\* code the fit only reads, so the ring, its links and the region are as
+\* they were, and the connection goes on (standard/MESSAGES.md m1.7).
 \* RefuseExhausts is v1.0's rn_region_exhaust here, the send-side kick.
+\* LinkFirst (broken): with a descriptor free, the start links its span at
+\* the place it would take without the floor test (rn_span_link: the tail,
+\* or 0 when the span would cross the end), then finds no room and undoes
+\* the link with rn_span_unlink, which splices the newest span out but
+\* leaves span_tail where the link put it.
+LinkThenUnlink(l, d) ==
+    LET l16 == Round16(l)
+        s   == IF first = NONE \/ l16 > SR - tail THEN 0 ELSE tail
+        e   == s + l16
+        p   == last
+    IN /\ start' = [start EXCEPT ![d] = s]
+       /\ len'   = [len EXCEPT ![d] = l16]
+       /\ tail'  = IF first = NONE THEN 0 ELSE IF e = SR THEN 0 ELSE e
+       /\ head'  = IF first = NONE THEN 0 ELSE head
+       /\ prv' = [x \in D |-> IF x = d THEN NONE ELSE prv[x]]
+       /\ nxt' = [x \in D |-> IF x = d THEN NONE ELSE IF x = p THEN NONE ELSE nxt[x]]
+       /\ UNCHANGED <<first, last, live, order>>
+
 Refuse(l) ==
-    /\ ~exhausted
-    /\ \/ D \ live = {}
-       \/ ~Place(Round16(l)).ok
-    /\ exhausted' = RefuseExhausts
-    /\ UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order>>
+    /\ ~FitOK(l)
+    /\ IF LinkFirst /\ ~exhausted /\ D \ live # {}
+         THEN \E d \in D \ live : LinkThenUnlink(l, d)
+         ELSE UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order>>
+    /\ exhausted' = (exhausted \/ RefuseExhausts)
+    /\ refused' = (refused + 1) % CountMod
+    /\ calls' = (calls + 1) % CountMod
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
 \* rn_region_send_free_fragment; any live span, in any order.  The span
@@ -154,7 +205,7 @@ Free(d) ==
                     /\ UNCHANGED tail
           /\ live' = live \ {d}
           /\ order' = SelectSeq(order, LAMBDA x : x # d)
-          /\ UNCHANGED <<start, len, exhausted>>
+          /\ UNCHANGED <<start, len, exhausted, refused, calls>>
 
 \* the region reset (rocketnet_allocator.cpp, "the send spans: empty")
 Reset ==
@@ -169,6 +220,7 @@ Reset ==
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
+    /\ UNCHANGED <<refused, calls>>
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
@@ -192,6 +244,7 @@ TypeOK ==
     /\ nxt \in [D -> D \cup {NONE}]
     /\ live \subseteq D
     /\ exhausted \in BOOLEAN
+    /\ refused \in 0..(CountMod - 1) /\ calls \in 0..(CountMod - 1)
 
 Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
 
@@ -199,10 +252,18 @@ Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
 \* (standard/MESSAGES.md m1.7). Reversed by RefuseExhausts.
 SpansNeverExhaust == ~exhausted
 
-\* A refusal leaves the ring, its links and the region as they were
-\* (standard/MESSAGES.md m1.7, rule 2). Reversed by RefuseExhausts.
+\* A span start: the alloc with room, or the start the region refuses.
+StartStep(l) == (\E d \in D : Alloc(l, d)) \/ Refuse(l)
+
+\* A start the region has no room for, by the fit's decision on the state
+\* before it, leaves the ring, its links and the region exactly as they
+\* were (standard/MESSAGES.md m1.7, rule 2), whatever it did on the way;
+\* the refusal counter alone moves, by one (design (L)1). Reversed by
+\* LinkFirst (span_tail left past the unlinked span) and RefuseExhausts.
 RefuseLeavesRing ==
-    [][\A l \in Lengths : Refuse(l) => UNCHANGED vars]_vars
+    [][\A l \in Lengths : StartStep(l) /\ ~FitOK(l) =>
+          /\ Ring' = Ring
+          /\ refused' = (refused + 1) % CountMod]_vars
 
 \* No two live spans share a byte.
 LiveSpansDisjoint ==

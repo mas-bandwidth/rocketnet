@@ -12,6 +12,7 @@ the counts, the kept prefix, and the two in-place compactions of
 | Model | Code |
 |---|---|
 | `forgets[i]`, `fc` | `forgets[i]`, `forget_count` |
+| `kf` | `kept_forget_count`: forgets `[0, kf)` were kept by the last commit |
 | `mkeys[i]`, `mvals[i]`, `mc` | `mark_keys[i]`, `mark_values[i].high_water`, `mark_count` |
 | `kc` | `kept_mark_count`: marks `[0, kc)` were refused by the last commit |
 | `refused` | `refused` |
@@ -34,8 +35,10 @@ freely.
 An update is the walk's forget pass, its mark pass, then the commit; the walk
 forgets and marks each key at most once per update.
 
-- **`Forget(k)`**: `rocketnet_xdp_replay_marks_forget`: a pending key is
-  coalesced before the capacity test; a new key is refused at
+- **`Forget(k)`**: `rocketnet_xdp_replay_marks_forget`: a key the kept
+  forgets `[0, kept_forget_count)` hold is coalesced before the capacity
+  test (only those are searched: the walk forgets each key at most once per
+  update, so a repeat can only be a kept forget); a new key is refused at
   `forget_count >= capacity`, else appended. An accepted forget, including a
   duplicate at capacity, then drops the first kept mark of the key by `rocketnet_xdp_replay_marks_drop_kept`,
   which shifts `[i + 1, mark_count)` down one and decrements both counts.
@@ -48,7 +51,7 @@ forgets and marks each key at most once per update.
   superseded, in order, and the refused marks, in order, all kept.
 - **`CompactForgetStep`**: one iteration of `reset_keeping`'s forget loop
   (the superseded test over the applied marks, the move to `forgets[kept]`
-  when `kept != i`), and at the end `forget_count = kept`.
+  when `kept != i`), and at the end `forget_count = kept_forget_count = kept`.
 - **`CompactMarkStep`**: one iteration of the mark loop (the move of key and
   value to `kept_marks` when `kept_marks != j`), and at the end
   `mark_count = kept_mark_count = kept_marks` and `refused = 0`.
@@ -110,6 +113,11 @@ counterexample below was checked against the C by hand.
    kernel-refused forget survives a commit; forgetting that source in a
    later update consumes a second cell. `LayoutIsQueue` fails because the
    independent contract keeps one pending entry per source key.
+5. **`MCRNXdpReplayMarksLayoutBrokenKeptForgetsUnrecorded.cfg`**
+   (`KeptForgetsRecorded = FALSE`): `reset_keeping` not setting
+   `kept_forget_count`, so the forget's search reads no cells. Violates
+   `LayoutIsQueue`: a forget the kernel refused is kept; the next update's
+   forget of the same key appends a second cell instead of coalescing.
 
 ## Runs
 

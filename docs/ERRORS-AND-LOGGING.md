@@ -45,8 +45,11 @@ status code and the accompanying `ERROR` log line:
 | `NOT_INITIALIZED` | `create`, `term` | `rocketnet_init` was not called before `create` / `term`. A create before init increments `api_misuses`. | Call `rocketnet_init()` once at process startup before creating any endpoint, and `rocketnet_term()` once after all endpoints are destroyed. |
 | `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0` or smaller than `sizeof(size_t)`, or is smaller than the struct and ends inside a field rather than where one of its fields ends (see [sized configs](ABI-EVOLUTION.md)). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
 | `CONFIG_ENV_INVALID` | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong base64 key/filter length). | Read the `ERROR` line naming the variable, fix or unset it (`docs/ENVIRONMENT.md`), and recreate the endpoint. Empty variables are ignored and logged. |
-| `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
-| `INVALID_ADDRESS` | `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_create_connect_token`, `rocketnet_create_dev_connect_token` | Create: `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). Start: the transport could not bind or use the address. The token minters: a server address does not parse. | Pass a valid address string with port for at least one family. |
+| `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or, in a production library (`ROCKETNET_DEV=0`), a nonzero `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH`, `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH`, `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` or `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW`). The `ROCKETNET_DEV_` simulator variables are not read by a production library at all: they are ignored, with no log line and no refusal ([ENVIRONMENT.md](ENVIRONMENT.md)). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
+| `INVALID_ADDRESS` | `rocketnet_server_create`, `rocketnet_server_start`, `rocketnet_create_connect_token`, `rocketnet_create_dev_connect_token` | Create: `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). Start: the transport could not bind or use the address. The token minters: a server address does not parse. A string with no port (`a.b.c.d`, `[v6]`) is not refused: it parses as port `0`, which a server takes as a request for an ephemeral port and which no connect token can name. | Pass a valid address string with port for at least one family. |
+| `INVALID_PROTOCOL_ID` | `rocketnet_server_start` | The server config's `protocol_id` is `0`, in either build. | Set the title's nonzero `protocol_id` (or `ROCKETNET_SERVER_PROTOCOL_ID`), the same value the backend puts in its connect tokens. |
+| `PLATFORM_INIT_FAILED` | `rocketnet_init` | The platform's socket layer did not start; the library stays uninitialized. | Correct the platform setup, then call `rocketnet_init` again. |
+| `FLOW_ID_RESERVED` | no call returns it | `rocketnet_server_start_message` was given a destination id with `ROCKETNET_FLOW_ID_BIT` set; the start returns `NULL` and the `ERROR` line names this status. | Pass a client index. |
 | `TRANSPORT_PORT_ZERO_UNSUPPORTED` | `rocketnet_server_start` | The address specifies port `0` on a server transport that cannot discover the kernel-assigned port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`) or include a transport that discovers its assigned port. |
 | `CONNECT_TOKEN_PORT_ZERO` | `rocketnet_client_connect` | The token advertises a server address with port `0`. | Fix the token issuer so each advertised address carries the server's bound non-zero port. |
 | `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED` | `OUT_OF_MEMORY`: `create`, `connect`, `start`; `MUTEX_CREATE_FAILED`: `connect`, `start`; `THREAD_CREATE_FAILED`: `connect`, when the OS refuses the thread (a refused allocation is `OUT_OF_MEMORY`) | The caller allocator returned `NULL` or the OS refused a mutex or thread. | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
@@ -135,12 +138,28 @@ status code and the accompanying `ERROR` log line:
        `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
        increments when a connection request waits past the server's
        `handshakes_per_update` budget; raise it if a mass join times out) and
-       check path MTU / packet loss.
+       check path MTU / packet loss. A connect token already in use by a live
+       connection from another address, or a token whose `client_id` is
+       already connected, is refused silently and also ends here: the server
+       sends nothing back, `connections_denied_full` does not count it, the
+       connected client is unaffected, and the new client reports
+       `CONNECTION_REQUEST_TIMED_OUT` (or `CONNECTION_RESPONSE_TIMED_OUT` when
+       the first connection was admitted during its handshake) only after T.
+       Give each connection its own token and `client_id`, or wait for the
+       first connection to end.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
-       rejected the connection. Check `s.connections_denied_full` in
-       `rocketnet_server_stats_t` (all `max_clients` slots are occupied) and
-       verify that the connect token was not already consumed by another
-       connection or a duplicate `client_id`.
+       rejected the connection because all `max_clients` slots are occupied.
+       Check `s.connections_denied_full` in `rocketnet_server_stats_t`.
+     - `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`): `rocketnet_client_connect`
+       refused the decoded token (it also returned
+       `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN`; see item 2). Request a new token.
+     - `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`): the token was
+       already expired at connect (`rocketnet_client_connect` returned
+       `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED`), or the token's lifetime (its
+       expire time less its create time) elapsed, counted from connect, before
+       the client sent its connection response. Request a fresh token, and check
+       that the server answers within that lifetime
+       ([handshake clocks](USAGE.md#surviving-a-network-outage)).
      - `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`) /
        `ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH`: client and server
        configurations disagree on protocol geometry (such as `num_channels`).

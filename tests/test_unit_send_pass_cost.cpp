@@ -45,7 +45,10 @@ struct sp_transport_t
     uint64_t next_id;
     int frames;                             // frames finished this flush
     int aborts;                             // frames aborted this flush
-    std::vector<int> acked_slot;            // the last flush's frames, acknowledged at this update
+    int capacity;                           // frame starts allowed per flush (send_capacity_available)
+    int started;                            // frames started this flush
+    int pad[2];                             // written out so frame needs no compiler padding (MSVC C4324)
+    std::vector<int> acked_slot;           // the last flush's frames, acknowledged at this update
     std::vector<uint64_t> acked;
     std::vector<int> pending_slot;          // this flush's frames
     std::vector<uint64_t> pending;
@@ -94,6 +97,7 @@ static uint8_t * sp_start_packet( void * transport, int client_index, int reques
     context->payload_index = SP_PAYLOAD_INDEX;
     context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     context->packet_id = ++t->next_id;
+    t->started++;
     context->client_index = client_index;
     return t->frame;
 }
@@ -116,7 +120,14 @@ static void sp_abort_packet( void * transport, rocketnet_packet_context_t * cont
 
 static void sp_send_packets( void * transport )
 {
-    (void) transport;
+    sp_transport_t * t = (sp_transport_t *) transport;
+    t->started = 0;                                 // the ring's count resets when the transport sends
+}
+
+static int sp_send_capacity_available( void * transport )
+{
+    sp_transport_t * t = (sp_transport_t *) transport;
+    return t->capacity - t->started;
 }
 
 static uint64_t sp_connection( void * transport, int client_index )
@@ -252,5 +263,113 @@ static void test_server_send_pass_visits_bounded_by_slots_plus_frames()
 }
 
 REGISTER_UNIT_TEST( test_server_send_pass_visits_bounded_by_slots_plus_frames );
+
+// ---- the cursor at a capacity cut in a later round ------------------------------------
+//
+// A cut in a later round leaves the cursor where a walk over every connection
+// would hold it: the position the cut connection had in the first round,
+// before its visit (sdk/rocketnet_message_server.cpp, the later-round
+// capacity test; proofs/tla/RNServerSendFair.tla CursorAsFullWalk). Four
+// connections, the cursor at 0. Flush A, capacity 3: connections 0 and 2 have
+// two frames due each, 1 and 3 nothing. Round one serves 0 and 2 (1 and 3 are
+// visited and write nothing); round two serves 0's second frame, and the
+// capacity is spent before 2: the cursor is 2's first-round position, 2. The
+// last connection visited would leave it at 1. Flush B, capacity 1:
+// connection 1 has a frame due now, and 2 still has its second. 2 was cut and
+// 1 was offered its turn in flush A, so 2 is served.
+
+static void test_server_send_cursor_at_later_round_cut()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 1;
+    config.reliable_messages_in_flight = 128;
+    config.packets_in_flight = 128;
+    config.receive_message_buffer_bytes = 4096;
+    config.max_message_bytes = 4096;
+    config.send_message_buffer_bytes = 131072;
+    config.send_queue_messages = 128;
+    config.packets_per_update = 64;
+    config.unreliable_messages_per_update = 16;
+    config.max_message_receipts = 16;
+    config.sequenced_messages_held = 0;
+    config.server_send_kbps = 0;
+    check( rocketnet_message_validate_config( &config ) );
+
+    sp_transport_t * t = new sp_transport_t();
+    t->next_id = 5000;
+    t->capacity = 1000;
+
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link.transport = t;
+    link.update = sp_update;
+    link.payloads = sp_payloads;
+    link.acked = sp_acked;
+    link.max_payload_bytes = sp_max_payload_bytes;
+    link.start_packet = sp_start_packet;
+    link.finish_packet = sp_finish_packet;
+    link.abort_packet = sp_abort_packet;
+    link.send_packets = sp_send_packets;
+    link.send_capacity_available = sp_send_capacity_available;
+    link.connection = sp_connection;
+    link.disconnect = sp_disconnect;
+    link.state = sp_state;
+
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 1, 4, &config, NULL, 0, 0, SP_T0 );
+    check( object != NULL );
+    if ( !object )
+    {
+        delete t;
+        return;
+    }
+    rocketnet_message_server_t * server = (rocketnet_message_server_t *) object;
+
+    // two warm flushes: every connection's CONFIG goes out, then is acknowledged
+
+    double time = SP_T0;
+    for ( int f = 0; f < 2; f++ )
+    {
+        check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+        rocketnet_message_server_send_packets( server );
+        time += SP_DT;
+    }
+
+    uint8_t message[SP_MESSAGE_BYTES];
+    memset( message, 0x5A, sizeof( message ) );
+
+    // flush A: capacity 3, two frames due on 0 and on 2
+
+    check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+    for ( int k = 0; k < 2; k++ )
+    {
+        check( rocketnet_message_server_send( server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+        check( rocketnet_message_server_send( server, 2, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+    }
+    object->send_next_connection = 0;
+    t->capacity = 3;
+    rocketnet_message_server_send_packets( server );
+    check( t->pending_slot.size() == 3 );
+    check( t->pending_slot.size() == 3 && t->pending_slot[0] == 0 && t->pending_slot[1] == 2 && t->pending_slot[2] == 0 );
+    printf( "    flush A served %d %d %d, cursor %d\n", t->pending_slot[0], t->pending_slot[1], t->pending_slot[2], object->send_next_connection );
+    check( object->send_next_connection == 2 );
+    time += SP_DT;
+
+    // flush B: capacity 1, a frame due on 1 now; 2's second frame waits since flush A
+
+    check( rocketnet_message_server_update( server, time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_server_send( server, 1, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+    t->capacity = 1;
+    rocketnet_message_server_send_packets( server );
+    check( t->pending_slot.size() == 1 );
+    printf( "    flush B served %d\n", t->pending_slot.empty() ? -1 : t->pending_slot[0] );
+    check( t->pending_slot.size() == 1 && t->pending_slot[0] == 2 );
+    check( t->aborts == 0 );
+
+    rocketnet_message_server_destroy( server );
+    delete t;
+}
+
+REGISTER_UNIT_TEST( test_server_send_cursor_at_later_round_cut );
 
 #endif // #if ROCKETNET_DEV

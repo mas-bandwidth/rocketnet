@@ -709,7 +709,8 @@ void rn_region_reset( rn_region_t * region )
 void rn_region_exhaust( rn_region_t * region )
 {
     // proofs/tla/RNConnectionMemory.tla, Exhaust: sticky with its one reason
-    // (ExhaustedReasonNamed), counted once per exhausted connection
+    // (ExhaustedReasonNamed), counted once per exhausted connection; every send
+    // start then refuses at the fit (proofs/tla/RNSendStoreLayout.tla Exhaust)
 
     rocketnet_assert( region );
 

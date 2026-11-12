@@ -157,3 +157,49 @@ changes the slot (RefuseChanges). The code before revision 1.1 did this:
 `rn_region_exhaust` on a failed fit, and the owner kicked the exhausted
 connection at its next decision. The code now calls `rn_region_send_refuse`,
 which counts the refusal and leaves the region as it was.
+
+## Revision 1.1.2: the refused start in the code's order
+
+Revision 1.1's two properties read the model's own definitions back: `Refuse(s)`
+was `UNCHANGED vars`, and the ghost `cause` behind the invariant
+`SendNeverEnds` was never written to `"send"` (a probe of both passed on
+`MCRNConnectionMemory.cfg`, 151,849 distinct). The ghost `cause` is removed.
+
+- `Refuse(s, n)` is a start of `n` records (one, or a span) that the fit
+  refuses (`FitOK(s, n) == ~exhausted[s] /\ used[s] + n <= Capacity`), with
+  the code's steps in order: the fit only reads (`rn_region_send_fit_store`,
+  `rn_region_send_fit_span`), then `rn_region_send_refuse` counts
+  (`sdk/rocketnet_allocator.cpp`). The per-slot counter `refused`
+  (mod `CountMod`) is the one variable a refusal may change, and it is
+  excluded from the slot's state by name.
+- `StartStep(s, n)` is every start (`Use`, `UseSpan`, `Refuse`). A refused
+  start is named by the fit's decision on the state before the step, not by
+  the action, so a start that takes room before it fits is caught.
+- `SendNeverEnds` is an action property read on the resulting state: no start,
+  refused or not, changes its slot's state, exhausted flag or reason.
+- `RefusalLeavesStateUnchanged`: a start the fit refuses leaves `Slot(s)`
+  (state, owner, room, exhaustion, reason, records) as it was and moves
+  `refused[s]` by one.
+- `TakeBeforeFit = TRUE` (reversed witness): a span start takes a record
+  before its room is known and returns with it still taken.
+
+| Property | Fails when | Witness |
+|---|---|---|
+| `SendNeverEnds` | a refused start exhausts the region (`SendExhausts`) | `MCRNConnectionMemoryBrokenExhaustOnFull.cfg` |
+| `RefusalLeavesStateUnchanged` | a span start takes a record before the fit (`TakeBeforeFit`), or exhausts the region (`SendExhausts`) | `MCRNConnectionMemoryBrokenTakeBeforeFit.cfg`, `MCRNConnectionMemoryBrokenRefuseChanges.cfg` |
+
+| Case | Expected | Exit | Distinct | Seconds (2 workers, vision) |
+|---|---|---:|---:|---:|
+| `MCRNConnectionMemory.cfg` (`CountMod = 1`) | pass | 0 | 151849 | 43.5 |
+| `MCRNConnectionMemoryRefuse.cfg` (two slots, three clients, `CountMod = 3`) | pass | 0 | 15301 | 4.0 |
+| `MCRNConnectionMemoryBrokenExhaustOnFull.cfg` | `SendNeverEnds` | 13 | 99 | 1.0 |
+| `MCRNConnectionMemoryBrokenRefuseChanges.cfg` | `RefusalLeavesStateUnchanged` | 13 | 99 | 1.0 |
+| `MCRNConnectionMemoryBrokenTakeBeforeFit.cfg` | `RefusalLeavesStateUnchanged` | 13 | 97 | 1.0 |
+
+TakeBeforeFit's trace (5 states), checked by hand against the code: `Connect(s1, c1)`,
+two `Use(s1)` (`used` 2 of 3), then a two-record span start that does not fit
+takes one record (`used` 2 to 3) and is refused.
+The code cannot do this: `rn_region_send_alloc_span` fits at
+`sdk/rocketnet_allocator.cpp:1139` on a const region and refuses at 1142,
+and takes its descriptor only at 1148, after the fit; `rn_region_send_alloc`
+fits at 901, refuses at 904, and takes at 908 and 910.

@@ -155,6 +155,14 @@ case "$MODE" in
     *) echo "unknown mode '$MODE' (provision, verify, sweep, or selftest; a misspelled mode must never mutate)" >&2; exit 2 ;;
 esac
 
+# R8's release and file names come from the environment in the selftest only:
+# elsewhere they are the running kernel's, never a file an inherited variable
+# names (sudo -E would otherwise write -1 as root wherever R8_RUNTIME points)
+
+if [ "$MODE" != "selftest" ]; then
+    unset R8_RELEASE R8_RUNTIME R8_CONFIG R8_PROC_CONFIG
+fi
+
 if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ]; then
     if [ -z "$INTERFACE" ] || [ -z "$NUM_QUEUES" ]; then
         echo "usage: rocketnet-provision <interface> <num_queues> [verify|sweep|selftest] [isolated-range]   (or: rocketnet-provision sweep | selftest)" >&2
@@ -463,12 +471,16 @@ r7_enforce()
 
 # R8 ENFORCEMENT AS A FUNCTION, same contract: VERIFY in; say/fail out.
 # The kernel release, the sysctl's file and the kernel's build config are
-# read through R8_RELEASE, R8_RUNTIME and R8_CONFIG, so the selftest drives
-# every arm against files in its own temp dir.
+# read through R8_RELEASE, R8_RUNTIME, R8_CONFIG and R8_PROC_CONFIG, so the
+# selftest drives every arm against files in its own temp dir; every other
+# mode clears them at the start, so the environment never names the file
+# this script writes as root.
 
-# true when the kernel stops a real-time thread that never sleeps: every
+# 0 when the kernel stops a real-time thread that never sleeps: every
 # kernel before 6.12, and a later one built with CONFIG_RT_GROUP_SCHED; a
-# release that does not parse is taken as throttling (fails closed)
+# release that does not parse is taken as throttling (fails closed). 1 when
+# it does not. 2 when it cannot be told: 6.12 or later, and its build config
+# is readable neither at $2 (/boot) nor at $3 (/proc/config.gz)
 r8_throttles()
 {
     local MAJOR="${1%%.*}"
@@ -480,7 +492,18 @@ r8_throttles()
     if [ "$MAJOR" -lt 6 ] || { [ "$MAJOR" -eq 6 ] && [ "$MINOR" -lt 12 ]; }; then
         return 0
     fi
-    [ -r "$2" ] && grep -qx 'CONFIG_RT_GROUP_SCHED=y' "$2"
+    local KCONFIG
+    if [ -r "$2" ]; then
+        KCONFIG="$(cat "$2" 2>/dev/null)" || return 2
+    elif [ -r "$3" ]; then
+        KCONFIG="$(gzip -dc "$3" 2>/dev/null)" || return 2
+    else
+        return 2
+    fi
+    if printf '%s\n' "$KCONFIG" | grep -qx 'CONFIG_RT_GROUP_SCHED=y'; then
+        return 0
+    fi
+    return 1
 }
 
 r8_enforce()
@@ -488,9 +511,12 @@ r8_enforce()
     local RELEASE="${R8_RELEASE:-$(uname -r)}"
     local RUNTIME_FILE="${R8_RUNTIME:-/proc/sys/kernel/sched_rt_runtime_us}"
     local CONFIG="${R8_CONFIG:-/boot/config-$RELEASE}"
+    local PROC_CONFIG="${R8_PROC_CONFIG:-/proc/config.gz}"
     local PERSIST="echo 'kernel.sched_rt_runtime_us = -1' > /etc/sysctl.d/90-rocketnet-xdp.conf"
 
-    if ! r8_throttles "$RELEASE" "$CONFIG"; then
+    local THROTTLES=0
+    r8_throttles "$RELEASE" "$CONFIG" "$PROC_CONFIG" || THROTTLES=$?
+    if [ $THROTTLES -eq 1 ]; then
         say "kernel $RELEASE has no real-time throttle (R8 passes; any ordinary task runnable on a worker's cpu still takes 50 ms in every second from it: keep other tasks off the isolated cpus)"
         return
     fi
@@ -502,6 +528,8 @@ r8_enforce()
     R8_CURRENT="$(cat "$RUNTIME_FILE" 2>/dev/null)"
     if [ "$R8_CURRENT" = "-1" ]; then
         say "kernel.sched_rt_runtime_us already -1 (R8)"
+    elif [ $VERIFY -eq 1 ] && [ $THROTTLES -eq 2 ]; then
+        fail "could not verify R8: kernel $RELEASE is 6.12 or later and its build config is readable at neither $CONFIG nor $PROC_CONFIG, so whether it throttles real-time threads (CONFIG_RT_GROUP_SCHED=y) is unknown, and kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}: sysctl -w kernel.sched_rt_runtime_us=-1 meets R8 either way, and to keep it across reboots: $PERSIST"
     elif [ $VERIFY -eq 1 ]; then
         fail "kernel.sched_rt_runtime_us is ${R8_CURRENT:-unreadable}, want -1 (R8): kernel $RELEASE stops each spinning xdp worker about 50 ms in every second (0.2 to 1 s at a time on a nohz_full cpu): sysctl -w kernel.sched_rt_runtime_us=-1, and to keep it across reboots: $PERSIST"
     else
@@ -1040,9 +1068,9 @@ exit 0'
     # --- R8: the real-time throttle, every arm, against a sysctl file and
     # a build config in the temp dir ---
 
-    run_r8()        # $1 verify-flag  $2 release  $3 sysctl file  $4 config  -> rc = UNMET
+    run_r8()        # $1 verify-flag  $2 release  $3 sysctl file  $4 config  [$5 /proc/config.gz]  -> rc = UNMET
     {
-        ( UNMET=0; VERIFY="$1"; R8_RELEASE="$2"; R8_RUNTIME="$3"; R8_CONFIG="$4"
+        ( UNMET=0; VERIFY="$1"; R8_RELEASE="$2"; R8_RUNTIME="$3"; R8_CONFIG="$4"; R8_PROC_CONFIG="${5:-$R8_DIR/absent}"
           r8_enforce; exit $UNMET ) 2>&1
     }
 
@@ -1074,6 +1102,29 @@ exit 0'
     fi
     OUT="$(run_r8 0 6.8.0-147-generic "$R8_DIR/sysctl_dir" "$R8_DIR/config_plain")"
     expect_case "r8 provision write refused" $? 1 "$OUT" "could not set kernel.sched_rt_runtime_us (R8)" 1
+
+    # 6.12 or later with no build config in /boot: /proc/config.gz decides
+    # when it is there; with neither, verify cannot tell and says so (never a
+    # pass), unless the throttle is already off
+    echo 950000 > "$R8_DIR/stock612"
+    gzip -c "$R8_DIR/config_groups" > "$R8_DIR/proc_groups.gz"
+    gzip -c "$R8_DIR/config_plain" > "$R8_DIR/proc_plain.gz"
+    echo "not gzip" > "$R8_DIR/proc_garbage.gz"
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent")"
+    expect_case "r8 verify 6.12 no config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_garbage.gz")"
+    expect_case "r8 verify 6.12 unreadable proc config cannot verify" $? 1 "$OUT" "could not verify R8" 1 "R8 passes"
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/off" "$R8_DIR/absent")"
+    expect_case "r8 verify 6.12 no config already off" $? 0 "$OUT" "already -1 (R8)" 0
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_groups.gz")"
+    expect_case "r8 verify 6.12 rt groups from proc config" $? 1 "$OUT" "want -1 (R8)" 1
+    OUT="$(run_r8 1 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent" "$R8_DIR/proc_plain.gz")"
+    expect_case "r8 verify 6.12 plain from proc config passes" $? 0 "$OUT" "has no real-time throttle (R8 passes" 0
+    OUT="$(run_r8 0 6.12.0-1-generic "$R8_DIR/stock612" "$R8_DIR/absent")"
+    expect_case "r8 provision 6.12 no config sets -1" $? 0 "$OUT" "confirmed at -1 (R8)" 0
+    if [ "$(cat "$R8_DIR/stock612")" != "-1" ]; then
+        echo "selftest FAIL: r8 provision 6.12 without a config did not write -1"; PASS=0
+    fi
 
     rm -rf "$STUB_DIR" || echo "selftest WARN: could not remove the stub temp dir $STUB_DIR"
 

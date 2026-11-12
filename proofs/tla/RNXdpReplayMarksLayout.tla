@@ -5,11 +5,14 @@
 (* RNXdpReplay.tla models the buffer's contents as sets; this model        *)
 (* carries the arrays those sets cannot see.                               *)
 (*                                                                         *)
-(* The buffer: the array forgets with forget_count, the parallel arrays    *)
-(* mark_keys and mark_values with mark_count, and kept_mark_count, the     *)
-(* length of the prefix of the marks the last commit refused.  An update   *)
-(* is the walk's forget pass (rocketnet_xdp_replay_marks_forget: coalesce    *)
-(* a pending key or append a new key,                                     *)
+(* The buffer: the array forgets with forget_count and kept_forget_count, *)
+(* the length of the prefix of the forgets the last commit kept, the       *)
+(* parallel arrays mark_keys and mark_values with mark_count, and          *)
+(* kept_mark_count, the length of the prefix of the marks the last commit  *)
+(* refused.  An update is the walk's forget pass                          *)
+(* (rocketnet_xdp_replay_marks_forget: coalesce a key the kept forgets     *)
+(* hold, searching only those, or append a new key; the walk forgets each *)
+(* key at most once per update, so no other repeat can come,              *)
 (* then drop a kept mark of the same key by shifting the rest down,        *)
 (* rocketnet_xdp_replay_marks_drop_kept), then its mark pass               *)
 (* (rocketnet_xdp_replay_marks_mark: replace a kept mark of the key in     *)
@@ -34,6 +37,8 @@
 (*   KeptSearchBound the forget's kept search runs one past the prefix     *)
 (*   CompactFromZero the mark compaction writes from the old kept count,   *)
 (*                   over entries it has not read                          *)
+(*   KeptForgetsRecorded the commit records kept_forget_count; FALSE leaves *)
+(*                   it 0, so a repeat of a kept forget is appended        *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -45,10 +50,11 @@ CONSTANTS
     FullTestExact,      \* rocketnet_xdp_replay_marks_forget refuses at forget_count >= MAX
     KeptSearchBound,    \* the forget's kept search runs i < kept_mark_count
     CompactFromZero,    \* reset_keeping's mark compaction writes from index 0
+    KeptForgetsRecorded, \* reset_keeping sets kept_forget_count = kept
     NONE                \* a cell nothing has written (a model value)
 
 ASSUME M \in Nat \ {0}
-ASSUME \A f \in {DeduplicateForgets, FullTestExact, KeptSearchBound, CompactFromZero} : f \in BOOLEAN
+ASSUME \A f \in {DeduplicateForgets, FullTestExact, KeptSearchBound, CompactFromZero, KeptForgetsRecorded} : f \in BOOLEAN
 
 Cells == 0..M                   \* cell M is the one past the end: a write there is out of bounds
 Idx == 0..(M - 1)
@@ -56,6 +62,7 @@ Idx == 0..(M - 1)
 VARIABLES
     forgets,        \* forgets[i]
     fc,             \* forget_count
+    kf,             \* kept_forget_count
     mkeys,          \* mark_keys[i]
     mvals,          \* mark_values[i].high_water
     mc,             \* mark_count
@@ -73,7 +80,7 @@ VARIABLES
     absK,           \* ghost: how many of absM's first entries are kept
     overflow        \* ghost: a write at or past MAX
 
-vars == <<forgets, fc, mkeys, mvals, mc, kc, refused, phase, li, lk, failed, applied,
+vars == <<forgets, fc, kf, mkeys, mvals, mc, kc, refused, phase, li, lk, failed, applied,
           doneF, doneM, absF, absM, absK, overflow>>
 
 \* A write at index x: in bounds it lands, past the end it is recorded and lands in cell M
@@ -99,13 +106,14 @@ Sub(s, keep) == [ n \in 1..Cardinality({ p \in 1..Len(s) : keep[p] }) |->
                     IN s[Nth(n)] ]
 SeqWithout(s, p) == [ n \in 1..(Len(s) - 1) |-> IF n < p THEN s[n] ELSE s[n + 1] ]
 AbsKeptHit(k) == { p \in 1..absK : absM[p].k = k }
-ForgetHit(k) == { i \in 0..(fc - 1) : forgets[i] = k }
+ForgetHit(k) == { i \in 0..(kf - 1) : forgets[i] = k }
 PendingForget(k) == DeduplicateForgets /\ ForgetHit(k) # {}
 AbsForgetHit(k) == { p \in 1..Len(absF) : absF[p] = k }
 
 Init ==
     /\ forgets = [ x \in Cells |-> NONE ]
     /\ fc = 0
+    /\ kf = 0
     /\ mkeys = [ x \in Cells |-> NONE ]
     /\ mvals = [ x \in Cells |-> NONE ]
     /\ mc = 0
@@ -147,7 +155,7 @@ Forget(k) ==
                     IN /\ absM' = SeqWithout(absM, p)
                        /\ absK' = absK - 1
                ELSE UNCHANGED <<absM, absK>>
-    /\ UNCHANGED <<phase, li, lk, failed, applied, doneM>>
+    /\ UNCHANGED <<kf, phase, li, lk, failed, applied, doneM>>
 
 \* rocketnet_xdp_replay_marks_mark, from the walk's mark pass (which follows
 \* the forget pass and marks each key at most once)
@@ -176,7 +184,7 @@ Mark(k, v) ==
             THEN UNCHANGED <<absM, absK>>
             ELSE /\ absM' = Append(absM, [ k |-> k, v |-> v ])
                  /\ UNCHANGED absK
-    /\ UNCHANGED <<forgets, fc, kc, li, lk, failed, applied, doneF, absF>>
+    /\ UNCHANGED <<forgets, fc, kf, kc, li, lk, failed, applied, doneF, absF>>
 
 \* the transport's commit: the kernel refuses some forgets and applies some
 \* marks; rocketnet_xdp_replay_marks_reset_keeping starts.  The contract's
@@ -196,10 +204,10 @@ Commit ==
     /\ phase' = "cf"
     /\ li' = 0
     /\ lk' = 0
-    /\ UNCHANGED <<forgets, fc, mkeys, mvals, mc, kc, refused, doneF, doneM, overflow>>
+    /\ UNCHANGED <<forgets, fc, kf, mkeys, mvals, mc, kc, refused, doneF, doneM, overflow>>
 
 \* one iteration of reset_keeping's forget loop; the end sets forget_count
-\* and starts the mark loop
+\* and kept_forget_count and starts the mark loop
 CompactForgetStep ==
     /\ phase = "cf"
     /\ IF li < fc
@@ -209,8 +217,9 @@ CompactForgetStep ==
                /\ overflow' = (overflow \/ (keep /\ lk # li /\ Past(lk)))
                /\ lk' = IF keep THEN lk + 1 ELSE lk
                /\ li' = li + 1
-               /\ UNCHANGED <<fc, phase>>
+               /\ UNCHANGED <<fc, kf, phase>>
        ELSE /\ fc' = lk
+            /\ kf' = IF KeptForgetsRecorded THEN lk ELSE 0
             /\ phase' = "cm"
             /\ li' = 0
             /\ lk' = IF CompactFromZero THEN 0 ELSE kc
@@ -237,7 +246,7 @@ CompactMarkStep ==
             /\ failed' = {} /\ applied' = {}
             /\ doneF' = {} /\ doneM' = {}
             /\ UNCHANGED <<mkeys, mvals, overflow>>
-    /\ UNCHANGED <<forgets, fc, absF, absM, absK>>
+    /\ UNCHANGED <<forgets, fc, kf, absF, absM, absK>>
 
 Next ==
     \/ \E k \in Keys : Forget(k)
@@ -256,7 +265,7 @@ TypeOK ==
     /\ forgets \in [ Cells -> Keys \cup {NONE} ]
     /\ mkeys \in [ Cells -> Keys \cup {NONE} ]
     /\ mvals \in [ Cells -> Vals \cup {NONE} ]
-    /\ fc \in 0..(M + 1) /\ mc \in 0..(M + 1) /\ kc \in 0..(M + 1)
+    /\ fc \in 0..(M + 1) /\ kf \in 0..(M + 1) /\ mc \in 0..(M + 1) /\ kc \in 0..(M + 1)
     /\ phase \in {"forget", "mark", "cf", "cm"}
     /\ overflow \in BOOLEAN
 

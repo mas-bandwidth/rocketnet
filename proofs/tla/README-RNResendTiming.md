@@ -437,3 +437,40 @@ tests `test_endpoint_probe_hold_requests_frame_only_for_u`
 counts frames asked for during the hold (one exactly when `U` is due, none
 aborted); the second shows three held clients taking only their probe slots of
 a shared send capacity of four.
+
+## Revision 1.3: the silence clock, and the RTT filter in its own module
+
+Standard rules: MESSAGES.md m9.3 (with the reliable timeout off no unacknowledged
+number ends the connection; only the silence timeout `T` does) and m9.2 (the
+acknowledgement-silence filter).
+
+Before this revision `NoEndBeforeT` and `OffMeansNoStallEnd` held vacuously in
+the timeout-off cases: no step ended the connection, so a bound of `FALSE` in
+their place also passed. The model now carries the silence clock: `quiet`
+counts the ticks since the other side was last heard (`KeepAlive` resets it),
+and `SilenceEnd` ends the connection once `quiet` reaches `SilenceAt` (the code:
+`SilenceT`). Every sending step waits while a silence end is due, as the update
+ends the connection before it writes. The properties:
+
+| Property | Kind | Meaning |
+|---|---|---|
+| `OffMeansNoStallEnd` | invariant | with the reliable timeout off, every end is a silence end |
+| `NoEndBeforeT` | invariant | with the reliable timeout off, no end comes before `T` ticks unheard |
+| `SilenceEndsAtT` | invariant | no live connection has gone more than `T` ticks unheard |
+
+| Case | Property | Exit |
+|---|---|---:|
+| `MCRNResendTimingOffQuiet.cfg` (T = 3), `MCRNResendTimingOffQuietFive.cfg` (T = 5), `MCRNResendTimingPacedOff.cfg` | all three, with `DueMeansWritten` | 0 |
+| `MCRNResendTimingBrokenSilenceEarly.cfg` (the end one tick before T) | `NoEndBeforeT` | 12 |
+| `MCRNResendTimingBrokenSilenceLate.cfg` (the end one tick after T) | `SilenceEndsAtT` | 12 |
+| `MCRNResendTimingBrokenDueIgnoresHoldPaced.cfg` (the v1.1.0 due test on the paced walk) | `DueMeansWritten` | 12 |
+
+`DueMeansWritten` now also covers a paced walk with room left (`Room > 0`):
+the due test is true exactly when the call plans a record.
+
+The RTT filter moved to `RNRttFilter.tla`, which models it against a path that
+slows, goes dark and loses packets, with send records, a moving `srtt` and an
+owed outage defined from the sender alone; the filter cases of revision 1.1 and
+1.2 (`MCRNResendTimingFilter*.cfg`, `MCRNResendTimingBrokenSampleAcrossSilence.cfg`,
+`MCRNResendTimingBrokenSilenceOnGap.cfg`) are replaced by its cases. `Sample`
+here sets only the resend delay.

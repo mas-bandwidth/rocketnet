@@ -1,12 +1,14 @@
 ------------------------- MODULE MCRNServerSendFair -------------------------
 (***************************************************************************)
-(* The small instance of RNServerSendFair: three clients, one frame per   *)
-(* update. MCRNServerSendFair.cfg is the committed run; the Walk config    *)
-(* widens the same fair rule to five clients and two frames. The Dark      *)
-(* config has a second client that never acknowledges (m1.8). The three    *)
-(* Broken configs restore the reversed witnesses and must fail.  The      *)
-(* Rounds configs check revision 1.2, one flush's rounds at the code's     *)
-(* index arithmetic; their three Broken configs must fail.               *)
+(* The small instances of RNServerSendFair (revision 1.3).  The passing    *)
+(* configs are the code: MCRNServerSendFair.cfg (three slots, one frame),  *)
+(* Walk (five slots, two frames), Dark and DarkTwo (slots in probe hold),  *)
+(* Short (a slot whose budget may refuse its packet), Rounds and           *)
+(* RoundsFull (the rounds with an unconnected slot and with all            *)
+(* connected).  The Broken configs are the reversed witnesses and must     *)
+(* fail: FromZero and InPlace (FairService), DueIgnoresHold and DarkProbes *)
+(* (the v1.1.0 due test), BudgetFrame (the v1.1.1 frame before the         *)
+(* budget), Revisit, CutCursor and Reorder (the rounds' arithmetic).       *)
 (***************************************************************************)
 EXTENDS RNServerSendFair
 =============================================================================

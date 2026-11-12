@@ -87,8 +87,10 @@ struct rocketnet_xdp_replay_marks_t
     uint32_t capacity;
     uint32_t forget_count;
     uint32_t mark_count;
+    uint32_t kept_forget_count;         // forgets [0, kept_forget_count) were refused by the last commit
     uint32_t kept_mark_count;           // marks [0, kept_mark_count) were refused by the last commit
     uint32_t refused;
+    uint64_t comparisons;               // development builds: every pending forget a forget's repeat search reads, for the unit cost case
 };
 
 // Binds the buffer to its owner's arrays of capacity entries, empty.
@@ -112,6 +114,7 @@ static inline void rocketnet_xdp_replay_marks_bind( struct rocketnet_xdp_replay_
 static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay_marks_t * marks )
 {
     marks->forget_count = 0;
+    marks->kept_forget_count = 0;
     marks->mark_count = 0;
     marks->kept_mark_count = 0;
     marks->refused = 0;
@@ -162,6 +165,7 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
     }
 
     marks->forget_count = kept;
+    marks->kept_forget_count = kept;
 
     uint32_t kept_marks = 0;
     for ( uint32_t j = 0; j < marks->mark_count; j++ )
@@ -204,15 +208,20 @@ static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_re
     marks->kept_mark_count--;
 }
 
-// Queues one forget per source key, coalescing repeats even when the list is
-// full. Returns false, and counts the refusal, when a new key cannot fit.
-// A queued forget, including a repeat, drops a kept mark
+// Queues one forget per source key, coalescing a repeat of a forget the last
+// commit kept even when the list is full. Returns false, and counts the
+// refusal, when a new key cannot fit. Only the kept forgets are searched:
+// the walk queues each address at most once per update
+// (proofs/tla/RNServerReplaySlots.tla DistinctUnlessOwed), so a repeat can
+// only be a forget the kernel refused, and a mass timeout of n clients reads
+// nothing here, not n(n-1)/2 forgets (the kept prefix is empty in steady
+// state). A queued forget, including a repeat, drops a kept mark
 // of the same key: that mark was taken before the slot let the address go,
 // and the commit applies forgets before marks, so kept it would rewrite the
 // released address's entry (proofs/tla/RNXdpReplay.tla, ForgetDropsKeptMark).
 
-// proofs/tla/RNXdpReplayMarksLayout.tla Forget: search below forget_count before
-// refusing a new key at capacity (InBounds); the kept search stops at
+// proofs/tla/RNXdpReplayMarksLayout.tla Forget: search below kept_forget_count
+// before refusing a new key at capacity (InBounds); the kept search stops at
 // kept_mark_count, never reading stale cells past it (LayoutIsQueue)
 static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
 {
@@ -220,8 +229,11 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
     rocketnet_xdp_replay_key_from_address( address, &key );
 
     bool pending = false;
-    for ( uint32_t i = 0; i < marks->forget_count && !pending; i++ )
+    for ( uint32_t i = 0; i < marks->kept_forget_count && !pending; i++ )
     {
+#if ROCKETNET_DEV
+        marks->comparisons++;
+#endif // #if ROCKETNET_DEV
         pending = memcmp( &marks->forgets[i], &key, sizeof( key ) ) == 0;
     }
 
@@ -348,5 +360,57 @@ static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_
     *count = marks->mark_count;
 }
 #endif // #if ROCKETNET_DEV
+
+// A commit's apply of count entries to the kernel map, by batch calls with a
+// single call only where a batch stopped. batch applies the *batch_count
+// entries from first and answers true when it applied them all; refused, it
+// answers false with *batch_count the entries it applied before the one it
+// stopped at (the kernel's generic batch, which stops at a missing key or
+// the first refusal). The entry it stopped at takes one single call, which
+// answers false when that entry failed, and the batch goes on past it. A
+// refused batch that reports no entry stopped at (count unchanged: a kernel
+// without the batch command) is walked one single call an entry. refused[i]
+// is set for each entry whose single call failed and cleared for the rest.
+// Returns the calls made, at most two for each entry a batch stopped at,
+// plus one.
+
+typedef bool rocketnet_xdp_replay_batch_t( void * context, uint32_t first, uint32_t * batch_count );
+typedef bool rocketnet_xdp_replay_single_t( void * context, uint32_t index );
+
+static inline uint32_t rocketnet_xdp_replay_apply( uint32_t count, rocketnet_xdp_replay_batch_t * batch, rocketnet_xdp_replay_single_t * single,
+                                                   void * context, bool * refused )
+{
+    memset( refused, 0, count * sizeof( bool ) );
+
+    uint32_t calls = 0;
+    uint32_t done = 0;
+    while ( done < count )
+    {
+        const uint32_t left = count - done;
+        uint32_t applied = left;
+        calls++;
+        if ( batch( context, done, &applied ) )
+        {
+            break;
+        }
+
+        if ( applied >= left )
+        {
+            for ( uint32_t i = done; i < count; i++ )
+            {
+                calls++;
+                refused[i] = !single( context, i );
+            }
+            break;
+        }
+
+        done += applied;
+        calls++;
+        refused[done] = !single( context, done );
+        done++;
+    }
+
+    return calls;
+}
 
 #endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H

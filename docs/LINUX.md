@@ -344,6 +344,15 @@ boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
 `scripts/rocketnet-provision eth0 7`, then `... verify`, then the server, and
 `scripts/rocketnet-provision sweep` after a crash.
 
+**The interface MTU.** The wire assumes a 1500-byte link
+(`sdk/rocketnet_wire.h`): the largest frame is 1494 bytes over IPv4 and 1514
+over IPv6. The kernel's AF_XDP transmit does not check the MTU, so the server
+reads the interface's (`/sys/class/net/<if>/mtu`) at create, warns once when it
+is below 1500, and refuses a frame larger than it before the TX ring, counting
+each one in `SEND_FAILED` (and logging the first per queue). On such a link
+(GCP's default 1460, PPPoE's 1492, an overlay) keep payloads under the link's
+limit or raise its MTU to 1500.
+
 ### Example machine layout: two XDP queues on 16 cores
 
 Disable hyperthreading, reserve CPU 0 for OS housekeeping, dedicate two

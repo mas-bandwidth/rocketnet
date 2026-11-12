@@ -230,13 +230,17 @@ and finish message queues the bytes written and returns the serial, nonzero, or
 `0` when the send was refused. Calling `rocketnet_client_finish_message` or
 `rocketnet_server_finish_message` without a successful outstanding start is an
 error: it asserts in a debug build and returns `0` in a release build. Abort
-message gives the room back.
+message (`rocketnet_client_abort_message`, `rocketnet_server_abort_message`)
+cancels the open start and gives the room back; with no start open it does
+nothing.
 One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. Every server per-client call
 takes an `int` client index; only `rocketnet_server_start_message` takes a
 `uint64_t` destination id, a client index today, with ids that have
-`ROCKETNET_FLOW_ID_BIT` set reserved for flows. Server finish message and abort
+`ROCKETNET_FLOW_ID_BIT` set reserved for flows: a start to such an id returns
+`NULL` and logs `FLOW_ID_RESERVED` (`ROCKETNET_STATUS_FLOW_ID_RESERVED`, which
+no call returns). Server finish message and abort
 message take no destination: they act on the one pending start. A finish whose
 `bytes_written` is outside 1 to the bytes started returns `0` and aborts the
 pending start, so the next start is never blocked.
@@ -283,10 +287,8 @@ RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
 sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
 other two receipt types ignore it, since they are neither ordered nor sequenced:
-any channel is accepted for them, never refused, and they travel with no
-channel (`rn_message_send_channel` in `sdk/rocketnet_message_server.cpp`,
-which `rn_message_object_start` calls to map the channel before reserving
-the message).
+any channel is accepted for them, never refused, and they are sent on
+channel 0 whatever channel was given: the receiver reads channel 0 for them.
 
 A send the connection's region has no room for is refused: `start_message`
 returns `NULL`, the refusal is counted for that connection (`send_refused` in
@@ -569,23 +571,31 @@ by `rocketnet_client_disconnected`. On the server,
 `rocketnet_server_client_connected` and `rocketnet_server_client_id` identify a
 slot and its client, `rocketnet_server_client_user_data` copies the
 `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` of user data the backend put in that
-client's connect token, `rocketnet_server_num_connected_clients` counts them, and
-`rocketnet_server_disconnect_client` ends one deliberately. The user data is
+client's connect token, `rocketnet_server_num_connected_clients` counts them
+(`rocketnet_server_max_clients` returns the config's `max_clients`), and
+`rocketnet_server_disconnect_client` ends one deliberately;
+`rocketnet_server_disconnect_all_clients` ends every connected client, leaves a
+client still in the handshake as it is, and keeps the server running. The user data is
 readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
 `rocketnet_server_client_connection_id` names the connection in a slot: a
 nonzero id, unique for the server's lifetime across slots, stops and starts,
-and 0 when the slot is free. One update can end a slot's connection and admit
-another into it, so `rocketnet_server_client_connected` reads true before and
-after; compare each slot's connection id after every update to see that change
-and reset per-connection state.
+and 0 when the slot is free. A freed slot reads not connected after the update
+that frees it, with the ended connection's `rocketnet_server_disconnect_reason`,
+and no new client takes it before the next update, so a game that reads every
+slot after every update sees `rocketnet_server_client_connected` false between
+two connections. A game that reads less often compares each slot's connection
+id to see the change and reset per-connection state.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
 `rocketnet_disconnect_reason_name`: `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
 when the server ended it, `ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED` when
 the client's disconnect packet arrived, `ROCKETNET_DISCONNECT_REASON_TIMED_OUT`
 when no packet arrived within the connection timeout, and the message-layer
-reasons for the ends a client shares with its own state.
+reasons for the ends a client shares with its own state. The reason stays
+until the slot's next connection or the server stops; a slot in which no
+connection has ended since start, and every slot of a stopped server, reads
+`ROCKETNET_DISCONNECT_REASON_NONE`.
 A client whose server disconnected it, stopped, or was destroyed reads
 `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` once its update accepts the
 server's disconnect packet; a reliable timeout (only when
@@ -640,8 +650,16 @@ cleanup do not have a strict wall-time guarantee.
 
 A connected client survives a total network outage in either or both
 directions shorter than T, the connection timeout: the connect token's
-`timeout_seconds` (default 10), at most the server's `max_timeout_seconds`
-(default 60, settable up to 3600). This holds when both ends are v1.1.0 or
+`timeout_seconds` (default 10). The two ends keep T separately. The client
+runs the token's `timeout_seconds` as it is. The server runs it capped at its
+own `max_timeout_seconds` (default 60, settable up to 3600), and that cap is
+applied on the server only: the client never learns of it. Mint
+`timeout_seconds` at or below the `max_timeout_seconds` of every server a token
+can name, so that both ends run one T. With a token above the server's cap, an
+outage longer than the cap and shorter than the token's value ends the
+connection on the server (`TIMED_OUT`) while the client still counts it as
+survivable: the client then reads CONNECTED, sending into a slot the server
+has freed, until the token's T of silence ends it there too. This holds when both ends are v1.1.0 or
 later, `reliable_message_timeout_ms` is left 0 (the default), and the round
 trip is at most 900 ms. Outages of T − 1 seconds at T of 10, 30 and 60 were
 tested. An outage that starts just as the server accepts the client, before
@@ -649,6 +667,14 @@ the client knows it is connected, costs one extra round trip of margin, and at
 a 1000 ms round trip that moment fails. Silence for T still ends the
 connection: `ROCKETNET_DISCONNECT_REASON_TIMED_OUT` on the server,
 `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` on the client.
+
+Each end learns of a timeout only from its own clock. A server that ends a
+connection for silence sends no disconnect packet, and it ignores that
+client's packets from then on. A client that resumes after a stall of T or
+longer of its own (a stopped or starved process) first reads the packets its socket
+held from before the end, and each one counts as heard, so it can read
+CONNECTED, its sends going unanswered, for up to another T before it
+reports `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT`.
 
 While the other side is not receiving, sends that find no room are refused
 (`start_message` returns `NULL`, `can_send_message` returns `false`), each
@@ -678,11 +704,18 @@ waited that long since it was first sent, outage or not, and a nonzero value
 also turns off the hold and the round-trip filter above. A nonzero value
 carries no outage guarantee.
 
-During the handshake, the client's connect clock (the connect token's
-lifetime, 30 s by default) applies only until the client sends its connection
-response. From then the server may already hold the client connected, so only
+During the handshake, two clocks run until the client sends its connection
+response, and the first to expire ends the attempt. Silence for T (the
+token's `timeout_seconds`, 10 s by default) ends it in that leg's timed-out
+state (`ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` or
+`ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT`), so a server that never
+answers (a token signed with the wrong backend key, or for another
+`protocol_id`) is reported after T. The token's lifetime (its expire time less
+its create time, `expire_seconds`, 30 s by default), counted from connect, ends
+it with `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED`. From the connection
+response on, the server may already hold the client connected, so only
 silence for T ends the attempt (`ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT`);
-with T above 30 s a failed attempt can take up to T to report. The wait for the
+with T above the token's lifetime a failed attempt can take up to T to report. The wait for the
 other side's CONFIG record has no clock of its own unless
 `reliable_message_timeout_ms` is set.
 

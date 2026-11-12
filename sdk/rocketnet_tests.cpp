@@ -4953,9 +4953,24 @@ void rocketnet_test_server_response_denials()
     // nothing
 
     rocketnet_client_slots_release( test.server.client_slots, 0 );
+
+    // until the update's end the freed slot is held: the response is ignored,
+    // not denied (no packet goes back). It still takes one outcome of its
+    // family (standard/TRANSPORT.md t18.1), CONNECTION_RESPONSE_NO_SLOTS, so
+    // connections_denied_full counts it too (sdk/rocketnet.h says so)
+
+    rocketnet_check( rocketnet_client_slots_num_held( test.server.client_slots ) == 1 );
+    response_bytes = 0;
+    rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof( client_response ), response, &response_bytes,
+                                                    payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 2 );
+    rocketnet_check( rocketnet_counters_conserved( &test.counters, NULL, 0 ) == 1 );
+
     rocketnet_client_slots_publish( test.server.client_slots );
     rocketnet_check( rocketnet_test_process_packet( &test, client_response, sizeof( client_response ), response, &response_bytes,
                                                     payload_out, &payload_out_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+    rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_SLOTS] == 2 );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 1 );
 
     rocketnet_test_server_teardown( &test );

@@ -1253,6 +1253,86 @@ static void test_rtt_filter_idle_connection_is_not_a_silence()
 REGISTER_UNIT_TEST( test_rtt_filter_idle_connection_is_not_a_silence );
 #endif // #if ROCKETNET_DEV
 
+// The first acknowledgement of a connection after an outage (m9.2): the
+// estimate is seeded from the transport's round trip at 50 ms, the first
+// message goes out as a 3 s outage begins, and its acknowledgement arrives
+// when the outage ends. A number was owed for 3 s since its first send with
+// no acknowledgement, so the acknowledgement ends a silence and the packet,
+// which waited it out, gives no sample. With no earlier acknowledgement the
+// silence is measured from U's first send. Without a seed, the first sample
+// is always taken.
+static void test_rtt_filter_first_ack_after_an_outage_gives_no_sample()
+{
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+        check( rn_window_ack_seed_rtt( &f.ack, 0.050 ) == 1 );
+        check( f.ack.has_last_ack == 0 );
+
+        const double t0 = resend_timing_start;
+        const double srtt = f.ack.srtt;
+        const double rttvar = f.ack.rttvar;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        const double outage_end = t0 + 3.000;
+        check( rn_ordered_acks( &f.ordered, &pa, 1, outage_end ) == 1 );
+        check( f.ack.srtt == srtt && f.ack.rttvar == rttvar );
+        check( f.ack.silence_end == outage_end );
+        check( f.send.U == f.send.next );
+
+        resend_timing_close( &f );
+    }
+
+    {
+        resend_timing_fixture_t f;
+        rocketnet_message_default_config( &f.config );
+        resend_timing_open( &f );
+
+        const double t0 = resend_timing_start;
+        const uint64_t pa = resend_timing_send( &f, t0, NULL );
+        check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 3.000 ) == 1 );
+        check( f.ack.has_rtt == 1 && fabs( f.ack.srtt - 3.000 ) < 1e-9 );
+
+        resend_timing_close( &f );
+    }
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_first_ack_after_an_outage_gives_no_sample );
+
+// A number is sampled once (m9.1): one message is sent and resent in a second
+// packet; the first packet's acknowledgement acknowledges the number and
+// samples. The second copy then waits out a 3 s outage, with nothing owed, so
+// no silence ends; its late acknowledgement acknowledges nothing and gives no
+// sample, so the estimate does not move toward the outage.
+static void test_rtt_filter_already_acknowledged_number_gives_no_sample()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    resend_timing_open( &f );
+    check( rn_window_ack_seed_rtt( &f.ack, 0.050 ) == 1 );
+
+    const double t0 = resend_timing_start;
+    uint64_t number = 0;
+    const uint64_t pa = resend_timing_send( &f, t0, &number );
+    const uint64_t pb = f.next_packet_id++;
+    rn_window_ack_commit_packet( &f.ack, pb, &number, 1, t0 + 0.010 );
+
+    check( rn_ordered_acks( &f.ordered, &pa, 1, t0 + 0.050 ) == 1 );
+    check( f.send.U == f.send.next );
+    const double srtt = f.ack.srtt;
+    const double rttvar = f.ack.rttvar;
+    const double delay = f.ack.resend_delay;
+    check( fabs( srtt - 0.050 ) < 1e-9 );
+
+    check( rn_ordered_acks( &f.ordered, &pb, 1, t0 + 3.010 ) == 1 );
+    check( f.ack.silence_end == 0.0 );
+    check( f.ack.srtt == srtt && f.ack.rttvar == rttvar && f.ack.resend_delay == delay );
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_rtt_filter_already_acknowledged_number_gives_no_sample );
+
 // A sent_index with every cell used cannot happen (2P cells hold at most P
 // entries), so it means the index memory was corrupted. Release builds
 // compile the asserts out: the backward-shift scan that removes an acked

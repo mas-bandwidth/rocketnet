@@ -247,7 +247,7 @@ int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt );
 
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
-// proofs/tla/RNResendTiming.tla Sample).
+// proofs/tla/RNRttFilter.tla Ack).
 // Looks up `packet_id` in sent_index in O(1). If absent (an ack of a keep-alive
 // or pure-unreliable packet, a duplicate ack, or an ack arriving after eviction),
 // does nothing and returns 0.

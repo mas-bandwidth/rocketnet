@@ -29,12 +29,22 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* With it off (zero, the default) no reliable number ends the connection;
 \* ReliableTimeout then only bounds the age counter. BrokenTimeoutWhenOff is
 \* the rule before revision 1.1: the timeout ends the connection whatever the
-\* configuration.
+\* configuration, so with it off (zero) at the first check after a first send.
+\* Clocked: the transport's silence clock runs on Tick (quiet: ticks since
+\* anything was heard from the other side) and the transport ends a
+\* connection silent for SilenceT ticks (TIMED_OUT / CONNECTION_TIMED_OUT),
+\* the end that remains with the timeout off. Clocked = FALSE leaves quiet at
+\* 0 and Tick as before revision 1.1 (a model-size knob for the cases that
+\* check no timing property, and for ReceiptProgress, which a silence end
+\* would satisfy for any stuck receipt). BrokenSilenceEarly is a reversed
+\* witness: the silence end one tick short.
 CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptDeadline, ReliableTimeout,
           BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenEarlyLoss,
-          TimeoutConfigured, BrokenTimeoutWhenOff
+          TimeoutConfigured, BrokenTimeoutWhenOff,
+          Clocked, SilenceT, BrokenSilenceEarly
 
 ASSUME RTO \in Nat /\ ReceiptDeadline \in Nat /\ RTO <= ReceiptDeadline
+ASSUME Clocked \in BOOLEAN /\ BrokenSilenceEarly \in BOOLEAN /\ SilenceT \in Nat \ {0}
 
 Serials == 1..3
 ReceiptSerials == 2..3
@@ -46,11 +56,12 @@ Events == [serial : ReceiptSerials, status : {"ACKED", "LOSS"}]
 VARIABLES receiptType, fragmentCount, nextSerial, live,
           sentNums, acked, smap, active, packetNums, opened, lost,
           openedNums, ackProof, age, evicted, outcomes, ring,
-          ringDropped, writes
+          ringDropped, writes,
+          quiet  \* Clocked: ticks since anything was heard from the other side
 vars == <<receiptType, fragmentCount, nextSerial, live,
           sentNums, acked, smap, active, packetNums, opened, lost,
           openedNums, ackProof, age, evicted, outcomes, ring,
-          ringDropped, writes>>
+          ringDropped, writes, quiet>>
 
 SendLimit == IF fragmentCount = 1 THEN 3 ELSE 2
 PromotionSources == {0,1,5}
@@ -81,6 +92,7 @@ Init ==
  /\ opened = {} /\ lost = {} /\ openedNums = {} /\ ackProof = {}
  /\ age = [n \in Nums |-> 0] /\ evicted = {}
  /\ outcomes = [s \in Serials |-> <<>>] /\ ring = <<>> /\ ringDropped = 0
+ /\ quiet = 0
  /\ writes = [s \in ReceiptSerials |-> 0]
 
 \* The API reserves/returns the serial before any packet is written, including
@@ -92,7 +104,7 @@ Send(t) ==
  /\ nextSerial' = nextSerial + 1
  /\ UNCHANGED <<receiptType, fragmentCount, live, sentNums, acked,
       smap, active, packetNums, opened, lost, openedNums, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes>>
+      evicted, outcomes, ring, ringDropped, writes, quiet>>
 
 WritePacket(n,pid) ==
  LET s == n[1] IN
@@ -105,7 +117,7 @@ WritePacket(n,pid) ==
  /\ packetNums' = [packetNums EXCEPT ![pid] = {n}]
  /\ writes' = [writes EXCEPT ![s] = IF @ < 2 THEN @ + 1 ELSE @]
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, acked,
-      opened, lost, openedNums, ackProof, age, evicted, outcomes, ring, ringDropped>>
+      opened, lost, openedNums, ackProof, age, evicted, outcomes, ring, ringDropped, quiet>>
 
 OpenPacket(pid) ==
  /\ live /\ pid \in active \ (opened \cup lost)
@@ -113,7 +125,7 @@ OpenPacket(pid) ==
  /\ openedNums' = openedNums \cup packetNums[pid]
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, lost, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes>>
+      evicted, outcomes, ring, ringDropped, writes, quiet>>
 
 ReceiveAck(pid) ==
  LET ns == UNION {smap[i].nums : i \in {j \in DOMAIN smap : smap[j].id = pid}} IN
@@ -123,6 +135,9 @@ ReceiveAck(pid) ==
  /\ smap' = RemoveMap(pid)
  /\ packetNums' = [packetNums EXCEPT ![pid] = {}]
  /\ active' = active \ {pid} /\ opened' = opened \ {pid} /\ lost' = lost \ {pid}
+ \* the ack came in a packet from the other side: the silence clock restarts
+ \* (last_receive_time = current_time on every accepted packet)
+ /\ quiet' = 0
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       openedNums, age, evicted, outcomes, ring, ringDropped, writes>>
 
@@ -133,7 +148,7 @@ PacketLost(pid) ==
  /\ lost' = lost \cup {pid}
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, openedNums, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes>>
+      evicted, outcomes, ring, ringDropped, writes, quiet>>
 
 RetireLostPacket(pid) ==
  /\ live /\ pid \in lost
@@ -141,7 +156,7 @@ RetireLostPacket(pid) ==
  /\ active' = active \ {pid} /\ opened' = opened \ {pid} /\ lost' = lost \ {pid}
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, openedNums, ackProof, age, evicted,
-      outcomes, ring, ringDropped, writes>>
+      outcomes, ring, ringDropped, writes, quiet>>
 
 EvictMap ==
  /\ live /\ Len(smap) > 0
@@ -149,13 +164,25 @@ EvictMap ==
  /\ smap' = Tail(smap)
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, active, packetNums, opened, lost, openedNums, ackProof, age,
-      outcomes, ring, ringDropped, writes>>
+      outcomes, ring, ringDropped, writes, quiet>>
 
+\* One update passes. Each sent, unacked number ages (its reliable clock, from
+\* its first send). Clocked, the silence clock counts the update unless a
+\* packet from the other side arrived in it (heard: a keep-alive or any
+\* packet carrying no ack this module tracks), and the transport ends a
+\* connection that has now heard nothing for SilenceT updates, at this update
+\* (server: current_time >= last_receive_time + timeout_seconds,
+\* rocketnet_server_protocol_update; client: current_time - last_receive_time
+\* >= timeout_seconds). The silence end and the ack path share live.
+SilenceEnd == IF BrokenSilenceEarly THEN SilenceT - 1 ELSE SilenceT
 Tick ==
  /\ live
  /\ age' = [n \in Nums |-> IF n \in sentNums \ acked /\ age[n] < ReliableTimeout
                                       THEN age[n]+1 ELSE age[n]]
- /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
+ /\ \E heard \in IF Clocked THEN BOOLEAN ELSE {TRUE} :
+      /\ quiet' = IF heard THEN 0 ELSE quiet + 1
+      /\ live' = (heard \/ quiet + 1 < SilenceEnd)
+ /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
       evicted, outcomes, ring, ringDropped, writes>>
 
@@ -169,7 +196,7 @@ EmitAck(s) ==
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, writes>>
+      age, evicted, writes, quiet>>
 
 \* Per-update deadline sweep, one eligible descriptor at a time. Its tombstone
 \* (outcomes) suppresses a late ACK even while the map's reliable references live.
@@ -187,27 +214,30 @@ SweepLoss(s) ==
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, writes>>
+      age, evicted, writes, quiet>>
 
 TakeReceipt ==
  /\ Len(ring) > 0 /\ ring' = Tail(ring)
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, outcomes, ringDropped, writes>>
+      age, evicted, outcomes, ringDropped, writes, quiet>>
 
 \* CHANNELS 6.4: a reliable number reaching first-send + reliable_timeout
 \* ends the connection even if other packets/traffic still make progress,
 \* when the timeout is configured (MESSAGES.md m9.3); off, it waits.
+\* TimeoutAge is the value compared with: reliable_timeout, which is 0 when
+\* off, so the broken rule (no reliable_timeout > 0 test) fires at once.
+TimeoutAge == IF TimeoutConfigured THEN ReliableTimeout ELSE 0
 Disconnect ==
  /\ live
  /\ TimeoutConfigured \/ BrokenTimeoutWhenOff
  /\ \E s \in Issued \cap ReceiptSerials :
       EffectiveKind(s) \in {6,7} /\
-      (\E n \in Parts(s) \cap (sentNums \ acked) : age[n] = ReliableTimeout)
+      (\E n \in Parts(s) \cap (sentNums \ acked) : age[n] >= TimeoutAge)
  /\ live' = FALSE
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, outcomes, ring, ringDropped, writes>>
+      age, evicted, outcomes, ring, ringDropped, writes, quiet>>
 
 \* A new send/retransmit can need map room even after transport loss retires
 \* its packet ID. Only this actual pressure requires eventual eviction.
@@ -234,6 +264,7 @@ TypeOK ==
  /\ outcomes \in [Serials -> Seq({"ACKED","LOSS"})]
  /\ ring \in Seq(Events) /\ ringDropped \in 0..4
  /\ writes \in [ReceiptSerials -> 0..2]
+ /\ quiet \in 0..SilenceT
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
@@ -254,11 +285,18 @@ UnreliableNeverResent == \A s \in ReceiptSerials : EffectiveKind(s)=5 => writes[
 LossOnlyAfterDeadline == \A s \in ReceiptSerials :
     Has(s,"LOSS") => (age[<<s,0>>] >= ReceiptDeadline \/ s \in evicted)
 ReceiptProgress == \A s \in ReceiptSerials : (s \in Issued) ~> (outcomes[s] # <<>> \/ ~live)
-\* With the timeout off nothing here ends the connection: a reliable receipt
-\* whose packets keep being lost waits for its ACKED outcome until the
-\* transport's silence timeout, outside this module, ends the connection.
-\* ReceiptProgress is checked only with the timeout configured.
-NoTimeoutEndWhenOff == ~TimeoutConfigured => live
+\* (S) No end shorter than T. With the timeout off (the default) the only end
+\* is the transport's silence end: a reliable receipt whose packets keep being
+\* lost waits for its ACKED outcome, and the connection ends only once nothing
+\* has been heard from the other side for SilenceT ticks. quiet is not
+\* advanced after the end, so it is the silence the connection ended at.
+\* Checked Clocked (replace quiet >= SilenceT by FALSE and
+\* MCRNReceiptsTimeoutOff.cfg fails). ReceiptProgress is checked only with
+\* the timeout configured and unclocked.
+EndsNeedSilenceT == ~live => quiet >= SilenceT
+NoEndBeforeSilenceT == ~TimeoutConfigured => EndsNeedSilenceT
+\* (K) The end at T: a live connection has heard something within T.
+SilenceEndsAtT == live => quiet < SilenceT
 
 \* The transport eventually resolves each occupied slot by packet ACK or
 \* loss/retirement. No fairness condition forces a lost packet to open, or

@@ -269,6 +269,27 @@ finding was read at its site.
   carve is NULL; it is a fixed offset of the region's block and the loop
   reaches it only with a live unreliable head. Dispositioned.
 
+## Integration of v1.1.4 (2026-11-11)
+
+The Linux transport fixes were written before the site keys and met the gate
+at integration. Each finding was read at its site; no library code changed for
+them, and the baseline does not grow.
+
+- `rocketnet_coalesce.h` `clang-analyzer-core.DivideZero` `80052f2657fcf88d`:
+  `rocketnet_coalesce_split_prefix` divides by the stride only after
+  `rocketnet_coalesce_split` returned -1, which a stride of 0 or less cannot
+  give (it is one segment of the whole message) while `max_segments` is at
+  least 1; the one caller passes 64. Dispositioned.
+- `rocketnet_server_socket_linux.cpp` `cert-err33-c` `98e4118167956d9b` and
+  `cert-err34-c` `81917e0488c6079f`: `get_interface_mtu`'s `fclose` and
+  `fscanf( "%d" )` of the sysfs MTU, the same idiom as the file's baselined
+  sysfs reads; a failed or negative read gives 0, "MTU unknown".
+  Dispositioned.
+- `rocketnet_server_uring_linux.cpp` `bugprone-misplaced-widening-cast`
+  `f0d624ca3a7fc891`: the development-build fake's
+  `(size_t) ( segments * ROCKETNET_URING_TEST_PAYLOAD_BYTES )`, with
+  segments asserted 1 to 64 and a 100-byte payload. Dispositioned.
+
 ## Build and unit gates
 
 Strict warnings and warnings-as-errors are enabled by default. Four complete
