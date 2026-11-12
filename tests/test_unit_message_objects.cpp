@@ -5570,6 +5570,71 @@ static void test_message_whole_frame_in_place_finish_edges()
 }
 
 REGISTER_UNIT_TEST( test_message_whole_frame_in_place_finish_edges );
+
+// A reliable message finished shorter than its start reserved is sent and
+// delivered at the finished length: start reserves the most the application
+// may write, finish names what it wrote (rn_channels_finish). Each reliable
+// type, from the server and from the client, one packet reserved and
+// finished, a block reserved and finished as a block, and a block reserved
+// and finished at one packet's size: the receiver gets exactly the bytes
+// written, once.
+static void test_message_reliable_finished_short_delivers_the_finished_length()
+{
+    const int types[5] = { ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+                           ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT };
+    const int sizes[3][2] = { { 400, 200 }, { 6000, 3500 }, { 6000, 300 } };    // reserved, written
+    for ( int side = 0; side < 2; side++ )
+    {
+        for ( int t = 0; t < 5; t++ )
+        {
+            for ( int s = 0; s < 3; s++ )
+            {
+                mo_pair_t pair;
+                mo_pair_setup( &pair, 1 );
+                for ( int i = 0; i < 3; i++ )
+                {
+                    mo_step( &pair );
+                }
+
+                const uint32_t id = (uint32_t) ( 1000 + side * 100 + t * 10 + s );
+                uint8_t * p = side == 0 ? rocketnet_message_server_start( pair.server, 0, 1, types[t], sizes[s][0] )
+                                        : rocketnet_message_client_start( pair.clients[0], 1, types[t], sizes[s][0] );
+                check( p != NULL );
+                if ( p )
+                {
+                    memset( p, 0xA5, (size_t) sizes[s][0] );                 // the reserved tail holds bytes that must not travel
+                    mo_fill( p, id, (uint32_t) sizes[s][1] );
+                    const uint32_t serial = side == 0 ? rocketnet_message_server_finish( pair.server, 0, sizes[s][1] )
+                                                      : rocketnet_message_client_finish( pair.clients[0], sizes[s][1] );
+                    check( serial != 0 );
+                }
+
+                std::vector<mo_received_t> server_got;
+                std::vector<mo_received_t> client_got;
+                for ( int i = 0; i < 6; i++ )
+                {
+                    mo_step( &pair, &server_got, &client_got );
+                }
+                const std::vector<mo_received_t> & got = side == 0 ? client_got : server_got;
+                check( got.size() == 1 );
+                if ( got.size() == 1 )
+                {
+                    uint32_t got_id = 0;
+                    if ( got[0].bytes.size() != (size_t) sizes[s][1] )
+                    {
+                        printf( "    side %d type %d reserved %d wrote %d: delivered %d bytes\n", side, types[t], sizes[s][0], sizes[s][1], (int) got[0].bytes.size() );
+                    }
+                    check( got[0].bytes.size() == (size_t) sizes[s][1] );
+                    check( mo_verify( got[0].bytes, &got_id ) && got_id == id );
+                }
+                check( ( side == 0 ? server_got : client_got ).empty() );
+                mo_pair_teardown( &pair );
+            }
+        }
+    }
+}
+
+REGISTER_UNIT_TEST( test_message_reliable_finished_short_delivers_the_finished_length );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
 #if ROCKETNET_DEV
