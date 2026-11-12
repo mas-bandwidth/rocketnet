@@ -738,6 +738,7 @@ MCRNXdpReplayMarksLayoutBrokenKeptSearchPastPrefix.cfg	MCRNXdpReplayMarksLayout.
 MCRNXdpReplayMarksLayoutBrokenCompactOverUnread.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplayMarksLayoutCapacityOne.cfg	MCRNXdpReplayMarksLayout.tla	pass	-	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplayMarksLayoutBrokenForgetDuplicates.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
+MCRNXdpReplayMarksLayoutBrokenKeptForgetsUnrecorded.cfg	MCRNXdpReplayMarksLayout.tla	invariant	LayoutIsQueue	check	rnxdpreplaymarkslayout	required	-
 MCRNXdpReplyMacsLayout.cfg	MCRNXdpReplyMacsLayout.tla	pass	-	check	rnxdpreplymacslayout	required	-
 MCRNXdpReplyMacsLayoutBrokenForgottenEndsProbe.cfg	MCRNXdpReplyMacsLayout.tla	invariant	TableIsMap	check	rnxdpreplymacslayout	required	-
 MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg	MCRNXdpReplyMacsLayout.tla	invariant	EvictOnlyOldest	check	rnxdpreplymacslayout	required	-
@@ -794,6 +795,7 @@ MCRNUringReapLayoutCoalesced.cfg	MCRNUringReapLayout.tla	pass	-	check	rnuringrea
 MCRNUringReapLayoutBrokenStopAtRoom.cfg	MCRNUringReapLayout.tla	action	SendsNotBehindRoom	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutBrokenNoHeldMod.cfg	MCRNUringReapLayout.tla	invariant	HeldMatches	check	rnuringreaplayout	required	-
 MCRNUringReapLayoutBrokenHeldCapShort.cfg	MCRNUringReapLayout.tla	invariant	HeldMatches	check	rnuringreaplayout	required	-
+MCRNUringReapLayoutBrokenNoTurns.cfg	MCRNUringReapLayout.tla	invariant	TurnsTaken	check	rnuringreaplayout	required	-
 MCSessionAcks.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-
 MCSessionAcksLive.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	bench	committed-instance-liveness-over-budget
 MCSessionAcksLiveSmall.cfg	MCSessionAcks.tla	pass	-	check	sessionacks	required	-

@@ -9331,6 +9331,7 @@ static pid_t rocketnet_xdp_veth_capture_pid = -1;
 static struct rocketnet_server_transport_t * rocketnet_xdp_veth_server = NULL;
 static bool rocketnet_xdp_veth_made = false;
 static char rocketnet_xdp_veth_pcap[64] = "";
+static int rocketnet_xdp_veth_mtu = 1500;     // both ends; a case may lower it before rocketnet_xdp_veth_start
 
 static void rocketnet_xdp_veth_teardown()
 {
@@ -9462,7 +9463,8 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
         // nothing left from an earlier run
     }
 
-    // the pair: MTU 1500 both ends. Only the family under test is addressed.
+    // the pair: MTU 1500 both ends, unless the case lowered
+    // rocketnet_xdp_veth_mtu. Only the family under test is addressed.
     // IPv6 takes no link-local address and no duplicate address detection,
     // so neighbor discovery runs between the two global addresses and the
     // case starts at once.
@@ -9481,7 +9483,7 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
     }
     {
         char command[256];
-        snprintf( command, sizeof( command ), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu 1500 numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu 1500 numtxqueues %d numrxqueues %d", veth_queues, veth_queues, veth_queues, veth_queues );
+        snprintf( command, sizeof( command ), "ip link add " ROCKETNET_XDP_VETH_NEAR " mtu %d numtxqueues %d numrxqueues %d type veth peer name " ROCKETNET_XDP_VETH_FAR " mtu %d numtxqueues %d numrxqueues %d", rocketnet_xdp_veth_mtu, veth_queues, veth_queues, rocketnet_xdp_veth_mtu, veth_queues, veth_queues );
         rocketnet_xdp_veth_run( command );
     }
     rocketnet_xdp_veth_run( "ip link set " ROCKETNET_XDP_VETH_FAR " netns " ROCKETNET_XDP_VETH_NETNS );
@@ -10110,6 +10112,129 @@ static void rocketnet_xdp_gateway_change_while_serving( const char * case_name )
     rocketnet_check( taken[2] );
 
     rocketnet_xdp_veth_teardown();
+}
+
+// A link below MTU 1500 (GCP's 1460, PPPoE's 1492, an overlay): the kernel's
+// AF_XDP transmit does not check the MTU, so a maximum-size frame is handed
+// to the device. veth drops it (its tx_dropped) and the copy-mode transmit
+// answers EBUSY, unless the transmit ran inside the worker's poll, whose
+// answer is lost, so the server's count of those drops falls short. The
+// server refuses a frame over the interface MTU before its TX ring and counts
+// each in SEND_FAILED: none reaches the device. The queue keeps sending, so
+// small packets sent after the large ones all arrive. The pair is at MTU
+// 1400; the server sends ROCKETNET_XDP_VETH_COUNT maximum-size packets, then
+// as many small ones.
+
+static uint64_t rocketnet_xdp_veth_near_tx_dropped()
+{
+    FILE * file = fopen( "/sys/class/net/" ROCKETNET_XDP_VETH_NEAR "/statistics/tx_dropped", "r" );
+    rocketnet_check( file );
+    unsigned long long value = 0;
+    rocketnet_check( fscanf( file, "%llu", &value ) == 1 );
+    fclose( file );
+    return (uint64_t) value;
+}
+
+static void rocketnet_xdp_over_mtu_refused( const char * case_name )
+{
+    rocketnet_xdp_veth_mtu = 1400;
+    char server_address[128];
+    struct rocketnet_server_transport_t * server = rocketnet_xdp_veth_start( false, case_name, server_address, sizeof( server_address ) );
+    rocketnet_xdp_veth_mtu = 1500;
+    struct rocketnet_client_transport_t * client = rocketnet_xdp_veth_client( server_address );
+
+    double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             rocketnet_server_transport_num_connected_clients( server ) == 1 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    rocketnet_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+
+    static uint8_t large[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t small[100];
+    memset( large, 0x5a, sizeof( large ) );
+    memset( small, 0xa5, sizeof( small ) );
+
+    const int count = ROCKETNET_XDP_VETH_COUNT;
+    const uint64_t failed_before = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_FAILED );
+    const uint64_t device_dropped_before = rocketnet_xdp_veth_near_tx_dropped();
+
+    // one packet a flush, each counted taken when the staging did not refuse it
+
+    int sent_large = 0, sent_small = 0, received_large = 0, received_small = 0;
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 10.0 )
+    {
+        if ( sent_small < count )
+        {
+            const uint64_t ring_full = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL );
+            const bool is_large = sent_large < count;
+            rocketnet_server_transport_send_packet( server, 0, is_large ? large : small, is_large ? (int) sizeof( large ) : (int) sizeof( small ) );
+            if ( rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_RING_FULL ) == ring_full )
+            {
+                sent_large += is_large ? 1 : 0;
+                sent_small += is_large ? 0 : 1;
+            }
+        }
+
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_client_transport_update( client, rocketnet_platform_time() );
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+
+        static uint8_t packet[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
+        int packet_bytes;
+        while ( ( packet_bytes = rocketnet_client_transport_receive_packet( client, packet, (int) sizeof( packet ) ) ) > 0 )
+        {
+            received_large += packet_bytes == (int) sizeof( large ) ? 1 : 0;
+            received_small += packet_bytes == (int) sizeof( small ) && memcmp( packet, small, sizeof( small ) ) == 0 ? 1 : 0;
+        }
+
+        if ( sent_small == count && received_small >= count )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    // the worker counts a refusal after it takes the frame from the staging:
+    // let the last flush reach it
+
+    start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 0.5 &&
+            rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_FAILED ) - failed_before < (uint64_t) count )
+    {
+        rocketnet_server_transport_update( server, rocketnet_platform_time() );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    const uint64_t failed = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_FAILED ) - failed_before;
+    const uint64_t device_dropped = rocketnet_xdp_veth_near_tx_dropped() - device_dropped_before;
+    printf( "%s: large sent %d received %d, small sent %d received %d, send failed counted %llu, device dropped %llu\n", case_name, sent_large, received_large,
+            sent_small, received_small, (unsigned long long) failed, (unsigned long long) device_dropped );
+    rocketnet_check( sent_large == count && sent_small == count );
+    rocketnet_check( received_large == 0 );
+    rocketnet_check( received_small == count );
+    rocketnet_check( failed == (uint64_t) count );
+    rocketnet_check( device_dropped == 0 );
+
+    rn_native_client_transport_stop_and_destroy( client );
+    rocketnet_xdp_veth_teardown();
+}
+
+void rocketnet_test_xdp_over_mtu_refused_ipv4()
+{
+    rocketnet_xdp_over_mtu_refused( "test_xdp_transport_over_mtu_frame_refused_ipv4" );
 }
 
 void rocketnet_test_xdp_gateway_change_while_serving()
@@ -13210,6 +13335,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_gateway_change_while_serving", rocketnet_test_xdp_gateway_change_while_serving, rocketnet_test_xdp_veth_runs_here },
+    { "test_xdp_transport_over_mtu_frame_refused_ipv4", rocketnet_test_xdp_over_mtu_refused_ipv4, rocketnet_test_xdp_veth_runs_here },
 #if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },

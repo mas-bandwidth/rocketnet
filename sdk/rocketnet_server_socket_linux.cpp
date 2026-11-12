@@ -228,7 +228,8 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<uint64_t> kernel_dropped{ 0 };
 
     // frames the flush did not send because the codec refused to build them
-    // (a destination of the family this server does not serve); written by
+    // (a destination of the family this server does not serve) or the frame
+    // is larger than the interface MTU allows; written by
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_build{ 0 };
 
@@ -282,6 +283,7 @@ struct rocketnet_server_xdp_socket_t
     std::atomic<int> send_flow_index{ -1 };
 
     uint8_t server_ethernet_address[ETH_ALEN];
+    int link_mtu;                           // the interface MTU read at create, 0 when unknown (rocketnet_xdp_frame_fits_mtu)
     rocketnet_address_t server_address;     // the public address and port (host-order port): its family is the family this socket serves
     int serves_both;                        // 1: ipv4_address and ipv6_address are both live
     rocketnet_address_t ipv4_address;
@@ -308,6 +310,7 @@ struct rocketnet_server_socket_t
     rocketnet_address_t public_address;
 
     uint8_t server_ethernet_address[ETH_ALEN];
+    int link_mtu;
     uint8_t gateway_ethernet_address[ETH_ALEN];
     bool gateway_known;
 
@@ -434,6 +437,35 @@ static bool get_interface_mac_address( const char * interface_name, uint8_t * ma
     }
 
     return true;
+}
+
+// the interface MTU from sysfs, or 0 when it cannot be read: a frame is
+// then sent whatever its size, as before the MTU was read
+
+static int get_interface_mtu( const char * interface_name )
+{
+    char path[256];
+    const int path_length = snprintf( path, sizeof( path ), "/sys/class/net/%s/mtu", interface_name );
+    if ( path_length < 0 || (size_t) path_length >= sizeof( path ) )
+    {
+        return 0;
+    }
+
+    FILE * file = fopen( path, "r" );
+    if ( !file )
+    {
+        return 0;
+    }
+
+    int mtu = 0;
+    if ( fscanf( file, "%d", &mtu ) != 1 || mtu < 0 )
+    {
+        mtu = 0;
+    }
+
+    fclose( file );
+
+    return mtu;
 }
 
 // the gateway's link-layer address for one family on this interface, through
@@ -1820,6 +1852,16 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
                     server_socket->server_ethernet_address[4],
                     server_socket->server_ethernet_address[5] );
 
+    // the interface MTU: a frame larger than it is refused before the TX
+    // ring and counted (rocketnet_xdp_frame_fits_mtu)
+
+    server_socket->link_mtu = get_interface_mtu( interface_name );
+    if ( server_socket->link_mtu > 0 && server_socket->link_mtu < ROCKETNET_LINK_MTU_BYTES )
+    {
+        rocketnet_warn( "server network interface %s has mtu %d, below %d: larger packets are refused and counted in SEND_FAILED",
+                        interface_name, server_socket->link_mtu, ROCKETNET_LINK_MTU_BYTES );
+    }
+
     // look up the gateway ethernet address for the network interface.
     // Both families discover one gateway MAC each. The env override still
     // covers both, because get_gateway_mac_address reads it for either family.
@@ -2361,6 +2403,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // copy across data needed by the socket to send packets
 
         memcpy( socket->server_ethernet_address, server_socket->server_ethernet_address, ETH_ALEN );
+        socket->link_mtu = server_socket->link_mtu;
         socket->server_address = public_address;
         socket->serves_both = server_socket->serves_both;
         if ( server_socket->serves_both )
@@ -3079,6 +3122,59 @@ static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_serve
     rocketnet_debug( "replay commit: %s failed (%s)", call, strerror( errno ) );
 }
 
+// the commit's calls into the kernel map for rocketnet_xdp_replay_apply: a
+// delete batch and single delete of the forgets (a missing key is not a
+// failure), an update batch and single update of the marks (BPF_ANY makes
+// a repeat harmless)
+
+static bool rocketnet_server_socket_replay_delete_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    struct bpf_map_batch_opts opts;
+    memset( &opts, 0, sizeof( opts ) );
+    opts.sz = sizeof( opts );
+    __u32 count = *batch_count;
+    const bool deleted = bpf_map_delete_batch( server_socket->replay_map_fd, &server_socket->replay_marks->forgets[first], &count, &opts ) == 0;
+    *batch_count = count;
+    return deleted;
+}
+
+static bool rocketnet_server_socket_replay_delete_single( void * context, uint32_t index )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    if ( bpf_map_delete_elem( server_socket->replay_map_fd, &server_socket->replay_marks->forgets[index] ) != 0 && errno != ENOENT )
+    {
+        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
+        return false;
+    }
+    return true;
+}
+
+static bool rocketnet_server_socket_replay_update_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    struct bpf_map_batch_opts opts;
+    memset( &opts, 0, sizeof( opts ) );
+    opts.sz = sizeof( opts );
+    opts.elem_flags = BPF_ANY;
+    __u32 count = *batch_count;
+    const bool updated = bpf_map_update_batch( server_socket->replay_map_fd, &server_socket->replay_marks->mark_keys[first],
+                                               &server_socket->replay_marks->mark_values[first], &count, &opts ) == 0;
+    *batch_count = count;
+    return updated;
+}
+
+static bool rocketnet_server_socket_replay_update_single( void * context, uint32_t index )
+{
+    struct rocketnet_server_socket_t * server_socket = (struct rocketnet_server_socket_t *) context;
+    if ( bpf_map_update_elem( server_socket->replay_map_fd, &server_socket->replay_marks->mark_keys[index], &server_socket->replay_marks->mark_values[index], BPF_ANY ) != 0 )
+    {
+        rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
+        return false;
+    }
+    return true;
+}
+
 void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * server_socket )
 {
     rocketnet_assert( server_socket );
@@ -3093,58 +3189,24 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
     // reconnect's refused zero mark is retried rather than lost.
 
+    // a batch the kernel stops (at a missing key, or a refusal) goes on past
+    // the entry it stopped at, which takes one single call so its outcome is
+    // known; a kernel without the batch command is walked one call an entry
+    // (rocketnet_xdp_replay_apply). An applied mark supersedes a refused
+    // forget of the same key (RetryNeverDeletesNewerMark).
+
     bool * forget_failed = server_socket->replay_forget_failed;
     memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
-
-    if ( marks->forget_count > 0 )
-    {
-        struct bpf_map_batch_opts opts;
-        memset( &opts, 0, sizeof( opts ) );
-        opts.sz = sizeof( opts );
-        __u32 count = marks->forget_count;
-        const bool batch_deleted = bpf_map_delete_batch( server_socket->replay_map_fd, marks->forgets, &count, &opts ) == 0;
-
-        for ( uint32_t i = 0; i < marks->forget_count; i++ )
-        {
-            // a missing key is not a failure; a refused batch (an older kernel,
-            // a missing key, or any other error) is walked one syscall at a
-            // time so each forget's outcome is known
-
-            forget_failed[i] = false;
-            if ( !batch_deleted && bpf_map_delete_elem( server_socket->replay_map_fd, &marks->forgets[i] ) != 0 && errno != ENOENT )
-            {
-                forget_failed[i] = true;
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_delete_elem" );
-            }
-        }
-    }
+    rocketnet_xdp_replay_apply( marks->forget_count, rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single, server_socket,
+                                forget_failed );
 
     bool * mark_applied = server_socket->replay_mark_applied;
     memset( mark_applied, 0, marks->capacity * sizeof( bool ) );
-
-    if ( marks->mark_count > 0 )
+    rocketnet_xdp_replay_apply( marks->mark_count, rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single, server_socket,
+                                mark_applied );
+    for ( uint32_t i = 0; i < marks->mark_count; i++ )
     {
-        struct bpf_map_batch_opts opts;
-        memset( &opts, 0, sizeof( opts ) );
-        opts.sz = sizeof( opts );
-        opts.elem_flags = BPF_ANY;
-        __u32 count = marks->mark_count;
-        const bool batch_updated = bpf_map_update_batch( server_socket->replay_map_fd, marks->mark_keys, marks->mark_values, &count, &opts ) == 0;
-
-        for ( uint32_t i = 0; i < marks->mark_count; i++ )
-        {
-            // a refused batch (an older kernel, or any other error) is walked
-            // one syscall at a time, so each mark's outcome is known: an
-            // applied mark supersedes a refused forget of the same key
-            // (RetryNeverDeletesNewerMark); BPF_ANY makes a repeat harmless
-
-            mark_applied[i] = true;
-            if ( !batch_updated && bpf_map_update_elem( server_socket->replay_map_fd, &marks->mark_keys[i], &marks->mark_values[i], BPF_ANY ) != 0 )
-            {
-                mark_applied[i] = false;
-                rocketnet_server_socket_replay_commit_failed( server_socket, "bpf_map_update_elem" );
-            }
-        }
+        mark_applied[i] = !mark_applied[i];
     }
 
     // a full buffer's refusals land in the commit failure count; a refused
@@ -4237,6 +4299,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     };
 
     bool reported_frame_pressure = false;
+    bool reported_over_mtu = false;
 
     // the last errno the tx wakeup saw, so a hard failure is logged once
     // per contiguous run rather than every pass
@@ -4523,6 +4586,20 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                         {
                             free_send_frame( socket, frame );
                             socket->send_refused_build.fetch_add( 1, std::memory_order_relaxed );
+                        }
+                        else if ( !rocketnet_xdp_frame_fits_mtu( frame_bytes, socket->link_mtu ) )
+                        {
+                            // the kernel would hand it to the device, which
+                            // drops it or sends it past the link's MTU: one
+                            // datagram lost, counted, logged once per queue
+
+                            free_send_frame( socket, frame );
+                            socket->send_refused_build.fetch_add( 1, std::memory_order_relaxed );
+                            if ( !reported_over_mtu )
+                            {
+                                rocketnet_warn( "xdp queue %d refused a %d-byte frame over the interface mtu %d; counted in SEND_FAILED", socket->queue, frame_bytes, socket->link_mtu );
+                                reported_over_mtu = true;
+                            }
                         }
                         else
                         {

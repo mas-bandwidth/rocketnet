@@ -175,6 +175,29 @@ static void test_ipv6_max_payload_is_1452_and_fits_1514()
     rocketnet_unit_check( len == 1514 );
 }
 
+// the largest frame of each family fits a 1500-byte link and not a
+// 1400-byte one; an unknown MTU (0) fits it
+static void test_xdp_frame_fits_mtu_judges_the_ip_packet()
+{
+    rocketnet_address_t s6, d6, s4, d4;
+    rocketnet_unit_check( rocketnet_address_parse( &s6, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d6, "[2001:db8::2]:40001" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
+
+    uint8_t frame[2048];
+    const int ipv6 = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &s6, &d6, ROCKETNET_MAX_PACKET_BYTES );
+    const int ipv4 = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, ROCKETNET_MAX_PACKET_BYTES );
+    rocketnet_unit_check( ipv6 == 1514 );
+    rocketnet_unit_check( ipv4 == 1494 );
+
+    rocketnet_unit_check( rocketnet_xdp_frame_fits_mtu( ipv6, 1500 ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_fits_mtu( ipv6, 1499 ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_fits_mtu( ipv4, 1480 ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_fits_mtu( ipv4, 1400 ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_fits_mtu( ipv6, 0 ) );
+}
+
 static void test_ipv6_payload_over_budget_is_refused()
 {
     rocketnet_address_t src, dst;
@@ -920,6 +943,7 @@ REGISTER_UNIT_TEST( test_ipv6_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_udp_checksum_verifies );
 REGISTER_UNIT_TEST( test_ipv6_checksum_zero_is_sent_as_ffff );
 REGISTER_UNIT_TEST( test_ipv6_max_payload_is_1452_and_fits_1514 );
+REGISTER_UNIT_TEST( test_xdp_frame_fits_mtu_judges_the_ip_packet );
 REGISTER_UNIT_TEST( test_ipv6_payload_over_budget_is_refused );
 REGISTER_UNIT_TEST( test_build_refuses_missing_inputs_and_short_frames );
 REGISTER_UNIT_TEST( test_parse_round_trips_both_families );

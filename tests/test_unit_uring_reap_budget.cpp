@@ -725,7 +725,10 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
 // 16000 per swap: a reap that stopped at the first receive without room
 // would leave the excess ahead of the next update's sends, the send budget
 // would end before their CQEs, and the reservation index would never go
-// back to 0 (proofs/tla/RNUringDriver.tla NoCallEndsBehindRoom,
+// back to 0. the receives are spread over four queues, as a held receive
+// owns its buffer and one queue's provided buffers cannot hold a bank's
+// excess; seven updates keep every queue's held receives within its buffers
+// (proofs/tla/RNUringDriver.tla NoCallEndsBehindRoom,
 // proofs/tla/RNUringReapLayout.tla SendsNotBehindRoom)
 
 static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
@@ -734,18 +737,21 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
     struct uring_fake_t * fake = uring_fake_create( uring_send_case_guard(), &source );
     fake->flood_on_arm = false;
 
-    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
+    const int queues = 4;
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, queues, &source );
     rocketnet_unit_check( uring );
 
     const int receives = 9000;
     const int sends = 256;
-    const int updates = 16;
+    const int updates = 7;
+
+    check( ( 2 * receives - ( URING_TEST_BANK_SIZE - ROCKETNET_URING_MAX_SEGMENTS ) ) * updates <= queues * ROCKETNET_URING_RECV_BUFFERS );
 
     for ( int update = 0; update < updates; update++ )
     {
         for ( int i = 0; i < receives; i++ )
         {
-            uring_fake_push_receive( fake, 0 );
+            uring_fake_push_receive( fake, i % queues );
         }
 
         uring_stage_sends( uring, sends, NULL );
@@ -761,7 +767,7 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
 
         for ( int i = 0; i < receives; i++ )
         {
-            uring_fake_push_receive( fake, 0 );
+            uring_fake_push_receive( fake, i % queues );
         }
 
         fake->consumed = 0;
@@ -871,7 +877,76 @@ static void test_io_uring_transport_send_phases_stage_every_update_under_late_re
     free( fake );
 }
 
+// one source floods queue 0 with coalesced receives of 64 datagrams, 1000
+// of them (four banks), and then one datagram arrives on queue 1. The held
+// receives are copied a queue at a time in turn, so queue 1's datagram is
+// in the next update's view, not behind the four banks of the flood; and
+// every datagram is copied once, none dropped. Queue 1's datagram is the
+// only one whose bytes are 0xEE: queue 0 skips every buffer id that writes
+// them.
+
+static void test_io_uring_transport_held_receives_take_turns_by_queue()
+{
+    struct rocketnet_server_uring_test_source_t source;
+    struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) URING_TEST_BANK_SIZE, &source );
+    fake->flood_on_arm = false;
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
+    rocketnet_unit_check( uring );
+    rocketnet_server_uring_test_coalesce( uring, 0, ROCKETNET_URING_MAX_SEGMENTS );
+
+    const uint8_t mark = 0xEE;
+    const int flood_receives = 1000;
+    int pushed = 0;
+    for ( int id = 0; pushed < flood_receives; id++ )
+    {
+        if ( (uint8_t) id == mark )
+        {
+            continue;
+        }
+        fake->next_buffer = id;
+        uring_fake_push_receive( fake, 0 );
+        pushed++;
+    }
+    fake->next_buffer = mark;
+    uring_fake_push_receive( fake, 1 );
+
+    const int datagrams = flood_receives * ROCKETNET_URING_MAX_SEGMENTS + 1;
+    int seen = 0;
+    int update_of_mark = -1;
+    for ( int update = 0; update < 8 && seen < datagrams; update++ )
+    {
+        fake->consumed = 0;
+        rocketnet_server_uring_receive_packets( uring );
+        check( !fake->guard_tripped );
+
+        struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+        for ( int i = 0; i < received->num_packets; i++ )
+        {
+            if ( received->packet_data[i][0] == mark )
+            {
+                check( update_of_mark < 0 );
+                update_of_mark = update;
+            }
+        }
+        seen += received->num_packets;
+    }
+
+    printf( "held receives by queue: queue 1's datagram in update %d of the flood's %d datagrams\n", update_of_mark, datagrams );
+    check( seen == datagrams );
+    check( update_of_mark == 1 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == (uint64_t) datagrams );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+
+    fake->consumed = 0;
+    uring_fake_stop_and_destroy( uring, fake );
+    check( !fake->guard_tripped );
+
+    free( fake );
+}
+
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_receive_flood_returns_within_budget );
+REGISTER_UNIT_TEST( test_io_uring_transport_held_receives_take_turns_by_queue );
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_holds_past_bank_room );
 REGISTER_UNIT_TEST( test_io_uring_transport_send_completions_pass_a_full_fill_bank );
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pressure );

@@ -580,7 +580,8 @@ returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
 segment is size-checked and copied into the fill bank before the buffer goes
 back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
 receive is copied only while the fill bank has room for a whole coalesced
-receive; otherwise it is held with its buffer, in arrival order, until a swap
+receive (64 datagrams; of a longer one, the first 64 are copied and each
+datagram past them is counted in `RECEIVE_DROPPED_OVERFLOW`); otherwise it is held with its buffer, in arrival order, until a swap
 brings room, and the completions behind it, sends among them, are reaped in
 the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
 regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
@@ -820,7 +821,12 @@ UDP for both address families: IPv4 byte-identical to the canonical builder
 (ihl 5, DF set, ttl 64, header checksum, UDP checksum 0) and IPv6 with the
 mandatory UDP checksum (RFC 8200 section 8.1) computed in software over the
 pseudo-header. Hardware TX checksum offload (AF_XDP TX metadata, kernel 6.8
-or later) is not used.
+or later) is not used. On receive, neither the kernel program nor the frame
+parse verifies the IPv4 header checksum or the UDP checksum, which the host
+stack does for every other transport; an IPv6 datagram with a zero UDP
+checksum is taken too. The sealed contents need none; a corrupted source
+address or port is treated as a spoofed one (RN-1 appendix C, "Kernel
+prefilter and XDP").
 
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
