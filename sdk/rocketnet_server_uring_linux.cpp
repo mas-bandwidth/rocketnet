@@ -47,6 +47,16 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #include <liburing.h>
 #include "rocketnet_uring_codec.h"
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+// MemorySanitizer sees only the writes of instrumented code ("MemorySanitizer
+// requires that all program code is instrumented", clang's MSan docs). The
+// completion pointers come from liburing.so and the completions from the kernel:
+// rocketnet_server_uring_ring_peek marks exactly what one peek hands us.
+#include <sanitizer/msan_interface.h>
+#define ROCKETNET_URING_MSAN 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
 // ROCKETNET_IO_URING also puts the io_uring row in the transport registry
 // (rocketnet_driver.cpp), so it must mean the transport is built: a liburing
 // without multishot receive is refused here, never compiled to a stub that the
@@ -376,7 +386,17 @@ static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_
         return (unsigned) count;
     }
 #endif // #if ROCKETNET_DEV
-    return io_uring_peek_batch_cqe( &uring->ring, cqes, max );
+    const unsigned count = io_uring_peek_batch_cqe( &uring->ring, cqes, max );
+#if defined( ROCKETNET_URING_MSAN )
+    // the pointers were written by liburing.so, each 16-byte completion
+    // (no IORING_SETUP_CQE32) by the kernel into the ring liburing mapped
+    for ( unsigned i = 0; i < count; i++ )
+    {
+        __msan_unpoison( &cqes[i], sizeof( cqes[i] ) );
+        __msan_unpoison( cqes[i], sizeof( *cqes[i] ) );
+    }
+#endif // #if defined( ROCKETNET_URING_MSAN )
+    return count;
 }
 
 static void rocketnet_server_uring_ring_advance( struct rocketnet_server_uring_t * uring, unsigned count )
