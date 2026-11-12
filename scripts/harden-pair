@@ -27,6 +27,8 @@
 #   --frame-p99-us U, --quiet-seconds Q, --warm-seconds W, --xdp-queues Q
 #                                     as scripts/harden-cell
 #   --port P                          the server's UDP port (default 40000)
+#   --client-remote DIR               the client machine's checkout (default --remote)
+#   --server-env K=V                  an environment setting for the server (repeatable)
 #   --local-bin DIR                   this machine's harden_load (default ./bin)
 #   --ssh "CMD"                       the ssh command (default "ssh -o BatchMode=yes")
 #
@@ -38,6 +40,8 @@ server_host=""
 client_host=""
 server_ip=""
 remote=""
+client_remote=""
+server_env=""
 transport=""
 row="control"
 out=""
@@ -68,6 +72,8 @@ while [ $# -gt 0 ]; do
         --client-host) client_host="$2"; shift 2 ;;
         --server-ip) server_ip="$2"; shift 2 ;;
         --remote) remote="$2"; shift 2 ;;
+        --client-remote) client_remote="$2"; shift 2 ;;
+        --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
         --row) row="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
@@ -116,6 +122,8 @@ on_shell()
 
 run_dir="$remote/harden-pair-run"
 tool="$remote/bin/harden_load"
+client_run_dir="${client_remote:-$remote}/harden-pair-run"
+client_tool="${client_remote:-$remote}/bin/harden_load"
 address="$server_ip:$port"
 
 netem_on=0
@@ -123,7 +131,7 @@ netem_on=0
 cleanup()
 {
     on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
-    on_shell "$client_host" "pkill -f '$tool clients' 2>/dev/null; sudo pkill -f '$tool hostile' 2>/dev/null; true" || true
+    on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
     if [ "$netem_on" = 1 ]; then
         on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
@@ -133,19 +141,31 @@ trap cleanup EXIT
 
 on "$server_host" rm -rf "$run_dir"
 on "$server_host" mkdir -p "$run_dir"
-on "$client_host" rm -rf "$run_dir"
-on "$client_host" mkdir -p "$run_dir"
+on "$client_host" rm -rf "$client_run_dir"
+on "$client_host" mkdir -p "$client_run_dir"
 
 if [ -n "$netem" ]; then
+    # only the cell's UDP is impaired: a prio root whose fourth band holds the
+    # netem, and a filter sending the cell's port to it (the server's source
+    # port on its way out, the players' destination port on theirs). The ssh
+    # that drives the cell rides the other bands untouched, and the root's drop
+    # count (netem's losses) is the cell's alone
     netem_on=1
-    # shellcheck disable=SC2086
-    on "$server_host" sudo -n tc qdisc replace dev "$server_dev" root netem $netem
-    # shellcheck disable=SC2086
-    on "$client_host" sudo -n tc qdisc replace dev "$client_dev" root netem $netem
+    for end in server client; do
+        if [ "$end" = server ]; then
+            dest=$server_host; dev=$server_dev; match="sport"
+        else
+            dest=$client_host; dev=$client_dev; match="dport"
+        fi
+        on "$dest" sudo -n tc qdisc replace dev "$dev" root handle 1: prio bands 4 priomap 1 2 2 2 1 2 0 0 1 1 1 1 1 1 1 1
+        # shellcheck disable=SC2086
+        on "$dest" sudo -n tc qdisc add dev "$dev" parent 1:4 handle 40: netem $netem
+        on "$dest" sudo -n tc filter add dev "$dev" parent 1:0 protocol ip prio 1 u32 match ip protocol 17 0xff match ip "$match" "$port" 0xffff flowid 1:4
+    done
 fi
 
 {
-    echo "harden_pair: transport=$transport row=$row seconds=$seconds clients=$clients threads=$threads netem=\"$netem\" hostile=$hostile hostile_pps=$hostile_pps utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "harden_pair: transport=$transport row=$row seconds=$seconds clients=$clients threads=$threads netem=\"$netem\" hostile=$hostile hostile_pps=$hostile_pps server_env=\"${server_env# }\" server_tool=$tool utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "harden_pair: server=$server_host ($(on "$server_host" uname -r), $(on "$server_host" nproc) cpus, dev $server_dev) clients=$client_host ($(on "$client_host" uname -r), $(on "$client_host" nproc) cpus, dev $client_dev) address=$address"
 } | tee "$out/cell.txt"
 
@@ -159,36 +179,33 @@ fi
 join_seconds=$(( clients / 100 + 5 ))
 end_at=$(( $(date +%s) + join_seconds + seconds + 8 ))
 
-on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup $(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
+on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup env $server_env $(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
     --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$server_dev" --warm-seconds "$warm_seconds" --sample-seconds 60 \
-    "${server_shape[@]}") $xdp_args > server.log 2>&1 < /dev/null &"
+    "${server_shape[@]}") $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
 key=""
-for _ in $(seq 1 100); do
-    key=$(on_shell "$server_host" "sed -n 's/^harden_ready: .* key=\([0-9a-f]*\) .*/\1/p' $(printf '%q' "$run_dir/server.log") | head -n 1")
-    [ -n "$key" ] && break
-    sleep 0.1
-done
+# one remote wait (10 s) for the ready line, not one ssh round trip per look
+key=$(on_shell "$server_host" "for i in \$(seq 1 100); do k=\$(sed -n 's/^harden_ready: .* key=\\([0-9a-f]*\\) .*/\\1/p' $(printf '%q' "$run_dir/server.log") | head -n 1); [ -n \"\$k\" ] && { echo \"\$k\"; break; }; sleep 0.1; done")
 if [ -z "$key" ]; then
     echo "harden-pair: the server never became ready" >&2
     on "$server_host" cat "$run_dir/server.log" >&2 || true
     exit 1
 fi
 
-on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup $(printf '%q ' "$tool" clients --address "$address" --key "$key" \
-    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") > clients.log 2>&1 < /dev/null &"
+on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
 
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire
     sleep "$join_seconds"
-    on_shell "$client_host" "cd $(printf '%q' "$run_dir") && sudo -n sh -c 'ulimit -n 65536; nohup $(printf '%q ' "$tool" hostile --address "$address" --key "$key" \
-        --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null &'"
+    on_shell "$client_host" "cd $(printf '%q' "$client_run_dir") && sudo -n sh -c 'ulimit -n 65536; nohup $(printf '%q ' "$client_tool" hostile --address "$address" --key "$key" \
+        --end-at "$end_at" --pps "$hostile_pps" --sockets 256 --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$client_dev") > hostile.log 2>&1 < /dev/null &'" < /dev/null > "$out/ssh-hostile.txt" 2>&1 &
 fi
 
 # every role ends by itself after its last cut (end_at + 3 quiet periods)
 deadline=$(( end_at + 60 ))
 while :; do
     running=$(on_shell "$server_host" "pgrep -f '$tool server' | wc -l")
-    running=$(( running + $(on_shell "$client_host" "pgrep -f '$tool (clients|hostile)' | wc -l") ))
+    running=$(( running + $(on_shell "$client_host" "pgrep -f '$client_tool (clients|hostile)' | wc -l") ))
     [ "$running" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
         echo "harden-pair: roles still running 60 s past the end; stopping them" >&2
@@ -198,10 +215,10 @@ while :; do
 done
 
 on "$server_host" cat "$run_dir/server.log" > "$out/server.log"
-on "$client_host" cat "$run_dir/clients.log" > "$out/clients.log"
+on "$client_host" cat "$client_run_dir/clients.log" > "$out/clients.log"
 logs="$out/server.log,$out/clients.log"
 if [ "$hostile" = "1" ]; then
-    on "$client_host" cat "$run_dir/hostile.log" > "$out/hostile.log"
+    on "$client_host" cat "$client_run_dir/hostile.log" > "$out/hostile.log"
     logs="$logs,$out/hostile.log"
 fi
 
