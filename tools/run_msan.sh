@@ -21,7 +21,9 @@
 # frame of a MemorySanitizer warning: its top frame when that is in this
 # tree, else `<top frame> | <first in-tree frame below it>`, so a listed
 # entry covers one call site, never every warning sharing a libc top frame
-# such as `bcmp (bin/test)`. Its origin trace is printed with it.
+# such as `bcmp (bin/test)`. Its origin trace and the cases that reported it
+# are printed with it, and a failing run keeps its logs (RUN_MSAN_KEEP_DIR,
+# default build-msan/msan-reports).
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
 # clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
@@ -125,6 +127,7 @@ set +e
 status=$?
 set -e
 
+set +e
 python3 - "$log" "$reports" "$known_file" "$status" "$PWD" << 'PY'
 import glob, os, re, sys
 
@@ -147,12 +150,12 @@ def require_cases():
 
 if os.path.exists(log_path):
     for line in open(log_path, errors="replace"):
-        m = re.match(r"^check failed: (test_[a-z0-9_]+ (?:signal \d+|exceeded .+|exit \d+|wait failed))\s*$", line)
+        m = re.match(r"^check failed: (test_[a-z0-9_]+ (?:signal \d+|exceeded .+|exit \d+|wait failed|failed to spawn|peak_rss_mb=\d+ bound_mb=\d+))\s*$", line)
         if not m:
             continue
         saw_fail = True
         detail = m.group(1)
-        parts = re.match(r"^(.*) (signal \d+|exceeded .+|exit \d+|wait failed)$", detail)
+        parts = re.match(r"^(.*) (signal \d+|exceeded .+|exit \d+|wait failed|failed to spawn|peak_rss_mb=\d+ bound_mb=\d+)$", detail)
         if parts is None:
             failed.append((detail, ""))
         else:
@@ -250,7 +253,8 @@ for text in texts:
                 origin.append(line.strip())
             if len(origin) >= 8:
                 break
-        warnings.append((top, origin))
+        case = re.search(r"\bin (test_[a-z0-9_]+)\b", part)
+        warnings.append((top, origin, case.group(1) if case else None))
 
 known = set()
 if os.path.exists(known_file):
@@ -285,10 +289,14 @@ if not warnings:
 
 seen = {}
 order = []
-for top, origin in warnings:
+cases = {}
+for top, origin, case in warnings:
     if top not in seen:
         seen[top] = origin
         order.append(top)
+        cases[top] = []
+    if case and case not in cases[top]:
+        cases[top].append(case)
 
 print("MSan: findings (each with its origin trace):")
 unmatched = []
@@ -296,6 +304,8 @@ for top in order:
     print(top)
     for line in seen[top]:
         print("  origin: " + line)
+    for case in cases[top]:
+        print("  case: " + case)
     if top not in known:
         unmatched.append(top)
 
@@ -319,3 +329,18 @@ require_cases()
 print("MSan: findings listed in %s (all known)" % known_file)
 sys.exit(0)
 PY
+verdict=$?
+set -e
+
+# a failing verdict keeps the run's log and the per-process MemorySanitizer
+# logs, each warning's whole stack and origin, which the verdict above prints
+# only in part; RUN_MSAN_KEEP_DIR names where (default build-msan/msan-reports)
+if [ "$verdict" -ne 0 ]; then
+    keep=${RUN_MSAN_KEEP_DIR:-$abs_build/msan-reports}
+    rm -rf "$keep"
+    mkdir -p "$keep"
+    cp "$log" "$keep/" 2> /dev/null || true
+    cp "$reports"/msan.* "$keep/" 2> /dev/null || true
+    echo "MSan: the run's logs are kept in $keep"
+fi
+exit "$verdict"
