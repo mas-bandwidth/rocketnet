@@ -177,8 +177,11 @@ static void family_fallback_expect_ipv4_after_ipv6_connect_refused( const char *
 
     family_fallback_check_sends_only_to( &c, &ipv4_server );
 
+    // the I/O worker closes the one socket at its exit; destroy frees it and
+    // closes nothing more
+
     rn_test_client_transport_stop_and_destroy( c.transport );
-    rocketnet_unit_check( c.fake->close_calls == 0 );
+    rocketnet_unit_check( c.fake->close_calls == 1 );
     rocketnet_unit_check( c.fake->destroy_calls == 2 );
     delete c.fake;
 }

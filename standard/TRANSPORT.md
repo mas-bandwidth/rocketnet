@@ -3017,6 +3017,13 @@ that accepts one MUST treat the connection as ended and MUST reset.
 The type data of a disconnect is empty; its sealed plaintext holds only the
 ack block.
 
+A client whose connection has ended MUST count each datagram it reads and
+discards after its last send as `CLIENT_RECEIVE_DISCARDED_AT_STOP`, and MUST
+NOT free a datagram queued for it unread. The reference implementation's I/O
+worker, at its exit, reads every datagram still queued on its socket, counts
+each, and closes the socket before the transport reports itself stopped; a
+later datagram meets a closed port, which the operating system counts.
+
 <a id="t13.4"></a>
 ### t13.4. Slot reset
 
@@ -3758,6 +3765,7 @@ The registry of counters, in index order, is:
 | `PAYLOAD_BATCH_FULL` | `refusal` | `none` |
 | `XDP_RECEIVE_FRAME_DROPPED` | `refusal` | `none` |
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
+| `CLIENT_RECEIVE_DISCARDED_AT_STOP` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3870,7 +3878,7 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 00 00 39 5f f8 12 00 00 00 a4 58 a7 b3 00 00
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
-a1 00 00 00
+a1 00 00 00 2d 17 2e 45 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

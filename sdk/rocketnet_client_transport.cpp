@@ -4280,6 +4280,12 @@ const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketn
         client_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = client_transport->io.operations->send_failures( client_transport->io.instance );
     }
 
+    // CLIENT_RECEIVE_DISCARDED_AT_STOP is the I/O worker's count at its exit,
+    // written before it stores stopped (rocketnet_client_io_discard_at_stop)
+    // and assigned on read: zero until then
+
+    client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_RECEIVE_DISCARDED_AT_STOP] = client_transport->client_io.receive_discarded_at_stop.load( std::memory_order_relaxed );
+
     return &client_transport->counters;
 }
 

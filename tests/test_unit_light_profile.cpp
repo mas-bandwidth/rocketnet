@@ -105,8 +105,12 @@
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
+// The client I/O core counts the datagrams its worker discards at its exit
+// (sdk/rocketnet_client_io.h, receive_discarded_at_stop, 8 bytes), adding 64
+// to the client (its object's 64-byte rounding) and nothing to the server
+// (measured); the probe's actual= line is 15036490.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452575 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987850 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987914 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's

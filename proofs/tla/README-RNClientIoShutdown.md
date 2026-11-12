@@ -26,7 +26,13 @@ The four named control families instantiate one module:
   queue (HandedOff), and ring 2 is Filling. Request publishes ring 2 as
   HandedOff without waiting for ring 0 or ring 1, changing their ownership,
   reopening a ring or making producer space. The worker finishes all three
-  rings, wipes its key copy, then acknowledges quiescence.
+  rings, wipes its key copy, then acknowledges quiescence. The endpoint also
+  owns one socket (`sock`, `queued`): `Arrive` queues a datagram on the open
+  socket, and the worker's quiescence reads and counts what is queued and
+  closes the socket (`rocketnet_client_io_discard_at_stop`,
+  sdk/rocketnet_client_io.h), so a later datagram meets a closed port. The
+  ghost `lost` records a queue that `Free` or the next generation's `Start`
+  frees unread.
 - `RNClientReceiveQuit`: one receive worker, no send-ring abstraction.
 - `ClientSession`: one retained transport owner and its key storage. This is
   lifecycle coverage, not another handshake or wire-state model.
@@ -67,6 +73,10 @@ reversed guarantees. Negative controls separately restore:
 4. Reusing a generation before completion.
 5. Acknowledging before wiping worker-owned keys.
 6. Calling the terminal callback again on repeated request.
+7. Exiting with the socket's queue unread and the socket open
+   (`exitunread`): `StoppedSocketDrained` fails, a completed stop with a
+   datagram still queued. The positive `RNClientIo` controls also check
+   `StoppedSocketDrained` and `NoUnreadDiscard`.
 
 The three-ring fixture intentionally tests the final handoff boundary; ordinary
 ring allocation, payload bytes, address binding and receive publication remain

@@ -17,14 +17,23 @@
    contract). Callback invocation itself and native cancel/syscall semantics
    are outside this abstraction; callback affinity/count and retained context
    are represented. Backend-specific RIO/uring/IOCP algorithms need separate
-   correspondence and native tests. *)
+   correspondence and native tests.
+
+   The client I/O endpoint's socket (sock, queued) and the ghost lost: a
+   datagram that arrives on the open socket queues until a read takes it.
+   The worker, at its exit, reads what is queued, counts it as discarded at
+   stop and closes the socket before it acknowledges quiescence
+   (sdk/rocketnet_client_io.h rocketnet_client_io_discard_at_stop); a later
+   datagram meets a closed port. lost records a queue that destroy or the
+   next connection's start freed unread, which nothing counts. *)
 EXTENDS Integers, FiniteSets
 CONSTANTS Endpoint, NumWorkers, MaxGenerations, StuckWorker, Defect
 ASSUME Endpoint \in {"clientio", "receive", "client", "server"}
 ASSUME NumWorkers \in Nat \ {0} /\ MaxGenerations \in Nat \ {0}
 ASSUME StuckWorker \in 0..NumWorkers
 ASSUME Defect \in {"none", "requestwait", "requestcomplete", "freeearly",
-                  "reuseearly", "ackbeforewipe", "repeatcallback"}
+                  "reuseearly", "ackbeforewipe", "repeatcallback",
+                  "exitunread"}
 Workers == 1..NumWorkers
 Generations == 1..MaxGenerations
 (* Three send rings: sdk/rocketnet_client_io.h
@@ -38,9 +47,10 @@ WorkerStates == {"idle", "working", "quiescent", "exited", "joined"}
 RingStates == {"empty", "filling", "handedoff", "sending", "sent"}
 CallStates == {"idle", "entered", "returned"}
 VARIABLES phase, generation, worker, keys, ring, ioRing, request, poll,
-          pollValue, callbacks, contextLive, badReuse
+          pollValue, callbacks, contextLive, badReuse, sock, queued, lost
 vars == <<phase, generation, worker, keys, ring, ioRing, request, poll,
-          pollValue, callbacks, contextLive, badReuse>>
+          pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
+SockStates == {"none", "open", "closed"}
 IdleCaller == request # "entered" /\ poll # "entered"
 Quiescent == \A w \in Workers : worker[w] \in {"idle", "quiescent", "exited", "joined"}
 Joined == \A w \in Workers : worker[w] \in {"idle", "joined"}
@@ -55,6 +65,7 @@ Init ==
     /\ request = "idle" /\ poll = "idle" /\ pollValue = FALSE
     /\ callbacks = [g \in Generations |-> 0]
     /\ contextLive = TRUE /\ badReuse = FALSE
+    /\ sock = "none" /\ queued = FALSE /\ lost = FALSE
 
 (* Freshly created, never-started endpoints already report completion.
    Restart's synchronous finalization joins the prior generation first. *)
@@ -64,7 +75,7 @@ BeginRestart ==
     /\ phase' = "restarting"
     /\ badReuse' = (badReuse \/ ~Quiescent)
     /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
-                    pollValue, callbacks, contextLive>>
+                    pollValue, callbacks, contextLive, sock, queued, lost>>
 Start ==
     /\ IdleCaller /\ generation < MaxGenerations
     /\ (phase = "stopped" /\ generation = 0) \/
@@ -83,6 +94,8 @@ Start ==
     /\ ioRing' = IF HasRings THEN 0 ELSE -1
     /\ request' = "idle" /\ poll' = "idle" /\ pollValue' = FALSE
     /\ badReuse' = (badReuse \/ ~Joined)
+    /\ sock' = IF HasRings THEN "open" ELSE "none"
+    /\ queued' = FALSE /\ lost' = (lost \/ queued)
     /\ UNCHANGED <<callbacks, contextLive>>
 RequestStop ==
     /\ IdleCaller /\ phase = "running"
@@ -94,25 +107,25 @@ RequestStop ==
     /\ ring' = [r \in Rings |-> IF ring[r] = "filling" THEN "handedoff" ELSE ring[r]]
     /\ callbacks' = [callbacks EXCEPT ![generation] = @ + 1]
     /\ pollValue' = FALSE
-    /\ UNCHANGED <<generation, worker, keys, ioRing, poll, contextLive, badReuse>>
+    /\ UNCHANGED <<generation, worker, keys, ioRing, poll, contextLive, badReuse, sock, queued, lost>>
 RepeatStop ==
     /\ IdleCaller /\ phase \in {"stopping", "stopped"}
     /\ request' = "entered"
     /\ callbacks' = IF Defect = "repeatcallback" /\ generation > 0
                      THEN [callbacks EXCEPT ![generation] = 2] ELSE callbacks
     /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, poll,
-                    pollValue, contextLive, badReuse>>
+                    pollValue, contextLive, badReuse, sock, queued, lost>>
 RequestReturn ==
     /\ request = "entered"
     /\ Defect # "requestwait" \/ Quiescent
     /\ request' = "returned"
     /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 BeginPoll ==
     /\ IdleCaller /\ phase \in {"stopping", "stopped"}
     /\ poll' = "entered"
     /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, request,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 PollReturn ==
     /\ poll = "entered"
     /\ LET result == Complete \/ (Defect = "requestcomplete" /\ phase = "stopping") IN
@@ -120,7 +133,7 @@ PollReturn ==
        /\ phase' = IF result THEN "stopped" ELSE phase
     /\ poll' = "returned"
     /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request,
-                    callbacks, contextLive, badReuse>>
+                    callbacks, contextLive, badReuse, sock, queued, lost>>
 
 (* A stuck worker has no finish/quiesce/exit action. No fair backend return
    is assumed in the stuck-owner control. The caller actions still run. *)
@@ -129,46 +142,59 @@ FinishRing ==
     /\ ioRing \in Rings /\ ring[ioRing] = "sending"
     /\ ring' = [ring EXCEPT ![ioRing] = "sent"] /\ ioRing' = -1
     /\ UNCHANGED <<phase, generation, worker, keys, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 TakeRing(r) ==
     /\ HasRings /\ StuckWorker # 1 /\ worker[1] = "working"
     /\ ioRing = -1 /\ ring[r] = "handedoff"
     /\ ring' = [ring EXCEPT ![r] = "sending"] /\ ioRing' = r
     /\ UNCHANGED <<phase, generation, worker, keys, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 WorkerQuiesce(w) ==
     /\ phase = "stopping" /\ w # StuckWorker /\ worker[w] = "working"
     /\ ~HasRings \/ w # 1 \/ (NoRingOwner /\ ioRing = -1)
     /\ keys' = IF Defect = "ackbeforewipe" THEN keys ELSE [keys EXCEPT ![w] = FALSE]
     /\ worker' = [worker EXCEPT ![w] = "quiescent"]
+    (* the exit's discard: the queue is read and counted, then the socket
+       closes; the exitunread defect leaves both as they are *)
+    /\ IF HasRings /\ w = 1 /\ Defect # "exitunread"
+       THEN sock' = "closed" /\ queued' = FALSE
+       ELSE UNCHANGED <<sock, queued>>
     /\ UNCHANGED <<phase, generation, ring, ioRing, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, lost>>
 WorkerExit(w) ==
     /\ worker[w] = "quiescent"
     /\ worker' = [worker EXCEPT ![w] = "exited"]
     /\ UNCHANGED <<phase, generation, keys, ring, ioRing, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 Join(w) ==
     /\ phase \in {"destroying", "restarting"} /\ worker[w] = "exited"
     /\ worker' = [worker EXCEPT ![w] = "joined"]
     /\ UNCHANGED <<phase, generation, keys, ring, ioRing, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 DestroyBegin ==
     /\ IdleCaller
     /\ phase = "stopped" \/ (Defect = "freeearly" /\ phase = "stopping")
     /\ phase' = "destroying"
     /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
-                    pollValue, callbacks, contextLive, badReuse>>
+                    pollValue, callbacks, contextLive, badReuse, sock, queued, lost>>
 Free ==
     /\ phase = "destroying" /\ (Joined \/ Defect = "freeearly")
     /\ phase' = "freed" /\ contextLive' = FALSE
+    /\ lost' = (lost \/ queued)
     /\ UNCHANGED <<generation, worker, keys, ring, ioRing, request, poll,
-                    pollValue, callbacks, badReuse>>
+                    pollValue, callbacks, badReuse, sock, queued>>
+(* A datagram from the server reaches the client's open socket and
+   queues; at a closed socket the operating system counts it instead. *)
+Arrive ==
+    /\ HasRings /\ sock = "open" /\ ~queued
+    /\ queued' = TRUE
+    /\ UNCHANGED <<phase, generation, worker, keys, ring, ioRing, request, poll,
+                    pollValue, callbacks, contextLive, badReuse, sock, lost>>
 Done == phase = "freed" /\ UNCHANGED vars
 Next == Start \/ BeginRestart \/ RequestStop \/ RepeatStop \/ RequestReturn
         \/ BeginPoll \/ PollReturn \/ FinishRing \/ (\E r \in Rings : TakeRing(r))
         \/ (\E w \in Workers : WorkerQuiesce(w) \/ WorkerExit(w) \/ Join(w))
-        \/ DestroyBegin \/ Free \/ Done
+        \/ DestroyBegin \/ Free \/ Arrive \/ Done
 Spec == Init /\ [][Next]_vars
 (* Caller return fairness concerns only caller execution, not I/O progress.
    Strong poll fairness permits applications that also repeat the request.
@@ -184,9 +210,14 @@ TypeOK ==
     /\ ring \in [Rings -> RingStates] /\ ioRing \in {-1} \cup Rings
     /\ request \in CallStates /\ poll \in CallStates /\ pollValue \in BOOLEAN
     /\ callbacks \in [Generations -> 0..2] /\ contextLive \in BOOLEAN /\ badReuse \in BOOLEAN
+    /\ sock \in SockStates /\ queued \in BOOLEAN /\ lost \in BOOLEAN
 CompletionMeansQuiescent == pollValue => Quiescent /\ NoWorkerKeys /\ NoRingOwner
 FreedOnlyAfterJoin == phase = "freed" => Joined /\ NoWorkerKeys /\ NoRingOwner
 RetainedUntilQuiescent == ~contextLive => Quiescent
+(* the stop a poll reports has read every queued datagram and closed the
+   socket; no queue is ever freed unread *)
+StoppedSocketDrained == HasRings /\ pollValue => sock # "open" /\ ~queued
+NoUnreadDiscard == ~lost
 NoReuseBeforeComplete == ~badReuse
 CallbackOnce == \A g \in Generations : callbacks[g] <= 1
 NeverStartedComplete == generation = 0 /\ phase = "stopped" => Complete
