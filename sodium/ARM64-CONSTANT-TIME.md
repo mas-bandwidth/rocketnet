@@ -35,27 +35,34 @@ result, 0 or -1, which is the public outcome the caller is told.
   `h + 5`, never by a branch (proved for every input by
   `proofs/cbmc/proof_poly1305_mul64.c`).
 - **Tag check**: `crypto_verify_16`, the bundle's constant-time compare.
-- **Wiping.** The guarantee is the portable reference's: named buffers of
-  key, state and keystream are cleared, and nothing more is promised.
+- **Wiping.** The guarantee is the portable reference's: the named key and
+  state buffers are cleared, and nothing more is promised.
   - *Cleared with `sodium_memzero` before return:*
-    - the ChaCha20 state (the key words) and the Poly1305 key, accumulator
-      and pads;
-    - the key block, the computed tag, and the partial-chunk and
-      partial-block buffers (`ks`, `block`, `tmp`);
-    - the named arrays of each ChaCha20 step: `in_v` and `x` (four-block
-      and one-pass steps), `a_in`, `b_in`, `x` and `y` (eight-block step),
-      `in` and `x` (scalar block), and the transposed keystream rows
-      (`row`).
+    - the ChaCha20 state (the key words);
+    - the Poly1305 key, accumulator and pads;
+    - the key block and the computed tag;
+    - the partial-chunk and partial-block buffers (`ks`, `block`, `tmp`);
+    - the scalar block's `in` and `x`.
   - *Not cleared:*
-    - values the compiler keeps in vector or general registers;
-    - values it spills to unnamed stack slots. The eight-block step holds
-      more live vectors than there are registers, so it spills.
-    - scalar locals: the Poly1305 limbs `h0`-`h2`, `r0`, `r1`, `s1`, and
-      the counters. At `-O0` these live on the stack.
+    - the working arrays of the vector steps: `in_v` and `x` (four-block and
+      one-pass steps), `a_in`, `b_in`, `x` and `y` (eight-block step), and
+      the transposed keystream rows (`row`);
+    - values the compiler keeps in registers or spills to unnamed stack
+      slots;
+    - scalar locals: the Poly1305 limbs, `r0`, `r1`, `s1` and the counters.
+      At `-O0` these live on the stack.
+  - *Why the working arrays are not cleared.* Clearing them was measured on
+    Neoverse-V2 at 1200 B, against the same code without it (perf cycles,
+    gcc 15.2, 2026-11-12):
+    - seal: 9351 against 4350 cycles (+115%);
+    - open: 10047 against 5755 cycles (+75%).
+
+    That is far over the 2% the rulings allowed, so they stay as the
+    portable reference leaves its own block words and `tmp`.
   - *The portable reference* clears its ChaCha20 context, the AEAD's key
-    block, its Poly1305 state and its computed tag. It leaves its block
-    words, its `tmp` partial block and any spills. Neither path promises
-    that no key-derived value survives in a stack frame.
+    block, its Poly1305 state and its computed tag.
+  - Neither path promises that no key-derived value survives in a stack
+    frame.
 - **Speculation**: open checks the tag before it computes any plaintext. It
   MACs the ciphertext, compares in constant time, and only on success runs
   `ACQUIRE_FENCE` and then the NEON keystream from block 1 over the

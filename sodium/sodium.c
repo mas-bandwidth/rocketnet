@@ -34488,7 +34488,6 @@ rn_neon_out4(const uint32x4_t x[16], unsigned char *out,
                 sodium_memzero(tmp, sizeof tmp);
             }
         }
-        sodium_memzero(row, sizeof row);
     }
 }
 
@@ -34550,8 +34549,6 @@ rn_neon_blocks4(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
         x[i] = vaddq_u32(x[i], in_v[i]);
     }
     rn_neon_out4(x, out, in, len);
-    sodium_memzero(in_v, sizeof in_v);
-    sodium_memzero(x, sizeof x);
 }
 
 /* Eight consecutive blocks from ctr as two interleaved sets of four, so a
@@ -34614,10 +34611,6 @@ rn_neon_blocks8(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
     }
     rn_neon_out4(x, out, in, 256);
     rn_neon_out4(y, out + 256, in != NULL ? in + 256 : NULL, len - 256);
-    sodium_memzero(a_in, sizeof a_in);
-    sodium_memzero(b_in, sizeof b_in);
-    sodium_memzero(x, sizeof x);
-    sodium_memzero(y, sizeof y);
 }
 
 /* One block in general-purpose registers. One block in vector rows is a
@@ -35032,8 +35025,6 @@ rn_fused_step(const rn_chacha_state *st, uint64_t ctr, unsigned char *out,
         x[i] = vaddq_u32(x[i], in_v[i]);
     }
     rn_neon_out4(x, out, in, len);
-    sodium_memzero(in_v, sizeof in_v);
-    sodium_memzero(x, sizeof x);
 }
 
 static void
