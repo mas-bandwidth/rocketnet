@@ -1180,6 +1180,9 @@ jobs:
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
   # Release build, on its own runner, so the optimizer sees those cases on
@@ -1219,6 +1222,9 @@ jobs:
           want="PASS seeds=1-50 runs=50 trace=$trace"
           got=$(tail -n 1 dst-reference.log)
           [ "$got" = "$want" ] || { echo "TRACE-MISMATCH: want '$want' got '$got'"; exit 1; }
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # The windows leg (#81's baseline doctrine): the portable driver built with
   # MSVC — the first machine ever to compile the windows arm — and the full
@@ -1296,7 +1302,10 @@ jobs:
   # stale object is a green for the wrong reason; the Linux and macOS jobs
   # compile through ccache (.github/actions/ccache), which keys each object
   # on the compiler, the flags and the preprocessed source and so never
-  # serves a stale one. The Windows runners have no ccache.
+  # serves a stale one. The Windows jobs compile through it too: the Visual
+  # Studio generator honours no compiler launcher, so the configure step
+  # passes ROCKETNET_VS_CCACHE_GLOBALS (set by the action) as CMAKE_VS_GLOBALS
+  # and MSBuild runs ccache under cl.exe's name; unset, the build is uncached.
   #
   # The doctrine the row itself carries (#81's baseline): the portable driver
   # built with MSVC, the full test suite run on the runner. /fp:precise comes
@@ -1342,6 +1351,7 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+      - uses: ./.github/actions/ccache
 
       - name: Check committed XDP fallback source on Windows
         if: matrix.leg == 'a'
@@ -1358,7 +1368,10 @@ jobs:
       # (ROCKETNET_DEV=ON); leg (b) checks the production library
       # (ROCKETNET_DEV=OFF) as a consumer sees it.
       - name: Configure
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
+        run: |
+          set -euo pipefail
+          cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }} "-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"
+        shell: bash
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -1693,6 +1706,9 @@ jobs:
           set -euo pipefail
           *enforce_unit_functional_timing
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # THE HAPPY PATH: the real server and client binaries as separate processes
   # over loopback, watched stage by stage. It is deliberately small -- connect,
   # one message of every reliability type, receipts, clean disconnect, clean
@@ -1814,7 +1830,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           set -euo pipefail
-          cmake -B build -G "Visual Studio 18 2026" -A x64
+          cmake -B build -G "Visual Studio 18 2026" -A x64 "-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
@@ -1845,6 +1861,9 @@ jobs:
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.os) }}
         run: *enforce_unit_functional_timing
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE WINDOWS UNIT SUITE PER COMMIT: test.exe under MSVC. It was a step of
   # happy path / windows, after that job's whole-tree build, and the two
@@ -1885,7 +1904,10 @@ jobs:
           exit "$missing"
 
       - name: Configure (Windows)
-        run: cmake -B build -G "Visual Studio 18 2026" -A x64
+        run: |
+          set -euo pipefail
+          cmake -B build -G "Visual Studio 18 2026" -A x64 "-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"
+        shell: bash
 
       - name: Build the unit suite (Windows)
         run: cmake --build build --config Release --target test --parallel
@@ -1917,6 +1939,9 @@ jobs:
         run: |
           set -euo pipefail
           *enforce_unit_functional_timing
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE BACKEND EXAMPLES: the Go and C# backends in examples/backend/ that mint
   # connect tokens, as yojimbo's matcher does. Their unit tests mint every token
@@ -1996,6 +2021,9 @@ jobs:
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.backend) }}
         run: *enforce_unit_functional_timing
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # asan + ubsan over focused transport recovery, lifecycle, driver, sodium
   # and XDP controls per commit. The transport allocates arenas at create,
@@ -2154,6 +2182,9 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
         run: *enforce_unit_functional_timing
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # THE FUZZ SMOKE -- a REPLAY, not a hunt.
   #
   # Discovery is the nightly's job (#124: hours, with the corpus persisted
@@ -2269,6 +2300,9 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE NDEBUG LEG: every fuzzer under tests/fuzz/ compiled with -DNDEBUG, so every
   # assertion in the harnesses is compiled out, and the corpora replayed. The
@@ -2394,6 +2428,9 @@ jobs:
             timeout-*
             leak-*
           if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE BIG-ENDIAN LEG (#111), and the reason it was built before the bug it
   # was built for (#112).
@@ -2622,6 +2659,9 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.build_type) }}
         run: *enforce_unit_functional_timing
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # The standard in standard/ (RN-1, RN-2, RN-R), per serialize's
   # tools/conformance. The checker reads each document as a DOCUMENT -- its
   # published tables, parsed as markdown, with no reference to the source tree
@@ -2768,6 +2808,9 @@ jobs:
           CI_TIMING_ROW: ${{ format('{0}/{1}/{2}', runner.os, github.job, matrix.leg) }}
         run: *enforce_unit_functional_timing
 
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
   # THE PINNED-SODIUM LEG.
   # Explicit system-sodium integration mode against a content-verified
   # 1.0.20 reference. Ordinary jobs use the pinned two-file vendor. Keeping
@@ -2887,6 +2930,9 @@ jobs:
         env:
           CI_TIMING_ROW: ${{ format('{0}/{1}', runner.os, github.job) }}
         run: *enforce_unit_functional_timing
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE SUPPORTED UBUNTU LTS RELEASES. Ubuntu 22.04 LTS and 24.04 LTS stay
   # supported (owner, 2026-11-09: "we still need to support Ubuntu 22.04
@@ -3086,6 +3132,9 @@ jobs:
 
       - name: Benchmark campaign result gate
         run: python3 benchmarks/test_campaign.py
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # THE INSTRUCTION COUNT GATE.
   # benchmarks/instruction_baseline.json names the gcc and valgrind it was
@@ -3610,6 +3659,9 @@ jobs:
           output="$(python3 tools/mutation/test_run_mutants.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
 
   # Every registered unit case runs in at least one CI configuration. Each job
   # that runs the unit suite uploads `bin/test --list` (or, for a leg that
