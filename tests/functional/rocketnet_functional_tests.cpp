@@ -1727,16 +1727,39 @@ void rocketnet_test_transport_udp_loopback()
     int sent_to_server = 0;
     int sent_to_client = 0;
 
+    // loopback can drop one (tests/kernel_drops.h): what either side is still
+    // short of at the deadline is sent again, by the same transports, only when
+    // the kernel counted that many receive drops; a count above ten (a late
+    // original after a resend, or a duplicate) fails by name
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
+    int quota_to_server = 10;
+    int quota_to_client = 10;
+    double wait = 5.0;
+
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
-        if ( sent_to_server < 10 )
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: server received %d of 10, client received %d of 10\n", __func__, server_received, client_received );
+            const int missing_at_server = 10 - server_received;
+            const int missing_at_client = 10 - client_received;
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
+            quota_to_server += missing_at_server;
+            quota_to_client += missing_at_client;
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        if ( sent_to_server < quota_to_server )
         {
             rocketnet_client_transport_send_packet( client, (const uint8_t *) "hello", 5 );
             sent_to_server++;
         }
 
-        if ( sent_to_client < 10 )
+        if ( sent_to_client < quota_to_client )
         {
             rocketnet_server_transport_send_packet( server, 0, (const uint8_t *) "world", 5 );
             sent_to_client++;
@@ -1773,7 +1796,10 @@ void rocketnet_test_transport_udp_loopback()
             client_received++;
         }
 
-        if ( server_received >= 10 && client_received >= 10 )
+        rocketnet_check( server_received <= 10 );
+        rocketnet_check( client_received <= 10 );
+
+        if ( server_received == 10 && client_received == 10 && sent_to_server == quota_to_server && sent_to_client == quota_to_client )
         {
             break;
         }
@@ -1781,8 +1807,8 @@ void rocketnet_test_transport_udp_loopback()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( server_received >= 10 );
-    rocketnet_check( client_received >= 10 );
+    rocketnet_check( server_received == 10 );
+    rocketnet_check( client_received == 10 );
 
     // the deliberate disconnect crosses the wire and the server empties
 
@@ -3812,16 +3838,39 @@ void rocketnet_test_transport_ipv6_loopback()
     int sent_to_server = 0;
     int sent_to_client = 0;
 
+    // loopback can drop one (tests/kernel_drops.h): what either side is still
+    // short of at the deadline is sent again, by the same transports, only when
+    // the kernel counted that many receive drops; a count above ten (a late
+    // original after a resend, or a duplicate) fails by name
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
+    int quota_to_server = 10;
+    int quota_to_client = 10;
+    double wait = 5.0;
+
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
-        if ( sent_to_server < 10 )
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: server received %d of 10, client received %d of 10\n", __func__, server_received, client_received );
+            const int missing_at_server = 10 - server_received;
+            const int missing_at_client = 10 - client_received;
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
+            quota_to_server += missing_at_server;
+            quota_to_client += missing_at_client;
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        if ( sent_to_server < quota_to_server )
         {
             rocketnet_client_transport_send_packet( client, (const uint8_t *) "hello6", 6 );
             sent_to_server++;
         }
 
-        if ( sent_to_client < 10 )
+        if ( sent_to_client < quota_to_client )
         {
             rocketnet_server_transport_send_packet( server, 0, (const uint8_t *) "world6", 6 );
             sent_to_client++;
@@ -3852,7 +3901,10 @@ void rocketnet_test_transport_ipv6_loopback()
             client_received++;
         }
 
-        if ( server_received >= 10 && client_received >= 10 )
+        rocketnet_check( server_received <= 10 );
+        rocketnet_check( client_received <= 10 );
+
+        if ( server_received == 10 && client_received == 10 && sent_to_server == quota_to_server && sent_to_client == quota_to_client )
         {
             break;
         }
@@ -3860,8 +3912,8 @@ void rocketnet_test_transport_ipv6_loopback()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( server_received >= 10 );
-    rocketnet_check( client_received >= 10 );
+    rocketnet_check( server_received == 10 );
+    rocketnet_check( client_received == 10 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
@@ -3926,16 +3978,39 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     int sent_to_server = 0;
     int sent_to_client = 0;
 
+    // loopback can drop one (tests/kernel_drops.h): what either side is still
+    // short of at the deadline is sent again, by the same transports, only when
+    // the kernel counted that many receive drops; a count above ten (a late
+    // original after a resend, or a duplicate) fails by name
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
+    int quota_to_server = 10;
+    int quota_to_client = 10;
+    double wait = 5.0;
+
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 )
+    for ( ;; )
     {
-        if ( sent_to_server < 10 )
+        if ( rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: server received %d of 10, client received %d of 10\n", __func__, server_received, client_received );
+            const int missing_at_server = 10 - server_received;
+            const int missing_at_client = 10 - client_received;
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
+            quota_to_server += missing_at_server;
+            quota_to_client += missing_at_client;
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            start = rocketnet_platform_time();
+        }
+
+        if ( sent_to_server < quota_to_server )
         {
             rocketnet_client_transport_send_packet( client, (const uint8_t *) "hello4", 6 );
             sent_to_server++;
         }
 
-        if ( sent_to_client < 10 )
+        if ( sent_to_client < quota_to_client )
         {
             rocketnet_server_transport_send_packet( server, 0, (const uint8_t *) "world4", 6 );
             sent_to_client++;
@@ -3966,7 +4041,10 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
             client_received++;
         }
 
-        if ( server_received >= 10 && client_received >= 10 )
+        rocketnet_check( server_received <= 10 );
+        rocketnet_check( client_received <= 10 );
+
+        if ( server_received == 10 && client_received == 10 && sent_to_server == quota_to_server && sent_to_client == quota_to_client )
         {
             break;
         }
@@ -3974,8 +4052,8 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( server_received >= 10 );
-    rocketnet_check( client_received >= 10 );
+    rocketnet_check( server_received == 10 );
+    rocketnet_check( client_received == 10 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     rocketnet_server_transport_stop( server );
