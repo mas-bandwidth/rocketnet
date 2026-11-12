@@ -57,6 +57,11 @@ LAYERS = {
         "kind": "steps",
         "untraced": {},
     },
+    "xdp-receive-ring": {
+        "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
+        "kind": "steps",
+        "untraced": {},
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
