@@ -75,10 +75,15 @@
 // The server's send pass keeps a writer list, two int32_t a connection
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
-// the stack) (measured, MSVC Release: the check read exactly this figure
-// plus the slack, 1609906366).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1608857790 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22972215 )
+// the stack).
+// The pins are the figures read with ROCKETNET_TEST_VERBOSE=1 on captain
+// (Visual Studio 18 2026, MSVC 19.51, x64, DEV=ON, Release and Debug): the
+// actual= lines 1469500735 and 15258748, less the slack. The pins before them,
+// 1608857790 and 22972215, stood 140405631 and 8762043 bytes above what the
+// build reads; the at-most check passed them and the suite hid the actual=
+// lines, so the figures above, computed from them, were never seen to hold.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452159 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210172 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
