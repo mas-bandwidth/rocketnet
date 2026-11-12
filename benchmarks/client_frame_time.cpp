@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <random>
 #include <stdio.h>
 #include <stdlib.h>
@@ -393,6 +394,101 @@ static void cft_relay_run( cft_relay_t * relay )
     }
 }
 
+#if defined( _WIN32 )
+
+// Windows refuses the relay's bind beside the server's (exclusive) bind of
+// the same port in either order, so there the server impairs what it sends
+// instead, server to client only: run it with --transport portable, whose
+// sends are plain sendto calls, and --impair-sends 1. The executable's
+// sendto import is pointed at a function that drops, delays, jitters and
+// reorders, and a thread of the tool makes the real calls when due.
+
+struct cft_held_send_t
+{
+    uint64_t due_ns;
+    SOCKET s;
+    sockaddr_storage to;
+    int to_bytes;
+    int bytes;
+    char data[1500];
+};
+
+typedef int( WSAAPI * cft_sendto_fn )( SOCKET s, const char * data, int bytes, int flags, const sockaddr * to, int to_bytes );
+
+static cft_sendto_fn cft_real_sendto;
+static std::mutex cft_impair_mutex;
+static std::vector<cft_held_send_t> cft_impair_queue;
+static std::mt19937_64 cft_impair_random( 1234 );
+static double cft_impair_loss;
+static double cft_impair_reorder;
+static uint64_t cft_impair_delay_ns;
+static uint64_t cft_impair_jitter_ns;
+static std::atomic<bool> cft_impair_quit( false );
+
+static int WSAAPI cft_impair_sendto( SOCKET s, const char * data, int bytes, int flags, const sockaddr * to, int to_bytes )
+{
+    if ( bytes <= 0 || bytes > 1500 || !to || to_bytes <= 0 || to_bytes > (int) sizeof( sockaddr_storage ) )
+    {
+        return cft_real_sendto( s, data, bytes, flags, to, to_bytes );
+    }
+
+    std::lock_guard<std::mutex> lock( cft_impair_mutex );
+    std::uniform_real_distribution<double> unit( 0.0, 1.0 );
+    if ( unit( cft_impair_random ) < cft_impair_loss )
+    {
+        return bytes;
+    }
+    cft_held_send_t held;
+    uint64_t delay = cft_impair_delay_ns + (uint64_t) ( unit( cft_impair_random ) * (double) cft_impair_jitter_ns );
+    if ( unit( cft_impair_random ) < cft_impair_reorder )
+    {
+        delay += cft_impair_jitter_ns + 5000000ull;
+    }
+    held.due_ns = cft_now_ns() + delay;
+    held.s = s;
+    memset( &held.to, 0, sizeof( held.to ) );
+    memcpy( &held.to, to, (size_t) to_bytes );
+    held.to_bytes = to_bytes;
+    held.bytes = bytes;
+    memcpy( held.data, data, (size_t) bytes );
+    cft_impair_queue.push_back( held );
+    return bytes;
+}
+
+static void cft_impair_run()
+{
+    std::vector<cft_held_send_t> due;
+    while ( !cft_impair_quit.load( std::memory_order_relaxed ) )
+    {
+        {
+            std::lock_guard<std::mutex> lock( cft_impair_mutex );
+            const uint64_t now = cft_now_ns();
+            for ( size_t i = 0; i < cft_impair_queue.size(); )
+            {
+                if ( cft_impair_queue[i].due_ns <= now )
+                {
+                    due.push_back( cft_impair_queue[i] );
+                    cft_impair_queue[i] = cft_impair_queue.back();
+                    cft_impair_queue.pop_back();
+                }
+                else
+                {
+                    i++;
+                }
+            }
+        }
+        std::sort( due.begin(), due.end(), []( const cft_held_send_t & a, const cft_held_send_t & b ) { return a.due_ns < b.due_ns; } );
+        for ( const cft_held_send_t & held : due )
+        {
+            cft_real_sendto( held.s, held.data, held.bytes, 0, (const sockaddr *) &held.to, held.to_bytes );
+        }
+        due.clear();
+        std::this_thread::sleep_for( std::chrono::microseconds( 250 ) );
+    }
+}
+
+#endif // #if defined( _WIN32 )
+
 // ---------------------------------------------------------------
 //    server
 // ---------------------------------------------------------------
@@ -430,6 +526,27 @@ static int cft_server( int argc, char ** argv )
     config.max_clients = 1;
     config.transport = transport;
     config.per_client_send_kbps = 100000;
+
+#if defined( _WIN32 )
+    std::thread impair_thread;
+    const bool impair_sends = strcmp( cft_arg( argc, argv, "--impair-sends", "0" ), "1" ) == 0;
+    if ( impair_sends )
+    {
+        cft_impair_loss = atof( cft_arg( argc, argv, "--loss", "0.02" ) );
+        cft_impair_reorder = atof( cft_arg( argc, argv, "--reorder", "0.05" ) );
+        cft_impair_delay_ns = (uint64_t) ( atof( cft_arg( argc, argv, "--delay-ms", "20" ) ) * 1e6 );
+        cft_impair_jitter_ns = (uint64_t) ( atof( cft_arg( argc, argv, "--jitter-ms", "10" ) ) * 1e6 );
+        cft_sendto_fn hook_function = cft_impair_sendto;
+        const void * hook;
+        memcpy( &hook, &hook_function, sizeof( hook ) );
+        cft_patch( "sendto", hook, &cft_real_sendto );
+        if ( !cft_real_sendto )
+        {
+            cft_fail( "no sendto import to impair" );
+        }
+        impair_thread = std::thread( cft_impair_run );
+    }
+#endif // #if defined( _WIN32 )
 
     // where the platform refuses a specific bind beside an existing wildcard
     // bind of the same port, --relay-first 1 binds the relay's side first
@@ -605,6 +722,13 @@ static int cft_server( int argc, char ** argv )
     }
 
     rn_cli_server_stop_and_destroy( server );
+#if defined( _WIN32 )
+    if ( impair_sends )
+    {
+        cft_impair_quit.store( true );
+        impair_thread.join();
+    }
+#endif // #if defined( _WIN32 )
     rocketnet_term();
     printf( "server done ticks=%llu\n", (unsigned long long) tick );
     return 0;

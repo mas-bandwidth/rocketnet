@@ -63,6 +63,11 @@ int cft_get_call( void );
 void cft_set_plant( int call, int kind, double microseconds, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 uint64_t cft_now_ns( void );
 
+#if defined( _WIN32 )
+// points this executable's import entries named name at hook; the old entry goes to *real
+void cft_patch( const char * name, const void * hook, void * real );
+#endif // #if defined( _WIN32 )
+
 #ifdef __cplusplus
 }
 #endif // #ifdef __cplusplus

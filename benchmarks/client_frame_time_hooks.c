@@ -197,7 +197,7 @@ static int WSAAPI cft_wsasendto( SOCKET s, LPWSABUF buffers, DWORD count, LPDWOR
 // hook; the entry's old value goes to *real (pointers move by memcpy, so no
 // function and data pointer cast is written)
 
-static void cft_patch( const char * name, const void * hook, void * real )
+void cft_patch( const char * name, const void * hook, void * real )
 {
     BYTE * base = (BYTE *) GetModuleHandleW( NULL );
     const IMAGE_DOS_HEADER * dos = (const IMAGE_DOS_HEADER *) base;
