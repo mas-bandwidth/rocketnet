@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include "loopback_hub.h"
 
 #define check rocketnet_unit_check
@@ -106,6 +107,23 @@ struct mass_disconnect_env_guard_t
 };
 #endif // #if ROCKETNET_DEV
 
+// A create that comes back NULL says why before its check fails. The
+// library's refusals here are its allocations (rocketnet_client_adopt has no
+// other), and on Windows every allocation fails together once the machine's
+// commit limit is reached (tests/suite_runner.h, suite_commit_lock_take; CI
+// run 43323005232), so the line carries the commit state beside errno.
+static void mass_disconnect_refused( const char * what, const int * status )
+{
+    const int error = errno;
+    const char * returned = "not returned";
+    if ( status != NULL )
+    {
+        returned = rocketnet_status_name( static_cast<enum rocketnet_status_t>( status[0] ) );
+    }
+    printf( "%s refused: status %s, errno %d, %s\n", what, returned, error, suite_commit_text().c_str() );
+    fflush( stdout );
+}
+
 struct mass_disconnect_keys_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -144,6 +162,10 @@ static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect
 
     int status = -1;
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status );
+    if ( transport == NULL || status != ROCKETNET_STATUS_OK )
+    {
+        mass_disconnect_refused( "rocketnet_server_transport_create_resolved", &status );
+    }
     check( transport != NULL && status == ROCKETNET_STATUS_OK );
 
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
@@ -153,9 +175,17 @@ static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect
     rocketnet_message_server_t * running = (rocketnet_message_server_t *) rn_message_object_create(
         NULL, &link, 1, MASS_DISCONNECT_CLIENTS, NULL, NULL, 0,
         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
+    if ( running == NULL )
+    {
+        mass_disconnect_refused( "rn_message_object_create (server)", NULL );
+    }
     check( running != NULL );
 
     rocketnet_server_t * server = rocketnet_server_adopt( NULL, running );
+    if ( server == NULL )
+    {
+        mass_disconnect_refused( "rocketnet_server_adopt", NULL );
+    }
     check( server != NULL );
     return server;
 }
@@ -182,6 +212,10 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
 
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(
         NULL, token, &config, 0.0, rocketnet_loopback_transport.client, NULL );
+    if ( transport == NULL )
+    {
+        mass_disconnect_refused( "rocketnet_client_transport_create_step_driven_current", NULL );
+    }
     check( transport != NULL );
 
     rn_message_link_t link;
@@ -189,9 +223,17 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
     rocketnet_message_client_t * connection = (rocketnet_message_client_t *) rn_message_object_create(
         NULL, &link, 0, 1, NULL, NULL, 0,
         ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
+    if ( connection == NULL )
+    {
+        mass_disconnect_refused( "rn_message_object_create (client)", NULL );
+    }
     check( connection != NULL );
 
     rocketnet_client_t * client = rocketnet_client_adopt( NULL, connection );
+    if ( client == NULL )
+    {
+        mass_disconnect_refused( "rocketnet_client_adopt", NULL );
+    }
     check( client != NULL );
     return client;
 }

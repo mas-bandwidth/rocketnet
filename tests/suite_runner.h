@@ -1624,6 +1624,125 @@ inline bool suite_case_runs_alone( const std::string & name )
     return false;
 }
 
+#if defined( _WIN32 )
+
+// The commit state, printed at the start of a Windows run and by a case that
+// gets NULL from a create, so a red names the limit it ran into.
+
+inline std::string suite_commit_text()
+{
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof( status );
+    if ( !GlobalMemoryStatusEx( &status ) )
+    {
+        return "commit state unreadable";
+    }
+    char text[160];
+    snprintf( text, sizeof( text ), "commit available %llu MiB of a %llu MiB limit, physical available %llu MiB",
+              (unsigned long long) ( status.ullAvailPageFile >> 20 ), (unsigned long long) ( status.ullTotalPageFile >> 20 ),
+              (unsigned long long) ( status.ullAvailPhys >> 20 ) );
+    return text;
+}
+
+// Running alone inside one run is not enough on Windows: the commit limit is
+// the machine's, and the runs beside this one (the other shard, another job's
+// legs, on runners sharing the machine) start their full-capacity cases on
+// their own schedules. captain (64 GiB, 160 GiB commit limit) logged "low
+// virtual memory" (System event 2004) at 22:47:58 on 2026-11-12 with two
+// test.exe at 43.4 GiB each and the WSL VM at 40 GiB; 0.9 s later a
+// rocketnet_client_adopt in test_clients_disconnect_together_server_count_exact
+// came back NULL (CI run 43323005232, windows / Release / unit (0/2)).
+//
+// So a run takes one machine-wide lock for each such case it starts, and
+// releases it when the case ends; a run that dies leaves the lock abandoned,
+// which the next wait takes. Global\ reaches every session (the runners are
+// services in session 0); a process that may not create Global\ objects
+// falls back to its own session's Local\ name.
+//
+// Holding the lock, the run then checks the case's planned commit (its
+// declared bound) against the commit available. A host whose whole limit is
+// below the plan fails the case by name at once; one that is short for now
+// (memory held by something outside these runs) is waited on, up to
+// SUITE_COMMIT_WAIT_SECONDS, then the case fails by name. Either way the
+// red says the host is too small for the case, not an allocation somewhere
+// inside it.
+
+#define SUITE_COMMIT_LOCK_WAIT_SECONDS 1800
+#define SUITE_COMMIT_WAIT_SECONDS 120
+
+inline HANDLE suite_commit_lock_open()
+{
+    HANDLE lock = CreateMutexW( NULL, FALSE, L"Global\\rocketnet-test-commit-bound" );
+    if ( !lock )
+    {
+        lock = CreateMutexW( NULL, FALSE, L"Local\\rocketnet-test-commit-bound" );
+    }
+    return lock;
+}
+
+inline bool suite_commit_lock_take( HANDLE lock, const std::string & name, long planned_mb, std::string & detail )
+{
+    if ( !lock )
+    {
+        detail = name + " could not open the machine-wide commit lock";
+        return false;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const DWORD wait = WaitForSingleObject( lock, SUITE_COMMIT_LOCK_WAIT_SECONDS * 1000 );
+    const double waited = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+    if ( wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED )
+    {
+        char text[128];
+        snprintf( text, sizeof( text ), " waited %.0f s for the machine-wide commit lock (wait %lu)", waited, (unsigned long) wait );
+        detail = name + text;
+        return false;
+    }
+    if ( waited >= 1.0 )
+    {
+        printf( "commit lock: %s waited %.1f s for another run's full-capacity case\n", name.c_str(), waited );
+        fflush( stdout );
+    }
+
+    const auto held = std::chrono::steady_clock::now();
+    for ( ;; )
+    {
+        MEMORYSTATUSEX status;
+        status.dwLength = sizeof( status );
+        if ( planned_mb <= 0 || !GlobalMemoryStatusEx( &status ) || ( status.ullAvailPageFile >> 20 ) >= (uint64_t) planned_mb )
+        {
+            return true;
+        }
+        const double short_s = std::chrono::duration<double>( std::chrono::steady_clock::now() - held ).count();
+        if ( ( status.ullTotalPageFile >> 20 ) < (uint64_t) planned_mb || short_s >= SUITE_COMMIT_WAIT_SECONDS )
+        {
+            char text[256];
+            snprintf( text, sizeof( text ), " needs %ld MiB of commit, this host has %llu MiB available of a %llu MiB limit (waited %.0f s)",
+                      planned_mb, (unsigned long long) ( status.ullAvailPageFile >> 20 ),
+                      (unsigned long long) ( status.ullTotalPageFile >> 20 ), short_s );
+            detail = name + text;
+            ReleaseMutex( lock );
+            return false;
+        }
+        Sleep( 1000 );
+    }
+}
+
+inline long suite_case_planned_mb( const std::string & name )
+{
+    suite_case_rss_bound_t * entry = suite_case_rss_bound_find( suite_case_rss_bound_registry(), name.c_str() );
+    return entry ? entry->bound_mb() : 0;
+}
+
+#else // #if defined( _WIN32 )
+
+inline std::string suite_commit_text()
+{
+    return "commit state is Windows only";
+}
+
+#endif // #if defined( _WIN32 )
+
 #if !defined( _WIN32 )
 
 inline void suite_drain( int fd, std::string & output )
@@ -2374,6 +2493,10 @@ inline int suite_main( int argc, char ** argv,
     size_t printed = 0;
     const bool keep_going = suite_keep_going();
     bool passed = true;
+    HANDLE commit_lock = suite_commit_lock_open();
+    printf( "%s\n", suite_commit_text().c_str() );
+    fflush( stdout );
+    bool commit_held = false;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
         while ( (int) running.size() < jobs && next < pending.size() &&
@@ -2382,6 +2505,16 @@ inline int suite_main( int argc, char ** argv,
             const size_t index = next++;
             const suite_case & item = pending[index];
             suite_result & result = results[index];
+            if ( suite_case_runs_alone( item.name ) )
+            {
+                if ( !suite_commit_lock_take( commit_lock, item.name, suite_case_planned_mb( item.name ), result.detail ) )
+                {
+                    result.done = true;
+                    result.failed = true;
+                    continue;
+                }
+                commit_held = true;
+            }
 
             const std::string path = item.exec_path.empty() ? self : item.exec_path;
             const std::wstring wide_path = rocketnet_test_wide_path( path );
@@ -2424,6 +2557,11 @@ inline int suite_main( int argc, char ** argv,
                     result.done = true;
                     result.failed = true;
                     result.detail = item.name + suite_spawn_failure_text( "CreatePipe", error );
+                    if ( commit_held )
+                    {
+                        ReleaseMutex( commit_lock );
+                        commit_held = false;
+                    }
                     continue;
                 }
 
@@ -2452,6 +2590,11 @@ inline int suite_main( int argc, char ** argv,
                 result.done = true;
                 result.failed = true;
                 result.detail = item.name + suite_spawn_failure_text( "CreateProcessW", error );
+                if ( commit_held )
+                {
+                    ReleaseMutex( commit_lock );
+                    commit_held = false;
+                }
                 continue;
             }
 
@@ -2539,6 +2682,11 @@ inline int suite_main( int argc, char ** argv,
                 suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ), enforce_case_rss );
             }
             result.done = true;
+            if ( running[i].alone && commit_held )
+            {
+                ReleaseMutex( commit_lock );
+                commit_held = false;
+            }
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
@@ -2558,6 +2706,14 @@ inline int suite_main( int argc, char ** argv,
         }
     }
 
+    if ( commit_held )
+    {
+        ReleaseMutex( commit_lock );
+    }
+    if ( commit_lock )
+    {
+        CloseHandle( commit_lock );
+    }
     return suite_finish( results, passed );
 }
 
