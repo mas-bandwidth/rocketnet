@@ -58,6 +58,7 @@
 #include <cstdio>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 // the packet types the receive path dispatches on, one bit each, set when a
 // counter shows the type arrived. The seed generator (ROCKETNET_FUZZ_SEED_DIR)
@@ -182,7 +183,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )

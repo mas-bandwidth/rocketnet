@@ -55,6 +55,7 @@
 #include <vector>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 // -----------------------------------------------------------------------
 //  the types this harness's parser reads, and the counter each raises
@@ -676,7 +677,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 
     // the codec allocates nothing and touches nothing else: no rocketnet_init
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char seed_dir[1024];
     const int have_dir = rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) );

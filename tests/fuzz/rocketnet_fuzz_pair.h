@@ -61,6 +61,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_read_write.h"
+#include "rocketnet_fuzz_quiet.h"
 #include "../portable_crt.h"
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -279,7 +280,7 @@ static inline int rocketnet_fuzz_pair_initialize()
     {
         return 1;
     }
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
     rocketnet_quiet( 1 );
 
     return 0;
