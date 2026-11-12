@@ -19,7 +19,7 @@
 // directly into the lane's transport-owned cold frames. Flush try-publishes
 // one of each lane's three compact generation-tagged index banks to that
 // lane's TX worker, which alone cuts the bank into runs of one destination
-// (consecutive slots until the send gather lands), coalesces and posts its
+// (grouped by the send gather, sdk/rocketnet_send_gather.h), coalesces and posts its
 // UDP sends; only completions return frames to the lane's bounded
 // free-reference queue.
 // Receive workers dequeue completions in batches, refuse what the stateless
