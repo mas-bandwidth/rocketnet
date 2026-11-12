@@ -12,6 +12,7 @@
 
 #include "rocketnet.h"
 #include "dst_harness.h"
+#include "dst_outage_grid.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,6 +136,13 @@ static int dst_set_sequence_start( uint64_t start )
 
 int main( int argc, char ** argv )
 {
+    // the outage scenarios (docs/DST.md, "Outage scenarios") take their own
+    // arguments and touch nothing of the seed runs below
+    if ( argc >= 2 && strcmp( argv[1], "--outage" ) == 0 )
+    {
+        return dst_outage_main( argc, argv );
+    }
+
     struct rocketnet_dst_options_t options;
     memset( &options, 0, sizeof( options ) );
     options.shape = ROCKETNET_DST_SHAPE_FULL;
