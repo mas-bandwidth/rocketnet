@@ -557,6 +557,8 @@ bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_t
         mapping->control->timeout_seconds = 1000;
         memset( &mapping->keys, i + 1, sizeof( mapping->keys ) );
         server->protocol.connection_ids[i] = ++server->protocol.next_connection_id;
+        server->protocol.receive_allowances[i].bytes = rocketnet_server_receive_allowance_capacity( server->protocol.receive_bytes_per_second, 1000 );
+        server->protocol.receive_allowances[i].time = server->time;
     }
     return true;
 }
@@ -594,6 +596,14 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
     if ( !member && protocol->connection_ids[client_index] != 0 )
     {
         member = "rocketnet_server_protocol_t.connection_ids";
+    }
+    if ( !member )
+    {
+        static const struct rocketnet_server_receive_allowance_t fresh_allowance = {};
+        if ( memcmp( &protocol->receive_allowances[client_index], &fresh_allowance, sizeof( fresh_allowance ) ) != 0 )
+        {
+            member = "rocketnet_server_protocol_t.receive_allowances";
+        }
     }
     bool allocation_failed = false;
 
@@ -1421,7 +1431,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
                              rocketnet_token_table_allocation_bytes( clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO ),
                              rocketnet_client_slots_allocation_bytes( clients ), rocketnet_server_acks_allocation_bytes( clients ),
                              rocketnet_memory_allocations( { (uint64_t) clients * sizeof( uint64_t ), (uint64_t) clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ),
-                                                             (uint64_t) clients * sizeof( int ) } ),
+                                                             (uint64_t) clients * sizeof( int ), (uint64_t) clients * sizeof( struct rocketnet_server_receive_allowance_t ) } ),
         // The plan counts what the transport allocates, once: the per-client wire totals are a separate allocation.
                              rocketnet_memory_allocations( { (uint64_t) clients * sizeof( rocketnet_server_wire_totals_t ) } ) } )
     {
@@ -2531,6 +2541,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
     protocol->handshakes_per_update = config->handshakes_per_update;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
+    protocol->receive_bytes_per_second = rocketnet_server_receive_allowance_rate( config->per_client_receive_kbps );
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );
     protocol->used_token_history = rocketnet_used_token_history_create( context, max_clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO );
@@ -2544,6 +2555,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     protocol->connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( uint64_t ) );
     protocol->acked_connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) );
     protocol->end_reasons = (int *) rocketnet_malloc( context, (size_t) max_clients * sizeof( int ) );
+    protocol->receive_allowances = (struct rocketnet_server_receive_allowance_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_server_receive_allowance_t ) );
     server_transport->client_wire_totals = (struct rocketnet_server_wire_totals_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_server_wire_totals_t ) );
     server_transport->client_wire_totals_capacity = max_clients;
     if ( protocol->connection_ids )
@@ -2553,6 +2565,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     if ( protocol->end_reasons )
     {
         memset( protocol->end_reasons, 0, (size_t) max_clients * sizeof( int ) );     // ROCKETNET_DISCONNECT_REASON_NONE
+    }
+    if ( protocol->receive_allowances )
+    {
+        memset( protocol->receive_allowances, 0, (size_t) max_clients * sizeof( struct rocketnet_server_receive_allowance_t ) );
     }
     if ( server_transport->client_wire_totals )
     {
@@ -2566,7 +2582,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
     }
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->end_reasons || !server_transport->client_wire_totals || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->end_reasons || !protocol->receive_allowances || !server_transport->client_wire_totals || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
         {
@@ -2681,6 +2697,10 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     if ( server_transport->protocol.end_reasons )
     {
         rocketnet_free( server_transport->context, server_transport->protocol.end_reasons );
+    }
+    if ( server_transport->protocol.receive_allowances )
+    {
+        rocketnet_free( server_transport->context, server_transport->protocol.receive_allowances );
     }
     if ( server_transport->client_wire_totals )
     {
@@ -4581,6 +4601,26 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
         stats->bytes_sent = rocketnet_platform_atomic_load_u64( (volatile uint64_t *) &totals->bytes_sent );
         stats->bytes_received = totals->bytes_received;
     }
+}
+
+// rocketnet_conditions_t's receive_refused_packets and receive_refused_bytes
+// for one slot: the authenticated packets its current connection sent over
+// its receive allowance; false, both 0, for a slot with no connected client.
+
+bool rocketnet_server_transport_receive_refused( const struct rocketnet_server_transport_t * server_transport, int client_index, uint64_t * packets, uint64_t * bytes )
+{
+    rocketnet_assert( packets && bytes );
+    *packets = 0;
+    *bytes = 0;
+    const struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
+    if ( !protocol->receive_allowances || !protocol->client_slots || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( protocol->client_slots ) ||
+         !rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
+    {
+        return false;
+    }
+    *packets = protocol->receive_allowances[client_index].refused_packets;
+    *bytes = protocol->receive_allowances[client_index].refused_bytes;
+    return true;
 }
 
 // rocketnet_conditions_t's seconds_since_heard for one slot: since the last

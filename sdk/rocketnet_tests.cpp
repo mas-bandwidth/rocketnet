@@ -8578,15 +8578,17 @@ void rocketnet_test_public_api_null()
         // conditions: a NULL struct or a NULL owner is one misuse, returns false and zeroes what it was given
 
         // every field starts nonzero, set field by field
-        const struct rocketnet_conditions_t garbage = { 7.0, 7.0, 7, 7 };
+        const struct rocketnet_conditions_t garbage = { 7.0, 7.0, 7, 7, 7, 7 };
         struct rocketnet_conditions_t conditions = garbage;
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_conditions( NULL, NULL, (int) sizeof( conditions ) ) ) );
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_client_conditions( NULL, &conditions, (int) sizeof( conditions ) ) ) );
-        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 );
+        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 &&
+                         conditions.receive_refused_packets == 0 && conditions.receive_refused_bytes == 0 );
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_conditions( NULL, 0, NULL, (int) sizeof( conditions ) ) ) );
         conditions = garbage;
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_conditions( NULL, 0, &conditions, (int) sizeof( conditions ) ) ) );
-        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 );
+        rocketnet_check( conditions.seconds_since_heard == 0.0 && conditions.seconds_since_progress == 0.0 && conditions.reliable_in_flight == 0 && conditions.send_refused == 0 &&
+                         conditions.receive_refused_packets == 0 && conditions.receive_refused_bytes == 0 );
     }
 
     // the exempt: NULL is the defaults, or there is no pointer
@@ -11932,6 +11934,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, per_client_receive_kbps ),
 };
 
 #undef RN_TEST_CONFIG_FIELD

@@ -209,6 +209,13 @@
 
 #define ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS            10000
 
+/// The server processes at most this many times a client's allowed
+/// client-to-server rate (rocketnet_server_config_t per_client_receive_kbps).
+/// A client within its own send budget sends at most that rate plus its
+/// keep-alives and acknowledgements, so a correct client is never refused.
+
+#define ROCKETNET_RECEIVE_ALLOWANCE_FACTOR                 2
+
 /// The send_kbps value for no send budget on a connection.
 
 #define ROCKETNET_SEND_KBPS_UNLIMITED                      0x7fffffff
@@ -983,6 +990,18 @@ struct rocketnet_conditions_t
     /// Starts refused on this connection because its send memory was full.
 
     uint64_t send_refused;
+
+    /// Server only (0 on the client). Packets from this client that
+    /// authenticated but were not processed because the client sent more
+    /// than its receive allowance (rocketnet_server_config_t
+    /// per_client_receive_kbps). To the client each one is a lost packet.
+    /// Counted for the current connection; a new connection starts at 0.
+
+    uint64_t receive_refused_packets;
+
+    /// Server only (0 on the client). The wire bytes of those packets.
+
+    uint64_t receive_refused_bytes;
 };
 
 /// Every public enum has the same size as int.
@@ -1784,6 +1803,28 @@ struct rocketnet_server_config_t
     /// Default is 0.
 
     uint64_t token_epoch_unix_seconds;
+
+    /// ROCKETNET_SERVER_PER_CLIENT_RECEIVE_KBPS sets the client-to-server
+    /// rate each client is allowed, in kbps. Set it to the send_kbps your
+    /// clients are configured with; the server never learns a client's
+    /// own value. The server processes at most
+    /// ROCKETNET_RECEIVE_ALLOWANCE_FACTOR times this rate from each client,
+    /// counted in the same wire bytes as the client's send budget, with an
+    /// allowance that accrues while the client is quiet up to the
+    /// connection's timeout in seconds, so traffic held up by an outage
+    /// shorter than the timeout is processed when it arrives. A packet over
+    /// the allowance authenticates and is then dropped unprocessed (to the
+    /// client it is a lost packet) and counted in the connection's
+    /// rocketnet_conditions_t receive_refused_packets and
+    /// receive_refused_bytes; the connection is not ended. Only packets
+    /// that authenticate under the client's session key count, so another
+    /// sender cannot spend a client's allowance. Range is 1 ..
+    /// ROCKETNET_SEND_KBPS_UNLIMITED. The unlimited value turns the
+    /// refusal off. Zero selects ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS,
+    /// which is also the default. Negative values return
+    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
+
+    int per_client_receive_kbps;
 };
 
 /// Messages

@@ -431,6 +431,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->handshakes_per_update = config->handshakes_per_update;
     transport->loopback_hub = config->loopback_hub;
     transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
+    transport->per_client_receive_kbps = config->per_client_receive_kbps;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure )
@@ -770,6 +771,8 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, server_secret_key ),
     ROCKETNET_SERVER_CONFIG_BYTES_4,
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, per_client_receive_kbps ),
+    ROCKETNET_SERVER_CONFIG_BYTES_6,
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -2404,6 +2407,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->handshakes_per_update = transport->handshakes_per_update;
     config->loopback_hub = transport->loopback_hub;
     config->token_epoch_unix_seconds = transport->token_epoch_unix_seconds;
+    config->per_client_receive_kbps = transport->per_client_receive_kbps;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
 
@@ -2478,6 +2482,7 @@ enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet
     // minimums; it never clamps. These assignments stay inside those ranges.
 
     RN_LIGHT_SET( per_client_send_kbps, 256 );                                   // 256 / 120 = 2.13, at least 2x the 120 kbps wire rate
+    RN_LIGHT_SET( per_client_receive_kbps, 256 );                                // the light client's send_kbps: its clients send at most this
     RN_LIGHT_SET( num_channels, 8 );                                             // one channel per reliability mode; one 10 Hz update uses one mode
     RN_LIGHT_SET( reliable_messages_in_flight, 256 );                            // 200 numbers, next power of two; minimum is 64
     RN_LIGHT_SET( receive_message_buffer_bytes, 142400 );                        // 100 * 1424; 1415 rounds up to a 16-byte ring placement
@@ -3884,6 +3889,7 @@ bool rocketnet_server_client_conditions( const struct rocketnet_server_t * serve
     if ( ok )
     {
         full.seconds_since_heard = rocketnet_server_transport_heard_age( rn_server_transport( server ), slot );
+        (void) rocketnet_server_transport_receive_refused( rn_server_transport( server ), slot, &full.receive_refused_packets, &full.receive_refused_bytes );
     }
     return rn_conditions_out( &full, ok, conditions, conditions_bytes );
 }

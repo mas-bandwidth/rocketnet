@@ -515,7 +515,13 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE   16
 #define ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE       1024
 
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
+// the rows before the struct's loopback_hub pointer, which has no row, and the
+// rows appended after it; the whole table is both, in struct order
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD ) \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_BEFORE_HUB( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD ) \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_AFTER_HUB( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_BEFORE_HUB( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                            \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,        ROCKETNET_DEFAULT_MAX_CLIENTS,     1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
     BYTES_FIELD(  packet_filter,          4,                              ROCKETNET_TEST_FILTER_VALUE,                          0 )                          \
@@ -539,6 +545,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    disconnect_packets_per_update, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1, 1024,              0 ) \
     INT_FIELD(    handshakes_per_update, ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE, 1, ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE, 0 )
 
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_AFTER_HUB( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                             \
+    INT_FIELD(    per_client_receive_kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1, ROCKETNET_SEND_KBPS_UNLIMITED,           ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Size in bytes of server transport config revision 1: before the public link simulator fields. */
@@ -553,8 +562,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshakes_per_update ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 5, in bytes: the loopback hub, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, loopback_hub ) + sizeof( void * ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 6, in bytes: the per-client receive allowance rate, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, per_client_receive_kbps ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 

@@ -280,6 +280,10 @@ static const char * const counters_appended_names[] = {
     "PAYLOAD_BATCH_FULL",
     "XDP_RECEIVE_FRAME_DROPPED",
     "DISCONNECT_BURST_DROPPED",
+    "KEEP_ALIVE_OVER_ALLOWANCE",
+    "PAYLOAD_OVER_ALLOWANCE",
+    "DISCONNECT_OVER_ALLOWANCE",
+    "ACK_OVER_ALLOWANCE",
 };
 #endif // #if ROCKETNET_DEV
 
