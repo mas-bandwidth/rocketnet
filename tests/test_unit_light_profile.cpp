@@ -171,8 +171,15 @@
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured, gcc Release: the check read exactly this figure plus
 // the slack, 3111676715).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628139ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147250 )
+// Each client slot holds its receive allowance (struct
+// rocketnet_server_receive_allowance_t, 32 bytes, one allocation of
+// max_clients of them, sdk/rocketnet_server_protocol.h), the server protocol
+// its pointer and rate (16 bytes), and the counter registry grows by four
+// counters: the server adds 32215 bytes at 1000 clients and the client 128
+// (measured on amd-3, gcc Release: the probe's actual= lines are 3111708930
+// and 15186210). The client pin moves by the same 128, as before.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110660354ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14147378 )
 #endif // #if defined( _WIN32 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
