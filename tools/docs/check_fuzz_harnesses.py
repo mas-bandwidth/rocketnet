@@ -1,44 +1,91 @@
 #!/usr/bin/env python3
-"""Check that the guides name the fuzz harnesses tests/fuzz/Makefile builds.
+"""Check that every fuzz harness and corpus is named by the lists that run it.
 
-tests/fuzz/Makefile's TARGETS is the owner. The harness list in the macOS
-replay loop (docs/MACOS.md), every harness list in .github/workflows/ci.yml
-(the per-commit fuzz-smoke replay included) and the CMake fuzz_replay_ list
-must name exactly those targets, and every count the guides give ("the ten
-harnesses", "each of the ten harnesses") must equal their number.
+tests/fuzz/Makefile's TARGETS is the owner of the harnesses (each builds on
+every host; LINUX_ONLY_TARGETS names those that are a no-op off Linux).
+The check fails on:
+
+  - a tracked tests/fuzz/rocketnet_fuzz*.cpp harness source, or a tracked
+    tests/fuzz/corpus* directory, whose harness no list names (a corpus that
+    nothing replays, a harness that nothing builds);
+  - a replay list that is not exactly TARGETS: every `harnesses="..."` list
+    in ci.yml (the macOS and Windows replays, fuzz-smoke, the NDEBUG
+    replay), the macOS replay loop in docs/MACOS.md, the CMake fuzz_replay_
+    list;
+  - ci.yml's seed_harnesses, which must be exactly the TARGETS harnesses whose
+    source reads ROCKETNET_FUZZ_SEED_DIR (a seed generator);
+  - a fuzz-smoke job with no harnesses= replay list, or one that replays a
+    libFuzzer binary or runs a time-boxed mutation pass;
+  - fuzz-nightly.yml's matrices: the Linux, NDEBUG and MSan jobs must fuzz
+    TARGETS; the macOS and Windows jobs TARGETS less LINUX_ONLY_TARGETS
+    (no-ops off Linux, each guarded to Linux in its source);
+    tools/fuzz_ndebug.sh's ALL_TARGETS must be TARGETS;
+  - a count in the guides ("the fourteen harnesses") other than |TARGETS|.
+
+  python3 tools/docs/check_fuzz_harnesses.py
+  python3 tools/docs/check_fuzz_harnesses.py --self-test
 
 Prints one OK line per checked list; exits 1 naming the file and the missing,
 extra or miscounted harnesses.
 """
 
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 NUMBERS = {
     "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
     "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
 }
 COUNT = re.compile(r"\b(" + "|".join(NUMBERS) + r")\s+(?:replay binaries|harnesses|committed corpora)\b")
 HARNESS = re.compile(r"\brocketnet_fuzz(?:_[a-z_]+)?\b")
+LIST = re.compile(r'^\s*harnesses="(rocketnet_fuzz[^"]*)"', re.M)
 
 
-def makefile_targets():
-    text = (ROOT / "tests" / "fuzz" / "Makefile").read_text(encoding="utf-8")
-    match = re.search(r"^TARGETS\s*=\s*((?:.*\\\n)*.*)$", text, re.M)
-    return set(match.group(1).replace("\\", " ").split())
+def read(root, name):
+    return (root / name).read_text(encoding="utf-8")
 
 
-def check_list(label, names, targets):
-    names = set(names)
-    if names == targets:
-        print(f"OK: {label} names the {len(targets)} harnesses")
-        return 0
-    missing = sorted(targets - names)
-    extra = sorted(names - targets)
-    print(f"FAIL: {label}: missing {missing}, extra {extra}", file=sys.stderr)
-    return 1
+def makefile_list(root, variable):
+    text = read(root, "tests/fuzz/Makefile")
+    names = set()
+    for match in re.finditer(rf"^{variable}\s*=[ \t]*((?:.*\\\n)*.*)$", text, re.M):
+        names |= set(match.group(1).replace("\\", " ").split())
+    return names
+
+
+def tracked(root, *paths):
+    result = subprocess.run(["git", "-C", str(root), "ls-files", "--"] + list(paths),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    if result.returncode != 0:
+        raise RuntimeError("git ls-files failed: " + result.stderr.strip())
+    return [line for line in result.stdout.splitlines() if line]
+
+
+class Report:
+    def __init__(self):
+        self.failed = 0
+        self.lines = []
+
+    def ok(self, text):
+        self.lines.append("OK: " + text)
+
+    def fail(self, text):
+        self.lines.append("FAIL: " + text)
+        self.failed = 1
+
+    def same(self, label, names, want):
+        names = set(names)
+        if names == want:
+            self.ok(f"{label} names the {len(want)} harnesses")
+            return
+        self.fail(f"{label}: missing {sorted(want - names)}, extra {sorted(names - want)}")
 
 
 def job_block(text, job):
@@ -51,69 +98,244 @@ def job_block(text, job):
     return rest[:following.start()] if following else rest
 
 
-def main():
-    targets = makefile_targets()
-    failed = 0
+def matrix_targets(block):
+    names = set(re.findall(r'"target":"(rocketnet_fuzz[a-z_]*)"', block))
+    names |= set(re.findall(r"^\s*-\s*(rocketnet_fuzz[a-z_]*)\s*$", block, re.M))
+    return names
 
-    macos = (ROOT / "docs" / "MACOS.md").read_text(encoding="utf-8")
+
+def check(root):
+    report = Report()
+    targets = makefile_list(root, "TARGETS")
+    if not targets:
+        report.fail("tests/fuzz/Makefile: no TARGETS")
+        return report
+    known = targets
+
+    # the Linux-only TARGETS: a subset of TARGETS, each source guarded to Linux
+    linux_only = makefile_list(root, "LINUX_ONLY_TARGETS")
+    for name in sorted(linux_only - targets):
+        report.fail(f"tests/fuzz/Makefile: LINUX_ONLY_TARGETS names {name}, which TARGETS does not")
+    for name in sorted(linux_only & targets):
+        source = read(root, f"tests/fuzz/{name}.cpp")
+        if not re.search(r"^#if\b.*(__linux__|ROCKETNET_XDP\b|ROCKETNET_FUZZ_XDP_FILTER_HOST)", source, re.M):
+            report.fail(f"tests/fuzz/{name}.cpp: in LINUX_ONLY_TARGETS but no __linux__, ROCKETNET_XDP "
+                        "or ROCKETNET_FUZZ_XDP_FILTER_HOST guard")
+
+    # every harness source and every corpus directory belongs to a named harness
+    sources = [Path(f).stem for f in tracked(root, "tests/fuzz")
+               if re.fullmatch(r"tests/fuzz/rocketnet_fuzz(_[a-z_]+)?\.cpp", f)]
+    corpora = sorted(set(f.split("/")[2] for f in tracked(root, "tests/fuzz")
+                         if re.fullmatch(r"tests/fuzz/corpus(_[a-z_]+)?/.+", f)))
+    if not sources or not corpora:
+        report.fail("tests/fuzz: git lists no harness source or no corpus directory")
+    for name in sorted(sources):
+        if name not in known:
+            report.fail(f"tests/fuzz/{name}.cpp: a harness source no list names (TARGETS)")
+    for corpus in corpora:
+        harness = "rocketnet_fuzz" + corpus[len("corpus"):]
+        if harness not in known:
+            report.fail(f"tests/fuzz/{corpus}/: a corpus whose harness {harness} no list names; nothing replays it")
+        if harness not in sources:
+            report.fail(f"tests/fuzz/{corpus}/: no tests/fuzz/{harness}.cpp")
+    for name in sorted(known):
+        if name not in sources:
+            report.fail(f"{name}: listed, but tests/fuzz/{name}.cpp is not tracked")
+        elif "corpus" + name[len("rocketnet_fuzz"):] not in corpora:
+            report.fail(f"{name}: listed, but has no tracked corpus directory")
+    report.ok(f"{len(sources)} harness sources and {len(corpora)} corpus directories, each named")
+
+    macos = read(root, "docs/MACOS.md")
     loop = re.search(r"^for harness in (.*?); do$", macos, re.M | re.S)
     if loop is None:
-        print("FAIL: docs/MACOS.md: no `for harness in ...; do` replay loop", file=sys.stderr)
-        failed = 1
+        report.fail("docs/MACOS.md: no `for harness in ...; do` replay loop")
     else:
-        failed |= check_list("docs/MACOS.md replay loop", HARNESS.findall(loop.group(1)), targets)
+        report.same("docs/MACOS.md replay loop", HARNESS.findall(loop.group(1)), targets)
 
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    lists = re.findall(r'harnesses="([^"]*)"', ci)
-    if not lists:
-        print("FAIL: .github/workflows/ci.yml: no harnesses= list", file=sys.stderr)
-        failed = 1
+    ci = read(root, ".github/workflows/ci.yml")
+    lists = LIST.findall(ci)
+    if len(lists) < 4:
+        report.fail(f".github/workflows/ci.yml: {len(lists)} harnesses= lists, want the macOS, Windows, fuzz-smoke and NDEBUG replays")
     for index, names in enumerate(lists, 1):
-        failed |= check_list(f".github/workflows/ci.yml harness list {index}", names.split(), targets)
+        report.same(f".github/workflows/ci.yml harness list {index}", names.split(), targets)
+
+    seeds = re.findall(r'^\s*seed_harnesses="([^"]*)"', ci, re.M)
+    generators = set(t for t in targets if "ROCKETNET_FUZZ_SEED_DIR" in read(root, f"tests/fuzz/{t}.cpp"))
+    if len(seeds) != 1:
+        report.fail(f".github/workflows/ci.yml: {len(seeds)} seed_harnesses= lists, want 1")
+    else:
+        report.same(".github/workflows/ci.yml seed_harnesses (the harnesses with a seed generator)", seeds[0].split(), generators)
 
     smoke = job_block(ci, "fuzz-smoke")
     if smoke is None:
-        print("FAIL: .github/workflows/ci.yml: no fuzz-smoke job", file=sys.stderr)
-        failed = 1
+        report.fail(".github/workflows/ci.yml: no fuzz-smoke job")
     else:
-        smoke_lists = re.findall(r'harnesses="([^"]*)"', smoke)
-        if not smoke_lists:
-            print("FAIL: .github/workflows/ci.yml fuzz-smoke: no harnesses= replay list", file=sys.stderr)
-            failed = 1
-        for index, names in enumerate(smoke_lists, 1):
-            failed |= check_list(f".github/workflows/ci.yml fuzz-smoke harness list {index}", names.split(), targets)
+        # each list is held to TARGETS with the others above
+        if not LIST.findall(smoke):
+            report.fail(".github/workflows/ci.yml fuzz-smoke: no harnesses= replay list")
         if re.search(r"\./bin/(?!fuzz_replay_)[A-Za-z0-9_.-]+", smoke):
-            print("FAIL: .github/workflows/ci.yml fuzz-smoke: replays a libFuzzer binary, not a fuzz_replay_ driver",
-                  file=sys.stderr)
-            failed = 1
+            report.fail(".github/workflows/ci.yml fuzz-smoke: replays a libFuzzer binary, not a fuzz_replay_ driver")
         if "-max_total_time" in smoke:
-            print("FAIL: .github/workflows/ci.yml fuzz-smoke: runs a time-boxed mutation pass; it belongs in fuzz-nightly.yml",
-                  file=sys.stderr)
-            failed = 1
+            report.fail(".github/workflows/ci.yml fuzz-smoke: runs a time-boxed mutation pass; it belongs in fuzz-nightly.yml")
 
-    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    cmake = read(root, "CMakeLists.txt")
     pair = re.search(r"set\(ROCKETNET_FUZZ_PAIR_HARNESSES ([^)]*)\)", cmake)
     replay = re.search(r"foreach\(harness (rocketnet_fuzz[^)]*)\)", cmake)
     if pair is None or replay is None:
-        print("FAIL: CMakeLists.txt: no fuzz_replay_ harness list", file=sys.stderr)
-        failed = 1
+        report.fail("CMakeLists.txt: no fuzz_replay_ harness list")
     else:
         names = replay.group(1).replace("${ROCKETNET_FUZZ_PAIR_HARNESSES}", pair.group(1)).split()
-        failed |= check_list("CMakeLists.txt fuzz_replay_ targets", names, targets)
+        report.same("CMakeLists.txt fuzz_replay_ targets", names, targets)
+
+    nightly = read(root, ".github/workflows/fuzz-nightly.yml")
+    for job, want in (("fuzz", targets), ("fuzz-ndebug", targets),
+                      ("fuzz-macos", targets - linux_only), ("fuzz-windows", targets - linux_only),
+                      ("fuzz-msan", targets)):
+        block = job_block(nightly, job)
+        if block is None:
+            report.fail(f".github/workflows/fuzz-nightly.yml: no {job} job")
+            continue
+        report.same(f".github/workflows/fuzz-nightly.yml {job} matrix", matrix_targets(block), want)
+
+    script = read(root, "tools/fuzz_ndebug.sh")
+    array = re.search(r"^ALL_TARGETS=\((.*?)\)", script, re.M | re.S)
+    if array is None:
+        report.fail("tools/fuzz_ndebug.sh: no ALL_TARGETS=( ... )")
+    else:
+        report.same("tools/fuzz_ndebug.sh ALL_TARGETS", HARNESS.findall(array.group(1)), targets)
 
     for guide in ("docs/BUILD-REFERENCE.md", "docs/MACOS.md"):
-        text = (ROOT / guide).read_text(encoding="utf-8")
+        text = read(root, guide)
         for match in COUNT.finditer(text):
             line = text.count("\n", 0, match.start()) + 1
             phrase = " ".join(match.group(0).split())
             if NUMBERS[match.group(1)] != len(targets):
-                print(f"FAIL: {guide}:{line}: '{phrase}', tests/fuzz/Makefile builds {len(targets)}", file=sys.stderr)
-                failed = 1
+                report.fail(f"{guide}:{line}: '{phrase}', tests/fuzz/Makefile builds {len(targets)}")
             else:
-                print(f"OK: {guide}:{line}: '{phrase}'")
+                report.ok(f"{guide}:{line}: '{phrase}'")
+    return report
 
-    return failed
+
+FILES = ["tests/fuzz/Makefile", "docs/MACOS.md", "docs/BUILD-REFERENCE.md", ".github/workflows/ci.yml",
+         ".github/workflows/fuzz-nightly.yml", "CMakeLists.txt", "tools/fuzz_ndebug.sh"]
+
+
+def self_test():
+    """Copies the real lists into a temporary git tree (each corpus as one
+    placeholder file), checks the copy is green, then plants one fault per
+    case and requires a FAIL."""
+    failures = []
+    cases = 0
+    with tempfile.TemporaryDirectory() as temp:
+        tree = Path(temp)
+        for name in FILES:
+            (tree / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, tree / name)
+        for name in tracked(ROOT, "tests/fuzz"):
+            if re.fullmatch(r"tests/fuzz/rocketnet_fuzz(_[a-z_]+)?\.cpp", name):
+                (tree / name).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / name, tree / name)
+        for corpus in set(f.split("/")[2] for f in tracked(ROOT, "tests/fuzz") if re.fullmatch(r"tests/fuzz/corpus(_[a-z_]+)?/.+", f)):
+            (tree / "tests/fuzz" / corpus).mkdir(parents=True, exist_ok=True)
+            (tree / "tests/fuzz" / corpus / "seed").write_text("x")
+        subprocess.run(["git", "init", "-q", str(tree)], check=True)
+
+        def stage():
+            subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
+
+        stage()
+        clean = check(tree)
+        cases += 1
+        if clean.failed:
+            failures.append("clean copy: " + "; ".join(l for l in clean.lines if l.startswith("FAIL")))
+
+        def plant(label, path, old, new, count=1):
+            nonlocal cases
+            cases += 1
+            original = (tree / path).read_text(encoding="utf-8")
+            if old not in original:
+                failures.append(f"{label}: the plant's text is not in {path}")
+                return
+            (tree / path).write_text(original.replace(old, new, count), encoding="utf-8")
+            stage()
+            if not check(tree).failed:
+                failures.append(f"{label}: want FAIL, got none")
+            (tree / path).write_text(original, encoding="utf-8")
+            stage()
+
+        def plant_file(label, path, content):
+            nonlocal cases
+            cases += 1
+            (tree / path).parent.mkdir(parents=True, exist_ok=True)
+            (tree / path).write_text(content)
+            stage()
+            if not check(tree).failed:
+                failures.append(f"{label}: want FAIL, got none")
+            (tree / path).unlink()
+            stage()
+
+        plant_file("unnamed harness source", "tests/fuzz/rocketnet_fuzz_planted.cpp", "// planted\n")
+        plant_file("unnamed corpus directory", "tests/fuzz/corpus_planted/seed", "x")
+        plant("harness dropped from TARGETS (its corpus unreplayed)", "tests/fuzz/Makefile",
+              " \\\n          rocketnet_fuzz_endpoint", "")
+        plant("harness dropped from a replay list", ".github/workflows/ci.yml",
+              ' rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter"\n          targets=""',
+              ' rocketnet_fuzz_endpoint"\n          targets=""')
+        plant("seed list loses a harness with a generator", ".github/workflows/ci.yml",
+              'seed_harnesses="rocketnet_fuzz ', 'seed_harnesses="')
+        plant("fuzz-smoke runs a time-boxed libFuzzer pass", ".github/workflows/ci.yml",
+              "      - name: Exact-field oracle rejects memory-safe truncation\n",
+              "      - name: Planted mutation pass\n"
+              "        run: ./bin/rocketnet_fuzz -max_total_time=5\n\n"
+              "      - name: Exact-field oracle rejects memory-safe truncation\n")
+        plant("CMake replay list loses the XDP filter", "CMakeLists.txt",
+              "rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter ${ROCKETNET_FUZZ_PAIR_HARNESSES}",
+              "rocketnet_fuzz_endpoint ${ROCKETNET_FUZZ_PAIR_HARNESSES}")
+        plant("nightly Linux matrix loses the XDP filter", ".github/workflows/fuzz-nightly.yml",
+              '"target":"rocketnet_fuzz_xdp_filter"', '"target":"rocketnet_fuzz_planted_gone"')
+        plant("nightly NDEBUG matrix loses a harness", ".github/workflows/fuzz-nightly.yml",
+              "          - rocketnet_fuzz_endpoint\n", "")
+        plant("fuzz_ndebug.sh loses a harness", "tools/fuzz_ndebug.sh",
+              "    rocketnet_fuzz_endpoint\n", "")
+        plant("macOS loop loses a harness", "docs/MACOS.md",
+              "rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter; do", "rocketnet_fuzz_endpoint; do")
+        plant("guide count wrong", "docs/BUILD-REFERENCE.md", "the fifteen harnesses", "the fourteen harnesses")
+        plant("the XDP filter fuzzed on macOS, where it is a no-op", "tests/fuzz/Makefile",
+              "                     rocketnet_fuzz_gateway_netlink \\\n                     rocketnet_fuzz_xdp_filter",
+              "                     rocketnet_fuzz_gateway_netlink")
+        # F-B1: a Linux-only harness fuzzed on macOS is a no-op (cov: 1) that reads green
+        xdp_frame_row = ('rocketnet_fuzz_xdp_frame.dict"}\'\n'
+                         '          - \'{"target":"rocketnet_fuzz_server_transport"')
+        plant("macOS matrix fuzzes a Linux-only no-op", ".github/workflows/fuzz-nightly.yml", xdp_frame_row,
+              'rocketnet_fuzz_xdp_frame.dict"}\'\n'
+              '          - \'{"target":"rocketnet_fuzz_uring_recvmsg","source":"tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp"}\'\n'
+              '          - \'{"target":"rocketnet_fuzz_server_transport"')
+        plant("LINUX_ONLY_TARGETS names a harness TARGETS does not", "tests/fuzz/Makefile",
+              "LINUX_ONLY_TARGETS = rocketnet_fuzz_uring_recvmsg", "LINUX_ONLY_TARGETS = rocketnet_fuzz_planted rocketnet_fuzz_uring_recvmsg")
+        plant("a Linux-only harness without its Linux guard", "tests/fuzz/rocketnet_fuzz_uring_recvmsg.cpp",
+              "#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT )", "#if defined( IORING_RECV_MULTISHOT )", count=1)
+
+    if failures:
+        for failure in failures:
+            print("FAIL " + failure)
+        print(f"check_fuzz_harnesses self-test: {len(failures)} of {cases} cases failed")
+        return 1
+    print(f"ok: check_fuzz_harnesses self-test, {cases} cases (a clean copy and {cases - 1} plants)")
+    return 0
+
+
+def main(argv):
+    if argv[1:] == ["--self-test"]:
+        return self_test()
+    try:
+        report = check(ROOT)
+    except RuntimeError as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 2
+    for line in report.lines:
+        print(line, file=sys.stderr if line.startswith("FAIL") else sys.stdout)
+    return report.failed
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

@@ -62,3 +62,79 @@ static void test_update_clock_bad_time_counts_and_does_not_assert()
 }
 
 REGISTER_UNIT_TEST( test_update_clock_bad_time_counts_and_does_not_assert );
+
+// A forward step on a clock that never went back hands out the caller's
+// time, bit for bit, and reports no clamp, whatever the flag held before.
+
+static void test_update_clock_forward_step_clears_the_clamp()
+{
+    double raw_time = 10.0;
+    double time_offset = 0.0;
+
+    bool clamped = true;
+    rocketnet_unit_check( rocketnet_update_clock_advance( 10.0, &raw_time, &time_offset, 10.25, &clamped ) == 10.25 );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( raw_time == 10.25 );
+    rocketnet_unit_check( time_offset == 0.0 );
+}
+
+REGISTER_UNIT_TEST( test_update_clock_forward_step_clears_the_clamp );
+
+// After a backwards step the clamped time advances by exactly each caller
+// step: each step is measured from the caller's previous time, never from
+// the time the clock fell back to. A caller's time exactly equal to the last
+// good time has caught up: the clock is the caller's clock again, not the
+// last good time plus a step.
+
+static void test_update_clock_catch_up_steps_from_the_callers_last_time()
+{
+    rocketnet_quiet( true );
+
+    double last_good = 10.0;
+    double raw_time = 10.0;
+    double time_offset = 0.0;
+    bool clamped = false;
+
+    // back from 10 to 5: the clamped time stands at 10
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 5.0, &clamped );
+    rocketnet_unit_check( last_good == 10.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 5.0 );
+    rocketnet_unit_check( time_offset == 5.0 );
+
+    // 5 to 6 to 7: the clamped time goes 11, 12, each one step of 1
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 6.0, &clamped );
+    rocketnet_unit_check( last_good == 11.0 );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( raw_time == 6.0 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 7.0, &clamped );
+    rocketnet_unit_check( last_good == 12.0 );
+    rocketnet_unit_check( raw_time == 7.0 );
+
+    // a backwards step measured from the caller's last time, 7, not from 5
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 6.5, &clamped );
+    rocketnet_unit_check( last_good == 12.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 6.5 );
+    rocketnet_unit_check( time_offset == 5.5 );
+
+    // a caller's time exactly at the last good time is the caller's time
+
+    double caught_raw = 4.0;
+    double caught_offset = 6.0;
+    clamped = true;
+    rocketnet_unit_check( rocketnet_update_clock_advance( 10.0, &caught_raw, &caught_offset, 10.0, &clamped ) == 10.0 );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( caught_raw == 10.0 );
+    rocketnet_unit_check( caught_offset == 6.0 );
+
+    // and just past it, the caller's time again
+
+    rocketnet_unit_check( rocketnet_update_clock_advance( 10.0, &caught_raw, &caught_offset, 10.5, &clamped ) == 10.5 );
+}
+
+REGISTER_UNIT_TEST( test_update_clock_catch_up_steps_from_the_callers_last_time );

@@ -9,9 +9,11 @@
 # bytes after its selector byte. A seed without a capture, a capture without
 # a seed, and a capture whose bytes differ are each one line; any of them
 # makes the check exit 1. With no regression files the check exits 0 and
-# prints "0 regressions".
+# prints "0 regressions"; but a tree where the seed corpora or the capture
+# directory are missing has nothing to read, and that is an error (zero inputs
+# is never a pass).
 #
-#   python3 tools/check_fuzz_regressions.py
+#   python3 tools/check_fuzz_regressions.py [--root DIR]
 #   python3 tools/check_fuzz_regressions.py --selftest
 
 import os
@@ -56,6 +58,12 @@ def check(root):
     problems = []
     paired = 0
     expected = set()
+    corpora = [corpus for corpus, _ in SEED_CORPORA if os.path.isdir(os.path.join(root, *corpus.split("/")))]
+    if not corpora or not os.path.isdir(regress):
+        # zero inputs is an error: a tree with nothing to read would print "0 regressions"
+        problems.append("%d of %d seed corpora and %d of 1 capture directory under %s: nothing was checked" %
+                        (len(corpora), len(SEED_CORPORA), int(os.path.isdir(regress)), root))
+        return problems, paired
 
     for corpus, interface, name, path in seeds(root):
         expected.add(name)
@@ -142,17 +150,24 @@ def selftest():
         assert len(problems) == 1 and "orphan capture" in problems[0], "a missing seed was not one orphan"
         assert paired == 1, "a missing seed must leave one pair"
 
-    print("check_fuzz_regressions selftest: ok (two converted pairs; missing capture and missing seed each red)")
+    with tempfile.TemporaryDirectory() as empty:
+        problems, paired = check(empty)
+        assert problems and "nothing was checked" in problems[0], "a tree with no corpora was accepted"
+
+    print("check_fuzz_regressions selftest: ok (two converted pairs; missing capture, missing seed and an empty tree each red)")
     return 0
 
 
 def main(argv):
     if len(argv) == 2 and argv[1] == "--selftest":
         return selftest()
-    if len(argv) != 1:
-        sys.stderr.write("usage: python3 tools/check_fuzz_regressions.py [--selftest]\n")
+    root = ROOT
+    if len(argv) == 3 and argv[1] == "--root":
+        root = argv[2]
+    elif len(argv) != 1:
+        sys.stderr.write("usage: python3 tools/check_fuzz_regressions.py [--selftest | --root DIR]\n")
         return 2
-    problems, paired = check(ROOT)
+    problems, paired = check(root)
     if problems:
         for line in problems:
             print(line)

@@ -182,6 +182,9 @@ def check(root):
     sdk_tests = os.path.join(root, "sdk", "rocketnet_tests.cpp")
     if os.path.exists(sdk_tests):
         files.append(sdk_tests)
+    if not files:
+        # zero inputs is an error: a tree with no unit source would otherwise pass unread
+        return [(tests_dir, 0, "0 unit source files (tests/test_unit_*.cpp, sdk/rocketnet_tests.cpp): nothing was checked")]
 
     failures = []
     for path in files + helpers(root, files):
@@ -228,7 +231,14 @@ def self_test():
             if len(found) != expected:
                 print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
                 return 1
-    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper is refused")
+    with tempfile.TemporaryDirectory() as root:
+        os.mkdir(os.path.join(root, "tests"))
+        found = check(root)
+        if len(found) != 1 or "0 unit source files" not in found[0][2]:
+            print("FAIL check_unit_purity self-test: zero unit sources: expected 1 finding, got %r" % (found,))
+            return 1
+    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper, "
+          "and a tree with no unit source, are refused")
     return 0
 
 

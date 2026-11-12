@@ -499,6 +499,7 @@ struct mo_pair_t
     rocketnet_message_client_t * clients[MO_MAX_SLOTS];
     int num_clients;
     double time;
+    void * allocations[MO_MAX_SLOTS + 1];   // caller blocks (mo_pair_setup_zeroed), freed by teardown
 };
 
 #if ROCKETNET_DEV
@@ -542,6 +543,48 @@ static void mo_pair_setup( mo_pair_t * pair, int num_clients, const rocketnet_me
     pair->time = MO_T0;
 }
 
+// mo_pair_setup with every object in a caller block that starts zeroed. A case
+// that compares a connection's whole region before and after a refused send
+// (mo_send_side_take, mo_send_side_check_refused) needs it: the region is
+// preallocated and written lazily (store chunks, spans, untaken descriptors,
+// the rings), so in a malloc'd block the bytes nothing has written yet have no
+// value, the compare reads them, and MemorySanitizer reports it. Zeroed, every
+// byte has a value, and the compare still covers the whole region, so a
+// refused send that writes anywhere in it fails the case.
+
+static void * mo_zeroed_block( mo_pair_t * pair, int which, uint64_t bytes )
+{
+    const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
+    check( bytes > 0 );
+    void * allocation = calloc( 1, (size_t) bytes + alignment - 1 );
+    check( allocation != NULL );
+    pair->allocations[which] = allocation;
+    return (void *) ( ( (uintptr_t) allocation + alignment - 1 ) & ~(uintptr_t) ( alignment - 1 ) );
+}
+
+static void mo_pair_setup_zeroed( mo_pair_t * pair, int num_clients, const rocketnet_message_config_t * config,
+                                  int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
+{
+    memset( pair, 0, sizeof( *pair ) );
+    pair->net = mo_net_new();
+    pair->num_clients = num_clients;
+    const uint64_t server_bytes = rn_message_object_required_bytes( config, MO_MAX_SLOTS, 1 );
+    void * server_block = mo_zeroed_block( pair, 0, server_bytes );
+    pair->server = mo_server_create( pair->net, config, MO_MAX_SLOTS, server_kbps, server_block, server_bytes );
+    check( pair->server );
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        const uint64_t client_bytes = rn_message_object_required_bytes( config, 1, 0 );
+        void * client_block = mo_zeroed_block( pair, 1 + i, client_bytes );
+        pair->clients[i] = mo_client_create( pair->net, i, config, client_kbps, client_block, client_bytes );
+        check( pair->clients[i] );
+        mo_net_connect( pair->net, i );
+    }
+
+    pair->time = MO_T0;
+}
+
 static void mo_pair_teardown( mo_pair_t * pair )
 {
     for ( int i = 0; i < pair->num_clients; i++ )
@@ -550,6 +593,11 @@ static void mo_pair_teardown( mo_pair_t * pair )
     }
     rocketnet_message_server_destroy( pair->server );
     mo_net_free( pair->net );
+
+    for ( int i = 0; i < MO_MAX_SLOTS + 1; i++ )
+    {
+        free( pair->allocations[i] );
+    }
 }
 
 static rn_message_connection_t * mo_server_slot( mo_pair_t * pair, int slot )
@@ -1785,7 +1833,7 @@ static void test_server_kicks_exhausted_client_others_unaffected()
     config.client_send_kbps = config.server_send_kbps = 0; // deliberate fixed-pool exhaustion
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 2, &config, 0, 0 );
+    mo_pair_setup_zeroed( &pair, 2, &config, 0, 0 );
     mo_step( &pair );
 
     // the server queues to slot 0 without sending until its region has no room:
@@ -1893,7 +1941,7 @@ static void test_client_disconnects_itself_on_exhaustion()
     mo_small_config( &config );
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup_zeroed( &pair, 1, &config );
     mo_step( &pair );
 
     rocketnet_message_client_t * client = pair.clients[0];
@@ -1987,7 +2035,7 @@ static void test_slot_reuse_starts_clean()
     config.server_send_kbps = 7000;                                   // R6: a reused slot starts at the config field
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0 );
+    mo_pair_setup_zeroed( &pair, 1, &config, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0 );
     mo_step( &pair );
 
     rn_message_connection_t * slot = mo_server_slot( &pair, 0 );
@@ -2962,7 +3010,7 @@ static void test_rnslots_witness_replays()
         mo_small_config( &small );
 
         mo_pair_t pair;
-        mo_pair_setup( &pair, 1, &small );
+        mo_pair_setup_zeroed( &pair, 1, &small );
         mo_step( &pair );
         mo_send_up( &pair, 0, 0, 1 );
         mo_send_up( &pair, 0, 0, 2 );
@@ -3249,7 +3297,7 @@ static void test_unreliable_store_full_is_refused_and_counted()
     config.send_queue_messages = 1024;                          // the store runs out before the descriptors do
 
     mo_pair_t pair;
-    mo_pair_setup( &pair, 1, &config );
+    mo_pair_setup_zeroed( &pair, 1, &config );                  // the refusal compares the whole region
     mo_step( &pair );
 
     int started = 0;
@@ -3568,7 +3616,9 @@ static void test_send_room_watch_crosses_once_and_rearms_below_half()
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
+    // the arena's block starts zeroed: the refusal below compares the whole
+    // region, and bytes nothing has written yet have no value to compare
+    rn_arena_t * arena = rn_unit_arena_create_zeroed( &config, 1, &counters );
     check( arena );
 
     rn_region_t * region = rn_arena_region( arena, 0 );

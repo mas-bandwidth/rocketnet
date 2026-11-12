@@ -1,0 +1,4 @@
+config	budget_s	measured_s	host	generated	distinct
+MCReplayWindowMid.cfg	900	335.6	hetzner1	69206063	3145729
+MCClientConnectionLCrash.cfg	900	380.3	hetzner1	2837306	474351
+MCRNClientIoDecrypt.cfg	900	292.2	vision	2892828	1170702

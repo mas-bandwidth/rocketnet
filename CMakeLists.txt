@@ -584,7 +584,7 @@ endif()
 if(ROCKETNET_BUILD_EXAMPLES)
     add_executable(client tests/client_server/client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
-    add_executable(server tests/client_server/server.c)
+    add_executable(server tests/client_server/server.c tests/echo_payload.cpp)
     target_link_libraries(server PRIVATE rocketnet_dev)
     add_executable(happy_server tools/happy_path/happy_server.c)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
@@ -712,11 +712,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_client_required_memory_validates.cpp
             tests/test_unit_connect_token_vectors.cpp
             tests/test_unit_connection_internal_error_counters.cpp
-            tests/test_unit_create_reports_status.cpp
             tests/test_unit_dev_keys_warning.cpp
             tests/test_unit_dst_core.cpp
             tests/test_unit_finish_requires_start.cpp
-            tests/test_unit_light_profile.cpp
             tests/test_unit_max_clients.cpp
             tests/test_unit_memory_plan_lifecycle.cpp
             tests/test_unit_platform_socket_hygiene.cpp
@@ -733,7 +731,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_server_serves_both_families.cpp
             tests/test_unit_shutdown_request_completion.cpp
             tests/test_unit_sim_schedules.cpp
-            tests/test_unit_sized_config.cpp
             tests/test_unit_status_codes_reached.cpp
             tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
@@ -802,7 +799,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             COMMAND test_fp_contract_fma
             VERBATIM)
     endif()
-    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
+    add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp tests/echo_payload.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
@@ -1032,10 +1029,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,
-    # test_serialize, test_transport_control,
+    # test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
-    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # test. ./bin/functional runs test_transport_control and
     # the platform's transport binary (the execs table in tests/functional/main.cpp's
     # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
@@ -1059,10 +1056,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
-    add_executable(test_serialize tests/test_serialize.cpp)
-    target_include_directories(test_serialize PRIVATE tests)
-    target_link_libraries(test_serialize PRIVATE rocketnet_dev)
-    rocketnet_warning_floor(test_serialize)
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
@@ -1173,6 +1166,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/session_reconnect_isolation.cpp
         tests/functional/destroy_early_keep.cpp
         tests/functional/disconnect_reasons_real.cpp
+        tests/functional/production_paths.cpp
+        tests/functional/client_io_threaded.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -1219,16 +1214,16 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_features(functional PRIVATE cxx_std_11)
     add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
         if(ROCKETNET_XDP)
             add_dependencies(functional test_xdp)
         endif()
     elseif(APPLE)
-        add_dependencies(functional test_msgx test_serialize test_transport_control)
+        add_dependencies(functional test_msgx test_transport_control)
     elseif(WIN32)
-        add_dependencies(functional test_iocp test_serialize test_transport_control)
+        add_dependencies(functional test_iocp test_transport_control)
     else()
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
     endif()
     # functional_production: the production-library functional executable.
     # Built only in a production build (ROCKETNET_DEV=OFF), where the
@@ -1303,7 +1298,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/posix_lifecycle_stress.cpp
             tests/functional/posix_socket_errors.cpp
             tests/functional/corpus_consistency.cpp
-            tests/functional/session_reconnect_isolation.cpp)
+            tests/functional/session_reconnect_isolation.cpp
+            tests/functional/disconnect_reasons_real.cpp
+            tests/functional/production_paths.cpp
+            tests/functional/client_io_threaded.cpp)
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)
@@ -1319,6 +1317,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak tests/soak/soak.c)
     add_executable(load tests/load/load.c)
     add_executable(load_split tests/load/load_split.c)
+    # the load harness census self-test (tools/test_load_census.c): a
+    # functional test of the OS census, run per commit (ci.yml functional leg)
+    add_executable(test_load_census tools/test_load_census.c)
+    target_link_libraries(test_load_census PRIVATE Threads::Threads)
+    rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The server transport hardening load (docs/HARDEN_LOAD.md): a bench tool.
     add_executable(harden_load tests/load/harden_load.cpp)
@@ -1411,8 +1414,8 @@ if(ROCKETNET_BUILD_TOOLS)
     # loopback case does, so the harness object goes first on the link line:
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
-    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
-    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink ${ROCKETNET_FUZZ_PAIR_HARNESSES})
+    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw)
+    foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} tests/fuzz/${harness}.cpp tests/fuzz/replay_main.cpp)
         else()
@@ -1427,6 +1430,13 @@ if(ROCKETNET_BUILD_TOOLS)
         rocketnet_use_sodium(fuzz_replay_${harness})
         target_link_libraries(fuzz_replay_${harness} PRIVATE rocketnet_dev Threads::Threads)
     endforeach()
+    # The XDP filter harness runs the filter where its host-C target exists
+    # (GCC or Clang, not Windows); elsewhere it compiles to a no-op whose seed
+    # generator writes without replaying.
+    if(TARGET rocketnet_xdp_filter_host)
+        target_link_libraries(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE rocketnet_xdp_filter_host)
+        target_compile_definitions(fuzz_replay_rocketnet_fuzz_xdp_filter PRIVATE ROCKETNET_FUZZ_XDP_FILTER_HOST=1)
+    endif()
 endif()
 
 set(rocketnet_install_targets rocketnet)
@@ -1434,7 +1444,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split harden_load soak_sim)
+foreach(harness client server soak load load_split harden_load soak_sim test_load_census)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()

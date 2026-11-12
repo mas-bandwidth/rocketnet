@@ -65,6 +65,10 @@ class TreeTest(unittest.TestCase):
             (root / "blob.bin").write_bytes(b"\0" + WORD.encode())
             self.assertEqual(check.check(root, ["blob.bin"]), [])
 
+    def test_zero_tracked_files_is_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(check.main(["--root", directory]), 1)
+
     def test_repository_is_clean(self):
         self.assertEqual(check.check(check.ROOT, check.tracked_files(check.ROOT)), [])
 

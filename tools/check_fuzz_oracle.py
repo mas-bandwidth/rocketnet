@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Require the exact-field fuzz oracle to reject memory-safe base64 truncation."""
+import argparse
 import os
 from pathlib import Path
 import shlex
@@ -7,8 +8,19 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parents[1]
-BUILD = Path(sys.argv[1] if len(sys.argv) > 1 else 'build-fuzz').resolve()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('build', nargs='?', default='build-fuzz', help='the fuzz build directory')
+parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1],
+                    help='tree holding sdk/ and tests/fuzz/ (default: this repository)')
+args = parser.parse_args()
+ROOT = args.root.resolve()
+BUILD = Path(args.build).resolve()
+if not (BUILD / 'CMakeCache.txt').is_file():
+    raise SystemExit(f'fuzz oracle: 0 cache entries: no CMakeCache.txt in {BUILD}')
+corpus = sorted((ROOT / 'tests/fuzz/corpus').iterdir()) if (ROOT / 'tests/fuzz/corpus').is_dir() else []
+if not corpus:
+    # a baseline replayed over no inputs passes and proves nothing
+    raise SystemExit(f'fuzz oracle: 0 corpus files in {ROOT / "tests/fuzz/corpus"}')
 cache = (BUILD / 'CMakeCache.txt').read_text()
 compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
                 if line.startswith('CMAKE_CXX_COMPILER:'))
@@ -52,7 +64,7 @@ int main(int argc, char** argv) {
     sources = [str(ROOT / 'tests/fuzz/rocketnet_fuzz.cpp'), str(replay)]
     baseline = work / 'baseline'
     subprocess.run(flags + sources + [str(BUILD / 'librocketnet.a')] + libs + ['-o', str(baseline)], check=True)
-    subprocess.run([str(baseline), *map(str, sorted((ROOT / 'tests/fuzz/corpus').iterdir()))], env=env, check=True)
+    subprocess.run([str(baseline), *map(str, corpus)], env=env, check=True)
 
     original = (ROOT / 'sdk/rocketnet_base64.cpp').read_text()
     guard = '    if ( output_length > output_size )\n    {\n        return 0;\n    }'

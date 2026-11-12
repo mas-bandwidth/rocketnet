@@ -41,6 +41,10 @@ permissions:
 env:
   NOVA_SPRINT_REF: 78df5862bb63044e9c8bcf73f8d2c4796dd14b13
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   check:
     name: roadmap (sexp parses, ids unique)
@@ -80,7 +84,6 @@ jobs:
           path: build/nova-sprint
 
       - name: Regenerate and commit ROADMAP.md
-        shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"

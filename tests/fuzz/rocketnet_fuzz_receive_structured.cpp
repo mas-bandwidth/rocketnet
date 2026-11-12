@@ -6,9 +6,8 @@
 // The stateful receive fuzz target (nightly): a real client and a real server
 // carried across a full handshake and into the session, with the fuzz input
 // consumed as a DECISION STREAM that interleaves legitimate traffic, injected
-// garbage, corrupted-envelope datagrams, and time advances. This is the
-// analog of yojimbo's fuzz_connection_structured -- where raw bytes almost
-// never form a valid packet, this target reaches the deep receive state (ack
+// garbage, corrupted-envelope datagrams, and time advances. Where raw bytes
+// almost never form a valid packet, this target reaches the deep receive state (ack
 // reconstruction, replay window, the session sequence
 // paths) by producing structurally valid packets from the real write paths
 // and then letting the fuzzer decide what to damage and when.

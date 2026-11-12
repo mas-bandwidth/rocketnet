@@ -173,9 +173,9 @@ static rn_receive_descriptor_t * rn_held_descriptor( rn_region_t * region, uint3
     return descriptor;
 }
 
-// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
-// empty one, wrapping at the end of the index. proofs/tla/RNHeldOwnership.tla Hold:
-// refused at W entries, the bound the 2W cells are sized for.
+// proofs/tla/RNOpenAddress.tla Insert (MCRNOpenAddressHeldCount.cfg): linear probe to
+// the first empty cell, wrapping; refused at held_count >= W, the bound the 2W cells
+// are sized for (RNHeldOwnership Hold); CountExact: held_count counts the used cells.
 static bool rn_held_insert( rn_region_t * region, uint64_t key, uint64_t number, uint32_t used )
 {
     if ( region->held_count >= region->window )
@@ -205,12 +205,12 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint64_t number,
 }
 
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
-// moves back each entry whose home is not cyclically in (hole, scan], and the
-// final hole clears last; the scan ends on a cell already empty, which the W
-// bound leaves in a 2W index. proofs/tla/RNHeldOwnership.tla EraseStep and
-// EraseBound: the scan examines at most every cell, so a table filled against
-// that bound still ends; false then, an invariant failure the caller ends the
-// connection for.
+// moves back each entry whose home is not cyclically in (hole, scan]; the final
+// hole clears last and held_count falls once with it (CountExact). The scan ends
+// on a cell already empty, which the W bound leaves in a 2W index.
+// proofs/tla/RNHeldOwnership.tla EraseStep and EraseBound: the scan examines at
+// most every cell, so a table filled against that bound still ends; false then,
+// an invariant failure the caller ends the connection for.
 static bool rn_held_erase( rn_region_t * region, uint32_t index )
 {
     const uint32_t entries = region->held_entries;
@@ -1809,7 +1809,6 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
         rn_packet_item_t * item = &plan->items[plan->count];
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
         {
-            item->resend = unsent ? 0 : 1;
             plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
             plan->count++;
         }
@@ -1937,12 +1936,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // Rotate off the ready list before the dequeue, while the membership
         // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
 
-        const uint32_t ready_ticket = send->ready_ticket;
-        const uint32_t ready_generation = send->ready_generation;
-        if ( !rn_ready_remove_named( channels, channel, ready_ticket, ready_generation ) && send->ready_ticket != 0 )
-        {
-            rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
-        }
+        rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
 
         // dequeue: the descriptor leaves its channel's FIFO
 

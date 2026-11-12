@@ -344,6 +344,11 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
             return 1
         runs = list(runs_reader)
 
+    if not cases or not runs:
+        # zero inputs is an error: header-only ledgers match each other and prove nothing
+        print(f"{len(cases)} cases in {cases_path}, {len(runs)} rows in {runs_path}: nothing was checked", file=out)
+        return 1
+
     plan = {}
     for case in cases:
         cfg = case["config"]
@@ -425,6 +430,35 @@ def check(cases_path=DEFAULT_CASES, runs_path=DEFAULT_RUNS, out=sys.stdout, forb
                 errors.append(
                     f"{cfg}: failure without declared timeout debt (result={row['result']!r}, exit={row['exit']!r}, gate={case['gate']!r}, debt={case['debt']!r})"
                 )
+
+    # NIGHTLY-DEBT.tsv beside CASES.tsv: the timeout debt tlc.yml re-runs every
+    # night under its own budget. Each row must be a declared timeout-debt
+    # case with a FAIL/124 record, listed once, with budget_s at least twice
+    # measured_s and positive completed counts (plan_tlc_nightly.nightly_debt,
+    # the planner's own check). No file is no nightly debt.
+    from plan_tlc_nightly import read_nightly_debt  # pylint: disable=import-outside-toplevel
+    nightly_debt_path = Path(cases_path).parent / "NIGHTLY-DEBT.tsv"
+    try:
+        read_nightly_debt(nightly_debt_path, cases, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{nightly_debt_path}: {error}")
+
+    # The budget margin (plan_tlc_nightly.margin): a PASS record over 60% of
+    # its budget is refused unless BUDGETS.tsv beside CASES.tsv declares its
+    # larger budget (at least twice its seconds; the nightly re-run runs it
+    # under that) or it becomes nightly timeout debt. The declared ones are
+    # printed. No file is no declared budget.
+    from plan_tlc_nightly import margin, read_budgets  # pylint: disable=import-outside-toplevel
+    budgets_path = Path(cases_path).parent / "BUDGETS.tsv"
+    try:
+        budgets = read_budgets(budgets_path, runs)
+    except (ValueError, KeyError, OSError) as error:
+        errors.append(f"{budgets_path}: {error}")
+        budgets = {}
+    flagged, problems = margin(runs, budgets)
+    errors.extend(problems)
+    for line in flagged:
+        print(line, file=out)
 
     for cfg in plan:
         if cfg not in seen_runs:

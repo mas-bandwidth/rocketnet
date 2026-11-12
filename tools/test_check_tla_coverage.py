@@ -89,6 +89,21 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("COVERAGE OK 1 rows", out)
 
+    def test_zero_rows_fails(self):
+        # zero inputs is an error: a header-only, empty or missing table checks nothing
+        root = self.plant_basic_repo()
+        coverage = root / "proofs" / "tla" / "COVERAGE.tsv"
+        for text in (HEAD + "\n", ""):
+            coverage.write_text(text)
+            code, out = run_check(root)
+            self.assertEqual(code, 1, out)
+            self.assertIn("0 rows", out)
+            self.assertNotIn("COVERAGE OK", out)
+        coverage.unlink()
+        code, out = run_check(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("0 rows", out)
+
     def test_malformed_row_width_fails_after_a_valid_row(self):
         root = self.plant_basic_repo()
         fields = ["malformed", "sdk/rocketnet_send_budget.h", "RNSendBudget",

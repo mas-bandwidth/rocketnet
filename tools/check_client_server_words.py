@@ -14,6 +14,9 @@ refused in any case and inside any compound, outside the exceptions below.
 
 Each word is spelled here built from two halves, so this file and its
 tests never hold either.
+
+Usage: check_client_server_words.py [--root DIR]   (default: this repository;
+0 tracked files under DIR is an error)
 """
 
 import re
@@ -111,8 +114,18 @@ def check(root, files):
     return found
 
 
-def main():
-    found = check(ROOT, tracked_files(ROOT))
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    root = Path(argv[1]) if argv[:1] == ["--root"] and len(argv) > 1 else ROOT
+    try:
+        files = tracked_files(root)
+    except subprocess.CalledProcessError:
+        files = []
+    if not files:
+        # zero inputs is an error: no tracked file would otherwise pass unread
+        print(f"FAIL: 0 tracked files under {root}: nothing was checked")
+        return 1
+    found = check(root, files)
     for path, number, line in found:
         print(f"{path}:{number}: says a banned word ('{WORD}' or '{WORD2}'): {line}")
     if found:
@@ -121,7 +134,7 @@ def main():
               f"and for '{WORD2}' say a read, a copy, a record or the state. "
               "Exceptions live in tools/check_client_server_words.py.")
         return 1
-    print(f"OK: no '{WORD}' or '{WORD2}' outside {len(FILES_ALLOWED)} allowed files and "
+    print(f"OK: no '{WORD}' or '{WORD2}' in {len(files)} tracked files outside {len(FILES_ALLOWED)} allowed files and "
           f"{len(SPANS_ALLOWED) + len(SPANS_ALLOWED2)} allowed spans")
     return 0
 

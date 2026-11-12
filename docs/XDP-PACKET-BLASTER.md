@@ -241,6 +241,12 @@ promoted to a numbered message (`MESSAGE_PROMOTED_UNRELIABLE`). The test
 server echoes the client's packet payload back raw, so the client receives
 its own send numbers. Once those run a window ahead of its receive window,
 the client refuses them as `NUMBER_OUTSIDE_WINDOW` and ends with disconnect
-reason -2 (`PROTOCOL_VIOLATION`). It happens only under load, and it comes
-from the echo, not from the library. Large-payload runs therefore use 1200 B.
+reason -2 (`PROTOCOL_VIOLATION`). It happened only under load, and it came
+from the echo, not from the library. The test server's echo now returns
+only what the server could have sent byte for byte (unreliable records,
+control records, raw transport bytes) and refuses a numbered message by
+name (`server echo refused ...`, tests/echo_payload.h), and the blaster's
+largest payload is 1411 B, the largest message sent as one unreliable
+record. An echo cell measures the transport echo of one unreliable record
+per message; it never measures numbered messages.
 A failed endpoint now prints its nonzero `MESSAGE_*` counters.

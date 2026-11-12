@@ -13,6 +13,7 @@ compile the list in cmake/RocketnetSources.cmake. This checks that
 and that the check refuses a tree with an unlisted sdk/ file, so it can fail.
 It needs cmake and no compiler.
 """
+import argparse
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,10 +58,24 @@ def problems(root, directory):
     return found
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=ROOT,
+                        help="the repository root to check (default: this repository)")
+    root = parser.parse_args(argv).root.resolve()
+    if not (root / "cmake/RocketnetSources.cmake").is_file():
+        print(f"FAIL: {root} has no cmake/RocketnetSources.cmake (0 files)", file=sys.stderr)
+        return 1
+    sources = [path for path in (root / "sdk").glob("*.c*") if path.suffix in (".c", ".cpp")]
+    if not sources:
+        print(f"FAIL: {root / 'sdk'} holds 0 files (.c or .cpp)", file=sys.stderr)
+        return 1
     with tempfile.TemporaryDirectory(prefix="sdk sources ") as directory:
         directory = Path(directory)
-        found = problems(ROOT, directory)
+        if not listed(root, directory):
+            print("FAIL: cmake/RocketnetSources.cmake lists 0 files", file=sys.stderr)
+            return 1
+        found = problems(root, directory)
         if found:
             for line in found:
                 print(f"FAIL: {line}", file=sys.stderr)
@@ -71,8 +86,8 @@ def main():
         # never fail.
         probe = directory / "probe"
         (probe / "cmake").mkdir(parents=True)
-        shutil.copyfile(ROOT / "cmake/RocketnetSources.cmake", probe / "cmake/RocketnetSources.cmake")
-        shutil.copytree(ROOT / "sdk", probe / "sdk")
+        shutil.copyfile(root / "cmake/RocketnetSources.cmake", probe / "cmake/RocketnetSources.cmake")
+        shutil.copytree(root / "sdk", probe / "sdk")
         (probe / "sdk/rocketnet_unlisted_probe.cpp").write_text("// probe\n", encoding="utf-8")
         found = problems(probe, directory)
         if not any("rocketnet_unlisted_probe.cpp is neither listed nor excluded" in line for line in found):

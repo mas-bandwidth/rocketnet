@@ -15,7 +15,7 @@
 // (a seed generator's INCOMPLETE, a failed setup) exits itself, so the replay
 // driver and the libFuzzer build stop in the same way.
 //
-// THE STANDALONE MODE, yojimbo's FUZZ_STANDALONE driver: with no paths named,
+// THE STANDALONE MODE: with no paths named,
 // it feeds FUZZ_ITERS pseudo-random inputs (default 200000) of up to 4096
 // bytes from a fixed linear congruential stream (FUZZ_SEED, default
 // 0x1234567), so a sanitized build shakes out crashes where no libFuzzer

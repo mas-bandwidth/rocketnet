@@ -192,10 +192,10 @@ def universal_arch_flags(library):
                                          text=True, errors="replace")
     except (OSError, subprocess.CalledProcessError):
         return []
-    flags = []
+    arch_flags = []
     for arch in output.split():
-        flags += ["-arch", arch]
-    return flags
+        arch_flags += ["-arch", arch]
+    return arch_flags
 
 
 def compile_and_run(language, linkage, source, link_library, staging_library, build, config, cc, cxx):
@@ -219,7 +219,7 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
         if sys.platform == "win32":
             compiler = msvc_tool("cl")
             crt = "/MDd" if config.lower() == "debug" else "/MD"
-            flags = ["/nologo", "/W4", "/WX", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory)]
+            flags = ["/nologo", "/W4", "/WX", "/fp:precise", crt, "/D_CRT_SECURE_NO_WARNINGS", "/I", str(directory)]
             if linkage == "shared":
                 flags += ["/DROCKETNET_SHARED=1"]
             source_arg = ("/Tc" if language == "C" else "/Tp") + str(source)
@@ -232,7 +232,7 @@ def compile_and_run(language, linkage, source, link_library, staging_library, bu
         else:
             compiler = cc if language == "C" else cxx
             standard = ["-std=c99"] if language == "C" else ["-std=c++11"]
-            flags = standard + ["-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)] + \
+            flags = standard + ["-ffp-contract=off", "-pedantic", "-Wall", "-Wextra", "-Werror", "-I", str(directory)] + \
                     universal_arch_flags(staging_library)
             if linkage == "shared":
                 flags += ["-DROCKETNET_SHARED=1"]

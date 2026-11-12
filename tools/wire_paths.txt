@@ -1,0 +1,32 @@
+# The wire-affecting paths release-check.yml's unreleased-wire-changes job
+# compares against the newest release tag: the standard itself, the shared
+# wire constants (the one file the sdk and the kernel program both read), and
+# the protocol layer that writes and reads packets. Deliberately not the whole
+# sdk: a gate that cries wolf on a transport refactor is a gate people learn
+# to merge past. One tracked path a line; tools/check_wire_paths.py fails a
+# path that is not tracked, a duplicate, or an empty list.
+standard/TRANSPORT.md
+standard/MESSAGES.md
+sdk/rocketnet_wire.h
+sdk/rocketnet_protocol.h
+sdk/rocketnet_protocol.cpp
+sdk/rocketnet_connect_token.h
+sdk/rocketnet_connect_token.cpp
+sdk/rocketnet_message.cpp
+sdk/rocketnet_message.h
+sdk/rocketnet_ack.cpp
+sdk/rocketnet_ack.h
+sdk/rocketnet_client_protocol.cpp
+sdk/rocketnet_client_protocol.h
+sdk/rocketnet_server_protocol.cpp
+sdk/rocketnet_server_protocol.h
+sdk/rocketnet_channel.cpp
+sdk/rocketnet_channel.h
+sdk/rocketnet_channel_reliable.cpp
+sdk/rocketnet_channel_sequenced.cpp
+sdk/rocketnet_channel_receipts.cpp
+sdk/rocketnet_keys.cpp
+sdk/rocketnet_keys.h
+sdk/rocketnet_read_write.h
+sdk/rocketnet_layers.h
+sdk/rocketnet.h

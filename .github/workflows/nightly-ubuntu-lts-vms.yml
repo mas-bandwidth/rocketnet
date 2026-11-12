@@ -1,0 +1,339 @@
+# Nightly Ubuntu LTS virtual machines: 22.04, 24.04 and 26.04, each on its
+# own stock kernel.
+#
+# ci.yml's distro-container job builds the tree and runs the unit suite in a
+# 22.04 and a 24.04 container, and says what that leaves out: a container
+# shares the host's kernel, so it qualifies the toolchain and userspace
+# libraries, not the 5.15 or 6.8 kernels (docs/DEPLOYING.md, "runtime
+# qualification"). This workflow is that runtime qualification for the
+# socket transports: each leg boots the official amd64 cloud image of one
+# release under qemu with KVM, cloud-init and the image's own kernel,
+# installs that release's stock packages (docs/BUILDING.md), and inside the
+# guest runs scripts/ubuntu-lts-vm-guest: the development and production
+# Release builds with zero warnings, the legacy-libbpf provider on 22.04 and
+# not elsewhere, ./bin/test, ./bin/test_xdp_compat on 22.04, ./bin/functional
+# (real sockets on the guest kernel: portable, gso, io_uring as the kernel
+# grants them) and tools/check_package.py. The script prints one
+# LTS-VM-PASS or LTS-VM-FAIL line; the step's exit is the script's.
+#
+# What it does not cover: an attached XDP data plane (the guest's virtio NIC
+# is not the deployment NIC), and performance. A red night is a finding.
+#
+# Images: each release's cloud image is cached on the runner host under
+# ~/.cache/rocketnet-nightly/cloud-images, keyed by its SHA256. Every run
+# fetches that release's SHA256SUMS and its GPG signature, checks the
+# signature against the pinned UEC image signing key (the key
+# nightly-bigendian-system.yml pins), and checks the cached image's SHA256
+# before use. The guest boots from a throwaway qcow2 overlay; the teardown
+# step always runs and stops the guest.
+#
+# Guest memory: 24 GiB. The suites' largest planned block is about 17.4 GiB
+# (a 1000-slot message server, strace, 2026-10-28); the stock kernel's
+# heuristic overcommit refuses one block larger than RAM plus swap, and the
+# cloud images have no swap. The host backs only the pages the guest touches.
+#
+# Measured 2026-10-31 (run 41218654978, from its branch): 24.04 and 26.04
+# green, 22.04 red for a real -Werror=undef in a test file, since fixed.
+# Brought to main 2026-11-12 (the file had lived on a branch, where its cron
+# never fired).
+
+name: nightly ubuntu lts vms
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap (the nightly opt-in, which
+# the guest script exports inside the guest too); GitHub still limits
+# self-hosted jobs to five days. Only the guest boot is bounded.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  ubuntu-lts-vm:
+    name: ubuntu ${{ matrix.version }} vm
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        series: [jammy, noble, resolute]
+        include:
+          - series: jammy
+            version: "22.04"
+            packages: cmake build-essential clang libbpf-dev liburing-dev xxd python3 lsb-release
+          - series: noble
+            version: "24.04"
+            packages: cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd python3 lsb-release
+          - series: resolute
+            version: "26.04"
+            packages: cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd python3 lsb-release
+    # keyed by the event as well as the ref: a dispatch never cancels or
+    # displaces the scheduled night, and the night never cancels a dispatch
+    concurrency:
+      group: nightly-ubuntu-lts-vms-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.series }}
+      cancel-in-progress: false
+    env:
+      SERIES: ${{ matrix.series }}
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's qemu packages and KVM are present
+        run: |
+          set -euo pipefail
+          echo "WORK=${RUNNER_TEMP}/ubuntu-lts-vm-${SERIES}" >> "$GITHUB_ENV"
+          missing=0
+          for tool in qemu-system-x86_64 qemu-img cloud-localds gpg flock ssh scp; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "KVM-MISSING /dev/kvm is not read-write for $(id -un) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Verify the ${{ matrix.version }} cloud image (cached by SHA256)
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          cd "$WORK"
+
+          BASE="https://cloud-images.ubuntu.com/releases/${SERIES}/release"
+          IMAGE="ubuntu-${VERSION}-server-cloudimg-amd64.img"
+          # Pinned fingerprint of the UEC Image Automatic Signing Key.
+          # Any other key is a failed verification, and the image is not used.
+          PIN=D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+
+          curl -fsSL --retry 3 -o SHA256SUMS "$BASE/SHA256SUMS"
+          curl -fsSL --retry 3 -o SHA256SUMS.gpg "$BASE/SHA256SUMS.gpg"
+          export GNUPGHOME="$WORK/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --keyid-format long --keyserver hkps://keyserver.ubuntu.com --recv-keys "$PIN"
+          FP=$(gpg --batch --with-colons --fingerprint "$PIN" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "signing-key fingerprint ${FP}"
+          test "$FP" = "$PIN"
+          gpg --batch --status-fd 1 --keyid-format long --verify SHA256SUMS.gpg SHA256SUMS | tee gpg-status.txt
+          grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt
+          grep -q "^\[GNUPG:\] VALIDSIG ${PIN} " gpg-status.txt
+          SUM=$(awk -v f="*${IMAGE}" '$2 == f {print $1}' SHA256SUMS)
+          test -n "$SUM"
+          echo "image ${IMAGE} sha256 ${SUM}"
+
+          CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/rocketnet-nightly/cloud-images/${SERIES}"
+          mkdir -p "$CACHE"
+          CACHED="$CACHE/${SUM}.img"
+          # One leg per host per release fetches at a time; the others wait
+          # and then find the verified file.
+          exec 9>"$CACHE/.lock"
+          flock 9
+          if [ -f "$CACHED" ] && echo "${SUM}  ${CACHED}" | sha256sum -c --status -; then
+            echo "cache hit ${CACHED}"
+          else
+            echo "cache miss: downloading ${BASE}/${IMAGE}"
+            rm -f "$CACHED" "$CACHE/download.tmp"
+            curl -fL --retry 3 -o "$CACHE/download.tmp" "$BASE/$IMAGE"
+            echo "${SUM}  $CACHE/download.tmp" | sha256sum -c -
+            mv "$CACHE/download.tmp" "$CACHED"
+          fi
+          # Older point images of this release are not used again.
+          find "$CACHE" -maxdepth 1 -name '*.img' ! -name "${SUM}.img" -print -delete
+          # The overlay pins the image it was made from; keep a hard link in
+          # the work directory so a concurrent prune cannot remove it.
+          ln -f "$CACHED" "$WORK/base.img"
+          flock -u 9
+          echo "${SUM}  $WORK/base.img" | sha256sum -c -
+
+      - name: Boot the ${{ matrix.version }} guest (KVM, cloud-init, stock kernel)
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          qemu-img create -f qcow2 -F qcow2 -b "$WORK/base.img" "$WORK/overlay.qcow2" 24G
+          ssh-keygen -t ed25519 -f "$WORK/guest_key" -N "" -q
+          chmod 600 "$WORK/guest_key"
+          PUB=$(cat "$WORK/guest_key.pub")
+          cat > "$WORK/user-data" << EOF
+          #cloud-config
+          hostname: lts-guest
+          ssh_pwauth: false
+          package_update: false
+          package_upgrade: false
+          users:
+            - name: runner
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              groups: sudo
+              shell: /bin/bash
+              lock_passwd: true
+              ssh_authorized_keys:
+                - ${PUB}
+          EOF
+          printf 'instance-id: rn-lts-%s-%s\nlocal-hostname: lts-guest\n' "$SERIES" "$GITHUB_RUN_ID" > "$WORK/meta-data"
+          cloud-localds "$WORK/seed.img" "$WORK/user-data" "$WORK/meta-data"
+
+          CPUS=$(( $(nproc) / 2 ))
+          [ "$CPUS" -le 8 ] || CPUS=8
+          [ "$CPUS" -ge 2 ] || CPUS=2
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          echo "$PORT" > "$WORK/port"
+          echo "guest ssh port ${PORT}, ${CPUS} vcpus, 24 GiB"
+          : > "$WORK/serial.log"
+          qemu-system-x86_64 \
+            -machine q35,accel=kvm \
+            -cpu host \
+            -m 24576 \
+            -smp "$CPUS" \
+            -display none \
+            -daemonize \
+            -pidfile "$WORK/qemu.pid" \
+            -serial file:"$WORK/serial.log" \
+            -drive "file=$WORK/overlay.qcow2,if=virtio,format=qcow2,cache=writeback" \
+            -drive "file=$WORK/seed.img,if=virtio,format=raw" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22" \
+            -device virtio-net-pci,netdev=net0 \
+            >"$WORK/qemu.log" 2>&1
+          echo "qemu pid $(cat "$WORK/qemu.pid")"
+
+          # The steps below reach the guest through these two wrappers.
+          cat > "$WORK/g" << EOF
+          #!/bin/sh
+          exec ssh -i "$WORK/guest_key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o LogLevel=ERROR runner@127.0.0.1 "\$@"
+          EOF
+          cat > "$WORK/gcp" << EOF
+          #!/bin/sh
+          exec scp -i "$WORK/guest_key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o LogLevel=ERROR "\$@"
+          EOF
+          chmod +x "$WORK/g" "$WORK/gcp"
+
+          # THE BOOT DEADLINE: the only bounded wait here. A KVM guest answers
+          # ssh in under a minute (2026-10-28); one with no ssh after 300 s
+          # fails the step by name with the end of its serial console.
+          boot_deadline=300
+          boot_start=$SECONDS
+          ok=0
+          while [ $((SECONDS - boot_start)) -lt "$boot_deadline" ]; do
+            if ! kill -0 "$(cat "$WORK/qemu.pid")" 2>/dev/null; then
+              echo "GUEST-DID-NOT-BOOT qemu exited before ssh"
+              tail -n 60 "$WORK/serial.log"
+              exit 1
+            fi
+            if "$WORK/g" true 2>/dev/null; then
+              ok=1
+              echo "ssh up after $((SECONDS - boot_start)) s"
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != 1 ]; then
+            echo "GUEST-DID-NOT-BOOT no ssh after ${boot_deadline} s"
+            tail -n 60 "$WORK/serial.log"
+            exit 1
+          fi
+          # cloud-init must have finished (it writes the user and its key);
+          # its status is printed, and a guest whose cloud-init is not done
+          # fails here by name
+          "$WORK/g" 'cloud-init status --wait --long' > "$WORK/cloud-init.txt" 2>&1 || echo "cloud-init status exit $? (judged by its status line below)"
+          cat "$WORK/cloud-init.txt"
+          if ! grep -qE '^status: done' "$WORK/cloud-init.txt"; then
+            echo "GUEST-CLOUD-INIT-NOT-DONE"
+            exit 1
+          fi
+
+      - name: Copy the checked-out tree into the guest
+        run: |
+          set -euo pipefail
+          tar -C "$GITHUB_WORKSPACE" --exclude ./.git --exclude ./build --exclude ./bin -cf "$WORK/src.tar" .
+          "$WORK/gcp" "$WORK/src.tar" runner@127.0.0.1:src.tar
+          "$WORK/g" 'mkdir -p ~/src && tar -C ~/src -xf ~/src.tar && rm ~/src.tar'
+
+      - name: Install the stock packages (docs/BUILDING.md)
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          set -euo pipefail
+          "$WORK/g" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PACKAGES}"
+          "$WORK/g" 'gcc --version | head -1; clang --version | head -1; cmake --version | head -1; dpkg-query -W libbpf-dev liburing-dev'
+          # The guest gets the socket buffer ceiling the fleet hosts grant.
+          "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
+
+      - name: Builds, suites and package check on the guest kernel
+        run: |
+          set -euo pipefail
+          "$WORK/g" "cd ~/src && bash scripts/ubuntu-lts-vm-guest ${SERIES}" 2>&1 | tee "$WORK/guest.log"
+          grep -q "^LTS-VM-PASS ${SERIES} " "$WORK/guest.log"
+          {
+            echo "### Ubuntu ${VERSION} (${SERIES}) guest"
+            echo ""
+            grep "^LTS-VM-PASS" "$WORK/guest.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect the guest logs
+        if: failure()
+        run: |
+          set -uo pipefail
+          # a log that was never written is not an error here; the verdict is
+          # the step above
+          mkdir -p "$WORK/logs"
+          for f in serial.log qemu.log guest.log cloud-init.txt; do
+            if [ -f "$WORK/$f" ]; then cp "$WORK/$f" "$WORK/logs/"; fi
+          done
+          for f in configure-dev.log build-dev.log configure-prod.log build-prod.log; do
+            if ! "$WORK/gcp" "runner@127.0.0.1:src/$f" "$WORK/logs/$f" 2>/dev/null; then
+              echo "no $f in the guest"
+            fi
+          done
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the guest logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: ubuntu-${{ matrix.series }}-vm-logs-${{ steps.refslug.outputs.slug }}
+          path: ${{ env.WORK }}/logs
+          if-no-files-found: ignore
+
+      - name: Tear down the guest
+        if: always()
+        run: |
+          set -uo pipefail
+          # cleanup, not a verdict: a guest already gone is the goal
+          if [ -f "$WORK/qemu.pid" ]; then
+            pid=$(cat "$WORK/qemu.pid")
+            if kill -0 "$pid" 2>/dev/null; then
+              "$WORK/g" 'sudo poweroff' >/dev/null 2>&1
+              for _ in $(seq 1 20); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null
+                sleep 2
+                kill -9 "$pid" 2>/dev/null
+              fi
+            fi
+            echo "guest stopped (qemu pid ${pid})"
+          fi
+          rm -rf "$WORK"
+          exit 0

@@ -62,6 +62,13 @@ class CheckExportsSourceTest(ExportFixtureTest):
         code, err = run_source_check(HEADER, TESTS)
         self.assertEqual(code, 0, err)
 
+    def test_zero_declared_exports_is_an_error(self):
+        empty = Path(self.tmp.name) / "empty.h"
+        empty.write_text("")
+        code, err = run_source_check(empty, empty)
+        self.assertNotEqual(code, 0)
+        self.assertIn("0 declared", err)
+
     def test_added_declaration_fails_naming_it(self):
         header_text = self.add_header_decl(HEADER.read_text())
         header_copy = Path(self.tmp.name) / "rocketnet.h"

@@ -1,58 +1,37 @@
-# clang-format 18 configuration derived from the owner's C and C++ style in
-# mas-bandwidth/netcode at 537c2c3e32f6823b8254657194838ffac89359f8 (netcode.c,
-# netcode.h) and networknext/next at b4efefcad40c05d72f43ffa9f5b91b4472033f32
-# (sdk/include, sdk/source). Language Cpp covers .c and .h as well. It
-# reproduces Allman braces, 4-space indent, spaces inside parentheses but not
-# empty ones, `char * p`, `(T) value` casts, tight square brackets, unlimited
-# line length, unsorted includes, indented case labels and namespaces, and
-# macro definition bodies left as written. InsertBraces was then set by the
-# owner's ruling of 2026-11-10, not by the measurement below (see the end of
-# this comment).
+# clang-format 18 configuration for RocketNet's C and C++ style. Language Cpp
+# covers .c and .h as well. It gives Allman braces, 4-space indent, spaces
+# inside parentheses but not empty ones, `char * p`, `(T) value` casts, tight
+# square brackets, unlimited line length, unsorted includes, indented case
+# labels and namespaces, macro definition bodies left as written, and braces
+# on every control statement body.
 #
-# Changed original lines (`diff <original> <(clang-format-18 <file>)` lines
-# marked `<`), this file copied beside the pinned clones:
-#   netcode.c + netcode.h: 747 / 11004 (6.8%; 1% target)
-#   next sdk/include + sdk/source, 65 files: 1489 / 28394 (5.2%; 3% target)
+# The blank-line keys are set explicitly so that formatting never adds or
+# removes a blank line a person placed (up to four in a row).
 #
-# Tuning against next at b4efefcad40c (its main, 2026-10-25): 1489 changed
-# lines before and 1489 after. 51 single-key alternatives were measured
-# (short functions, blocks, loops, enums and lambdas on one line, access
-# modifier and block-start blank lines, operand and escaped-newline alignment,
-# consecutive macro, declaration and bit-field alignment, array-of-struct
-# alignment, trailing comment spacing and alignment, binary operator breaks,
-# continuation indent, constructor initializers, goto labels, space before
-# parens and square brackets, template and angle spacing, braced list style,
-# MaxEmptyLinesToKeep 1 and 2, short case labels); none went below 1489, so
-# the keys below are the minimum clang-format 18 reaches. The blank-line keys
-# are set explicitly so that formatting never adds or removes a blank line a
-# person placed (up to four in a row).
-#
-# Residual differences clang-format 18 cannot express, one per line (a cost is
-# netcode/next changed lines with that key set instead):
-#   trailing whitespace is kept on lines (netcode.c:123); clang-format always strips it, no option keeps it
-#   cast pointers bind to the type, `(sockaddr_in6*) p` (netcode.c:578); PointerAlignment sets casts and declarations together, Left/Right cost 1134/2551 and 1167/2580
-#   sizeof is written tight, `sizeof(buffer)` (netcode.c:130); no sizeof-only paren option, SpacesInParensOptions Other false costs 3552/7739
-#   some calls and groupings are tight, `netcode_generate_nonce(nonce)` (netcode.c:5594); the reference mixes forms, Other false costs 3552/7739
-#   function-pointer declarators are tight, `void (*f)( ... )` (netcode.c:103); Other spaces declarator parens with call parens, no separate option
-#   preprocessor lines are indented by hand, `    #if` (netcode.c:93); BeforeHash and AfterHash indent by depth everywhere and cost 796/1827 and 833/1903; with IndentPPDirectives None they are pulled to column 0, so a preprocessor group indented by hand holds only inside a clang-format off region; sdk/rocketnet.h, whose groups are indented one level per #if with their doc comments (an include guard after #pragma once is not seen as a guard, so BeforeHash would also indent the whole header), sits between one clang-format off and on pair
-#   preprocessor parens are tight, `#if defined(_WIN32)`, `#pragma warning(disable:4996)` (next.h:80, netcode.c:36); SpacesInParens has no preprocessor-only switch
-#   short unions, enums and if/else blocks sit on one line, `union { ... } data;` (next_address.h:17); Allman wrapping splits them, custom wrapping costs 801/1625
-#   byte tables keep several values per line (netcode.c:5792); a braced list ending in a comma is broken one element per line, no option keeps it
-#   `#if` conditions continue over backslash lines (netcode.h:62); with ColumnLimit 0 they are joined, ColumnLimit 300 costs 1010/2290
-#   case bodies and values sit at a hand-chosen column (netcode.c:2797); short-case alignment pads to the longest label only
-#   continuation arguments are sometimes indented one level, not aligned (next_client.cpp:724); AlignAfterOpenBracket DontAlign gives 878/1418, worse in total
-#   declarations inside `#if` are indented (next_platform_gdk.h:22); no option indents code by preprocessor depth; sdk/rocketnet.h indents the declarations and doc comments of its #if ROCKETNET_DEV block by hand, inside its off/on pair
-#   spaces are hand-padded inside lines, `>> 8  )`, `x  = y` (netcode.c:316, next_header.h:75); AlignConsecutiveAssignments costs 1039/2585, no option for padding in expressions
-#   binary operators inside an index are tight, `buffer[4*1024]` (netcode.c:129); binary operators are always spaced, no index-only option
-#   some casts have no space after, `(uint32_t)INVALID_SOCKET` (netcode.c:653); SpaceAfterCStyleCast false costs 871/1625
-#   tight binary operators in expressions, `(uint64_t(1)<<bits)`, and lines mixing several kinds above (next_bitpacker.h:298); no option keeps operators tight
-#   macro parameter lists are hand-padded, `( stream, sequence, ack  )` (next_serialize.h:408); SkipMacroDefinitionBody skips the body only
+# What clang-format 18 cannot express, one per line; these are kept by hand:
+#   trailing whitespace is kept on some lines; clang-format always strips it, no option keeps it
+#   cast pointers bind to the type, `(sockaddr_in6*) p`; PointerAlignment sets casts and declarations together
+#   sizeof is written tight, `sizeof(buffer)`; there is no sizeof-only parenthesis option
+#   some calls and groupings are written tight; SpacesInParens has no per-call option
+#   function-pointer declarators are tight, `void (*f)( ... )`; SpacesInParensOptions Other spaces declarator parentheses with call parentheses, no separate option
+#   preprocessor lines are indented by hand, `    #if`; BeforeHash and AfterHash indent by depth everywhere; with IndentPPDirectives None they are pulled to column 0, so a preprocessor group indented by hand holds only inside a clang-format off region; sdk/rocketnet.h, whose groups are indented one level per #if with their doc comments (an include guard after #pragma once is not seen as a guard, so BeforeHash would also indent the whole header), sits between one clang-format off and on pair
+#   preprocessor parentheses are tight, `#if defined(_WIN32)`, `#pragma warning(disable:4996)`; SpacesInParens has no preprocessor-only switch
+#   short unions, enums and if/else blocks sit on one line, `union { ... } data;`; Allman wrapping splits them
+#   byte tables keep several values per line; a braced list ending in a comma is broken one element per line, no option keeps it
+#   `#if` conditions continue over backslash lines; with ColumnLimit 0 they are joined
+#   case bodies and values sit at a hand-chosen column; short-case alignment pads to the longest label only
+#   continuation arguments are sometimes indented one level, not aligned; AlignAfterOpenBracket has no per-call choice
+#   declarations inside `#if` are indented; no option indents code by preprocessor depth; sdk/rocketnet.h indents the declarations and doc comments of its #if ROCKETNET_DEV block by hand, inside its off/on pair
+#   spaces are hand-padded inside lines, `>> 8  )`, `x  = y`; there is no option for padding in expressions
+#   binary operators inside an index are tight, `buffer[4*1024]`; binary operators are always spaced, no index-only option
+#   some casts have no space after, `(uint32_t)INVALID_SOCKET`; SpaceAfterCStyleCast applies to every cast
+#   tight binary operators in expressions, `(uint64_t(1)<<bits)`, and lines mixing several kinds above; no option keeps operators tight
+#   macro parameter lists are hand-padded, `( stream, sequence, ack  )`; SkipMacroDefinitionBody skips the body only
 #   comment-only lines inside a #define body are joined onto the line above, dropping their backslashes; SkipMacroDefinitionBody does not cover comments, so such macros sit between clang-format off and on
 #   a #if or #elif condition continued over backslash lines is joined into one line (see above); these sit between clang-format off and on
 #   a directive's trailing // comment followed by a // comment line gains a backslash that splices the two; that directive sits between clang-format off and on
 #
-# Set by the owner's ruling of 2026-11-10, after the tuning above and not
-# measured against the reference trees:
+# Braces, by the owner's ruling of 2026-11-10:
 #   InsertBraces: true -- every if, else, for, while and do body is braced, "brackets are just safer". Braced by hand, because the formatter does not reach them: control statements inside a #define (SkipMacroDefinitionBody), a body that a preprocessor branch separates from its statement or that sits in a lambda holding a preprocessor branch (left unbraced), and a lambda body passed as a call argument (braces inserted but not placed)
 Language: Cpp
 BasedOnStyle: LLVM
@@ -98,7 +77,6 @@ ReflowComments: false
 SkipMacroDefinitionBody: true
 # declaration macros written tight in this style, `ROCKETNET_DECLARE_SENTINEL(0)`
 WhitespaceSensitiveMacros:
-  - NEXT_DECLARE_SENTINEL
   - ROCKETNET_DECLARE_SENTINEL
   - MAKEWORD
   - VERSION_STRING

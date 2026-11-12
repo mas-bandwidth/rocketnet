@@ -3,11 +3,12 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Suite runner. Each test is a process, and cases run in parallel, one
-    job per core. The output is the netcode
-    shape: one line per test, its name, in suite order, then
+    job per core. The output is one line per test, its name, in suite
+    order, then
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
-    fails. The functional runner keeps 120s in every build; the unit runner
+    fails; `--run <case>` on its own is held to the same limit and names the
+    case ("check failed: <case> exceeded Ns (--run)"). The functional runner keeps 120s in every build; the unit runner
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
     a suite passes in; the nightly macOS TSAN functional runs set 30 (one hour),
@@ -37,6 +38,21 @@
 #include "portable_crt.h"
 #include "time_scale.h"
 #include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
+
+// LeakSanitizer (alone or inside AddressSanitizer): a case child that ends
+// with _exit skips the exit-time leak check, so it runs the check itself
+// (suite_run_names_only).
+#if defined( __SANITIZE_ADDRESS__ )
+#define SUITE_RUNNER_LSAN 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer ) || __has_feature( leak_sanitizer )
+#define SUITE_RUNNER_LSAN 1
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( leak_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ )
+#if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+#include <sanitizer/lsan_interface.h>
+#endif // #if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -108,6 +124,24 @@ inline bool suite_nightly()
     return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
 }
 
+// ROCKETNET_TEST_KEEP_GOING=1, on the nightly tier only: a failing case no
+// longer ends the run. Every collected case runs; each failure prints as it
+// would, and the summary names each failed case and counts the cases run
+// against the cases collected. The suite still exits 1 on any failure. A
+// per-commit run stops at the first failure, so the variable without
+// ROCKETNET_TEST_NIGHTLY=1 fails the suite before any case runs.
+
+inline bool suite_keep_going_requested()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_KEEP_GOING", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
+}
+
+inline bool suite_keep_going()
+{
+    return suite_keep_going_requested() && suite_nightly();
+}
+
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 
 inline bool suite_env_is_set( const char * name )
@@ -139,6 +173,29 @@ inline bool suite_case_limit( double case_limit_s, double * limit_s )
     *limit_s = unbounded ? std::numeric_limits<double>::infinity() : case_limit_s * scale;
 
     return true;
+}
+
+// The case limit for `<suite> --run <case>` run on its own (a script, the
+// transport matrix, a bench): the same limit a suite run holds the case to,
+// from a thread in the case's own process, which prints the case's name and
+// exits 1 when it passes. Infinite (ROCKETNET_NIGHTLY_NO_TIMEOUT=1) starts no
+// thread. A case the suite runs needs none: its parent kills it at the limit.
+
+inline void suite_run_watchdog_thread( std::string case_name, double limit_s )
+{
+    std::this_thread::sleep_for( std::chrono::duration<double>( limit_s ) );
+    printf( "check failed: %s exceeded %.0fs (--run)\n", case_name.c_str(), limit_s );
+    fflush( stdout );
+    std::_Exit( 1 );
+}
+
+inline void suite_run_watchdog( const char * name, double limit_s )
+{
+    if ( !( limit_s < std::numeric_limits<double>::infinity() ) )
+    {
+        return;
+    }
+    std::thread( suite_run_watchdog_thread, std::string( name ), limit_s ).detach();
 }
 
 struct suite_exec
@@ -331,6 +388,76 @@ inline uint64_t suite_page_bytes()
     const long bytes = sysconf( _SC_PAGESIZE );
     return bytes > 0 ? (uint64_t) bytes : 4096;
 #endif // #if defined( _WIN32 )
+}
+
+// A case passes only when its function returns 0. A case that ends the
+// process itself never returns: exit( 0 ) ahead of its checks would otherwise
+// leave with status 0 and pass in every entry (--run, the suite's children,
+// shards). While a case runs, an atexit handler stands guard: if the process
+// that started the case leaves through exit() before the case returned, the
+// handler prints why and ends the process with status 1. A failed check's
+// exit( 1 ) still ends with 1; abort and signals never run atexit handlers.
+// A child the case forks keeps its own exit status (the pid is compared).
+
+struct suite_case_guard_state
+{
+    const char * name;
+    long pid;
+    bool running;
+    bool registered;
+};
+
+inline suite_case_guard_state & suite_case_guard()
+{
+    static suite_case_guard_state state = { NULL, 0, false, false };
+    return state;
+}
+
+inline long suite_process_id()
+{
+#if defined( _WIN32 )
+    return (long) GetCurrentProcessId();
+#else
+    return (long) getpid();
+#endif // #if defined( _WIN32 )
+}
+
+// true when an exit() now, from process pid, must fail the case: a case is
+// running and this is the process that started it
+inline bool suite_case_exit_fails( const suite_case_guard_state & state, long pid )
+{
+    return state.running && state.pid == pid;
+}
+
+inline void suite_case_exit_guard()
+{
+    const suite_case_guard_state & state = suite_case_guard();
+    if ( suite_case_exit_fails( state, suite_process_id() ) )
+    {
+        printf( "check failed: %s left through exit() before it returned; a case ends only by returning\n", state.name );
+        fflush( stdout );
+        _exit( 1 );
+    }
+}
+
+inline int suite_run_case( int ( *worker )( const char * ), const char * name )
+{
+    suite_case_guard_state & state = suite_case_guard();
+    if ( !state.registered )
+    {
+        if ( atexit( suite_case_exit_guard ) != 0 )
+        {
+            printf( "check failed: %s: could not register the exit guard\n", name );
+            return 1;
+        }
+        state.registered = true;
+    }
+    state.name = name;
+    state.pid = suite_process_id();
+    state.running = true;
+    const int rc = worker( name );
+    state.running = false;
+    return rc;
 }
 
 // The bound for one case: none in a sanitizer build without the environment
@@ -675,6 +802,19 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     return (int) jobs;
 }
 
+// The job count on this host for a requested count (0: none): this host's
+// cores and memory budget, and this platform's ceiling.
+inline int suite_job_count_requested( int requested )
+{
+#if defined( _WIN32 )
+    const int ceiling = SUITE_WAIT_HANDLES;
+#else
+    const int ceiling = 0;
+#endif // #if defined( _WIN32 )
+
+    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+}
+
 inline int suite_job_count()
 {
     int requested = 0;
@@ -684,13 +824,7 @@ inline int suite_job_count()
         requested = std::atoi( env );
     }
 
-#if defined( _WIN32 )
-    const int ceiling = SUITE_WAIT_HANDLES;
-#else
-    const int ceiling = 0;
-#endif // #if defined( _WIN32 )
-
-    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+    return suite_job_count_requested( requested );
 }
 
 // io_uring cases and RLIMIT_MEMLOCK (docs/LINUX.md sections 5 and 8). The
@@ -789,7 +923,7 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --list [--shard <i>/<n>] | --enforce-rss | --shard <i>/<n>]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list [--shard <i>/<n>] | [--enforce-rss] [--shard <i>/<n>]]\n", argv[0] );
     return 2;
 }
 
@@ -866,22 +1000,6 @@ inline bool suite_take_shard_option( int * argc, char ** argv, int * index, int 
     return true;
 }
 
-inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int), int shard_index = 0, int shards = 0 )
-{
-    const int n = count ? count() : 0;
-    for ( int i = 0; i < n; i++ )
-    {
-        if ( shards > 0 && suite_shard_of( name_at( i ), shards ) != shard_index )
-        {
-            continue;
-        }
-        printf( "%s\n", name_at( i ) );
-    }
-    fflush( stdout );
-
-    return 0;
-}
-
 // Calls emit( line ) for each line of output, without its line ending.
 
 template <typename F> inline void suite_for_each_line( const std::string & output, F emit )
@@ -946,11 +1064,31 @@ inline int suite_emit_captured( const std::string & output, bool show_all )
 
 // Prints the finished cases in suite order, up to the first still running.
 // A passing case prints its name (an exec case, the test names it printed); a
-// failing case prints everything it wrote and, when the runner failed it
-// (time, memory, a signal, an exit with no check line), one check line.
-// Returns false once a failure is printed.
+// failing case prints everything it wrote and one check line naming the
+// reason: always when the runner failed it (time, memory), and for a signal
+// or an exit only when the case printed no check line itself.
+// Returns false once a failure is printed, unless keep_going
+// (suite_keep_going), when it prints on past the failure.
 
-inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture )
+// The runner made the call: the case ran past its time limit or its peak was
+// over its memory bound. Its reason is printed even when the case's output
+// already holds a check line, because a case that exercises the check path
+// prints one while passing: with 1500 MiB planted in
+// test_suite_finish_fails_when_no_case_ran, an --enforce-rss run failed with
+// only that case's own "check failed: no case ran" and no reason.
+inline bool suite_runner_failed( const suite_result & result )
+{
+    return result.rss_over_bound || result.detail.find( " exceeded " ) != std::string::npos;
+}
+
+// A failing case gets the runner's check line naming the reason when the
+// runner made the call, or when the case printed no check line of its own.
+inline bool suite_failure_line_needed( const suite_result & result )
+{
+    return suite_runner_failed( result ) || result.output.find( "check failed" ) == std::string::npos;
+}
+
+inline bool suite_print_ready( std::vector<suite_result> & results, size_t & printed, bool capture, bool keep_going )
 {
     while ( printed < results.size() && results[printed].done )
     {
@@ -958,12 +1096,16 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
         if ( result.failed )
         {
             suite_emit_captured( result.output, true );
-            if ( result.output.find( "check failed" ) == std::string::npos )
+            if ( suite_failure_line_needed( result ) )
             {
                 printf( "check failed: %s\n", result.detail.c_str() );
             }
             fflush( stdout );
-            return false;
+            if ( !keep_going )
+            {
+                return false;
+            }
+            continue;
         }
 
         if ( capture && ( !result.exec || suite_emit_captured( result.output, false ) == 0 ) )
@@ -1040,6 +1182,13 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // A registered case group_of marks SUITE_GROUP_NIGHTLY is not collected
     // outside the nightly tier.
 
+    if ( suite_keep_going_requested() && !suite_nightly() )
+    {
+        printf( "check failed: ROCKETNET_TEST_KEEP_GOING=1 is for the nightly tier only; set ROCKETNET_TEST_NIGHTLY=1 or unset it\n" );
+        fflush( stdout );
+        return false;
+    }
+
     const size_t first = pending.size();
     const bool nightly = suite_nightly();
     int num_registered = 0;
@@ -1085,6 +1234,29 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         {
             printf( "check failed: test name %s is not test_ lowercase snake_case\n", pending[i].name.c_str() );
             return false;
+        }
+    }
+
+    // every name once: a registry row or exec row repeated would run twice
+    // and the second result would stand for both (VERIFY-5 K3). Compared
+    // through pointers to the names, never string copies (the MSan note
+    // above)
+
+    {
+        std::vector<const char *> names( pending.size() );
+        for ( size_t i = 0; i < pending.size(); i++ )
+        {
+            names[i] = pending[i].name.c_str();
+        }
+        std::sort( names.begin(), names.end(), []( const char * a, const char * b )
+                   { return std::strcmp( a, b ) < 0; } );
+        for ( size_t i = 1; i < names.size(); i++ )
+        {
+            if ( std::strcmp( names[i - 1], names[i] ) == 0 )
+            {
+                printf( "check failed: test name %s is registered more than once\n", names[i] );
+                return false;
+            }
         }
     }
 
@@ -1138,7 +1310,7 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
 // Keeps the collected cases of shard index of shards (suite_shard_of), in
 // suite order, and prints how many of the collected cases that is.
 
-inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards )
+inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<suite_result> & results, int index, int shards, bool report = true )
 {
     if ( shards == 0 )
     {
@@ -1161,8 +1333,46 @@ inline void suite_keep_shard( std::vector<suite_case> & pending, std::vector<sui
     }
     pending.resize( kept );
     results.resize( kept );
-    printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+    if ( report )
+    {
+        printf( "shard %d/%d: %zu of %zu cases\n", index, shards, kept, collected );
+        fflush( stdout );
+    }
+}
+
+// --list [--shard i/n]: the names a run with the same environment and shard
+// would start, chosen by the run's own code (suite_collect, then
+// suite_keep_shard), never by a second reading of the registry: the nightly
+// tier's cases are listed only under ROCKETNET_TEST_NIGHTLY=1, an exec row is
+// listed with the registered cases, and a case a shard run drops is missing
+// from that shard's list too (tools/check_test_shards.py,
+// tools/check_unit_case_coverage.py).
+
+inline int suite_list_cases( int ( *count )(), const char * ( *name_at )(int), const suite_exec * execs, int nexecs,
+                             int ( *group_of )( const char * name ), const char * exe_suffix, int shard_index, int shards )
+{
+    const std::string self = suite_executable_path();
+    if ( self.empty() )
+    {
+        printf( "check failed: could not resolve this executable\n" );
+        return 1;
+    }
+
+    std::vector<suite_case> pending;
+    std::vector<suite_result> results;
+    if ( !suite_collect( pending, results, count, name_at, execs, nexecs, group_of, suite_directory_of( self ), exe_suffix ) )
+    {
+        return 1;
+    }
+    suite_keep_shard( pending, results, shard_index, shards, false );
+
+    for ( size_t i = 0; i < pending.size(); i++ )
+    {
+        printf( "%s\n", pending[i].name.c_str() );
+    }
     fflush( stdout );
+
+    return 0;
 }
 
 // Rows a suite omitted because their runs_here predicate is false on this
@@ -1218,10 +1428,42 @@ inline void suite_print_skipped()
     fflush( stdout );
 }
 
+// Under suite_keep_going the run is not stopped by a failure, so passed alone
+// cannot judge it: every failed case is named, the cases run are counted
+// against the cases collected, and any failure or any case left unrun fails
+// the suite.
+
+inline bool suite_keep_going_summary( const std::vector<suite_result> & results )
+{
+    int failed = 0;
+    int ran = 0;
+    for ( size_t i = 0; i < results.size(); i++ )
+    {
+        if ( !results[i].done )
+        {
+            continue;
+        }
+        ran++;
+        if ( results[i].failed )
+        {
+            failed++;
+            printf( "FAILED %s\n", results[i].name.c_str() );
+        }
+    }
+    printf( "keep going: %d failed; %d of %d collected cases ran\n", failed, ran, (int) results.size() );
+    fflush( stdout );
+
+    return failed == 0 && ran == (int) results.size();
+}
+
 inline int suite_finish( const std::vector<suite_result> & results, bool passed )
 {
     suite_print_report( results );
     suite_print_skipped();
+    if ( suite_keep_going() && !suite_keep_going_summary( results ) )
+    {
+        passed = false;
+    }
     if ( !passed )
     {
         return 1;
@@ -1313,6 +1555,52 @@ inline void suite_drain( int fd, std::string & output )
     }
 }
 
+// A case run by `--run <case>` with no suite parent (CI's XDP cases, run as
+// root one at a time inside virtme-ng guests) holds itself to the bound the
+// parent would hold it to: suite_case_rss_mb of the bound it reported from
+// its plan (tests/plan_rss.h), or of none, against its own peak resident set
+// read as wait4 would read it (the larger of its own and its waited-for
+// children's). A passed case over its bound fails by name. Under a suite
+// parent (ROCKETNET_TEST_SUITE_CAPTURE) the parent checks, and this does not
+// run; a tier that does not enforce its bounds (the unit suite) skips it.
+
+inline int suite_check_own_rss( const char * name, int rc, bool enforce )
+{
+    if ( rc != 0 || !enforce )
+    {
+        return rc;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+
+    struct rusage self;
+    struct rusage children;
+    memset( &self, 0, sizeof( self ) );
+    memset( &children, 0, sizeof( children ) );
+    getrusage( RUSAGE_SELF, &self );
+    getrusage( RUSAGE_CHILDREN, &children );
+    const long maxrss = self.ru_maxrss > children.ru_maxrss ? self.ru_maxrss : children.ru_maxrss;
+#if defined( __APPLE__ )
+    const long peak_mb = maxrss / ( 1024 * 1024 ); // bytes on macOS
+#else
+    const long peak_mb = maxrss / 1024; // kilobytes on Linux
+#endif // #if defined( __APPLE__ )
+    const long bound_mb = suite_case_rss_mb( name, plan_rss_reported() ? plan_rss_bound_mb() : -1 );
+
+    const long long check_us = (long long) std::chrono::duration_cast<std::chrono::microseconds>( std::chrono::steady_clock::now() - start ).count();
+    printf( "own rss %s: peak_mb=%ld bound_mb=%ld (checked in %lld us)\n", name, peak_mb, bound_mb, check_us );
+
+    if ( bound_mb > 0 && peak_mb > bound_mb )
+    {
+        printf( "check failed: %s peaked at %ld MiB resident, over its bound of %ld MiB (tests/plan_rss.h)\n", name, peak_mb, bound_mb );
+        fflush( stdout );
+        return 1;
+    }
+
+    fflush( stdout );
+    return rc;
+}
+
 // Runs one case in a child with its stdout and stderr read through a pipe,
 // then prints every line when it failed and only the name lines when it
 // passed. The child may exit(1), abort or be killed and the parent still has
@@ -1320,7 +1608,7 @@ inline void suite_drain( int fd, std::string & output )
 // its children, so `--run <case>` does not leak a passing case's diagnostics
 // without ROCKETNET_TEST_VERBOSE.
 
-inline int suite_run_names_only( int ( *worker )( const char * ), const char * name )
+inline int suite_run_names_only( int ( *worker )( const char * ), const char * name, double limit_s, bool enforce_rss )
 {
     fflush( stdout );
     fflush( stderr );
@@ -1328,7 +1616,8 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     int pipefd[2];
     if ( pipe( pipefd ) != 0 )
     {
-        return worker( name );
+        suite_run_watchdog( name, limit_s );
+        return suite_check_own_rss( name, suite_run_case( worker, name ), enforce_rss );
     }
 
     const pid_t pid = fork();
@@ -1336,7 +1625,8 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
     {
         close( pipefd[0] );
         close( pipefd[1] );
-        return worker( name );
+        suite_run_watchdog( name, limit_s );
+        return suite_check_own_rss( name, suite_run_case( worker, name ), enforce_rss );
     }
 
     if ( pid == 0 )
@@ -1351,7 +1641,19 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
             close( pipefd[1] );
         }
 
-        const int rc = worker( name );
+        // in the case's process, so its line reaches the pipe the parent prints
+        suite_run_watchdog( name, limit_s );
+        int rc = suite_check_own_rss( name, suite_run_case( worker, name ), enforce_rss );
+#if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
+        // _exit skips LeakSanitizer's exit-time check: run it here, so a
+        // single `--run <case>` reports a leak as the whole suite would. It
+        // does nothing when detect_leaks is off.
+        if ( __lsan_do_recoverable_leak_check() != 0 && rc == 0 )
+        {
+            printf( "check failed: %s leaked (LeakSanitizer, above)\n", name );
+            rc = 1;
+        }
+#endif // #if defined( SUITE_RUNNER_LSAN ) && !defined( _WIN32 )
         fflush( stdout );
         fflush( stderr );
         _exit( rc );
@@ -1402,6 +1704,12 @@ inline int suite_main( int argc, char ** argv,
     {
         return 2;
     }
+    // --enforce-rss before --shard: a shard of the suite enforces the bound too
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
     {
@@ -1410,27 +1718,17 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
-    }
-
-    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
-    {
-        enforce_case_rss = true;
-        argc = 1;
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, "", shard_index, shards );
     }
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
-        }
-        for ( int i = 3; i < argc; i++ )
-        {
-            if ( argv[i][0] == '-' )
-            {
-                return suite_usage( argv );
-            }
         }
 
         // under a suite run the parent already captures this process, so
@@ -1440,22 +1738,30 @@ inline int suite_main( int argc, char ** argv,
         if ( suite_env_is_set( "ROCKETNET_TEST_SUITE_CAPTURE" ) )
         {
             unsetenv( "ROCKETNET_TEST_SUITE_CAPTURE" );
-            return worker( argv[2] );
+            return suite_run_case( worker, argv[2] );
         }
 
+        // on its own, the case is held to the limit a suite run holds it to
+        double run_limit_s = case_limit_s;
+        if ( !suite_case_limit( case_limit_s, &run_limit_s ) )
+        {
+            return 1;
+        }
         if ( !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" ) )
         {
-            return suite_run_names_only( worker, argv[2] );
+            return suite_run_names_only( worker, argv[2], run_limit_s, enforce_case_rss );
         }
-        return worker( argv[2] );
+        suite_run_watchdog( argv[2], run_limit_s );
+        return suite_check_own_rss( argv[2], suite_run_case( worker, argv[2] ), enforce_case_rss );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();
@@ -1519,6 +1825,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<running_t> running;
     size_t next = 0;
     size_t printed = 0;
+    const bool keep_going = suite_keep_going();
     bool passed = true;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
@@ -1712,7 +2019,7 @@ inline int suite_main( int argc, char ** argv,
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
-        passed = suite_print_ready( results, printed, capture );
+        passed = suite_print_ready( results, printed, capture, keep_going );
         if ( passed && !running.empty() )
         {
             std::this_thread::sleep_for( std::chrono::milliseconds( 50 ) );
@@ -1779,6 +2086,33 @@ inline void suite_drain( HANDLE pipe, std::string & output )
 // the suite spawns; each child sets all of it again in its own CRT.
 // tests/windows_no_dialogs.cpp and ci.yml's Windows leg (c) prove it.
 
+#if defined( _MSC_VER ) && defined( _DEBUG )
+
+// The debug CRT reports what it detects (a heap block overrun at its free, a
+// bad pointer, a CRT assert) and, with the reports routed to stderr so no
+// dialog blocks CI, carries on: the case then exits 0 over a printed "HEAP
+// CORRUPTION DETECTED". Any error or assert report ends the process red: the
+// text goes to stderr first, then the process leaves with status 3. Warnings
+// (the leak dump) stay reports.
+
+inline int __cdecl suite_crt_report_fails( int report_type, char * message, int * return_value )
+{
+    if ( report_type == _CRT_ERROR || report_type == _CRT_ASSERT )
+    {
+        fprintf( stderr, "check failed: the debug CRT reported an error: %s\n", message ? message : "(no text)" );
+        fflush( stderr );
+        fflush( stdout );
+        _exit( 3 );
+    }
+    if ( return_value )
+    {
+        *return_value = 0;
+    }
+    return FALSE;
+}
+
+#endif // #if defined( _MSC_VER ) && defined( _DEBUG )
+
 inline void suite_no_dialogs()
 {
     SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX );
@@ -1792,6 +2126,7 @@ inline void suite_no_dialogs()
     _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDERR );
     _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
     _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDERR );
+    _CrtSetReportHook2( _CRT_RPTHOOK_INSTALL, suite_crt_report_fails );
 #endif // #if defined( _DEBUG )
 #endif // #if defined( _MSC_VER )
 }
@@ -1826,6 +2161,12 @@ inline int suite_main( int argc, char ** argv,
     {
         return 2;
     }
+    // --enforce-rss before --shard: a shard of the suite enforces the bound too
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
     {
@@ -1834,18 +2175,15 @@ inline int suite_main( int argc, char ** argv,
 
     if ( list )
     {
-        return suite_list_registered_cases( count, name_at, shard_index, shards );
-    }
-
-    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
-    {
-        enforce_case_rss = true;
-        argc = 1;
+        return suite_list_cases( count, name_at, execs, nexecs, group_of, ".exe", shard_index, shards );
     }
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
-        if ( argc < 3 || argv[2][0] == '-' )
+        // exactly one case: a second name was ignored before, so a caller
+        // that believed it ran two cases ran one
+
+        if ( argc != 3 || argv[2][0] == '-' )
         {
             return suite_usage( argv );
         }
@@ -1856,15 +2194,24 @@ inline int suite_main( int argc, char ** argv,
                 return suite_usage( argv );
             }
         }
-        return worker( argv[2] );
+        // the case is held to the limit a suite run holds it to (a case the
+        // suite spawned is also killed by its parent at that limit)
+        double run_limit_s = case_limit_s;
+        if ( !suite_case_limit( case_limit_s, &run_limit_s ) )
+        {
+            return 1;
+        }
+        suite_run_watchdog( argv[2], run_limit_s );
+        return suite_run_case( worker, argv[2] );
     }
 
-    for ( int i = 1; i < argc; i++ )
+    // a whole-suite run takes no other argument: a bare case name or a
+    // misspelt flag is refused, never ignored (a bare name used to run the
+    // whole suite and report its status as the case's)
+
+    if ( argc > 1 )
     {
-        if ( argv[i][0] == '-' )
-        {
-            return suite_usage( argv );
-        }
+        return suite_usage( argv );
     }
 
     const std::string self = suite_executable_path();
@@ -1904,6 +2251,7 @@ inline int suite_main( int argc, char ** argv,
     std::vector<running_t> running;
     size_t next = 0;
     size_t printed = 0;
+    const bool keep_going = suite_keep_going();
     bool passed = true;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
@@ -2073,7 +2421,7 @@ inline int suite_main( int argc, char ** argv,
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
 
-        passed = suite_print_ready( results, printed, capture );
+        passed = suite_print_ready( results, printed, capture, keep_going );
     }
 
     // a failure ends the run: the cases still running are ended

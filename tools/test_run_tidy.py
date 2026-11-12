@@ -81,6 +81,21 @@ class RunTidyGateTest(unittest.TestCase):
         self.assertEqual(findings([439, 420]), reviewed)
         self.assertNotEqual(findings([420, 550]), reviewed)
 
+    def test_zero_translation_units_fails(self):
+        # zero inputs is an error: a tree with no sdk/*.cpp is never clean
+        import contextlib
+        import io
+        saved = (run_tidy.ROOT, run_tidy.BUILD, run_tidy.COMPILE_DB, run_tidy.TIDY_DB_DIR, sys.argv)
+        out = io.StringIO()
+        try:
+            sys.argv = ["run_tidy.py", "--root", self.tmp.name]
+            with contextlib.redirect_stdout(out):
+                code = run_tidy.main()
+        finally:
+            run_tidy.ROOT, run_tidy.BUILD, run_tidy.COMPILE_DB, run_tidy.TIDY_DB_DIR, sys.argv = saved
+        self.assertEqual(code, 1, out.getvalue())
+        self.assertIn("0 sdk/*.cpp", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

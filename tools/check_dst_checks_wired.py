@@ -13,6 +13,7 @@ any function the run cannot reach.
 
     python3 tools/check_dst_checks_wired.py              # the repository
     python3 tools/check_dst_checks_wired.py --self-test  # a planted dead check goes red
+    python3 tools/check_dst_checks_wired.py --root DIR   # DIR/tests; 0 functions is an error
 """
 
 import os
@@ -21,7 +22,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DEFINITION = re.compile(r"^static inline [^(]*?\b(rocketnet_dst_check_\w+)\s*\(", re.M)
+# a definition starts at column 0 with any return type and qualifiers
+# (static inline, static, inline static, a bare type ...), so a check spelled
+# without "static inline" is still a function of the file
+DEFINITION = re.compile(r"^(?:[A-Za-z_][\w]*[ \t*]+)+(rocketnet_dst_check_\w+)\s*\(", re.M)
 CALL = re.compile(r"\b(rocketnet_dst_check_\w+)\s*\(")
 
 
@@ -110,14 +114,44 @@ static inline void rocketnet_dst_check_dead( int * st ) { rocketnet_dst_check_fa
     if dead:
         print("check_dst_checks_wired self-test FAILED: a called check reported dead: %r" % dead)
         return 1
-    print("ok check_dst_checks_wired self-test: a planted uncalled check is refused, a called one passes")
+    # a dead check spelled without "static inline" is still found
+    for spelling in ("static int", "inline static int", "int", "static inline const char *", "static bool"):
+        planted = checks + "%s rocketnet_dst_check_spelled( int * st )\n{\n    return 0;\n}\n" % spelling
+        dead, _ = unreached(planted, [harness])
+        if dead != ["rocketnet_dst_check_dead", "rocketnet_dst_check_spelled"]:
+            print("check_dst_checks_wired self-test FAILED: a dead check spelled %r not reported (got %r)" % (spelling, dead))
+            return 1
+    import tempfile
+    with tempfile.TemporaryDirectory() as root:
+        if main(["--root", root]) != 1:
+            print("check_dst_checks_wired self-test FAILED: a tree with no DST files was accepted")
+            return 1
+        os.mkdir(os.path.join(root, "tests"))
+        for name in ("dst_checks.h", "dst_harness.h", "dst.cpp"):
+            open(os.path.join(root, "tests", name), "w").close()
+        if main(["--root", root]) != 1:
+            print("check_dst_checks_wired self-test FAILED: zero DST check functions was accepted")
+            return 1
+    print("ok check_dst_checks_wired self-test: a planted uncalled check is refused, a called one passes, "
+          "a dead check spelled without static inline is refused, zero checks is red")
     return 0
 
 
-def main():
-    if "--self-test" in sys.argv[1:]:
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if "--self-test" in argv:
         return self_test()
-    dead, total = check(ROOT)
+    root = argv[argv.index("--root") + 1] if "--root" in argv[:-1] else ROOT
+    try:
+        dead, total = check(root)
+    except OSError as error:
+        print("check_dst_checks_wired FAILED: 0 functions read: %s" % error)
+        return 1
+    if total == 0:
+        # zero inputs is an error: an empty tests/dst_checks.h would otherwise pass
+        print("check_dst_checks_wired FAILED: 0 functions in %s: nothing was checked"
+              % os.path.join(root, "tests", "dst_checks.h"))
+        return 1
     if dead:
         for name in dead:
             print("tests/dst_checks.h: %s is never reached by the DST run (tests/dst_harness.h, tests/dst.cpp); "

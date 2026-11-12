@@ -10,6 +10,7 @@ README line is removed by hand. This script stages a two-branch merge of an
 append of each ledger and proves both names survive.
 """
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -60,9 +61,14 @@ def commit_branch(repo, name, ledger):
     git(repo, "commit", "-q", "-m", name)
 
 
-def run():
+def run(root=ROOT):
     failures = []
-    build = ROOT / "build"
+    present = [rel for rel in LEDGERS + [".gitattributes"] if (root / rel).is_file()]
+    if len(present) != len(LEDGERS) + 1:
+        missing = sorted(set(LEDGERS + [".gitattributes"]) - set(present))
+        print(f"LEDGER MERGE FAIL {len(present)} files of {len(LEDGERS) + 1} under {root}: missing {', '.join(missing)}")
+        return 1
+    build = root / "build"
     build.mkdir(exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="tla-ledger-merge.", dir=str(build)))
     try:
@@ -70,7 +76,7 @@ def run():
         for rel in LEDGERS + [".gitattributes"]:
             dst = scratch / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / rel, dst)
+            shutil.copy2(root / rel, dst)
         git(scratch, "add", ".")
         git(scratch, "commit", "-q", "-m", "base")
 
@@ -107,4 +113,6 @@ def run():
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=ROOT, help="tree holding the ledgers and .gitattributes (default: this repository)")
+    sys.exit(run(parser.parse_args().root.resolve()))

@@ -5,13 +5,21 @@
 # (the case that ran it, read from the worker's execve, and the socket call),
 # when any process of the suite calls socket(). execve is traced only to name
 # the case. A failing suite fails the check too, and the suite's own output
-# prints, so on Linux CI this run is the plain unit run as well.
+# prints, so on Linux CI this run is the plain unit run as well. Zero inputs is
+# an error: a run in which no case worker was started (the runner spawns each
+# case as `<binary> --run <case>`) checked nothing and fails.
 #
-# usage: tools/check_unit_no_sockets.sh [binary]   (default ./bin/test)
+# usage: tools/check_unit_no_sockets.sh [binary [suite arguments...]]   (default ./bin/test)
+#
+# Arguments after the binary go to it, so a shard runs as
+# tools/check_unit_no_sockets.sh ./bin/test --shard 0/2.
 
 set -eu
 
 binary=${1:-./bin/test}
+if [ "$#" -gt 0 ]; then
+    shift
+fi
 
 if ! command -v strace >/dev/null 2>&1; then
     echo "TOOL-MISSING strace (any) (missing)"
@@ -29,14 +37,16 @@ suite=0
 # Filter in the kernel: ordinary -e filtering still stops at every unrelated
 # syscall under ptrace. That multiplied the 1000-client Debug case's cost
 # under CI load. -f retains fork/exec tracing, including child socket openers.
-strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
+strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" "$@" || suite=$?
 
 if [ ! -s "$trace" ]; then
     echo "check_unit_no_sockets: strace wrote no trace for $binary"
     exit 2
 fi
 
-# each line is "<pid> <call>"; a worker's execve names its case as its last argument
+# each line is "<pid> <call>"; a worker's execve names its case as its last argument.
+# awk exits 1 on a socket() call, 3 when no case worker ran, 0 otherwise.
+verdict=0
 awk '
     $2 ~ /^execve\(/ {
         line = $0
@@ -46,6 +56,7 @@ awk '
         name = args[n]
         gsub( /"/, "", name )
         cases[$1] = ( n > 1 ) ? name : "(the suite runner)"
+        if ( n > 1 ) workers++
         next
     }
     $2 ~ /^socket\(/ {
@@ -62,11 +73,21 @@ awk '
             printf "FAIL check_unit_no_sockets: %d socket() call(s); first opener %s\n", count, first
             exit 1
         }
-        print "ok check_unit_no_sockets: no socket() call in the unit suite"
+        if ( workers == 0 ) {
+            print "FAIL check_unit_no_sockets: 0 cases ran (no case worker was started): nothing was checked"
+            exit 3
+        }
+        printf "ok check_unit_no_sockets: no socket() call in the unit suite (%d case workers)\n", workers
     }
-' "$trace" || exit 1
+' "$trace" || verdict=$?
 
+if [ "$verdict" -eq 1 ]; then
+    exit 1
+fi
 if [ "$suite" -ne 0 ]; then
     echo "FAIL check_unit_no_sockets: $binary exited $suite"
     exit "$suite"
+fi
+if [ "$verdict" -ne 0 ]; then
+    exit 1
 fi
