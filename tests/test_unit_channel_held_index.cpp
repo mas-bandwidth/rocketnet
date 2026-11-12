@@ -254,6 +254,51 @@ static void test_held_index_chain_wraps_past_the_last_cell()
     rn_unit_arena_destroy( h.arena );
 }
 
+// RNOpenAddress Find past the home: the same four keys, released so that each
+// lookup probes past its home. The second key, homed at the last cell, is
+// found across the wrap at cell 0; the fourth, homed at 0, at cell 1 behind
+// the third.
+
+static void test_held_index_finds_entries_past_their_home()
+{
+    held_t h;
+    held_create( &h );
+    held_map( &h, held_homes );
+    const uint32_t last = h.region->held_entries - 1;
+
+    held_key_t key[4];
+    check( held_pick( held_homes, last, key, 0, &key[0] ) );
+    check( held_pick( held_homes, last, key, 1, &key[1] ) );
+    check( held_pick( held_homes, 0, key, 2, &key[2] ) );
+    check( held_pick( held_homes, 0, key, 3, &key[3] ) );
+
+    uint32_t number[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        number[i] = held_hold( &h, key[i].channel, key[i].ordering );
+    }
+
+    held_release( &h, key[1] );
+    check( held_cell( &h, number[0] ) == last );
+    check( held_cell( &h, number[2] ) == 0 );
+    check( held_cell( &h, number[3] ) == 1 );
+    check( !h.region->held_index[2].used );
+
+    held_release( &h, key[3] );
+    check( held_cell( &h, number[0] ) == last );
+    check( held_cell( &h, number[2] ) == 0 );
+    check( !h.region->held_index[1].used );
+
+    held_release( &h, key[0] );
+    check( held_cell( &h, number[2] ) == 0 );
+
+    held_release( &h, key[2] );
+    check( held_used_cells( &h ) == 0 );
+    check( h.region->held_count == 0 );
+
+    rn_unit_arena_destroy( h.arena );
+}
+
 // RNOpenAddress EraseStep without the wrap: two keys homed at H and one at
 // H + 1 fill H, H + 1, H + 2. Erasing at H moves both back one (each home is
 // the hole or before it); erasing at H again leaves the entry at H + 1, its
@@ -391,6 +436,7 @@ static void test_held_index_guards_refuse_a_dead_entry_and_a_full_index()
 }
 
 REGISTER_UNIT_TEST( test_held_index_chain_wraps_past_the_last_cell );
+REGISTER_UNIT_TEST( test_held_index_finds_entries_past_their_home );
 REGISTER_UNIT_TEST( test_held_index_entry_at_its_home_stays );
 REGISTER_UNIT_TEST( test_held_index_holds_w_minus_one_and_drains_in_order );
 REGISTER_UNIT_TEST( test_held_index_guards_refuse_a_dead_entry_and_a_full_index );
