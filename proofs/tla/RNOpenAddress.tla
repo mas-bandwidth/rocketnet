@@ -38,10 +38,30 @@
 (* entry in front of its home, where no probe finds it (Findable).         *)
 (* ClearLast TRUE with MaxLive = N is a clear-last index allowed to fill:  *)
 (* its scan circles with no empty cell to stop it (EraseEnds).             *)
+(*                                                                         *)
+(* The separate counter.  The held index (sdk/rocketnet_channel.cpp) keeps *)
+(* its own count of used cells, region->held_count, beside the cells, and  *)
+(* its bound reads the counter, not the cells: rn_held_insert refuses at   *)
+(* held_count >= W and increments on success; rn_held_erase decrements    *)
+(* once, after the final hole clears, under held_count > 0.  count is that *)
+(* counter, and Insert is refused at count >= MaxLive (MaxLive is W).  The *)
+(* other indexes here keep no such counter (their bound is their table's   *)
+(* capacity); for them count is the model's own tally, checked the same   *)
+(* way.  It falls when a cell is cleared: at EraseStart for the           *)
+(* clear-first erase, at the final hole for the clear-last one, so         *)
+(* CountExact (count is the number of used cells) holds in every state,    *)
+(* mid-erase included,                                                     *)
+(* and LiveBounded (at most MaxLive live keys) follows from the counted    *)
+(* refusal.  MCRNOpenAddressHeldCount.cfg is the held index's own shape:  *)
+(* W = 2 in 2W = 4 cells, clear-last.  CountFault names a fault in the     *)
+(* counter, for the reversed witnesses: "insert_keeps_count" (the          *)
+(* increment deleted, mutant 3085 of the 2026-11-11 hunt) and              *)
+(* "erase_floor_one" (the guard held_count > 0 read as > 1, mutant 3119);  *)
+(* both fail CountExact.  "none" is the code.                              *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
-CONSTANTS Keys, N, NoWrapTest, ClearLast, MaxLive
+CONSTANTS Keys, N, NoWrapTest, ClearLast, MaxLive, CountFault
 
 EMPTY == 0
 
@@ -52,9 +72,14 @@ VARIABLES
     pc,         \* "idle" or "erase"
     hole,       \* erase: the cell being refilled
     scan,       \* erase: the cell examined last
-    scanned     \* erase: cells the scan has examined
+    scanned,    \* erase: cells the scan has examined
+    count       \* the index's separate counter (the held index's held_count)
 
-vars == <<home, cell, live, pc, hole, scan, scanned>>
+vars == <<home, cell, live, pc, hole, scan, scanned, count>>
+
+\* the counter on a successful insert, and at the one clear that ends an erase
+CountUp == IF CountFault = "insert_keeps_count" THEN count ELSE count + 1
+CountDown == IF count > (IF CountFault = "erase_floor_one" THEN 1 ELSE 0) THEN count - 1 ELSE count
 
 Next1(x) == (x + 1) % N
 
@@ -86,13 +111,17 @@ Init ==
     /\ hole = 0
     /\ scan = 0
     /\ scanned = 0
+    /\ count = 0
 
+\* refused at count >= MaxLive: the code's bound reads the counter
+\* (rn_held_insert: held_count >= W), never the cells
 Insert(k) ==
     /\ pc = "idle"
     /\ k \notin live
-    /\ Cardinality(live) < MaxLive
+    /\ count < MaxLive
     /\ cell' = [ cell EXCEPT ![FirstEmpty(home[k], 0)] = k ]
     /\ live' = live \cup {k}
+    /\ count' = CountUp
     /\ UNCHANGED <<home, pc, hole, scan, scanned>>
 
 \* the erase finds the key's cell, clearing it first unless ClearLast; the
@@ -105,6 +134,7 @@ EraseStart(k) ==
           /\ hole' = at
           /\ scan' = at
           /\ scanned' = 0
+    /\ count' = IF ClearLast THEN count ELSE CountDown
     /\ live' = live \ {k}
     /\ pc' = "erase"
     /\ UNCHANGED home
@@ -122,15 +152,16 @@ EraseStep ==
           THEN /\ pc' = "idle"
                /\ scan' = s
                /\ cell' = IF ClearLast THEN [ cell EXCEPT ![hole] = EMPTY ] ELSE cell
+               /\ count' = IF ClearLast THEN CountDown ELSE count
                /\ UNCHANGED hole
           ELSE IF InCyclic(home[c], hole, s)
           THEN /\ scan' = s
-               /\ UNCHANGED <<cell, hole, pc>>
+               /\ UNCHANGED <<cell, hole, pc, count>>
           ELSE /\ cell' = IF ClearLast THEN [ cell EXCEPT ![hole] = c ]
                            ELSE [ cell EXCEPT ![hole] = c, ![s] = EMPTY ]
                /\ hole' = s
                /\ scan' = s
-               /\ UNCHANGED pc
+               /\ UNCHANGED <<pc, count>>
     /\ scanned' = scanned + 1
     /\ UNCHANGED <<home, live>>
 
@@ -141,7 +172,7 @@ EraseBound ==
     /\ ~ClearLast
     /\ scanned = N
     /\ pc' = "idle"
-    /\ UNCHANGED <<home, cell, live, hole, scan, scanned>>
+    /\ UNCHANGED <<home, cell, live, hole, scan, scanned, count>>
 
 Next ==
     \/ \E k \in Keys : Insert(k) \/ EraseStart(k)
@@ -154,6 +185,17 @@ TypeOK ==
     /\ cell \in [0..(N - 1) -> Keys \cup {EMPTY}]
     /\ live \subseteq Keys
     /\ pc \in {"idle", "erase"}
+    /\ count \in Nat
+    /\ CountFault \in {"none", "insert_keeps_count", "erase_floor_one"}
+
+\* the counter is the number of used cells, in every state, mid-erase included
+\* (rn_held_insert's increment, rn_held_erase's one decrement after the final
+\* hole clears)
+CountExact == count = Cardinality({ c \in 0..(N - 1) : cell[c] # EMPTY })
+
+\* the refusal at count >= MaxLive keeps the live keys within the bound the
+\* cells are sized for (RNHeldOwnership HeldBound, here on the counter)
+LiveBounded == Cardinality(live) <= MaxLive
 
 \* the scan meets an empty cell within one pass of the array
 EraseEnds == scanned <= N
