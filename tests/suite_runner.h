@@ -745,6 +745,19 @@ inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, 
     return (int) jobs;
 }
 
+// The job count on this host for a requested count (0: none): this host's
+// cores and memory budget, and this platform's ceiling.
+inline int suite_job_count_requested( int requested )
+{
+#if defined( _WIN32 )
+    const int ceiling = SUITE_WAIT_HANDLES;
+#else
+    const int ceiling = 0;
+#endif // #if defined( _WIN32 )
+
+    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+}
+
 inline int suite_job_count()
 {
     int requested = 0;
@@ -754,13 +767,7 @@ inline int suite_job_count()
         requested = std::atoi( env );
     }
 
-#if defined( _WIN32 )
-    const int ceiling = SUITE_WAIT_HANDLES;
-#else
-    const int ceiling = 0;
-#endif // #if defined( _WIN32 )
-
-    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
+    return suite_job_count_requested( requested );
 }
 
 // io_uring cases and RLIMIT_MEMLOCK (docs/LINUX.md sections 5 and 8). The

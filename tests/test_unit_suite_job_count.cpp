@@ -47,20 +47,21 @@ static void test_suite_job_count_fits_the_windows_wait_set()
     // the live count on this host, whatever its cores, memory and
     // ROCKETNET_TEST_JOBS, fits the Windows wait set
 
-#if defined( _WIN32 )
     check( suite_job_count() >= 1 );
+
+    // and the live count is wired to this platform's ceiling: a requested
+    // count far past it reads exactly the ceiling on Windows, on any host, and
+    // the request itself elsewhere (VERIFY-4 W10: no CI host asks for more
+    // than 64 jobs, so a bound on suite_job_count() alone could not go red).
+    // The request goes in as an argument; a unit case never writes the
+    // environment (tools/check_unit_purity.py).
+
+    const int asked_past = suite_job_count_requested( 1000 );
+#if defined( _WIN32 )
     check( suite_job_count() <= SUITE_WAIT_HANDLES );
-
-    // and the live count is wired to the ceiling: a requested count far past
-    // it reads exactly the ceiling on any host (VERIFY-4 W10: no CI host asks
-    // for more than 64 jobs, so the two checks above could not go red)
-
-    char saved[256] = {};
-    const bool had = rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", saved, sizeof( saved ) ) != 0;
-    check( _putenv_s( "ROCKETNET_TEST_JOBS", "1000" ) == 0 );
-    const int asked_past = suite_job_count();
-    check( _putenv_s( "ROCKETNET_TEST_JOBS", had ? saved : "" ) == 0 );
     check( asked_past == SUITE_WAIT_HANDLES );
+#else
+    check( asked_past == 1000 );
 #endif // #if defined( _WIN32 )
 }
 
