@@ -309,7 +309,7 @@ def gh(path):
     return result.stdout
 
 
-def remote(root, rows, repo, fetch=gh):
+def remote(root, rows, repo, fetch=gh, seen=None):
     problems, runs, logs = [], {}, {}
 
     def latest(workflow):
@@ -372,10 +372,13 @@ def remote(root, rows, repo, fetch=gh):
                 problems.append(f"{row.where()}: job {j.get('name')} (run {run['id']}) shows no executed case")
                 continue
         checked += 1
+        if seen is not None:  # the run each cell was seen in, for the evidence record
+            run, j = steps_ran[0]
+            seen.append(f"{row.cell}\t{run['id']}\t{j.get('id')}\t{j.get('name')}\t{j.get('conclusion')}")
     return problems, checked
 
 
-def check(root, today, do_remote=False, repo=REPO, fetch=gh, out=sys.stdout):
+def check(root, today, do_remote=False, repo=REPO, fetch=gh, out=sys.stdout, ran_out=None):
     root = Path(root).resolve()
     rows, problems = read_registry(root / REGISTRY)
     targets = transports = 0
@@ -388,7 +391,10 @@ def check(root, today, do_remote=False, repo=REPO, fetch=gh, out=sys.stdout):
     checked = 0
     if do_remote and rows:
         try:
-            found, checked = remote(root, rows, repo, fetch)
+            seen = [] if ran_out else None
+            found, checked = remote(root, rows, repo, fetch, seen)
+            if ran_out:
+                Path(ran_out).write_text("".join(line + "\n" for line in seen))
         except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
             found, checked = [f"API-ERROR {error}"], 0  # an unreadable history is red, never a pass
         problems += found
@@ -519,11 +525,12 @@ def main(argv):
     parser.add_argument("--remote", action="store_true")
     parser.add_argument("--repo", default=REPO)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--ran-out", default=None, help="with --remote: write cell, run id, job id, job name, conclusion per cell seen run")
     args = parser.parse_args(argv[1:])
     if args.self_test:
         return self_test()
     today = datetime.date.fromisoformat(args.today) if args.today else datetime.datetime.now(datetime.timezone.utc).date()
-    return check(args.root, today, do_remote=args.remote, repo=args.repo)
+    return check(args.root, today, do_remote=args.remote, repo=args.repo, ran_out=args.ran_out)
 
 
 if __name__ == "__main__":
