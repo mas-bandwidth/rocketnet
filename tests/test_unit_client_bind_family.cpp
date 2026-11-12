@@ -426,6 +426,166 @@ static void test_client_connect_keeps_the_family_that_answers()
 
 REGISTER_UNIT_TEST( test_client_connect_keeps_the_family_that_answers );
 
+// The race won by the primary family: the same token and server, but the IPv4
+// route is broken and IPv6 answers. The client commits to IPv6 (the primary,
+// family 0), closes the IPv4 socket and connects. A late cookie from the IPv4
+// server, the second family that lost, is then foreign like any other source:
+// dropped and counted once, and the connection carries on: a payload from the
+// server is read whole, after a read into a NULL buffer consumed nothing.
+// Mutation that must bite: keep the race open at a commit to family 0, commit
+// the second family whichever answered, or drop the NULL buffer guard. Time is
+// an argument, from 1000.0.
+
+static void bind_family_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+}
+
+static void test_client_race_won_by_the_primary_drops_the_second()
+{
+    rocketnet_address_t ipv4_server, ipv6_server, client_address;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv4_server, "203.0.113.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &ipv6_server, "[2001:db8::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
+    static struct rocketnet_server_protocol_t server;
+    static struct rocketnet_counters_t server_counters;
+    bind_family_server_setup( &server, &server_counters );
+
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
+    operations.connect = rocketnet_fake_client_connect;
+    operations.close = rocketnet_fake_client_close;
+
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+
+    bind_family_clock_t clock = { 1000.0 };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    bind_family_mint_both( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    config.time_callback = bind_family_time;
+    memcpy( config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
+
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
+        &clock, token, &config, clock.now, ROCKETNET_TEST_CREATE_TS, &operations, fake );
+    rocketnet_unit_check( transport != NULL );
+
+    rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
+    rocketnet_unit_check( io != NULL );
+
+    const uint64_t * counters = rocketnet_client_transport_counters( transport )->values;
+    int forwarded = 0;
+    int closes_at_commit = -1;
+    uint8_t late_cookie[ROCKETNET_RECEIVE_CEILING];
+    int late_cookie_bytes = 0;
+    uint64_t foreign_before_late = 0;
+    bool late_cookie_sent = false;
+
+    for ( clock.now = 1000.0; clock.now < 1000.0 + bind_family_timeout_seconds; clock.now += 0.01 )
+    {
+        rocketnet_client_io_step( io, false );
+        rocketnet_client_transport_update( transport, clock.now );
+        rocketnet_client_io_step( io, false );
+
+        const int state = rocketnet_client_transport_state( transport );
+        if ( closes_at_commit < 0 && state >= ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
+        {
+            rocketnet_client_io_step( io, false );
+            closes_at_commit = fake->close_calls;
+        }
+
+        for ( ; forwarded < fake->num_sent; forwarded++ )
+        {
+            const rocketnet_fake_client_datagram_t * datagram = &fake->sent[forwarded];
+            const bool to_ipv6 = rocketnet_address_equal( &datagram->address, &ipv6_server );
+            const bool to_ipv4 = rocketnet_address_equal( &datagram->address, &ipv4_server );
+            rocketnet_unit_check( to_ipv6 || to_ipv4 );
+
+            // the broken IPv4 route: nothing sent there reaches a server
+
+            if ( !to_ipv6 )
+            {
+                continue;
+            }
+
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0, payload_bytes = 0, payload_client_index = -1;
+            rocketnet_server_protocol_process_packet( &server, &client_address, datagram->data, datagram->bytes,
+                                                      ROCKETNET_TEST_CREATE_TS, clock.now, response, &response_bytes,
+                                                      payload, &payload_bytes, &payload_client_index );
+
+            if ( response_bytes > 0 )
+            {
+                rocketnet_fake_client_push( fake, &ipv6_server, response, response_bytes );
+
+                if ( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES && late_cookie_bytes == 0 )
+                {
+                    memcpy( late_cookie, response, (size_t) response_bytes );
+                    late_cookie_bytes = response_bytes;
+                }
+            }
+        }
+
+        // after the commit the same cookie arrives from the IPv4 server
+
+        if ( closes_at_commit >= 0 && !late_cookie_sent && late_cookie_bytes > 0 )
+        {
+            foreign_before_late = counters[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE];
+            rocketnet_fake_client_push( fake, &ipv4_server, late_cookie, late_cookie_bytes );
+            late_cookie_sent = true;
+        }
+
+        if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
+            break;
+        }
+    }
+
+    // connected over IPv6; the IPv4 socket closed at the commit; the late
+    // IPv4 cookie was dropped as foreign, once
+
+    rocketnet_unit_check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_unit_check( closes_at_commit == 1 );
+    rocketnet_unit_check( late_cookie_sent );
+    rocketnet_unit_check( counters[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] == foreign_before_late + 1 );
+
+    // a payload from the server over IPv6 is queued; a read into a NULL
+    // buffer is a counted no-op that consumes nothing, and the next read
+    // with a buffer gets the payload whole
+
+    const uint8_t sent_payload[4] = { 0xC1, 0xC2, 0xC3, 0xC4 };
+    uint8_t wire[ROCKETNET_RECEIVE_CEILING];
+    const int wire_bytes = rocketnet_server_protocol_write_payload( &server, 0, sent_payload, (int) sizeof( sent_payload ), clock.now, wire );
+    rocketnet_unit_check( wire_bytes > 0 );
+    rocketnet_fake_client_push( fake, &ipv6_server, wire, wire_bytes );
+    clock.now += 0.01;
+    rocketnet_client_io_step( io, false );
+    rocketnet_client_transport_update( transport, clock.now );
+
+    rocketnet_assert_function( bind_family_quiet_assert );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+    rocketnet_unit_check( rocketnet_client_transport_receive_packet( transport, NULL, 64 ) == 0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == misuse + 1 );
+    rocketnet_assert_function( NULL );
+
+    uint8_t received[64];
+    rocketnet_unit_check( rocketnet_client_transport_receive_packet( transport, received, (int) sizeof( received ) ) == (int) sizeof( sent_payload ) );
+    rocketnet_unit_check( memcmp( received, sent_payload, sizeof( sent_payload ) ) == 0 );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+    rocketnet_unit_check( fake->close_calls == 1 );
+    rocketnet_unit_check( fake->destroy_calls == 2 );
+    delete fake;
+    bind_family_server_teardown( &server );
+}
+
+REGISTER_UNIT_TEST( test_client_race_won_by_the_primary_drops_the_second );
+
 // The family race at its commit, on the same token, server and broken IPv6
 // route, with one fake socket per family: race_pair_t's create hands out
 // fake[0] for the primary (IPv6) family and fake[1] for the IPv4 family, so
