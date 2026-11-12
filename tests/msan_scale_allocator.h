@@ -39,12 +39,15 @@
 // test_server_disconnect_full_queue_never_bypasses_budget at 41,258 MiB,
 // 3.4 % over its whole plan, the debug heap's block headers on top of the
 // fill. Neither figure is the library's: Release on the same host holds both
-// bounds. So under the debug CRT such a case takes a block of a mebibyte or
-// more from VirtualAlloc, demand-zero pages resident only once touched, the
-// way a Release build's heap hands out a block that large. Smaller blocks
-// still come from the debug heap, filled and guarded. The cost: an overrun
-// of a large plan block is not caught by the debug heap's guard bytes in
-// these cases; every smaller-world case of the suite runs on the debug heap.
+// bounds. So under the debug CRT such a case takes every block of a page or
+// more from VirtualAlloc, demand-zero pages resident only once touched, as a
+// Release build's heap leaves the untouched pages of a large block. A
+// mebibyte threshold, as under MSan, was not enough: the stats case still
+// peaked at 1,355 MiB, its per-client blocks under a mebibyte filled whole.
+// Blocks under a page still come from the debug heap, filled and guarded.
+// The cost: an overrun of a block of a page or more is not caught by the
+// debug heap's guard bytes in these cases; every smaller-world case of the
+// suite runs on the debug heap.
 //
 // In every other build the scope does nothing and the case runs on the
 // default allocator.
@@ -95,7 +98,11 @@
 enum
 {
     MSAN_SCALE_HEADER_BYTES = 64,               // keeps the block 64-byte aligned
+#if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+    MSAN_SCALE_MAPPED_BYTES = 4096,             // blocks of a page and up are mapped (the header comment)
+#else
     MSAN_SCALE_MAPPED_BYTES = 1024 * 1024,      // blocks this size and up are mapped
+#endif // #if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
 };
 
 struct msan_scale_header_t
