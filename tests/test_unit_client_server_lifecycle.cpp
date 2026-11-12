@@ -1279,8 +1279,8 @@ REGISTER_UNIT_TEST( test_server_start_stop_start_again );
 
 // proofs/tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
 // client. rocketnet_server_update returns while !server->running
-// (sdk/rocketnet_api.cpp:2013), and the transport reads only while RUNNING
-// (sdk/rocketnet_server_transport.cpp:2636).
+// (sdk/rocketnet_api.cpp), and the transport reads only while RUNNING
+// (sdk/rocketnet_server_transport.cpp).
 
 static void test_server_stopped_admits_no_client()
 {

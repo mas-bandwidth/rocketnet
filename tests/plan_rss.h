@@ -28,7 +28,7 @@
     Planned bytes the SDK takes from the OS outside the allocator are counted
     by the case that makes them: the AF_XDP UMEM (rocketnet_xdp_umem_bytes) is
     in the server's plan but is a posix_memalign block registered with the
-    kernel (sdk/rocketnet_server_socket_linux.cpp:1814), so a case that builds
+    kernel (sdk/rocketnet_server_socket_linux.cpp), so a case that builds
     an xdp server counts it with plan_rss_count_outside_allocator after the
     create and plan_rss_uncount_outside_allocator after the destroy.
 */

@@ -197,7 +197,7 @@ code (probes `[][Refuse => UNCHANGED vars]_vars` passed on
 - **RNSendStoreLayout.** `Refuse(kind, spanRoom)` is a store or span start that
   the fit refuses (`FitOK`: not exhausted, a free descriptor, and the store's
   find or the span's room), written as the code's steps in order:
-  `rn_region_send_fit_store` (`sdk/rocketnet_allocator.cpp:821`, a const
+  `rn_region_send_fit_store` (`sdk/rocketnet_allocator.cpp`, a const
   region: exhausted, then the descriptors, then `rn_send_store_find` at 345)
   and `rn_region_send_refuse` (871), which counts. The counter `refused`
   (mod `CountMod`) and the ghost `calls` (every application start, so a
