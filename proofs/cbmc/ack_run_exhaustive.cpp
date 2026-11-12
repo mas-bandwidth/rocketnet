@@ -40,7 +40,7 @@
                               filled neighbourhoods, newly acked records)
                               must report VACUOUS;
       the mutants             one-line bugs sed plants in a copy of the leaf.
-    -DACK_RUN_STOP_ON_FAILURE ends the run at the first failure (controls).
+    Every build ends the run at the first failing ring position.
 
     Usage: ack_run_exhaustive [threads]
     Exit: 0 VERIFICATION SUCCESSFUL, 1 VERIFICATION FAILED, 3 VACUOUS.
@@ -78,9 +78,9 @@ static std::atomic<bool> g_stop( false );
 
 static void report( const char * what, uint64_t low, uint64_t len, uint64_t highest, uint64_t pattern, int fill )
 {
-#if defined( ACK_RUN_STOP_ON_FAILURE )
+    // the verdict is FAILED from the first failure on: every thread stops at
+    // its next ring position, so a planted bug is red in seconds
     g_stop.store( true, std::memory_order_relaxed );
-#endif // #if defined( ACK_RUN_STOP_ON_FAILURE )
     // a negative control fails ~1e10 times: read before the atomic add, so the
     // threads do not contend on one cache line, and count in uint64_t, which
     // does not wrap

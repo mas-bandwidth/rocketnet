@@ -331,7 +331,7 @@ ack-run-exhaustive-8: ack_run_exhaustive.cpp
 	@$(call run_ack_exhaustive,ack-run-exhaustive-8,,pass,$(SDK))
 
 ack-run-exhaustive-negative-control: ack_run_exhaustive.cpp
-	@$(call run_ack_exhaustive,ack-run-exhaustive-negative-control,-DACK_NEGATIVE_CONTROL=1 -DACK_RUN_STOP_ON_FAILURE=1,fail,$(SDK))
+	@$(call run_ack_exhaustive,ack-run-exhaustive-negative-control,-DACK_NEGATIVE_CONTROL=1,fail,$(SDK))
 
 ack-run-exhaustive-vacuity-plant: ack_run_exhaustive.cpp
 	@$(call run_ack_exhaustive,ack-run-exhaustive-vacuity-plant,-DACK_RUN_PLANT_VACUOUS=1,vacuous,$(SDK))
@@ -352,7 +352,7 @@ ack-run-exhaustive-mutant-%: ack_run_exhaustive.cpp
 	sed '$(ACK_RUN_MUTANT_$*)' $(SDK)/rocketnet_ack.cpp > "$$mutant/rocketnet_ack.cpp"; \
 	if cmp -s $(SDK)/rocketnet_ack.cpp "$$mutant/rocketnet_ack.cpp"; then \
 	  echo "$@ HOLD: the mutant no longer applies to sdk/rocketnet_ack.cpp"; rm -rf "$$mutant"; exit 1; fi; \
-	( $(call run_ack_exhaustive,$@,-DACK_RUN_STOP_ON_FAILURE=1,fail,$$mutant) ); status=$$?; rm -rf "$$mutant"; exit $$status
+	( $(call run_ack_exhaustive,$@,,fail,$$mutant) ); status=$$?; rm -rf "$$mutant"; exit $$status
 
 read-write: proof_read_write.c
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"

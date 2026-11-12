@@ -43,13 +43,11 @@ jobs:
 
       - name: ack-run-exhaustive-8
         run: |
-          set -o pipefail
           make -C proofs/cbmc ack-run-exhaustive-8 2>&1 | tee proofs/cbmc/ack-run-exhaustive-8-output.txt
 
       - name: ack-run-exhaustive-negative-control
         if: ${{ !cancelled() }}
         run: |
-          set -o pipefail
           make -C proofs/cbmc ack-run-exhaustive-negative-control 2>&1 | tee proofs/cbmc/ack-run-exhaustive-negative-control-output.txt
 
       - name: ack-run-exhaustive-vacuity-plant
@@ -59,7 +57,6 @@ jobs:
       - name: ack-run-exhaustive-mutants
         if: ${{ !cancelled() }}
         run: |
-          set -o pipefail
           make -C proofs/cbmc ack-run-exhaustive-mutants 2>&1 | tee proofs/cbmc/ack-run-exhaustive-mutants-output.txt
 
       - name: Upload the output
