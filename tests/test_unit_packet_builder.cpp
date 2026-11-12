@@ -463,6 +463,90 @@ static void test_message_record_valid_refuses_each_shape()
     }
 }
 
+// The same gate at each edge: the largest value of every field and of the
+// data length is taken, and one past it is refused. A code outside 0..4 is
+// refused also when its low three bits name a code (8 and -8 pack to code 0
+// in the flags byte), so the gate's own range test is what refuses them.
+
+enum record_edge_field_t
+{
+    RECORD_EDGE_CODE,
+    RECORD_EDGE_BYTES,
+    RECORD_EDGE_ORDERING,
+    RECORD_EDGE_CHANNEL,
+    RECORD_EDGE_FRAGMENTS
+};
+
+static int record_edge_valid( int code, enum record_edge_field_t field, int64_t value )
+{
+    // the gate reads the length, never the data: the base record's 16 bytes serve every length
+    struct rocketnet_message_record_t record;
+    valid_base_record( &record, code );
+    if ( field == RECORD_EDGE_CODE )
+    {
+        record.code = (int) value;
+    }
+    else if ( field == RECORD_EDGE_BYTES )
+    {
+        record.bytes = (int) value;
+    }
+    else if ( field == RECORD_EDGE_ORDERING )
+    {
+        record.ordering = (uint32_t) value;
+    }
+    else if ( field == RECORD_EDGE_CHANNEL )
+    {
+        record.channel = (uint32_t) value;
+    }
+    else
+    {
+        record.block = 1;
+        record.fragments = (uint32_t) value;
+    }
+    return rocketnet_message_record_valid( &record );
+}
+
+static void test_message_record_valid_takes_each_edge()
+{
+    // codes outside 0..4 whose low bits name a code
+
+    rocketnet_unit_check( record_edge_valid( 0, RECORD_EDGE_CODE, 8 ) == 0 );
+    rocketnet_unit_check( record_edge_valid( 0, RECORD_EDGE_CODE, -8 ) == 0 );
+    rocketnet_unit_check( record_edge_valid( 0, RECORD_EDGE_CODE, 10 ) == 0 );
+    rocketnet_unit_check( record_edge_valid( 0, RECORD_EDGE_CODE, ROCKETNET_MESSAGE_NUM_CODES - 1 ) == 1 );
+
+    // the data length: 1 and 65535 taken
+
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_UNRELIABLE, RECORD_EDGE_BYTES, 1 ) == 1 );
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_UNRELIABLE, RECORD_EDGE_BYTES, ROCKETNET_MESSAGE_MAX_RECORD_BYTES ) == 1 );
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_UNRELIABLE, RECORD_EDGE_BYTES, ROCKETNET_MESSAGE_MAX_RECORD_BYTES + 1 ) == 0 );
+
+    // ordering and channel: present on codes 1, 3, 4 up to their widths, absent (zero only) on 0 and 2
+
+    const int with_channel[3] = { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
+                                  ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED };
+    for ( int i = 0; i < 3; i++ )
+    {
+        rocketnet_unit_check( record_edge_valid( with_channel[i], RECORD_EDGE_ORDERING, ROCKETNET_MESSAGE_U24_MASK ) == 1 );
+        rocketnet_unit_check( record_edge_valid( with_channel[i], RECORD_EDGE_ORDERING, (int64_t) ROCKETNET_MESSAGE_U24_MASK + 1 ) == 0 );
+        rocketnet_unit_check( record_edge_valid( with_channel[i], RECORD_EDGE_CHANNEL, 0xFFFF ) == 1 );
+        rocketnet_unit_check( record_edge_valid( with_channel[i], RECORD_EDGE_CHANNEL, 0x10000 ) == 0 );
+    }
+    const int without_channel[2] = { ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_MESSAGE_CODE_RELIABLE };
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_unit_check( record_edge_valid( without_channel[i], RECORD_EDGE_ORDERING, 0 ) == 1 );
+        rocketnet_unit_check( record_edge_valid( without_channel[i], RECORD_EDGE_ORDERING, 1 ) == 0 );
+        rocketnet_unit_check( record_edge_valid( without_channel[i], RECORD_EDGE_CHANNEL, 1 ) == 0 );
+    }
+
+    // a block: 2 to 65536 fragments (the field is the count - 1, u16)
+
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_RELIABLE, RECORD_EDGE_FRAGMENTS, 1 ) == 1 );
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_RELIABLE, RECORD_EDGE_FRAGMENTS, 0xFFFF ) == 1 );
+    rocketnet_unit_check( record_edge_valid( ROCKETNET_MESSAGE_CODE_RELIABLE, RECORD_EDGE_FRAGMENTS, 0x10000 ) == 0 );
+}
+
 // The pick order is proofs/tla/RNScheduler.tla's IsHead, Boost, PickLevel and PickIn.
 // What follows is BASE's picker (sdk/rocketnet_packet_builder.cpp before the
 // linear class pass), kept here verbatim in its logic: for every item, a scan
@@ -1017,6 +1101,7 @@ REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
+REGISTER_UNIT_TEST( test_message_record_valid_takes_each_edge );
 REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_packet_builder_operations_bounded );
