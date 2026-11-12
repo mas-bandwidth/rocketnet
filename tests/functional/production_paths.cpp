@@ -24,6 +24,13 @@
 #include <string.h>
 #include <string>
 
+#if defined( __APPLE__ )
+#include <libproc.h>
+#include <unistd.h>
+#elif defined( __linux__ )
+#include <dirent.h>
+#endif // #if defined( __APPLE__ )
+
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 // defined in tests/functional/rocketnet_functional_tests.cpp
@@ -177,10 +184,40 @@ static void paths_step( paths_world_t * world )
     rocketnet_sleep( 0.001 );
 }
 
+// The process's open file descriptors (Linux /proc/self/fd, macOS
+// proc_pidinfo), or -1 where this host has no count.
+static int paths_open_fds()
+{
+#if defined( __APPLE__ )
+    static struct proc_fdinfo entries[4096];
+    const int got = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, entries, (int) sizeof( entries ) );
+    return got > 0 ? got / (int) sizeof( struct proc_fdinfo ) : -1;
+#elif defined( __linux__ )
+    DIR * directory = opendir( "/proc/self/fd" );
+    if ( !directory )
+    {
+        return -1;
+    }
+    int count = 0;
+    struct dirent * entry = NULL;
+    while ( ( entry = readdir( directory ) ) != NULL )
+    {
+        if ( entry->d_name[0] != '.' )
+        {
+            count++;
+        }
+    }
+    closedir( directory );
+    return count - 1; // the directory's own descriptor
+#else
+    return -1;
+#endif // #if defined( __APPLE__ )
+}
+
 // Creates client i on the named client transport and connects it with a token
-// naming 127.0.0.1, and [::1] too for a two-family server; returns once both
-// ends report the connection.
-static void paths_client_connect( paths_world_t * world, int i, const char * transport, uint64_t client_id )
+// naming 127.0.0.1, and [::1] too for a two-family server unless one_family;
+// returns once both ends report the connection.
+static void paths_client_connect( paths_world_t * world, int i, const char * transport, uint64_t client_id, bool one_family = false )
 {
     char ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     char ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
@@ -191,7 +228,7 @@ static void paths_client_connect( paths_world_t * world, int i, const char * tra
     const uint64_t create_timestamp = rocketnet_functional_token_timestamp( 0, paths_now( world ) );
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     paths_check( rn_test_server_token_string( world->backend_secret_key, world->server, paths_protocol_id, addresses,
-                                              world->two_families ? 2 : 1, client_id, create_timestamp, create_timestamp + 30, 10,
+                                              world->two_families && !one_family ? 2 : 1, client_id, create_timestamp, create_timestamp + 30, 10,
                                               NULL, token ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_config_t client_config;
@@ -335,7 +372,9 @@ static void paths_race_log( void * context, enum rocketnet_log_level_t level, co
 
 // A token naming both families, on every client transport this host offers
 // (loopback has no family): the client dials both, the first answer keeps one
-// family and the other is closed, and the connection then carries reliable
+// family and the other is closed (its socket and its wake: where the host
+// counts descriptors, the client comes to hold exactly what a client dialing
+// one family holds, and none once destroyed), and the connection then carries reliable
 // messages both ways, byte exact and in order, through the kept family alone.
 // The client's disconnect ends the server's slot as CLIENT_DISCONNECTED.
 void rocketnet_test_family_race_each_client_transport_carries_messages()
@@ -361,10 +400,44 @@ void rocketnet_test_family_race_each_client_transport_carries_messages()
             continue;
         }
 
+        // the descriptors one connected client of this transport holds, dialing one family
+
+        const int fds_before = paths_open_fds();
+        int one_family_fds = -1;
+        if ( fds_before >= 0 )
+        {
+            const uint64_t races_before_one = paths_races_logged.load();
+            paths_client_connect( &world, 0, transport, UINT64_C( 0x7900 ) + (uint64_t) t, true );
+            paths_check( paths_races_logged.load() == races_before_one );
+            one_family_fds = paths_open_fds() - fds_before;
+            paths_check( one_family_fds > 0 );
+            paths_client_destroy( &world, 0 );
+            paths_check( paths_open_fds() == fds_before );
+        }
+
         const uint64_t races_before = paths_races_logged.load();
         paths_client_connect( &world, 0, transport, UINT64_C( 0x7A00 ) + (uint64_t) t );
         paths_check( paths_races_logged.load() == races_before + 1 );
         paths_check( strcmp( rocketnet_client_transport_name( world.client[0] ), transport ) == 0 );
+
+        // the losing family's socket and wake are closed by the reading thread
+        // once it sees the commit (its memory stays until destroy), so the
+        // racing client comes to hold what a one-family client holds
+
+        if ( fds_before >= 0 )
+        {
+            const double close_deadline = rocketnet_time() + paths_wait_seconds;
+            while ( rocketnet_time() < close_deadline && paths_open_fds() - fds_before != one_family_fds )
+            {
+                paths_step( &world );
+            }
+            if ( paths_open_fds() - fds_before != one_family_fds )
+            {
+                printf( "family race over %s: %d descriptors held, a one-family client holds %d\n", transport,
+                        paths_open_fds() - fds_before, one_family_fds );
+            }
+            paths_check( paths_open_fds() - fds_before == one_family_fds );
+        }
 
         paths_exchange( &world, 0, 8, 300 );
 
@@ -378,6 +451,10 @@ void rocketnet_test_family_race_each_client_transport_carries_messages()
         paths_check( !rocketnet_server_client_connected( world.server, slot ) );
         paths_check( rocketnet_server_disconnect_reason( world.server, slot ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
         paths_client_destroy( &world, 0 );
+        if ( fds_before >= 0 )
+        {
+            paths_check( paths_open_fds() == fds_before );
+        }
 
         printf( "family race over %s: connected, 8 messages each way\n", transport );
         raced++;
