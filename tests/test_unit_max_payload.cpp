@@ -34,6 +34,7 @@
 #include "wycheproof.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -683,8 +684,113 @@ static void test_client_drops_reserved_and_wrong_direction_types()
     max_payload_pair_teardown( &pair );
 }
 
+// ---------------------------------------------------------------------------
+// The in-place seal on both endpoints takes 1 to MAX_PACKET_PAYLOAD_BYTES. The
+// bytes past the maximum up to the send budget's room beside the smallest ack
+// block (three of them) would fit a datagram, and the receiver refuses them as
+// the wrong opened size, so the seal refuses them first: it returns 0, writes
+// nothing into the frame and records nothing sent. Zero and negative sizes are
+// refused the same way, and so is a zero sequence (the sealer refuses it, and
+// nothing may be recorded sent under it). The maximum still seals and is
+// delivered.
+// ---------------------------------------------------------------------------
+
+static void test_seal_payload_frame_refuses_sizes_outside_one_to_max()
+{
+    struct max_payload_pair_t * pair = (struct max_payload_pair_t *) malloc( sizeof( struct max_payload_pair_t ) );
+    check( pair );
+    max_payload_pair_setup( pair );
+
+    const int room = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    check( room > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+    // the last case is a valid size under sequence zero
+    const int refused_sizes[] = { 0, -1, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1, room, 1 };
+    const int num_cases = (int) ( sizeof( refused_sizes ) / sizeof( refused_sizes[0] ) );
+
+    const int mapping_index = rocketnet_encryption_map_find( pair->server.encryption_map, &pair->client_address );
+    check( mapping_index != -1 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( pair->server.encryption_map, mapping_index );
+    struct rocketnet_ack_endpoint_t * endpoint = &pair->server.acks->endpoints[0];
+
+    uint8_t * wire_start = g_frame + ROCKETNET_FRAME_WIRE_OFFSET;
+    struct rocketnet_client_protocol_t * client_before = (struct rocketnet_client_protocol_t *) malloc( sizeof( struct rocketnet_client_protocol_t ) );
+    struct rocketnet_server_protocol_t * server_before = (struct rocketnet_server_protocol_t *) malloc( sizeof( struct rocketnet_server_protocol_t ) );
+    struct rocketnet_encryption_mapping_t * mapping_before = (struct rocketnet_encryption_mapping_t *) malloc( sizeof( struct rocketnet_encryption_mapping_t ) );
+    struct rocketnet_ack_endpoint_t * endpoint_before = (struct rocketnet_ack_endpoint_t *) malloc( sizeof( struct rocketnet_ack_endpoint_t ) );
+    struct rocketnet_counters_t * counters_before = (struct rocketnet_counters_t *) malloc( sizeof( struct rocketnet_counters_t ) );
+    check( client_before && server_before && mapping_before && endpoint_before && counters_before );
+
+    for ( int i = 0; i < num_cases; i++ )
+    {
+        const bool zero_sequence = i == num_cases - 1;
+
+        // client to server
+
+        uint64_t sequence = 0;
+        check( rocketnet_client_protocol_start_payload( &pair->client, &sequence ) );
+        if ( zero_sequence )
+        {
+            sequence = 0;
+        }
+        memset( g_frame, 0xEE, sizeof( g_frame ) );
+        max_payload_fill( g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 31 );
+        memcpy( client_before, &pair->client, sizeof( pair->client ) );
+        memcpy( counters_before, &pair->client_counters, sizeof( pair->client_counters ) );
+
+        check( rocketnet_client_protocol_seal_payload_frame( &pair->client, sequence, sequence, wire_start,
+                                                             refused_sizes[i], pair->time ) == 0 );
+        check( memcmp( client_before, &pair->client, sizeof( pair->client ) ) == 0 );
+        check( memcmp( counters_before, &pair->client_counters, sizeof( pair->client_counters ) ) == 0 );
+        for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
+        {
+            check( wire_start[j] == 0xEE );
+        }
+
+        // server to client
+
+        struct rocketnet_address_t to;
+        check( rocketnet_server_protocol_start_payload( &pair->server, 0, &to, &sequence ) );
+        if ( zero_sequence )
+        {
+            sequence = 0;
+        }
+        memset( g_frame, 0xEE, sizeof( g_frame ) );
+        max_payload_fill( g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 37 );
+        memcpy( server_before, &pair->server, sizeof( pair->server ) );
+        memcpy( mapping_before, mapping, sizeof( *mapping ) );
+        memcpy( endpoint_before, endpoint, sizeof( *endpoint ) );
+        memcpy( counters_before, &pair->server_counters, sizeof( pair->server_counters ) );
+
+        check( rocketnet_server_protocol_seal_payload_frame( &pair->server, 0, sequence, sequence, wire_start,
+                                                             refused_sizes[i], pair->time ) == 0 );
+        check( memcmp( server_before, &pair->server, sizeof( pair->server ) ) == 0 );
+        check( memcmp( mapping_before, mapping, sizeof( *mapping ) ) == 0 );
+        check( memcmp( endpoint_before, endpoint, sizeof( *endpoint ) ) == 0 );
+        check( memcmp( counters_before, &pair->server_counters, sizeof( pair->server_counters ) ) == 0 );
+        for ( int j = 0; j < ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET; j++ )
+        {
+            check( wire_start[j] == 0xEE );
+        }
+    }
+
+    // the maximum seals and opens whole on the far side
+
+    max_payload_fill( g_frame + ROCKETNET_FRAME_PAYLOAD_OFFSET, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, 41 );
+    max_payload_seal_and_deliver( pair, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
+    free( counters_before );
+    free( endpoint_before );
+    free( mapping_before );
+    free( server_before );
+    free( client_before );
+    max_payload_pair_teardown( pair );
+    free( pair );
+}
+
 REGISTER_UNIT_TEST( test_message_of_1400_bytes_is_one_unfragmented_packet );
 REGISTER_UNIT_TEST( test_limits_are_derived_from_the_packet_size );
+REGISTER_UNIT_TEST( test_seal_payload_frame_refuses_sizes_outside_one_to_max );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_sealed_packet_at_max_size_opens );
 #endif // #if ROCKETNET_DEV

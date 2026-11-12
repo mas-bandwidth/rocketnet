@@ -100,7 +100,11 @@ jobs:
           if [ -z "$minor" ] || [ "$minor" -lt 26 ] || { [ "$minor" -eq 26 ] && [ "$patch" -lt 6 ]; }; then
             echo "TOOL-MISSING go >= 1.26.6 $got on $RUNNER_NAME"; exit 1
           fi
-      - name: Build the pinned public runner and check records
+      # Fetching and compiling the pinned runner, the adapter and the adapter's
+      # control tests is a toolchain step, bounded at five times its normal
+      # length; the record check, the controls and TLC below carry no deadline.
+      - name: Build the pinned public runner and the TLC adapter
+        timeout-minutes: 1
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -112,6 +116,15 @@ jobs:
           git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
           git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
           (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
+          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
+          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
+          (cd "$job/runner" && go test -c -o "$job/tlc-nightly.test" "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go")
+          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+
+      - name: Check records and run the stale cases
+        run: |
+          set -euo pipefail
+          job="$TLC_EVIDENCE"
           "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
           cat "$job/stale.json"
           plan="$job/plan"
@@ -128,11 +141,8 @@ jobs:
             exit 1
           fi
 
-          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
-          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
           export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
-          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
-          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+          (cd "$job/runner" && "$job/tlc-nightly.test" -test.timeout=0 -test.count=1 -test.v) | tee "$job/adapter-controls.log"
           if [ ! -s "$plan" ]; then
             echo "TLC-PLAN no stale case outside the timeout debt (tlc-debt.yml runs the debt)"
             exit 0

@@ -1211,8 +1211,18 @@ static void check_allocator_install_race()
     check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     // nothing has initialized the library yet: the clock reads 0, not the
     // nan of a zero timebase (macOS), the infinity of a zero frequency
     // (Windows) or an uptime from another origin (Linux)

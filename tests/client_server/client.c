@@ -687,6 +687,10 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
             else
             {
                 reason = matrix_rx_accept( &st->cfg, s, mode, channel, data, bytes, &sequence );
+                if ( !reason )
+                {
+                    reason = matrix_rx_interleave( st->rx, mode, channel, (uint32_t) sequence );
+                }
             }
 
             if ( reason )
@@ -1294,6 +1298,10 @@ static uint64_t run_matrix( opts_t * o )
         memset( st.streams, 0, ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * sizeof( stream_t ) );
         memset( st.cells, 0, 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS * sizeof( cell_counts_t ) );
         matrix_rx_reset( st.rx );
+        for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES; m++ )
+        {
+            st.rx->totals[m] = rocketnet_live_sequences_per_stream( &st.cfg, m );      // the server's streams end there
+        }
         st.hello_answered = 0;
         st.outstanding = 0;
         st.last_progress = 0.0;
@@ -1381,6 +1389,17 @@ static uint64_t run_matrix( opts_t * o )
                     }
 
                     stream_t * s = RN_STREAM( &st, m, c );
+
+                    // modes 3 and 7 share the channel's order: interleave them
+                    // (tests/matrix_receive.h) so the server can check it; the
+                    // client's streams have no total
+                    const int partner = matrix_interleave_partner( m );
+                    if ( partner >= 0 &&
+                         !matrix_interleave_admits( m, s->sequence, RN_STREAM( &st, partner, c )->sequence, 0, (int) ( ( o->mode_mask >> partner ) & 1u ) ) )
+                    {
+                        continue;
+                    }
+
                     const uint32_t length = rocketnet_live_length( &st.cfg, m, c, s->sequence );
                     const int bucket = rocketnet_live_bucket( &st.cfg, m, length );
                     const int reliable = matrix_reliable_path( m, length );

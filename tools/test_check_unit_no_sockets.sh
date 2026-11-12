@@ -48,8 +48,14 @@ status=0
 RN_SOCKET_CHECK_MODE=child bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" > "$tmp/child.log" || status=$?
 test "$status" = 1
 grep -F '1 socket() call(s); first opener socket-child: socket(' "$tmp/child.log"
+# arguments after the binary reach it (a shard runs as ./bin/test --shard i/2):
+# one argument makes the fixture open a socket itself
+status=0
+RN_SOCKET_CHECK_MODE=clean bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" forwarded > "$tmp/forwarded.log" || status=$?
+test "$status" = 1
+grep -F '1 socket() call(s); first opener forwarded: socket(' "$tmp/forwarded.log"
 status=0
 RN_SOCKET_CHECK_MODE=fail bash "$root/tools/check_unit_no_sockets.sh" "$tmp/fixture" > "$tmp/fail.log" || status=$?
 test "$status" = 7
 grep -F 'exited 7' "$tmp/fail.log"
-echo 'Socket gate controls passed: clean, zero cases, exec child, and failing suite.'
+echo 'Socket gate controls passed: clean, zero cases, exec child, forwarded arguments, and failing suite.'

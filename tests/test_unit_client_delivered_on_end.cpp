@@ -304,4 +304,176 @@ static void test_client_payload_burst_past_batch_capacity_spreads_across_updates
 }
 
 REGISTER_UNIT_TEST( test_client_payload_burst_past_batch_capacity_spreads_across_updates );
+
+static int delivered_on_end_asserts = 0;
+
+static void delivered_on_end_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+
+    delivered_on_end_asserts++;
+}
+
+// The copying cursor at the smallest buffers, and the batch accessors given
+// no out argument. A capacity below one reads nothing, counts nothing and
+// leaves the cursor where it is; a capacity of exactly one byte takes a
+// one-byte payload; a payload larger than the buffer is refused whole,
+// counted RECEIVE_CURSOR_TOO_SMALL, and the cursor goes on to the next one
+// that fits. The accessors refuse a NULL out argument: nothing is returned
+// and nothing written, the misuse is counted, and (with the assert hook
+// installed) the call returns instead of trapping.
+
+static void test_client_receive_cursor_at_one_byte_and_null_out_arguments()
+{
+    struct delivered_on_end_pair_t pair;
+    delivered_on_end_setup( &pair );
+    delivered_on_end_connect( &pair );
+
+    const uint8_t one[1] = { 0xA1 };
+    const uint8_t three[3] = { 0xB1, 0xB2, 0xB3 };
+    const uint8_t two[2] = { 0xC1, 0xC2 };
+    rocketnet_server_transport_send_packet( pair.server, 0, one, (int) sizeof( one ) );
+    rocketnet_server_transport_send_packet( pair.server, 0, three, (int) sizeof( three ) );
+    rocketnet_server_transport_send_packet( pair.server, 0, two, (int) sizeof( two ) );
+    rocketnet_server_transport_send_packets( pair.server );
+
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 3 );
+
+    const uint64_t * counters = rocketnet_client_transport_counters( pair.client )->values;
+    const uint64_t too_small = counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL];
+
+    uint8_t copy[8];
+    memset( copy, 0xEE, sizeof( copy ) );
+    check( rocketnet_client_transport_receive_packet( pair.client, copy, 0 ) == 0 );
+    check( rocketnet_client_transport_receive_packet( pair.client, copy, -1 ) == 0 );
+    check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small );
+    check( copy[0] == 0xEE );
+
+    check( rocketnet_client_transport_receive_packet( pair.client, copy, 1 ) == 1 );
+    check( copy[0] == 0xA1 && copy[1] == 0xEE );
+    check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small );
+
+    check( rocketnet_client_transport_receive_packet( pair.client, copy, 2 ) == 2 );
+    check( copy[0] == 0xC1 && copy[1] == 0xC2 && copy[2] == 0xEE );
+    check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small + 1 );
+
+    check( rocketnet_client_transport_receive_packet( pair.client, copy, (int) sizeof( copy ) ) == 0 );
+    check( counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL] == too_small + 1 );
+
+    // the accessors with a NULL out argument
+
+    rocketnet_quiet( true );
+    rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rocketnet_assert_function( delivered_on_end_assert_hook );
+    delivered_on_end_asserts = 0;
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    check( rocketnet_client_transport_payload( pair.client, 0, NULL ) == NULL );
+
+    uint8_t * const * payload_data = NULL;
+    const int * payload_bytes = NULL;
+    check( rocketnet_client_transport_payloads( pair.client, NULL, &payload_bytes ) == 0 );
+    check( payload_bytes == NULL );
+    check( rocketnet_client_transport_payloads( pair.client, &payload_data, NULL ) == 0 );
+    check( payload_data == NULL );
+
+    check( rocketnet_client_transport_acked_packets( pair.client, NULL ) == 0 );
+
+    check( rocketnet_api_misuse_count() == misuse + 4 );
+    rocketnet_assert_function( saved_assert );
+
+    // and with them, the batch whole
+
+    check( rocketnet_client_transport_payloads( pair.client, &payload_data, &payload_bytes ) == 3 );
+    check( payload_data != NULL && payload_bytes != NULL );
+    if ( payload_data && payload_bytes )
+    {
+        check( payload_bytes[0] == 1 && payload_bytes[1] == 3 && payload_bytes[2] == 2 );
+        check( payload_data[1][0] == 0xB1 && payload_data[1][2] == 0xB3 );
+    }
+    int bytes = -1;
+    check( rocketnet_client_transport_payload( pair.client, 2, &bytes ) != NULL && bytes == 2 );
+
+    rn_test_client_transport_stop_and_destroy( pair.client );
+    rn_test_server_transport_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_client_receive_cursor_at_one_byte_and_null_out_arguments );
+
+// the server's acked payload packets over steps of both sides
+
+static int delivered_on_end_acked_over( struct delivered_on_end_pair_t * pair, int steps )
+{
+    int acked = 0;
+    for ( int i = 0; i < steps; i++ )
+    {
+        delivered_on_end_step( pair );
+        const int * client_index = NULL;
+        const uint64_t * packet_ids = NULL;
+        acked += rocketnet_server_transport_acked_packets( pair->server, &client_index, &packet_ids );
+    }
+    return acked;
+}
+
+static void delivered_on_end_send( struct delivered_on_end_pair_t * pair, uint8_t tag )
+{
+    const uint8_t payload[2] = { tag, 0x5A };
+    rocketnet_server_transport_send_packet( pair->server, 0, payload, (int) sizeof( payload ) );
+}
+
+// The message layer's deferred acks (rocketnet_client_transport_defer_payload_acks,
+// accept_payload; sdk/rocketnet_message_client.cpp links them): a deferred
+// client acks a payload only when the caller accepts it by its index in this
+// update's batch. An index outside the batch accepts nothing, also an index
+// that held a payload in an earlier, larger batch; an accepted payload is
+// acked once.
+
+static void test_client_deferred_acks_only_for_accepted_payloads_in_this_batch()
+{
+    struct delivered_on_end_pair_t pair;
+    delivered_on_end_setup( &pair );
+    delivered_on_end_connect( &pair );
+    delivered_on_end_acked_over( &pair, 10 );
+
+    rocketnet_client_transport_defer_payload_acks( pair.client );
+
+    // a batch of two, neither accepted
+
+    delivered_on_end_send( &pair, 1 );
+    delivered_on_end_send( &pair, 2 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 2 );
+
+    // a batch of one; indices past it, and before it, accept nothing
+
+    delivered_on_end_send( &pair, 3 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 1 );
+    rocketnet_client_transport_accept_payload( pair.client, 1 );
+    rocketnet_client_transport_accept_payload( pair.client, -1 );
+    rocketnet_client_transport_accept_payload( pair.client, 2 );
+
+    check( delivered_on_end_acked_over( &pair, 10 ) == 0 );
+
+    // the one accepted payload is acked, once
+
+    delivered_on_end_send( &pair, 4 );
+    rocketnet_server_transport_send_packets( pair.server );
+    delivered_on_end_client_update( &pair );
+    check( rocketnet_client_transport_num_payloads( pair.client ) == 1 );
+    rocketnet_client_transport_accept_payload( pair.client, 0 );
+
+    check( delivered_on_end_acked_over( &pair, 10 ) == 1 );
+
+    rn_test_client_transport_stop_and_destroy( pair.client );
+    rn_test_server_transport_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_client_deferred_acks_only_for_accepted_payloads_in_this_batch );
 #endif // #if ROCKETNET_DEV

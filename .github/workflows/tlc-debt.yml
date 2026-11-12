@@ -115,12 +115,14 @@ jobs:
     name: ${{ matrix.case.config }}
     needs: plan
     if: needs.plan.outputs.count != '0'
-    runs-on: [self-hosted, Linux, X64, fleet]
+    # Only vision carries tlc-debt runners (fleet record: rocketnet=2:tlc-debt): a case runs for up to 96 hours,
+    # nothing resumes a killed one, and no host that serves per-commit runners carries one.
+    runs-on: [self-hosted, Linux, X64, fleet, tlc-debt]
     timeout-minutes: 6000  # 100 h: the 96 h case deadline plus the build
     strategy:
       fail-fast: false
-      # Two cases at once, so the debt never holds more than two of the
-      # fleet's Linux runners for days and per-commit CI keeps the rest.
+      # Two cases at once, one per tlc-debt runner on vision; the
+      # per-commit hosts never carry a case.
       max-parallel: 2
       matrix:
         case: ${{ fromJSON(needs.plan.outputs.cases) }}
@@ -134,7 +136,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
-      - name: Run the case to its declared result
+      # Fetching the pinned runner and compiling the adapter and its control
+      # tests is a toolchain step, bounded at five times its normal length; the
+      # controls and the case below carry only the case's own deadline.
+      - name: Build the TLC adapter and its control tests
+        timeout-minutes: 1
         env:
           GIT_TERMINAL_PROMPT: '0'
           GOFLAGS: -mod=readonly
@@ -145,6 +151,19 @@ jobs:
           git rev-parse HEAD > "$job/source-revision.txt"
           git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
           git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
+          if ! command -v go >/dev/null 2>&1; then
+            echo "TOOL-MISSING go on $RUNNER_NAME"
+            exit 1
+          fi
+          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
+          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
+          (cd "$job/runner" && go test -c -o "$job/tlc-nightly.test" "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go")
+          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+
+      - name: Run the case to its declared result
+        run: |
+          set -euo pipefail
+          job="$TLC_EVIDENCE"
           # the pinned JAR, from the fleet's tla play
           jar=/opt/tla/tla2tools.jar
           want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
@@ -156,16 +175,9 @@ jobs:
             echo "TOOL-MISSING java on $RUNNER_NAME"
             exit 1
           fi
-          if ! command -v go >/dev/null 2>&1; then
-            echo "TOOL-MISSING go on $RUNNER_NAME"
-            exit 1
-          fi
 
-          adapter_sha=$(sha256sum tools/tlc_nightly.go | cut -d' ' -f1)
-          echo "$adapter_sha" > "$job/adapter-source-sha256.txt"
           export TLC_NIGHTLY_TEST_JAR="$jar" TLC_NIGHTLY_TEST_EVIDENCE="$job/controls"
-          (cd "$job/runner" && go test -timeout=0 -count=1 -v "$GITHUB_WORKSPACE/tools/tlc_nightly.go" "$GITHUB_WORKSPACE/tools/tlc_nightly_test.go") | tee "$job/adapter-controls.log"
-          (cd "$job/runner" && go build -ldflags "-X main.adapterSHA=$adapter_sha" -o "$job/tlc-nightly" "$GITHUB_WORKSPACE/tools/tlc_nightly.go")
+          (cd "$job/runner" && "$job/tlc-nightly.test" -test.timeout=0 -test.count=1 -test.v) | tee "$job/adapter-controls.log"
 
           # The case keeps its group index/cardinality and exact oracle, under
           # its own deadline; timeout signals the adapter and its TLC.
