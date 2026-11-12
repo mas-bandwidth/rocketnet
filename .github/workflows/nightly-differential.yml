@@ -25,6 +25,10 @@ permissions:
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   differential:
     name: nightly differential (netcode 1.02 live, with self-test)
@@ -35,7 +39,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
-      group: nightly-differential-${{ matrix.ref }}
+      group: nightly-differential-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: false
     steps:
 
@@ -44,7 +48,6 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
-        shell: bash
         run: |
           set -euo pipefail
           missing=0
@@ -63,20 +66,17 @@ jobs:
           exit "$missing"
 
       - name: Check out the pinned netcode reference
-        shell: bash
         run: |
           set -euo pipefail
           git clone --quiet https://github.com/mas-bandwidth/netcode.git netcode-ref
           git -C netcode-ref checkout --quiet 1dd10f892f4742498a99a0bb5d9b1f8f6e94f26b
 
       - name: Self-test: the gate passes stock and fails on every plant
-        shell: bash
         env:
           DIFFERENTIAL_JOBS: '4'
         run: bash tools/differential/selftest.sh netcode-ref
 
       - name: The differential, live against netcode 1.02
-        shell: bash
         env:
           DIFFERENTIAL_BUILD_DIR: ${{ github.workspace }}/build-differential
           DIFFERENTIAL_JOBS: '4'
