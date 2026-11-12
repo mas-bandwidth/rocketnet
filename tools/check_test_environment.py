@@ -287,6 +287,9 @@ SKIPPED_RE = re.compile(r"SKIPPED (test_[a-z0-9_]+): (\w+)")
 SKIPPED_COUNT_RE = re.compile(r"skipped: ([0-9]+)")
 RSS_OVER_RE = re.compile(r"test_[a-z0-9_]+ peak_rss_mb=[0-9]+ bound_mb=[0-9]+")
 REPORT_LINE_RE = re.compile(r"(slowest cases:|peak rss:|  .*)")
+# suite_keep_going_summary (tests/suite_runner.h): a passing nightly run says
+# no case failed and every collected case ran; any other count is not a pass.
+KEEP_GOING_PASS_RE = re.compile(r"keep going: 0 failed; ([0-9]+) of \1 collected cases ran")
 
 
 def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
@@ -302,7 +305,7 @@ def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
     problems = []
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         return ["the run does not end with a blank line, %r and a blank line" % PASSED_LINE]
-    printed, skipped, counts, other = [], {}, [], []
+    printed, skipped, counts, other, keep_going = [], {}, [], [], 0
     for line in lines[:-3]:
         if TEST_NAME_RE.fullmatch(line):
             printed.append(line)
@@ -317,11 +320,16 @@ def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
         if m:
             counts.append(int(m.group(1)))
             continue
+        if KEEP_GOING_PASS_RE.fullmatch(line):
+            keep_going += 1
+            continue
         if line == "" or RSS_OVER_RE.fullmatch(line) or REPORT_LINE_RE.fullmatch(line):
             continue
         other.append(line)
     if other:
         problems.append("lines that are not test names, SKIPPED lines or the report: %s" % "; ".join(other[:10]))
+    if keep_going > 1:
+        problems.append("expected at most one keep-going summary, found %d" % keep_going)
     if len(counts) != 1:
         problems.append("expected one 'skipped: <n>' line, found %d" % len(counts))
     elif counts[0] != len(skipped):
