@@ -107,7 +107,7 @@ VARIABLES prod,       \* each queue's producer bank (the flow index)
 
 vars == <<prod, cnt, gid, held, owner, demand, flushes, oob, shared, foreign, routeBad>>
 
-SlotKeys == Qs \X Bs \X 0..S
+SlotKeys == Qs \X Bs \X (0..S)
 
 Init ==
     /\ prod = [q \in Qs |-> 0]
