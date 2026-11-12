@@ -92,9 +92,11 @@ if [ "$count" -ne 1 ]; then
     fail "the plant site occurs $count times in $SOURCE, expected exactly 1 (has the full check moved?)"
     exit 1
 fi
-content="$( cat "$SOURCE" )"
-printf '%s\n' "${content/"$CLEAN"/"$PLANT"}" > "$SOURCE"
-if [ "$( grep -c -F "$PLANT" "$SOURCE" )" -ne 1 ]; then
+# sed, not bash's ${var/pattern/text}, which is quadratic over a file this size;
+# the pattern holds no regex metacharacter but the literal parentheses BRE reads as text
+sed 's/if ( send_buffer->num_packets >= send_buffer->capacity )/if ( send_buffer->num_packets > send_buffer->capacity )/' "$SOURCE" > "$WORK/planted"
+cp "$WORK/planted" "$SOURCE"
+if [ "$( grep -c -F "$PLANT" "$SOURCE" )" -ne 1 ] || [ "$( grep -c -F "$CLEAN" "$SOURCE" )" -ne 0 ]; then
     fail "the plant was not applied"
     exit 1
 fi
