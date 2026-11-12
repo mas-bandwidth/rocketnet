@@ -1254,6 +1254,55 @@ static void test_reservation_takes_a_packet_that_fits_exactly()
     node_free( b );
 }
 
+// The reservation of records that release nothing held: a CONFIG control
+// record makes no delivery and is taken on a full table; a code-2 record
+// makes one, whatever channel 0's ordered run holds, and is taken with one
+// left.
+
+static void test_reservation_of_control_and_unordered_records()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+
+    node_t * a = node_new( &config, 8 );
+    node_t * b = node_new( &config, 8 );
+    rn_channels_t * channels = &b->ordered.channels;
+
+    wire_packet_t control;
+    check( rn_ordered_announce_config( &a->ordered, &config ) );
+    check( write_packets( a, 1.0, &control, 1 ) == 1 );
+    channels->deliveries = channels->delivery_capacity;
+    check( rn_ordered_receive( &b->ordered, control.data, control.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( channels->deliveries == channels->delivery_capacity );
+    check( channels->error == ROCKETNET_DISCONNECT_REASON_NONE );
+    channels->deliveries = 0;
+    rn_ordered_end_update( &b->ordered );
+
+    wire_packet_t ordered[2];
+    for ( int i = 0; i < 2; i++ )
+    {
+        check( send_message( a, 0, (uint32_t) ( 24 + i ) ) != 0 );
+        check( write_packets( a, 1.0, &ordered[i], 1 ) == 1 );
+    }
+
+    uint8_t * p = rn_channels_start( &a->ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE, 30 );
+    check( p != NULL );
+    memset( p, 0x5A, 30 );
+    check( rn_channels_finish( &a->ordered.channels, 30 ) );
+    wire_packet_t unordered;
+    check( write_packets( a, 1.0, &unordered, 1 ) == 1 );
+
+    check( open_packet( b, &ordered[1] ) );
+    channels->deliveries = channels->delivery_capacity - 1;
+    check( rn_ordered_receive( &b->ordered, unordered.data, unordered.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    check( channels->deliveries == channels->delivery_capacity );
+    check( b->region->held_count == 1 );
+    check( !rn_region_exhausted( b->region ) );
+
+    node_free( a );
+    node_free( b );
+}
+
 static void test_large_between_small_keeps_order()
 {
     boundary_sizes_leg();
@@ -3695,6 +3744,7 @@ REGISTER_UNIT_TEST( test_large_between_small_keeps_order_one_payload_per_write )
 REGISTER_UNIT_TEST( test_large_between_small_keeps_order_with_refused_packets );
 REGISTER_UNIT_TEST( test_reservation_counts_the_held_run_past_2_to_the_24 );
 REGISTER_UNIT_TEST( test_reservation_takes_a_packet_that_fits_exactly );
+REGISTER_UNIT_TEST( test_reservation_of_control_and_unordered_records );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 REGISTER_UNIT_TEST( test_no_partial_delivery );
 REGISTER_UNIT_TEST( test_hostile_chunk_count_or_index_kicks );
