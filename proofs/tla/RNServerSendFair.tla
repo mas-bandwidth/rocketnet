@@ -51,7 +51,7 @@
 (*                       the last visit set it                             *)
 (*   Mode = "reorder":   later rounds walk the list from its end           *)
 (***************************************************************************)
-EXTENDS Naturals
+EXTENDS Integers
 
 CONSTANTS N,          \* connected clients, 1..N (rounds: slots 0..N-1)
           K,          \* payload frames the transport starts per update
