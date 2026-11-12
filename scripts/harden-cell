@@ -5,7 +5,7 @@
 #
 #   sudo scripts/harden-cell --bin build/bin --transport io_uring --row control --out DIR [options]
 #
-# Rows: control, space, churn, impair, hostile, longrun. The server runs in
+# Rows: control, space, churn, impair, duplicate, hostile, longrun. The server runs in
 # namespace rnhs-N (veth hs0-N, 10.77.N.1); its players and the hostile load
 # in rnhc-N (veth hc0-N, 10.77.N.2), N from --slot so cells can run side by
 # side. Impairment is tc netem on the egress of both veth ends, so each
@@ -33,7 +33,7 @@ quiet=1.5
 
 usage()
 {
-    echo "usage: sudo $0 --bin DIR --transport NAME --row control|space|churn|impair|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--hostile-pps P] [--frame-p99-us U]" >&2
+    echo "usage: sudo $0 --bin DIR --transport NAME --row control|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--hostile-pps P] [--frame-p99-us U]" >&2
     exit 2
 }
 
@@ -122,11 +122,17 @@ case "$row" in
         client_shape=(--messages 1 --reliable-every 1 --join-rate 100 --churn-clients 200 --churn-rate 20 --token-timeout 5)
         ;;
     impair)
-        # each direction: 1% loss, 0.5% duplicates, 2% reordered (sent
-        # without the delay), 15 ms +- 5 ms of normal jitter
-        netem="delay 15ms 5ms distribution normal reorder 2% loss 1% duplicate 0.5% limit 200000"
-        duplicates=1
+        # each direction: 1% loss, 2% reordered (sent without the delay),
+        # 15 ms +- 5 ms of normal jitter. No duplicates here: netem counts
+        # none, so they would make the packet equation an inequality
+        netem="delay 15ms 5ms distribution normal reorder 2% loss 1% limit 200000"
         min_delivery=97
+        ;;
+    duplicate)
+        # each direction: 1% duplicated, nothing lost; the duplicates are
+        # the equation's excess of arrivals and every one must be refused
+        netem="duplicate 1% limit 200000"
+        duplicates=1
         ;;
     hostile)
         hostile=1
