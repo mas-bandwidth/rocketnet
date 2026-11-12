@@ -214,7 +214,8 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 #define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
 #define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          11
+#define ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS               11       // a receive whose UDP_GRO control was truncated (MSG_CTRUNC) or malformed: taken as one datagram, as io_uring's GRO_CMSG_FAULTS
+#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          12
 
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
@@ -304,6 +305,9 @@ bool rocketnet_server_gso_test_send_retry_quit();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_drain_room();
+// Receives whose UDP_GRO control is truncated reach the GRO_CMSG_FAULTS
+// counter once each, through the drain, the publish and main's fold.
+bool rocketnet_server_gso_test_gro_cmsg_faults();
 
 #if defined( __linux__ )
 struct mmsghdr;
