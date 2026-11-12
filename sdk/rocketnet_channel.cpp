@@ -1809,7 +1809,6 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, bool on_wire, d
         rn_packet_item_t * item = &plan->items[plan->count];
         if ( rn_ordered_item( ordered, slot, unsent ? ROCKETNET_SEND_CLASS_ORDERED_PROGRESS : ROCKETNET_SEND_CLASS_RETRANSMIT, item ) )
         {
-            item->resend = unsent ? 0 : 1;
             plan->planned += item->alone ? ( plan->capacity - 1 ) : (uint64_t) item->bytes + ROCKETNET_CHANNEL_ORDERED_HEADER_BYTES;
             plan->count++;
         }
@@ -1937,12 +1936,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         // Rotate off the ready list before the dequeue, while the membership
         // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
 
-        const uint32_t ready_ticket = send->ready_ticket;
-        const uint32_t ready_generation = send->ready_generation;
-        if ( !rn_ready_remove_named( channels, channel, ready_ticket, ready_generation ) && send->ready_ticket != 0 )
-        {
-            rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
-        }
+        rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
 
         // dequeue: the descriptor leaves its channel's FIFO
 

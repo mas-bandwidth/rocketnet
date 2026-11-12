@@ -27,7 +27,7 @@ timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disco
 | `cKept` | `has_cookie`, `return_cookie` | the attempt's first cookie, kept |
 | `cLatest` | `has_latest_cookie`, `latest_cookie` | a later cookie (`ClientRecvCookie`) |
 | `cAltLatest` | `send_latest_cookie` | the next request carries the latest cookie |
-| `cKeys` | `keys`, `session_nonce` | the committed keys, `[att, nonce]`, or none |
+| `cKeys` | `keys` (derived from the nonce; the nonce itself is not kept) | the committed keys, `[att, nonce]`, or none |
 | `cEph` | `client_ephemeral_secret_key` | the ephemeral secret is live (not zeroed) |
 | `cIndex` | `client_index` | the index is known (from the first keep-alive) |
 | `cSinceSend`, `cSinceRecv`, `cAge` | `last_send_time`, `last_receive_time`, `attempt_start_time` | ticks since, saturating |
