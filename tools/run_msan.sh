@@ -16,9 +16,12 @@
 # tools/msan_known.txt and every test passes; 1 when a finding is not listed
 # there, a test crashes or exits non-zero, a fatal MemorySanitizer ERROR
 # appears in any process (its exit code is 0 here, so the suite reads that
-# case as passed), or the run stops without a test fail line. A finding is
-# the top frame of a MemorySanitizer warning. Its origin trace is printed
-# with it.
+# case as passed), or the run stops without a test fail line, or an entry in
+# the known list names no in-tree frame. A finding is keyed by an in-tree
+# frame of a MemorySanitizer warning: its top frame when that is in this
+# tree, else `<top frame> | <first in-tree frame below it>`, so a listed
+# entry covers one call site, never every warning sharing a libc top frame
+# such as `bcmp (bin/test)`. Its origin trace is printed with it.
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
 # clang, /opt/msan-libcxx-<clang++ -dumpversion>, built by
@@ -157,6 +160,26 @@ def frame(line):
     line = re.sub(r"^\s*#\d+\s+0x[0-9a-f]+\s+(?:in\s+)?", "", line)
     return line.strip()
 
+# An in-tree frame ends in a source location inside this tree: a relative
+# path (the root is already stripped) with a line, not the C++ library.
+IN_TREE = re.compile(r"(?:^|\s)(?!/|\.\./|include/c\+\+/)[\w.+-][\w./+-]*\.(?:c|cc|cpp|cxx|h|hpp|inl):\d+(?::\d+)?$")
+
+def in_tree(text):
+    return IN_TREE.search(text) is not None
+
+# A finding's key names an in-tree frame, so a listed finding is one call
+# site and never every warning that shares a top frame: the top frame when
+# it is in the tree, else the top frame, " | ", and the first in-tree frame
+# below it. A stack with no in-tree frame keys by its top frame alone, and
+# such a key can never be listed (the known list refuses it below).
+def finding_key(stack):
+    if in_tree(stack[0]):
+        return stack[0]
+    for entry in stack[1:]:
+        if in_tree(entry):
+            return "%s | %s" % (stack[0], entry)
+    return stack[0]
+
 # A fatal MSan error (allocation-size-too-big, out-of-memory, a CHECK) ends
 # its process with MSan's exitcode, which is 0 here, so the suite reads the
 # case as passed though it stopped where the error was raised. Up to clang 18
@@ -191,13 +214,16 @@ for text in texts:
         lines = part.splitlines()
         if not lines or "WARNING: MemorySanitizer:" not in lines[0]:
             continue
-        top = None
-        for line in lines:
-            if line.startswith("    #0 "):
-                top = frame(line)
+        # the warning's own stack: the frames before its origin section
+        stack = []
+        for line in lines[1:]:
+            if re.match(r"^    #\d+ ", line):
+                stack.append(frame(line))
+            elif stack:
                 break
-        if not top:
+        if not stack:
             continue
+        top = finding_key(stack)
         origin = []
         cap = False
         for line in lines:
@@ -215,6 +241,23 @@ for text in texts:
                 break
         warnings.append((top, origin))
 
+known = set()
+if os.path.exists(known_file):
+    for line in open(known_file, errors="replace"):
+        line = line.strip()
+        if line and not line.startswith("#"):
+            known.add(line)
+
+# every entry names an in-tree frame, judged on every run, clean or not: an
+# entry keyed by a top frame alone (`bcmp (bin/test)`) would pass every later
+# uninitialised compare with that top frame, wherever it is
+unkeyed = sorted(entry for entry in known if not in_tree(entry.split(" | ")[-1]))
+if unkeyed:
+    print("MSan: entries in %s name no in-tree frame (function and file:line under this tree):" % known_file)
+    for entry in unkeyed:
+        print(entry)
+    sys.exit(1)
+
 if not warnings:
     if status != 0:
         if failed:
@@ -227,13 +270,6 @@ if not warnings:
         sys.exit(1)
     print("MSan: clean")
     sys.exit(0)
-
-known = set()
-if os.path.exists(known_file):
-    for line in open(known_file, errors="replace"):
-        line = line.strip()
-        if line and not line.startswith("#"):
-            known.add(line)
 
 seen = {}
 order = []

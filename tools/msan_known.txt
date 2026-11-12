@@ -1,10 +1,15 @@
 # tools/msan_known.txt: the known MemorySanitizer findings for the portable
-# unit suite. A finding is the top frame of one MemorySanitizer warning, in
-# the form the gate prints: function and source location, with a binary-only
-# frame written as `(bin/test)` and a C++ library frame written under
-# `include/c++/`. A warning whose top frame is absent here fails
-# `bash tools/run_msan.sh`. The gate passes when the run is clean or every
-# finding is listed.
+# unit suite. A finding is keyed by an in-tree frame of one MemorySanitizer
+# warning, in the form the gate prints: its top frame (function and source
+# location) when that frame is in this tree, else the top frame, ` | `, and
+# the first in-tree frame below it, for example
+#   bcmp (bin/test) | some_check(int) tests/test_unit_x.cpp:12:5
+# A binary-only frame is written `(bin/test)` and a C++ library frame under
+# `include/c++/`; neither is in-tree. An entry that names no in-tree frame
+# (function and file:line under this tree) fails the gate on every run: a
+# top frame alone would pass every later warning with that top frame. A
+# warning whose key is absent here fails `bash tools/run_msan.sh`. The gate
+# passes when the run is clean or every finding is listed.
 #
 # The list is empty: the gate runs clean with clang 18.1.3 and 21.1.8. The
 # findings it used to hold were blind spots, each fixed at its cause:
@@ -17,7 +22,11 @@
 #   MSan-instrumented libc++ (tools/build_msan_libcxx.sh).
 # - three tests compared or scanned bytes nothing had written (a region's
 #   unused memory, a caller's arena block, a reassembly set's staging); each
-#   now starts those bytes zeroed.
+#   now starts those bytes zeroed. Two more of that shape (2026-11-12):
+#   test_unreliable_store_full_is_refused_and_counted and
+#   test_send_room_watch_crosses_once_and_rearms_below_half compared a whole
+#   connection region around a refused send; both now build their objects in
+#   zeroed blocks (mo_pair_setup_zeroed, rn_unit_arena_create_zeroed).
 #
 # A new entry is a finding with a written cause, never a line to make the
 # gate green: fix the cause where it can be fixed.
