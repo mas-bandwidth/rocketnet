@@ -1026,3 +1026,120 @@ static void test_message_server_create_reports_a_refused_allocation()
 }
 
 REGISTER_UNIT_TEST( test_message_server_create_reports_a_refused_allocation );
+
+// ---- abort on the region path returns the room ------------------------------------------
+//
+// An unreliable start the in-place path cannot take (the transport has no
+// frame to spare beyond the clients' round) takes a send descriptor and a
+// store chunk in the region (rn_endpoint_start); the public abort gives both
+// back (rn_endpoint_abort). Started and aborted many more times than the region
+// has descriptors, for each unreliable type: every start is given room, the
+// region's free descriptors and chunks are back where they were after each
+// abort, nothing is refused, and the connection goes on.
+
+static uint32_t cr_store_free_chunks( const rn_region_t * region )
+{
+    uint32_t free_chunks = 0;
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+    {
+        free_chunks += region->store.classes[c].free_count + ( region->store.classes[c].num_chunks - region->store.classes[c].fresh );
+    }
+    return free_chunks;
+}
+
+static void test_server_abort_on_the_region_path_returns_the_room()
+{
+    const int bound[2] = { 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 2, bound );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+
+    // the transport has no frame to spare beyond the round it keeps for the
+    // connected clients, so no start is written in place
+
+    w.t->capacity = w.t->started;
+
+    const rn_region_t * region = w.object->connections[0].region;
+    const uint32_t descriptors_free = region->descriptors_free;
+    const uint32_t chunks_free = cr_store_free_chunks( region );
+    const uint64_t queue_full = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL];
+    const uint64_t store_full = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL];
+    const uint64_t exhausted = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED];
+    check( descriptors_free > 0 );
+
+    const int types[3] = { ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT };
+    const int rounds = 3 * (int) descriptors_free + 3;
+    int given = 0;
+    for ( int n = 0; n < rounds; n++ )
+    {
+        uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, types[n % 3], 100 );
+        check( p != NULL );
+        check( w.object->in_place == 0 );                               // the region path, not a frame
+        check( region->descriptors_free == descriptors_free - 1 );
+        if ( p )
+        {
+            given++;
+            memset( p, 0x22, 100 );
+        }
+        rocketnet_message_server_abort( w.server, 0 );
+        check( region->descriptors_free == descriptors_free );
+        check( cr_store_free_chunks( region ) == chunks_free );
+        check( w.object->pending_connection == -1 );
+    }
+    check( given == rounds );
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == queue_full );
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] == store_full );
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == exhausted );
+
+    // the reliable starts (rn_channels_cancel) give their room back the same
+    // way, and so does an unreliable start over one packet, promoted to the
+    // reliable path (its pending type stays unreliable)
+
+    const int reliable[4] = { ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_UNRELIABLE };
+    for ( int n = 0; n < rounds; n++ )
+    {
+        uint8_t * p = rocketnet_message_server_start( w.server, 0, 0, reliable[n % 4], n % 4 == 3 ? 2000 : 100 );
+        check( p != NULL );
+        rocketnet_message_server_abort( w.server, 0 );
+        check( region->descriptors_free == descriptors_free );
+        check( cr_store_free_chunks( region ) == chunks_free );
+    }
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == queue_full );
+
+    // an in-place start holds no descriptor, and its abort frees none (a
+    // debug build asserts on a free of no descriptor)
+
+    w.t->capacity = w.t->started + 4;
+    {
+        gaps_assert_scope_t asserts;
+        for ( int n = 0; n < 3; n++ )
+        {
+            check( rocketnet_message_server_start( w.server, 0, 0, types[n], 100 ) != NULL );
+            check( w.object->in_place != 0 );
+            check( region->descriptors_free == descriptors_free );
+            rocketnet_message_server_abort( w.server, 0 );
+            check( region->descriptors_free == descriptors_free );
+        }
+        check( g_gaps_asserts == 0 );
+    }
+    w.t->capacity = w.t->started;
+
+    // the connection goes on: a message sent and finished on the same path
+    // is queued, and nothing ends the connection
+
+    uint8_t message[16];
+    memset( message, 0x21, sizeof( message ) );
+    check( rocketnet_message_server_send( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, message, (int) sizeof( message ) ) != 0 );
+    check( region->descriptors_free == descriptors_free - 1 );
+    w.t->capacity = w.t->started + 4;
+    rocketnet_message_server_send_packets( w.server );
+    w.time += CR_DT;
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+    check( rocketnet_message_server_client_connected( w.server, 0 ) == 1 );
+    check( rocketnet_message_server_disconnect_reason( w.server, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( w.t->disconnects == 0 );
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_abort_on_the_region_path_returns_the_room );
