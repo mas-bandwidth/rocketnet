@@ -74,7 +74,55 @@
 #define ROCKETNET_DST_SCHEDULE_SEQ_WRAP_32   4
 #define ROCKETNET_DST_SCHEDULE_BURST         5
 #define ROCKETNET_DST_SCHEDULE_DUP_STORM     6
-#define ROCKETNET_DST_NUM_SCHEDULES          7
+#define ROCKETNET_DST_SCHEDULE_OUTAGE        7
+#define ROCKETNET_DST_SCHEDULE_OUTAGE_PAST   8
+#define ROCKETNET_DST_NUM_SCHEDULES          9
+
+// The connect token's timeout_seconds, T: a session silent for T ends.
+#define ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS  5
+
+// outage and outage-past: a drawn subset of the clients (at least one left
+// bright) goes dark in a drawn direction for T - 1 s (outage, survived) or
+// T + 1 s (outage-past, both ends time out). The wire drops a dark
+// direction's packets. Through the run the dark clients send and are sent
+// messages of at most one packet (no blocks, so a held sender's one probe
+// is one frame). In the window they are offered only reliable messages,
+// OUTAGE_OFFERS draws a step each way, with no outstanding cap.
+//
+// The schedule's send side is small so that the library's no-room refusal
+// is reached in the window: a connection's send memory is the configured
+// side (16 messages, 12288 bytes) plus a resend reserve of its send budget
+// times message_resend_delay_max_ms (rn_region_reserve_sizes), so the delay
+// cap is 250 ms (the server's 10000 kbps then reserves 312500 bytes, not
+// 2.5 MB). The numbering window is the smallest (64), so a dark sender has
+// numbered all it can within the window's first second and is left with
+// only its probe; max_message_bytes is the most 64 fragments carry.
+#define ROCKETNET_DST_OUTAGE_STEPS           ( ( ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS - 1 ) * 100 )
+#define ROCKETNET_DST_OUTAGE_PAST_STEPS      ( ( ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS + 1 ) * 100 )
+#define ROCKETNET_DST_OUTAGE_C2S             1
+#define ROCKETNET_DST_OUTAGE_S2C             2
+#define ROCKETNET_DST_OUTAGE_BOTH            3
+#define ROCKETNET_DST_OUTAGE_SEND_BYTES      12288
+#define ROCKETNET_DST_OUTAGE_SEND_MESSAGES   16
+#define ROCKETNET_DST_OUTAGE_RESEND_MAX_MS   250
+#define ROCKETNET_DST_OUTAGE_WINDOW          64
+#define ROCKETNET_DST_OUTAGE_MAX_MESSAGE     ( ROCKETNET_DST_OUTAGE_WINDOW * 1152 )
+#define ROCKETNET_DST_OUTAGE_MAX_BYTES       1152
+#define ROCKETNET_DST_OUTAGE_OFFERS          16
+// liveness_delivered's in-flight slack under this send side: a reliable
+// send queues behind at most the outstanding cap plus one message (as in
+// ROCKETNET_DST_CHECK_BUDGET_STEPS), 81920 bytes, which is more numbers
+// (one per 1152-byte packet, 72) than the window holds, so it waits up to
+// two windows' worth of round trips, each two one-way wire bounds
+// (ROCKETNET_DST_CHECK_WIRE_STEPS), on top of the default slack. Derived
+// from the constants, not measured: 96 + 2 x 60 = 216 steps.
+#define ROCKETNET_DST_OUTAGE_WINDOW_ROUNDS \
+    ( ( ROCKETNET_DST_CHECK_OUTSTANDING_CAP + ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES + ROCKETNET_DST_OUTAGE_MAX_MESSAGE - 1 ) / \
+      ROCKETNET_DST_OUTAGE_MAX_MESSAGE )
+#define ROCKETNET_DST_OUTAGE_IN_FLIGHT_STEPS \
+    ( ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS + ROCKETNET_DST_OUTAGE_WINDOW_ROUNDS * 2 * ROCKETNET_DST_CHECK_WIRE_STEPS )
+// probe_paced judges a sender over each 100 steps (one second) it was held
+#define ROCKETNET_DST_OUTAGE_SECOND_STEPS    100
 
 // clock-back: the step back is a whole number of milliseconds from one
 // frame (10 ms) to 5 s; the skew check's bound for the stepped endpoint is
@@ -122,6 +170,8 @@ static inline const char * rocketnet_dst_schedule_name( int schedule )
         "seq-wrap-32",
         "burst",
         "dup-storm",
+        "outage",
+        "outage-past",
     };
     if ( schedule < 0 || schedule >= ROCKETNET_DST_NUM_SCHEDULES )
     {
@@ -274,6 +324,7 @@ struct rocketnet_dst_options_t
     int schedule;               // ROCKETNET_DST_SCHEDULE_*, 0 for none
     int witness;                // ROCKETNET_DST_WITNESS_*, 0 for none: a unit case's planted defect
     int reliable_timeout_ms;    // 0: the default reliable_message_timeout_ms; else that accepted value
+    int outage_control;         // internal: the outage control run (no client dark) bright_unaffected compares with
 };
 
 // Reversed witnesses: a unit case plants one defect in what the checks
@@ -286,6 +337,9 @@ struct rocketnet_dst_options_t
 #define ROCKETNET_DST_WITNESS_NONE          0
 #define ROCKETNET_DST_WITNESS_ORDERED_SWAP  1
 #define ROCKETNET_DST_WITNESS_FOREIGN_ACK   2
+// OUTAGE_BRIGHT (outage schedules): the wire drops one bright client's
+// packets in the window too, while the checks still judge it as bright
+#define ROCKETNET_DST_WITNESS_OUTAGE_BRIGHT 3
 
 struct rocketnet_dst_result_t
 {
@@ -306,6 +360,15 @@ struct rocketnet_dst_result_t
     uint64_t duplicate_payloads;    // payloads a receiver took twice (the library's duplicate refusals)
     uint64_t server_reliable_timeouts;  // server connections the message layer ended with RELIABLE_TIMED_OUT
     uint64_t client_reliable_timeouts;  // client connections the message layer ended with RELIABLE_TIMED_OUT
+    uint64_t message_kicks;             // message-layer kicks for any reason
+    uint64_t budget_aborts;             // frames started and then aborted for a reliable budget wait
+    uint64_t bright_gap[ROCKETNET_DST_MAX_CLIENTS * 2]; // outage: each client's longest window gap, [client * 2 + direction]
+    uint64_t session_ends;              // client session ends of any kind, explained or not
+    uint64_t refused;                   // harness sends the library refused, both directions
+    uint64_t accepted_reliable;         // reliable harness sends the library accepted, both directions
+    uint64_t frames_max;                // outage: the most frames one held sender started in a judged second
+    uint64_t seconds_judged;            // outage: the seconds probe_paced judged
+    uint64_t outage_ends;               // outage-past: the dark session ends judged, both ends counted
 };
 
 struct rocketnet_dst_world_t;
@@ -352,6 +415,13 @@ typedef struct rocketnet_dst_client_t
     uint32_t epoch[2];
     unsigned mixed[2];
     uint64_t wrap_generation;   // seq-wrap: the last session seen crossing the boundary
+
+    // no_unscheduled_end: the session (generation) whose end a script
+    // explains (a drawn churn, an opted-in reliable timeout, outage-past),
+    // and the transport state the last step ended in
+    uint64_t explained_generation;
+    uint64_t connect_step;              // the step the current generation's connect began
+    int end_state;
 } rocketnet_dst_client_t;
 
 // One schedule's drawn plan and what it observed. Endpoint e is 0 for the
@@ -380,6 +450,46 @@ struct rocketnet_dst_schedule_t
     uint64_t max_sequence_jump;
     uint64_t burst_sent;
     uint64_t burst_received;
+
+    // outage, outage-past: the dark clients (bit i, client i), the dark
+    // direction (ROCKETNET_DST_OUTAGE_*), and per client the session it held
+    // on both ends when the window opened (generation 0: none), its slot,
+    // whether each end still holds it, and each end's last receive time
+    // while it did
+    uint32_t dark_mask;
+    int direction;
+    int witness_client;                     // OUTAGE_BRIGHT: the bright client also dropped, or -1
+    uint64_t dark_generation[ROCKETNET_DST_MAX_CLIENTS];
+    int dark_slot[ROCKETNET_DST_MAX_CLIENTS];
+    int dark_client_live[ROCKETNET_DST_MAX_CLIENTS];
+    int dark_server_live[ROCKETNET_DST_MAX_CLIENTS];
+    double dark_client_heard[ROCKETNET_DST_MAX_CLIENTS];
+    double dark_server_heard[ROCKETNET_DST_MAX_CLIENTS];
+    int dark_slot_reused[ROCKETNET_DST_MAX_CLIENTS];
+
+    // probe_paced: whether each dark session's two senders are held (no ack
+    // progress for RN_PROBE_SECONDS, so only the probe may be resent), the
+    // held steps counted toward the current judged second, the frames each
+    // started in those steps, and the shortest resend delay each had in them
+    int probe_held[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t held_steps[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t frames[ROCKETNET_DST_MAX_CLIENTS][2];
+    double resend_delay_low[ROCKETNET_DST_MAX_CLIENTS][2];
+    double peer_delay_low[ROCKETNET_DST_MAX_CLIENTS][2];   // the peer's, while it reaches the sender
+    uint64_t first_sends[ROCKETNET_DST_MAX_CLIENTS][2];    // numbers first sent in the counted steps
+    uint64_t numbers_sent[ROCKETNET_DST_MAX_CLIENTS][2];   // each side's numbers written at least once, at the last step
+    uint64_t frames_max;                    // the most frames one sender started in a judged second
+    uint64_t seconds_judged;
+
+    // bright_unaffected: per client and direction ([0] to the server, [1]
+    // to the client), the step and session of the last delivery, the
+    // longest gap between two deliveries of one session before the window,
+    // and the longest inside it
+    uint64_t delivery_step[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t delivery_generation[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t gap_before[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t gap_inside[ROCKETNET_DST_MAX_CLIENTS][2];
+    uint64_t outage_ends;                   // outage-past: dark session ends judged (both ends counted)
 };
 
 // the delivery ROCKETNET_DST_WITNESS_ORDERED_SWAP holds back
@@ -433,6 +543,26 @@ typedef struct rocketnet_dst_world_t
     uint64_t fault_steps;
     struct rocketnet_dst_schedule_t schedule;
     uint64_t reliable_timeouts[2];  // the message layer's RELIABLE_TIMED_OUT kicks: server, clients
+    int reliable_timeout_run;       // the run opted in to reliable_message_timeout_ms
+
+    // the message objects' own counters: [0] the server's, [1] every client
+    // object's summed (a client's object is rebuilt per session, so each is
+    // added here before it is destroyed); the run's end adds the live ones
+    struct rocketnet_counters_t message_counters[2];
+
+    // the harness's own sends, by sender ([0] clients, [1] the server): those
+    // offered to the library, those it accepted, those it refused, and the
+    // reliable ones offered and accepted (send_floor, refusals_agree)
+    uint64_t offered[2];
+    uint64_t accepted[2];
+    uint64_t refused[2];
+    uint64_t offered_reliable[2];
+    uint64_t accepted_reliable[2];
+    uint64_t message_kicks;         // every message-layer kick, any reason
+    uint64_t budget_aborts;         // frames aborted because the send budget could not pay a due reliable packet
+    int outage_control;             // the outage control run: the same draws with no client dark
+    const uint64_t * bright_control; // bright_unaffected: the control run's longest window gap, [client * 2 + direction]
+    uint64_t session_ends;          // every client session end seen, explained or not
     struct rocketnet_dst_check_state_t check;
     int witness;
     int witness_state;                  // 0 armed, 1 holding (ORDERED_SWAP), 2 fired
@@ -524,6 +654,78 @@ static inline int rocketnet_dst_burst_holding( const rocketnet_dst_world_t * w, 
     const struct rocketnet_dst_schedule_t * s = &w->schedule;
     return s->kind == ROCKETNET_DST_SCHEDULE_BURST && client_index == s->endpoint &&
            w->step >= s->start_step && w->step < s->end_step;
+}
+
+// outage: whether client i is one of the run's dark clients (through the
+// whole run, so its messages stay within one packet), and whether the window
+// is open at this step.
+
+static inline int rocketnet_dst_outage_run( const rocketnet_dst_world_t * w )
+{
+    return w->schedule.kind == ROCKETNET_DST_SCHEDULE_OUTAGE || w->schedule.kind == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST;
+}
+
+static inline int rocketnet_dst_outage_dark( const rocketnet_dst_world_t * w, int client_index )
+{
+    return rocketnet_dst_outage_run( w ) && client_index >= 0 && client_index < ROCKETNET_DST_MAX_CLIENTS &&
+           ( w->schedule.dark_mask >> client_index ) & 1u;
+}
+
+static inline int rocketnet_dst_outage_open( const rocketnet_dst_world_t * w )
+{
+    return rocketnet_dst_outage_run( w ) && w->step >= w->schedule.start_step && w->step < w->schedule.end_step;
+}
+
+// outage: whether a dark session's side (0 the client, 1 the server) still
+// receives its peer's packets in the window: a one-way outage leaves the
+// other direction bright.
+
+static inline int rocketnet_dst_outage_reaches( const struct rocketnet_dst_schedule_t * s, int side )
+{
+    return !( s->direction & ( side ? ROCKETNET_DST_OUTAGE_C2S : ROCKETNET_DST_OUTAGE_S2C ) );
+}
+
+// outage: how many reliable numbers a connection's sender has written at
+// least once: every number it has numbered (below next) but those in the
+// window it holds still unsent. Its growth over a step is the step's first
+// sends, which probe pacing still allows (m9.3).
+
+static inline uint64_t rocketnet_dst_outage_numbers_sent( const struct rn_message_connection_t * connection )
+{
+    const rn_region_t * region = connection->region;
+    const uint64_t U = connection->ordered.send.U;
+    const uint64_t next = connection->ordered.send.next;
+    uint64_t unsent = 0;
+    for ( uint64_t n = U; n < next; n++ )
+    {
+        const rn_send_number_t * slot = &region->send_numbers[n & ( region->window - 1 )];
+        if ( slot->number == n && !slot->acked && rn_send_number_never_sent( slot->last_send ) )
+        {
+            unsent++;
+        }
+    }
+    return next - unsent;
+}
+
+// outage: the wire drops this packet of client i's, sent to the server
+// (to_server) or to the client, while the window is open and that direction
+// is dark for the client (or for the OUTAGE_BRIGHT witness's bright client).
+
+static inline int rocketnet_dst_outage_drops( rocketnet_dst_world_t * w, int client_index, int to_server )
+{
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    const int dark = rocketnet_dst_outage_dark( w, client_index ) || ( client_index >= 0 && client_index == s->witness_client );
+    const int bit = to_server ? ROCKETNET_DST_OUTAGE_C2S : ROCKETNET_DST_OUTAGE_S2C;
+    if ( !dark || !rocketnet_dst_outage_open( w ) || !( s->direction & bit ) )
+    {
+        return 0;
+    }
+    s->fired++;
+    if ( w->client[client_index].protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        w->check.outage_handshake_seen = 1;
+    }
+    return 1;
 }
 
 static inline void rocketnet_dst_endpoint_reset_payloads( rocketnet_dst_endpoint_t * endpoint )
@@ -694,6 +896,11 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
                 }
             }
 
+            if ( rocketnet_dst_outage_drops( w, rocketnet_dst_world_client_for_address( w, &from ), 1 ) )
+            {
+                continue;   // outage: a dark client's packet to the server is lost
+            }
+
             rocketnet_dst_server_process( endpoint, &from, packet, bytes, time );
         }
 
@@ -737,6 +944,11 @@ static inline void rocketnet_dst_endpoint_update( void * transport, double time 
     while ( !holding &&
             ( bytes = rocketnet_network_simulator_receive( w->sim, &w->client[endpoint->client_index].address, wire_time, &from, packet ) ) > 0 )
     {
+        if ( rocketnet_dst_outage_drops( w, endpoint->client_index, 0 ) )
+        {
+            continue;   // outage: the server's packet to a dark client is lost
+        }
+
         received++;
 
         int payload_bytes = 0;
@@ -811,6 +1023,28 @@ static inline int rocketnet_dst_endpoint_acked( void * transport, const int ** c
     return w->client[endpoint->client_index].protocol.num_acked;
 }
 
+// probe_paced: the dark client whose held session's sender starts (or
+// aborts) this frame, or -1. The server's frame for slot client_index is
+// the server side of the session in that slot; a client's frame is its own.
+
+static inline int rocketnet_dst_outage_frame_client( rocketnet_dst_world_t * w, const rocketnet_dst_endpoint_t * endpoint,
+                                                     int client_index, int receiver )
+{
+    if ( !rocketnet_dst_outage_open( w ) )
+    {
+        return -1;
+    }
+    const int dark = endpoint->is_server ? receiver - 1 : endpoint->client_index;
+    if ( !rocketnet_dst_outage_dark( w, dark ) || w->schedule.dark_generation[dark] == 0 ||
+         !w->schedule.probe_held[dark][endpoint->is_server ? 1 : 0] )
+    {
+        return -1;
+    }
+    const uint64_t session = endpoint->is_server ? rocketnet_client_slots_client_id( w->server.client_slots, client_index )
+                                                 : w->client[dark].generation * 256 + (uint64_t) dark;
+    return session == w->schedule.dark_generation[dark] * 256 + (uint64_t) dark ? dark : -1;
+}
+
 static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, int client_index, int request_bytes,
                                                              struct rocketnet_packet_context_t * context )
 {
@@ -852,6 +1086,15 @@ static inline uint8_t * rocketnet_dst_endpoint_start_packet( void * transport, i
     context->client_index = client_index;
     endpoint->pending_frame = slot;
     endpoint->frame_receiver[slot] = receiver;
+
+    // probe_paced: a frame a held dark session's sender starts in the window
+    // (each one takes a slot of the transport's send capacity, sent or aborted)
+    const int dark = rocketnet_dst_outage_frame_client( w, endpoint, client_index, receiver );
+    if ( dark >= 0 )
+    {
+        w->schedule.frames[dark][endpoint->is_server ? 1 : 0]++;
+    }
+
     return wire_start;
 }
 
@@ -897,7 +1140,32 @@ static inline int rocketnet_dst_endpoint_finish_packet( void * transport, struct
 static inline void rocketnet_dst_endpoint_abort_packet( void * transport, struct rocketnet_packet_context_t * context )
 {
     rocketnet_dst_endpoint_t * endpoint = (rocketnet_dst_endpoint_t *) transport;
-    (void) context;
+    rocketnet_dst_world_t * w = endpoint->world;
+
+    // a frame aborted because the send budget could not pay the reliable
+    // packet the plan reported due (budget_aborts, reported); probe_paced
+    // takes it out of a held sender's frames, since it is not the probe's
+    if ( endpoint->pending_frame >= 0 )
+    {
+        const int receiver = endpoint->frame_receiver[endpoint->pending_frame];
+        const int owner = endpoint->is_server ? receiver - 1 : endpoint->client_index;
+        if ( owner >= 0 && owner < w->num_clients && w->client[owner].message )
+        {
+            struct rn_message_object_t * object = endpoint->is_server ? &w->message_server->object : &w->client[owner].message->object;
+            const struct rn_message_connection_t * connection =
+                rn_message_object_connection( object, endpoint->is_server ? context->client_index : 0 );
+            if ( connection && connection->budget.reliable_waiting )
+            {
+                w->budget_aborts++;
+                const int dark = rocketnet_dst_outage_frame_client( w, endpoint, context->client_index, receiver );
+                const int side = endpoint->is_server ? 1 : 0;
+                if ( dark >= 0 && w->schedule.frames[dark][side] > 0 )
+                {
+                    w->schedule.frames[dark][side]--;
+                }
+            }
+        }
+    }
     endpoint->pending_frame = -1;
 }
 
@@ -1055,6 +1323,31 @@ static inline void rocketnet_dst_endpoint_disconnect( void * transport, int clie
     if ( reason == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT )
     {
         w->reliable_timeouts[endpoint->is_server ? 0 : 1]++;
+    }
+
+    // no_unscheduled_end: the message layer ends a connection only for a
+    // reliable message past an opted-in timeout. Any other kick (a full send
+    // side, a wire violation, memory exhausted, a message not received) is a
+    // session end no script explains. The explained one names the session it
+    // ends: the slot's for the server, the client's current one otherwise.
+    w->message_kicks++;
+    const int kicked = endpoint->is_server ? target : endpoint->client_index;
+    const uint64_t kicked_generation = endpoint->is_server
+                                           ? rocketnet_client_slots_client_id( w->server.client_slots, client_index ) >> 8
+                                           : ( kicked >= 0 ? w->client[kicked].generation : 0 );
+    if ( reason == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT && w->reliable_timeout_run )
+    {
+        if ( kicked >= 0 && kicked < w->num_clients && kicked_generation == w->client[kicked].generation )
+        {
+            w->client[kicked].explained_generation = kicked_generation;
+        }
+    }
+    else
+    {
+        char what[160];
+        snprintf( what, sizeof( what ), "%s kicked client=%d generation=%llu reason=%d",
+                  endpoint->is_server ? "server" : "client", kicked, (unsigned long long) kicked_generation, reason );
+        rocketnet_dst_check_unscheduled_kick( &w->check, what );
     }
 
     if ( endpoint->is_server )
@@ -1245,6 +1538,16 @@ static inline uint32_t rocketnet_dst_next_sequence( rocketnet_dst_client_t * cli
     return client->sequence[type & 7][direction]++;
 }
 
+// Adds one counter block into another, value by value.
+
+static inline void rocketnet_dst_counters_add( struct rocketnet_counters_t * into, const struct rocketnet_counters_t * from )
+{
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        into->values[i] += from->values[i];
+    }
+}
+
 // A new session gets a fresh message object, as section 3's restart does:
 // nothing of the old session survives into the new one.
 
@@ -1253,6 +1556,7 @@ static inline int rocketnet_dst_client_message_build( rocketnet_dst_world_t * w,
     rocketnet_dst_client_t * client = &w->client[index];
     if ( client->message )
     {
+        rocketnet_dst_counters_add( &w->message_counters[1], &client->message->object.counters );
         rocketnet_message_client_destroy( client->message );
     }
     client->endpoint.pending_frame = -1;
@@ -1277,7 +1581,12 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
     memset( &signed_fields, 0, sizeof( signed_fields ) );
     memset( &private_fields, 0, sizeof( private_fields ) );
 
+    // a new session follows an end a script explains, or none before it
+    rocketnet_dst_check_session_end( &w->check, index, client->generation, client->explained_generation,
+                                     "client reconnects", 0 );
+
     client->generation++;
+    client->connect_step = w->step;
     rocketnet_dst_check_generation( &w->check, index, client->generation );
 
     // every session, the first included, gets a fresh message object at
@@ -1298,7 +1607,7 @@ static inline void rocketnet_dst_connect_client( rocketnet_dst_world_t * w, int 
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = w->unix_ts;
     signed_fields.expire_timestamp = w->unix_ts + 300;
-    signed_fields.timeout_seconds = 5;
+    signed_fields.timeout_seconds = ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
 
     const uint8_t server_address_bytes[6] = { 203, 0, 113, 10, 0x40, 0x9c };
@@ -1339,8 +1648,20 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
 
     const int channel = (int) rocketnet_dst_substream_uniform( traffic, 0, ROCKETNET_DST_NUM_CHANNELS - 1 );
     const int type = rocketnet_dst_channel_type( client, channel, direction );
-    const int size = rocketnet_dst_draw_size( traffic, type );
+    int size = rocketnet_dst_draw_size( traffic, type );
     int session = 16 + index;
+
+    // outage: a dark client's messages fit one packet all run, and in the
+    // window only reliable ones are offered, past the outstanding cap
+    const int dark_open = rocketnet_dst_outage_dark( w, index ) && rocketnet_dst_outage_open( w );
+    if ( rocketnet_dst_outage_dark( w, index ) && size > ROCKETNET_DST_OUTAGE_MAX_BYTES )
+    {
+        size = ROCKETNET_DST_OUTAGE_MAX_BYTES;
+    }
+    if ( dark_open && ( type == 0 || type == 1 || type == 5 ) )
+    {
+        return;
+    }
 
     if ( direction == 0 )
     {
@@ -1364,7 +1685,8 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     const int current = generation == (uint32_t) client->generation;
     const uint64_t identity = direction == 0 ? ( (uint64_t) generation * 256 + (uint64_t) index ) : (uint64_t) generation;
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
+    if ( reliable && !dark_open &&
+         rocketnet_dst_check_outstanding( &w->check, session, identity ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
     {
         return;
     }
@@ -1396,6 +1718,14 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     {
         sent = rocketnet_message_server_send( w->message_server, slot, channel, type, payload, size );
     }
+
+    // send_floor counts the reliable sends the library has no reason to
+    // refuse: every one but a dark session's in its outage window
+    w->offered[direction]++;
+    w->offered_reliable[direction] += reliable && !dark_open ? 1 : 0;
+    w->accepted[direction] += sent ? 1 : 0;
+    w->accepted_reliable[direction] += sent && reliable && !dark_open ? 1 : 0;
+    w->refused[direction] += sent ? 0 : 1;
 
     if ( sent )
     {
@@ -1466,6 +1796,9 @@ static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int inde
         const uint32_t sent = direction == 0
                                   ? rocketnet_message_client_send( client->message, channel, type, payload, size )
                                   : rocketnet_message_server_send( w->message_server, slot, channel, type, payload, size );
+        w->offered[direction]++;
+        w->accepted[direction] += sent ? 1 : 0;
+        w->refused[direction] += sent ? 0 : 1;
         if ( sent )
         {
             const uint64_t identity = direction == 0
@@ -1667,6 +2000,7 @@ static inline void rocketnet_dst_world_draw( rocketnet_dst_world_t * w, uint64_t
         w->client[i].generation = 0;
         w->client[i].pause_until = -1;
         w->client[i].last_state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+        w->client[i].end_state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
         w->client[i].last_server_slot = -1;
     }
 }
@@ -1690,6 +2024,7 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
 {
     struct rocketnet_dst_schedule_t * s = &w->schedule;
     s->kind = options->schedule;
+    s->witness_client = -1;
     if ( s->kind <= ROCKETNET_DST_SCHEDULE_NONE || s->kind >= ROCKETNET_DST_NUM_SCHEDULES )
     {
         s->kind = ROCKETNET_DST_SCHEDULE_NONE;
@@ -1742,6 +2077,29 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
             s->end_step = s->start_step + length;
             break;
         }
+        case ROCKETNET_DST_SCHEDULE_OUTAGE:
+        case ROCKETNET_DST_SCHEDULE_OUTAGE_PAST:
+        {
+            // a dark subset that leaves at least one client bright (every
+            // run has two clients or more), the direction (outage-past is
+            // dark both ways, so both ends time out), the start, and T - 1 s
+            // or T + 1 s
+            // (a run of one client, --clients 1, has no bright one: nothing goes dark)
+            const uint64_t all = ( 1ULL << w->num_clients ) - 1;
+            s->dark_mask = w->num_clients < 2 ? 0 : (uint32_t) rocketnet_dst_substream_uniform( &s->draws, 1, all - 1 );
+            if ( options->outage_control )
+            {
+                s->dark_mask = 0;   // the control run: the same draws, no client dark
+            }
+            s->direction = s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE
+                               ? (int) rocketnet_dst_substream_uniform( &s->draws, ROCKETNET_DST_OUTAGE_C2S, ROCKETNET_DST_OUTAGE_BOTH )
+                               : ROCKETNET_DST_OUTAGE_BOTH;
+            const uint64_t length = s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE ? ROCKETNET_DST_OUTAGE_STEPS
+                                                                             : ROCKETNET_DST_OUTAGE_PAST_STEPS;
+            s->start_step = rocketnet_dst_schedule_draw_step( s, fault_steps, length );
+            s->end_step = s->start_step + length;
+            break;
+        }
         default:
             // seq-wrap-31 and seq-wrap-32 draw nothing: the process's session
             // sequence start (ROCKETNET_DEV_SESSION_SEQUENCE_START) is the fault
@@ -1750,6 +2108,8 @@ static inline int rocketnet_dst_schedule_draw( rocketnet_dst_world_t * w, uint64
 
     return 1;
 }
+
+static inline void rocketnet_dst_outage_open_window( rocketnet_dst_world_t * w );
 
 // The schedule's per-step faults, applied before the endpoints update.
 
@@ -1761,6 +2121,11 @@ static inline void rocketnet_dst_schedule_step( rocketnet_dst_world_t * w )
         s->clock_offset[s->endpoint] -= (double) s->amount * 0.001;
         s->fired++;
         rocketnet_dst_schedule_trace( w, (uint64_t) s->endpoint, s->amount, 0 );
+    }
+
+    if ( rocketnet_dst_outage_run( w ) && w->step == s->start_step )
+    {
+        rocketnet_dst_outage_open_window( w );
     }
 
     if ( s->kind == ROCKETNET_DST_SCHEDULE_BURST && s->pending && w->step >= s->start_step )
@@ -1910,6 +2275,332 @@ static inline double rocketnet_dst_skew_bound( const rocketnet_dst_world_t * w, 
     return ROCKETNET_DST_SKEW_BOUND_SECONDS;
 }
 
+// outage: the window opens. Each dark client that holds a session on both
+// ends now is the session the schedule judges: outage requires it to
+// survive, outage-past to end by the timeout on both ends (which explains
+// its end). The OUTAGE_BRIGHT witness takes the first bright client that has
+// a delivery gap measured before the window, so bright_unaffected judges it.
+
+static inline void rocketnet_dst_outage_open_window( rocketnet_dst_world_t * w )
+{
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    for ( int i = 0; i < w->num_clients; i++ )
+    {
+        rocketnet_dst_client_t * client = &w->client[i];
+        const int slot = rocketnet_dst_world_slot_for_client( w, i );
+        if ( rocketnet_dst_outage_dark( w, i ) && client->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+             slot >= 0 )
+        {
+            s->dark_generation[i] = client->generation;
+            s->dark_slot[i] = slot;
+            s->dark_client_live[i] = 1;
+            s->dark_server_live[i] = 1;
+            s->dark_client_heard[i] = client->protocol.last_receive_time;
+            const int mapping = rocketnet_client_slots_mapping_index( w->server.client_slots, slot );
+            const struct rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( w->server.encryption_map, mapping );
+            s->dark_server_heard[i] = entry ? entry->control->last_receive_time : w->now;
+            s->resend_delay_low[i][0] = 1.0e9;
+            s->resend_delay_low[i][1] = 1.0e9;
+            s->peer_delay_low[i][0] = 1.0e9;
+            s->peer_delay_low[i][1] = 1.0e9;
+            if ( s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST )
+            {
+                client->explained_generation = client->generation;
+            }
+        }
+        if ( w->witness == ROCKETNET_DST_WITNESS_OUTAGE_BRIGHT && s->witness_client < 0 && !rocketnet_dst_outage_dark( w, i ) &&
+             ( s->gap_before[i][0] > 0 || s->gap_before[i][1] > 0 ) )
+        {
+            s->witness_client = i;
+        }
+    }
+    rocketnet_dst_schedule_trace( w, s->dark_mask, (uint64_t) s->direction, s->end_step - s->start_step );
+}
+
+// outage: one delivery to client i's session `generation` ([0] at the
+// server, [1] at the client): the gap since the session's last one, before
+// the window or inside it (bright_unaffected).
+
+static inline void rocketnet_dst_outage_delivery( rocketnet_dst_world_t * w, int index, int direction, uint64_t generation )
+{
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    if ( !rocketnet_dst_outage_run( w ) || index < 0 || index >= w->num_clients )
+    {
+        return;
+    }
+
+    if ( s->delivery_generation[index][direction] == generation && generation != 0 )
+    {
+        const uint64_t gap = w->step - s->delivery_step[index][direction];
+        uint64_t * longest = w->step < s->start_step ? &s->gap_before[index][direction]
+                                                     : ( w->step < s->end_step ? &s->gap_inside[index][direction] : NULL );
+        if ( longest && gap > *longest )
+        {
+            *longest = gap;
+        }
+    }
+    s->delivery_step[index][direction] = w->step;
+    s->delivery_generation[index][direction] = generation;
+}
+
+// outage-past: a judged dark session ended on one end (server_side 1: its
+// slot). It ended by the silence timeout, and no earlier than T after that
+// end last heard the other.
+
+static inline void rocketnet_dst_outage_end( rocketnet_dst_world_t * w, int index, int server_side, int reason )
+{
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    int * live = server_side ? &s->dark_server_live[index] : &s->dark_client_live[index];
+    if ( !*live )
+    {
+        return;
+    }
+    *live = 0;
+    if ( s->kind != ROCKETNET_DST_SCHEDULE_OUTAGE_PAST )
+    {
+        return;     // outage: the end itself is no_unscheduled_end's
+    }
+
+    s->outage_ends++;
+    const double heard = server_side ? s->dark_server_heard[index] : s->dark_client_heard[index];
+    const int timeout_reason = server_side ? ROCKETNET_DISCONNECT_REASON_TIMED_OUT
+                                           : ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT;
+    rocketnet_dst_check_outage_end( &w->check, index, server_side, reason, timeout_reason, w->now - heard,
+                                    (double) ROCKETNET_DST_TOKEN_TIMEOUT_SECONDS );
+}
+
+// outage: after each step. Records each judged session's last receive on
+// both ends while it holds; judges probe_paced over each 100 steps in which
+// a sender was held; at the
+// window's last step judges bright_unaffected and (outage-past) that both
+// ends of every judged session have ended.
+
+static inline void rocketnet_dst_outage_observe( rocketnet_dst_world_t * w )
+{
+    struct rocketnet_dst_schedule_t * s = &w->schedule;
+    if ( !rocketnet_dst_outage_run( w ) || w->step < s->start_step )
+    {
+        return;
+    }
+
+    for ( int i = 0; i < w->num_clients; i++ )
+    {
+        if ( s->dark_generation[i] == 0 )
+        {
+            continue;
+        }
+        const uint64_t id = s->dark_generation[i] * 256 + (uint64_t) i;
+        const int slot = s->dark_slot[i];
+        const int slot_holds = rocketnet_client_slots_connected( w->server.client_slots, slot ) &&
+                               rocketnet_client_slots_client_id( w->server.client_slots, slot ) == id;
+        if ( s->dark_client_live[i] )
+        {
+            s->dark_client_heard[i] = w->client[i].protocol.last_receive_time;
+        }
+        if ( s->dark_server_live[i] && slot_holds )
+        {
+            const int mapping = rocketnet_client_slots_mapping_index( w->server.client_slots, slot );
+            const struct rocketnet_encryption_mapping_t * entry = rocketnet_encryption_map_entry( w->server.encryption_map, mapping );
+            if ( entry )
+            {
+                s->dark_server_heard[i] = entry->control->last_receive_time;
+            }
+        }
+        if ( !s->dark_server_live[i] && rocketnet_client_slots_connected( w->server.client_slots, slot ) &&
+             rocketnet_client_slots_client_id( w->server.client_slots, slot ) != id )
+        {
+            s->dark_slot_reused[i] = 1;
+        }
+
+        if ( w->step >= s->end_step )
+        {
+            continue;
+        }
+
+        // probe_paced: a sender held at the end of this step (no ack progress
+        // for RN_PROBE_SECONDS, so only U may be resent) has the frames it
+        // starts in the next step counted; each 100 counted steps are one
+        // judged second. A held sender may still send numbers it never sent
+        // (m9.3), so those first sends are counted beside the frames. In a
+        // one-way outage the side the bright direction reaches also answers
+        // its peer's packets: it is counted only while the peer is held too,
+        // and the peer's shortest resend delay and first sends bound the
+        // answers.
+        uint64_t sent[2] = { 0, 0 };
+        int has_sent[2] = { 0, 0 };
+        int held[2] = { 0, 0 };
+        double delay[2] = { 0.0, 0.0 };
+        for ( int side = 0; side < 2; side++ )
+        {
+            const int live = side ? s->dark_server_live[i] && slot_holds : s->dark_client_live[i];
+            struct rn_message_object_t * object = side ? &w->message_server->object : &w->client[i].message->object;
+            const struct rn_message_connection_t * connection = live ? rn_message_object_connection( object, side ? slot : 0 ) : NULL;
+            struct rocketnet_conditions_t conditions;
+            memset( &conditions, 0, sizeof( conditions ) );
+            if ( connection && rn_message_object_conditions( object, side ? slot : 0, &conditions ) )
+            {
+                sent[side] = rocketnet_dst_outage_numbers_sent( connection );
+                has_sent[side] = 1;
+                if ( conditions.seconds_since_progress >= RN_PROBE_SECONDS )
+                {
+                    held[side] = 1;
+                    delay[side] = connection->ordered.ack.resend_delay;
+                }
+            }
+        }
+        for ( int side = 0; side < 2; side++ )
+        {
+            const int reaches = rocketnet_dst_outage_reaches( s, side );
+            if ( s->probe_held[i][side] )
+            {
+                for ( int from = 0; from < 2; from++ )
+                {
+                    if ( ( from == side || reaches ) && has_sent[from] && sent[from] > s->numbers_sent[i][from] )
+                    {
+                        s->first_sends[i][side] += sent[from] - s->numbers_sent[i][from];
+                    }
+                }
+                s->held_steps[i][side]++;
+                if ( s->held_steps[i][side] == ROCKETNET_DST_OUTAGE_SECOND_STEPS )
+                {
+                    s->seconds_judged++;
+                    if ( s->frames[i][side] > s->frames_max )
+                    {
+                        s->frames_max = s->frames[i][side];
+                    }
+                    rocketnet_dst_check_probe_paced( &w->check, i, side, s->frames[i][side], s->resend_delay_low[i][side],
+                                                     reaches ? s->peer_delay_low[i][side] : 0.0, s->first_sends[i][side] );
+                    s->held_steps[i][side] = 0;
+                    s->frames[i][side] = 0;
+                    s->first_sends[i][side] = 0;
+                    s->resend_delay_low[i][side] = 1.0e9;
+                    s->peer_delay_low[i][side] = 1.0e9;
+                }
+            }
+        }
+        for ( int side = 0; side < 2; side++ )
+        {
+            const int reaches = rocketnet_dst_outage_reaches( s, side );
+            if ( has_sent[side] )
+            {
+                s->numbers_sent[i][side] = sent[side];
+            }
+            s->probe_held[i][side] = held[side] && ( !reaches || held[1 - side] );
+            if ( s->probe_held[i][side] )
+            {
+                if ( delay[side] < s->resend_delay_low[i][side] )
+                {
+                    s->resend_delay_low[i][side] = delay[side];
+                }
+                if ( reaches && delay[1 - side] < s->peer_delay_low[i][side] )
+                {
+                    s->peer_delay_low[i][side] = delay[1 - side];
+                }
+            }
+        }
+    }
+
+    if ( w->step + 1 != s->end_step )
+    {
+        return;
+    }
+
+    for ( int i = 0; i < w->num_clients; i++ )
+    {
+        if ( rocketnet_dst_outage_dark( w, i ) )
+        {
+            if ( s->kind == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST && ( s->dark_client_live[i] || s->dark_server_live[i] ) )
+            {
+                char what[160];
+                snprintf( what, sizeof( what ), "client=%d generation=%llu client_live=%d server_live=%d past the timeout",
+                          i, (unsigned long long) s->dark_generation[i], s->dark_client_live[i], s->dark_server_live[i] );
+                rocketnet_dst_check_fail( &w->check, "outage_end", what );
+            }
+            continue;
+        }
+        for ( int direction = 0; direction < 2; direction++ )
+        {
+            // the gap still open at the window's end counts as inside it
+            const uint64_t open = s->end_step - s->delivery_step[i][direction];
+            if ( s->delivery_generation[i][direction] == w->client[i].generation && open > s->gap_inside[i][direction] )
+            {
+                s->gap_inside[i][direction] = open;
+            }
+            if ( w->bright_control )
+            {
+                rocketnet_dst_check_bright_unaffected( &w->check, i, direction, w->bright_control[i * 2 + direction],
+                                                       s->gap_inside[i][direction], ROCKETNET_DST_OUTAGE_RESEND_MAX_MS / 10 );
+            }
+        }
+    }
+}
+
+// no_unscheduled_end, the server's side: a slot that stops holding a session
+// while its client still holds that same session CONNECTED ended a session
+// the client did not end. Only a script explains that. A slot whose client
+// already left the session (a churn, its own end) is judged on the client's
+// side. Called each step before rocketnet_dst_check_slot records the slot.
+
+static inline void rocketnet_dst_world_slot_end( rocketnet_dst_world_t * w, int slot, int connected, uint64_t client_id )
+{
+    if ( !w->check.slot_connected[slot] || ( connected && client_id == w->check.slot_client_id[slot] ) )
+    {
+        return;
+    }
+
+    const uint64_t ended = w->check.slot_client_id[slot];
+    const int index = (int) ( ended & 0xFF );
+    const uint64_t generation = ended >> 8;
+    if ( index < w->num_clients && rocketnet_dst_outage_run( w ) && w->schedule.dark_generation[index] == generation &&
+         generation != 0 && w->schedule.dark_slot[index] == slot )
+    {
+        rocketnet_dst_outage_end( w, index, 1, w->server_end_reasons[slot] );
+    }
+    if ( index >= w->num_clients || generation != w->client[index].generation ||
+         w->client[index].protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        return;
+    }
+
+    char what[64];
+    snprintf( what, sizeof( what ), "server ended slot=%d reason=%d", slot, w->server_end_reasons[slot] );
+    rocketnet_dst_check_session_end( &w->check, index, generation, w->client[index].explained_generation, what, 1 );
+}
+
+// no_unscheduled_end, the client's side: each session end (CONNECTED left,
+// or a connect that ends in an error state) is one a script explains.
+
+static inline void rocketnet_dst_world_client_end( rocketnet_dst_world_t * w, int index )
+{
+    rocketnet_dst_client_t * client = &w->client[index];
+    const int state = client->protocol.state;
+    const int left = client->end_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                     state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+    const int failed = state < 0 && client->end_state >= 0 && !left;
+    client->end_state = state;
+    if ( !left && !failed )
+    {
+        return;
+    }
+
+    w->session_ends++;
+    if ( left && rocketnet_dst_outage_run( w ) && w->schedule.dark_generation[index] == client->generation )
+    {
+        rocketnet_dst_outage_end( w, index, 0, state );
+    }
+
+    // a dark client's connect that the window overlapped lost its handshake
+    // packets to the outage: the schedule explains its failure
+    if ( failed && rocketnet_dst_outage_dark( w, index ) && client->connect_step < w->schedule.end_step &&
+         w->step >= w->schedule.start_step )
+    {
+        client->explained_generation = client->generation;
+    }
+    char what[64];
+    snprintf( what, sizeof( what ), "client %s state=%d", left ? "left CONNECTED" : "connect failed", state );
+    rocketnet_dst_check_session_end( &w->check, index, client->generation, client->explained_generation, what, 1 );
+}
+
 static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_t seed,
                                               const struct rocketnet_dst_options_t * options )
 {
@@ -1917,6 +2608,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     w->seed = seed;
     w->faults = options->faults;
     w->witness = options->witness;
+    w->outage_control = options->outage_control;
     w->fault_steps = options->fault_steps;
     w->now = 1000.0;
     w->unix_ts = 1700000000ULL;
@@ -1991,8 +2683,26 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
 
     rocketnet_message_default_config( &w->message_config );
     w->message_config.num_channels = ROCKETNET_DST_NUM_CHANNELS;
+    if ( rocketnet_dst_outage_run( w ) )
+    {
+        // the outage schedules' small send side, so a dark session's
+        // offers reach the library's no-room refusal (see ROCKETNET_DST_OUTAGE_*)
+        w->message_config.send_message_buffer_bytes = ROCKETNET_DST_OUTAGE_SEND_BYTES;
+        w->message_config.send_queue_messages = ROCKETNET_DST_OUTAGE_SEND_MESSAGES;
+        w->message_config.reliable_messages_in_flight = ROCKETNET_DST_OUTAGE_WINDOW;
+        w->message_config.max_message_bytes = ROCKETNET_DST_OUTAGE_MAX_MESSAGE;
+        w->message_config.message_resend_delay_max_ms = ROCKETNET_DST_OUTAGE_RESEND_MAX_MS;
+        if ( w->message_config.message_resend_delay_initial_ms > ROCKETNET_DST_OUTAGE_RESEND_MAX_MS )
+        {
+            w->message_config.message_resend_delay_initial_ms = ROCKETNET_DST_OUTAGE_RESEND_MAX_MS;
+        }
+        // a numbering window of 64 holds fewer numbers than the backlog a
+        // send can queue behind, so it adds its round trips to the slack
+        w->check.in_flight_steps = ROCKETNET_DST_OUTAGE_IN_FLIGHT_STEPS;
+    }
     if ( options->reliable_timeout_ms > 0 )
     {
+        w->reliable_timeout_run = 1;
         // the config check keeps four initial resend delays inside the timeout
         w->message_config.reliable_message_timeout_ms = options->reliable_timeout_ms;
         if ( w->message_config.message_resend_delay_initial_ms > options->reliable_timeout_ms / 4 )
@@ -2119,9 +2829,8 @@ static inline int rocketnet_dst_world_destroy( rocketnet_dst_world_t * w )
     return leaked;
 }
 
-static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
-                                                       const struct rocketnet_dst_options_t * options,
-                                                       struct rocketnet_dst_result_t * result )
+static inline int rocketnet_dst_run_world_seed( uint64_t seed, const struct rocketnet_dst_options_t * options,
+                                                struct rocketnet_dst_result_t * result, const uint64_t * bright_control )
 {
     memset( result, 0, sizeof( *result ) );
     result->seed = seed;
@@ -2143,6 +2852,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         free( w );
         return 0;
     }
+    w->bright_control = bright_control;
 
     for ( uint64_t k = 0; k < options->steps; k++ )
     {
@@ -2184,6 +2894,11 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
                 int burst_count = 0;
                 int burst_bytes = 0;
+                client->explained_generation = client->generation;     // the drawn churn ends this session
+                if ( rocketnet_dst_outage_run( w ) && w->schedule.dark_generation[i] == client->generation )
+                {
+                    w->schedule.dark_client_live[i] = 0;                // a churn, not the timeout, ends the client side
+                }
                 rocketnet_client_protocol_disconnect( &client->protocol, burst, &burst_count, &burst_bytes );
                 for ( int b = 0; b < burst_count; b++ )
                 {
@@ -2205,7 +2920,11 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                  ( client->pause_until < 0 || (int) k >= client->pause_until ) &&
                  !rocketnet_dst_burst_holding( w, i ) )
             {
-                rocketnet_dst_send_one( w, i, 0, -1 );
+                const int offers = rocketnet_dst_outage_dark( w, i ) && rocketnet_dst_outage_open( w ) ? ROCKETNET_DST_OUTAGE_OFFERS : 1;
+                for ( int n = 0; n < offers; n++ )
+                {
+                    rocketnet_dst_send_one( w, i, 0, -1 );
+                }
             }
             if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
                  i == w->schedule.endpoint )
@@ -2224,7 +2943,11 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             {
                 if ( !rocketnet_dst_burst_holding( w, index ) )
                 {
-                    rocketnet_dst_send_one( w, index, 1, slot );
+                    const int offers = rocketnet_dst_outage_dark( w, index ) && rocketnet_dst_outage_open( w ) ? ROCKETNET_DST_OUTAGE_OFFERS : 1;
+                    for ( int n = 0; n < offers; n++ )
+                    {
+                        rocketnet_dst_send_one( w, index, 1, slot );
+                    }
                 }
                 if ( w->schedule.kind == ROCKETNET_DST_SCHEDULE_BURST && w->step == w->schedule.start_step &&
                      index == w->schedule.endpoint )
@@ -2249,6 +2972,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 uint32_t expected_generation = (uint32_t) ( client_id >> 8 );
                 rocketnet_dst_check_deliveries( w, slot, expected_generation, w->server_incarnation,
                                                 client_id, data, bytes );
+                rocketnet_dst_outage_delivery( w, (int) ( client_id & 0xFF ), 0, client_id >> 8 );
                 rocketnet_message_server_release( w->message_server, data );
             }
         }
@@ -2264,6 +2988,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
                 {
                     rocketnet_dst_check_deliveries( w, 16 + i, expected_generation, w->server_incarnation,
                                                     client->generation, data, bytes );
+                    rocketnet_dst_outage_delivery( w, i, 1, client->generation );
                     rocketnet_message_client_release( client->message, data );
                 }
             }
@@ -2320,6 +3045,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         {
             const int connected = rocketnet_client_slots_connected( w->server.client_slots, slot );
             const uint64_t client_id = connected ? rocketnet_client_slots_client_id( w->server.client_slots, slot ) : 0;
+            rocketnet_dst_world_slot_end( w, slot, connected, client_id );
             rocketnet_dst_check_slot( &w->check, slot, connected, client_id, w->server_incarnation );
             if ( connected )
             {
@@ -2340,6 +3066,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             rocketnet_dst_client_t * client = &w->client[i];
             const int terminal_explained = (int) k < (int) w->fault_steps + 1000;
             rocketnet_dst_check_client_state( &w->check, i, client->protocol.state, terminal_explained );
+            rocketnet_dst_world_client_end( w, i );
             if ( client->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 rocketnet_dst_check_replay( &w->check, 16 + i, client->generation,
@@ -2354,6 +3081,7 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         }
         rocketnet_dst_check_clock( &w->check, 0, w->now + w->schedule.clock_offset[0], w->now,
                                    rocketnet_dst_skew_bound( w, 0 ) );
+        rocketnet_dst_outage_observe( w );
 
         if ( w->check.failed && !w->failed )
         {
@@ -2389,6 +3117,14 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             live[16 + i] = w->client[i].protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
             live_identity[16 + i] = w->client[i].generation;
         }
+        // the message objects' counters: the server's, and every client
+        // object's (the ones rebuilt during the run were added as they went)
+        rocketnet_dst_counters_add( &w->message_counters[0], &w->message_server->object.counters );
+        for ( int i = 0; i < w->num_clients; i++ )
+        {
+            rocketnet_dst_counters_add( &w->message_counters[1], &w->client[i].message->object.counters );
+        }
+
         if ( !w->check.failed )
         {
             w->check.step = options->steps;
@@ -2407,8 +3143,35 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
             // what the duplicate fault explains, and nothing more
             const int storm = w->schedule.kind == ROCKETNET_DST_SCHEDULE_DUP_STORM;
             const int duplicates = storm || ( options->faults & ROCKETNET_DST_FAULT_DUP ) != 0;
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server", duplicates );
-            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients", duplicates );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->server_counters, "server", duplicates, rocketnet_dst_outage_run( w ) );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->client_counters, "clients", duplicates, rocketnet_dst_outage_run( w ) );
+
+            // the message objects' own counters: the same two laws, every
+            // send the library refused seen by the harness and counted by
+            // the library alike, and a floor on the reliable sends accepted
+            rocketnet_dst_check_conservation( &w->check, &w->message_counters[0], "server messages" );
+            rocketnet_dst_check_conservation( &w->check, &w->message_counters[1], "client messages" );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->message_counters[0], "server messages", duplicates, rocketnet_dst_outage_run( w ) );
+            rocketnet_dst_check_unexplained_refusal( &w->check, &w->message_counters[1], "client messages", duplicates, rocketnet_dst_outage_run( w ) );
+            rocketnet_dst_check_refusals_agree( &w->check, "server", w->refused[1], &w->message_counters[0] );
+            rocketnet_dst_check_refusals_agree( &w->check, "clients", w->refused[0], &w->message_counters[1] );
+            rocketnet_dst_check_send_floor( &w->check, "server", w->offered_reliable[1], w->accepted_reliable[1] );
+            rocketnet_dst_check_send_floor( &w->check, "clients", w->offered_reliable[0], w->accepted_reliable[0] );
+
+            // outage-past: each judged session's client is back in a newer
+            // session and its old slot was taken again
+            for ( int i = 0; i < w->num_clients && w->schedule.kind == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST; i++ )
+            {
+                if ( w->schedule.dark_generation[i] != 0 &&
+                     ( w->client[i].generation <= w->schedule.dark_generation[i] || !w->schedule.dark_slot_reused[i] ) )
+                {
+                    char what[160];
+                    snprintf( what, sizeof( what ), "client=%d generation=%llu after %llu, slot=%d reused=%d", i,
+                              (unsigned long long) w->client[i].generation, (unsigned long long) w->schedule.dark_generation[i],
+                              w->schedule.dark_slot[i], w->schedule.dark_slot_reused[i] );
+                    rocketnet_dst_check_fail( &w->check, "outage_reconnect", what );
+                }
+            }
         }
         if ( w->check.failed && !w->failed )
         {
@@ -2434,6 +3197,19 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
         rocketnet_counter_value( &w->client_counters, ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED );
     result->server_reliable_timeouts = w->reliable_timeouts[0];
     result->client_reliable_timeouts = w->reliable_timeouts[1];
+    result->message_kicks = w->message_kicks;
+    result->budget_aborts = w->budget_aborts;
+    for ( int i = 0; i < w->num_clients; i++ )
+    {
+        result->bright_gap[i * 2] = w->schedule.gap_inside[i][0];
+        result->bright_gap[i * 2 + 1] = w->schedule.gap_inside[i][1];
+    }
+    result->session_ends = w->session_ends;
+    result->refused = w->refused[0] + w->refused[1];
+    result->accepted_reliable = w->accepted_reliable[0] + w->accepted_reliable[1];
+    result->frames_max = w->schedule.frames_max;
+    result->seconds_judged = w->schedule.seconds_judged;
+    result->outage_ends = w->schedule.outage_ends;
     result->step = w->fail_step;
     if ( w->failed )
     {
@@ -2450,6 +3226,32 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed,
     }
     free( w );
     return 1;
+}
+
+// One seed. An outage run first runs its control: the same seed and draws
+// with no client dark (outage_control), whose longest window gap per bright
+// client and direction bright_unaffected judges the outage run against.
+
+static inline int rocketnet_dst_run_seed_with_options( uint64_t seed, const struct rocketnet_dst_options_t * options,
+                                                       struct rocketnet_dst_result_t * result )
+{
+    const int outage = options->schedule == ROCKETNET_DST_SCHEDULE_OUTAGE || options->schedule == ROCKETNET_DST_SCHEDULE_OUTAGE_PAST;
+    if ( !outage || options->outage_control )
+    {
+        return rocketnet_dst_run_world_seed( seed, options, result, NULL );
+    }
+
+    struct rocketnet_dst_options_t control = *options;
+    control.outage_control = 1;
+    control.witness = ROCKETNET_DST_WITNESS_NONE;
+    control.force_fail_step = -1;
+    if ( !rocketnet_dst_run_world_seed( seed, &control, result, NULL ) )
+    {
+        return 0;
+    }
+    uint64_t gaps[ROCKETNET_DST_MAX_CLIENTS * 2];
+    memcpy( gaps, result->bright_gap, sizeof( gaps ) );
+    return rocketnet_dst_run_world_seed( seed, options, result, gaps );
 }
 
 static inline int rocketnet_dst_run_seed( uint64_t seed, uint64_t steps, int pinned_clients,

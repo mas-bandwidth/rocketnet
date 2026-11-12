@@ -503,3 +503,154 @@ static void test_dst_check_sequenced_later_type4_raises_the_requirement()
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
 }
 REGISTER_UNIT_TEST( test_dst_check_sequenced_later_type4_raises_the_requirement );
+
+// One state for the cases below: each starts it with
+// rocketnet_dst_check_init, and a state is tens of megabytes, so they share
+// one rather than add one each to the test binary.
+static struct rocketnet_dst_check_state_t dst_check_state;
+
+// The end-of-run row by step: a reliable send is owed once it is
+// ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS old, however few sequences follow it
+// (a stream that stalls before the end leaves its last sends owed), and is
+// excused only while it is younger. A run whose send side sets a longer
+// slack (in_flight_steps) excuses for that long.
+
+static void dst_check_stalled_stream( struct rocketnet_dst_check_state_t * st, uint64_t end_after, uint64_t in_flight )
+{
+    rocketnet_dst_check_init( st, 1, 1000 );
+    st->in_flight_steps = in_flight;
+    for ( uint32_t seq = 0; seq <= 30; seq++ )
+    {
+        rec_sent( st, 0, 0, 2, seq );
+        if ( seq != 25 )
+        {
+            rec_deliver( st, 0, 0, 2, seq );
+        }
+    }
+    st->step = 1000 + end_after;
+    rocketnet_unit_check( st->failed == 0 );
+    rec_end( st, 0 );
+}
+
+static void test_dst_check_reliable_owed_by_step_fails()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    dst_check_stalled_stream( &st, ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS, 0 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_reliable_owed_by_step_fails );
+
+static void test_dst_check_reliable_in_flight_slack_passes()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    dst_check_stalled_stream( &st, ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS - 1, 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_stalled_stream( &st, ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS, 2 * ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_stalled_stream( &st, 2 * ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS, 2 * ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS );
+    rocketnet_unit_check( st.failed == 1 );
+}
+REGISTER_UNIT_TEST( test_dst_check_reliable_in_flight_slack_passes );
+
+// no_unscheduled_end: a session's end is explained only by the script that
+// ended that same generation (explained), and the first connect (generation
+// 0) ends nothing.
+
+static void test_dst_check_unscheduled_end_fails()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_session_end( &st, 0, 0, 0, "first connect", 0 );
+    rocketnet_dst_check_session_end( &st, 0, 3, 3, "drawn churn", 1 );
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_dst_check_session_end( &st, 0, 4, 3, "client left CONNECTED", 1 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "no_unscheduled_end" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_unscheduled_end_fails );
+
+// refusals_agree: the sends the harness saw refused equal the library's
+// no-room and not-connected counts; send_floor: at least half the reliable
+// offers are accepted, and some are whenever any were offered.
+
+static void test_dst_check_refusals_agree_and_floor()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] = 5;
+    counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] = 2;
+
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_refusals_agree( &st, "server", 7, &counters );
+    rocketnet_dst_check_send_floor( &st, "server", 10, 5 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    rocketnet_dst_check_refusals_agree( &st, "server", 8, &counters );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "refusals_agree" ) == 0 );
+
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_send_floor( &st, "server", 11, 5 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "send_floor" ) == 0 );
+
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_send_floor( &st, "server", 1, 0 );
+    rocketnet_unit_check( st.failed == 1 );
+}
+REGISTER_UNIT_TEST( test_dst_check_refusals_agree_and_floor );
+
+// probe_paced: a held second allows one frame per resend delay plus one,
+// plus one per first send, plus the peer's term when its packets reach the
+// sender; one frame more fails.
+
+static void test_dst_check_probe_paced_bound()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_probe_paced( &st, 0, 0, 5, 0.25, 0.0, 0 );
+    rocketnet_dst_check_probe_paced( &st, 0, 0, 8, 0.25, 0.0, 3 );
+    rocketnet_dst_check_probe_paced( &st, 0, 1, 10, 0.25, 0.25, 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    rocketnet_dst_check_probe_paced( &st, 0, 0, 6, 0.25, 0.0, 0 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "probe_paced" ) == 0 );
+
+    // the aborted frame of every update the probe-slot defect started
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_probe_paced( &st, 0, 1, 100, 0.25, 0.0, 0 );
+    rocketnet_unit_check( st.failed == 1 );
+}
+REGISTER_UNIT_TEST( test_dst_check_probe_paced_bound );
+
+// bright_unaffected: a bright gap in the window may exceed the control run's
+// by the slack and no more; outage_end: a dark session's end must carry the
+// timeout reason, no earlier than the timeout after it last heard.
+
+static void test_dst_check_bright_and_outage_end()
+{
+    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_bright_unaffected( &st, 0, 0, 10, 35, 25 );
+    rocketnet_dst_check_outage_end( &st, 0, 1, -7, -7, 5.0, 5.0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    rocketnet_dst_check_bright_unaffected( &st, 0, 0, 10, 36, 25 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "bright_unaffected" ) == 0 );
+
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_outage_end( &st, 0, 1, -7, -7, 4.99, 5.0 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "outage_end" ) == 0 );
+
+    rocketnet_dst_check_init( &st, 1, 100 );
+    rocketnet_dst_check_outage_end( &st, 0, 0, 0, -5, 6.0, 5.0 );
+    rocketnet_unit_check( st.failed == 1 );
+}
+REGISTER_UNIT_TEST( test_dst_check_bright_and_outage_end );

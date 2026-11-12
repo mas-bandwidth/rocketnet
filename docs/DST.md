@@ -18,9 +18,27 @@ The harness checks properties that also appear in the TLA+ models:
 - an acknowledgement names a packet the acknowledged endpoint itself issued,
   and names it once;
 - every reliable message a live session sent, in the fault window or after
-  it, is delivered by the end of the run, apart from the last few still in
-  flight;
-- an endpoint (the server or a client) that can make fair progress does not remain wedged.
+  it, is delivered by the end of the run, apart from those sent within the
+  in-flight slack before the end (`ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS`, 96
+  steps: the wire's worst one-way delay and the send budget's longest queue);
+  the slack is counted by step, so a stream that stalls before the end still
+  owes its last sends, and it never excuses more than the earlier rule, the
+  newest 20 sequences, did;
+- an endpoint (the server or a client) that can make fair progress does not remain wedged;
+- no session ends unless the run scripted its end (`no_unscheduled_end`): a
+  drawn churn, an outage past the timeout, a dark client's connect the outage
+  window overlapped, or, on a run that opts into it, the reliable timeout. A
+  client that leaves CONNECTED or fails a connect, a slot the server frees
+  while its client still holds the session, and any message-layer kick
+  (`rocketnet_dst_endpoint_disconnect`, for any reason) is judged; the first
+  connect ends nothing;
+- both message objects' counters (the clients' summed over every session a
+  client held) are conserved and explain every refusal they count, as the
+  transport's do; a send the library refuses for want of room or a connection
+  is one the harness saw refused (`refusals_agree`: the harness's refused
+  sends equal `MESSAGE_SEND_QUEUE_FULL + MESSAGE_SEND_STORE_FULL +
+  MESSAGE_SEND_NOT_CONNECTED`), and at least half the reliable sends the
+  harness offered outside an outage window are accepted (`send_floor`).
 
 Every simulated endpoint has explicit state: connection generation, local clock,
 next frame time, restart state, sent-message identities and received-message
@@ -83,7 +101,8 @@ Release `dst` and `test`, runs the `test_dst_` unit cases by `--run`,
 runs `--seeds 1-50` and fails unless its PASS line carries the reference trace,
 requires every check to pass over the fixed range `--seeds 1-2050`, then runs
 one named short step per fault schedule (`clock-back`, `seq-gap`,
-`seq-wrap-31`, `seq-wrap-32`, `burst` and `dup-storm`, each over seeds 1-50)
+`seq-wrap-31`, `seq-wrap-32`, `burst`, `dup-storm`, `outage` and
+`outage-past`, each over seeds 1-50)
 printing a `PASS schedule=<name> seeds=1-50 fired=<count>` line; a schedule
 that fires zero times fails its step. Each leg then sweeps a longer range
 sized to about twenty minutes on that OS (Linux 10950 seeds, macOS 13950,
@@ -185,6 +204,47 @@ schedule; a failure prints its seed and the replay command, which carries
   reordered. The copies take no draw from the wire's own stream. The storm is
   the duplicate fault at its worst, so it explains the refusals the duplicate
   fault explains, and no others.
+- `outage` and `outage-past`: draw a subset of the clients (at least one left
+  bright), a direction (client to server, server to client or both;
+  `outage-past` is always both) and a start. For `T - 1` s (`outage`, 4 s) or
+  `T + 1` s (`outage-past`, 6 s), where `T` is the token's 5 s timeout, the
+  wire drops the dark clients' packets in the dark direction. The message side
+  is made small (`ROCKETNET_DST_OUTAGE_*` in `tests/dst_harness.h`: a 64-number
+  window, 16 messages and 12288 bytes of send queue, a 250 ms resend cap) and a
+  dark client is offered 16 reliable messages a step each way, so the
+  library's no-room refusal is reached in the window. The checks:
+  - `no_unscheduled_end`: under `outage` no dark session ends; under
+    `outage-past` a dark session's end on either end is explained by the
+    outage, counted in `outage_ends`, and every judged client connects again
+    by the end of the run. A dark client's connect that the window overlapped
+    may fail; that end is explained, and so are the cookie expiry and salt
+    mismatch refusals its handshake meets, but only on a run where the
+    harness dropped a handshake packet of a client that was not connected.
+  - `probe_paced`: a sender whose window is held (no acknowledgement progress
+    for a second or more) resends only its oldest unacknowledged number, at
+    its resend delay, but may still send numbers it never sent. Over each
+    second it is held it starts at most `floor(1 / delay) + 1` frames, plus
+    the first sends it made in that second, plus `floor(1 / peer_delay) + 1`
+    when a one-way outage leaves its peer held and answering through the
+    bright direction. Frames started and then aborted because the send budget
+    could not pay for the due reliable packet are counted apart
+    (`budget_aborts` in the verbose line) and not judged. Reverting the
+    library's probe slot fails this check on 49 of seeds 1-50.
+  - `bright_unaffected`: each bright client's largest gap between deliveries
+    inside the window, per direction, is at most the same gap in a control
+    run plus 25 steps (the 250 ms resend cap). The control run is the same
+    seed with the same draws and no client dark (`outage_control`); it runs
+    first and is not judged. A bright client's gap is compared with itself,
+    not with the gaps before the window, because loss and jitter draws make
+    those gaps different whether or not an outage is open.
+  - the in-flight slack for liveness is 216 steps on these runs
+    (`ROCKETNET_DST_OUTAGE_IN_FLIGHT_STEPS`, derived from the constants, not
+    measured): a reliable send can queue behind two windows' worth of round
+    trips on top of the default 96.
+
+A schedule that fires on no seed of the range fails the run, even if every
+check held: it prints `FAIL seeds=<a>-<b> schedule=<name> fired on no seed`
+and exits non-zero.
 
 `test_dst_schedule_same_seed_same_trace`, `test_dst_clock_back_reaches_endpoints`
 and `test_dst_seq_gap_exceeds_history` (`tests/test_unit_dst_core.cpp`, run by
@@ -194,10 +254,20 @@ least two hundred packets in one update and receives at least two hundred in
 one release step, counted apart, and `test_dst_dup_storm_duplicates_payloads`
 pins that the storm's copies reach the receivers as a payload taken twice,
 with the duplicate fault off.
+`test_dst_outage_holds_dark_sessions` and
+`test_dst_outage_past_times_out_both_ends` run seed 1 for 1600 steps under
+each outage schedule and require it to fire, to judge held seconds, to reach
+the no-room refusal and (past) to end dark sessions on both ends;
+`test_dst_witness_outage_bright_fails` is the reversed witness: it also drops
+one bright client and requires `bright_unaffected` to fail. The check cases in
+`tests/test_unit_dst_checks.cpp` drive each new check function directly, each
+both ways.
 
-At the default `reliable_message_timeout_ms`, 0 (off), the message layer does not end a
-connection in seeds 1-50. `test_dst_reliable_timeout_ends_connections_cleanly`
-runs seed 3 at an accepted 1500 ms, where it ends connections on both ends,
-and requires every check to hold across them. A client whose session ended
+At the default `reliable_message_timeout_ms`, 0 (off), the message layer does
+not end a connection. `test_dst_reliable_timeout_ends_connections_cleanly`
+first runs seed 3 at the default and requires every check to pass with no
+message-layer kick, so `no_unscheduled_end` sees no session end that the seed
+did not draw; it then runs seed 3 at an accepted 1500 ms, where the timeout
+ends connections on both ends, and requires every check to hold across them. A client whose session ended
 can reconnect while the server still holds the old session's slot; the
 harness books each server send and receipt to the session its slot holds.

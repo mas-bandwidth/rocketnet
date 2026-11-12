@@ -72,6 +72,16 @@
     ( ( ( ROCKETNET_DST_CHECK_OUTSTANDING_CAP + ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES ) * 8 / ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS + 9 ) / 10 )
 #define ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS ( ROCKETNET_DST_CHECK_WIRE_STEPS + ROCKETNET_DST_CHECK_BUDGET_STEPS )
 
+// The newest reliable sends of one stream, each with the step it was sent
+// at, so the end-of-run check excuses only what was sent inside the run's
+// last in-flight slack (ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS, or the outage
+// schedules' longer one). The harness sends one message per client per step
+// on one of the session's 72 streams (rocketnet_dst_send_one), and more only
+// to a dark session in an outage window, which ends long before the run, so
+// the ring reaches back past the slack at the end of the run. A ring that
+// did not would only owe more, never less (rocketnet_dst_check_owed_through).
+#define ROCKETNET_DST_CHECK_RECENT_SENDS 128
+
 // The ghost state one stream keeps. The checks read and update these
 // counters; the SDK objects are never touched.
 struct rocketnet_dst_check_stream_t
@@ -137,6 +147,11 @@ struct rocketnet_dst_check_stream_t
     uint32_t reliable_sent_count;
     uint32_t reliable_delivered_count;
     uint64_t outstanding_bytes;
+
+    // the newest reliable sends and their steps (ROCKETNET_DST_CHECK_RECENT_SENDS)
+    uint32_t recent_seq[ROCKETNET_DST_CHECK_RECENT_SENDS];
+    uint64_t recent_step[ROCKETNET_DST_CHECK_RECENT_SENDS];
+    uint32_t recent_count;
 };
 
 // The cross-type view of the sequenced messages on one (session, channel).
@@ -204,6 +219,15 @@ struct rocketnet_dst_check_state_t
     // an endpoint's offset, and it only moves it back, so a negative offset
     // observed here is that schedule having fired on this run.
     int clock_back_seen;
+
+    // unexplained_refusal, outage row: set when the outage schedules drop a
+    // dark client's packet while that client is not yet connected.
+    int outage_handshake_seen;
+
+    // liveness_delivered, the by-step rule: the steps a reliable send may
+    // still be in flight at the end. 0 is ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
+    // a run whose send side differs from the defaults sets its own.
+    uint64_t in_flight_steps;
 
     // fresh_generation (RNSimFaults::RestartIsFresh).
     uint64_t generation_high[ROCKETNET_DST_MAX_CLIENTS];
@@ -417,6 +441,10 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
     if ( reliable && !lap )
     {
         s->outstanding_bytes += (uint32_t) bytes;
+        const uint32_t at = s->recent_count % ROCKETNET_DST_CHECK_RECENT_SENDS;
+        s->recent_seq[at] = sequence;
+        s->recent_step[at] = st->step;
+        s->recent_count++;
     }
 
     if ( channel == 8 && ( type == 1 || type == 4 ) )
@@ -938,6 +966,37 @@ static inline void rocketnet_dst_check_client_state( struct rocketnet_dst_check_
     st->client_state[client] = state;
 }
 
+// no_unscheduled_end (proofs/tla/ClientSession.tla and ServerSession.tla:
+// a session ends by the silence timeout, the peer's goodbye or a cause; the
+// DST wire's loss and duplication leave no cause): a client session ends only
+// where a script ends it, a drawn churn, an opted-in reliable timeout or the
+// outage-past schedule, each of which names the generation it ends
+// (explained). Generation 0 is no session. `at_end` says the end is seen
+// now; otherwise the client is about to start a new session over this one.
+
+static inline void rocketnet_dst_check_session_end( struct rocketnet_dst_check_state_t * st, int client,
+                                                    uint64_t generation, uint64_t explained, const char * how,
+                                                    int at_end )
+{
+    if ( generation == 0 || generation == explained )
+    {
+        return;
+    }
+
+    char what[200];
+    snprintf( what, sizeof( what ), "client=%d generation=%llu %s%s", client, (unsigned long long) generation, how,
+              at_end ? "" : " after an end no script explains" );
+    rocketnet_dst_check_fail( st, "no_unscheduled_end", what );
+}
+
+// no_unscheduled_end, the message layer's own kick: one the run did not opt
+// in to (anything but RELIABLE_TIMED_OUT on a reliable-timeout run).
+
+static inline void rocketnet_dst_check_unscheduled_kick( struct rocketnet_dst_check_state_t * st, const char * what )
+{
+    rocketnet_dst_check_fail( st, "no_unscheduled_end", what );
+}
+
 // Mirrors RNSimFaults::RestartIsFresh: a restarted client connects only under
 // a generation never used before.
 
@@ -1085,6 +1144,41 @@ static inline uint32_t rocketnet_dst_check_type4_newest( const struct rocketnet_
     return newest;
 }
 
+// The newest reliable sequence of a stream that was sent at least the run's
+// in-flight slack (in_flight_steps, or ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS
+// when the run sets none) before the check's step, so is owed by now;
+// UINT32_MAX when every send the ring holds is younger. A stream sends
+// its sequences in increasing order, so every older sequence is owed too.
+
+static inline uint32_t rocketnet_dst_check_owed_through( const struct rocketnet_dst_check_state_t * st,
+                                                         const struct rocketnet_dst_check_stream_t * s )
+{
+    const uint32_t held = s->recent_count < ROCKETNET_DST_CHECK_RECENT_SENDS ? s->recent_count : ROCKETNET_DST_CHECK_RECENT_SENDS;
+    const uint64_t in_flight = st->in_flight_steps ? st->in_flight_steps : ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
+    uint32_t owed = UINT32_MAX;
+    uint64_t owed_step = 0;
+    for ( uint32_t i = 0; i < held; i++ )
+    {
+        if ( s->recent_step[i] + in_flight <= st->step &&
+             ( owed == UINT32_MAX || s->recent_step[i] > owed_step ||
+               ( s->recent_step[i] == owed_step && s->recent_seq[i] > owed ) ) )
+        {
+            owed = s->recent_seq[i];
+            owed_step = s->recent_step[i];
+        }
+    }
+
+    // a ring that wrapped holds only the newest sends: everything sent
+    // before its oldest entry is older still
+    const uint32_t oldest = s->recent_seq[s->recent_count % ROCKETNET_DST_CHECK_RECENT_SENDS];
+    if ( owed == UINT32_MAX && s->recent_count > ROCKETNET_DST_CHECK_RECENT_SENDS && oldest > 0 )
+    {
+        owed = oldest - 1;
+    }
+
+    return owed;
+}
+
 // Marks where the quiet window begins on each stream. The reliable types owe
 // every sequence sent before the last in-flight slack at the last step, the
 // fault window's included (rocketnet_dst_check_end); the sequenced type 4
@@ -1148,19 +1242,32 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                 {
                     // every message still unresolved is due once the quiet
                     // window has healed the wire, those sent in the fault
-                    // window included; the last 20 may still be in flight
-                    const uint32_t settled = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
+                    // window included; only a send of the last
+                    // ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS may still be in flight
+                    // (by step; never fewer than the earlier rule owed, every
+                    // sequence but the newest 20)
+                    const uint32_t by_count = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
+                    const uint32_t by_step = rocketnet_dst_check_owed_through( st, s );
+                    const uint32_t settled = by_step == UINT32_MAX || by_step < by_count ? by_count : by_step;
                     for ( uint32_t seq = s->reliable_base;
                           seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
                     {
                         if ( rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) &&
                              !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
                         {
-                            char what[160];
-                            snprintf( what, sizeof( what ), "stream=%d seq=%u settled=%u last=%u at=%llu id=%llu",
-                                      rocketnet_dst_check_stream_index( session, channel, type ), seq,
-                                      s->settled_seq, s->last_sent_seq, (unsigned long long) s->last_sent_step,
-                                      (unsigned long long) s->identity );
+                            uint64_t sent_step = UINT64_MAX;
+                            for ( uint32_t r = 0; r < ROCKETNET_DST_CHECK_RECENT_SENDS && r < s->recent_count; r++ )
+                            {
+                                if ( s->recent_seq[r] == seq )
+                                {
+                                    sent_step = s->recent_step[r];
+                                }
+                            }
+                            char what[192];
+                            snprintf( what, sizeof( what ), "stream=%d seq=%u owed_through=%u sent_step=%lld last=%u at=%llu id=%llu",
+                                      rocketnet_dst_check_stream_index( session, channel, type ), seq, settled,
+                                      sent_step == UINT64_MAX ? -1LL : (long long) sent_step, s->last_sent_seq,
+                                      (unsigned long long) s->last_sent_step, (unsigned long long) s->identity );
                             rocketnet_dst_check_fail( st, "liveness_delivered", what );
                             break;
                         }
@@ -1231,7 +1338,7 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst_check_state_t * st,
                                                             const struct rocketnet_counters_t * counters,
                                                             const char * end,
-                                                            int duplicates_enabled )
+                                                            int duplicates_enabled, int window_bounded )
 {
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
@@ -1264,11 +1371,37 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // rocketnet_dst_check_clock above); on any other run the same
             // counter stays unexplained.
             ( st->clock_back_seen && i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED ) ||
+            // The outage schedules drop a dark client's handshake packets
+            // in the window: a client that took its cookie before the window
+            // and whose request reaches the server only after it answers late
+            // in the same way. Explained only when the wire dropped a
+            // handshake packet of a dark client on this run
+            // (outage_handshake_seen, set by the harness).
+            ( st->outage_handshake_seen && i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED ) ||
+            // The same dropped handshake times the dark client's connect out;
+            // it reconnects with a fresh cookie salt while the server's
+            // challenge to the old request is still on the wire.
+            ( st->outage_handshake_seen && i == ROCKETNET_COUNTER_CLIENT_COOKIE_SALT_MISMATCH ) ||
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED ||
-            i == ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING;
+            i == ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING ||
+            // The message objects' rows (measured, seeds 1-2050 and every
+            // schedule over 1-50): a full sent-packet map evicts its oldest
+            // entry and keeps that entry's numbers queued for resend, so
+            // nothing is lost; an unreliable message the send budget cannot
+            // pay is dropped, which unreliable delivery allows. A no-room
+            // send refusal is judged by refusals_agree, against the sends
+            // the harness saw refused.
+            i == ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ||
+            i == ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET ||
+            i == ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ||
+            i == ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ||
+            // The outage schedules run the smallest numbering window (64)
+            // and hold a dark sender's numbers unacknowledged, so the window
+            // fills and new numbering waits: only on such a run.
+            ( window_bounded && i == ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL );
         if ( !explained )
         {
             char what[256];
@@ -1277,6 +1410,123 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             rocketnet_dst_check_fail( st, "unexplained_refusal", what );
             return;
         }
+    }
+}
+
+// refusals_agree (standard/MESSAGES.md m1.7, proofs/tla/RNConnectionMemory.tla:
+// a send with no room is refused and counted, never a kick): every send the
+// harness offered and the library refused is one the message object counted
+// as a no-room refusal (MESSAGE_SEND_QUEUE_FULL or MESSAGE_SEND_STORE_FULL)
+// or as a send on a connection not yet CONNECTED (MESSAGE_SEND_NOT_CONNECTED:
+// the burst schedule's batch can open in the step the client's transport
+// connects, before its message connection has), and the object counted none
+// the harness did not see refused.
+
+static inline void rocketnet_dst_check_refusals_agree( struct rocketnet_dst_check_state_t * st, const char * end,
+                                                       uint64_t refused, const struct rocketnet_counters_t * counters )
+{
+    const uint64_t counted = rocketnet_counter_value( counters, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL ) +
+                             rocketnet_counter_value( counters, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) +
+                             rocketnet_counter_value( counters, ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED );
+    if ( counted != refused )
+    {
+        char what[160];
+        snprintf( what, sizeof( what ), "%s: the harness saw %llu sends refused, the library counted %llu", end,
+                  (unsigned long long) refused, (unsigned long long) counted );
+        rocketnet_dst_check_fail( st, "refusals_agree", what );
+    }
+}
+
+// send_floor: a library that refused every send would pass every check that
+// judges what was sent, so at least half of the reliable sends the harness
+// offered each way are accepted. Only the outage schedules' dark sessions
+// are refused at all, and only in their window.
+
+static inline void rocketnet_dst_check_send_floor( struct rocketnet_dst_check_state_t * st, const char * end,
+                                                   uint64_t offered, uint64_t accepted )
+{
+    if ( accepted * 2 < offered || ( offered > 0 && accepted == 0 ) )
+    {
+        char what[160];
+        snprintf( what, sizeof( what ), "%s: %llu of %llu reliable sends accepted", end, (unsigned long long) accepted,
+                  (unsigned long long) offered );
+        rocketnet_dst_check_fail( st, "send_floor", what );
+    }
+}
+
+// probe_paced (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
+// ReportedDue, DueMeansWritten): a sender that has had no reliable number
+// acknowledged for RN_PROBE_SECONDS resends only its oldest, once per resend
+// delay, and asks its transport for a frame only for that probe or for a
+// number it never sent (which m9.3 still allows, within the window). Over
+// each 100 steps (one second) in which a dark session's sender (side 0 the
+// client, 1 the server's slot) was held, the frames it started are at most
+// one per its shortest resend delay in them, plus one for alignment, plus
+// one per number first sent in them. A sender whose peer's packets still
+// reach it (one-way outage) also answers each of the peer's packets, so the
+// peer's shortest resend delay adds its own term, and first_sends counts the
+// peer's first sends too; peer_delay 0 means nothing reaches the sender.
+
+static inline void rocketnet_dst_check_probe_paced( struct rocketnet_dst_check_state_t * st, int client, int side,
+                                                    uint64_t frames, double resend_delay, double peer_delay,
+                                                    uint64_t first_sends )
+{
+    const double delay = resend_delay > 0.010 ? resend_delay : 0.010;
+    uint64_t bound = (uint64_t) ( 1.0 / delay ) + 1 + first_sends;
+    if ( peer_delay > 0.0 )
+    {
+        const double peer = peer_delay > 0.010 ? peer_delay : 0.010;
+        bound += (uint64_t) ( 1.0 / peer ) + 1;
+    }
+    if ( frames > bound )
+    {
+        char what[224];
+        snprintf( what, sizeof( what ),
+                  "client=%d %s started %llu frames in a held second, resend delay %.3f s (peer %.3f s) and %llu first sends allow %llu",
+                  client, side ? "server" : "client", (unsigned long long) frames, resend_delay, peer_delay,
+                  (unsigned long long) first_sends, (unsigned long long) bound );
+        rocketnet_dst_check_fail( st, "probe_paced", what );
+    }
+}
+
+// bright_unaffected (the per-client isolation of the bad-network design, P):
+// a client the outage leaves bright sees no longer gap between two
+// deliveries of its session inside the window, in either direction
+// (0 to the server, 1 to the client), than the same seed's control run
+// (the same draws with no client dark) saw in the same window, plus a slack
+// of `slack` steps. The two runs share every fault draw but not every packet
+// (the dark clients' traffic moves sequence numbers and send order), so a
+// bright gap moves a little either way; the slack is one longest resend
+// delay, the most one lost and resent packet adds to a gap.
+
+static inline void rocketnet_dst_check_bright_unaffected( struct rocketnet_dst_check_state_t * st, int client,
+                                                          int direction, uint64_t control, uint64_t inside,
+                                                          uint64_t slack )
+{
+    if ( inside > control + slack )
+    {
+        char what[192];
+        snprintf( what, sizeof( what ), "client=%d %s: a gap of %llu steps in the window, %llu without the outage (slack %llu)",
+                  client, direction ? "to the client" : "to the server", (unsigned long long) inside,
+                  (unsigned long long) control, (unsigned long long) slack );
+        rocketnet_dst_check_fail( st, "bright_unaffected", what );
+    }
+}
+
+// outage_end (proofs/tla/ClientSession.tla and ServerSession.tla: the
+// silence timeout): a session dark both ways for longer than T ends on each
+// end by the timeout reason, no earlier than T after that end last heard
+// the other (side 0 the client's state, 1 the server slot's end reason).
+
+static inline void rocketnet_dst_check_outage_end( struct rocketnet_dst_check_state_t * st, int client, int side,
+                                                   int reason, int timeout_reason, double silent, double timeout )
+{
+    if ( reason != timeout_reason || silent < timeout - 1.0e-6 )
+    {
+        char what[160];
+        snprintf( what, sizeof( what ), "client=%d %s ended reason=%d after %.3f s silent (timeout reason %d at %.0f s)",
+                  client, side ? "server" : "client", reason, silent, timeout_reason, timeout );
+        rocketnet_dst_check_fail( st, "outage_end", what );
     }
 }
 
