@@ -866,7 +866,7 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --list [--shard <i>/<n>] | --enforce-rss | --shard <i>/<n>]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list [--shard <i>/<n>] | [--enforce-rss] [--shard <i>/<n>]]\n", argv[0] );
     return 2;
 }
 
@@ -1524,6 +1524,12 @@ inline int suite_main( int argc, char ** argv,
     {
         return 2;
     }
+    // --enforce-rss before --shard: a shard of the suite enforces the bound too
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
     {
@@ -1533,12 +1539,6 @@ inline int suite_main( int argc, char ** argv,
     if ( list )
     {
         return suite_list_cases( count, name_at, execs, nexecs, group_of, "", shard_index, shards );
-    }
-
-    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
-    {
-        enforce_case_rss = true;
-        argc = 1;
     }
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
@@ -1973,6 +1973,12 @@ inline int suite_main( int argc, char ** argv,
     {
         return 2;
     }
+    // --enforce-rss before --shard: a shard of the suite enforces the bound too
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     const bool list = argc == 2 && std::strcmp( argv[1], "--list" ) == 0;
     if ( shards > 0 && argc != 1 && !list )
     {
@@ -1982,12 +1988,6 @@ inline int suite_main( int argc, char ** argv,
     if ( list )
     {
         return suite_list_cases( count, name_at, execs, nexecs, group_of, ".exe", shard_index, shards );
-    }
-
-    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
-    {
-        enforce_case_rss = true;
-        argc = 1;
     }
 
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
