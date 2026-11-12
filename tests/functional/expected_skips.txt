@@ -129,3 +129,4 @@ skip test_xdp_transport_posix_init_term_1000 rocketnet_test_posix_xdp_offered li
 skip test_xdp_transport_posix_server_create_destroy_1000 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_posix_server_restart_same_port_100 rocketnet_test_posix_xdp_offered linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_xdp_transport_server_io_pin rocketnet_test_server_pin_allows_xdp linux-dev-portable,linux-prod-portable,linux-s390x-portable
+skip test_xdp_transport_serves_both_families rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
