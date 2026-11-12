@@ -1524,3 +1524,42 @@ function(rocketnet_check_fp_floor)
     message(STATUS "Floating-point floor (${family}) on all ${checked} compiled targets")
 endfunction()
 rocketnet_check_fp_floor()
+
+# The source audit's public-API cast check (source_audit_client_counter_access.cpp)
+# reads every C/C++ source the build compiles into a program: every executable
+# but the white-box suites, which test the internals on purpose (the unit and
+# functional suites, the test_* programs, the source audit, the deterministic
+# simulation and the fuzz replays). No list of directories: a new tool,
+# example or benchmark is read the day it is added (VERIFY-3 W16). Read at the
+# end, once every target is defined.
+if(TARGET source_audit)
+    get_property( ROCKETNET_AUDIT_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY BUILDSYSTEM_TARGETS )
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt" AND ROCKETNET_BUILD_EXAMPLES)
+        get_property( ROCKETNET_AUDIT_EXAMPLE_TARGETS DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/examples" PROPERTY BUILDSYSTEM_TARGETS )
+        list( APPEND ROCKETNET_AUDIT_TARGETS ${ROCKETNET_AUDIT_EXAMPLE_TARGETS} )
+    endif()
+    set( ROCKETNET_PUBLIC_PROGRAM_SOURCES "" )
+    foreach( audit_target IN LISTS ROCKETNET_AUDIT_TARGETS )
+        get_target_property( audit_type ${audit_target} TYPE )
+        if(NOT audit_type STREQUAL "EXECUTABLE" OR audit_target MATCHES "^(test|test_.*|functional|source_audit|dst|fuzz_.*)$")
+            continue()
+        endif()
+        get_target_property( audit_dir ${audit_target} SOURCE_DIR )
+        get_target_property( audit_sources ${audit_target} SOURCES )
+        foreach( audit_source IN LISTS audit_sources )
+            if(NOT audit_source MATCHES "\\.(c|cpp)$")
+                continue()
+            endif()
+            get_filename_component( audit_path "${audit_source}" ABSOLUTE BASE_DIR "${audit_dir}" )
+            file( RELATIVE_PATH audit_relative "${CMAKE_CURRENT_SOURCE_DIR}" "${audit_path}" )
+            if(NOT audit_relative MATCHES "^(sdk/|\\.\\./)")
+                list( APPEND ROCKETNET_PUBLIC_PROGRAM_SOURCES "${audit_relative}" )
+            endif()
+        endforeach()
+    endforeach()
+    list( REMOVE_DUPLICATES ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    list( SORT ROCKETNET_PUBLIC_PROGRAM_SOURCES )
+    string( REPLACE ";" "|" ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST "${ROCKETNET_PUBLIC_PROGRAM_SOURCES}" )
+    set_property( SOURCE tests/source_audit_client_counter_access.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_PUBLIC_PROGRAM_SOURCES=\"${ROCKETNET_PUBLIC_PROGRAM_SOURCES_LIST}\"" )
+endif()
