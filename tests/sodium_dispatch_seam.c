@@ -2,9 +2,10 @@
 
 // The vendored sodium pair compiled into this translation unit, so the test
 // (tests/test_sodium_dispatch.cpp) can read and set the implementation each
-// runtime dispatch picked: ChaCha20 (ref, SSSE3, AVX2), Poly1305 (donna,
-// SSE2) and BLAKE2b (ref, SSSE3, SSE4.1, AVX2). The library's own copy is a
-// separate object; this binary does not link it. Test code only.
+// runtime dispatch picked: ChaCha20 (ref, SSSE3, AVX2, NEON), Poly1305
+// (donna, SSE2, mul64), BLAKE2b (ref, SSSE3, SSE4.1, AVX2) and the IETF AEAD
+// (composed, neon-fused). The library's own copy is a separate object; this
+// binary does not link it. Test code only.
 
 #include "sodium.c"
 
@@ -41,11 +42,26 @@ int sodium_dispatch_has( const char * feature )
     {
         return _cpu_features.has_avx2;
     }
+    if ( strcmp( feature, "neon" ) == 0 )
+    {
+        return _cpu_features.has_neon;
+    }
     return -1;
+}
+
+const char * sodium_dispatch_aead( void )
+{
+    return implementation__aead->name;
 }
 
 const char * sodium_dispatch_chacha20( void )
 {
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    if ( implementation__cc20 == &crypto_stream_chacha20_neon_implementation )
+    {
+        return "neon";
+    }
+#endif
 #if defined( HAVE_AVX2INTRIN_H ) && defined( HAVE_EMMINTRIN_H ) && defined( HAVE_TMMINTRIN_H ) && defined( HAVE_SMMINTRIN_H )
     if ( implementation__cc20 == &crypto_stream_chacha20_dolbeau_avx2_implementation )
     {
@@ -67,6 +83,12 @@ const char * sodium_dispatch_chacha20( void )
 
 const char * sodium_dispatch_poly1305( void )
 {
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    if ( implementation__poly == &crypto_onetimeauth_poly1305_mul64_implementation )
+    {
+        return "mul64";
+    }
+#endif
 #if defined( HAVE_TI_MODE ) && defined( HAVE_EMMINTRIN_H )
     if ( implementation__poly == &crypto_onetimeauth_poly1305_sse2_implementation )
     {
@@ -129,8 +151,24 @@ int sodium_dispatch_built( const char * primitive, const char * name )
 #endif
         return 0;
     }
+    if ( strcmp( primitive, "aead" ) == 0 )
+    {
+#if defined( SODIUM_ROCKETNET_ARM64 )
+        if ( strcmp( name, "neon-fused" ) == 0 )
+        {
+            return 1;
+        }
+#endif
+        return strcmp( name, "composed" ) == 0;
+    }
     if ( strcmp( primitive, "chacha20" ) == 0 )
     {
+#if defined( SODIUM_ROCKETNET_ARM64 )
+        if ( strcmp( name, "neon" ) == 0 )
+        {
+            return 1;
+        }
+#endif
 #if defined( HAVE_EMMINTRIN_H ) && defined( HAVE_TMMINTRIN_H )
         if ( strcmp( name, "ssse3" ) == 0 )
         {
@@ -147,6 +185,12 @@ int sodium_dispatch_built( const char * primitive, const char * name )
     }
     if ( strcmp( primitive, "poly1305" ) == 0 )
     {
+#if defined( SODIUM_ROCKETNET_ARM64 )
+        if ( strcmp( name, "mul64" ) == 0 )
+        {
+            return 1;
+        }
+#endif
 #if defined( HAVE_TI_MODE ) && defined( HAVE_EMMINTRIN_H )
         if ( strcmp( name, "sse2" ) == 0 )
         {
@@ -190,6 +234,13 @@ int sodium_dispatch_select_chacha20( const char * name )
         implementation__cc20 = &crypto_stream_chacha20_ref_implementation;
         return 1;
     }
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    if ( strcmp( name, "neon" ) == 0 && _cpu_features.has_neon )
+    {
+        implementation__cc20 = &crypto_stream_chacha20_neon_implementation;
+        return 1;
+    }
+#endif
 #if defined( HAVE_EMMINTRIN_H ) && defined( HAVE_TMMINTRIN_H )
     if ( strcmp( name, "ssse3" ) == 0 && _cpu_features.has_ssse3 )
     {
@@ -214,6 +265,13 @@ int sodium_dispatch_select_poly1305( const char * name )
         implementation__poly = &crypto_onetimeauth_poly1305_donna_implementation;
         return 1;
     }
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    if ( strcmp( name, "mul64" ) == 0 && _cpu_features.has_neon )
+    {
+        implementation__poly = &crypto_onetimeauth_poly1305_mul64_implementation;
+        return 1;
+    }
+#endif
 #if defined( HAVE_TI_MODE ) && defined( HAVE_EMMINTRIN_H )
     if ( strcmp( name, "sse2" ) == 0 && _cpu_features.has_sse2 )
     {
@@ -255,9 +313,36 @@ int sodium_dispatch_select_blake2b( const char * name )
     return 0;
 }
 
+int sodium_dispatch_select_aead( const char * name )
+{
+    if ( strcmp( name, "composed" ) == 0 )
+    {
+        implementation__aead = &crypto_aead_chacha20poly1305_ietf_composed_implementation;
+        return 1;
+    }
+#if defined( SODIUM_ROCKETNET_ARM64 )
+    if ( strcmp( name, "neon-fused" ) == 0 && _cpu_features.has_neon )
+    {
+        implementation__aead = &crypto_aead_chacha20poly1305_ietf_neon_fused_implementation;
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+// The picks rerun the way sodium_init runs them, which reads the forced
+// fallback (ROCKETNET_SODIUM_PORTABLE) again.
+
+void sodium_dispatch_repick( void )
+{
+    _crypto_onetimeauth_poly1305_pick_best_implementation();
+    _crypto_stream_chacha20_pick_best_implementation();
+    _crypto_aead_chacha20poly1305_ietf_pick_best_implementation();
+    _crypto_generichash_blake2b_pick_best_implementation();
+}
+
 // Detection forced: clear AVX and AVX2 (as on a CPU or OS without YMM
-// state), or detect again, then rerun the three picks the way sodium_init
-// does.
+// state), or detect again, then rerun the picks.
 
 void sodium_dispatch_force_no_avx2( int no_avx2 )
 {
@@ -267,7 +352,5 @@ void sodium_dispatch_force_no_avx2( int no_avx2 )
         _cpu_features.has_avx = 0;
         _cpu_features.has_avx2 = 0;
     }
-    _crypto_onetimeauth_poly1305_pick_best_implementation();
-    _crypto_stream_chacha20_pick_best_implementation();
-    _crypto_generichash_blake2b_pick_best_implementation();
+    sodium_dispatch_repick();
 }
