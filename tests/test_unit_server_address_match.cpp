@@ -314,6 +314,34 @@ void test_rocketnet_test_server_address_match_family_mismatch_refused()
     rocketnet_server_address_match_server_teardown( &test );
 }
 
+// A request whose source is v4-mapped (::ffff:a.b.c.d, an IPv4 client seen
+// through an IPv6 socket) arrives over IPv4: the token's IPv4 address is the
+// one checked. A token naming 127.0.0.1:40000 is accepted; one naming only
+// [::1]:40000, an address the server does advertise, is refused.
+
+void test_rocketnet_test_server_address_match_v4_mapped_arrival()
+{
+    struct rocketnet_server_address_match_server_t test;
+    rocketnet_server_address_match_server_setup( &test );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
+    const uint8_t loopback_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
+
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "[::ffff:198.51.100.7]:56789" ) );
+    rocketnet_unit_check( test.client_address.type == ROCKETNET_ADDRESS_IPV6 );
+
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, loopback_ipv6 );
+    rocketnet_server_address_match_refused( &test, request, true );
+    rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+    rocketnet_server_address_match_refused( &test, request, false );
+
+    rocketnet_server_address_match_server_teardown( &test );
+}
+
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped );
+REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_v4_mapped_arrival );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_two_address_token );
 REGISTER_UNIT_TEST( test_rocketnet_test_server_address_match_family_mismatch_refused );
