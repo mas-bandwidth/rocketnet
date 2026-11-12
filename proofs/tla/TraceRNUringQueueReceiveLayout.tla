@@ -14,7 +14,7 @@
 (* that is not a model step.  At the last record the trace stutters        *)
 (* (TraceDone).  README-TraceCheck.md has the mechanism.                   *)
 (***************************************************************************)
-EXTENDS RNUringQueueReceiveLayout, Sequences
+EXTENDS RNUringQueueReceiveLayout, Sequences, TLC
 
 CONSTANT TraceLog
 
