@@ -71,7 +71,7 @@ jobs:
       cancel-in-progress: false
     defaults:
       run:
-        shell: bash --noprofile --norc -euo pipefail {0}
+        shell: bash
     env:
       ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
       ROCKETNET_TEST_JOBS: 4
@@ -86,6 +86,7 @@ jobs:
 
       - name: Application Verifier can be enabled by this runner's account
         run: |
+          set -euo pipefail
           av=/c/Windows/System32/appverif.exe
           if [ ! -x "$av" ]; then echo "APPVERIF-MISSING $av on $RUNNER_NAME: install Application Verifier for x64"; exit 1; fi
           probe="rocketnet_appverif_probe_appverif_$$.exe"
@@ -115,34 +116,42 @@ jobs:
           Write-Output ("IFEO before: {0} lines" -f (Get-Content logs\ifeo-before.reg).Count)
 
       - name: Configure (DEV=OFF Debug)
-        run: cmake -B "$BUILD_DIR" -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin"
+        run: |
+          set -euo pipefail
+          cmake -B "$BUILD_DIR" -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$BUILD_DIR/bin"
 
       - name: Build Debug
         id: build
-        run: cmake --build "$BUILD_DIR" --config Debug --parallel 4
+        run: |
+          set -euo pipefail
+          cmake --build "$BUILD_DIR" --config Debug --parallel 4
 
       - name: Self-check, a planted handle fault and heap fault must each be logged
         id: selfcheck
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
+          set -euo pipefail
           python tools/windows/appverif_run.py --self-check --plants "$BIN" --write-stamp "$STAMP" --xml logs/appverif.xml 2>&1 | tr -d '\r' | tee selfcheck.log
           grep -q '^appverif_run: self-check PASS' selfcheck.log
 
       - name: IOCP and RIO transport suite under Application Verifier
         if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
         run: |
+          set -euo pipefail
           python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml logs/appverif-iocp.xml -- "$BIN/test_iocp.exe" 2>&1 | tr -d '\r' | tee iocp.log
           grep -q '^appverif_run: PASS' iocp.log
 
       - name: Unit suite under Application Verifier
         if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
         run: |
+          set -euo pipefail
           python tools/windows/appverif_run.py --self-check-passed-at "$STAMP" --xml logs/appverif-unit.xml -- "$BIN/test.exe" 2>&1 | tr -d '\r' | tee unit.log
           grep -q '^appverif_run: PASS' unit.log
 
       - name: Functional suite under Application Verifier, eight shards
         if: ${{ !cancelled() && steps.selfcheck.outcome == 'success' }}
         run: |
+          set -euo pipefail
           failed=0
           ran=0
           for shard in 0 1 2 3 4 5 6 7; do
@@ -172,7 +181,7 @@ jobs:
           $diff = Compare-Object (Get-Content logs\ifeo-before.reg) (Get-Content logs\ifeo-after.reg)
           if ($diff) {
             Write-Output "FAIL Image File Execution Options changed during the run (<= before only, => after only):"
-            $diff | ForEach-Object { Write-Output ("    {0} {1}" -f $_.SideIndicator, $_.InputObject) }
+            foreach ($line in $diff) { Write-Output ("    {0} {1}" -f $line.SideIndicator, $line.InputObject) }
             exit 1
           }
           Write-Output ("IFEO unchanged: {0} lines before and after" -f (Get-Content logs\ifeo-after.reg).Count)
@@ -184,6 +193,7 @@ jobs:
         env:
           REF: ${{ matrix.ref }}
         run: |
+          set -euo pipefail
           s="$REF"; s=${s//\//-}
           echo "slug=$s" >> "$GITHUB_OUTPUT"
 
