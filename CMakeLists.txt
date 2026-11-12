@@ -1163,6 +1163,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/posix_hard_killed_client.cpp
         tests/functional/posix_lifecycle_stress.cpp
         tests/functional/posix_socket_errors.cpp
+        tests/functional/server_bind_address.cpp
         tests/functional/corpus_consistency.cpp
         tests/functional/shared_library_tokens.cpp
         tests/functional/loopback_hub_shared_objects.cpp
@@ -1301,6 +1302,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/windows_connreset.cpp
             tests/functional/posix_lifecycle_stress.cpp
             tests/functional/posix_socket_errors.cpp
+            tests/functional/server_bind_address.cpp
             tests/functional/corpus_consistency.cpp
             tests/functional/session_reconnect_isolation.cpp
             tests/functional/disconnect_reasons_real.cpp

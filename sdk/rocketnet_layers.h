@@ -36,6 +36,7 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, server_secret_key ) + ROCKETNET_SERVER_SECRET_KEY_BYTES, sizeof( void * ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, bind_ipv6_address ) + sizeof( const char * ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -759,7 +760,23 @@ struct rocketnet_server_transport_config_t
     int handshakes_per_update;
     /** @brief The loopback hub the loopback transport serves through; NULL refuses the loopback transport. */
     struct rocketnet_loopback_hub_t * loopback_hub;
+    /** @brief The local IPv4 address the server binds, with no port; empty binds the IPv4 wildcard. */
+    char bind_ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    /** @brief The local IPv6 address the server binds, with no port; empty binds the IPv6 wildcard. */
+    char bind_ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 };
+
+/** @brief Resolves the local address a server transport binds from its config and served address.
+ * @param[in] config The resolved config: bind_ipv4_address and bind_ipv6_address are read.
+ * @param[in] public_address The served address (the first family when the server serves both).
+ * @param[in] serves_both Nonzero when the server serves both families on one dual-stack socket.
+ * @param[out] bind_address Receives the address to bind, on the served port.
+ * @param[out] status Receives ROCKETNET_STATUS_INVALID_ADDRESS on a refusal; may be NULL.
+ * @return true resolved, logged as "server transport binds ..."; false refused, with one log line naming why.
+ * @details Unset binds the family's wildcard (both families: the IPv6 wildcard). Refused: an address that does not parse, of the other family, with a port, multicast or the IPv4 broadcast; a bind address for a family not served; any bind address when serves_both.
+ */
+bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const struct rocketnet_address_t * public_address,
+                                                      int serves_both, struct rocketnet_address_t * bind_address, int * status );
 
 // a NULL config is a counted no-op
 /** @brief Fill a server transport config with its defaults.
