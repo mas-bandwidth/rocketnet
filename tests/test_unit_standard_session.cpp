@@ -232,3 +232,31 @@ static void test_standard_session_accept_payload_names_the_live_connection()
 }
 
 REGISTER_UNIT_TEST( test_standard_session_accept_payload_names_the_live_connection );
+
+// The per-slot accessors answer for 0 .. max_clients - 1 only: at max_clients
+// they return the empty answer, never the next array element. The arrays
+// here have one element past max_clients holding a value a slot would hold.
+
+static void test_standard_session_accessors_stop_at_max_clients()
+{
+    struct rocketnet_session_server_t test;
+    rocketnet_session_server_setup_clients( &test, 2 );
+
+    uint64_t connection_ids[3] = { 0x77, 0, 0x99 };
+    int end_reasons[3] = { ROCKETNET_DISCONNECT_REASON_NONE, ROCKETNET_DISCONNECT_REASON_NONE, ROCKETNET_DISCONNECT_REASON_TIMED_OUT };
+    test.server.connection_ids = connection_ids;
+    test.server.end_reasons = end_reasons;
+
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, 0 ) == 0x77 );
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, 2 ) == 0 );
+    rocketnet_unit_check( rocketnet_server_protocol_connection_id( &test.server, -1 ) == 0 );
+    rocketnet_unit_check( rocketnet_server_protocol_end_reason( &test.server, 2 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( rocketnet_server_protocol_end_reason( &test.server, -1 ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( rocketnet_server_protocol_client_rtt( &test.server, 2 ) == 0.0 );
+
+    test.server.connection_ids = NULL;
+    test.server.end_reasons = NULL;
+    rocketnet_session_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_standard_session_accessors_stop_at_max_clients );
