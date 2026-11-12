@@ -208,6 +208,43 @@ static void test_token_claims_refuse_a_second_address_at_every_slot()
 
 REGISTER_UNIT_TEST( test_token_claims_refuse_a_second_address_at_every_slot );
 
+#if ROCKETNET_DEV
+
+extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
+extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history );
+
+// The claim index's probe count (DEV): in a table holding no claim, a lookup
+// reads its home cell, finds it empty and stops (one probe); a first claim
+// is one lookup and one insert into its empty home (two). At every capacity.
+static void test_token_claim_probes_in_an_empty_table()
+{
+    struct rocketnet_address_t address[2];
+    tt_addresses( address );
+
+    for ( int capacity = 1; capacity <= 8; ++capacity )
+    {
+        struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+        check( history );
+
+        uint8_t id[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+        tt_id( id, capacity );
+
+        rocketnet_dev_token_table_reset_operation_counts( history );
+        check( rocketnet_used_token_history_claim_check( history, id, &address[1], 1000.0 ) == 1 );
+        check( rocketnet_dev_token_claim_probe_steps( history ) == 1 );
+
+        rocketnet_dev_token_table_reset_operation_counts( history );
+        check( rocketnet_used_token_history_claim_record( history, id, &address[0], 1010.0, 1000.0 ) == 1 );
+        check( rocketnet_dev_token_claim_probe_steps( history ) == 2 );
+
+        rocketnet_used_token_history_destroy( history );
+    }
+}
+
+REGISTER_UNIT_TEST( test_token_claim_probes_in_an_empty_table );
+
+#endif // #if ROCKETNET_DEV
+
 // ---- an independent model of the header's rules ----------------------------
 
 enum
