@@ -65,6 +65,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_server_gso.h"
+#include "rocketnet_segment_refused.h"
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -1760,6 +1761,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     uring->context = context;
     uring->num_queues = num_queues;
     uring->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    uring->segment_refused.seed = (uint32_t) rocketnet_random_uint64();
     uring->packet_id = 1;
 
     if ( !rocketnet_server_uring_buffers_create( uring, max_clients ) )

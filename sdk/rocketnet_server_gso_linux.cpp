@@ -1175,6 +1175,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->context = context;
     gso->num_queues = num_queues;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    gso->segment_refused.seed = (uint32_t) rocketnet_random_uint64();
     gso->packet_id = 1;
 
     gso->max_clients = max_clients;

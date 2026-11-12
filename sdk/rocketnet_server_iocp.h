@@ -126,8 +126,10 @@ enum rocketnet_server_iocp_counter_t
 
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters );
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
-// The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
-// segmented send is refused.
+// The ROCKETNET_IOCP_FEATURE_* bits in use now. A destination that refuses a
+// live segmented send is sent per datagram from then on (sdk/rocketnet_segment_refused.h);
+// USO clears itself only when ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
+// destinations refused and no segmented send was ever accepted.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 
 #if ROCKETNET_DEV

@@ -4,6 +4,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_server_rio.h"
+#include "rocketnet_segment_refused.h"
 #include "rocketnet_memory.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
@@ -1701,7 +1702,7 @@ static void test_iocp_send_post_fails()
 // v1.1.0 to v1.1.7 cleared USO for the whole transport on the first refusal.
 // proofs/tla/RNSegmentRefusal.tla OtherDestinationUnaffected.
 
-#define IOCP_SEGMENT_REFUSAL_THRESHOLD 8 // ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
+#define IOCP_SEGMENT_REFUSAL_THRESHOLD ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
 
 static bool iocp_uso_transport( rocketnet_address_t * bind, rocketnet_server_iocp_t ** transport )
 {

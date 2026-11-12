@@ -378,6 +378,7 @@ bool rocketnet_server_iocp_test_retry_receive_keeps_operation( bool * boundary_a
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #include "rocketnet_coalesce.h"
+#include "rocketnet_segment_refused.h"
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <mstcpip.h>
@@ -594,6 +595,7 @@ struct rocketnet_server_iocp_t
     // bytes (zero for an aborted or empty slot) and destination.
     int * run_bytes = NULL;                     // send_queue_size entries
     rocketnet_address_t * run_to = NULL;
+    rocketnet_segment_refused_t segment_refused = {};      // TX worker only: the destinations that refused a USO send
 #if ROCKETNET_DEV
     std::atomic<int> test_faults[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_IOCP_TEST_NUM_FAULTS]{};
@@ -1561,7 +1563,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     iocp->context = context;
     iocp->num_workers = num_workers;
     iocp->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
-    iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
+    iocp->segment_refused.seed = (uint32_t) rocketnet_random_uint64();
+    iocp->owner_epoch =rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
     iocp->receive_queue_size = layout.receive_queue_size;
 
@@ -2069,9 +2072,9 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rock
 // stride (the shared run rule's shorter tail is the documented shorter last
 // segment). WSASendMsg captures the WSABUF array before it returns (WSASendMsg
 // reference), so the array lives on this stack; the WSAMSG and its control
-// message live in the run's first frame. Returns false when the host refused
-// USO live: the feature is cleared, counted, and the caller sends the run
-// frame by frame.
+// message live in the run's first frame. Returns false when the destination
+// refused USO live: the refusal is counted and the destination remembered
+// (rocketnet_segment_refused_t), and the caller sends the run frame by frame.
 static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t * staged, int run )
 {
     rocketnet_iocp_operation_t * first = rocketnet_iocp_send_from_ref( iocp, staged[0], ROCKETNET_IOCP_OPERATION_STAGED );
@@ -2137,6 +2140,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         if ( result == 0 )
         {
             iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+            iocp->segment_refused.accepted = true;
             return true;
         }
 
@@ -2146,6 +2150,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
     if ( error == WSA_IO_PENDING )
     {
         iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+        iocp->segment_refused.accepted = true;
         return true;
     }
 
@@ -2155,11 +2160,27 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     if ( error == WSAEINVAL || error == WSAEOPNOTSUPP )
     {
-        // As the GSO transport does for a refused live UDP_SEGMENT send:
-        // degrade the tier and resend losslessly, never drop the run.
-        rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
-        iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
-        iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed );
+        // This destination refused a USO send. It is that destination's: it
+        // is remembered, so its later runs leave plain, and this run is
+        // resent frame by frame; other destinations keep USO. USO turns off
+        // for the transport only when the threshold of destinations refused
+        // with none ever accepted (a host that cannot segment at all).
+        // standard/TRANSPORT.md t2.4 rule 7; proofs/tla/RNSegmentRefusal.tla Refuse.
+        const bool first_refusal = iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed ) == 0;
+        if ( rocketnet_segment_refused_add( &iocp->segment_refused, &first->to ) )
+        {
+            rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). %d destinations refused and none accepted, degrading to WSASendTo per datagram",
+                            error, iocp->segment_refused.destinations );
+            iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
+        }
+        else if ( first_refusal )
+        {
+            rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). resending that run per datagram", error );
+        }
+        else
+        {
+            rocketnet_spam( "iocp transport: live USO send refused (Winsock %d). resending that run per datagram", error );
+        }
 
         rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
         const bool released = rocketnet_iocp_take_run( iocp, run_ticket, run, refs );
@@ -2210,7 +2231,9 @@ static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_
             continue;
         }
 
-        if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
+        // proofs/tla/RNSegmentRefusal.tla Run: a destination that refused leaves plain
+        if ( ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO ) &&
+             !rocketnet_segment_refused_contains( &iocp->segment_refused, &op->to ) )
         {
             const int run = rocketnet_coalesce_send_run( &iocp->run_bytes[i], &iocp->run_to[i], (int) ( count - i ),
                                                          ROCKETNET_IOCP_USO_MAX_SEGMENTS, ROCKETNET_IOCP_USO_MAX_SUPER_BYTES );
