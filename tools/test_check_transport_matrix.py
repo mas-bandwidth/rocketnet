@@ -15,7 +15,7 @@ from pathlib import Path
 TOOLS = Path(__file__).resolve().parent
 TOOL = TOOLS / "check_transport_matrix.py"
 REPO = TOOLS.parent
-INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
+INPUTS = ("sdk/rocketnet_drivers.inc", ".github/workflows/ci.yml", ".github/workflows/nightly.yml", "sdk/rocketnet.h", "docs/USAGE.md", "docs/TRANSPORTS.md")
 
 # pin-only, so the auto orders the docs state are unchanged and the one gap
 # is the missing matrix cell
@@ -54,6 +54,19 @@ class TransportMatrixTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("transport spare: no TRANSPORT_MATRIX_LINUX cell with server transport spare", result.stdout)
 
+    def test_a_nightly_cell_list_is_refused(self):
+        # nightly.yml's fifty-times step of an OS that names cells (--cell) is
+        # a copy of ci.yml's list that drifts: the Windows job named 4 of 6
+        self.plant()
+        nightly = self.root / ".github/workflows/nightly.yml"
+        text = nightly.read_text()
+        self.assertIn("          scripts/transport-cells-repeat --runs 50\n", text)
+        nightly.write_text(text.replace("          scripts/transport-cells-repeat --runs 50\n",
+                                        "          scripts/transport-cells-repeat --runs 50 --cell portable/portable\n", 1))
+        result = self.run_tool()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("the fifty-times step names cells (--cell)", result.stdout)
+
     def test_a_registry_with_no_rows_is_refused(self):
         self.plant()
         (self.root / "sdk/rocketnet_drivers.inc").write_text("")
@@ -64,7 +77,7 @@ class TransportMatrixTest(unittest.TestCase):
     def test_an_empty_tree_is_refused(self):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("0 files of 5", result.stdout)
+        self.assertIn("0 files of %d" % len(INPUTS), result.stdout)
 
 
 if __name__ == "__main__":

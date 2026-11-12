@@ -82,3 +82,5 @@ tools/bigendian/run_byte_cases.sh	bash tools/bigendian/test_run_byte_cases.sh	cd
 tools/format/check_format.sh	sh tools/format/test_check_format.sh	cd {empty} && git init -q && CLANG_FORMAT=true sh "$OLDPWD/tools/format/check_format.sh"	ci.yml	lint	Test the format checker
 tools/check_run_shell.py	python3 tools/check_run_shell.py --self-test	python3 tools/check_run_shell.py --root {empty}	ci.yml	lint	Every run step stops on its first failure
 tools/check_msvc_crt.py	python3 tools/check_msvc_crt.py --self-test	python3 tools/check_msvc_crt.py --root {empty}	ci.yml	lint	No CRT call MSVC deprecates where MSVC compiles it
+tools/check_fuzz_stats.py	python3 tools/check_fuzz_stats.py --self-test	python3 tools/check_fuzz_stats.py --target rocketnet_fuzz --seconds 1 {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
+tools/check_fuzz_coverage.py	python3 tools/check_fuzz_coverage.py --self-test	python3 tools/check_fuzz_coverage.py --os Linux --all {emptyfile}	ci.yml	lint	Test the fuzz floor checkers' verdicts
