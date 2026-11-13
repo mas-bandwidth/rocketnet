@@ -83,7 +83,8 @@ the same in the result (empty when the row has none), its other --set
 values are the coverage's own, it ran on the OS the row's runs-on names (read
 from the labels: linux, ubuntu, macos, windows; labels that name none are not
 checked), and its workflow file is byte for byte the WORKFLOW given here (git
-blob id). A replay is recorded as clean only when the tree was clean and
+blob id). A replay is recorded as clean only when the tree was clean (no
+change, no untracked and no ignored file: a fresh checkout) and
 WORKFLOW was the checkout's own file as committed at HEAD, so run --coverage
 in a checkout of SHA. Result files are read as written: a file made by hand
 is believed.
@@ -791,10 +792,11 @@ def workflow_at_head(path):
 
 
 def git_state():
-    """The commit at HEAD here and whether the tree is clean (untracked files count), or (None, False)."""
+    """The commit at HEAD here and whether the tree is clean (untracked and ignored files count), or (None, False)."""
     try:
         head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
-        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+        # ignored files count: a stale build/ or cache is not in CI's fresh checkout
+        status = subprocess.run(["git", "status", "--porcelain", "--ignored"], capture_output=True, text=True)
     except OSError:
         return None, False
     if head.returncode != 0 or status.returncode != 0:
