@@ -167,7 +167,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual=1528614751 (the Windows unit job, run 43448217775).
 // The per-transport thread counts grow the transport config, one 64-byte
 // rounding: actual=1528614815 (the Windows unit job, run 43463295653).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566239 )
+// The receive handoff (sdk/rocketnet_receive_handoff.h) gives the IOCP
+// completion workers three receive banks where they had four, one bank of
+// the server's receive queue size a worker fewer: actual=1504678759, 23936056
+// below (aws-win-ci-2, MSVC, Release, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1503630183 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
