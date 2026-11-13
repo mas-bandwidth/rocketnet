@@ -101,6 +101,8 @@ REGISTER_UNIT_TEST( test_unguarded_after_literals );
 
 class ShapeTests(unittest.TestCase):
     def test_names_then_passed_line(self):
+        self.assertEqual(checker.check_shape(["commit available 1 MiB of a 2 MiB limit, physical available 3 MiB",
+                                              "test_a", "", checker.PASSED_LINE, ""], "suite"), ["test_a"])
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
 

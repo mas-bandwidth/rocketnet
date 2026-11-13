@@ -427,7 +427,9 @@ def exec_functional_names():
 
 def check_shape(lines, label, once=False):
     # every line a test name, then a blank line, the passed line and a blank line;
-    # with once, each name on one line only (the unit registry prints each case once)
+    # with once, each name on one line only (the unit registry prints each case once);
+    # a Windows run's commit lines (COMMIT_LINE_RE) are reports and are set aside first
+    lines = [line for line in lines if not COMMIT_LINE_RE.fullmatch(line)]
     if lines[-3:] == ["", PASSED_LINE, ""] and not any(line.strip() for line in lines[:-3]):
         # zero inputs is an error: a run that printed no test name ran nothing
         sys.exit("%s: 0 test names printed before %r: nothing was checked" % (label, PASSED_LINE))
