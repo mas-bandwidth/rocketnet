@@ -341,4 +341,9 @@
    :title "The io_uring receive re-arm spins on a kernel that refuses multishot"
    :text "A kernel that refuses multishot receive (Linux before 6.0) ends every arm at once; the worker arms again on its next pass without a bound, burning its core. The refusals are visible as RECEIVE_FAILED now (the receive module's ERRORS reach the drop totals). Bound the re-arms, back off, and name the kernel in the create log."
    :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+
+  (item "tlc-plant-behaviour-not-printed" :group "trace-check" :area "tools"
+   :title "Find why TLC sometimes prints no behaviour for a plant's violation"
+   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (hetzner1, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
+   :date "2026-11-13" :origin "Piece P, #1093 trace shard 0/6")
  ))
