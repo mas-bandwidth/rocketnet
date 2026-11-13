@@ -389,6 +389,7 @@ struct rocketnet_server_transport_t
 #if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
     int refuse_fill_chunks_for_test; // the next reserve chunk claims refused as if past the budget
+    uint64_t retest_take_back_for_test; // claims taken back, as by another filler, between a single claim's refusal and its retest
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -1164,8 +1165,8 @@ static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet
 // (claim_index + size <= budget); else the budget is raised to what the
 // queue's state allows now (Read1-3) and the claims outstanding, this one
 // among them, are tested against it: not this claim's index, which a refused
-// claim ahead of it has raised (witness IndexTest). Refused: taken back whole
-// (Refuse) and false.
+// claim ahead of it has raised (witness IndexTest). Refused (Refuse): taken
+// back whole (TakeBack) and false.
 static bool rocketnet_server_transport_claim_frames( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t size )
 {
     const uint64_t claim = rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], size );
@@ -1196,7 +1197,7 @@ static uint64_t rocketnet_server_transport_tails_held( const struct rocketnet_se
 }
 
 // proofs/tla/RNSendReserve.tla OwnClaim, Continue, Size, Claim, Check,
-// Read1-3, Decide, Refuse: a client's first frame this phase takes its own
+// Read1-3, Decide, Refuse, TakeBack, Retest: a client's first frame this phase takes its own
 // reserved frame when it has one. Otherwise a frame of the calling thread's
 // line's tail when it holds one (Continue: a compare-and-swap on the line,
 // no write to the queue's claims). Otherwise the guard (Size, two loads):
@@ -1260,9 +1261,32 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
         rocketnet_platform_atomic_add_u64( tails, 0 - held );
     }
 
-    if ( rocketnet_server_transport_claim_frames( server_transport, queue, 1 ) )
+    // TakeBack, Retest: a single claim refused was taken back inside
+    // claim_frames; the test that refused it may have counted another
+    // filler's claim that has since been taken back too, so the claims and
+    // the budget are read again and a frame now under the budget is claimed
+    // again. Without the retest two fillers refused by each other's claims
+    // are both refused with a frame left (witness NoRetry). A pass comes
+    // back only when another filler took a claim back, or the budget rose,
+    // between this claim's test and its retest.
+    for ( ;; )
     {
-        return queue;
+        if ( rocketnet_server_transport_claim_frames( server_transport, queue, 1 ) )
+        {
+            return queue;
+        }
+#if ROCKETNET_DEV
+        if ( server_transport->retest_take_back_for_test > 0 )
+        {
+            rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], 0 - server_transport->retest_take_back_for_test );
+            server_transport->retest_take_back_for_test = 0;
+        }
+#endif // #if ROCKETNET_DEV
+        const uint64_t claims_now = rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
+        if ( claims_now + 1 > rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] ) )
+        {
+            break;
+        }
     }
 
     rocketnet_spam( "server start packet refused. send room is down to the protocol reserve" );
@@ -1623,6 +1647,18 @@ void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_se
 {
     rocketnet_assert( server_transport );
     server_transport->refuse_fill_chunks_for_test = chunks;
+}
+
+void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    server_transport->fill_claims[queue] += claims;
+}
+
+void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims )
+{
+    rocketnet_assert( server_transport );
+    server_transport->retest_take_back_for_test = claims;
 }
 
 uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport )
