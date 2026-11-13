@@ -210,30 +210,46 @@ cleanup()
         on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
-    if [ "$server_os" = linux ]; then
-        on_shell "$server_host" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" || true
+    # each removal reports its own failure; the cell's status is set before this runs
+    if [ "$server_os" = linux ] && ! remove_stray_table "$server_host"; then
+        echo "harden-pair: remove the table by hand on $server_host: sudo nft delete table inet harden_cell" >&2
     fi
-    on_shell "$client_host" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" || true
+    if ! remove_stray_table "$client_host"; then
+        echo "harden-pair: remove the table by hand on $client_host: sudo nft delete table inet harden_cell" >&2
+    fi
 }
 
-# stray_table <dest> <peer address> [plant N]: the cell's nftables table on one
-# Linux machine (the header says why). Counter "strays": IPv4 UDP for a local
-# address, no socket found, not from <peer address>, counted at the last
-# input priority so a datagram an earlier rule drops is not in it. With
+# remove_stray_table <dest>: removes the cell's nftables table from one machine
+# if it is there (a cell that stopped before installing it left none); a
+# table that is there and cannot be removed, or a machine that cannot be
+# reached, is a failure, said on stderr
+remove_stray_table()
+{
+    if ! on_shell "$1" "if sudo -n nft list table inet harden_cell > /dev/null 2>&1; then sudo -n nft delete table inet harden_cell; fi" < /dev/null; then
+        echo "harden-pair: the cell's nftables table (inet harden_cell) on $1 was not removed" >&2
+        return 1
+    fi
+}
+
+# stray_table <dest> <other end's address> [plant N]: the cell's nftables
+# table on one Linux machine (the header says why). Counter "strays": IPv4 UDP
+# for a local address, no socket found, not from the other end's address,
+# counted at the last input priority so a datagram an earlier rule drops is
+# not in it. With
 # plant N, chain "plant" drops one in N of the server's datagrams first
 # (--plant-loss). Prints the table's name, or nothing when it cannot be
 # installed (no nft or no sudo): the roles then read no strays and the chain
 # names none
 stray_table()
 {
-    local dest=$1 peer=$2 plant=${3:-0}
+    local dest=$1 other_end=$2 plant=${3:-0}
     local rules
     rules="table inet harden_cell {
     counter strays {
     }
     chain input {
         type filter hook input priority 1000; policy accept;
-        meta nfproto ipv4 meta l4proto udp fib daddr type local ip saddr != $peer jump nosocket
+        meta nfproto ipv4 meta l4proto udp fib daddr type local ip saddr != $other_end jump nosocket
     }
     chain nosocket {
         socket wildcard 0 return
@@ -250,7 +266,11 @@ table inet harden_cell {
     }
 }"
     fi
-    on_shell "$dest" "sudo -n nft delete table inet harden_cell 2>/dev/null; true" < /dev/null > /dev/null 2>&1 || true
+    # a table an earlier cell left is removed first; one that cannot be removed
+    # is said on stderr and nothing is installed: the roles then read no strays
+    if ! remove_stray_table "$dest" > /dev/null; then
+        return 0
+    fi
     if on_shell "$dest" "sudo -n nft -f -" <<< "$rules" > /dev/null 2>&1; then
         echo harden_cell
     fi
