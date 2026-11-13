@@ -5910,8 +5910,8 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     }
 
     // the gso, io_uring, iocp and rio transports' own counts are the public
-    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp and
-    // io_uring transports' refused pins *_PIN_REFUSALS, and the io_uring
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp, io_uring
+    // and portable transports' refused pins *_PIN_REFUSALS, and the io_uring
     // transport's URING_RECEIVE_DROPPED_SOCKET, cumulative, assigned on read;
     // a transport writes its own rows and the rest reads 0, so every platform
     // has every row
@@ -5932,6 +5932,7 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         // the kernel dropped at its sockets
         server_transport->counters.values[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = transport_rows[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET];
+        server_transport->counters.values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
     }
 
     return &server_transport->counters;

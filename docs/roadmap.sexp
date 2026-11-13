@@ -545,4 +545,19 @@
    :title "rocketnet-provision: read-back of R5, a settle wait after R7, and an unprovision mode"
    :text "From the same reading as the repin fix: provision writes R5's napi_defer_hard_irqs and gro_flush_timeout and does not read them back (R7 and R8 do); after an R7 channel change R4 reads /proc/interrupts at once, while some drivers are still rebuilding their vectors (repin already waits for them; provision should wait the same way, bounded); and there is no mode that puts R4 to R8 back (affinities, busy-poll pair, channels, sched_rt_runtime_us) for a host leaving XDP service."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-75 (script parts)")
+
+  (item "xdp-reserve-cpu-0" :group "review-v1-2" :area "sdk"
+   :title "xdp has no reserve_cpu_0 setting: it needs a provisioning mode without a housekeeping cpu"
+   :text "gso, io_uring and portable on Linux each have a *_reserve_cpu_0 config field and environment variable (ROCKETNET_CPU_0_NOT_RESERVED puts network thread q on cpu q). xdp has none, because its placement is fixed by its provisioning contract: scripts/rocketnet-provision keeps cpu 0 as the housekeeping and interrupt cpu and isolates the cpus the xdp threads run on (R4), so a thread on cpu 0 would share it with every IRQ the provisioning moved there. Giving xdp the setting takes a provisioning mode without a housekeeping cpu: where the IRQs and kernel threads go instead, how the NIC queues map to cpus from 0, and a measured peak on that layout before it ships."
+   :date "2026-11-13" :origin "Linux thread placement fix (v1.1.x point release), the owner's option (b)")
+
+  (item "windows-reserve-cpu-0" :group "review-v1-2" :area "sdk"
+   :title "rio and iocp have no reserve_cpu_0 setting: their workers follow the NIC's receive-side scaling"
+   :text "The Windows transports put lane or worker i on core i, cpu 0 included, so each worker runs on the core RSS delivers its queue's interrupts and completions to (sdk/rocketnet_server_rio_windows.cpp, sdk/rocketnet_server_iocp_windows.cpp). Moving them off cpu 0 would split a queue from the core RSS steers it to unless the NIC's RSS base processor moves with it. A setting for Windows takes reading and setting the adapter's RSS base processor (Set-NetAdapterRss -BaseProcessorNumber) in step, and a measured peak on that layout."
+   :date "2026-11-13" :origin "Linux thread placement fix (v1.1.x point release), the owner's ruling: no Windows behaviour change")
+
+  (item "sparse-cpu-ids" :group "review-v1-2" :area "sdk"
+   :title "The Linux pin helpers take the online cpu count as a dense range of cpu ids"
+   :text "rocketnet_gso_pin_check and rocketnet_gso_pin_fallback (sdk/rocketnet_gso_pin.h) treat sysconf(_SC_NPROCESSORS_ONLN) as the ids 0 .. online - 1, and gso, io_uring, portable and the uring helpers inherit it. With cpus taken offline (hotplug) the ids are sparse: a pin to an online cpu whose id is at or past the count is refused as offline, and the fallback can name offline ids and leave out online ones, so a confinement that could hold fails. The placement takes the online and allowed cpus as a mask (sched_getaffinity, /sys/devices/system/cpu/online) instead of a count, with unit cases on sparse layouts through the fake affinity calls. The functional placement cases read the allowed mask (rocketnet_test_placement_host) but take ids as dense the same way, and move with the helpers."
+   :date "2026-11-13" :origin "Linux thread placement fix (v1.1.x point release), first review (static), advisory: inherited, not changed in a point release")
  ))
