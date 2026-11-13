@@ -86,6 +86,10 @@ LAYERS = {
             "Seqs": "not an action: the set of sequences Next's Forge ranges over",
         },
     },
+    "msgx": {
+        "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
