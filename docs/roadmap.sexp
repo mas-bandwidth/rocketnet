@@ -525,4 +525,19 @@
    :title "The receive reservation's models are bound by citation only"
    :text "RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and it agrees with rn_window_receive_accept only by reading the two functions: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap."
    :date "2026-11-13" :origin "Audit round 1, ordered duplicate scan fix")
+
+  (item "load-delivery-delay-column" :group "after-v1-1-landing" :area "tools"
+   :title "A delivery-delay column in the load report, per transport"
+   :text "The receive handoffs of gso, xdp and portable held nearly every datagram one more server update than io_uring (measured 2026-11-13 at a steady mean of 1.49 updates against 0.52), and no load run showed it: bin/load reports update times, drops and counters, never how many server updates a message waited. Add a column to the load report: for each message, the updates between its send and the receive_messages call that returned it, as mean, p99 and max per transport, so a handoff that adds an update shows in every load run as well as in tests/functional/receive_latency.cpp."
+   :date "2026-11-13" :origin "Receive handoff latency fix, the owner's ask for input checks that do not regress")
+
+  (item "receive-handoff-advance-after-tail" :group "after-v1-1-landing" :area "sdk"
+   :title "After a cut receive call, the next call does not reach the worker's newer buffer"
+   :text "In sdk/rocketnet_receive_handoff.h main moves on to the worker's buffer (rocketnet_receive_handoff_begin) only at the start of a call whose tail is finished. After a call the per-update budget cut, the next call reads the tail and main's own buffer and leaves what the worker committed into its newer buffer for the call after, even with budget left: one more update for those datagrams, only after an overloaded update. A second try-acquire once the tail is drained within the call would close it; it needs RNReceiveHandoff to drop the backlog exemption from DeliveredByNextCall, and its trace walk to cover the second try."
+   :date "2026-11-13" :origin "Receive handoff latency fix, cold read finding 4")
+
+  (item "gso-receive-dropped-socket-row" :group "after-v1-1-landing" :area "sdk"
+   :title "A gso row of its own for the kernel's drops at a queue socket"
+   :text "Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows."
+   :date "2026-11-13" :origin "gso flood drops counted by no counter (W2-121); the existing row was chosen for the point release")
  ))

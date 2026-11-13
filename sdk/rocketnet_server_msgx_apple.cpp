@@ -1174,8 +1174,8 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
 
     // proofs/tla/RNMsgxReceiveFill.tla Claim (RNGsoHandoff.tla RxClaim and
-    // RxConsume): a retained tail is consumed before a newer ready bank is
-    // claimed. Only main moves hand.main
+    // RxConsume at 5a2dbf403): a retained tail is consumed before a newer
+    // ready bank is claimed. Only main moves hand.main
     struct rocketnet_server_msgx_recv_bank_t * held = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
     if ( receiver->main_cursor >= held->num_packets )
     {

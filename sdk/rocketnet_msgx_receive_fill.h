@@ -18,7 +18,7 @@
 // kernel. proofs/tla/RNMsgxReceiveFill.tla models it.
 //
 // The rule (the gso transport's, proofs/tla/RNGsoHandoff.tla RxFill and
-// RxPublish): a datagram is read only into room. The drain asks the kernel
+// RxPublish at 5a2dbf403): a datagram is read only into room. The drain asks the kernel
 // for no more datagrams than the bank has room for; a full bank is handed to
 // main at once when main has taken the last one (no ready bank waits and a
 // free bank exists), and otherwise the drain stops and the socket keeps the
