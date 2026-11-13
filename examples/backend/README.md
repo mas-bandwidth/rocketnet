@@ -113,6 +113,14 @@ it is a fixed-development-server-key test fixture. It cannot inspect a token
 sealed to a live production server. The harness supplies its fixture token on
 standard input, then tests a separate live server/token/client exchange.
 
+`example_backend_server` runs a game server's 60 Hz frame: the main thread
+joins last frame's split-off half, does a bit of networking (send, update,
+receive), and splits off the second half of the network update (queuing the
+echoes) onto another thread to run in parallel with the main thread until the
+join next frame. An echo goes on the wire at the start of the next frame: one
+frame of added send latency, 16.67 ms on average. The
+[game loop](../../docs/examples/game_loop.md) explains this frame.
+
 Both services listen on `127.0.0.1:8080` by default. Setting
 `ROCKETNET_BACKEND_LISTEN_ADDRESS` to a non-loopback address exposes the
 unauthenticated routes and emits a warning. The local sample does not become

@@ -3,7 +3,9 @@
 
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the examples'
 protocol id and packet filter), "shutdown.h" (the command-line wait for
-shutdown) and the C standard headers below, and may name only rocketnet_
+shutdown), "thread.h" (the platform's threads, start and join, for the
+server examples' split-off half of the network update) and the C standard
+headers below, and may name only rocketnet_
 identifiers that sdk/rocketnet.h declares. A rocketnet_client_connect call's
 status is kept in a variable, never compared where it is made, so a refused
 connect reports its own status and not the earlier create's
@@ -24,6 +26,7 @@ ALLOWED_HEADERS = {
     "rocketnet.h",
     "dev_keys.h",
     "shutdown.h",
+    "thread.h",
     "stdio.h",
     "time.h",
     "stdlib.h",
