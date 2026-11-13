@@ -14574,8 +14574,6 @@ extern void windows_connreset_send_to_closed_port_rio_ipv4();
 extern void windows_connreset_send_to_closed_port_rio_ipv6();
 extern void windows_client_connreset_server_gone_ipv4();
 extern void windows_client_connreset_server_gone_ipv6();
-extern void windows_connreset_child_client();
-extern void windows_connreset_child_parent();
 extern void windows_connreset_child_dies_with_its_parent();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -16010,6 +16008,7 @@ void rocketnet_test_posix_platform_send_seam();
 void rocketnet_test_posix_msgx_retired_socket_counted();
 void rocketnet_test_posix_msgx_finish_refused_counted();
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open();
+bool rocketnet_test_posix_msgx_dual_stack_runs_here();
 void rocketnet_test_posix_msgx_shared_receive_buffer_granted();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_transport_send_seam();
@@ -16730,6 +16729,9 @@ static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_tran
 
 extern void rocketnet_test_server_stats_creates_no_thread();
 extern void rocketnet_test_public_step_driven_client_connects_without_a_thread();
+extern void rocketnet_test_server_stats_live_without_a_worker();
+extern void rocketnet_test_public_step_driven_client_connects_live();
+extern bool rocketnet_process_thread_counts_runs_here();
 extern void rocketnet_test_disconnect_reason_server_disconnected_portable();
 extern void rocketnet_test_disconnect_reason_timed_out_portable();
 extern void rocketnet_test_disconnect_reason_reliable_timed_out_portable();
@@ -16756,6 +16758,7 @@ extern void rocketnet_test_server_bind_refused_msgx();
 extern void rocketnet_test_server_bind_dual_stack_ipv4_held();
 extern void rocketnet_test_server_bind_dual_stack_port_zero();
 extern void rocketnet_test_server_msgx_dual_stack_both_families_connect();
+extern bool rocketnet_test_server_bind_dual_stack_runs_here();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_refused_gso();
@@ -17060,7 +17063,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
     { "test_posix_msgx_finish_refused_counted", rocketnet_test_posix_msgx_finish_refused_counted, NULL },
-    { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, NULL },
+    { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, rocketnet_test_posix_msgx_dual_stack_runs_here },
     { "test_posix_msgx_shared_receive_buffer_granted", rocketnet_test_posix_msgx_shared_receive_buffer_granted, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
@@ -17348,13 +17351,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_rio_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_rio_ipv6, NULL },
     { "test_windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4, NULL },
     { "test_windows_client_connreset_server_gone_ipv6", windows_client_connreset_server_gone_ipv6, NULL },
-    { "test_windows_connreset_child_client", windows_connreset_child_client, NULL },
-    { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
+
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_DEV
-    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
-    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
+    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, rocketnet_process_thread_counts_runs_here },
+    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, rocketnet_process_thread_counts_runs_here },
+    { "test_server_stats_live_without_a_worker", rocketnet_test_server_stats_live_without_a_worker, NULL },
+    { "test_public_step_driven_client_connects_live", rocketnet_test_public_step_driven_client_connects_live, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
     { "test_disconnect_reason_server_disconnected_portable", rocketnet_test_disconnect_reason_server_disconnected_portable, NULL },
     { "test_disconnect_reason_timed_out_portable", rocketnet_test_disconnect_reason_timed_out_portable, NULL },
@@ -17376,10 +17380,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
-    { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, NULL },
-    { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, NULL },
+    { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, rocketnet_test_server_bind_dual_stack_runs_here },
+    { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, rocketnet_test_server_bind_dual_stack_runs_here },
 #if ROCKETNET_DEV
-    { "test_server_msgx_dual_stack_both_families_connect", rocketnet_test_server_msgx_dual_stack_both_families_connect, NULL },
+    { "test_server_msgx_dual_stack_both_families_connect", rocketnet_test_server_msgx_dual_stack_both_families_connect, rocketnet_test_server_bind_dual_stack_runs_here },
 #endif // production excludes dev-key cases
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -17533,6 +17537,12 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_two_usable_cpus";
     }
+#if ROCKETNET_DEV
+    if ( predicate == rocketnet_process_thread_counts_runs_here )
+    {
+        return "rocketnet_process_thread_counts_runs_here";
+    }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( predicate == rocketnet_server_uring_available )
     {
@@ -17618,6 +17628,16 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_msgx";
     }
+    if ( predicate == rocketnet_test_server_bind_dual_stack_runs_here )
+    {
+        return "rocketnet_test_server_bind_dual_stack_runs_here";
+    }
+#if ROCKETNET_DEV
+    if ( predicate == rocketnet_test_posix_msgx_dual_stack_runs_here )
+    {
+        return "rocketnet_test_posix_msgx_dual_stack_runs_here";
+    }
+#endif // #if ROCKETNET_DEV
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     return "runs_here";
 }

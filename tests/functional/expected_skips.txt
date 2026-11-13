@@ -73,6 +73,7 @@ reason rocketnet_test_posix_xdp_offered the XDP lifecycle cycles need root and a
 reason rocketnet_test_posix_io_uring_offered the s390x guest's kernel does not offer io_uring (every io_uring row skips there); the native Linux legs run these, where an io_uring skip is unlisted and fails
 reason rocketnet_server_uring_available the s390x guest's kernel does not offer io_uring (every io_uring row skips there); the native Linux legs run these, where an io_uring skip is unlisted and fails
 reason suite_max_case_rss_mb under a sanitizer shadow memory is not a case's footprint, so the RSS row would check nothing (tests/functional/unit_case_memory.cpp); the unsanitized legs run it
+reason rocketnet_process_thread_counts_runs_here the process thread count is read from /proc/self/task, which only Linux has; the _live rows run the rest of these two cases here, and counting threads on macOS and Windows is a roadmap entry (thread-count-macos-windows)
 
 skip test_client_transport_io rocketnet_test_client_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-prod-portable
 skip test_gso_transport_server_io_pin rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
@@ -117,6 +118,7 @@ skip test_posix_send_to_closed_port_io_uring_ipv4_client_portable rocketnet_serv
 skip test_posix_send_to_closed_port_io_uring_ipv6_client_portable rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_posix_send_to_closed_port_xdp_ipv4_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_posix_send_to_closed_port_xdp_ipv6_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
+skip test_public_step_driven_client_connects_without_a_thread rocketnet_process_thread_counts_runs_here macos-dev,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev,windows-dev-sanitized,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_receive_latency_server_gso rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_receive_latency_server_io_uring rocketnet_test_server_pin_allows_io_uring linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_receive_latency_server_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
@@ -125,6 +127,7 @@ skip test_server_gso_receive_buffer_request rocketnet_test_server_pin_allows_gso
 skip test_server_port_zero_transport rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_server_receive_1000_clients_256kbps_10hz rocketnet_test_server_receive_low_tick_measurement_requested linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
 skip test_server_stop_disconnects_every_client_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
+skip test_server_stats_creates_no_thread rocketnet_process_thread_counts_runs_here macos-dev,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,windows-dev,windows-dev-sanitized,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_server_transport_io_fall rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_session_reconnect_isolation_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_session_reconnect_isolation_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable

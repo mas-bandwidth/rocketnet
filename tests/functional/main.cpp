@@ -119,6 +119,9 @@ static int rocketnet_functional_worker( const char * name )
 }
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
+#if defined( _WIN32 )
+int rocketnet_windows_connreset_child_main( int argc, char ** argv );
+#endif // #if defined( _WIN32 )
 suite_exec rocketnet_unit_case_memory_exec();
 bool rocketnet_unit_case_memory_runs_here();
 
@@ -293,6 +296,15 @@ SUITE_CASE_RSS_BOUND( test_transport_control, rocketnet_transport_control_rss_bo
 
 int main( int argc, char ** argv )
 {
+#if defined( _WIN32 )
+    // the child client and the self-ending parent of the Windows connreset
+    // cases (tests/functional/windows_connreset.cpp), started by CreateProcessW
+    if ( argc >= 2 && ( strcmp( argv[1], "--windows-connreset-child-client" ) == 0 || strcmp( argv[1], "--windows-connreset-child-parent" ) == 0 ) )
+    {
+        return rocketnet_windows_connreset_child_main( argc, argv );
+    }
+#endif // #if defined( _WIN32 )
+
     // the child client of the hard-killed client cases
     // (tests/functional/posix_hard_killed_client.cpp), started by posix_spawn and
     // ended by the case with SIGKILL
