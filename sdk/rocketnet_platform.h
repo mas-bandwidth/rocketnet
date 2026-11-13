@@ -660,6 +660,13 @@ bool rocketnet_platform_mutex_try_acquire( struct rocketnet_platform_mutex_t * m
 
 void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex );
 
+// ----------------------------------------------------------------
+
+// The calling thread's identity: nonzero, and distinct among the threads alive
+// in the process at once (an id may be reused after its thread exits).
+// pthread_self on POSIX, GetCurrentThreadId on Windows; no thread-local state.
+uint64_t rocketnet_platform_thread_id( void );
+
 #ifdef __cplusplus
 }
 #endif // #ifdef __cplusplus
