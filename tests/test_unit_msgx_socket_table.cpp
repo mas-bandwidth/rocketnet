@@ -303,6 +303,7 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
     uint32_t generation = 0;
     const int slot = rocketnet_msgx_socket_table_stamp( test.table, &a, &generation );
+    rocketnet_unit_check( slot >= 0 );
     const int fd = test.table->slots[slot].fd;
 
     // a report about an older generation of the slot is ignored
