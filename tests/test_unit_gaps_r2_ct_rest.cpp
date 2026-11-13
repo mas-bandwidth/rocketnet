@@ -170,7 +170,10 @@ REGISTER_UNIT_TEST( test_gaps_r2_ct_rest_step_driven_creates_without_a_driver_ar
 // mutation gap: hunt 2/6964 (an out-of-range step_driven says so in the status)
 //
 // step_driven is 0 or 1. Any other value is refused before a transport is
-// chosen, with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE through the status.
+// chosen, with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE through the status. The
+// config table's 0 .. 1 row refuses it first, with the same status, so this
+// case also guards that row; the development check behind it is a second
+// line that no create reaches.
 
 static void test_gaps_r2_ct_rest_step_driven_out_of_range_reports_its_status()
 {
@@ -455,13 +458,6 @@ REGISTER_UNIT_TEST( test_gaps_r2_ct_rest_receive_into_null_with_a_payload_waitin
 
 static void test_gaps_r2_ct_rest_reset_witness_refuses_null_and_an_io_client()
 {
-    const bool refused_null = !rocketnet_client_transport_reset_witness_for_test( NULL );
-    if ( !refused_null )
-    {
-        printf( "mutation gap hunt 2/6373: the reset witness accepted a NULL client\n" );
-    }
-    check( refused_null );
-
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
     rocketnet_client_transport_t * transport = r2_rest_client( fake, &rocketnet_fake_client_operations_io );
     check( rocketnet_client_transport_client_io( transport ) != NULL );
@@ -475,6 +471,14 @@ static void test_gaps_r2_ct_rest_reset_witness_refuses_null_and_an_io_client()
 
     rn_test_client_transport_stop_and_destroy( transport );
     delete fake;
+
+    // last: were the guard gone, a NULL client would be dereferenced
+    const bool refused_null = !rocketnet_client_transport_reset_witness_for_test( NULL );
+    if ( !refused_null )
+    {
+        printf( "mutation gap hunt 2/6373: the reset witness accepted a NULL client\n" );
+    }
+    check( refused_null );
 }
 
 REGISTER_UNIT_TEST( test_gaps_r2_ct_rest_reset_witness_refuses_null_and_an_io_client );
