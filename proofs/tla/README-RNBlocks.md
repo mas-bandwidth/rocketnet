@@ -114,13 +114,13 @@ Measured by `tlacheck run` on aws-mut-3, 2026-11-13 (revision 1.1):
 
 | Case | Result | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|
-| `MCRNBlocks.cfg` (now with `SpanInsideRing`, `NeverRefused`) | every invariant holds | 11478 | 2421 | 3.4 |
-| `MCRNBlocksWrap.cfg` | every invariant holds | 11478 | 2421 | 3.4 |
-| `MCRNBlocksForged.cfg` | every invariant but `NeverRefused` holds | 66823 | 14703 | 10.2 |
+| `MCRNBlocks.cfg` (now with `SpanInsideRing`, `NeverRefused`) | every invariant holds | 11478 | 2421 | 2.9 |
+| `MCRNBlocksWrap.cfg` | every invariant holds | 11478 | 2421 | 3.3 |
+| `MCRNBlocksForged.cfg` | every invariant but `NeverRefused` holds | 66823 | 14703 | 11.5 |
 | `MCRNBlocksBrokenPlaceByArrival.cfg` | `DeliveredEqualsSent` violated, exit 12 | 11447 | 2997 | 4.7 |
-| `MCRNBlocksBrokenNoPad.cfg` | `SpanInsideRing` violated, exit 12 | 3 | 3 | 0.9 |
-| `MCRNBlocksBrokenNoAnchorCheck.cfg` | `NoPartialDelivery` violated, exit 12 | 19344 | 5922 | 6.3 |
-| `MCRNBlocksForgedRefused.cfg` | `NeverRefused` violated, exit 12 | 750 | 431 | 1.5 |
+| `MCRNBlocksBrokenNoPad.cfg` | `SpanInsideRing` violated, exit 12 | 3 | 3 | 0.7 |
+| `MCRNBlocksBrokenNoAnchorCheck.cfg` | `NoPartialDelivery` violated, exit 12 | 19344 | 5922 | 7.2 |
+| `MCRNBlocksForgedRefused.cfg` | `NeverRefused` violated, exit 12 | 750 | 431 | 1.9 |
 
 ## Revision 1.1: padding, the wrap, and the anchor refusal
 
