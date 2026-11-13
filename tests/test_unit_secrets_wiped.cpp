@@ -787,6 +787,12 @@ static void secrets_wiped_destroy_without_disconnect( struct rocketnet_client_tr
     check( secrets_wiped_watches[0].freed == 1 );
 }
 
+static bool secrets_wiped_transports_connected( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server )
+{
+    return rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+           rocketnet_server_transport_is_client_connected( server, 0 );
+}
+
 static void test_secrets_wiped_client_transport_destroy_without_disconnect()
 {
     check( rocketnet_test_loopback_hub_release() );
@@ -838,8 +844,7 @@ static void test_secrets_wiped_client_transport_destroy_without_disconnect()
     check( server != NULL );
 
     struct rocketnet_client_transport_t * connected = secrets_wiped_client_transport( backend_secret, server_public, rocketnet_server_transport_port( server ) );
-    for ( int i = 0; i < 400 && !( rocketnet_client_transport_state( connected ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_server_transport_is_client_connected( server, 0 ) ); i++ )
+    for ( int i = 0; i < 400 && !secrets_wiped_transports_connected( connected, server ); i++ )
     {
         secrets_wiped_now += 0.01;
         rocketnet_server_transport_update( server, secrets_wiped_now );
