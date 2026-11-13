@@ -78,6 +78,17 @@ static inline int64_t harden_refused_before_received( int64_t transport_received
     return ( transport_received - library_received ) + outside_size_drops;
 }
 
+// the same term from the reconcile's printed terms: get( key ) is a term's
+// value, 0 for a term no role printed (a counter at 0 is not printed). One
+// transport serves the cell, so the size drop counters of the others read 0
+template <typename Get> static inline int64_t harden_refused_from_terms( const Get & get )
+{
+    const int64_t outside_size_drops = get( "server.c2s_transport_URING_RECEIVE_DROPPED_SIZE" )
+                                     + get( "server.c2s_transport_IOCP_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_LARGE" )
+                                     + get( "server.c2s_transport_RIO_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_LARGE" );
+    return harden_refused_before_received( get( "server.c2s_transport_PACKETS_RECEIVED" ), get( "server.c2s_packets_received" ), outside_size_drops );
+}
+
 static inline harden_chain_result_t harden_chain_judge( const harden_chain_t & c, int duplicates_expected )
 {
     harden_chain_result_t r;

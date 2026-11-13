@@ -8,13 +8,18 @@
 // violation the chain must fail. The clean rows are the X710 pair's XDP rows
 // of 2026-11-13 (main 59890655d, rm-xdp-peak-noload-q2), whose players' and
 // server's hosts each took a stray datagram from the internet at a closed port
-// on their public address. Pure arithmetic: no time, no sockets.
+// on their public address. Pure arithmetic: no time, no sockets. The refused
+// term's rows read the counter names from the library.
 
 #include "test_unit_registry.h"
 
 #include "load/harden_chain.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_counters.h"
 
+#include <map>
 #include <stdint.h>
+#include <string>
 
 #define check rocketnet_unit_check
 
@@ -274,6 +279,33 @@ static void test_harden_chain_refused_negative_difference_is_red()
     check( !harden_chain_judge( c, 0 ).ok );
 }
 
+static void test_harden_chain_refused_from_terms_reads_the_counters()
+{
+    // the reconcile's term from the printed terms: each key is the server's
+    // c2s_transport_ prefix and the library's own counter name, so a misspelled
+    // or renamed counter reads 0 and fails here
+
+    const int outside[] = { ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE,
+                            ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE };
+    for ( int i = 0; i < (int) ( sizeof( outside ) / sizeof( outside[0] ) ); i++ )
+    {
+        std::map<std::string, int64_t> terms;
+        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1010;
+        terms["server.c2s_packets_received"] = 1000;
+        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( outside[i] )] = 3;
+        // the prefilter's own size counters mix both parts: never read
+        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT )] = 100;
+        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PREFILTER_TOO_LARGE )] = 100;
+        const int64_t refused = harden_refused_from_terms( [&terms]( const char * key ) -> int64_t
+                                                           {
+                                                               std::map<std::string, int64_t>::const_iterator it = terms.find( key );
+                                                               return it == terms.end() ? 0 : it->second;
+                                                           } );
+        check( refused == 13 );
+    }
+}
+
+REGISTER_UNIT_TEST( test_harden_chain_refused_from_terms_reads_the_counters );
 REGISTER_UNIT_TEST( test_harden_chain_refused_hostile_worker_prefilter );
 REGISTER_UNIT_TEST( test_harden_chain_refused_both_parts_io_uring );
 REGISTER_UNIT_TEST( test_harden_chain_refused_negative_difference_is_red );
