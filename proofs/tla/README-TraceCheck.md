@@ -52,8 +52,8 @@ The walk is trusted code, read by a person or a reader, never proven by the chec
 The plant proves part of this: it changes library code, and TLC must reject the trace
 exactly where the change first shows. The checker keeps the plant in the library: the
 layer file may test `ROCKETNET_TLA_PLANT` only to open the one top-level block holding
-its plant defines and sdk includes, and the writer names the plant trace itself, so the
-walk never branches on the plant. A walk that logs a shadow, or reads the wrong
+its sdk includes, the build sets each plant define, and the writer names the plant trace
+itself, so the walk never branches on the plant. A walk that logs a shadow, or reads the wrong
 variable, fails the plant on the variable the plant changes, and nowhere else. A layer's
 review reads its walk against these points.
 
@@ -86,26 +86,29 @@ predicates for the edges (below), so a walk that never gets there is red.
      `MCTraceXPlantSeed<seed>` in the plant build: the walk passes `"MCTraceX"` and the
      seed to `tla_write_trace`, which adds the rest). tlacheck refuses any other name,
      and the writer refuses it first.
-   - **Build.** `tla_trace` takes every `tests/tla_trace_*.cpp`. Each file also gets its
-     own plant binary, `tla_trace_plant_<file>`, holding that file alone, compiled with
-     `ROCKETNET_TLA_PLANT` and with the library's own private definitions, include
-     directories and options. Under `ROCKETNET_TLA_PLANT` the file includes the sdk code
-     it traces with its plant define, so the plant binary carries the planted library
-     code in place of the library's:
+   - **Build.** `tla_trace` takes every `tests/tla_trace_*.cpp`. Each file also gets
+     one plant binary per plant its row names (`"plants"`), holding that file alone,
+     compiled with `ROCKETNET_TLA_PLANT`, that one plant define and the library's own
+     private definitions, include directories and options:
+     `tla_trace_plant_<file>` for one plant, `tla_trace_plant_<file>--<k>` for the
+     k-th of several. Under `ROCKETNET_TLA_PLANT` the file includes the sdk code it
+     traces, so each plant binary carries one planted defect in place of the
+     library's code:
 
      ```cpp
      #if defined( ROCKETNET_TLA_PLANT )
-     #define ROCKETNET_X_PLANT 1
      #include "../sdk/rocketnet_x.cpp"
      #endif // #if defined( ROCKETNET_TLA_PLANT )
      ```
 
      The checker requires that include, in a top-level `#if defined(
-     ROCKETNET_TLA_PLANT )` that holds only `ROCKETNET_..._PLANT` defines and sdk
-     includes, refuses any other test of the plant in the file, and requires an `#if`
-     of the sdk file to test the `ROCKETNET_..._PLANT` define. The file defines or undefines no other
-     `ROCKETNET_` macro: the trace binaries take the library's configuration, never
-     their own. The walk calls the library's code, never a copy of it in the test file.
+     ROCKETNET_TLA_PLANT )` that holds only sdk includes, refuses any other test of
+     the plant in the file, and requires an `#if` of the sdk files to test EVERY plant
+     of the row. Each plant is checked in its own binary on every seed: two plants in
+     one binary would let the one that acts first hide the other, whose own defect
+     could then vanish with the check still green. The file defines or undefines no
+     `ROCKETNET_` macro, a plant define included: the trace binaries take the
+     library's configuration, never their own. The walk calls the library's code, never a copy of it in the test file.
      One layer's plant never reaches another layer's trace, and two layers may include
      the same sdk file.
    - **Records.** The walk writes one record per step with
@@ -204,19 +207,22 @@ predicates for the edges (below), so a walk that never gets there is red.
   - a ghost is read by a step, or a reach predicate is not a plain state predicate;
   - `untraced` or `ghost` names something the spec does not have;
   - the layer's file, or a header of `tests/` it includes, defines or undefines a
-    `ROCKETNET_` macro other than its plant's (comments, line splices and `%:` are
+    `ROCKETNET_` macro, a plant define included (comments, line splices and `%:` are
     read as the preprocessor reads them); it includes no sdk `.cpp`, or one outside a
-    top-level `#if defined( ROCKETNET_TLA_PLANT )`; that block holds anything but plant
-    defines and sdk includes, or the file tests the plant anywhere else; or no `#if` of
-    those sdk files tests its plant define (the example alone is self-contained, and
-    its row says why).
+    top-level `#if defined( ROCKETNET_TLA_PLANT )`; that block holds anything but sdk
+    includes, or the file tests the plant anywhere else; or a plant of the row is
+    tested by no `#if` of those sdk files (the example alone is self-contained, and its
+    row says why).
 - **The rows:** a layer file with no row file, or a row file with no layer file; a
   registered layer with no row, or a row with no layer; a name registered twice
   (`REFUSED <name> registered-twice`), a bad name, or two rows of one name; a row that
   is not one dict literal, or names a key twice; a row key the table does not know, a
   key it needs missing, `self_contained` on a row but the example's, or `steps` under
-  100; a plant binary that is not exactly one layer, or not the layer its file's row
-  names. More layer files than `TLA_TRACE_MAX_LAYERS` (`tests/tla_trace_record.h`, 256)
+  100; a row with no `plants` (the example alone has none), plants that are not
+  `ROCKETNET_<X>_PLANT` defines, a plant named twice, or a `"plants"` line that does not
+  name exactly the row's plants (CMake reads that one line); a plant binary that is not
+  exactly one layer, not the layer its file's row names, or no plant of the row, and a
+  plant of the row with no binary. More layer files than `TLA_TRACE_MAX_LAYERS` (`tests/tla_trace_record.h`, 256)
   is refused when CMake configures; a full table at start prints
   `REFUSED <name> table-full`.
 - **The shards:** a layer with no commit seed, a commit seed given two shards (a dict
@@ -394,8 +400,9 @@ nothing shared is edited, so layers added on parallel branches merge without con
 
 1. **Files you add**, all new:
    - `tests/tla_trace_<file>.cpp`: the walk, registered with `TLA_TRACE_LAYER( "<name>",
-     ... )` (section "Adding a layer `x`" above). CMake picks it up and builds its plant
-     binary `tla_trace_plant_<file>`; add nothing to `CMakeLists.txt`.
+     ... )` (section "Adding a layer `x`" above). CMake picks it up and builds a plant
+     binary per plant of its row, `tla_trace_plant_<file>` (or `--<k>` for the k-th of
+     several); add nothing to `CMakeLists.txt`.
    - `tests/tla_trace_<file>.row`: its row, the same stem (below).
    - `proofs/tla/Trace<Spec>.tla`: a copy of `TraceRNTraceExample.tla`, changed only where
      step 3 above says.
@@ -405,12 +412,15 @@ nothing shared is edited, so layers added on parallel branches merge without con
      `tests/tla_trace_<file>.cpp`, module `Trace<Spec>`, status `covered`), placed next to
      the model's own row, not at the end of the file.
    - The sdk file under trace gets its plant: an `#if defined( ROCKETNET_<X>_PLANT )` arm
-     that the clean build never compiles.
+     that the clean build never compiles. One defect per plant: a second defect is a
+     second plant in the row, with its own binary, never a second arm under one define
+     that hides the first.
 2. **The row.** Copy `tests/tla_trace_example.row` and set:
    ```python
    {
        "layer": "<name>",                      # what the .cpp registers
        "modules": ["RN<Spec>.tla", "TraceRN<Spec>.tla"],
+       "plants": ["ROCKETNET_<X>_PLANT"],      # ONE line: CMake reads it
        "untraced": {"Action": "why no walk takes it"},
        "ghost": {"v": "why the code holds no such word"},   # only if needed
        "reach": ["Wrapped", "Full"],           # the edges a walk must show

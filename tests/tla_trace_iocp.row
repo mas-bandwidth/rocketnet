@@ -3,6 +3,8 @@
 {
     "layer": "iocp-admit",
     "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT"],
     "untraced": {},
     "reach": ["BankFull"],
     # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)

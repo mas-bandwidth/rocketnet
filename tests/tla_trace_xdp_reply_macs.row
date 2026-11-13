@@ -3,6 +3,8 @@
 {
     "layer": "xdp-reply-macs",
     "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_XDP_REPLY_MACS_PLANT"],
     "untraced": {},
     "reach": ["Wrapped", "WindowLive"],
     "steps": 250,

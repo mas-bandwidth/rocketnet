@@ -54,7 +54,6 @@
 #include "tla_trace_record.h"
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_MSGX_SEND_RUNS_PLANT 1
 #include "../sdk/rocketnet_msgx_send_runs.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

@@ -3,6 +3,8 @@
 {
     "layer": "queue-send",
     "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_URING_QUEUE_SEND_PLANT"],
     "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
                          "length, so it never gets there"},
     "reach": ["Full", "AgainPosted"],

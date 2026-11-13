@@ -26,10 +26,8 @@
 // a decode that left the slot it named, at the record where it happened:
 // the planted code's own act, so none in the clean build.
 
-// the plant build: sdk/rocketnet_rio_layout.h decodes the lane as id % lanes
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_RIO_LANE_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
+// the plant build (ROCKETNET_RIO_LANE_PLANT, set by the build from the row's
+// plants): sdk/rocketnet_rio_layout.h decodes the lane as id % lanes
 #include "../sdk/rocketnet_rio_layout.h"
 
 #include <inttypes.h>

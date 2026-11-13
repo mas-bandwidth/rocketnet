@@ -3,6 +3,8 @@
 {
     "layer": "gso",
     "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_GSO_SEND_SLOT_PLANT"],
     "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
                          "gets there, and Done is no call of the code"},
     "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],

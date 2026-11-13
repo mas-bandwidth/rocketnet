@@ -35,7 +35,6 @@
 // of the bank still pending, which the clean code refuses.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_URING_QUEUE_SEND_PLANT 1
 #include "../sdk/rocketnet_uring_queue_send.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

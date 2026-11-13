@@ -100,7 +100,6 @@
 // no capacity: neither is ever shown by the clean walk on that transport.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_WRITER_FINISH_PLANT 1
 #include "../sdk/rocketnet_message_server.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

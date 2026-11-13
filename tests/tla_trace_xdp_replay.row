@@ -3,6 +3,8 @@
 {
     "layer": "xdp-replay",
     "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_XDP_REPLAY_PLANT"],
     "untraced": {},
     # a kernel mark for the filter's drop rule to read, a forget the kernel refused, a held greeting
     "reach": ["KernelMarked", "ForgetRefused", "GreetingHeld"],

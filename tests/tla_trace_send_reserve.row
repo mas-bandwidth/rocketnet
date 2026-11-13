@@ -3,6 +3,8 @@
 {
     "layer": "sendreserve",
     "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_SEND_RESERVE_PLANT"],
     "untraced": {},
     "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
     "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],

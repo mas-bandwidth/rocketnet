@@ -3,6 +3,8 @@
 {
     "layer": "queue-worker",
     "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_URING_QUEUE_WORKER_PLANT"],
     "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
                                "READ before the worker can see quit, and the worker arms no READ after it: "
                                "a READ to cancel is left only when the write and the arm race on two threads",

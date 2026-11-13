@@ -3,6 +3,8 @@
 {
     "layer": "msgx",
     "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_MSGX_SOCKET_TABLE_PLANT"],
     "untraced": {
         "Forget": "the first step of a forget call, where holders run before its retire: the walk sees the table between calls and takes the whole call, ForgetCall",
         "Retire": "the second step of a retire inside a forget or a sweep call, which the walk takes whole as ForgetCall or SweepCall",

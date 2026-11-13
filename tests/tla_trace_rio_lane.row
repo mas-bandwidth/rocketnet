@@ -3,6 +3,8 @@
 {
     "layer": "rio-lane",
     "modules": ["RNRioLaneLayout.tla", "TraceRNRioLaneLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_RIO_LANE_PLANT"],
     "untraced": {},
     "reach": ["BothLanesStaged"],
     "header_only": True,

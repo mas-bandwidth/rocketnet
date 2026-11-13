@@ -43,7 +43,6 @@
 #include "tla_trace_record.h"
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT
 #include "../sdk/rocketnet_server_iocp_windows.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

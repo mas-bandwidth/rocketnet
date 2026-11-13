@@ -49,7 +49,6 @@
 // often runs next, so the filler's look finds it.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_FILL_PHASE_PLANT 1
 #include "../sdk/rocketnet_fill_phase.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

@@ -29,7 +29,6 @@
 // never makes: its closes are the sweep's, of retired slots.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_MSGX_SOCKET_TABLE_PLANT 1
 #include "../sdk/rocketnet_msgx_socket_table.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

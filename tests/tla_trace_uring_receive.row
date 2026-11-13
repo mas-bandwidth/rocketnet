@@ -3,6 +3,8 @@
 {
     "layer": "receive",
     "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_URING_RECEIVE_QUEUE_PLANT"],
     "untraced": {},
     "reach": ["BankFull", "RingDry"],
     # a record carries the datagrams banked and delivered so far, so TLC's

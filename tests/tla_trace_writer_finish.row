@@ -3,6 +3,8 @@
 {
     "layer": "writerfinish",
     "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_WRITER_FINISH_PLANT"],
     "untraced": {},
     # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
     # (the last three): a seed set must hold both kinds

@@ -3,6 +3,8 @@
 {
     "layer": "ackapply",
     "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_ACK_APPLY_PLANT"],
     "untraced": {},
     "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
               "GatheredRangesFull"],

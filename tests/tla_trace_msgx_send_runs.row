@@ -3,6 +3,8 @@
 {
     "layer": "msgxsendruns",
     "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_MSGX_SEND_RUNS_PLANT"],
     "untraced": {},
     # one bank of 16 to 24 packets leaves in about 60 steps; the rest
     # of a 400-step walk would be Done records, each paid for by the

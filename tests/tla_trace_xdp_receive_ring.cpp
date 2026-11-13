@@ -50,7 +50,6 @@
 #include <vector>
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_XDP_RECEIVE_RING_PLANT 1
 #include "../sdk/rocketnet_server_socket_linux.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

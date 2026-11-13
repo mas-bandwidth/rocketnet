@@ -3,6 +3,8 @@
 {
     "layer": "xdp-receive-ring",
     "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_XDP_RECEIVE_RING_PLANT"],
     "untraced": {},
     # the staging buffer full, the RX ring full, and a refused flush
     # (even seeds: a fill ring of exactly the frames)

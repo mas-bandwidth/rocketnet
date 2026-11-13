@@ -54,7 +54,6 @@
 // or waiting, which the clean code never takes.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_URING_QUEUE_WORKER_PLANT 1
 #include "../sdk/rocketnet_uring_queue_worker.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

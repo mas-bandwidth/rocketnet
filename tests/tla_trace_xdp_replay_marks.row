@@ -3,6 +3,8 @@
 {
     "layer": "xdp-replay-marks",
     "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_XDP_REPLAY_MARKS_PLANT"],
     "untraced": {
         "Commit": "the start of reset_keeping, inside the one call the walk makes; the walk takes ResetKeeping, "
                   "the call whole",

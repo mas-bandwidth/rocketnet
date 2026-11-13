@@ -3,6 +3,8 @@
 {
     "layer": "xdp-gateway-refresh",
     "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_XDP_GATEWAY_REFRESH_PLANT"],
     "untraced": {
         "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
     },

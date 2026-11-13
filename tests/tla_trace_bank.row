@@ -3,6 +3,8 @@
 {
     "layer": "bank",
     "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_URING_SEND_QUEUE_PLANT"],
     "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
                          "under MaxFlush, so it never gets there"},
     "reach": ["LastSlot"],

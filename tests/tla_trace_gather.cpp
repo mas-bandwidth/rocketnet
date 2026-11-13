@@ -20,7 +20,6 @@
 // code never writes.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_SEND_GATHER_PLANT 1
 #include "../sdk/rocketnet_send_gather.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

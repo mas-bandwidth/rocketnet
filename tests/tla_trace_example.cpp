@@ -19,12 +19,13 @@
 // same state could look alike.
 //
 // A real layer's code lives in sdk/. Its file here includes that .cpp under
-// ROCKETNET_TLA_PLANT with the layer's plant define set, so the layer's own
-// plant binary, tla_trace_plant_<layer>, carries the planted code in place
-// of the library's:
+// ROCKETNET_TLA_PLANT, and its row names its plant defines ("plants"): the
+// build makes one plant binary per plant, tla_trace_plant_<file> (or
+// tla_trace_plant_<file>--<k> for the k-th of several), with that define
+// alone set, so each carries one planted defect in place of the library's
+// code:
 //
 //   #if defined( ROCKETNET_TLA_PLANT )
-//   #define ROCKETNET_X_PLANT 1
 //   #include "../sdk/rocketnet_x.cpp"
 //   #endif // #if defined( ROCKETNET_TLA_PLANT )
 //

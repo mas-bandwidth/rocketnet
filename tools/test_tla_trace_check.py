@@ -20,6 +20,7 @@ ROW = """# a row
 {
     "layer": "%(layer)s",
     "modules": ["RNTraceExample.tla", "TraceRNTraceExample.tla"],
+    %(plants)s
     "untraced": {},
     %(extra)s
     "commit": %(commit)s,
@@ -34,11 +35,13 @@ class Rows(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir)
 
-    def layer(self, stem, layer=None, commit="{1: 0, 2: 0, 3: 1, 4: 1}", extra="", cpp=True, text=None):
+    def layer(self, stem, layer=None, commit="{1: 0, 2: 0, 3: 1, 4: 1}", extra="", cpp=True, text=None,
+              plants='"plants": ["ROCKETNET_A_PLANT"],'):
         if cpp:
             (self.dir / f"tla_trace_{stem}.cpp").write_text("// a layer\n")
         (self.dir / f"tla_trace_{stem}.row").write_text(
-            text if text is not None else ROW % {"layer": layer or stem, "commit": commit, "extra": extra})
+            text if text is not None else ROW % {"layer": layer or stem, "commit": commit, "extra": extra,
+                                                 "plants": plants})
 
     def failures(self, count=2):
         rows, stems, failed = ttc.load_rows(self.dir)
@@ -132,6 +135,84 @@ class Rows(unittest.TestCase):
         self.layer("a")
         self.layer("b", text='{"modules": [], "untraced": {}, "commit": {1: 1}}')
         self.red('tests/tla_trace_b.row: no "layer"')
+
+    def test_no_plants(self):
+        self.layer("a", plants="")
+        self.red("layer a: the row has no plants")
+
+    def test_plants_not_defines(self):
+        self.layer("a", plants='"plants": ["a plant"],')
+        self.red("layer a: plants is a non-empty list of ROCKETNET_<X>_PLANT defines")
+
+    def test_plants_empty(self):
+        self.layer("a", plants='"plants": [],')
+        self.red("layer a: plants is a non-empty list")
+
+    def test_plant_twice(self):
+        self.layer("a", plants='"plants": ["ROCKETNET_A_PLANT", "ROCKETNET_A_PLANT"],')
+        self.red("layer a: a plant named twice in plants")
+
+    def test_plants_over_two_lines(self):
+        # CMakeLists.txt reads the one "plants" line: a second line's plant would never be built
+        self.layer("a", plants='"plants": ["ROCKETNET_A_PLANT",\n        "ROCKETNET_B_PLANT"],')
+        self.red('tests/tla_trace_a.row: "plants" is not one line naming exactly the row\'s plants')
+
+    def test_self_contained_with_plants(self):
+        self.layer("example", extra='"self_contained": "the template",')
+        self.red("layer example: a self-contained row has no plants")
+
+    def test_one_binary_per_plant(self):
+        self.assertEqual(ttc.plant_binaries("x", {"plants": ["ROCKETNET_A_PLANT"]}),
+                         [("tla_trace_plant_x", "ROCKETNET_A_PLANT")])
+        self.assertEqual(ttc.plant_binaries("x", {"plants": ["ROCKETNET_A_PLANT", "ROCKETNET_B_PLANT"]}),
+                         [("tla_trace_plant_x--1", "ROCKETNET_A_PLANT"), ("tla_trace_plant_x--2", "ROCKETNET_B_PLANT")])
+        self.assertEqual(ttc.plant_binaries("example", {"self_contained": "t"}), [("tla_trace_plant_example", None)])
+
+
+class Sources(unittest.TestCase):
+    """the layer file's plant rules (source_failures): every plant of the row tested by the sdk code, none
+    set by the layer's file"""
+
+    LAYER = ('#include "tla_trace_record.h"\n'
+             "#if defined( ROCKETNET_TLA_PLANT )\n"
+             '#include "../sdk/rocketnet_x.cpp"\n'
+             "#endif // #if defined( ROCKETNET_TLA_PLANT )\n")
+    SDK = ("#if defined( ROCKETNET_A_PLANT )\nint a = 1;\n#endif\n"
+           "#if defined( ROCKETNET_B_PLANT )\nint b = 1;\n#endif\n")
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        (self.root / "tests").mkdir()
+        (self.root / "sdk").mkdir()
+        (self.root / "tests" / "tla_trace_x.cpp").write_text(self.LAYER)
+        (self.root / "sdk" / "rocketnet_x.cpp").write_text(self.SDK)
+        self.saved = ttc.ROOT, ttc.TESTS
+        ttc.ROOT, ttc.TESTS = self.root, self.root / "tests"
+
+    def tearDown(self):
+        ttc.ROOT, ttc.TESTS = self.saved
+        shutil.rmtree(self.root)
+
+    def test_every_plant_tested_is_green(self):
+        self.assertEqual(ttc.source_failures({"plants": ["ROCKETNET_A_PLANT", "ROCKETNET_B_PLANT"]}, "x"), [])
+
+    def test_one_untested_plant_is_red(self):
+        # one plant the sdk tests no longer hides one it does not: no any()
+        (self.root / "sdk" / "rocketnet_x.cpp").write_text(self.SDK.replace("ROCKETNET_B_PLANT", "ROCKETNET_C_PLANT"))
+        failed = ttc.source_failures({"plants": ["ROCKETNET_A_PLANT", "ROCKETNET_B_PLANT"]}, "x")
+        self.assertEqual(failed, ["plant ROCKETNET_B_PLANT is tested by no #if in the sdk files tla_trace_x.cpp includes"])
+
+    def test_plant_named_in_a_comment_is_red(self):
+        (self.root / "sdk" / "rocketnet_x.cpp").write_text("// ROCKETNET_A_PLANT\n")
+        failed = ttc.source_failures({"plants": ["ROCKETNET_A_PLANT"]}, "x")
+        self.assertTrue(any("plant ROCKETNET_A_PLANT is tested by no #if" in f for f in failed), failed)
+
+    def test_layer_file_sets_a_plant_is_red(self):
+        (self.root / "tests" / "tla_trace_x.cpp").write_text(
+            self.LAYER.replace('#include "../sdk', '#define ROCKETNET_A_PLANT 1\n#include "../sdk'))
+        failed = ttc.source_failures({"plants": ["ROCKETNET_A_PLANT"]}, "x")
+        self.assertTrue(any(f.startswith("tla_trace_x.cpp defines ROCKETNET_A_PLANT: a plant is set by the build")
+                            for f in failed), failed)
 
 
 class Repository(unittest.TestCase):

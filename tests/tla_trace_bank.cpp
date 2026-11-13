@@ -22,7 +22,6 @@
 // which the clean code never leaves.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_URING_SEND_QUEUE_PLANT 1
 #include "../sdk/rocketnet_uring_send_queue.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

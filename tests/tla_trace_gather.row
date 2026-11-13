@@ -3,6 +3,8 @@
 {
     "layer": "gather",
     "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_SEND_GATHER_PLANT"],
     "untraced": {},
     "reach": ["SegCapEdge", "ByteCapEdge"],
     # seven steps a bank (six stages and the call): 100 calls a seed

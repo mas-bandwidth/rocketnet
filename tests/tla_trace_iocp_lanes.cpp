@@ -24,8 +24,10 @@
 // Every lane's free queue is read back from the code after each step; the
 // code's hash of every destination is the cfg's DestLaneAt.
 //
-// The plant is two defects in the transport's file, compiled only into this
-// layer's plant binary. The carve (ROCKETNET_IOCP_SEND_LANES_PLANT) is
+// The plants are two defects in the transport's file, each compiled alone
+// into a plant binary of its own (the row's plants,
+// tests/tla_trace_iocp_lanes.row), so each must be rejected at the first
+// record it changes and neither can hide the other. The carve (ROCKETNET_IOCP_SEND_LANES_PLANT) is
 // index % lanes: a release lands in another lane's queue (or finds it full
 // and is refused). The thread walk (ROCKETNET_IOCP_SEND_THREAD_PLANT) takes
 // each thread one lane past its own: a thread posts a lane another thread
@@ -47,8 +49,6 @@
 #include "tla_trace_record.h"
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_IOCP_SEND_LANES_PLANT
-#define ROCKETNET_IOCP_SEND_THREAD_PLANT
 #include "../sdk/rocketnet_server_iocp_windows.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

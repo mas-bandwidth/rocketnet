@@ -29,7 +29,6 @@
 // which the clean code never does.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_URING_RECEIVE_QUEUE_PLANT 1
 #include "../sdk/rocketnet_uring_receive_queue.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

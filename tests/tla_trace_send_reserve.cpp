@@ -47,7 +47,6 @@
 // never shows on one thread.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_SEND_RESERVE_PLANT 1
 #include "../sdk/rocketnet_server_transport.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

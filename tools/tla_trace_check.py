@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Run the TLA+ trace check of one layer or of every layer (proofs/tla/README-TraceCheck.md).
 
-For each seed, bin/tla_trace writes a trace of the layer's code and the
-layer's own plant binary, bin/tla_trace_plant_<file>, writes the same walk
-over the planted code. Each walk runs twice and must write the same bytes
+For each seed, bin/tla_trace writes a trace of the layer's code and each of
+the layer's plant binaries writes the same walk over planted code: one
+binary per plant the row names, built with that plant's define alone,
+bin/tla_trace_plant_<file> for one plant and bin/tla_trace_plant_<file>--<k>
+for the k-th of several. Each walk runs twice and must write the same bytes
 both times. Each trace is checked by the pinned tlacheck in a run and a root
-of its own: the clean trace must pass, and the planted trace must violate
+of its own: the clean trace must pass, and EVERY plant's trace must violate
 TraceConsistent at the first record where it differs from the clean trace,
-which must be a record where the walk says the planted effect happened.
+which must be a record where the walk says the planted effect happened. No
+plant can hide another: each is checked in a binary of its own.
 
 Before any walk, the layer's files are read and refused, by name, when:
   the Trace module is not the template: Trace == TraceLog, the ASSUME,
@@ -17,12 +20,14 @@ Before any walk, the layer's files are read and refused, by name, when:
     ghost variables), Act(a, x) must be CASE a = "X" -> X(x[1], ..., x[n])
     with every X an action of Next taking n arguments, and nothing else may
     be defined there but OpActs and the row's reach predicates;
-  the layer's file defines or undefines a ROCKETNET_ macro other than its
-    plant's, or (but for a self-contained row) includes no sdk .cpp, or its
-    plant define appears in none of the sdk files it includes;
+  the layer's file defines or undefines a ROCKETNET_ macro (a plant define
+    included: the build sets each from the row's plants), or (but for a
+    self-contained row) includes no sdk .cpp, or one of the row's plants is
+    tested by no #if of the sdk files it includes;
   the rows and the binaries disagree: a row with no layer, a layer with no
     row, a name registered twice or refused, two rows of one name, a plant
-    binary that is not exactly one layer or not its row's;
+    binary that is not exactly one layer or not its row's, a plant of the
+    row with no binary, a binary that is no plant of the row;
   the shard table is not a partition: a layer with no per-commit seed, a
     seed in two shards or in none, an empty shard; or the workflows' shard
     matrices or the ruleset's shard checks are not SHARD_COUNT's.
@@ -35,7 +40,7 @@ not SPECIFICATION TraceSpec, INVARIANT TraceConsistent and plain constants;
 TLC rejects the clean trace, times out, errs, or found fewer states than the
 trace has records; the clean walk shows the planted effect; the plant never
 fired, changed no record, or TLC accepts it or rejects it anywhere but at
-the first record it changed.
+the first record it changed; each of these for every plant of the row.
 
 Across the seeds, red when an action of Next that is not untraced, or a
 reach predicate of the row, was never taken or reached in a clean trace.
@@ -85,10 +90,17 @@ TESTS = ROOT / "tests"
 #                   a layout layer must show (wrapped, full, empty after a
 #                   wrap). Each costs one more TLC run per seed until hit.
 #   steps           (optional) the walk's length for this layer (400).
+#   plants          the plant defines, ROCKETNET_<X>_PLANT, on ONE line, for
+#                   CMakeLists.txt reads that line to build one plant binary per
+#                   plant with that define alone; each must be tested by an #if
+#                   of the sdk code the layer includes, and each plant's trace
+#                   is checked on every seed. Every layer has one or more; the
+#                   self-contained example has none (its plant is
+#                   ROCKETNET_TLA_PLANT itself).
 #   header_only     (optional, true) the layer's code is a header-only library file:
-#                   its plant define is set in the plant block and tested by a
-#                   directive of the sdk header the layer includes whole; without
-#                   this key a layer must include an sdk .cpp under the plant block.
+#                   its plants are tested by directives of the sdk header the
+#                   layer includes whole; without this key a layer must include
+#                   an sdk .cpp under the plant block.
 #   self_contained  (the example only) why the code under test lives in the
 #                   layer's own file instead of sdk/.
 #   commit          the per-commit seeds and where each runs: {seed: shard},
@@ -120,7 +132,12 @@ RULESET_SHARD = re.compile(r'^ *\{"context": "TLA\+ trace check \(fixed seeds, s
 STEPS = 400
 # the shortest walk a row may ask for
 MIN_STEPS = 100
-ROW_KEYS = {"layer", "modules", "untraced", "ghost", "reach", "steps", "self_contained", "header_only", "commit"}
+ROW_KEYS = {"layer", "modules", "plants", "untraced", "ghost", "reach", "steps", "self_contained", "header_only",
+            "commit"}
+# a plant define, and the row line CMakeLists.txt reads the plants from (file(STRINGS REGEX), then every
+# plant define on it: the line must say exactly what the row's literal says)
+PLANT_NAME = re.compile(r"ROCKETNET_[A-Z0-9_]+_PLANT")
+PLANTS_LINE = re.compile(r'^[ \t]*"plants":', re.M)
 # the rows whose code may live in the layer's own file
 SELF_CONTAINED = {"example"}
 WALK_TIMEOUT = 120
@@ -354,16 +371,12 @@ PLANT_BLOCK = "if defined( ROCKETNET_TLA_PLANT )"
 PLANT_OPENS = {PLANT_BLOCK, "if defined(ROCKETNET_TLA_PLANT)", "ifdef ROCKETNET_TLA_PLANT"}
 
 
-def source_failures(layer, plant_binary):
-    """[failures] of the layer's own file, found from its plant binary's name"""
-    stem = plant_binary[len("tla_trace_plant_"):]
-    if stem.endswith(".exe"):
-        stem = stem[:-4]
+def source_failures(layer, stem):
+    """[failures] of the layer's own file, tests/tla_trace_<stem>.cpp"""
     path = TESTS / f"tla_trace_{stem}.cpp"
     if not path.exists():
-        return [f"no {path.relative_to(ROOT)} for {plant_binary}"]
+        return [f"no {path.relative_to(ROOT)}"]
     failures = []
-    plants = set()
     # the layer's file and every header of tests/ it includes, transitively
     seen, todo = set(), [path]
     while todo:
@@ -375,8 +388,9 @@ def source_failures(layer, plant_binary):
         for word, rest in DIRECTIVE.findall(code):
             if word in ("define", "undef"):
                 m = re.match(r"(ROCKETNET_[A-Za-z0-9_]+)", rest)
-                if m and m.group(1).endswith("_PLANT") and f == path:
-                    plants.add(m.group(1))
+                if m and m.group(1).endswith("_PLANT"):
+                    failures.append(f"{f.name} defines {m.group(1)}: a plant is set by the build, one plant binary "
+                                    f"each, from the row's plants (tests/{path.stem}.row)")
                 elif m and not re.fullmatch(r"ROCKETNET_TESTS_[A-Z0-9_]+_H", m.group(1)):
                     failures.append(f"{f.name} defines {m.group(1)}: the trace binaries take the library's configuration, never their own")
             elif word == "include":
@@ -388,8 +402,8 @@ def source_failures(layer, plant_binary):
     # every sdk .cpp include sits in a top-level #if defined( ROCKETNET_TLA_PLANT ): the clean binary
     # traces the library itself, the plant binary the planted copy of the same file
     # The plant lives in the library's code alone: the file tests ROCKETNET_TLA_PLANT or a plant
-    # define only to open that block, at the top level, and the block holds only the plant
-    # defines and the sdk includes. A walk that branched on the plant could plant its own records.
+    # define only to open that block, at the top level, and the block holds only the sdk
+    # includes. A walk that branched on the plant could plant its own records.
     code = c_tokens(path.read_text())
     stack, included, headers = [], [], []
     for line in code.split("\n"):
@@ -397,11 +411,11 @@ def source_failures(layer, plant_binary):
         in_block = stack == [PLANT_BLOCK]
         if not directive:
             if in_block and line.strip():
-                failures.append(f"{path.name} has code inside its plant block: it holds plant defines and sdk includes only")
+                failures.append(f"{path.name} has code inside its plant block: it holds sdk includes only")
             continue
         word, rest = directive.group(1), " ".join(directive.group(2).split())
         if in_block and not (word == "endif" or word == "define" and re.match(r"ROCKETNET_\w+_PLANT\b", rest) or word == "include" and re.match(r'"\.\./sdk/[^"]+\.cpp"', rest)):
-            failures.append(f"{path.name} has #{word} {rest} inside its plant block: it holds plant defines and sdk includes only")
+            failures.append(f"{path.name} has #{word} {rest} inside its plant block: it holds sdk includes only")
         if word in ("if", "ifdef", "ifndef", "elif") and "_PLANT" in rest:
             if f"{word} {rest}" not in PLANT_OPENS or stack:
                 failures.append(f"{path.name} tests the plant in #{word} {rest}: only the top-level block that includes the sdk may")
@@ -417,8 +431,8 @@ def source_failures(layer, plant_binary):
                 if stack != [PLANT_BLOCK]:
                     failures.append(f"{path.name} includes sdk/{m.group(1)} outside a top-level #if defined( ROCKETNET_TLA_PLANT )")
                 included.append(m.group(1))
-            # a library header the layer includes whole (a header-only layout): its plant define
-            # is set in the plant block above and tested by a directive of the header itself
+            # a library header the layer includes whole (a header-only layout): its plants are
+            # tested by directives of the header itself
             h = re.match(r'"\.\./sdk/([^"]+\.h)"', rest)
             if h and stack == [] and layer.get("header_only"):
                 headers.append(h.group(1))
@@ -434,10 +448,11 @@ def source_failures(layer, plant_binary):
             failures.append(f"{path.name} includes sdk/{f}, which does not exist")
         else:
             sdk_code += c_tokens((ROOT / "sdk" / f).read_text())
-    # the plant define is tested by a directive of the sdk code, not named in a comment
-    tested = any(re.search(r"^[ \t]*#[ \t]*(?:if|ifdef|elif)\b[^\n]*\b" + p + r"\b", sdk_code, re.M) for p in plants)
-    if not tested:
-        failures.append(f"{path.name}'s plant define is tested by no #if in the sdk files it includes")
+    # EVERY plant is tested by a directive of the sdk code, not named in a comment: one untested
+    # plant is a binary of the clean code, whatever its siblings do
+    for plant in layer.get("plants", []):
+        if not re.search(r"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif)\b[^\n]*\b" + plant + r"\b", sdk_code, re.M):
+            failures.append(f"plant {plant} is tested by no #if in the sdk files {path.name} includes")
     return failures
 
 
@@ -570,69 +585,85 @@ def tlc_failure(kind, exit_code):
         return f"{kind} trace: TLC timeout (the run budget)"
     if kind == "clean" and exit_code == 12:
         return "clean trace rejected by TLC (TraceConsistent)"
-    if kind == "plant" and exit_code == 0:
-        return "plant trace accepted by TLC"
+    if kind.startswith("plant") and exit_code == 0:
+        return f"{kind} trace accepted by TLC"
     return f"{kind} trace: TLC exit {exit_code}"
 
 
-def check_seed(args, name, layer, plant_binary, seed, facts):
-    """(name, seed, log, failures, clean report, plant reruns)"""
+def check_seed(args, name, layer, plants, seed, facts):
+    """(name, seed, log, failures, clean report, plant reruns) of one seed: the clean walk, and the walk of
+    each plant binary in plants ([(binary, plant define or None)]), each plant checked on its own"""
     log, failures = [], []
     base = args.dir / f"{name}-{seed}"
     if base.exists():
         shutil.rmtree(base)
     steps = args.steps or layer.get("steps", STEPS)
+    # (kind, its directory, binary, how a failure names it): one plant keeps the plain "plant"; of
+    # several, each failure names its plant
+    kinds = [("clean", "clean", "tla_trace", "clean")]
+    for k, (binary, plant) in enumerate(plants, 1):
+        if len(plants) == 1:
+            kinds.append(("plant", "plant", binary, "plant"))
+        else:
+            kinds.append(("plant", f"plant-{k}", binary, f"plant {k}/{len(plants)} {plant} ({binary})"))
 
     reports = {}
-    for kind, binary in (("clean", "tla_trace"), ("plant", plant_binary)):
-        first = walk(args, binary, name, seed, steps, base / kind / "walk", log)
-        second = walk(args, binary, name, seed, steps, base / kind / "again", log)
+    for kind, sub, binary, said_kind in kinds:
+        first = walk(args, binary, name, seed, steps, base / sub / "walk", log)
+        second = walk(args, binary, name, seed, steps, base / sub / "again", log)
         if first is None or second is None:
             said = [line for chunk in log for line in chunk.splitlines() if line.startswith("tla_trace: ")]
-            failures.append(f"{kind} harness failed, timed out or printed no CONFIG, TRACE, ACTS, PLANT-FIRED and PLANT-AT lines"
+            failures.append(f"{said_kind} harness failed, timed out or printed no CONFIG, TRACE, ACTS, PLANT-FIRED and PLANT-AT lines"
                             + (" (it said: " + "; ".join(line[len("tla_trace: "):] for line in said[:3]) + ")" if said else ""))
             return name, seed, log, failures, None, 0
-        if not same_walk(first, second, base / kind / "walk", base / kind / "again"):
-            failures.append(f"{kind} walk is nondeterministic: two runs of one seed differ")
+        if not same_walk(first, second, base / sub / "walk", base / sub / "again"):
+            failures.append(f"{said_kind} walk is nondeterministic: two runs of one seed differ")
             return name, seed, log, failures, None, 0
         if first["records"] != steps + 1 or len(first["lines"]) != steps + 1:
-            failures.append(f"{kind} trace has {first['records']} records, not steps + 1 = {steps + 1}")
+            failures.append(f"{said_kind} trace has {first['records']} records, not steps + 1 = {steps + 1}")
         if first["acts"] != first["logged"]:
-            failures.append(f"{kind} walk's ACTS {first['acts']} are not the acts its trace records {first['logged']}")
-        failures += [f"{kind}: {f}" for f in cfg_failures(base / kind / "walk" / (first["module"] + ".cfg"), facts["constants"])]
-        failures += [f"{kind}: {f}" for f in mc_failures(base / kind / "walk" / (first["module"] + ".tla"), facts["trace_stem"])]
-        reports[kind] = first
+            failures.append(f"{said_kind} walk's ACTS {first['acts']} are not the acts its trace records {first['logged']}")
+        failures += [f"{said_kind}: {f}" for f in cfg_failures(base / sub / "walk" / (first["module"] + ".cfg"), facts["constants"])]
+        failures += [f"{said_kind}: {f}" for f in mc_failures(base / sub / "walk" / (first["module"] + ".tla"), facts["trace_stem"])]
+        reports[sub] = first
         if kind == "clean":
-            log.append(f"TRACE-SHA256 {name} {seed} {trace_sha(base / kind / 'walk', first)}\n")
+            log.append(f"TRACE-SHA256 {name} {seed} {trace_sha(base / sub / 'walk', first)}\n")
 
-    if reports["clean"]["config"] != reports["plant"]["config"]:
-        failures.append(f"the plant binary's CONFIG {reports['plant']['config']} is not the clean one's {reports['clean']['config']}")
-    for macro, value in reports["clean"]["config"].items():
+    clean = reports["clean"]
+    for macro, value in clean["config"].items():
         if args.library_config.get(macro, "undef") != value:
             failures.append(f"the trace binaries see {macro}={value}, the library is built with "
                             f"{macro}={args.library_config.get(macro, 'undef')}")
-    if reports["clean"]["fired"] != 0:
-        failures.append(f"clean code shows the planted effect {reports['clean']['fired']} times")
-    if reports["plant"]["fired"] == 0:
-        failures.append("the plant never fired: its trace proves nothing")
-    # the first record the planted code changed: the walk is the same, so
-    # the two traces agree until the plant acts
-    clean_lines, plant_lines = reports["clean"]["lines"], reports["plant"]["lines"]
-    changed = next((i + 1 for i, (c, p) in enumerate(zip(clean_lines, plant_lines)) if c != p), None)
-    if changed is None and len(clean_lines) == len(plant_lines):
-        failures.append("the plant changed no record: its trace is the clean one")
-    elif changed is None:
-        changed = min(len(clean_lines), len(plant_lines)) + 1
-    if changed is not None and changed not in reports["plant"]["at"]:
-        failures.append(f"the plant first changed record {changed}, where the walk does not say the plant fired")
+    if clean["fired"] != 0:
+        failures.append(f"clean code shows the planted effect {clean['fired']} times")
+    # per plant: the first record its code changed (the walk is the same, so the two traces agree until
+    # the plant acts), which must be a record where the walk says the plant fired
+    changed = {}
+    for kind, sub, binary, said_kind in kinds[1:]:
+        # one plant's messages are the plain ones; of several, each names its plant
+        the = "the plant" if said_kind == "plant" else said_kind
+        report = reports[sub]
+        if report["config"] != clean["config"]:
+            failures.append(f"{binary}'s CONFIG {report['config']} is not the clean one's {clean['config']}")
+        if report["fired"] == 0:
+            failures.append(f"{the} never fired: its trace proves nothing")
+        clean_lines, plant_lines = clean["lines"], report["lines"]
+        first = next((i + 1 for i, (c, p) in enumerate(zip(clean_lines, plant_lines)) if c != p), None)
+        if first is None and len(clean_lines) == len(plant_lines):
+            failures.append(f"{the} changed no record: its trace is the clean one")
+        elif first is None:
+            first = min(len(clean_lines), len(plant_lines)) + 1
+        if first is not None and first not in report["at"]:
+            failures.append(f"{the} first changed record {first}, where the walk does not say the plant fired")
+        changed[sub] = first
     if failures:
-        return name, seed, log, failures, reports["clean"], 0
+        return name, seed, log, failures, clean, 0
 
     expected = {"clean": "pass\t-", "plant": "invariant\tTraceConsistent"}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        runs = {kind: pool.submit(tlc, args, name, base / kind, reports[kind]["module"], expected[kind], layer, log)
-                for kind in ("clean", "plant")}
-        results = {kind: runs[kind].result() for kind in runs}
+    with ThreadPoolExecutor(max_workers=len(kinds)) as pool:
+        runs = {sub: pool.submit(tlc, args, name, base / sub, reports[sub]["module"], expected[kind], layer, log)
+                for kind, sub, _, _ in kinds}
+        results = {sub: runs[sub].result() for sub in runs}
 
     clean_exit, clean_log = results["clean"]
     if clean_exit != 0:
@@ -643,39 +674,43 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         # short of the end
         found = DISTINCT.findall(clean_log)
         distinct = int(found[-1].replace(",", "")) if found else -1
-        if distinct < reports["clean"]["records"]:
-            failures.append(f"clean trace: TLC found {distinct} distinct states for {reports['clean']['records']} records")
-    plant_exit, plant_log = results["plant"]
-    # TLC 2.19 sometimes reports the violation (exit 12) and prints no
-    # behaviour at all: on byte-identical inputs, with -fp and -seed pinned,
-    # one worker and a fresh metadir each run, the same plant printed it in
-    # 5, 6 and 7 of 10 runs (hetzner1, 2026-11-13). A run without a behaviour
-    # is run again, up to PLANT_ATTEMPTS in all; every attempt past the first
-    # is printed, so the flake stays visible, and a plant that never prints
-    # one stays red
-    attempts = 1
-    missing = 0
-    while plant_exit == 12 and not TI.search(plant_log) and attempts < PLANT_ATTEMPTS:
-        missing += 1
-        attempts += 1
-        plant_exit, plant_log = tlc(args, name, base / f"plant-attempt-{attempts}", reports["plant"]["module"],
-                                    expected["plant"], layer, log, source=base / "plant" / "walk")
-    if plant_exit == 12 and not TI.search(plant_log):
-        missing += 1
-    if attempts > 1:
-        log.append(f"PLANT-ATTEMPTS {attempts}: TLC printed no behaviour for the plant's violation on {missing} of them\n")
-    if plant_exit != 12:
-        failures.append(tlc_failure("plant", plant_exit))
-    else:
-        # the last matched record is ti, so the record that is not a model
-        # step is ti + 1: it must be the first record the plant changed
-        values = TI.findall(plant_log)
-        if not values:
-            failures.append(f"plant rejection: no ti in TLC's counterexample after {attempts} attempts")
-        elif int(values[-1]) + 1 != changed:
-            failures.append(f"plant trace rejected at record {int(values[-1]) + 1}, not at record {changed}, "
-                            "the first the plant changed")
-    return name, seed, log, failures, reports["clean"], attempts - 1
+        if distinct < clean["records"]:
+            failures.append(f"clean trace: TLC found {distinct} distinct states for {clean['records']} records")
+    reruns = 0
+    for kind, sub, binary, said_kind in kinds[1:]:
+        the = "plant" if said_kind == "plant" else said_kind
+        plant_exit, plant_log = results[sub]
+        # TLC 2.19 sometimes reports the violation (exit 12) and prints no
+        # behaviour at all: on byte-identical inputs, with -fp and -seed pinned,
+        # one worker and a fresh metadir each run, the same plant printed it in
+        # 5, 6 and 7 of 10 runs (hetzner1, 2026-11-13). A run without a behaviour
+        # is run again, up to PLANT_ATTEMPTS in all; every attempt past the first
+        # is printed, so the flake stays visible, and a plant that never prints
+        # one stays red
+        attempts = 1
+        missing = 0
+        while plant_exit == 12 and not TI.search(plant_log) and attempts < PLANT_ATTEMPTS:
+            missing += 1
+            attempts += 1
+            plant_exit, plant_log = tlc(args, name, base / f"{sub}-attempt-{attempts}", reports[sub]["module"],
+                                        expected["plant"], layer, log, source=base / sub / "walk")
+        if plant_exit == 12 and not TI.search(plant_log):
+            missing += 1
+        if attempts > 1:
+            log.append(f"PLANT-ATTEMPTS {attempts}: TLC printed no behaviour for the {the}'s violation on {missing} of them\n")
+        reruns += attempts - 1
+        if plant_exit != 12:
+            failures.append(tlc_failure(the, plant_exit))
+        else:
+            # the last matched record is ti, so the record that is not a model
+            # step is ti + 1: it must be the first record the plant changed
+            values = TI.findall(plant_log)
+            if not values:
+                failures.append(f"{the} rejection: no ti in TLC's counterexample after {attempts} attempts")
+            elif int(values[-1]) + 1 != changed[sub]:
+                failures.append(f"{the} trace rejected at record {int(values[-1]) + 1}, not at record {changed[sub]}, "
+                                f"the first the plant changed")
+    return name, seed, log, failures, clean, reruns
 
 
 def coverage_walk(args, name, layer, seed):
@@ -796,6 +831,13 @@ def read_row(path):
         row = ast.literal_eval(tree.body)
     except ValueError as error:
         return None, failures + [f"{where}: not a literal: {error}"]
+    # the build reads the plants from the text, the check from the literal: they must agree
+    if isinstance(row, dict) and "plants" in row:
+        lines = [line for line in path.read_text().splitlines() if PLANTS_LINE.match(line)]
+        built = PLANT_NAME.findall(lines[0]) if len(lines) == 1 else None
+        if built is None or built != row["plants"]:
+            failures.append(f"{where}: \"plants\" is not one line naming exactly the row's plants, in order: "
+                            f"CMakeLists.txt builds a plant binary for each define on that line")
     return row, failures
 
 
@@ -847,12 +889,34 @@ def row_failures(name, row, steps_given):
         failures.append(f"layer {name}: reach is a list of predicate names")
     if "self_contained" in row and name not in SELF_CONTAINED:
         failures.append(f"layer {name}: only the example is self-contained; a layer traces sdk code")
+    plants = row.get("plants")
+    if "self_contained" in row:
+        if plants is not None:
+            failures.append(f"layer {name}: a self-contained row has no plants: its plant is ROCKETNET_TLA_PLANT")
+    elif plants is None:
+        failures.append(f"layer {name}: the row has no plants: every layer names its plant defines, one plant "
+                        "binary each")
+    elif not isinstance(plants, list) or not plants or not all(isinstance(p, str) and PLANT_NAME.fullmatch(p)
+                                                                for p in plants):
+        failures.append(f"layer {name}: plants is a non-empty list of ROCKETNET_<X>_PLANT defines")
+    elif len(set(plants)) != len(plants):
+        failures.append(f"layer {name}: a plant named twice in plants")
     steps = row.get("steps", STEPS)
     if not isinstance(steps, int):
         failures.append(f"layer {name}: steps is a whole number")
     elif not steps_given and steps < MIN_STEPS:
         failures.append(f"layer {name}: steps {steps} is under {MIN_STEPS}")
     return failures
+
+
+def plant_binaries(stem, row):
+    """[(binary name, plant define or None)] the build makes for a layer (CMakeLists.txt): one per plant, the
+    bare name for one plant, --<k> for the k-th of several; one of ROCKETNET_TLA_PLANT alone for a row
+    without plants"""
+    plants = row.get("plants") if isinstance(row.get("plants"), list) else []
+    if len(plants) <= 1:
+        return [(f"tla_trace_plant_{stem}", plants[0] if plants else None)]
+    return [(f"tla_trace_plant_{stem}--{k}", plant) for k, plant in enumerate(plants, 1)]
 
 
 def commit_seeds(row):
@@ -1077,35 +1141,45 @@ def main():
                 failed.append(f"layer {n}: a row this run needs, not registered by the harness (a build of other layers: "
                               f"ROCKETNET_TLA_TRACE_ONLY)")
     layer_of_stem = {stem: n for n, stem in stems.items()}
+    # every plant binary built: the layer it holds, and that it is a plant binary its row names
+    wanted = {name_: (n, plant) for n in rows for name_, plant in plant_binaries(stems[n], rows[n])}
     for path in sorted(args.bin.glob("tla_trace_plant_*")):
         if path.suffix not in ("", ".exe"):
             continue
+        binary = path.stem if path.suffix else path.name
         layers, plant_refusals = listed(path)
         for n, reason in plant_refusals:
             failed.append(f"{path.name}: layer {n} refused at registration: {reason}")
         if layers is None or len(layers) != 1:
             failed.append(f"{path.name}: a plant binary must hold exactly one layer, it lists {layers}")
             continue
-        if layers[0] in plants:
-            failed.append(f"layer {layers[0]}: two plant binaries")
-        plants[layers[0]] = path.name
-        stem = path.stem[len("tla_trace_plant_"):] if path.suffix else path.name[len("tla_trace_plant_"):]
+        stem = binary[len("tla_trace_plant_"):].split("--")[0]
         if stem in layer_of_stem and layer_of_stem[stem] != layers[0]:
             failed.append(f"{path.name} holds layer {layers[0]}, its row tests/tla_trace_{stem}.row names "
                           f"{layer_of_stem[stem]}")
+            continue
+        if binary not in wanted:
+            failed.append(f"{path.name}: layer {layers[0]}'s row names no plant for it (its plants: one binary "
+                          "tla_trace_plant_<file>, or tla_trace_plant_<file>--<k> for the k-th of several)")
+            continue
+        plants.setdefault(layers[0], []).append(binary)
 
     facts = {}
     for n in names:
-        if n not in plants:
-            failed.append(f"layer {n}: no plant binary tla_trace_plant_<file> holds it")
+        needed = plant_binaries(stems[n], rows[n])
+        missing = [f"{b} ({p or 'ROCKETNET_TLA_PLANT'})" for b, p in needed if b not in plants.get(n, [])]
+        if missing:
+            failed.append(f"layer {n}: no plant binary {', '.join(missing)}: every plant of the row is built and "
+                          "checked on its own")
             continue
+        plants[n] = needed
         # a row without its modules or with values of the wrong kind is already red above
         if not REQUIRED_KEYS <= set(rows[n]) or not isinstance(rows[n]["modules"], list) or not rows[n]["modules"] \
                 or not all(isinstance(rows[n].get(k, {}), dict) for k in ("untraced", "ghost")) \
                 or not isinstance(rows[n].get("reach", []), list):
             continue
         found, failures = module_facts(n, rows[n])
-        failures += source_failures(rows[n], plants[n])
+        failures += source_failures(rows[n], stems[n])
         for failure in failures:
             failed.append(f"layer {n}: {failure}")
         if found:

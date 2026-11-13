@@ -3,6 +3,8 @@
 {
     "layer": "fillphase",
     "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_FILL_PHASE_PLANT"],
     "untraced": {
         "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
         "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",

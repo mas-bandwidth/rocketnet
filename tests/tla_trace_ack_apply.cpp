@@ -79,7 +79,6 @@
 // stands, which the clean walk never shows.
 
 #if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_ACK_APPLY_PLANT 1
 #include "../sdk/rocketnet_ack.cpp"
 #endif // #if defined( ROCKETNET_TLA_PLANT )
 

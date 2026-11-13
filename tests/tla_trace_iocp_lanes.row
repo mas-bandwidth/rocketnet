@@ -3,6 +3,8 @@
 {
     "layer": "iocp-lanes",
     "modules": ["RNIocpSendLanes.tla", "TraceRNIocpSendLanes.tla"],
+    # the plants: each its own plant binary, built with that define alone (CMakeLists.txt)
+    "plants": ["ROCKETNET_IOCP_SEND_LANES_PLANT", "ROCKETNET_IOCP_SEND_THREAD_PLANT"],
     "untraced": {},
     "reach": ["LaneEmpty", "EveryThreadPosts"],
     # per commit: seed -> shard (ci.yml tla-trace, --seeds commit --shard I/N)
