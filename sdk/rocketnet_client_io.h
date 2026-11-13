@@ -1139,9 +1139,13 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // to it while it has room; full, it reads no more until update starts on
     // it and wakes this thread (FullWaitsOnWake). A pass that read nothing
     // still commits a buffer holding records, so a full buffer update has
-    // started on is left. A move is worked.
+    // started on is left. A move is worked. The I/O thread does wait on
+    // update: it acquires the mutex here blocking (update only ever tries it
+    // and holds it for the exchange alone), a full buffer it cannot leave
+    // waits on the wake below until update starts on it, and its exit waits
+    // for stop's wake call to return (stop_woken). Update's side never waits.
     // proofs/tla/RNClientIo.tla IoPublish and IoOwe (historical two-buffer design): the publish, or the
-    // owed publish, which the commit replaces (it never waits on update).
+    // owed publish, which the commit replaces: there is no owed publish now.
     // proofs/tla/RNClientIoCompactLayout.tla Publish: the next buffer fills from slot 0 again.
 
     if ( buffer->num_packets > 0 )

@@ -35,6 +35,10 @@ the buffer it left (the tail) first, within its 1024-packet budget; the rest
 wait for the next update in order, and none is processed twice or overwritten.
 A datagram committed before an update that took the mutex is returned by that
 update (`DeliveredByNextCall`). The legacy receive path shares the same handoff.
+Only update's side never waits. The I/O thread can wait on update: it takes
+the mutex blocking for its commit (update holds it for the exchange alone), a
+full buffer it cannot leave waits on the wake until update starts on it, and
+at stop its exit waits for stop's wake call to return.
 
 On the legacy path (a connection created with an active development link
 simulator or without wait/wake), `stop` transfers the simulator to the worker

@@ -1401,8 +1401,9 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // RNClientIo as an abstraction of the receive handoff: IoPublish stands for
 // the commit of rocketnet_receive_handoff_commit (records become visible to
 // update only there, each opened before it), and IoOwe has no step in the code
-// now, since the commit never waits on update (proofs/tla/RNReceiveHandoff.tla
-// is the handoff itself).
+// now, since the commit never owes a publish: it always makes the count
+// visible, and a full buffer update has not started on waits on the wake
+// (proofs/tla/RNReceiveHandoff.tla is the handoff itself).
 // proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update takes the
 // committed records at its start (Expose stands for the begin of the receive
 // handoff's Call); Return has no step in the code now, since update hands no
