@@ -41,6 +41,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_socket_config.h"
+#include "suite_runner.h"
 
 #include <stddef.h>
 
@@ -198,6 +199,24 @@ static void test_xdp_transport_umem_holds_only_the_fill_frames()
     check( rocketnet_xdp_umem_bytes( ROCKETNET_XDP_MAX_QUEUES + 1 ) == 0 );
 }
 
+// XDP sizes its own process batch: at every sizing it holds at least twice one
+// queue's send queue, whatever the shared per-client receive budget is, and it
+// is never below that budget.
+
+static void test_xdp_transport_process_batch_holds_twice_the_send_queue()
+{
+    const int sizings[] = { 1, 2, 64, 512, 1000, 4096, ROCKETNET_MAX_CLIENTS };
+    for ( int i = 0; i < (int) ( sizeof( sizings ) / sizeof( sizings[0] ) ); i++ )
+    {
+        const int max_clients = sizings[i];
+        const int xdp = rocketnet_server_xdp_receive_packets_per_update( max_clients );
+        check( xdp >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
+        check( xdp >= rocketnet_server_receive_packets_per_update( max_clients ) );
+        check( xdp == ROCKETNET_XDP_MIN_RECEIVE_PACKETS_PER_UPDATE || xdp == rocketnet_server_receive_packets_per_update( max_clients ) );
+    }
+    check( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT == 16 );
+}
+
 // the operator budget's figure counts each queue's UMEM once beside the
 // allocator bytes; a transport without UMEM totals its allocator bytes
 
@@ -268,6 +287,26 @@ typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketne
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
                                                    rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
+uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_clients );
+
+// The case builds two whole queue objects, zeroed at construction, each
+// holding its receive staging and send buffers (about 583 MiB a queue at
+// 32768 receive and 16384 send slots, ROCKETNET_XDP_NUM_BUFFERS of each):
+// past the suite's default bound of 698 MiB. Its bound is the XDP plan of a
+// two-queue server less the UMEM it never maps, plus 64 MiB for the process
+// (measured 1180 MiB in a Debug build on CI).
+static long xdp_two_queue_rss_bound_mb()
+{
+    const uint64_t plan = rocketnet_server_socket_memory_required( 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const uint64_t umem = rocketnet_xdp_umem_bytes( 2 );
+    if ( !plan || !umem || plan <= umem )
+    {
+        return 0;
+    }
+    return suite_rss_bound_mb( plan - umem, 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_xdp_transport_receive_frames_dropped_counted, xdp_two_queue_rss_bound_mb );
 
 static void test_xdp_transport_receive_frames_dropped_counted()
 {
@@ -294,6 +333,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_umem_config_sizes_fill_and_completion_rin
 REGISTER_UNIT_TEST( test_xdp_transport_send_slot_refuses_bad_offsets_before_dividing );
 REGISTER_UNIT_TEST( test_xdp_transport_send_queue_is_one_per_destination );
 REGISTER_UNIT_TEST( test_xdp_transport_umem_holds_only_the_fill_frames );
+REGISTER_UNIT_TEST( test_xdp_transport_process_batch_holds_twice_the_send_queue );
 REGISTER_UNIT_TEST( test_xdp_transport_memory_plan_total_counts_umem_once );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_any_attached_mode );
 

@@ -1186,7 +1186,7 @@ static bool rocketnet_server_socket_sized_layout( int max_clients, rocketnet_ser
         return false;
     }
     layout->reply_mac_entries = rocketnet_xdp_reply_mac_entries( max_clients );
-    layout->process_capacity = rocketnet_server_receive_packets_per_update( max_clients );
+    layout->process_capacity = rocketnet_server_xdp_receive_packets_per_update( max_clients );
 
     const uint64_t replay = layout->replay_entries;
     const uint64_t process = (uint64_t) layout->process_capacity;
