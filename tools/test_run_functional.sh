@@ -47,12 +47,11 @@ fake ran 0 'test_a' 'skipped: 0' '*** ALL TESTS PASSED ***'
 fake crashed 139 'test_b'
 fake crlf 0 $'test_b\r' $'SKIPPED test_a: p_root\r' $'skipped: 1\r' $'\r' $'*** ALL TESTS PASSED ***\r' $'\r'
 fake lost 0 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
-# test_a falls in shard 1 of 2 and test_b in shard 0 (tests/suite_runner.h suite_shard_of)
-fake shard0 0 'shard 0/2: 1 of 2 cases' 'test_b' 'skipped: 0' '' '*** ALL TESTS PASSED ***' ''
+# test_a falls in shard 1 of 2 and test_b in shard 0 (tests/suite_runner.h suite_shard_of); every shard prints all SKIPPED lines
+fake shard0 0 'shard 0/2: 1 of 2 cases' 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 fake shard1 0 'shard 1/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
-fake shard0_lost 0 'shard 0/2: 1 of 2 cases' 'skipped: 0' '' '*** ALL TESTS PASSED ***' ''
-fake shard0_other 0 'shard 0/2: 1 of 2 cases' 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
-fake shard0_noline 0 'test_b' 'skipped: 0' '' '*** ALL TESTS PASSED ***' ''
+fake shard0_lost 0 'shard 0/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake shard0_noline 0 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 fake stranger 0 'test_b' 'test_z' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 
 failures=0
@@ -84,7 +83,6 @@ expect 139 "crash: the suite's exit, not the check's" t "$work/crashed"
 expect 0 "shard 0/2: its rows only" t --shard 0/2 "$work/shard0"
 expect 0 "shard 1/2: its skip only" t --shard 1/2 "$work/shard1"
 expect 1 "shard 0/2: a row of the shard neither ran nor skipped" t --shard 0/2 "$work/shard0_lost"
-expect 1 "shard 0/2: another shard's row skipped here" t --shard 0/2 "$work/shard0_other"
 expect 1 "shard run without its shard line" t --shard 0/2 "$work/shard0_noline"
 expect 1 "whole-suite log must hold every row (a shard log is not whole)" t "$work/shard0"
 expect 1 "undeclared variant" other "$work/good"

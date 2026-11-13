@@ -9,14 +9,12 @@ into a SKIPPED line while the job stayed green. tests/functional/
 expected_skips.txt lists, per leg, every row that leg may skip and why; this
 check holds a run's output to that list both ways.
 
-  python3 tools/check_skips.py --variant dev [--shard I/N] LOG
+  python3 tools/check_skips.py --variant dev LOG
       the leg is <os>-dev, the os read from this host; fails on an unlisted
       skip, a listed row that ran, a different predicate, a server pin
       (ROCKETNET_SERVER_TRANSPORT, auto when unset) other than the leg's, and
       output with no "skipped: <n>" line or one that disagrees with the
-      SKIPPED lines. With --shard I/N the log is one shard's run of the suite
-      (tests/suite_runner.h --shard): only the listed rows whose name falls in
-      shard I (suite_shard_of: FNV-1a of the name mod N) are expected to skip.
+      SKIPPED lines.
   python3 tools/check_skips.py --lint
       the list is well formed, every predicate it uses has a reason, every
       case and predicate is named in tests/, every leg is run by some
@@ -128,31 +126,15 @@ def parse_list(text):
     return legs, reasons, skips, errors
 
 
-def shard_of(name, shards):
-    """tests/suite_runner.h suite_shard_of: FNV-1a (32 bit) of the name, mod shards."""
-    h = 2166136261
-    for b in name.encode():
-        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
-    return h % shards
-
-
-def parse_shard(text):
-    m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", text or "")
-    if not m or int(m.group(1)) >= int(m.group(2)):
-        return None
-    return int(m.group(1)), int(m.group(2))
-
-
-def check_output(legs, skips, leg, pin, output, shard=None):
-    """Returns the errors for one run's output against leg's rows (shard: (i, n) for one shard's run)."""
+def check_output(legs, skips, leg, pin, output):
+    """Returns the errors for one run's output against leg's rows."""
     errors = []
     if leg not in legs:
         return ["leg %s is not declared in tests/functional/expected_skips.txt" % leg]
     want_pin = legs[leg][1]
     if pin != want_pin:
         errors.append("leg %s runs with server pin %s, but ROCKETNET_SERVER_TRANSPORT gives %s" % (leg, want_pin, pin))
-    expected = dict((case, predicate) for case, (predicate, names, _) in skips.items() if leg in names
-                    and (shard is None or shard_of(case, shard[1]) == shard[0]))
+    expected = dict((case, predicate) for case, (predicate, names, _) in skips.items() if leg in names)
     seen = {}
     counts = []
     for raw in output.splitlines():
@@ -277,21 +259,6 @@ def self_test():
     run("other predicate", good.replace("test_b: p_pin", "test_b: p_root"), "red")
     run("no count line (suite cut short)", "SKIPPED test_a: p_root\nSKIPPED test_b: p_pin\n", "red")
     run("count disagrees", good.replace("skipped: 2", "skipped: 3"), "red")
-    # a shard run: only the listed rows of the shard are expected (FNV-1a mod 2 of the name)
-    if shard_of("test_a", 2) == shard_of("test_b", 2):
-        failures.append("self-test names test_a and test_b fall in one shard: pick other names")
-    else:
-        mine, other = ("test_a", "p_root"), ("test_b", "p_pin")
-        if shard_of("test_a", 2) != 0:
-            mine, other = other, mine
-        shard_text = "shard 0/2: 1 of 2 cases\nSKIPPED %s: %s\nskipped: 1\n" % mine
-        legs_, _, skips_, _ = parse_list(base)
-        if check_output(legs_, skips_, "linux-dev", "auto", shard_text, (0, 2)):
-            failures.append("shard 0/2 with its own listed skip: %s" % check_output(legs_, skips_, "linux-dev", "auto", shard_text, (0, 2)))
-        if not check_output(legs_, skips_, "linux-dev", "auto", "shard 0/2: 1 of 2 cases\nskipped: 0\n", (0, 2)):
-            failures.append("shard 0/2 whose listed row ran was green")
-        if not check_output(legs_, skips_, "linux-dev", "auto", shard_text.replace("skipped: 1", "SKIPPED %s: %s\nskipped: 2" % other), (0, 2)):
-            failures.append("shard 0/2 that skipped the other shard's row was green")
     run("two count lines (two runs in one log)", good + good, "red")
     run("duplicate SKIPPED", good.replace("skipped: 2", "SKIPPED test_b: p_pin\nskipped: 3"), "red")
     run("unreadable SKIPPED", good.replace("SKIPPED test_b: p_pin", "SKIPPED test_b p_pin"), "red")
@@ -382,16 +349,10 @@ def main(argv):
         print("ok: %d legs, %d skippable rows, each with a reason, every leg run through run_functional.sh" % (nlegs, nskips))
         return 0
     args = argv[1:]
-    variant, pin, shard = None, None, None
+    variant, pin = None, None
     while args and args[0].startswith("--"):
         if args[0] == "--variant" and len(args) > 1:
             variant, args = args[1], args[2:]
-        elif args[0] == "--shard" and len(args) > 1:
-            shard = parse_shard(args[1])
-            if shard is None:
-                print("check_skips: --shard is I/N with 0 <= I < N: %s" % args[1])
-                return 2
-            args = args[2:]
         elif args[0] == "--pin" and len(args) > 1:
             pin, args = args[1], args[2:]
         else:
@@ -415,14 +376,13 @@ def main(argv):
     if pin is None:
         pin = os.environ.get("ROCKETNET_SERVER_TRANSPORT", "") or "auto"
     leg = "%s-%s" % (host_os(), variant)
-    problems = check_output(legs, skips, leg, pin, output, shard)
+    problems = check_output(legs, skips, leg, pin, output)
     for problem in problems:
         print(problem)
     if problems:
         print("check_skips FAILED for leg %s: the suite's skips are not the leg's list (tests/functional/expected_skips.txt)" % leg)
         return 1
-    count = sum(1 for case, (_, names, _) in skips.items() if leg in names
-                and (shard is None or shard_of(case, shard[1]) == shard[0]))
+    count = sum(1 for _, names, _ in skips.values() if leg in names)
     print("ok: leg %s skipped exactly its %d listed rows" % (leg, count))
     return 0
 

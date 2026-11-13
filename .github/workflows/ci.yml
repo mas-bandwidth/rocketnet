@@ -275,18 +275,20 @@ jobs:
           # excluded in both tiers; the macOS Debug unit row stays one job.
           - { os: linux, build_type: Debug, leg: unit, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Debug, leg: unit, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          # The Linux functional legs run in two shards each (the suite's own --shard
+          # The Linux functional legs run in three shards each (the suite's own --shard
           # I/N, tests/suite_runner.h: a case's shard is a function of its name):
           # the suite step alone took 81 s (Debug) and 106 s (Release, the production
           # suite) against the 120 s cap, and main never showed a whole result. The
           # plain Linux functional rows are excluded in both tiers; summary jobs
-          # carry their names. Shard 1/2 also runs the small steps (wide fill,
+          # carry their names. Shard 2/3 also runs the small steps (wide fill,
           # pinned-portable pass, platform primitives, load census, lifecycle
           # binary, production client lifecycle); the memlock check runs in both.
-          - { os: linux, build_type: Debug, leg: functional, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: functional, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Release, leg: functional, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Release, leg: functional, shard: 1/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 0/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 1/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 2/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 0/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 1/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 2/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The macOS Release functional row ran both suites in one job, 1m30
           # to 1m50 against the two-minute bound. The production library's
           # suite (functional_production) runs in this row of its own, on its
@@ -634,14 +636,14 @@ jobs:
       # threads at once and the fill-phase check's refusals, on the
       # development library (bin/test_wide_fill exists only there).
       - name: Run the wide fill cases (job threads)
-        if: matrix.leg == 'functional' && matrix.dev == 'ON' && matrix.shard != '0/2'
+        if: matrix.leg == 'functional' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '1/3'
         run: ./bin/test_wide_fill
 
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
       # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
-        if: matrix.leg == 'functional' && matrix.shard != '0/2'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -658,7 +660,7 @@ jobs:
           bash tools/run_functional.sh prod --log functional-production-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional_production
 
       - name: Run functional_production suite (portable rung pinned by env)
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/2'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -669,7 +671,7 @@ jobs:
       # (docs/BUILD-REFERENCE.md lists it as a production gate); built on
       # ROCKETNET_DEV=OFF only, under a second here.
       - name: "Functional: production client lifecycle"
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/2'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
         run: ./bin/test_production_client_lifecycle
 
       # tests/functional/platform_primitives.cpp built standalone: the real
@@ -680,7 +682,7 @@ jobs:
       # Release rows OFF, and the line it prints must name the DEV setting
       # this row built.
       - name: "Functional: platform primitives (standalone, both DEV settings)"
-        if: matrix.leg == 'functional' && matrix.shard != '0/2'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         shell: bash
         run: |
           set -euo pipefail
@@ -697,7 +699,7 @@ jobs:
       # self-test plants a file left open, a reused descriptor number, the
       # random device and a thread left running.
       - name: "Functional: load harness census self-test"
-        if: matrix.leg == 'functional' && matrix.shard != '0/2'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         shell: bash
         run: |
           set -euo pipefail
@@ -928,7 +930,7 @@ jobs:
           exit "$failed"
 
       - name: "Functional: lifecycle binary"
-        if: matrix.leg == 'functional' && matrix.shard != '0/2'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -1429,7 +1431,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/2)" "linux / Debug / functional (1/2)"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/3)" "linux / Debug / functional (1/3)" "linux / Debug / functional (2/3)"
 
   release-functional:
     name: linux / Release / functional
@@ -1475,7 +1477,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/2)" "linux / Release / functional (1/2)"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every

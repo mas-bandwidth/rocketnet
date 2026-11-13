@@ -13,7 +13,7 @@
 # suite with the wrong skips is red. Every whole-suite run in a workflow goes
 # through here (check_skips.py --lint fails on one that does not).
 # --shard I/N runs one shard of the suite (the command gets a trailing
-# "--shard I/N", tests/suite_runner.h) and holds the log to that shard's rows.
+# "--shard I/N", tests/suite_runner.h) and holds the log to that shard's rows (every SKIPPED line of the suite is still printed and checked).
 set -uo pipefail
 
 if [ $# -lt 2 ]; then
@@ -48,12 +48,14 @@ python=python3
 if [ "${OS:-}" = "Windows_NT" ] || ! command -v python3 >/dev/null 2>&1; then
     python=python
 fi
+# A shard run prints every SKIPPED line of the suite (the skips are decided when the
+# cases are collected, before the shard keeps its own), so the skip check is the whole one.
+"$python" "$here/check_skips.py" --variant "$variant" "$log"
+skips=$?
 shard_args=()
 if [ -n "$shard" ]; then
     shard_args=(--shard "$shard")
 fi
-"$python" "$here/check_skips.py" --variant "$variant" ${shard_args[@]+"${shard_args[@]}"} "$log"
-skips=$?
 # Cases run == registered rows - skips: every registry row ran or was SKIPPED
 # (tools/check_test_environment.py --functional-log). Only a passing suite's
 # log is whole enough to hold to that.
