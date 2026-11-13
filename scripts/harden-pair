@@ -177,6 +177,19 @@ cleanup()
 }
 trap cleanup EXIT
 
+# ena_shaping: a Windows server's ENA shaping counters (the ENA driver's
+# "ENA Packets Shaping" performance set) as "pps bw_out bw_in conntrack": the
+# instance's own allowances, which drop packets after the transport has sent
+# them, and which the tool cannot read on Windows
+ena_shaping()
+{
+    on_shell "$server_host" "powershell -NoProfile -Command \"(Get-Counter '\\ENA Packets Shaping(_total)\\PPS allowance exceeded','\\ENA Packets Shaping(_total)\\Aggregate outbound BW allowance exceeded','\\ENA Packets Shaping(_total)\\Aggregate inbound BW allowance exceeded','\\ENA Packets Shaping(_total)\\Connection tracking allowance exceeded').CounterSamples | ForEach-Object { \\\$_.RawValue }\" | tr -d '\\r' | tr '\\n' ' '"
+}
+ena_before=""
+if [ "$server_os" = windows ]; then
+    ena_before=$(ena_shaping)
+fi
+
 on "$server_host" rm -rf "$run_dir"
 on "$server_host" mkdir -p "$run_dir"
 on "$client_host" rm -rf "$client_run_dir"
@@ -279,6 +292,17 @@ status=0
 if ! grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"; then
     echo "harden-pair: no role printed a verdict" | tee -a "$out/reconcile.txt"
     status=1
+fi
+if [ "$server_os" = windows ]; then
+    # the cell's own share of each allowance: a nonzero bw_out is packets
+    # the instance shed after send, an unnamed s2c gap's likely home
+    read -r -a before <<< "$ena_before"
+    read -r -a after <<< "$(ena_shaping)"
+    if [ "${#before[@]}" -eq 4 ] && [ "${#after[@]}" -eq 4 ]; then
+        echo "harden_ena: server pps_allowance=$(( after[0] - before[0] )) bw_out_allowance=$(( after[1] - before[1] )) bw_in_allowance=$(( after[2] - before[2] )) conntrack_allowance=$(( after[3] - before[3] ))" | tee -a "$out/reconcile.txt"
+    else
+        echo "harden_ena: server unavailable (no ENA shaping counters)" | tee -a "$out/reconcile.txt"
+    fi
 fi
 echo "harden_pair: transport=$transport row=$row exit=$status utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$out/reconcile.txt"
 exit "$status"
