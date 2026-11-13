@@ -759,7 +759,7 @@ static struct rocketnet_client_transport_t * secrets_wiped_client_transport( con
     return client;
 }
 
-// stop the client transport (no disconnect), snapshot the live blocks, watch
+// stop the client transport (no disconnect), copy every live block, watch
 // its secret spans, destroy it; the watch's per-span tallies say what the
 // destroy left in the freed block
 static void secrets_wiped_destroy_without_disconnect( struct rocketnet_client_transport_t * client, int * before )
