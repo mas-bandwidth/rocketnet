@@ -450,7 +450,10 @@ struct harden_options_t
     int pin_first_cpu = -1;   // --pin-first-cpu C: the main thread on core C, game thread i on C + i
     double world_ms = 2.0;    // --world-ms: the main thread's own share of the stand-in world update
     double game_load = 0.5;   // --game-load F: stand-in game jobs, F of each game thread per frame
-    // the one departure from space's frame in this tool: where in the frame the network task is split off (the default is space exact)
+    // departures from space's frame, one at a time (SPACE-FRAME-SHAPE.md "Departures"); the defaults are space exact
+    bool space_send_wide = false;   // --space-send wide: the player jobs start and finish each client's messages themselves (no serial commit)
+    bool space_update_split = false; // --space-update split: update_receive, update_client over client ranges as jobs, update_finish
+    bool space_net_in_task = false;  // --space-net task: send_packets and the update run at the end of the split-off task, not in the first half
     bool space_split_top = false;    // --space-split top: the network task is split off at the top of the frame, before the world update, and runs in parallel with it
     bool payload_copy = false;
     int sizes[HARDEN_MAX_SIZES] = { 1200, 1200, 1200, 1100, 900, 600, 300 };
@@ -657,10 +660,37 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         {
             o->game_load = atof( v );
         }
+        else if ( strcmp( a, "--space-send" ) == 0 )
+        {
+            o->space_send_wide = strcmp( v, "wide" ) == 0;
+            if ( !o->space_send_wide && strcmp( v, "serial" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-send is serial or wide\n" );
+                return false;
+            }
+        }
         else if ( strcmp( a, "--load" ) == 0 )
         {
             if ( !harden_apply_load( o, v ) )
             {
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--space-update" ) == 0 )
+        {
+            o->space_update_split = strcmp( v, "split" ) == 0;
+            if ( !o->space_update_split && strcmp( v, "main" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-update is main or split\n" );
+                return false;
+            }
+        }
+        else if ( strcmp( a, "--space-net" ) == 0 )
+        {
+            o->space_net_in_task = strcmp( v, "task" ) == 0;
+            if ( !o->space_net_in_task && strcmp( v, "main" ) != 0 )
+            {
+                fprintf( stderr, "harden_load: --space-net is main or task\n" );
                 return false;
             }
         }
@@ -792,7 +822,7 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
          o->base < 0 || o->burst < 0 || o->burst_clients < 0 || o->fill_jobs < 0 || o->fill_jobs > HARDEN_MAX_FILL_JOBS || o->reliable_every < 0 || o->reliable_bytes < HARDEN_HEADER_BYTES || o->input_bytes < HARDEN_HEADER_BYTES || o->input_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 64 ||
          o->big_every < 0 || o->big_bytes < HARDEN_HEADER_BYTES || ( o->payload_copy && o->big_bytes > HARDEN_COPY_BODY_BYTES ) || o->sample_seconds < 1 || o->quiet_seconds < 0.1 || o->token_timeout < 1 ||
          o->pps < 0.0 || o->sockets < 1 || o->sockets > 4096 || o->warm_seconds < 0 || o->game_threads < 0 || o->game_threads > HARDEN_MAX_THREADS ||
-         ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
+         ( o->space_shape && ( o->game_threads < 2 || o->fill_jobs > 0 || ( o->space_send_wide && o->big_every > 0 ) ) ) || o->world_ms < 0.0 || o->game_load < 0.0 || o->game_load > 1.0 )
     {
         fprintf( stderr, "harden_load: an option is out of range\n" );
         return false;
@@ -1305,8 +1335,11 @@ struct harden_frame_window_t
     double commit_sum = 0, commit_max = 0;         // the commit inside the task: start/finish per staged message
     double latency_sum = 0, latency_max = 0;       // a frame's packets: built from the state to sent by send_packets
     uint64_t latency_frames = 0, task_frames = 0, task_late = 0;
+    double input_age_sum = 0, input_age_max = 0;   // --space-net task: from the task's update finishing to the main thread handing those inputs to the world update
+    uint64_t input_age_frames = 0;
     double game_core_sum = 0;                      // core seconds the stand-in game jobs ran
     double world_sum = 0, world_max = 0;           // the main thread's world update, its own share plus the game jobs it waits on
+    double task_send_sum = 0, task_update_sum = 0, task_update_max = 0; // --space-net task: the task's send_packets and update (serial part)
     double net_thread[HARDEN_MAX_THREADS] = {};    // rocketnet's work by thread index (0 = the main thread's part in jobs)
     double range_thread[HARDEN_MAX_THREADS] = {};  // the part of it in range jobs (writes, update_client): no serial walk
 };
@@ -1455,7 +1488,7 @@ static void harden_fill_job_main( harden_fill_pool_t * pool, int job )
     }
 }
 
-// one fill phase: wake every job on the plan and wait for all of them
+// run the plan once: wake every job on it and wait for all of them
 static void harden_fill_run( harden_fill_pool_t * pool, const std::vector<harden_fill_item_t> & plan )
 {
     std::unique_lock<std::mutex> lock( pool->mutex );
@@ -1526,10 +1559,6 @@ struct harden_stage_t
 
 #define HARDEN_SPACE_RING 2 // the frame ring of plans (space's state records: frame % 128)
 
-#if defined( _MSC_VER )
-#pragma warning( push )
-#pragma warning( disable : 4324 ) // the cache-line aligned counters pad their struct: the padding is the point
-#endif // #if defined( _MSC_VER )
 struct harden_space_t
 {
     ThreadPool pool;
@@ -1558,11 +1587,50 @@ struct harden_space_t
     {
         uint64_t count = 0;
     };
+    count_t wide_messages[HARDEN_MAX_THREADS]; // --space-send wide: messages each thread queued
+    count_t wide_refused[HARDEN_MAX_THREADS];
     double game_item_seconds = 0;
+    double task_update_seconds = 0, task_send_seconds = 0; // --space-net task: the task's send_packets and update
+    double task_sent_at = 0;                               // --space-net task: when the task's send_packets began
+    double update_done_at = 0;                             // --space-net task: when the task's update finished (the batch the next receive reads)
 };
-#if defined( _MSC_VER )
-#pragma warning( pop )
-#endif // #if defined( _MSC_VER )
+
+// the per-client part of the server update, over a range of client slots:
+// a plain range call any job system can make (rocketnet_server_update_client)
+static void harden_space_update_clients( platform_task_args_t * args )
+{
+    harden_space_t * space = (harden_space_t *) args->data;
+    const double began = harden_now();
+    for ( int i = args->start; i < args->finish; i++ )
+    {
+        (void) rocketnet_server_update_client( space->server, i );
+    }
+    space->net_busy[args->thread_index].seconds += harden_now() - began;
+    space->range_busy[args->thread_index].seconds += harden_now() - began;
+}
+
+// the server update, whole or split into receive, the client range jobs and
+// finish. Returns the seconds the calling thread spent in its own serial part
+// (the whole update, or receive plus finish); the jobs count their own
+static double harden_space_update( harden_space_t * space, double time )
+{
+    const double began = harden_now();
+    if ( !space->o->space_update_split )
+    {
+        rocketnet_server_update( space->server, time );
+        return harden_now() - began;
+    }
+    rocketnet_server_update_receive( space->server, time );
+    const double received = harden_now();
+    Task * clients = space->pool.AddTask( harden_space_update_clients, space, space->o->max_clients );
+    if ( clients )
+    {
+        clients->Wait();
+    }
+    const double finishing = harden_now();
+    rocketnet_server_update_finish( space->server );
+    return ( received - began ) + ( harden_now() - finishing );
+}
 
 static void harden_spin_for( double seconds )
 {
@@ -1580,6 +1648,61 @@ static void harden_space_write_players( platform_task_args_t * args )
     const harden_options_t & o = *space->o;
     const std::vector<harden_fill_item_t> & plan = *space->plan;
     const double began = harden_now();
+    if ( o.space_send_wide )
+    {
+        // departure 1 (wide): each job starts and finishes its own players'
+        // messages, the packet built and sealed on this thread; no staging,
+        // no serial commit. A refusal ends that player's frame, so its
+        // sequences stay contiguous
+        uint64_t messages = 0, refused = 0;
+        for ( int k = args->start; k < args->finish; k++ )
+        {
+            const harden_fill_item_t & item = plan[(size_t) k];
+            harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
+            if ( o.reliable_every > 0 && space->tick % (uint64_t) o.reliable_every == 0 )
+            {
+                // the reliable trickle: written here, by the thread that owns this player this frame, because the
+                // library gives a player to one thread at a time (the main thread writing it first refuses the jobs' writes)
+                uint8_t * r = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, o.reliable_bytes );
+                if ( r )
+                {
+                    harden_write_message( r, o.reliable_bytes, HARDEN_KIND_RELIABLE, item.client_id, item.connection, slot.next[HARDEN_KIND_RELIABLE]++ );
+                    if ( rocketnet_server_finish_client_message( space->server, item.slot, o.reliable_bytes ) != 0 )
+                    {
+                        messages++;
+                    }
+                }
+                else
+                {
+                    refused++;
+                }
+            }
+            for ( int n = 0; n < item.count; n++ )
+            {
+                const uint32_t sequence = slot.next[HARDEN_KIND_BURST];
+                const int bytes = o.sizes[sequence % (uint32_t) o.num_sizes];
+                uint8_t * p = rocketnet_server_start_message( space->server, (uint64_t) item.slot, HARDEN_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, bytes );
+                if ( !p )
+                {
+                    refused += (uint64_t) ( item.count - n );
+                    break;
+                }
+                harden_write_message( p, bytes, HARDEN_KIND_BURST, item.client_id, item.connection, sequence );
+                if ( rocketnet_server_finish_client_message( space->server, item.slot, bytes ) == 0 )
+                {
+                    refused += (uint64_t) ( item.count - n );
+                    break;
+                }
+                slot.next[HARDEN_KIND_BURST]++;
+                messages++;
+            }
+        }
+        space->wide_messages[args->thread_index].count += messages;
+        space->wide_refused[args->thread_index].count += refused;
+        space->net_busy[args->thread_index].seconds += harden_now() - began;
+        space->range_busy[args->thread_index].seconds += harden_now() - began;
+        return;
+    }
     for ( int k = args->start; k < args->finish; k++ )
     {
         const harden_fill_item_t & item = plan[(size_t) k];
@@ -1617,6 +1740,10 @@ static void harden_space_task( platform_task_args_t * args )
     const double commit_began = harden_now();
     for ( const harden_fill_item_t & item : *space->plan )
     {
+        if ( space->o->space_send_wide )
+        {
+            break; // the jobs queued every message themselves
+        }
         harden_server_slot_t & slot = ( *space->slots )[(size_t) item.slot];
         const harden_stage_t & stage = space->stage[(size_t) item.slot];
         size_t offset = 0;
@@ -1640,6 +1767,20 @@ static void harden_space_task( platform_task_args_t * args )
     const double committed = harden_now();
     space->commit_seconds = committed - commit_began;
     space->net_busy[args->thread_index].seconds += committed - commit_began;
+    if ( space->o->space_net_in_task )
+    {
+        // departure 3: the frame's packets leave now, and the next frame's
+        // update runs here too, so the main thread's first half is the read
+        // of what this update received
+        space->task_sent_at = committed;
+        rocketnet_server_send_packets( space->server );
+        const double sent = harden_now();
+        space->task_send_seconds = sent - committed;
+        const double serial = harden_space_update( space, sent );
+        space->task_update_seconds = serial;
+        space->update_done_at = harden_now();
+        space->net_busy[args->thread_index].seconds += ( sent - committed ) + serial;
+    }
     space->task_ended = harden_now();
 }
 
@@ -2171,15 +2312,6 @@ static int harden_server_main( const harden_options_t & o )
         }
         printf( "harden_pool: shape=%s game_threads=%d first_cpu=%d pinned=%d realtime=%d world_ms=%.2f game_load=%.2f\n", o.space_shape ? "space" : "blocking", o.game_threads, o.pin_first_cpu,
                 harden_pin.pinned.load(), harden_pin.realtime.load(), o.world_ms, o.game_load );
-        // a setting the system refused is in the row (nothing prints when every setting held)
-        if ( harden_pin.pin_refused.load() > 0 || harden_pin.realtime_refused.load() > 0 )
-        {
-            printf( "harden_pool_refused: pin_refused=%d pin_error=%d realtime_refused=%d realtime_error=%d (error codes are errno, or GetLastError on Windows; priority is SCHED_FIFO max, or THREAD_PRIORITY_TIME_CRITICAL on Windows)\n",
-                    harden_pin.pin_refused.load(), harden_pin.pin_error.load(), harden_pin.realtime_refused.load(), harden_pin.realtime_error.load() );
-        }
-#if defined( __APPLE__ )
-        printf( "harden_pool_advisory: pinning is advisory on macOS: no hard CPU pinning; threads get QOS_CLASS_USER_INTERACTIVE and an affinity tag (pinned counts accepted tags, realtime counts QoS set; on macOS the pin_error is a kern_return_t)\n" );
-#endif // #if defined( __APPLE__ )
         fflush( stdout );
     }
     double last_plan_time = 0.0; // space: when the frame the task staged was built from game state
@@ -2295,11 +2427,12 @@ static int harden_server_main( const harden_options_t & o )
                 }
                 const double rn_core_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum + net_all ) / f;
                 printf( "harden_frame: t=%.1f shape=%s threads=%d pinned=%d realtime=%d main_rn_ms p99=%.3f max=%.3f join_ms avg=%.3f max=%.3f task_ms avg=%.3f max=%.3f late=%" PRIu64
-                        " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f\n",
+                        " task_core_ms avg=%.3f max=%.3f commit_ms avg=%.3f max=%.3f world_ms avg=%.3f max=%.3f game_core_ms=%.3f rn_core_ms=%.3f leftover_core_ms=%.3f latency_ms avg=%.3f max=%.3f input_age_ms avg=%.3f max=%.3f\n",
                         t_now - started, o.space_shape ? "space" : "blocking", o.game_threads, harden_pin.pinned.load(), harden_pin.realtime.load(), 1e3 * harden_percentile( work_copy, 0.99 ),
                         1e3 * harden_percentile( work_copy, 1.0 ), 1e3 * w.join_sum / f, 1e3 * w.join_max, 1e3 * w.task_sum / tf, 1e3 * w.task_max, w.task_late, 1e3 * w.task_core_sum / tf,
                         1e3 * w.task_core_max, 1e3 * w.commit_sum / tf, 1e3 * w.commit_max, 1e3 * w.world_sum / f, 1e3 * w.world_max, 1e3 * w.game_core_sum / f, rn_core_ms,
-                        frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - o.world_ms, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max );
+                        frame_core_ms - rn_core_ms - 1e3 * w.game_core_sum / f - o.world_ms, 1e3 * w.latency_sum / lf, 1e3 * w.latency_max, 1e3 * w.input_age_sum / ( w.input_age_frames ? (double) w.input_age_frames : 1.0 ),
+                        1e3 * w.input_age_max );
                 // one line per thread class: the main thread's network ms a frame
                 // (wall, rocketnet's calls and the waits inside them), each game
                 // thread's (busy in rocketnet's work), and main : mean game thread
@@ -2319,8 +2452,11 @@ static int harden_server_main( const harden_options_t & o )
                 const double game_per_thread_ms = gn ? 1e3 * w.game_core_sum / f / (double) gn : 0.0;
                 const double leftover_ms = 1e3 * step - game_per_thread_ms - gmean;
                 const double main_ms = 1e3 * ( w.update_sum + w.receive_sum + w.write_sum + w.send_sum ) / f;
-                printf( "harden_threads: t=%.1f main_net_ms=%.3f main_in_jobs_ms=%.3f game_net_ms min=%.3f mean=%.3f max=%.3f ratio=%.3f leftover_ms=%.3f\n", t_now - started, main_ms,
-                        1e3 * w.net_thread[0] / f, gn ? gmin : 0.0, gmean, gmax, gmean > 0.0 ? main_ms / gmean : 0.0, leftover_ms );
+                printf( "harden_threads: t=%.1f send_mode=%s update_mode=%s net_mode=%s main_net_ms=%.3f main_in_jobs_ms=%.3f game_net_ms min=%.3f mean=%.3f max=%.3f ratio=%.3f"
+                        " task_send_ms=%.3f task_update_ms avg=%.3f max=%.3f leftover_ms=%.3f\n",
+                        t_now - started, o.space_send_wide ? "wide" : "serial", o.space_update_split ? "split" : "main", o.space_net_in_task ? "task" : "main", main_ms,
+                        1e3 * w.net_thread[0] / f, gn ? gmin : 0.0, gmean, gmax, gmean > 0.0 ? main_ms / gmean : 0.0, 1e3 * w.task_send_sum / tf, 1e3 * w.task_update_sum / tf,
+                        1e3 * w.task_update_max, leftover_ms );
                 // each thread's network ms a frame, by thread index (0 = the
                 // main thread's part in jobs), to see how even the split is
                 printf( "harden_thread_net_ms: t=%.1f", t_now - started );
@@ -2459,6 +2595,18 @@ static int harden_server_main( const harden_options_t & o )
                 w.start_refused += space.refused;
                 space.messages = 0;
                 space.refused = 0;
+                for ( int i = 0; i < HARDEN_MAX_THREADS; i++ )
+                {
+                    w.messages += space.wide_messages[i].count;
+                    w.start_refused += space.wide_refused[i].count;
+                    space.wide_messages[i].count = 0;
+                    space.wide_refused[i].count = 0;
+                }
+                w.task_send_sum += space.task_send_seconds;
+                w.task_update_sum += space.task_update_seconds;
+                w.task_update_max = std::max( w.task_update_max, space.task_update_seconds );
+                space.task_send_seconds = 0;
+                space.task_update_seconds = 0;
             }
             // every thread's rocketnet work since the last join (the first
             // half's update jobs included)
@@ -2494,20 +2642,34 @@ static int harden_server_main( const harden_options_t & o )
             // ---- first half, the main thread (S:603-641)
             const double t_first = harden_now();
             harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
-            rocketnet_server_send_packets( server );
+            if ( !o.space_net_in_task )
+            {
+                rocketnet_server_send_packets( server );
+            }
             const double t_sent = harden_now();
             if ( last_plan_time > 0.0 )
             {
                 // a frame's packets from its state to the send_packets that sends them
-                w.latency_sum += t_first - last_plan_time;
-                w.latency_max = std::max( w.latency_max, t_first - last_plan_time );
+                const double sent_at = o.space_net_in_task ? space.task_sent_at : t_first;
+                w.latency_sum += sent_at - last_plan_time;
+                w.latency_max = std::max( w.latency_max, sent_at - last_plan_time );
                 w.latency_frames++;
                 last_plan_time = 0.0;
             }
             harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
-            rocketnet_server_update( server, frame_start );
+            if ( !o.space_net_in_task )
+            {
+                (void) harden_space_update( &space, frame_start );
+            }
             const double t_update = harden_now();
             harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
+            if ( o.space_net_in_task && space.update_done_at > 0.0 )
+            {
+                const double age = harden_now() - space.update_done_at;
+                w.input_age_sum += age;
+                w.input_age_max = std::max( w.input_age_max, age );
+                w.input_age_frames++;
+            }
             drain_receive();
             const double t_receive = harden_now();
 
@@ -2537,12 +2699,18 @@ static int harden_server_main( const harden_options_t & o )
                     }
                     frame_plan.push_back( harden_fill_item_t{ i, client_count( bursting_seen, connected_count ), id, connection } );
                     bursting_seen++;
-                    write_reliable_and_big( i, id, connection, slot );
+                    if ( !o.space_send_wide )
+                    {
+                        write_reliable_and_big( i, id, connection, slot );
+                    }
                 }
             }
             const double t_reliable = harden_now();
             harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
-            rocketnet_server_send_packets( server ); // S:711
+            if ( !o.space_net_in_task )
+            {
+                rocketnet_server_send_packets( server ); // S:711; with --space-net task the task's send_packets sends them
+            }
             const double t_sent_reliable = harden_now();
             harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
 
@@ -2551,7 +2719,7 @@ static int harden_server_main( const harden_options_t & o )
             // until the next join; the state it sends is the one the last world
             // update produced
             const bool split_here = o.space_split_top;
-            if ( split_here && !frame_plan.empty() )
+            if ( split_here && ( !frame_plan.empty() || o.space_net_in_task ) )
             {
                 space.plan = &frame_plan;
                 space.tick = tick;
@@ -2570,7 +2738,7 @@ static int harden_server_main( const harden_options_t & o )
             w.world_max = std::max( w.world_max, t_world - t_world_began );
 
             // ---- the split (S:963-971): the frame's plan is its state record
-            if ( !split_here && !frame_plan.empty() )
+            if ( !split_here && ( !frame_plan.empty() || o.space_net_in_task ) )
             {
                 space.plan = &frame_plan;
                 space.tick = tick;
