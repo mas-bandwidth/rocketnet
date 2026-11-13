@@ -135,7 +135,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // and each region's room_refusals 8 more per connection to the server: both
 // pins read on captain, MSVC 19.51.36263.0, Release (server actual=1469641215,
 // 64 under the Linux arithmetic; client as pinned).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468661567 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468693823 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14214396 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -187,7 +187,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bytes to the client and server, and each region's room_refusals 8 more per
 // connection to the server: both pins read on mini-m5, AppleClang 21.0.0,
 // Release, at the figures the Linux arithmetic gave.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468661983 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468694239 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992138 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -272,8 +272,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bench-nyc-4, gcc, Debug). The message object's per-thread open lines move
 // the client and the server 4096, and each region's room_refusals the server
 // 8000 more (actual=3111817267, client actual=15190306, bench-nyc-4, gcc,
-// Debug).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110837619ULL )
+// Debug). The per-thread started counts on the 64 fill lines (64 queues of 8
+// bytes each) move the server 32768, less the 512 of the shared array they
+// replace: 32256 (actual=3111918451, bench-nyc-5, gcc, Debug); the same
+// arithmetic moves the macOS and Windows pins.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110869875ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141794 )
 #endif // #if defined( _WIN32 )
 
