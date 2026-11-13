@@ -395,12 +395,12 @@ def validate(server_text, shard_texts, run_id, total, duration, limit,
             target = expected_combo_offers(key[0], key[2], offers)
             if server_pair[1] != target or client_pair[0] != target:
                 raise ValueError(f"c2s per-client target rate or rotation failed {key}")
-            if server_pair[0] != 0 or client_pair[1] != 0 or client_pair[0] != server_pair[1]:
+            if server_pair[0] != 0 or client_pair[1] != 0:
                 raise ValueError(f"c2s delivery mismatch {key}")
         else:
             if server_pair[0] != offers or client_pair[1] != offers:
                 raise ValueError(f"s2c per-client target rate failed {key}")
-            if server_pair[1] != 0 or client_pair[0] != 0 or server_pair[0] != client_pair[1]:
+            if server_pair[1] != 0 or client_pair[0] != 0:
                 raise ValueError(f"s2c delivery mismatch {key}")
     server_c2s = sum(pair[1] for key, pair in server_streams.items() if key[1] == "c2s")
     server_s2c = sum(pair[0] for key, pair in server_streams.items() if key[1] == "s2c")

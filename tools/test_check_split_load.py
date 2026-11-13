@@ -4,6 +4,7 @@
 import hashlib
 import io
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -212,8 +213,10 @@ class SplitReceiptTests(unittest.TestCase):
 
     def test_failed_role(self):
         server, shards = fixture()
-        with self.assertRaisesRegex(ValueError, "verdict"):
-            self.check(server, [shards[0].replace("verdict=PASS", "verdict=FAIL"), shards[1]])
+        # only the role's own verdict: the delivery, load and bandwidth
+        # verdicts stay PASS, so the refusal is the verdict field's
+        with self.assertRaisesRegex(ValueError, "^verdict: expected PASS, got FAIL$"):
+            self.check(server, [shards[0].replace(" verdict=PASS", " verdict=FAIL"), shards[1]])
 
     def test_short_traffic_window(self):
         server, shards = fixture()
@@ -242,17 +245,25 @@ class SplitReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stream coverage"):
             self.check(server.replace(removed, ""), shards)
 
-    def test_delivery_mismatch(self):
+    def test_c2s_target_rate_failure(self):
         server, shards = fixture()
-        with self.assertRaisesRegex(ValueError, "per-client target rate"):
+        with self.assertRaisesRegex(ValueError, "c2s per-client target rate"):
             self.check(server.replace("direction=c2s combo=0 sent=0 received=8",
                                       "direction=c2s combo=0 sent=0 received=0", 1), shards)
 
-    def test_census_accepts_operating_system_count_churn(self):
-        # Windows x64 MSVC 2026-10-22: counts 97/101/103/99 and 4/4/6/6 with every
-        # survivor an OS thread pool worker; the census, not the count, decides
+    def test_c2s_delivery_mismatch(self):
+        # the server sends nothing on a c2s stream
         server, shards = fixture()
-        self.check(server, shards)
+        with self.assertRaisesRegex(ValueError, "c2s delivery mismatch"):
+            self.check(server.replace("direction=c2s combo=0 sent=0 received=8",
+                                      "direction=c2s combo=0 sent=1 received=8", 1), shards)
+
+    def test_s2c_delivery_mismatch(self):
+        # a client sends nothing on an s2c stream
+        server, shards = fixture()
+        with self.assertRaisesRegex(ValueError, "s2c delivery mismatch"):
+            self.check(server, [shards[0].replace("direction=s2c combo=3 sent=0 received=60",
+                                                  "direction=s2c combo=3 sent=1 received=60", 1), shards[1]])
 
     def test_census_survivor_handle_fails(self):
         server, shards = fixture()
@@ -277,7 +288,10 @@ class SplitReceiptTests(unittest.TestCase):
                                       "resource_baseline_schema=guess"), shards)
 
     def test_resource_mismatch(self):
-        # without a census the counts must return to both phase baselines
+        # without a census the counts must return to both phase baselines. The
+        # fixture's counts (97/101/103/99 and 4/4/6/6, Windows x64 MSVC
+        # 2026-10-22, every survivor an OS thread pool worker) pass under
+        # census_v1 in every passing test: the census, not the count, decides
         server, shards = fixture()
         server = server.replace("resource_baseline_schema=census_v1", "resource_baseline_schema=phase_counts_v1")
         with self.assertRaisesRegex(ValueError, "resource phase mismatch"):
@@ -593,6 +607,26 @@ def proof_replace(text, prefix, old, new):
 
 
 class SplitProofTests(unittest.TestCase):
+    def test_proof_rotation_tables_match_the_harness(self):
+        # The merger's PROOF_MODES and PROOF_FRAGMENTED_MODES are copies of the
+        # harness's SPLIT_VERIFY_NUM_MODES and its fragmented modes array
+        # (tools/load_split_verify.h), whose names sdk/rocketnet.h numbers.
+        root = Path(__file__).resolve().parent.parent
+        harness = (root / "tools" / "load_split_verify.h").read_text()
+        values = {name: int(value) for name, value in
+                  re.findall(r"(ROCKETNET_RELIABILITY_[A-Z_]+) = (\d+)", (root / "sdk" / "rocketnet.h").read_text())}
+        self.assertEqual(len(values), 8, values)
+        modulus = re.search(r"#define SPLIT_VERIFY_NUM_MODES (\d+)u", harness)
+        self.assertIsNotNone(modulus)
+        self.assertEqual(int(modulus.group(1)), PROOF_MODES)
+        table = re.search(r"static const uint32_t modes\[SPLIT_VERIFY_FRAGMENTED_MODES\] = \{([^}]*)\}", harness)
+        self.assertIsNotNone(table)
+        names = re.findall(r"ROCKETNET_RELIABILITY_[A-Z_]+", table.group(1))
+        self.assertEqual(tuple(values[name] for name in names), PROOF_FRAGMENTED_MODES)
+        count = re.search(r"#define SPLIT_VERIFY_FRAGMENTED_MODES (\d+)u", harness)
+        self.assertIsNotNone(count)
+        self.assertEqual(int(count.group(1)), len(PROOF_FRAGMENTED_MODES))
+
     def test_proof_rotation_matches_the_simulation(self):
         # The merger's count per stream must be the rotation the harness
         # sends: offer k of client c carries the small message in mode
