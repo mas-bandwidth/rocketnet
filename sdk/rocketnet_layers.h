@@ -614,6 +614,10 @@ void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_se
 void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims );
 void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims );
 uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport );
+#if ROCKETNET_DEV
+/** @brief The payload ring slots taken since the last flush that hold a sealed frame, for the trace check (tests/tla_trace_writer_finish.cpp); call it with no start, finish or abort running. */
+uint64_t rocketnet_server_transport_payload_ring_sealed_for_test( const struct rocketnet_server_transport_t * server_transport );
+#endif // #if ROCKETNET_DEV
 uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport );
 void rocketnet_server_transport_steal_ring_chunk_for_test( struct rocketnet_server_transport_t * server_transport, int chunks );
 /** @brief The rest of a send queue's reserve words, for the trace check (tests/tla_trace_send_reserve.cpp): the game frames staged and the own frames used since the budget opened, and whether a client still holds its own frame. */
@@ -1062,6 +1066,31 @@ void rocketnet_forbid_xdp_commit( void );
  * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
  */
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+
+// update, split so the game's jobs apply the received acks: update_receive,
+// then update_client_acks once per client on any threads, then
+// update_finish. update is the same three calls with no client taken, and
+// gives the same result. Between update_receive and update_finish nothing
+// else runs on the transport.
+
+/** @brief The first part of update: read and process received packets, queuing each client's acks.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @param time [in] As update's.
+ * @return Nothing. Main thread, outside fill phases; a receive with the last one unfinished finishes it first and counts as misuse.
+ */
+void rocketnet_server_transport_update_receive( struct rocketnet_server_transport_t * server_transport, double time );
+/** @brief Applies one client's queued acks, from any thread, between update_receive and update_finish.
+ * @param server_transport [in,out] The transport update_receive opened.
+ * @param client_index [in] 0 to max_clients - 1. Calls for different clients may run at once; a second call for one client finds nothing.
+ * @return The ack blocks applied. Outside the open phase, or with a bad index: 0 and counted as misuse.
+ */
+int rocketnet_server_transport_update_client_acks( struct rocketnet_server_transport_t * server_transport, int client_index );
+/** @brief The rest of update: every client not yet applied, the acked batch, timeouts, keep-alives and acks.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @return Nothing. Main thread, after the jobs that called update_client_acks have joined. Without an open receive it does nothing.
+ */
+void rocketnet_server_transport_update_finish( struct rocketnet_server_transport_t * server_transport );
+
 // internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 
@@ -1324,6 +1353,11 @@ void rocketnet_server_transport_disconnect_client( struct rocketnet_server_trans
  */
 int rocketnet_server_transport_num_connected_clients( struct rocketnet_server_transport_t * server_transport );
 
+// true when the transport is not staged: its payload frames go through the
+// server transport's own ring (send_capacity slots an update), as the
+// in-memory and plain socket transports' do. a NULL transport is false
+bool rocketnet_server_transport_send_buffered( const struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport is a counted no-op that returns 0
 /** @brief Check whether a slot currently holds a connected client.
  * @param server_transport [in] Created server transport; NULL is a counted no-op.
@@ -1497,6 +1531,8 @@ int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_tra
 // send pass reads before it gives a connection its turn
 /** @brief Sets the send capacity the next server transport create reads, for a unit test. */
 void rocketnet_server_transport_set_create_send_capacity_for_test( int packets );
+/** @brief Makes the next server transport create apply each ack block inline, for a unit test that compares the two applies. */
+void rocketnet_server_transport_set_create_inline_acks_for_test( bool inline_acks );
 /** @brief Returns the transport's payload send capacity. */
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
 #endif // #if ROCKETNET_DEV
@@ -1881,6 +1917,13 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 // ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
 
+// update in three parts, as the server transport's (update_receive,
+// update_client_acks per client from any thread, update_finish, which
+// returns update's result); update is the three with no client taken
+void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time );
+int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index );
+int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * server );
+
 // a NULL server is a counted no-op
 /**
  * @brief Flushes packets staged through a message server.
@@ -1898,6 +1941,15 @@ uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * se
 // the pending start when bytes_written is outside 1 to the bytes started. a
 // NULL server is a counted no-op that returns 0
 uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
+
+// the writer's finish, behind rocketnet_server_finish_client_message: as
+// rocketnet_message_server_finish, but the packet of an unreliable message
+// written in place is finished in this call on this thread (sealed with its
+// ack block and packet id, encrypted, handed to the network threads), and an
+// unreliable start that found no capacity returns 0 and counts
+// MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY instead of queueing for send_packets.
+// a NULL server is a counted no-op that returns 0
+uint32_t rocketnet_message_server_finish_client( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
 
 // a NULL server is a counted no-op
 void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index );

@@ -879,6 +879,37 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
     return true;
 }
 
+// The cpu an XDP thread pins to: queue q takes cpu num_os_cpus + q. The
+// operating system keeps core 0 on Linux, so the first XDP thread is on cpu 1
+// at the least: a num_os_cpus below 1 reads as 1 and no queue ever lands on
+// core 0.
+
+static inline int rocketnet_xdp_thread_cpu( int num_os_cpus, int queue )
+{
+    return ( num_os_cpus < 1 ? 1 : num_os_cpus ) + queue;
+}
+
+// The mask an XDP thread falls back to when its own pin is refused (a cpu
+// outside the set or offline, or the affinity call failing): the cpus it is
+// allowed on less core 0, which the operating system keeps on Linux. allowed
+// and out are bit arrays of bytes bytes, cpu n at bit n % 8 of byte n / 8 (a
+// Linux cpu_set_t's layout). Returns how many cpus out holds; with 0 the
+// thread has nowhere but core 0 and the caller leaves its mask alone.
+
+static inline int rocketnet_xdp_mask_without_core_zero( const uint8_t * allowed, uint8_t * out, int bytes )
+{
+    int count = 0;
+    for ( int i = 0; i < bytes; i++ )
+    {
+        out[i] = i == 0 ? (uint8_t) ( allowed[i] & 0xFE ) : allowed[i];
+        for ( int bit = 0; bit < 8; bit++ )
+        {
+            count += ( out[i] >> bit ) & 1;
+        }
+    }
+    return count;
+}
+
 // PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
 // num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
 // ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never
@@ -933,7 +964,9 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
         }
     }
 
-    for ( int cpu = num_os_cpus; cpu < num_os_cpus + num_queues; cpu++ )
+    const int first_cpu = rocketnet_xdp_thread_cpu( num_os_cpus, 0 );
+
+    for ( int cpu = first_cpu; cpu < first_cpu + num_queues; cpu++ )
     {
         bool found = false;
         const char * scan = cursor;
@@ -1236,7 +1269,14 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
                     oldest_answered = candidate;
                 }
             }
+            // the trace check's plant (tests/tla_trace_xdp_reply_macs.cpp):
+            // the eviction takes the live entry learned last, the reversed
+            // witness MCRNXdpReplyMacsLayoutBrokenEvictNewest.cfg
+#if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
+            else if ( !oldest || candidate->learned > oldest->learned )
+#else  // #if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
             else if ( !oldest || candidate->learned < oldest->learned )
+#endif // #if defined( ROCKETNET_XDP_REPLY_MACS_PLANT )
             {
                 oldest = candidate;
             }
@@ -1326,7 +1366,10 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
     }
 }
 
-// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
+// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given);
+// proofs/tla/RNXdpReplyMacsLayout.tla ReplyLearned (the learned MAC returned),
+// ReplyAnswered (the answered entry's MAC returned) and Refuse (no MAC, the
+// reply not sent):
 // the reply MAC for a destination: the learned MAC, else the gateway MAC,
 // else answered_mac (the source MAC of the received frame this reply
 // answers, NULL for none), kept as the address's answered entry; a zero or
@@ -1447,7 +1490,11 @@ static inline int rocketnet_xdp_gateway_refresh( struct rocketnet_xdp_gateway_re
         return 0;
     }
 
+    // tests/tla_trace_xdp_gateway_refresh.cpp plants a refresh that keeps
+    // its old deadline, so every later call resolves again
+#if !defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT )
     refresh->next_time = now + ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS;
+#endif // #if !defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT )
 
     int num_changes = 0;
     const int num_families = refresh->serves_both ? 2 : 1;

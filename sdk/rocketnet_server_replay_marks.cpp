@@ -94,6 +94,22 @@ uint64_t rocketnet_server_replay_marks_comparisons_for_test( const struct rocket
 {
     return marks->comparisons;
 }
+
+bool rocketnet_server_replay_marks_slot_for_test( const struct rocketnet_server_replay_marks_t * marks, int index, bool * has_mark, uint32_t * marked_value,
+                                                  bool * seen, struct rocketnet_address_t * seen_address, bool * mark_owed )
+{
+    if ( !marks || index < 0 || index >= marks->max_clients )
+    {
+        return false;
+    }
+    const struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[index];
+    *has_mark = slot->has_mark != 0;
+    *marked_value = slot->marked_value;
+    *seen = slot->seen != 0;
+    *seen_address = slot->seen_address;
+    *mark_owed = slot->mark_owed != 0;
+    return true;
+}
 #endif // #if ROCKETNET_DEV
 
 // proofs/tla/RNServerReplaySlots.tla Walk (MarkSupersedes, ForgetSupersedes): a

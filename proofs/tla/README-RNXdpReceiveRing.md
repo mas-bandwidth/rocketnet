@@ -10,22 +10,38 @@ the code each action mirrors, the witnesses and the runs.
 
 ## Actions and the code they mirror
 
-- **`Peek`**: `xsk_ring_cons__peek( &socket->receive_queue, receive_limit, ... )`,
+The worker's steps are the functions of `sdk/rocketnet_xdp_receive_pass.h`,
+which the worker calls in this order.
+
+- **`Peek`**: `rocketnet_xdp_receive_peek`, `xsk_ring_cons__peek( &socket->receive_queue, receive_limit, ... )`,
   where `receive_limit` is the lesser of `receive_capacity`
   (`ROCKETNET_XDP_RECV_QUEUE_SIZE - receive_buffer->num_packets`, the staging
   room, `StageCap - staged`) and `pending_return.available()` (`PendCap -
-  Cardinality(pending)`). The peek returns what the ring holds up to that.
-- **`Take`**: one iteration of the loop over `num_packets`: the descriptor is
-  read, its frame goes to the pending return when `rocketnet_xdp_fill_return`
-  places it in the receive region, and a packet is staged. The loop has no
-  room test; the `rocketnet_assert` on the staging room is compiled out of a
-  release build. What keeps it in bounds is the peek's cap.
+  Cardinality(pending)`). The peek returns what libxdp's cached view of the
+  ring holds up to that, and reads the producer again (`cprod`, the whole
+  ring) only when that view is empty (`xsk_cons_nb_avail`).
+- **`Take`**: `rocketnet_xdp_receive_take`, one iteration of the loop over
+  `num_packets`: the descriptor is read, its frame goes to the pending return
+  when `rocketnet_xdp_fill_return` places it in the receive region, and a
+  packet is staged. The loop has no room test; the `rocketnet_assert` on the
+  staging room is compiled out of a release build. What keeps it in bounds is
+  the peek's cap.
 - **`Finish`**: the loop ends with every peeked descriptor read
-  (`num_consumed == num_packets`); `rocketnet_xdp_receive_ring_finish` cancels
-  `num_packets - num_consumed`, which is zero, and releases `num_consumed`;
-  then the pending return is flushed, all or none.
-- **`Refill`**, **`Drain`**, **`KernelReceive`**, **`KernelRefresh`**,
+  (`num_consumed == num_packets`); `rocketnet_xdp_receive_end` calls
+  `rocketnet_xdp_receive_ring_finish`, which cancels `num_packets -
+  num_consumed`, which is zero, and releases `num_consumed`, and appends the
+  pass's frames to the pending return; then `rocketnet_xdp_fill_flush` flushes
+  it, all or none.
+- **`Refill`**: `rocketnet_xdp_fill_flush` at the top of the next pass.
+- **`Drain`**, **`KernelReceive`**, **`KernelRefresh`**,
   **`KernelMisdeliver`**: as the module header says.
+
+A frame is its number in the UMEM (the cases use frames 1 to 3; frame 0, the
+send region's first, is `SendFrame`). The first fill writes the frames in
+frame order, and `Init` does too (`FrameOrder`), so the trace check's record 1
+is the model's one initial state. A flush writes them in the pending return's
+order, which the model leaves free (`Orders`): no rule depends on it, and the
+trace pins it.
 
 ## The peek's two room terms
 
@@ -69,20 +85,20 @@ Each counterexample was checked against the C by hand.
 1. **`MCRNXdpReceiveRingBrokenPeekPastStaging.cfg`**
    (`PeekStagingRoom <- PeekStagingRoomBroken`): `receive_limit` without
    `receive_capacity`. Violates `StagingInBounds` (14 states): the kernel
-   posts F1 and F2; a pass peeks two (staging room 3, pending room 3), reads
+   posts frame 1 and frame 2; a pass peeks two (staging room 3, pending room 3), reads
    both, stages 2, releases 2 and flushes both frames back. The application
-   has not taken the buffer. The kernel posts F3 and, after a refresh, F1;
+   has not taken the buffer. The kernel posts frame 3 and, after a refresh, frame 1;
    the next pass has staging room 1 but asks for the pending room, 3, and the
    peek returns 2; the loop writes `receive_buffer` index 2, then index 3,
    one past `ROCKETNET_XDP_RECV_QUEUE_SIZE` (3 here). With the term the peek
    asks for 1 and the second descriptor waits for the next pass.
 2. **`MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg`** (`FillSize = 3`): a fill
    ring of exactly the frames. Violates `FillNeverEmptyWhileFramesFree`
-   (8 states): the kernel's batch holds all three frames; a pass takes F1 and
+   (8 states): the kernel's batch holds all three frames; a pass takes frame 1 and
    its flush finds no slot (`xsk_ring_prod__reserve` gives zero: the batch's
-   taken entries keep their slots), so F1 stays in the pending return; the
-   kernel takes F3, the last entry, and the fill ring is empty while the
-   worker holds F1.
+   taken entries keep their slots), so frame 1 stays in the pending return; the
+   kernel takes frame 3, the last entry, and the fill ring is empty while the
+   worker holds frame 1.
 3. **`MCRNXdpReceiveRingBrokenRefusedRefilled.cfg`**
    (`RefusedRefilled <- RefusedRefilledBroken`): a refused descriptor's frame
    handed back like any dropped frame. Violates `FillHoldsOnlyReceiveFrames`
@@ -93,14 +109,38 @@ Each counterexample was checked against the C by hand.
 
 ## Runs
 
-Bench runs of this version (two workers):
+Bench runs of this version (hetzner2, 2026-11-13):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNXdpReceiveRing.cfg` | pass | 5,006 | 1.1 |
-| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 222 | 0.8 |
-| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.7 |
-| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.7 |
+| `MCRNXdpReceiveRing.cfg` | pass | 6,551 | 1.4 |
+| `MCRNXdpReceiveRingBrokenPeekPastStaging.cfg` | `StagingInBounds`, exit 12 | 303 | 0.9 |
+| `MCRNXdpReceiveRingBrokenFillOfTheFrames.cfg` | `FillNeverEmptyWhileFramesFree`, exit 12 | 39 | 0.9 |
+| `MCRNXdpReceiveRingBrokenRefusedRefilled.cfg` | `FillHoldsOnlyReceiveFrames`, exit 12 | 21 | 0.9 |
 
 The records are in `RUNS.tsv` (group `rnxdpreceivering`), made with the pinned
 runner as `proofs/tla/README.md` describes.
+
+## The trace check
+
+Layer `xdp-receive-ring` of `tools/tla_trace_check.py` (`README-TraceCheck.md`)
+binds the model to the code. `tests/tla_trace_xdp_receive_ring.cpp` lays out
+an RX ring, a fill ring, a UMEM of six frames (two send frames, four receive
+frames) and a staging buffer, and drives them through libxdp's own ring views
+and the functions of `sdk/rocketnet_xdp_receive_pass.h`, playing the kernel
+itself. Each step is one record; `TraceRNXdpReceiveRing.tla` checks the
+records are a behaviour of this module. Odd seeds use a fill ring of eight
+slots, even seeds one of four, the frames' count, so a flush that finds no
+room (`Refill`) is reached.
+
+The walk names each receive frame by its number in the UMEM (2 to 5) and
+any descriptor outside the receive region as `SendFrame`, 0; the cfg it
+writes is plain values (`Frames = {2, 3, 4, 5}`).
+
+The plant (`ROCKETNET_XDP_RECEIVE_RING_PLANT` in
+`sdk/rocketnet_xdp_receive_pass.h`, built only into
+`tla_trace_plant_xdp_receive_ring`, which includes
+`sdk/rocketnet_server_socket_linux.cpp` with it defined) is the reversed witness
+`PeekPastStaging` in the code: the peek asks for the pending return's room
+alone. The walk reports the peek record where more was peeked than the
+staging room, and TLC rejects that record.

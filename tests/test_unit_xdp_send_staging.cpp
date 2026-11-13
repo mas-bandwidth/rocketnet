@@ -9,6 +9,8 @@
 
 #include <errno.h>
 #include <string.h>
+#include <algorithm>
+#include <vector>
 
 #if ROCKETNET_DEV
 
@@ -598,5 +600,58 @@ static void test_xdp_transport_send_claim_does_not_wrap()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_send_claim_does_not_wrap );
+
+// Packet ids come from each queue's own turn and slot: every id over three
+// turns of four queues of a small staging is distinct, never 0 from turn 1
+// on, and names its queue as id % queues, as finish and abort read it.
+static void test_xdp_transport_send_packet_id_is_per_queue()
+{
+    const int slots = 8;
+    const int queues = 4;
+    std::vector<uint64_t> ids;
+    for ( uint64_t turn = 1; turn <= 3; ++turn )
+    {
+        for ( int queue = 0; queue < queues; ++queue )
+        {
+            for ( int slot = 0; slot < slots; ++slot )
+            {
+                const uint64_t id = rocketnet_xdp_send_packet_id( turn, slot, slots, queues, queue );
+                rocketnet_unit_check( id != 0 );
+                rocketnet_unit_check( (int) ( id % (uint64_t) queues ) == queue );
+                ids.push_back( id );
+            }
+        }
+    }
+    std::sort( ids.begin(), ids.end() );
+    rocketnet_unit_check( std::adjacent_find( ids.begin(), ids.end() ) == ids.end() );
+
+    // within one queue, a later turn's ids are all above an earlier turn's
+
+    rocketnet_unit_check( rocketnet_xdp_send_packet_id( 2, 0, slots, queues, 1 ) > rocketnet_xdp_send_packet_id( 1, slots - 1, slots, queues, 1 ) );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_send_packet_id_is_per_queue );
+
+// Main's handoff lock: it takes the lock at the first try that succeeds,
+// makes exactly tries attempts when every one fails, and never more.
+static void test_xdp_transport_handoff_lock_is_bounded()
+{
+    int attempts = 0;
+    rocketnet_unit_check( rocketnet_xdp_handoff_lock( [&attempts]()
+                                                      { return ++attempts == 3; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( attempts == 3 );
+
+    attempts = 0;
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return false; }, ROCKETNET_XDP_HANDOFF_TRIES ) );
+    rocketnet_unit_check( attempts == ROCKETNET_XDP_HANDOFF_TRIES );
+
+    attempts = 0;
+    rocketnet_unit_check( !rocketnet_xdp_handoff_lock( [&attempts]()
+                                                       { ++attempts; return true; }, 0 ) );
+    rocketnet_unit_check( attempts == 0 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_handoff_lock_is_bounded );
 
 #endif // #if defined(__linux__)

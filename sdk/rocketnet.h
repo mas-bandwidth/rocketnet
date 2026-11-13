@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.30"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.41"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        30
+    #define ROCKETNET_VERSION_PATCH                        41
 
 #else // !ROCKETNET_DEV
 
@@ -3063,6 +3063,51 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
+/// By default a server is updated by one call, rocketnet_server_update, on
+/// one thread, and needs nothing below.
+///
+/// These three calls are rocketnet_server_update split up, for a game that
+/// wants its game threads to apply the acknowledgements received from each
+/// client: rocketnet_server_update_receive on the main thread, then
+/// rocketnet_server_update_client once for each client index on the game
+/// threads, then rocketnet_server_update_finish on the main thread. The
+/// result is rocketnet_server_update's exactly; a client nobody calls
+/// rocketnet_server_update_client for is applied by
+/// rocketnet_server_update_finish.
+///
+/// Thread: rocketnet_server_update_receive and rocketnet_server_update_finish
+/// on the main thread. Between them, the main thread and the game threads
+/// may call rocketnet_server_update_client at once, one call per client
+/// index (a second call for the same index finds nothing to do), and nothing
+/// else may be called on the server. The game joins its game threads (a join
+/// or a barrier, not a wall-clock wait) before
+/// rocketnet_server_update_finish.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param time As rocketnet_server_update's.
+
+ROCKETNET_EXPORT void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time );
+
+/// Applies one client's received acknowledgements. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server update_receive was called on. NULL counts as API
+/// misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Another index, or a
+/// call outside update_receive .. update_finish, counts as API misuse and
+/// returns 0.
+/// @return The number of acknowledgement blocks applied, 0 when the client
+/// had none.
+
+ROCKETNET_EXPORT int rocketnet_server_update_client( struct rocketnet_server_t * server, int client_index );
+
+/// Finishes the update rocketnet_server_update_receive began. See
+/// rocketnet_server_update_receive.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t * server );
+
 /// Sends each client's queued messages in packets under its send budget.
 ///
 /// The gso, io_uring, xdp, iocp and rio server transports hold what they send
@@ -3390,6 +3435,16 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// rocketnet_server_finish_message. Use it when game threads each hold a
 /// message open on their own clients; a server used from one thread may
 /// use it too.
+///
+/// One difference: an unreliable message small enough to fit in one packet
+/// is sent alone from this call, on the calling thread, rather than waiting
+/// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
+/// returns 0, the message is dropped and
+/// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
+/// other message is queued as by rocketnet_server_finish_message: a larger
+/// one, a reliable one, one that must keep its order behind a message already
+/// queued, and, on the in-memory and plain socket transports, one their send
+/// ring had no slot for.
 ///
 /// Needs a message opened by rocketnet_server_start_message on client_index
 /// of a running server; otherwise it asserts in a debug build and returns 0

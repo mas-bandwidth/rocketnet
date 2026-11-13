@@ -3280,6 +3280,48 @@ void rocketnet_server_update( struct rocketnet_server_t * server, double time )
     (void) rocketnet_message_server_update( server->running, time );
 }
 
+// proofs/tla/RNAckApplyPhase.tla: rocketnet_server_update in three calls, so
+// the game's jobs apply the received acks client by client
+
+void rocketnet_server_update_receive( struct rocketnet_server_t * server, double time )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( !server->running )
+    {
+        return;
+    }
+    rocketnet_message_server_update_receive( server->running, time );
+}
+
+int rocketnet_server_update_client( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+    if ( !server->running )
+    {
+        return 0;
+    }
+    return rocketnet_message_server_update_client_acks( server->running, client_index );
+}
+
+void rocketnet_server_update_finish( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( !server->running )
+    {
+        return;
+    }
+    (void) rocketnet_message_server_update_finish( server->running );
+}
+
 void rocketnet_server_send_packets( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )
@@ -3680,7 +3722,11 @@ uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * ser
     }
 
     rn_server_arm_one_thread_a_client( server );
-    return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
+
+    // the writer's finish: an unreliable message written in place leaves in
+    // its frame from this call, on this thread; one with no capacity is
+    // refused here rather than queued
+    return rocketnet_message_server_finish_client( rn_server( server ), client_index, bytes_written );
 }
 
 void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index )

@@ -12,7 +12,9 @@
 (* Every probe sequence starts at the address's home slot (the FNV hash,   *)
 (* rocketnet_xdp_reply_macs_slot, chosen here at Init from every map of    *)
 (* addresses to slots, so every collision pattern is checked) and runs at  *)
-(* most P slots, wrapping modulo N.                                        *)
+(* most P slots, wrapping modulo N.  Under HomesGiven the addresses are    *)
+(* numbers and each one's home is its value modulo N: the trace check      *)
+(* names each address by the code's hash of it plus a multiple of N.       *)
 (*                                                                         *)
 (*   Find(a, s)  rocketnet_xdp_reply_macs_find_state: the first slot of    *)
 (*               state s holding a, stopping at the first EMPTY slot       *)
@@ -27,6 +29,11 @@
 (*               else not kept                                             *)
 (*   Forget      rocketnet_xdp_reply_macs_forget: LIVE becomes ANSWERED    *)
 (*   Reset       rocketnet_xdp_reply_macs_reset with no gateway            *)
+(*   Ignore      rocketnet_xdp_reply_macs_learn of an unusable MAC         *)
+(*   ReplyLearned, ReplyAnswered, Refuse  rocketnet_xdp_reply_mac giving   *)
+(*               the learned MAC, the answered entry's MAC (no frame), or  *)
+(*               none: calls that change nothing, so the trace check can   *)
+(*               name them (TraceRNXdpReplyMacsLayout.tla)                 *)
 (*                                                                         *)
 (* The code has no tombstone state: a forget leaves an ANSWERED entry in   *)
 (* place.  Nothing ever returns a used slot to EMPTY but a reset of the    *)
@@ -59,10 +66,13 @@ CONSTANTS
     EvictOldest,        \* learn's eviction takes the smallest learned stamp
     InsertWindowExact,  \* learn's insert loop probes P slots, as the lookups do
     LearnTakesEmptyFirst, \* learn's insert takes an EMPTY slot before another address's ANSWERED entry
-    NOADDR              \* the address field of a never-used slot (a model value)
+    NOADDR,             \* the address field of a never-used slot (a model value)
+    NOMAC,              \* the MAC field of a never-used slot, the zero bytes (a model value)
+    HomesGiven          \* Addrs are numbers, each one's home its value modulo N (the trace check)
 
 ASSUME N \in Nat \ {0} /\ P \in 1..N
-ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact, LearnTakesEmptyFirst} : f \in BOOLEAN
+ASSUME \A f \in {SkipOtherEntries, EvictOldest, InsertWindowExact, LearnTakesEmptyFirst, HomesGiven} : f \in BOOLEAN
+ASSUME HomesGiven => Addrs \subseteq Nat
 
 Slots == 0..(N - 1)
 EMPTY == "empty"
@@ -143,10 +153,10 @@ Displace(x, a, new) ==
                       ELSE abs[b] ]
 
 Init ==
-    /\ home \in [ Addrs -> Slots ]
+    /\ home \in IF HomesGiven THEN { [ a \in Addrs |-> a % N ] } ELSE [ Addrs -> Slots ]
     /\ st = [ s \in Slots |-> EMPTY ]
     /\ addr = [ s \in Slots |-> NOADDR ]
-    /\ mac = [ s \in Slots |-> CHOOSE m \in Macs : TRUE ]
+    /\ mac = [ s \in Slots |-> NOMAC ]
     /\ stamp = [ s \in Slots |-> 0 ]
     /\ count = 0
     /\ abs = [ a \in Addrs |-> None ]
@@ -205,16 +215,49 @@ Forget(a) ==
 Reset ==
     /\ st' = [ s \in Slots |-> EMPTY ]
     /\ addr' = [ s \in Slots |-> NOADDR ]
-    /\ mac' = [ s \in Slots |-> CHOOSE m \in Macs : TRUE ]
+    /\ mac' = [ s \in Slots |-> NOMAC ]
     /\ stamp' = [ s \in Slots |-> 0 ]
     /\ count' = 0
     /\ abs' = [ a \in Addrs |-> None ]
     /\ UNCHANGED <<home, badEviction>>
 
+\* The calls below change nothing; they are actions so that the trace check
+\* names each one and checks it changed nothing.
+
+\* rocketnet_xdp_reply_macs_learn of a zero or multicast MAC: ignored
+Ignore(a) ==
+    UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac of a learned address: its learned MAC m, with or
+\* without an answered MAC, and nothing kept
+ReplyLearned(a, m) ==
+    /\ Find(a, LIVE) # -1
+    /\ mac[Find(a, LIVE)] = m
+    /\ UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac with no answered MAC (no frame in hand) for an
+\* address that is not learned: its answered entry's MAC m
+ReplyAnswered(a, m) ==
+    /\ Find(a, LIVE) = -1
+    /\ Find(a, ANSWERED) # -1
+    /\ mac[Find(a, ANSWERED)] = m
+    /\ UNCHANGED vars
+
+\* rocketnet_xdp_reply_mac returning no MAC for an address that is not
+\* learned: framed, the answered MAC was zero or multicast; not framed, there
+\* was none and the address has no answered entry
+Refuse(a, framed) ==
+    /\ Find(a, LIVE) = -1
+    /\ framed \/ Find(a, ANSWERED) = -1
+    /\ UNCHANGED vars
+
 Next ==
     \/ \E a \in Addrs, m \in Macs : Learn(a, m) \/ Answer(a, m)
     \/ \E a \in Addrs : Forget(a)
     \/ Reset
+    \/ \E a \in Addrs : Ignore(a)
+    \/ \E a \in Addrs, m \in Macs : ReplyLearned(a, m) \/ ReplyAnswered(a, m)
+    \/ \E a \in Addrs, framed \in BOOLEAN : Refuse(a, framed)
 
 Spec == Init /\ [][Next]_vars
 
@@ -232,7 +275,7 @@ TypeOK ==
     /\ home \in [ Addrs -> Slots ]
     /\ st \in [ Slots -> States ]
     /\ addr \in [ Slots -> Addrs \cup {NOADDR} ]
-    /\ mac \in [ Slots -> Macs ]
+    /\ mac \in [ Slots -> Macs \cup {NOMAC} ]
     /\ count \in Nat
 
 \* every lookup returns what the contract says: the learned MAC while the

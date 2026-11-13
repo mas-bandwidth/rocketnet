@@ -71,6 +71,13 @@ struct rn_message_link_t
 
     void ( *update )( void * transport, double time );
 
+    // update in three parts (the server's link only; NULL elsewhere):
+    // update_receive, update_client_acks per client from the game's jobs,
+    // update_finish. Used only while update is the server transport's own.
+    void ( *update_receive )( void * transport, double time );
+    int ( *update_client_acks )( void * transport, int client_index );
+    void ( *update_finish )( void * transport );
+
     // the update's payload batch, valid until the next update. The client's
     // link leaves *client_index NULL.
     int ( *payloads )( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
@@ -92,6 +99,13 @@ struct rn_message_link_t
     uint64_t ( *payload_connection )( void * transport, int k );
     uint64_t ( *acked_connection )( void * transport, int k );
 
+    // the whole acked batch's connection ids at once, parallel to the acked
+    // client index array (the count it returns bounds it): the same ids
+    // acked_connection answers entry by entry, read once per update. NULL
+    // (the client's link, the unit suite's fakes): acked_connection, or the
+    // fallback above, entry by entry.
+    int ( *acked_connection_ids )( void * transport, const uint64_t ** connection_ids );
+
     // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );
@@ -111,6 +125,14 @@ struct rn_message_link_t
 
     // connected clients whose next send round must remain available
     int ( *send_connected_count )( void * transport );
+
+    // true when the transport sends through the server's own ring of
+    // max_clients-sized slots (the in-memory and plain socket transports),
+    // false when it stages frames in its own send queue. NULL (the client's
+    // link, the unit suite's fakes): false. The writer's finish reads it: on
+    // a buffered transport a start the ring had no slot for is queued for
+    // the main thread's send as the serial finish queues it, never refused
+    bool ( *send_buffered )( const void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
     // Observe). The server's link answers
@@ -207,9 +229,21 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // one per connection, so N fill threads may each hold one open on a
 // different connection. Written only by that connection's one filler in a
 // fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
+// rn_message_open_t pending: nonzero while a start is open. NO_CAPACITY is a
+// fitting unreliable start that found no capacity to be written in place (no
+// transport frame, the round kept for the main thread's send, the update's
+// send limit spent, or a budget that cannot pay it) and took the queued path:
+// the serial finish queues it for the main thread's send as before; the
+// writer's finish (rn_message_object_finish_client) refuses it, so nothing a
+// writer finishes is left for that send (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY).
+// On a buffered transport (rn_message_link_t send_buffered) a start the ring
+// had no slot for is not marked: it queues from either finish
+#define RN_MESSAGE_OPEN_PENDING 1
+#define RN_MESSAGE_OPEN_PENDING_NO_CAPACITY 2
+
 struct rn_message_open_t
 {
-    int pending;                                // 1 while a start is open here, until its finish, abort or a cancel
+    int pending;                                // RN_MESSAGE_OPEN_PENDING* while a start is open here, until its finish, abort or a cancel; 0 otherwise
     int in_place;                               // the open start: 0 region, 1 whole frame, 2 appended record;
                                                 // -1: an in-place start an update or a flush closed, whose finish returns 0
     struct rocketnet_packet_context_t in_place_context;
@@ -290,6 +324,8 @@ struct rn_message_object_t
     // thread's last open while exactly one is open (rn_message_open_count,
     // rn_message_open_last)
     struct rn_message_open_line_t open_lines[ROCKETNET_FILL_PHASE_FILL_LINES];
+    int update_stage;                           // RN_MESSAGE_UPDATE_*: where a split update stands
+    int update_result;                          // the split update's result so far
 
     // the one receive queue, pumped by each receive: the update's deliveries,
     // connection by connection in index order, each connection's in its
@@ -358,10 +394,37 @@ void rn_message_object_destroy( struct rn_message_object_t * object );
 // ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
 
+// the same update in two parts around the game's per-client ack apply:
+// begin runs through the transport's update_receive, end from its
+// update_finish on and returns the update's result. update is begin then
+// end. A begin with the last one not ended ends it first (misuse, counted).
+
+enum
+{
+    RN_MESSAGE_UPDATE_CLOSED = 0,               // no split update in progress
+    RN_MESSAGE_UPDATE_SPLIT = 1,                // the transport's receive ran; end finishes it
+    RN_MESSAGE_UPDATE_WHOLE = 2,                // the transport updated whole (or not at all); end does the rest
+    RN_MESSAGE_UPDATE_DONE = 3                  // begin returned early; end returns the result only
+};
+
+void rn_message_object_update_begin( struct rn_message_object_t * object, double time );
+int rn_message_object_update_end( struct rn_message_object_t * object );
+
 void rn_message_object_send_packets( struct rn_message_object_t * object );
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 uint32_t rn_message_object_finish( struct rn_message_object_t * object, int index, int bytes );
+
+// the writer's finish (rocketnet_server_finish_client_message): as
+// rn_message_object_finish, except that the frame holding an unreliable
+// message written in place is sealed, ack-stamped, encrypted and handed to
+// the transport in this call, and an unreliable start that found no capacity
+// (RN_MESSAGE_OPEN_PENDING_NO_CAPACITY) is refused, its start aborted and
+// MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counted. A message the writer
+// finishes is either on its way to the network or refused; the main thread's
+// send builds nothing of it. Large and ordering-queued messages (no in-place
+// form) queue as on the serial finish.
+uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, int index, int bytes );
 
 // the messages open across the connections (the sum of the open lines), and
 // the connection the calling thread last opened a message on
@@ -404,11 +467,14 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 #if ROCKETNET_DEV
 // The send pass's cost, counted on this thread by
 // rn_message_object_send_packets (development builds only): the connection
-// slots its rounds visit, and the frames started and then aborted in it.
+// slots its rounds visit, the frames started and then aborted in it, and the
+// frames it finished (open builds sealed at BeginFlush and frames written):
+// the work the main thread's send did that a writer's finish could have done.
 struct rn_send_pass_cost_t
 {
     uint64_t slot_visits;
     uint64_t frames_aborted;
+    uint64_t frames_finished;
 };
 
 void rn_send_pass_cost_reset();
