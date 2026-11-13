@@ -10,10 +10,11 @@
 
 #include <stdint.h>
 
-// Known-answer test vectors, mirroring standard/TRANSPORT.md ta byte for byte.
-// Generated from the vectors harness that produced the appendix; never edited
-// by hand. The fixed inputs are stated in the appendix; the outputs here are
-// what a conforming implementation must reproduce exactly.
+// Known-answer test vectors, mirroring the vectors printed in their defining
+// sections of standard/TRANSPORT.md (its Appendix A, ta, explains the vector
+// identifiers). Generated from the vectors harness; never edited by hand. The
+// fixed inputs are stated in those sections; the outputs here are what a
+// conforming implementation must reproduce exactly.
 
 #define ROCKETNET_TEST_PROTOCOL_ID    0x1122334455667788ULL
 #define ROCKETNET_TEST_CLIENT_ID      0x0123456789abcdefULL

@@ -3387,8 +3387,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build.
+    // an infinity or a step backwards becomes the last good time, counted as
+    // API misuse and logged as an error once per clamped update, in every build.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
