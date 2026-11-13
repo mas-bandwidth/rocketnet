@@ -117,7 +117,8 @@ void rocketnet_uring_send_queues_destroy( struct rocketnet_uring_send_queues_t *
     rocketnet_free( context, memory );
 }
 
-// proofs/tla/RNUringQueueBankLayout.tla Start(t, d): the destination's queue
+// proofs/tla/RNUringQueueBankLayout.tla Start(t, d, ptr, pid), or
+// StartFull(t, d, pid) when it returns NULL: the destination's queue
 // (QueueOf), the id gid * Q + q (PidOf, IdRule "mul") and one claim on the
 // producer bank's counter (ClaimCmp "ge", CounterWrap 0); a refused claim
 // leaves the counter past slots until the bank is reset
@@ -148,10 +149,11 @@ uint8_t * rocketnet_uring_send_queues_start( struct rocketnet_uring_send_queues_
     return bank->data + (size_t) index * ROCKETNET_FRAME_STRIDE;
 }
 
-// proofs/tla/RNUringQueueBankLayout.tla Finish(t, k): the queue from the id
-// (id mod Q) and the slot from the pointer's offset past that queue's
-// producer bank, tested before the division (SlotFrom, SlotRule "check");
-// a pointer that names no slot writes nothing
+// proofs/tla/RNUringQueueBankLayout.tla Finish(t, k), or FinishRefused(t, k)
+// when finish or abort returns false: the queue from the id (id mod Q) and
+// the slot from the pointer's offset past that queue's producer bank, tested
+// before the division (SlotFrom, SlotRule "check"); a pointer that names no
+// slot writes nothing
 
 static struct rocketnet_uring_send_slot_t * rocketnet_uring_send_queues_slot( struct rocketnet_uring_send_queues_t * queues, uint64_t packet_id, const uint8_t * packet_data )
 {
@@ -219,9 +221,9 @@ int rocketnet_uring_send_queues_staged( const struct rocketnet_uring_send_queues
     return num < (uint64_t) queues->slots ? (int) num : queues->slots;
 }
 
-// proofs/tla/RNUringQueueBankLayout.tla Flush: every queue that staged turns
-// its producer over to its next bank, whose counter is reset before any fill
-// sees it. ROCKETNET_URING_SEND_QUEUE_PLANT is the trace check's plant
+// proofs/tla/RNUringQueueBankLayout.tla Flush(n), n the queues it returns:
+// every queue that staged turns its producer over to its next bank, whose
+// counter is reset before any fill sees it. ROCKETNET_URING_SEND_QUEUE_PLANT is the trace check's plant
 // (proofs/tla/README-TraceCheck.md): only tests/tla_trace_bank.cpp in the plant build
 // defines it, and its traces must fail TraceConsistent
 

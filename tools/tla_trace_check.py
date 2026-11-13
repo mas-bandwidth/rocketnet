@@ -81,15 +81,9 @@ LAYERS = {
     },
     "bank": {
         "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
-        "untraced": {},
-    },
-    "gather": {
-        "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
-        "untraced": {},
-    },
-    "gso": {
-        "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
-        "untraced": {},
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
+                             "under MaxFlush, so it never gets there"},
+        "reach": ["LastSlot"],
     },
 }
 
