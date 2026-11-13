@@ -136,30 +136,17 @@ above that) and one receive worker, a socket for each connected client and
 one shared socket (`sdk/rocketnet_server_msgx.h`); the `portable` server runs
 one transmit worker and one receive worker, and has no count to set. macOS
 gives no thread a core: neither transport pins its threads, and the scheduler
-places them. The default of 3 transmit workers is what was measured on
-2026-11-13 (main 5366e4f13, players on a Linux machine over 10 GbE): an M5 Pro
-Mac mini server sent the whole peak, 900k packets a second, to 1000 players
-at 3. An M3 Ultra Mac Studio server topped out at 694k a second at 2 and sent
-less as workers were added (678k at 1, 660k at 3, 492k at 6), each worker near
-fully busy in the kernel's send path. More workers are not more throughput on
-every Mac; measure yours.
+places them. More transmit workers are not always more throughput: under a
+heavy send load a worker can spend most of its time in the kernel's send
+path, and then more workers may not send more. The performance report has no
+macOS measurement record yet ([PERFORMANCE.md](PERFORMANCE.md)); measure
+your workload.
 
 A client with a socket leaves through the transmit worker its socket-table slot
 names, slot modulo the worker count (`rocketnet_msgx_socket_table_queue_of`,
 `proofs/tla/RNMsgxSendSpread.tla`); a client without one goes by its address
 hash. The busiest worker sets the rate, so the split is kept even: with every
-slot held the workers differ by at most one client. Measured on 2026-11-13
-(the M5 Pro Mac mini above, 1000 players, 3 workers): an address hash left the
-workers 77/84/89% of a core over a peak run with game load and 87/89/90%
-without; by slot they read within 0.2 points of each other. At the peak, 900k
-packets a second of about 1280 bytes on the wire (9.2 Gb/s), each worker was
-88-89% busy without game load and 93-95% with the harness's game threads; at
-the average, 480k a second, 47-51%. The workers spend about 2.95 us of a core
-a packet in the kernel's send path without game load, at 15 datagrams a call
-and at 8 alike, so a larger batch does not lower it; with game load, 3.1-3.2
-us. The peak is 94% of the Mac's send ceiling (956k a second), and with game
-load starts were still refused in episodes (two of three 60-second runs): the
-peak with game load needs headroom this Mac does not have at 3 workers.
+slot held the workers differ by at most one client.
 
 In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
@@ -171,29 +158,18 @@ socket pump; the client path is separate.
 Each TX bank holds `ROCKETNET_SEND_PACKETS_PER_CLIENT` (16) packets per
 configured client, and never fewer than `rocketnet_server_send_batch_packets`;
 the three banks are one allocation made at create. A packet sent while all
-three banks are in flight is dropped and counted in `SEND_FAILED`. Measured on
-a 1000-client msgx LAN cell, the transmit worker spends about 18 us per
-packet in `sendmsg_x`, so 45,000 packets a second keep it about 80% busy and a
-burst backs up for tens of milliseconds. With fixed banks of 1000 packets that
-backlog found every bank in flight thousands of times a minute
-(`SEND_FAILED` 9,240 in 60 s, all of them for want of a free bank, none a
-socket errno); banks sized to the client count hold it. A failed socket send
-is counted apart, by call and errno, and the first of each is logged once.
+three banks are in flight is dropped and counted in `SEND_FAILED`. A transmit
+worker that drains fewer packets a second than the game sends, for longer
+than the banks hold, drops packets this way; no bank size absorbs a deficit
+that lasts. A failed socket send is counted apart, by call and errno, and the
+first of each is logged once.
 
 `SEND_FAILED` is the sum of the socket's failures and the handoff's drops, and
 the handoff counts each drop by its path: `no-free-bank` (the producer bank is
 full and every other bank is in flight), `handoff-busy` (full, and the handoff
 lock was held), `stopping` and `invalid-packet`. The first drop on each path
 logs once; the transport logs every path's count, zeros included, beside the
-socket's send failures when it closes. On a 600 s cell at 1000 clients the
-worker's QoS class read default (0x15) and it ran on the same six cores
-throughout. It held 16.3 to 17.3 us per packet for most of the run, but in two
-episodes of about 30 s (from 210 s and from 411 s to 440 s into the run) (with the server host's load rising to 8.3) the cost rose
-to 26 to 29 us per packet. The worker then drains fewer packets a second than
-main produces, and no bank size absorbs a deficit that lasts that long: those
-episodes dropped 240,768 packets, all `no-free-bank`, no socket errno. This is
-an observation of a host loaded by other work, not a bank sizing fault: the
-banks are unchanged.
+socket's send failures when it closes.
 
 **The msgx client** is the portable client table under the `msgx` name: the
 `MSGX` registry row's client operations are `portable_client_operations`
@@ -291,30 +267,10 @@ the SCHED_RR minimum, 1. The macOS minimum, 15, demoted the client I/O thread:
 under CPU contention its sends and receives stalled for hundreds of
 milliseconds while the game thread ran (`test_posix_send_to_closed_port` on a
 loaded runner). The maximum, 47 (the user-interactive band), outranked the
-game's ordinary threads. In the recorded MacBook Air sample, the P=32 client frame p99
-(`benchmarks/client_main_thread_cost.cpp`, portable) went from 35 to 97 us
-when the maximum landed.
-On Apple M3 Ultra (`studio`, 512 GiB, 24 P-cores + 8 E-cores) at `2cf45bc0`,
-304 single-cell `test_posix_send_to_closed_port` runs at priority 32 across all
-eight `portable`/`msgx` IPv4 and IPv6 cells (240 ambient at 12 workers, plus 64
-interleaved against 64 priority-47 runs at 8 workers under 28 ordinary
-priority-31 spin processes and one active solver) passed with 0 failures for
-both 32 and 47 (wall p50 2.11 s, p99 2.37 s vs 2.35 s under contention); a
-dedicated before/after `rocketnet_get_thread_priority_refusals()` check across
-all eight `closed_port` cells and `benchmarks/client_main_thread_cost.cpp`
-(`portable` and `msgx`, outside the timed frame window) recorded 0 refusals for
-both 32 and 47 (matching a direct `pthread_setschedparam` /
-`pthread_getschedparam` OS readback probe for 31, 32, and 47). In
-`benchmarks/client_main_thread_cost.cpp` (`P=32`, 2000 frames), both 32 and 47
-pass the quiet-host 100 us gate (`load <= cores / 4`: `portable` p99 median
-12.46 us vs 13.62 us; `msgx` 12.92 us vs 13.04 us) and overlap as observed
-measurements across 10 alternating ambient pairs (`portable` 12.83 us vs
-13.04 us; `msgx` 13.73 us vs 13.85 us, without claiming a universal priority-32
-latency win); under the 28-hog priority-31 oversubscription workload, both
-policies show much larger observed tails (`portable` p99 median 352.38 us vs
-400.25 us, max up to 5.47 ms vs 2.39 ms; `msgx` 342.00 us vs 348.83 us, max up
-to 4.12 ms vs 2.59 ms), consistent with preemption of the benchmark's own
-priority-31 main thread by the priority-31 hogs inside the timed frame windows.
+game's ordinary threads. Priority 32 sits between them; it is not a promise
+of lower latency on every Mac. To see the client frame's cost on yours, run
+`./bin/client_main_thread_cost portable 32 2000`
+(`benchmarks/client_main_thread_cost.md`).
 That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and

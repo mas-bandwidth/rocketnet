@@ -701,7 +701,8 @@ static int msgx_test_spread( const struct msgx_test_t & test, const struct rocke
 // ephemeral range hands them out) are spread across 1 to 16 workers within one
 // of each other, and stay so when a client leaves and another takes its
 // slot; an address with no socket goes by its address hash. The address
-// hash alone left the workers uneven on this set (docs/MACOS.md).
+// hash alone does not keep them within one (the reversed witness
+// proofs/tla/MCRNMsgxSendSpreadBrokenAddressHash.cfg).
 static void test_rocketnet_msgx_socket_table_queue_spread()
 {
     const int clients = ROCKETNET_MSGX_TABLE_MAX_SLOTS;
