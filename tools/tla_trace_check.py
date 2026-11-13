@@ -109,6 +109,9 @@ LAYERS = {
     "xdp-receive-ring": {
         "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
         "untraced": {},
+        # the staging buffer full, the RX ring full, and a refused flush
+        # (even seeds: a fill ring of exactly the frames)
+        "reach": ["StagingFull", "RxRingFull", "HeldBetweenPasses"],
     },
     "xdp-replay": {
         "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],

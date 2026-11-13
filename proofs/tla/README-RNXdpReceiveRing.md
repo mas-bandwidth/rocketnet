@@ -36,9 +36,12 @@ which the worker calls in this order.
 - **`Drain`**, **`KernelReceive`**, **`KernelRefresh`**,
   **`KernelMisdeliver`**: as the module header says.
 
-The first fill writes the frames in frame order and a flush writes them in
-the pending return's order. The model leaves the order free (`Orders`): no
-rule depends on it, and the trace pins it.
+A frame is its number in the UMEM (the cases use frames 1 to 3; frame 0, the
+send region's first, is `SendFrame`). The first fill writes the frames in
+frame order, and `Init` does too (`FrameOrder`), so the trace check's record 1
+is the model's one initial state. A flush writes them in the pending return's
+order, which the model leaves free (`Orders`): no rule depends on it, and the
+trace pins it.
 
 ## The peek's two room terms
 
@@ -130,8 +133,14 @@ records are a behaviour of this module. Odd seeds use a fill ring of eight
 slots, even seeds one of four, the frames' count, so a flush that finds no
 room (`Refill`) is reached.
 
-The plant (`ROCKETNET_TLA_PLANT_XDP_RECEIVE_RING`, built only into
-`tla_trace_plant_xdp_receive_ring`) is the reversed witness
+The walk names each receive frame by its number in the UMEM (2 to 5) and
+any descriptor outside the receive region as `SendFrame`, 0; the cfg it
+writes is plain values (`Frames = {2, 3, 4, 5}`).
+
+The plant (`ROCKETNET_XDP_RECEIVE_RING_PLANT` in
+`sdk/rocketnet_xdp_receive_pass.h`, built only into
+`tla_trace_plant_xdp_receive_ring`, which includes
+`sdk/rocketnet_server_socket_linux.cpp` with it defined) is the reversed witness
 `PeekPastStaging` in the code: the peek asks for the pending return's room
 alone. The walk reports the peek record where more was peeked than the
 staging room, and TLC rejects that record.
