@@ -194,7 +194,7 @@ WorkerComplete ==
                    ghosts, ownerGen, pending, refusedPending, badReuse>>
 
 \* connect(token), rn_client_connect (sdk/rocketnet_api.cpp), with
-\* its five outcomes (rn_client_connect at 1556-1642). A live state is refused
+\* its five outcomes (rn_client_connect at 1556-1640). A live state is refused
 \* first (1560-1566, CLIENT_NOT_DISCONNECTED). A string that is not one
 \* base64 token is refused next, before the terminal attempt or its worker
 \* is touched (1572-1577, rn_connect_token_decode): nothing changes, whatever
@@ -202,7 +202,7 @@ WorkerComplete ==
 \* it owns no worker or the old worker has completed (RetryPending
 \* otherwise, 1593-1602, client->retiring), and finalization joins the
 \* stopped generation (rn_client_end_connection); then the connection is
-\* created (1606-1641, rocketnet_message_client_create_resolved): a valid
+\* created (1606-1640, rocketnet_message_client_create_resolved): a valid
 \* token starts the handshake, a token the transport
 \* refuses ends in INVALID_CONNECT_TOKEN or CONNECT_TOKEN_EXPIRED, and any
 \* other create failure leaves DISCONNECTED.

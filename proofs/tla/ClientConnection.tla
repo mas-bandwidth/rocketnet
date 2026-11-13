@@ -271,11 +271,12 @@ S2C == INSTANCE Link WITH wire <- s2cWire, sent <- s2cSent, pulse <- s2cPulse,
                           Packets <- ServerPackets, Pattern <- S2CPattern
 
 NoMap == [live |-> FALSE, att |-> 0, nonce |-> 0, slot |-> FALSE, age |-> 0,
-          sinceRecv |-> 0, sinceKA |-> 0, sinceSend |-> 0, acked |-> FALSE]
+          sinceRecv |-> 0, sinceKA |-> 0, sinceSend |-> 0, acked |-> FALSE, debt |-> FALSE]
 
 Mapping == [live : BOOLEAN, att : Att \cup {0}, nonce : Nonce \cup {0}, slot : BOOLEAN,
             age : 0..ServerDeadline, sinceRecv : 0..Timeout,
-            sinceKA : 0..SendInterval, sinceSend : 0..SendInterval, acked : BOOLEAN]
+            sinceKA : 0..SendInterval, sinceSend : 0..SendInterval, acked : BOOLEAN,
+            debt : BOOLEAN]
 
 \* a saturating tick of a counter whose bound may be 0 (off)
 Sat(x, bound) == IF bound = 0 THEN 0 ELSE IF x < bound THEN x + 1 ELSE bound
@@ -364,16 +365,20 @@ AppConnectKeepsAttempt ==
                    cPayloadDelivered, serverVars, c2sVars, s2cVars>>
 
 \* rocketnet_client_protocol_disconnect: in 3 or 4 a burst of sealed
-\* disconnects, then state 0 and the keys and ephemeral zeroed; from any
-\* other non-zero state (including a terminal one, F8) state 0 and the
-\* zeroing alone
+\* disconnects, then state 0 through rocketnet_client_set_state, whose
+\* rocketnet_client_connection_reset zeroes the keys, the ephemeral, the
+\* cookies, the client index and the replay window; from any other non-zero
+\* state (including a terminal one, F8) state 0 and the zeroing alone.
+\* cEarly is left: it is read only in 2 and 3, and AppConnect clears it.
 AppDisconnect ==
     /\ Disconnects /\ cstate # 0 /\ cDiscPending = 0
     /\ IF cstate \in {3, 4}
          THEN cDiscPending' = DisconnectCopies /\ cDiscKeys' = cKeys
          ELSE UNCHANGED <<cDiscPending, cDiscKeys>>
     /\ cstate' = 0 /\ cKeys' = NoKeys /\ cEph' = FALSE
-    /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSinceSend, earlyVars, cSinceRecv, cAge, cSeen,
+    /\ cKept' = "none" /\ cLatest' = "none" /\ cAltLatest' = FALSE
+    /\ cIndex' = FALSE /\ cSeen' = {}
+    /\ UNCHANGED <<cAttempt, cSinceSend, earlyVars, cSinceRecv, cAge,
                    cPayloadDelivered, cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
 (***************************************************************************)
@@ -518,7 +523,10 @@ ClientRecvCookieReplaces(p) ==
 \* nonce, erase the ephemeral, response built once, 2 -> 3; the advance
 \* arms the early send of the response (t11 rule 7). With SmallOrderServer
 \* the challenge may instead carry a small order ephemeral the derivation
-\* refuses: ignored, the client stays in 2
+\* refuses: ignored, the client stays in 2. The choice is made per delivered
+\* copy, so a later copy of the same challenge may commit; the code's
+\* server resends the stored challenge byte for byte and the client refuses
+\* every copy. That adds behaviour, so safety checked here still holds.
 ClientRecvChallenge(p) ==
     /\ p.type = "challenge"
     /\ S2C!Deliver(p)
@@ -573,29 +581,35 @@ ClientRecvDeniedKeepsKeys(p) ==
 \* by loss or reorder of that keep-alive, and one delivered in 3 let the
 \* application reply on a connection that could not yet send. An accepted
 \* disconnect is rocketnet_client_set_state(DISCONNECTED), which zeroes the
-\* keys (rocketnet_client_connection_reset; KeysErasedWhenDown). Erase FALSE
-\* is the pre-fix rule that leaves them, only in SpecDownKeepsKeys. A
-\* server ack (ServerAcks) refreshes the timeout and moves nothing else; a
-\* packet refused after its replay mark (AuthenticRefusals) keeps only the
-\* mark.
+\* keys, the cookies, the client index and the replay window
+\* (rocketnet_client_connection_reset; KeysErasedWhenDown). Erase FALSE is
+\* the pre-fix rule that leaves them and runs no reset, only in
+\* SpecDownKeepsKeys. A server ack (ServerAcks) refreshes the timeout and
+\* moves nothing else; a packet refused after its replay mark
+\* (AuthenticRefusals) keeps only the mark.
 SessionStateAccepts(t) == cstate = 4 \/ (cstate = 3 /\ t # "payload")
 
 ClientRecvSessionRule(p, Erase) ==
     /\ p.type \in SessionTypes
     /\ S2C!Deliver(p)
     /\ IF SessionStateAccepts(p.type) /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
-         THEN \/ /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
-                 /\ cKeys' = IF Erase /\ p.type = "disconnect" THEN NoKeys ELSE cKeys
-                 /\ CASE p.type = "keepalive"  -> cIndex' = TRUE /\ cstate' = 4
-                      [] p.type = "payload"    -> UNCHANGED <<cIndex, cstate>>
-                      [] p.type = "ack"        -> UNCHANGED <<cIndex, cstate>>
-                      [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
+         THEN \/ /\ LET reset == Erase /\ p.type = "disconnect"
+                    IN /\ cSeen' = IF reset THEN {} ELSE cSeen \cup {p.id}
+                       /\ cKeys' = IF reset THEN NoKeys ELSE cKeys
+                       /\ cKept' = IF reset THEN "none" ELSE cKept
+                       /\ cLatest' = IF reset THEN "none" ELSE cLatest
+                       /\ cAltLatest' = (cAltLatest /\ ~reset)
+                       /\ CASE p.type = "keepalive"  -> cIndex' = TRUE /\ cstate' = 4
+                            [] p.type = "payload"    -> UNCHANGED <<cIndex, cstate>>
+                            [] p.type = "ack"        -> UNCHANGED <<cIndex, cstate>>
+                            [] p.type = "disconnect" -> cstate' = 0 /\ cIndex' = (cIndex /\ ~reset)
+                 /\ cSinceRecv' = 0
               \/ \* AuthenticRefusals: refused after the replay mark
                  /\ AuthenticRefusals
                  /\ cSeen' = cSeen \cup {p.id}
-                 /\ UNCHANGED <<cSinceRecv, cIndex, cstate, cKeys>>
-         ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cKeys>>
-    /\ UNCHANGED <<cookieVars, cEph>>
+                 /\ UNCHANGED <<cSinceRecv, cIndex, cstate, cKeys, cookieVars>>
+         ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cKeys, cookieVars>>
+    /\ UNCHANGED cEph
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 ClientRecvSession(p) == ClientRecvSessionRule(p, TRUE)
@@ -697,13 +711,15 @@ ServerRecvResponse(p) ==
 
 \* a client session packet that opens for a connected mapping: a keep-alive
 \* refreshes the slot and its ack block acknowledges a keep-alive (the
-\* latch); a disconnect releases the slot and destroys the mapping
+\* latch), and, with ServerAcks, makes an ack due (the ack debt, set by an
+\* accepted eliciting packet); a disconnect releases the slot and destroys
+\* the mapping
 ServerRecvSession(p) ==
     /\ p.type \in {"keepalive", "disconnect"}
     /\ C2S!Deliver(p)
     /\ IF ~ServerMute /\ sMap.live /\ sMap.slot /\ KeysOf(p) = KeysOf(sMap)
          THEN /\ sMap' = IF p.type = "keepalive"
-                        THEN [sMap EXCEPT !.sinceRecv = 0, !.acked = TRUE]
+                        THEN [sMap EXCEPT !.sinceRecv = 0, !.acked = TRUE, !.debt = ServerAcks]
                         ELSE NoMap
          ELSE UNCHANGED sMap
     /\ UNCHANGED <<s2cVars, sLostKinds, cSeen>>
@@ -728,7 +744,7 @@ ServerKeepAlive ==
        IN clock = SendInterval
     /\ \E i \in FreshId :
         /\ ServerSendSession("keepalive", i)
-        /\ sMap' = [sMap EXCEPT !.sinceKA = 0, !.sinceSend = 0]
+        /\ sMap' = [sMap EXCEPT !.sinceKA = 0, !.sinceSend = 0, !.debt = FALSE]
     /\ UNCHANGED <<sOthers, sDiscPending, sDiscKeys, sDiscId>>
     /\ UNCHANGED serverSendUnchanged
 
@@ -741,20 +757,21 @@ ServerPayload ==
     /\ sMap.sinceSend = SendInterval
     /\ \E i \in FreshId :
         /\ ServerSendSession("payload", i)
-        /\ sMap' = [sMap EXCEPT !.sinceSend = 0]
+        /\ sMap' = [sMap EXCEPT !.sinceSend = 0, !.debt = FALSE]
     /\ UNCHANGED <<sOthers, sDiscPending, sDiscKeys, sDiscId>>
     /\ UNCHANGED serverSendUnchanged
 
 \* rocketnet_server_protocol_write_ack_if_due (ServerAcks): the standalone
-\* ack, owed once the server has accepted a client keep-alive on the slot
-\* (the ack debt), paced like a payload (a model-size bound), stamping the
-\* last send of anything (rocketnet_server_write_session_packet)
+\* ack, sent only while an ack is owed (ack_debt, set by an accepted client
+\* keep-alive and cleared by every server session send in
+\* rocketnet_server_write_session_packet), paced like a payload (a
+\* model-size bound), stamping the last send of anything
 ServerAck ==
-    /\ ServerAcks /\ ~ServerMute /\ sMap.live /\ sMap.slot /\ sMap.acked
+    /\ ServerAcks /\ ~ServerMute /\ sMap.live /\ sMap.slot /\ sMap.debt
     /\ sMap.sinceSend = SendInterval
     /\ \E i \in FreshId :
         /\ ServerSendSession("ack", i)
-        /\ sMap' = [sMap EXCEPT !.sinceSend = 0]
+        /\ sMap' = [sMap EXCEPT !.sinceSend = 0, !.debt = FALSE]
     /\ UNCHANGED <<sOthers, sDiscPending, sDiscKeys, sDiscId>>
     /\ UNCHANGED serverSendUnchanged
 

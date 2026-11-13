@@ -48,18 +48,18 @@ models in the module:
 | Action | Who | Code |
 |---|---|---|
 | `AppConnect` | application | `rocketnet_client_protocol_connect`: struct reset, fresh salt and ephemeral, state 1 |
-| `AppDisconnect` | application | `rocketnet_client_protocol_disconnect`: the burst from 3 or 4, state 0, keys and ephemeral zeroed; from a terminal state, 0 alone |
+| `AppDisconnect` | application | `rocketnet_client_protocol_disconnect`: the burst from 3 or 4, state 0 through `rocketnet_client_set_state` (or `rocketnet_client_connection_reset` directly), keys, ephemeral, cookies, client index and replay window zeroed; from a terminal state, 0 and the zeroing alone |
 | `ClientSend` | the scheduled send | `rocketnet_client_protocol_update`: request in 1 and 2, the stored response in 3, keep-alive in 4, at the send interval |
 | `ClientEarlySend` | the advance | `rocketnet_client_protocol_update` with `handshake_early_send`: the new state's packet without waiting for the interval, once, in 2 or 3; any send clears the arm |
 | `ClientDiscCopy` | the client | one copy of the disconnect burst |
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3; with `SmallOrderServer` a challenge carrying a small-order server key is ignored and nothing changes |
 | `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1 through `rocketnet_client_set_state`, whose `rocketnet_client_connection_reset` zeroes keys, ephemeral, both cookies, the client index and the replay window |
-| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0, keys zeroed), and with `ServerAcks` the standalone ack (`rocketnet_client_process_ack`: the receive clock refreshed, no state change); with `AuthenticRefusals` a packet that opens and is replay-marked but then refused (bad ack block, wrong size, keep-alive index past the slot count: the checks after the replay advance in `rocketnet_client_open_session` and `rocketnet_client_validate_keep_alive`) marks its id and changes nothing else |
+| `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0 through `rocketnet_client_set_state`: keys, cookies, client index and replay window zeroed), and with `ServerAcks` the standalone ack (`rocketnet_client_process_ack`: the receive clock refreshed, no state change); with `AuthenticRefusals` a packet that opens and is replay-marked but then refused (bad ack block, wrong size, keep-alive index past the slot count: the checks after the replay advance in `rocketnet_client_open_session` and `rocketnet_client_validate_keep_alive`) marks its id and changes nothing else |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
 | `ServerRecvResponse` | a packet arrives | `rocketnet_server_process_connection_response`: already connected → ignored, the idle clock not refreshed (only a mapping with no slot refreshes it from a response, as in ServerConnection); no slot → the half-open mapping refreshed and denied, mapping kept; else slot assigned and the first keep-alive |
 | `ServerRecvSession` | a packet arrives | the sealed check sequence for a connected mapping: a keep-alive refreshes and its block sets the latch; a disconnect releases slot and mapping |
-| `ServerAck` | the server's ack timer | `rocketnet_server_protocol_write_ack_if_due`: with `ServerAcks`, a standalone ack to a connected client at the send interval (an environment action) |
+| `ServerAck` | the server's ack timer | `rocketnet_server_protocol_write_ack_if_due`: with `ServerAcks`, a standalone ack to a connected client at the send interval while an ack is owed (`ack_debt`: set by an accepted client keep-alive, cleared by every server session send; an environment action) |
 | `ServerKeepAlive` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due`: paced off the keep-alive's own clock until one is acknowledged, off the last send of anything after |
 | `ServerPayload` | the server application | a payload, at most one per send interval |
 | `ServerAppDisconnect`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, slot and mapping gone at once |
@@ -133,7 +133,7 @@ The code's behaviour is `RepeatKeepAlive = TRUE`, `KeepAliveClock = "keepalive"`
   the wrong pair is delivered and discarded. So the teardown at the integrity limit, by
   which an observer sending junk under the session's addresses can end an attempt
   (`sdk/rocketnet_constants.h` `ROCKETNET_INTEGRITY_LIMIT`), is a code transition no
-  module has; it is a roadmap entry (`integrity-limit-model`). The small-order check on
+  module has; a roadmap entry for it is proposed (`integrity-limit-model`). The small-order check on
   the challenge is the `SmallOrderServer` branch of `ClientRecvChallenge`.
 - **Sequence numbers and the replay window.** Server session packets carry an id from a
   pool of `MaxIds` instead of a 64-bit sequence. A fresh send takes an id no copy on the
@@ -590,7 +590,12 @@ the server's denial (its one slot is held), `ClientRecvDeniedKeepsKeys` to -1
 still holding the cookie, then `AppConnectKeepsAttempt` to state 1 at attempt
 2 with `cKept` still `"good"`. Checked against the code by hand: either reset
 alone zeroes `has_cookie` and `return_cookie`, so only a step that skips both,
-as the witness does, carries them into the new attempt.
+as the witness does, carries them into the new attempt. The witness checks
+`FreshAttemptFromFailure` alone: the pre-fix denial from state 2 also leaves
+the ephemeral live at -1, which `EphemeralErasedOutsideHandshake` would
+report first. Its constants (Timeout 0, Deadline 0, so the denial's -1 is
+the only failure state) differ from `RetryFromFailure`'s, which predates
+this revision.
 
 The `clientconnection` group has 40 cases and `tlacheck groups --root . --stale`
 prints `[]`. Every required case reaches its declared result: `RetryFromFailure`

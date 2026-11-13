@@ -85,8 +85,10 @@ AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
 \* sender sent; the structural refusals (a bound token at the used rung, a
 \* claim held elsewhere, a full table, a token the update already refused,
 \* a request for the token its address's half-open mapping holds) are read
-\* off the state in Refuses.  restart is a wrong size or an address already
-\* connected; compares the address flags, the advertised address or the
+\* off the state in Refuses.  restart is a wrong size, an address already
+\* connected, or a request carrying its address's half-open mapping's salt
+\* under another token (the code answers it with the stored challenge too;
+\* the model has no salt); compares the address flags, the advertised address or the
 \* server key; cookie a missing, forged or expired cookie (answered with a
 \* fresh cookie, or withheld); mismatch sealed fields that disagree with the
 \* signed ones; smallorder a small-order client ephemeral key

@@ -494,7 +494,7 @@ Next == /\ \/ (\E a \in Addrs, tok \in Tokens, g \in Gens : Request(a, tok, g) \
            \/ (\E a \in Addrs : Response(a) \/ Disconnect(a))
            \/ OtherJoins \/ OtherLeaves \/ Tick
         /\ UNCHANGED floodVars
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick)
+Spec == Init /\ [][Next]_vars /\ WF_vars(Tick /\ UNCHANGED floodVars)
 SpecFair == Spec
 
 \* The focused claim control keeps both slots and all three identifiers,
