@@ -3,11 +3,12 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A client start_packet can refuse after spending its sequence: it takes
-// the sequence in sdk/rocketnet_client_transport.cpp
-// (rocketnet_client_transport_start_packet) and refuses after it
-// when the payload ring is full or the lease table is full. The
-// server assigns a sequence only when finish accepts the payload and reserves
+// A client start_packet can refuse after spending its sequence: it claims
+// its payload ring slot first, so a full ring refuses before any sequence
+// is taken, then takes the sequence in sdk/rocketnet_client_transport.cpp
+// (rocketnet_client_transport_start_packet) and refuses after it when the
+// lease table is full; an aborted or refused client packet spends its
+// sequence too. The server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
 // proofs/tla/SessionAcks.tla models such a sequence as a burn (BurnOne: a
@@ -107,8 +108,8 @@ static void test_sequence_burn_sender_walk_is_harmless()
         rec_sent( ep, s );
     }
 
-    // burn sequence 6: start_packet spent it, the frame/lease/ring refusal
-    // returned before record_sent, so no record exists
+    // burn sequence 6: start_packet spent it, the lease refusal (or an
+    // abort) returned before record_sent, so no record exists
 
     for ( uint64_t s = 7; s <= 12; s++ )
     {
@@ -240,9 +241,9 @@ REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 // A transport pair on the in-memory loopback transport, stepped from 1000.0 by
 // 10 ms, no socket. The burning side fills its own capacity with real packets
 // and then calls start_packet until it refuses for real (SEND_RING_FULL
-// counts each refusal). Client refusals spend their sequence;
-// the server assigns sequences only at an accepted finish, so its refusals spend
-// none. The control run sends the very same real
+// counts each refusal). Neither side's ring refusal spends a sequence: the
+// client claims its ring slot before it takes one, and the server assigns
+// sequences only at an accepted finish. The control run sends the very same real
 // packets in the very same rounds and never makes the refused calls. Both
 // runs report the measures of sequence_burn_measures_t.
 
@@ -331,7 +332,7 @@ static void sequence_burn_pair_teardown( struct sequence_burn_pair_t * pair )
 struct sequence_burn_measures_t
 {
     int real_sent;                  // real packets the sender finished
-    int refused;                    // start_packet calls refused after the sequence was spent
+    int refused;                    // start_packet calls the full ring refused
     int acked;                      // packet ids the sender's acked batches surfaced
     int delivered;                  // payloads the receiver delivered
     uint64_t refusal_counter;       // SEND_RING_FULL on the sender
@@ -620,6 +621,89 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_ring_full_is_harmless );
 static void test_sequence_burn_client_ring_full_is_harmless() { sequence_burn_compare( BURN_SIDE_CLIENT, "client.ring" ); }
 REGISTER_UNIT_TEST( test_sequence_burn_client_ring_full_is_harmless );
 
+// test_sequence_burn_client_ring_full_spends_no_sequence: the client claims its
+// payload ring slot before it takes a sequence, so a start the full ring
+// refuses (counted SEND_RING_FULL) spends none. A sender held at a full ring
+// would otherwise burn one sequence per refused call and run its sequences
+// ahead of everything it sent, past the send history the acks are matched
+// against. The next accepted start after the refusals takes the sequence
+// right after the last real packet's.
+
+static void test_sequence_burn_client_ring_full_spends_no_sequence()
+{
+    struct sequence_burn_pair_t pair;
+    rocketnet_unit_check( sequence_burn_pair_setup( &pair ) );
+
+    bool connected = false;
+    for ( int i = 0; i < 400 && !connected; i++ )
+    {
+        connected = rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                    rocketnet_server_transport_is_client_connected( pair.server, 0 );
+        if ( !connected )
+        {
+            struct sequence_burn_measures_t ignored;
+            memset( &ignored, 0, sizeof( ignored ) );
+            sequence_burn_round( &pair, BURN_SIDE_CLIENT, false, -1, NULL, &ignored );
+        }
+    }
+    rocketnet_unit_check( connected );
+
+    pair.time += 0.01;
+    sequence_burn_clock = pair.time;
+    rocketnet_server_transport_update( pair.server, pair.time );
+    rocketnet_client_transport_update( pair.client, pair.time );
+
+    const uint64_t refused_before = rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+
+    int sent = 0;
+    uint64_t last_sequence = 0;
+    for ( ;; )
+    {
+        struct rocketnet_packet_context_t context;
+        uint8_t * payload = rocketnet_client_transport_start_packet( pair.client, BURN_SMALL_BYTES, &context );
+        if ( !payload )
+        {
+            break;
+        }
+        last_sequence = context.sequence;
+        memset( payload, 0xC1, BURN_SMALL_BYTES );
+        rocketnet_unit_check( rocketnet_client_transport_finish_packet( pair.client, &context, BURN_SMALL_BYTES ) > 0 );
+        sent++;
+    }
+    rocketnet_unit_check( sent > 0 );
+
+    for ( int i = 1; i < BURN_REFUSALS_PER_ROUND; i++ )
+    {
+        struct rocketnet_packet_context_t context;
+        rocketnet_unit_check( rocketnet_client_transport_start_packet( pair.client, BURN_SMALL_BYTES, &context ) == NULL );
+    }
+    rocketnet_unit_check( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_SEND_RING_FULL] ==
+                          refused_before + BURN_REFUSALS_PER_ROUND );
+
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_client_transport_send_packets( pair.client );
+
+    pair.time += 0.01;
+    sequence_burn_clock = pair.time;
+    rocketnet_server_transport_update( pair.server, pair.time );
+    rocketnet_client_transport_update( pair.client, pair.time );
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * payload = rocketnet_client_transport_start_packet( pair.client, BURN_SMALL_BYTES, &context );
+    rocketnet_unit_check( payload != NULL );
+    if ( payload )
+    {
+        rocketnet_unit_check( context.sequence == last_sequence + 1 );
+        memset( payload, 0xC2, BURN_SMALL_BYTES );
+        rocketnet_unit_check( rocketnet_client_transport_finish_packet( pair.client, &context, BURN_SMALL_BYTES ) > 0 );
+    }
+    rocketnet_client_transport_send_packets( pair.client );
+
+    sequence_burn_pair_teardown( &pair );
+}
+
+REGISTER_UNIT_TEST( test_sequence_burn_client_ring_full_spends_no_sequence );
+
 static void test_sequence_burn_server_finish_populates_sequence()
 {
     struct sequence_burn_pair_t pair;
@@ -761,8 +845,9 @@ REGISTER_UNIT_TEST( test_sequence_burn_server_refused_finish_does_not_count_as_l
 // object's link.start_packet, the one transport call the layer starts frames
 // through, sdk/rocketnet_message_object.h) first claims every free ring
 // slot with a start it aborts, then makes the layer's own call, which the
-// transport refuses for real (SEND_RING_FULL). Client starts spend their
-// sequence before this refusal; server starts spend none until finish.
+// transport refuses for real (SEND_RING_FULL). Each aborted client start
+// spends its sequence and the refused one spends none, since the ring refuses
+// before a sequence is taken; server starts spend none until finish.
 // The layer's write pass then treats the frame as not started
 // (rn_endpoint_packet_failed, sdk/rocketnet_endpoint.cpp) and writes the
 // rest next update. The control run is the same traffic with no seam. Measured

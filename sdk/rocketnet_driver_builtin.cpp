@@ -2096,8 +2096,10 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
 static void portable_io_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (proofs/tla/RNClientRace.tla ReaderStep): the wake's handles, then the
-    // socket's; the memory stays for destroy on the caller's thread
+    // (proofs/tla/RNClientRace.tla ReaderStep), and at the I/O thread's exit
+    // the transport, or every race family still open (ReaderExit): the wake's
+    // handles, then the socket's; the memory stays for destroy on the
+    // caller's thread
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
     rocketnet_platform_wake_close( client->wake );
@@ -2245,8 +2247,9 @@ static bool portable_client_connect( void * transport, const rocketnet_address_t
 static void portable_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (proofs/tla/RNClientRace.tla ReaderStep): the socket's handle; the memory
-    // stays for destroy on the caller's thread
+    // (proofs/tla/RNClientRace.tla ReaderStep), and at the I/O thread's exit
+    // the transport, or every race family still open (ReaderExit): the
+    // socket's handle; the memory stays for destroy on the caller's thread
 
     rocketnet_platform_socket_close( (rocketnet_platform_socket_t *) transport );
 }

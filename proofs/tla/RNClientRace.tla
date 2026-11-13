@@ -9,9 +9,15 @@
    thread, the legacy receive worker, or the caller's own step) reads both
    until it observes the commit with acquire, then closes the losing family's
    operating-system handles (the backend's close: socket, wake, completion
-   port) and reads the kept family only. Nothing is freed then: destroy, on
-   the caller's thread, after stop and join, frees both families' memory and
-   the race block.
+   port) and reads the kept family only. At its exit, after stop, the I/O
+   thread (or the caller's own step) reads what is still queued and closes
+   every family still open (the race's close operation,
+   rocketnet_client_race_close): both while uncommitted, the kept one after
+   the commit. The legacy receive worker closes nothing at its exit, for one
+   family as for two; the model's exit is the I/O thread's. The caller sends, hands off and commits nothing
+   after stop (each entry point returns at stop_requested). Nothing is freed
+   by the reader: destroy, on the caller's thread, after stop and join, frees
+   both families' memory and the race block.
 
    A family's state is its handle (open or closed) and its memory (live or
    freed). Every use of a family by either thread is checked against both:
@@ -36,6 +42,10 @@
                       failures; only the reader's close stores them, so a
                       SEND_FAILED read between the two leaves them out:
                       SendFailedMonotonic
+     "noexitclose"    the reader's exit closes nothing it had not closed at
+                      a step (the race had no close operation, so a family
+                      it kept open stayed open from the exit to destroy):
+                      ExitedIsClosed
 
    The Filling ring of the I/O ring path (rocketnet_client_io_hand_off): a
    hand-off attempt binds the ring's destination to the protocol's server, the
@@ -56,7 +66,7 @@
 EXTENDS Integers, FiniteSets
 CONSTANTS Defect
 ASSUME Defect \subseteq {"readerfrees", "callerusesloser", "freebeforejoin", "readerclosesearly",
-                         "commitkeepsring", "nokeepatcommit"}
+                         "commitkeepsring", "nokeepatcommit", "noexitclose"}
 
 MaxFail == 2
 
@@ -105,7 +115,7 @@ Init ==
 (* rocketnet_client_race_send / send_batch, the caller: both families while
    in flight, the kept one after the commit. *)
 CallerSend ==
-    /\ ~destroyed
+    /\ ~destroyed /\ reader = "running"
     /\ IF committed < 0 THEN Use("caller", Families)
        ELSE IF "callerusesloser" \in Defect THEN Use("caller", Families)
        ELSE Use("caller", {committed})
@@ -117,7 +127,7 @@ CallerSend ==
    attempt binds its destination to the protocol's server, and the ring stays
    with the caller. *)
 CallerHandOffLate ==
-    /\ ~destroyed
+    /\ ~destroyed /\ reader = "running"
     /\ ringTo' = IF ringTo < 0 THEN Server ELSE ringTo
     /\ ringPost' = (ringPost \/ committed >= 0)
     /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
@@ -129,7 +139,7 @@ CallerHandOffLate ==
    after the commit is in it when this attempt commits one after the commit
    or an earlier LATE did. *)
 CallerHandOff ==
-    /\ ~destroyed
+    /\ ~destroyed /\ reader = "running"
     /\ LET to   == IF ringTo < 0 THEN Server ELSE ringTo
            post == ringPost \/ committed >= 0
        IN lost' = (lost \/ (post /\ to # committed))
@@ -141,7 +151,7 @@ CallerHandOff ==
    bound to the losing server (rocketnet_client_io_rebind_held) and keeps the
    losing family's send failures, then the release store. *)
 CallerCommit(f) ==
-    /\ ~destroyed /\ committed < 0
+    /\ ~destroyed /\ reader = "running" /\ committed < 0
     /\ committed' = f
     /\ ringTo' = IF ringTo = 1 - f /\ "commitkeepsring" \notin Defect THEN f ELSE ringTo
     /\ kept' = IF "nokeepatcommit" \in Defect THEN kept ELSE failures[1 - f]
@@ -199,11 +209,28 @@ CallerStop ==
     /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, joined, destroyed, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
+(* rocketnet_client_io_discard_at_stop, the reader's exit: its discard reads
+   through rocketnet_client_race_kept, which closes the losing family on a
+   commit not yet seen, then the race's close operation
+   (rocketnet_client_race_close) closes every family still open. This is the
+   I/O thread's exit; the legacy receive worker runs no exit discard and
+   closes nothing at its exit, for one family as for two, and destroy closes
+   what it left open. *)
 ReaderExit ==
     /\ reader = "stopping"
     /\ reader' = "exited"
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, joined, destroyed, fault>>
-    /\ UNCHANGED <<ringVars, failVars>>
+    /\ seen' = committed
+    /\ IF committed >= 0 THEN Use("reader", {committed}) ELSE Use("reader", Families)
+    /\ IF committed >= 0 /\ ~closed
+       THEN kept' = failures[Loser]
+       ELSE UNCHANGED kept
+    /\ IF "noexitclose" \in Defect
+       THEN /\ closed' = (closed \/ committed >= 0)
+            /\ handle' = IF committed >= 0 THEN [handle EXCEPT ![Loser] = "closed"] ELSE handle
+       ELSE /\ closed' = TRUE
+            /\ handle' = [f \in Families |-> "closed"]
+    /\ UNCHANGED <<committed, memory, frees, joined, destroyed>>
+    /\ UNCHANGED <<ringVars, failures, reported, dipped>>
 
 CallerJoin ==
     /\ reader = "exited" /\ ~joined
@@ -264,8 +291,14 @@ FreedOnlyAfterJoin == \A f \in Families : memory[f] = "freed" => joined
 (* Each family is freed at most once, and a freed family is closed. *)
 FreedOnce == \A f \in Families : Cardinality({r \in frees : r[2] = f}) <= 1
 FreedIsClosed == \A f \in Families : memory[f] = "freed" => handle[f] = "closed"
-(* The reader closes only the losing family, and only after the commit. *)
-ClosedOnlyLoser == \A f \in Families : handle[f] = "closed" /\ ~destroyed => committed >= 0 /\ f = Loser
+(* Before its exit the reader closes only the losing family, and only after
+   the commit. *)
+ClosedOnlyLoser == \A f \in Families : handle[f] = "closed" /\ ~destroyed /\ reader # "exited" => committed >= 0 /\ f = Loser
+(* Once the reader (the I/O thread, or the caller's step) has exited, no
+   family is open: a datagram that arrives
+   after the exit's discard meets a closed port, and none waits unread for
+   destroy to free it (standard/TRANSPORT.md t13.3). *)
+ExitedIsClosed == reader = "exited" => \A f \in Families : handle[f] = "closed"
 (* Once the reader sees the commit, the losing family is closed (it closes
    in the same step that first sees it). *)
 SeenMeansClosed == seen >= 0 /\ ~destroyed => handle[1 - seen] = "closed"
