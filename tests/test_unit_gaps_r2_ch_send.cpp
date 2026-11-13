@@ -183,9 +183,13 @@ static void test_gaps_r2_ch_commit_of_packet_id_zero_records_nothing()
     const uint32_t slot = (uint32_t) ( number % node.region->window );
     const double last_send = node.region->send_numbers[slot].last_send;
 
+    const rocketnet_assert_function_t saved = rn_assert_function;
+    snd_asserts = 0;
+    rocketnet_assert_function( snd_assert_record );
     rn_window_ack_commit_packet( &node.ordered.ack, 0, &number, 1, 1000.0 );
+    rocketnet_assert_function( saved );
 
-    if ( ack->pkt_tail != tail || ack->resend_count != count || node.region->send_numbers[slot].last_send != last_send )
+    if ( ack->pkt_tail != tail|| ack->resend_count != count || node.region->send_numbers[slot].last_send != last_send )
     {
         printf( "a packet committed with id 0 was recorded: sent ring %llu -> %llu, resend count %u -> %u\n", (unsigned long long) tail,
                 (unsigned long long) ack->pkt_tail, count, ack->resend_count );
@@ -193,6 +197,7 @@ static void test_gaps_r2_ch_commit_of_packet_id_zero_records_nothing()
     check( ack->pkt_tail == tail );
     check( ack->resend_count == count );
     check( node.region->send_numbers[slot].last_send == last_send );
+    check( snd_asserts == 0 );
     snd_free( &node );
 }
 
@@ -502,15 +507,12 @@ REGISTER_UNIT_TEST( test_gaps_r2_ch_config_moves_channel_zero_from_behind );
 // CONFIG and the ordered binding's refusals
 // ---------------------------------------------------------------------------
 
+// the channel's live count, as rn_channel_live_count sums it
+
 static uint32_t snd_queued( const snd_node_t * node, uint32_t channel )
 {
-    uint32_t count = 0;
-    for ( uint32_t d = node->region->channel_send[channel].queue_head; d != RN_DESCRIPTOR_NONE && count <= node->region->queue;
-          d = node->region->send_descriptors[d].queue_next )
-    {
-        count++;
-    }
-    return count;
+    const rn_channel_send_t * send = &node->region->channel_send[channel];
+    return (uint32_t) ( send->queued[0] + send->queued[1] + send->queued[2] + send->queued[3] );
 }
 
 // mutation gap: hunt 1/3735 (a second announce's refusal deleted)
@@ -534,6 +536,8 @@ static void test_gaps_r2_ch_config_is_announced_once()
 
 REGISTER_UNIT_TEST( test_gaps_r2_ch_config_is_announced_once );
 
+// MESSAGE_MEMORY_EXHAUSTED is counted once per exhausted connection: an
+// announce on the exhausted region is refused before it tries the store.
 // mutation gap: hunt 1/3751 (the exhausted region's refusal deleted)
 
 static void test_gaps_r2_ch_config_on_an_exhausted_region_is_refused()
@@ -541,15 +545,20 @@ static void test_gaps_r2_ch_config_on_an_exhausted_region_is_refused()
     snd_node_t node;
     snd_init( &node );
     rn_region_exhaust( node.region );
+    const uint64_t exhausted = snd_counter( &node, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+    check( exhausted == 1 );
 
     const bool announced = rn_ordered_announce_config( &node.ordered, &node.config );
-    if ( announced || snd_queued( &node, 0 ) != 0 || node.ordered.config_announced )
+    const uint64_t after = snd_counter( &node, ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED );
+    if ( announced || snd_queued( &node, 0 ) != 0 || node.ordered.config_announced || after != exhausted )
     {
-        printf( "CONFIG was announced on an exhausted region (returned %d, %u queued)\n", announced ? 1 : 0, snd_queued( &node, 0 ) );
+        printf( "CONFIG on an exhausted region tried the send store (returned %d, %u queued, MESSAGE_MEMORY_EXHAUSTED counted %llu times)\n",
+                announced ? 1 : 0, snd_queued( &node, 0 ), (unsigned long long) after );
     }
     check( !announced );
     check( snd_queued( &node, 0 ) == 0 );
     check( !node.ordered.config_announced );
+    check( after == exhausted );
     snd_free( &node );
 }
 
