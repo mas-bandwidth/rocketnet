@@ -255,7 +255,8 @@ hand-written traces:
 ## Where it runs, and what it costs
 
 - **Every commit:** the `tla-trace` job of `ci.yml` builds `tla_trace_all` (the harness
-  and every plant) and runs `--layer all --seeds 1-4 --jobs 8`.
+  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/4` in four parallel shard jobs
+  (a summary job carries the required name "TLA+ trace check (fixed seeds)").
 - **Nightly:** the `trace` job of `tlc.yml` runs 64 seeds that start where the day of
   the year puts them.
 - **Cost:** see "Measured cost" below.

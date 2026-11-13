@@ -28,14 +28,14 @@
 (* MarkNewSessions <- MarkNewSessionsBroken (the walk marks only a nonzero *)
 (* highest_opened, so a reconnect's first commit leaves the old entry) and *)
 (* must fail NewSessionNeverDroppedByOldMark.  The controls set            *)
-(* ForgetFailureBudget <- ForgetFailureBudgetTwo: a kept forget refused    *)
-(* again in the commit that lands the newer mark; the superseded witness   *)
-(* takes ForgetFailureBudgetThree, since the newer session's first commit  *)
+(* ForgetFailureBudget = 2: a kept forget refused again in the commit     *)
+(* that lands the newer mark; the superseded witness                       *)
+(* takes ForgetFailureBudget = 3, since the newer session's first commit   *)
 (* lands a zero mark and its nonzero mark comes a commit later.            *)
 (* MCRNXdpReplayReconnect.cfg is the reconnect control: two addresses,     *)
 (* three sessions, one pending-forget entry.                               *)
 (* MCRNXdpReplayRefusedMark.cfg is the refused-mark control: the kernel    *)
-(* may refuse up to two marks (MarkFailureBudget <- MarkFailureBudgetTwo). *)
+(* may refuse up to two marks (MarkFailureBudget = 2).                     *)
 (* Its reversed witnesses: MCRNXdpReplayBrokenRefusedMarkDropped.cfg sets  *)
 (* KeepRefusedMarks <- KeepRefusedMarksBroken (a refused mark is dropped)  *)
 (* and must fail MarkOwedUntilApplied;                                     *)
@@ -53,7 +53,7 @@
 (* advances on a mark the buffer refused) and must fail                    *)
 (* MarkOwedUntilApplied.                                                   *)
 (* MCRNXdpReplayHeldReply.cfg is the held-reply control: the link holds up *)
-(* to two replies (HeldReplyBudget <- HeldReplyBudgetTwo), a handshake     *)
+(* to two replies (HeldReplyBudget = 2), a handshake                       *)
 (* reply, a session reply or one to an address no frame came from, and     *)
 (* sends each later with no frame in hand.  Its reversed witnesses:        *)
 (* MCRNXdpReplayBrokenAnsweredNotKept.cfg sets KeepAnswered <-             *)
@@ -77,16 +77,11 @@ WalkForgetsUnmarkedBroken == FALSE
 KernelWindowBroken   == W - 1
 KeepFailedForgetsBroken == FALSE
 SupersedeStaleForgetsBroken == FALSE
-ForgetFailureBudgetTwo == 2
-ForgetFailureBudgetThree == 3
 MarkNewSessionsBroken == FALSE
 KeepRefusedMarksBroken == FALSE
 ForgetDropsKeptMarkBroken == FALSE
-MarkFailureBudgetOne == 1
-MarkFailureBudgetTwo == 2
 HoldGreetingUntilMarkedBroken == FALSE
 AdvanceOnQueueRefusalBroken == TRUE
-HeldReplyBudgetTwo == 2
 KeepAnsweredBroken == FALSE
 ForgetLeavesAnsweredBroken == FALSE
 AnswerKeyedByAddressBroken == FALSE

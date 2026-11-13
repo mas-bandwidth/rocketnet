@@ -86,6 +86,7 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 | `overclaim` | the block names every sequence in the window, opened or not | `BurnedNeverNamed`, and with burns off `SurfacedOnlyIfOpened` |
 | `walkskip` | the walk skips the lowest named sequence whose unacknowledged bit is set | `WalkVisitsUnacked` |
 | `staleheld` | the reconcile keeps a lapped slot's held bit | `BitsMatchRing` |
+| `skipdeferred` | the block memo is kept after an apply that deferred an id | `RepeatExact` |
 
 `SurfacedOnce` and `BitsCoverRing` have no reversed witness.
 `MCSessionAcksBrokenLiveness.cfg` is `OpenedSurfacesOrLaps`'s reversed witness: the
@@ -195,6 +196,7 @@ instance that exercises the clear. The two bitmap witnesses use the same instanc
 | `MCSessionAcksWitOverclaimSurfaced.cfg` | `SpecSafety` | the gate instance, `"overclaim"`, burns off | `SurfacedOnlyIfOpened` |
 | `MCSessionAcksWitWalkskip.cfg` | `SpecSafety` | the bits instance, `"walkskip"` | `WalkVisitsUnacked` |
 | `MCSessionAcksWitStaleheld.cfg` | `SpecSafety` | the bits instance, `"staleheld"` | `BitsMatchRing` |
+| `MCSessionAcksWitSkipdeferred.cfg` | `SpecSafety` | the bits instance, `"skipdeferred"`, without `WalkVisitsUnacked` | `RepeatExact` |
 
 Duplication is on only in `MCSessionAcksLiveDup.cfg`: with it on, the gate instance and
 the "none" and "burst" patterns pass more than 3.6 million distinct states without
@@ -228,3 +230,25 @@ holds it.
 clears slot 1 from `unacked` but keeps it in `held`, so `held = {0, 1}` while only slot 0
 holds a sequence in the window. The code's reconcile clears both bits of a slot that does
 not hold its sequence.
+
+## The block memo
+
+process_block remembers the last block it applied in full when that apply
+deferred nothing (`block_memo` in `rocketnet_ack_endpoint_t`); a recorded send clears it.
+The same block again, at the same high-water mark, is `RecvAckRepeat`: the reconcile,
+then no walk. `RepeatExact` holds that the repeat leaves the ring, the batch, the
+surfaced counts and the bits that `RecvAck`'s full apply would, and it passes in every
+safety cfg above. In this model every block names only sequences already sent, so the
+send clear never changes what a repeat would ack: it keeps the code's unknown-sequence
+count exact and covers a block naming an unsent sequence, which the unit test
+`test_ack_block_memo_matches_the_full_apply` drives against
+`rocketnet_ack_endpoint_process_block_full`.
+
+**wit-skipdeferred.** Payloads 1 and 2 are recorded (slots 1 and 0) and both open; the
+block `{1, 2}` arrives: the walk surfaces 2 and defers 1 (`BatchCap` 1), and the
+witness keeps the memo. A `Tick` drains the batch and the same block arrives again:
+the repeat skips it, while the full apply would surface 1, so `RepeatExact` fails.
+`WalkVisitsUnacked` is left out of this cfg because it fires first, on a repeat before
+the `Tick` (the state is still equal there; in the code the skipped walk would miss
+one `batch_full` count). The code keeps the memo only when `batch_full_counter` did
+not move during the apply (`rocketnet_ack_endpoint_process_block`).
