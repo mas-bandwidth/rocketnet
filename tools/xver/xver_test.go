@@ -4,19 +4,48 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
-func passingServer(ends []string, verifies int) []string {
-	lines := []string{"SRV key 00", "SRV started addr=127.0.0.1:1 transport=portable"}
+// The fixture lines below are xver.c's own formats, filled in; the formats
+// they copy are checked against xver.c by TestFixturesAreXverFormats, so a
+// fixture cannot drift from what the harness prints.
+const (
+	fixtureStarted         = "SRV started 127.0.0.1:1 transport=%s max_message_bytes=262144"
+	fixtureVerify          = "SRV verify session=1 ok m0=300/300 m1=300/300 m2=300/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300  stats sent=10 received=10 rtt=0.10 loss=0.000"
+	fixtureVerifyFail      = "SRV FAIL verify session=1 m0=300/300 m1=300/300 m2=299/300 m3=300/300 m4=300/300(last) m5=300/300 m6=300/300 m7=300/300 "
+	fixtureEnd             = "SRV end slot=0 session=1 reason=%s(1) verdict_sent=1 t=1.000"
+	fixtureExit            = "SRV exit fails=0"
+	fixtureClientConnect   = "CLI connected session=1 attempts=1 after=0.010s transport=%s"
+	fixtureClientVerify    = "CLI verify basic ok in 1.00s refused_starts=0 receipts m5=300+0/300 m6=300/300 m7=300/300 rx m0=300/300  stats sent=10 received=10 resent=0 rtt=0.10 loss=0.000"
+	fixtureClientFail      = "CLI FAIL basic verify server_ok=0 client_bad=1 rx m0=300/300 "
+	fixtureClientExit      = "CLI exit fails=0"
+	fixtureServerTransport = "portable"
+)
+
+func fill(format, value string) string {
+	return strings.Replace(format, "%s", value, 1)
+}
+
+func passingServerOn(transport string, ends []string, verifies int) []string {
+	lines := []string{"SRV key 00", fill(fixtureStarted, transport)}
 	for i := 0; i < verifies; i++ {
-		lines = append(lines, "SRV verify slot=0 ok")
+		lines = append(lines, fixtureVerify)
 	}
 	for _, e := range ends {
-		lines = append(lines, "SRV end slot=0 reason="+e+"(1)")
+		lines = append(lines, fill(fixtureEnd, e))
 	}
-	return append(lines, "SRV exit fails=0")
+	return append(lines, fixtureExit)
+}
+
+func passingServer(ends []string, verifies int) []string {
+	return passingServerOn(fixtureServerTransport, ends, verifies)
+}
+
+func passingClient() []string {
+	return []string{fill(fixtureClientConnect, "portable"), fixtureClientVerify, fixtureClientExit}
 }
 
 // pick takes alternative n (or the last) of every expected entry
@@ -27,6 +56,33 @@ func pick(want []string, n int) []string {
 		out = append(out, alternatives[min(n, len(alternatives)-1)])
 	}
 	return out
+}
+
+// the printf format in xver.c that each fixture line above was filled from,
+// up to the first conversion the fixture fills differently
+func TestFixturesAreXverFormats(t *testing.T) {
+	source, err := os.ReadFile("xver.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, format := range []string{
+		`"SRV key "`,
+		`"\nSRV started %s transport=%s max_message_bytes=%d\n"`,
+		`"SRV verify session=%x ok %s stats sent=%llu received=%llu rtt=%.2f loss=%.3f\n"`,
+		`"SRV FAIL verify session=%x %s\n"`,
+		`"SRV end slot=%d session=%x reason=%s(%d) verdict_sent=%d t=%.3f\n"`,
+		`"SRV exit fails=%llu\n"`,
+		`"CLI connected session=%x attempts=%d after=%.3fs transport=%s\n"`,
+		`"CLI verify %s ok in %.2fs refused_starts=%llu receipts m5=%u+%u/%u m6=%u/%u m7=%u/%u rx %s stats sent=%llu received=%llu resent=%llu rtt=%.2f loss=%.3f\n"`,
+		`"CLI FAIL %s verify server_ok=%u client_bad=%u rx %s\n"`,
+		`"CLI exit fails=%llu\n"`,
+		`"CLI ready-to-die\n"`,
+	} {
+		if !strings.Contains(text, format) {
+			t.Errorf("xver.c no longer prints %s: update the grader and these fixtures together", format)
+		}
+	}
 }
 
 func TestSilentClientEndAllowsReliableTimedOutForV10xServersOnly(t *testing.T) {
@@ -51,7 +107,7 @@ func TestGradePassesEveryAllowedName(t *testing.T) {
 		for _, server := range []string{"v1.0.0", "main"} {
 			for n := 0; n < 2; n++ {
 				lines := passingServer(pick(expectedServerEnds(c, server), n), expectedVerifies(c))
-				if reasons := grade(c, server, 0, 0, []string{"CLI done"}, lines); len(reasons) != 0 {
+				if reasons := grade(c, server, fixtureServerTransport, 0, 0, passingClient(), lines); len(reasons) != 0 {
 					t.Errorf("case %s server %s alternative %d: %v", c, server, n, reasons)
 				}
 			}
@@ -59,10 +115,57 @@ func TestGradePassesEveryAllowedName(t *testing.T) {
 	}
 }
 
+func TestGradePassesEveryTransportItWasGranted(t *testing.T) {
+	for _, transport := range []string{"portable", "gso", "io_uring"} {
+		lines := passingServerOn(transport, []string{"CLIENT_DISCONNECTED"}, 1)
+		if reasons := grade("basic", "main", transport, 0, 0, passingClient(), lines); len(reasons) != 0 {
+			t.Errorf("transport %s: %v", transport, reasons)
+		}
+	}
+}
+
+// a pin the build cannot honour falls back to auto with only a warning: the
+// cell must not pass under the label it pinned
+func TestGradeRefusesAnotherServerTransport(t *testing.T) {
+	for _, c := range []struct{ pinned, granted string }{
+		{"io_uring", "gso"},
+		{"io_uring", "portable"},
+		{"gso", "portable"},
+		{"portable", "gso"},
+	} {
+		lines := passingServerOn(c.granted, []string{"CLIENT_DISCONNECTED"}, 1)
+		reasons := grade("basic", "main", c.pinned, 0, 0, passingClient(), lines)
+		if len(reasons) != 1 || !strings.Contains(reasons[0], "server was granted transport ["+c.granted+"]") {
+			t.Errorf("pinned %s granted %s: reasons = %v", c.pinned, c.granted, reasons)
+		}
+	}
+}
+
+func TestGradeRefusesAServerThatNamesNoTransport(t *testing.T) {
+	var lines []string
+	for _, line := range passingServer([]string{"CLIENT_DISCONNECTED"}, 1) {
+		if !strings.HasPrefix(line, "SRV started ") {
+			lines = append(lines, line)
+		}
+	}
+	reasons := grade("basic", "main", "gso", 0, 0, passingClient(), lines)
+	if len(reasons) != 1 || !strings.Contains(reasons[0], "server was granted transport []") {
+		t.Fatalf("reasons = %v", reasons)
+	}
+}
+
+func TestGradeRefusesAClientNotOnPortable(t *testing.T) {
+	client := []string{fill(fixtureClientConnect, "portable"), fill(fixtureClientConnect, "gso"), fixtureClientExit}
+	reasons := grade("basic", "main", "portable", 0, 0, client, passingServer([]string{"CLIENT_DISCONNECTED"}, 1))
+	if len(reasons) != 1 || !strings.Contains(reasons[0], `client was granted transport "gso"`) {
+		t.Fatalf("reasons = %v", reasons)
+	}
+}
+
 func TestGradeRefusesReliableTimedOutFromNewerServer(t *testing.T) {
 	for _, server := range []string{"v1.1.0", "main", "newest"} {
 		lines := passingServer([]string{"RELIABLE_TIMED_OUT", "CLIENT_DISCONNECTED"}, 1)
-		reasons := grade("die", server, 0, 0, nil, lines)
+		reasons := grade("die", server, fixtureServerTransport, 0, 0, passingClient(), lines)
 		if len(reasons) != 1 || !strings.Contains(reasons[0], "server end reasons") {
 			t.Fatalf("server %s: reasons = %v", server, reasons)
 		}
@@ -76,39 +179,44 @@ func TestGradeRefusesOtherEndsFromV10xServer(t *testing.T) {
 		{"RELIABLE_TIMED_OUT", "RELIABLE_TIMED_OUT"},
 	} {
 		lines := passingServer(ends, 1)
-		if reasons := grade("die", "v1.0.0", 0, 0, nil, lines); len(reasons) != 1 {
+		if reasons := grade("die", "v1.0.0", fixtureServerTransport, 0, 0, passingClient(), lines); len(reasons) != 1 {
 			t.Errorf("ends %v: reasons = %v", ends, reasons)
 		}
 	}
 	// lifecycle D is the server's own silence: TIMED_OUT on every version
 	lines := passingServer([]string{"CLIENT_DISCONNECTED", "SERVER_DISCONNECTED", "TIMED_OUT", "RELIABLE_TIMED_OUT", "CLIENT_DISCONNECTED"}, 5)
-	if reasons := grade("lifecycle", "v1.0.0", 0, 0, nil, lines); len(reasons) != 1 {
+	if reasons := grade("lifecycle", "v1.0.0", fixtureServerTransport, 0, 0, passingClient(), lines); len(reasons) != 1 {
 		t.Errorf("lifecycle D: reasons = %v", reasons)
 	}
 }
 
+// the real lines xver.c prints on a failure, each named in the reasons
 func TestGradeNamesEveryFault(t *testing.T) {
-	lines := []string{"SRV key 00", "SRV verify slot=0 FAIL bad payload", "SRV end slot=0 reason=MESSAGE_NOT_RECEIVED(9)", "SRV exit fails=1"}
-	reasons := grade("basic", "main", 1, 1, []string{"CLI recv mode=2 FAIL count"}, lines)
-	want := []string{"client exited 1", "server exited 1", "client: CLI recv", "server: SRV verify", "server end reasons", "SRV exit fails=0"}
+	lines := []string{"SRV key 00", fill(fixtureStarted, fixtureServerTransport), fixtureVerifyFail, fill(fixtureEnd, "MESSAGE_NOT_RECEIVED"), "SRV exit fails=1"}
+	client := []string{fill(fixtureClientConnect, "portable"), fixtureClientFail, "CLI exit fails=1"}
+	reasons := grade("basic", "main", fixtureServerTransport, 1, 1, client, lines)
+	want := []string{"client exited 1", "server exited 1", "client: CLI FAIL basic verify", "server: SRV FAIL verify", "server end reasons", "verified 0 sessions, want 1", "SRV exit fails=0"}
 	joined := strings.Join(reasons, "\n")
 	for _, w := range want {
 		if !strings.Contains(joined, w) {
 			t.Errorf("no reason mentions %q in %v", w, reasons)
 		}
 	}
+	if len(reasons) != len(want) {
+		t.Errorf("%d reasons, want %d: %v", len(reasons), len(want), reasons)
+	}
 }
 
 func TestGradeCountsVerifiedSessions(t *testing.T) {
 	lines := passingServer(expectedServerEnds("lifecycle", "main"), 4)
-	reasons := grade("lifecycle", "main", 0, 0, nil, lines)
+	reasons := grade("lifecycle", "main", fixtureServerTransport, 0, 0, passingClient(), lines)
 	if len(reasons) != 1 || !strings.Contains(reasons[0], "verified 4 sessions, want 5") {
 		t.Fatalf("reasons = %v", reasons)
 	}
 }
 
 func TestServerEndsReadsReasonNames(t *testing.T) {
-	got := serverEnds([]string{"SRV end slot=0 reason=TIMED_OUT(3) after=10s", "CLI end reason=X(1)", "SRV end slot=1 reason=CLIENT_DISCONNECTED(2)"})
+	got := serverEnds([]string{fill(fixtureEnd, "TIMED_OUT"), "CLI end reason=X(1)", fill(fixtureEnd, "CLIENT_DISCONNECTED")})
 	if strings.Join(got, ",") != "TIMED_OUT,CLIENT_DISCONNECTED" {
 		t.Fatalf("got %v", got)
 	}

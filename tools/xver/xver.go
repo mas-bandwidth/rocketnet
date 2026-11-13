@@ -16,6 +16,9 @@
 // always runs portable.
 //
 // The cases are in xver.c's header. A run passes only when both ends exit 0,
+// the server says (SRV started) it was granted the transport the run pinned
+// and the client says portable on every connect (a pin the build cannot
+// honour falls back to the library's auto order with only a warning),
 // neither prints a line holding " FAIL ", the server verified every session
 // the case has, and the server's end reasons are exactly the case's list
 // (expectedServerEnds). Every failure prints one line
@@ -156,9 +159,44 @@ func countPrefix(lines []string, prefix string) int {
 	return n
 }
 
-// grade returns why a run did not pass, or nothing when it passed.
-func grade(caseName, serverLabel string, clientExit, serverExit int, clientLines, serverLines []string) []string {
+// fieldValue returns the value of the first "<name>=<value>" field of line,
+// and whether there was one.
+func fieldValue(line, name string) (string, bool) {
+	for _, field := range strings.Fields(line) {
+		if value, ok := strings.CutPrefix(field, name+"="); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+// grantedTransports returns the transport= value of every line that starts
+// with prefix ("" for such a line without one). The library falls back to its
+// own auto order, with only a warning, when the pinned transport is not
+// available, so the pin is checked against what each end says it was granted.
+func grantedTransports(lines []string, prefix string) []string {
+	var out []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, prefix) {
+			value, _ := fieldValue(line, "transport")
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+// grade returns why a run did not pass, or nothing when it passed. transport
+// is the server transport the run pinned; the client always pins portable.
+func grade(caseName, serverLabel, transport string, clientExit, serverExit int, clientLines, serverLines []string) []string {
 	var reasons []string
+	if got := grantedTransports(serverLines, "SRV started "); len(got) != 1 || got[0] != transport {
+		reasons = append(reasons, fmt.Sprintf("server was granted transport %v (SRV started), want [%s]", got, transport))
+	}
+	for _, got := range grantedTransports(clientLines, "CLI connected ") {
+		if got != "portable" {
+			reasons = append(reasons, fmt.Sprintf("client was granted transport %q (CLI connected), want portable", got))
+		}
+	}
 	if clientExit != 0 {
 		reasons = append(reasons, fmt.Sprintf("client exited %d", clientExit))
 	}
@@ -394,7 +432,7 @@ func runOnce(bins map[string]string, p pairing, count int, dir string) ([]string
 	if ctx.Err() != nil {
 		reasons = append(reasons, "the run passed its deadline")
 	}
-	return append(reasons, grade(p.caseName, p.server, clientExit, server.exit, clientLines, server.output.all())...), nil
+	return append(reasons, grade(p.caseName, p.server, p.transport, clientExit, server.exit, clientLines, server.output.all())...), nil
 }
 
 func runPairings(bins map[string]string, list []pairing, count, parallel int, out string) bool {
