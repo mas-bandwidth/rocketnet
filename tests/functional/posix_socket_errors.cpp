@@ -3391,6 +3391,150 @@ static void posix_xdp_print( const char * what, const struct posix_xdp_expect_t 
     fflush( stdout );
 }
 
+static void posix_xdp_add( struct posix_xdp_expect_t * to, const struct posix_xdp_expect_t * adds )
+{
+    to->too_small += adds->too_small;
+    to->too_large += adds->too_large;
+    to->wrong_epoch += adds->wrong_epoch;
+    to->wrong_filter += adds->wrong_filter;
+    to->invalid_type += adds->invalid_type;
+    to->fragment += adds->fragment;
+    to->first_fragment += adds->first_fragment;
+}
+
+// from -= takes; every field of takes is at most the same field of from
+
+static void posix_xdp_sub( struct posix_xdp_expect_t * from, const struct posix_xdp_expect_t * takes )
+{
+    from->too_small -= takes->too_small;
+    from->too_large -= takes->too_large;
+    from->wrong_epoch -= takes->wrong_epoch;
+    from->wrong_filter -= takes->wrong_filter;
+    from->invalid_type -= takes->invalid_type;
+    from->fragment -= takes->fragment;
+    from->first_fragment -= takes->first_fragment;
+}
+
+static bool posix_xdp_fits( const struct posix_xdp_expect_t * a, const struct posix_xdp_expect_t * within )
+{
+    return a->too_small <= within->too_small && a->too_large <= within->too_large && a->wrong_epoch <= within->wrong_epoch &&
+           a->wrong_filter <= within->wrong_filter && a->invalid_type <= within->invalid_type && a->fragment <= within->fragment &&
+           a->first_fragment <= within->first_fragment;
+}
+
+static bool posix_xdp_over( const struct posix_xdp_expect_t * now, const struct posix_xdp_expect_t * want )
+{
+    return !posix_xdp_fits( now, want );
+}
+
+static uint64_t posix_xdp_total( const struct posix_xdp_expect_t * a )
+{
+    return a->too_small + a->too_large + a->wrong_epoch + a->wrong_filter + a->invalid_type + a->fragment + a->first_fragment;
+}
+
+// the far veth's transmit drops, read in the far namespace: a frame the far
+// end cannot hand to the near end's ring is dropped in its transmit and
+// counted in its tx_dropped, before the XDP program sees it. Measured in the
+// virtme-ng guest (kernel 7.0, 2026-11-12): bursts of up to 20000 datagrams,
+// with a 32 MiB send buffer and with threaded NAPI on the other CPU, lost
+// none (the sender is held back instead), so this counter's exactness could
+// not be measured: it has never moved. A loss it does not count fails the
+// case as before; it counts the client's frames too, so it can over-permit a
+// resend, and the class-by-class fill and the over-count check still hold.
+
+static uint64_t posix_xdp_veth_drops()
+{
+    FILE * file = popen( "ip netns exec " POSIX_XDP_NETNS " cat /sys/class/net/" POSIX_XDP_FAR "/statistics/tx_dropped", "r" );
+    posix_check( file != NULL );
+
+    unsigned long long value = 0;
+    const bool read = fscanf( file, "%llu", &value ) == 1;
+
+    pclose( file );
+    posix_check( read );
+
+    return (uint64_t) value;
+}
+
+// PLANT begin
+// starve the near veth's NAPI: threaded NAPI, its kthread pinned to cpu 1,
+// and a SCHED_FIFO spinner on cpu 1 for `seconds`; the caller sends from cpu 0
+#include <pthread.h>
+#include <dirent.h>
+static double lossless_starve_until = 0.0;
+static void * lossless_spin( void * )
+{
+    cpu_set_t one;
+    CPU_ZERO( &one );
+    CPU_SET( 1, &one );
+    sched_setaffinity( 0, sizeof( one ), &one );
+    struct sched_param param;
+    param.sched_priority = 99;
+    const int fifo = sched_setscheduler( 0, SCHED_FIFO, &param );
+    printf( "PLANT starve: spinner fifo %d\n", fifo );
+    fflush( stdout );
+    while ( rocketnet_platform_time() < lossless_starve_until )
+    {
+    }
+    return NULL;
+}
+static void lossless_starve( double seconds )
+{
+    if ( system( "echo 1 > /sys/class/net/" POSIX_XDP_NEAR "/threaded" ) != 0 )
+    {
+        printf( "PLANT starve: threaded napi refused\n" );
+    }
+    int pinned = 0;
+    DIR * proc = opendir( "/proc" );
+    struct dirent * entry;
+    while ( proc && ( entry = readdir( proc ) ) != NULL )
+    {
+        char path[300];
+        char comm[64] = "";
+        snprintf( path, sizeof( path ), "/proc/%s/comm", entry->d_name );
+        FILE * f = fopen( path, "r" );
+        if ( !f )
+        {
+            continue;
+        }
+        if ( fgets( comm, sizeof( comm ), f ) && strncmp( comm, "napi/" POSIX_XDP_NEAR, strlen( "napi/" POSIX_XDP_NEAR ) ) == 0 )
+        {
+            cpu_set_t one;
+            CPU_ZERO( &one );
+            CPU_SET( 1, &one );
+            if ( sched_setaffinity( atoi( entry->d_name ), sizeof( one ), &one ) == 0 )
+            {
+                pinned++;
+            }
+        }
+        fclose( f );
+    }
+    if ( proc )
+    {
+        closedir( proc );
+    }
+    cpu_set_t zero;
+    CPU_ZERO( &zero );
+    CPU_SET( 0, &zero );
+    sched_setaffinity( 0, sizeof( zero ), &zero );
+    lossless_starve_until = rocketnet_platform_time() + seconds;
+    pthread_t spinner;
+    pthread_create( &spinner, NULL, lossless_spin, NULL );
+    pthread_detach( spinner );
+    rocketnet_platform_sleep( 0.01 );
+    printf( "PLANT starve: %d napi threads pinned to cpu 1, starving %.2f s\n", pinned, seconds );
+    fflush( stdout );
+}
+static void lossless_unpin()
+{
+    cpu_set_t all;
+    CPU_ZERO( &all );
+    CPU_SET( 0, &all );
+    CPU_SET( 1, &all );
+    sched_setaffinity( 0, sizeof( all ), &all );
+}
+// PLANT end
+
 // the kernel filter's verdict on one whole datagram, in the program's order
 
 static void posix_xdp_classify( const uint8_t * data, int bytes, struct posix_xdp_expect_t * expect )
@@ -3623,25 +3767,328 @@ static void posix_xdp_weather( int ipv6 )
     int valid_seen = 0;
     uint64_t frag_creates = 0;
     uint64_t other_frag_creates = 0;
-    uint64_t fragments_counted = 0;
     static uint8_t other_sent[POSIX_XDP_OTHER_BYTES];
     static uint8_t other_received[POSIX_XDP_OTHER_BYTES + 1];
     int other_received_bytes = -1;
+    bool other_in_flight = false;
 
-    for ( int round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    // The veth does not promise delivery either: a frame the far end cannot
+    // hand to the near end's ring is dropped before the XDP program sees it,
+    // and the counts here are exact, so a loss cannot be waited out. The
+    // weather form (posix_weather_cell): the storm goes in chunks of
+    // POSIX_WEATHER_CHUNK, each kept until its datagrams are counted; what a
+    // chunk is still short of after POSIX_WEATHER_CHUNK_WAIT seconds is sent
+    // again from the chunk's own datagrams, class by class, at most
+    // POSIX_WEATHER_RESENDS times, each resend printed, and the valid payload
+    // the same way. Here the XDP program is the library's, so a resend must
+    // not hide a count the library lost: it is permitted only when the far
+    // veth's own transmit-drop counter (posix_xdp_veth_drops) rose by at least
+    // the frames missing since the case began, less what earlier resends used.
+    // A count above what was sent fails by name, and a deficit that is not
+    // whole datagrams of the chunk (a lost fragment of a fragmented datagram)
+    // fails by name too.
+
+    static uint8_t chunk_data[POSIX_WEATHER_CHUNK][65507];
+    int chunk_bytes[POSIX_WEATHER_CHUNK];
+    const struct sockaddr_storage * chunk_to[POSIX_WEATHER_CHUNK];
+    bool chunk_fragmented[POSIX_WEATHER_CHUNK];
+    struct posix_xdp_expect_t chunk_class[POSIX_WEATHER_CHUNK];
+    int chunk_count = 0;
+    int resends = 0;
+    int round = 0;
+    const uint64_t veth_drops_start = posix_xdp_veth_drops();
+    uint64_t veth_drops_used = 0;
+    // PLANT begin
+    int plant_calls = 0;
+    const int plant_kind = getenv( "LOSSLESS_PLANT" ) ? atoi( getenv( "LOSSLESS_PLANT" ) ) : 0;
+    struct sockaddr_storage to_filler = to;
+    if ( ipv6 )
     {
+        ( (struct sockaddr_in6 *) &to_filler )->sin6_port = htons( POSIX_XDP_PORT + 5 );
+    }
+    else
+    {
+        ( (struct sockaddr_in *) &to_filler )->sin_port = htons( POSIX_XDP_PORT + 5 );
+    }
+    // PLANT end
+
+    // one update; every valid payload that arrived is checked and counted, and
+    // the other port's socket is read once its datagram is in flight
+
+    auto pump = [&]() {
+        posix_xdp_update( server, client );
+
+        const int num_payloads = rocketnet_server_transport_num_payloads( server );
+        for ( int i = 0; i < num_payloads; i++ )
         {
-            struct rocketnet_packet_context_t context;
-            uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
-            posix_check( frame != NULL );
-            posix_valid_payload( valid_sent, frame + context.payload_index );
-            posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-            rocketnet_client_transport_send_packets( client );
-            valid_sent++;
+            int payload_client = -1;
+            int payload_bytes = 0;
+            uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client, &payload_bytes );
+            posix_check( payload_client == client_index );
+            posix_check( valid_seen < valid_sent );
+            posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
+            valid_seen++;
         }
+
+        if ( other_in_flight && other_received_bytes < 0 )
+        {
+            const ssize_t got = recv( other_receiver, other_received, sizeof( other_received ), 0 );
+            if ( got >= 0 )
+            {
+                other_received_bytes = (int) got;
+            }
+        }
+    };
+
+    auto send_valid = [&]( int index ) {
+        struct rocketnet_packet_context_t context;
+        uint8_t * frame = rocketnet_client_transport_start_packet( client, POSIX_WEATHER_VALID_BYTES, &context );
+        posix_check( frame != NULL );
+        posix_valid_payload( index, frame + context.payload_index );
+        posix_check( rocketnet_client_transport_finish_packet( client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+        rocketnet_client_transport_send_packets( client );
+    };
+
+    auto send_kept = [&]( int i ) {
+        // a datagram above the veth MTU leaves with dont-fragment lifted, for
+        // that send only
+        if ( chunk_fragmented[i] )
+        {
+            posix_set_dont_fragment( sender, ipv6, 0 );
+        }
+        posix_send_datagram( sender, chunk_to[i], to_bytes, chunk_data[i], chunk_bytes[i], NULL );
+        if ( chunk_fragmented[i] )
+        {
+            posix_set_dont_fragment( sender, ipv6, 1 );
+        }
+    };
+
+    // send a datagram and keep it in the chunk; what it adds to the kernel
+    // filter's counters goes into expect
+
+    auto send_and_keep = [&]( const uint8_t * data, int bytes, const struct sockaddr_storage * where, bool fragmented,
+                              const struct posix_xdp_expect_t * adds ) {
+        posix_check( chunk_count < POSIX_WEATHER_CHUNK );
+        const int i = chunk_count++;
+        memcpy( chunk_data[i], data, (size_t) bytes );
+        chunk_bytes[i] = bytes;
+        chunk_to[i] = where;
+        chunk_fragmented[i] = fragmented;
+        chunk_class[i] = *adds;
+        // PLANT begin
+        plant_calls++;
+        if ( plant_calls == 40 && plant_kind == 7 )
+        {
+            // a real kernel drop the veth does not count: a qdisc that drops
+            // everything, on the far end, for this one datagram
+            posix_xdp_run( "ip netns exec " POSIX_XDP_NETNS " tc qdisc add dev " POSIX_XDP_FAR " root netem loss 100%" );
+            send_kept( i );
+            posix_xdp_run( "ip netns exec " POSIX_XDP_NETNS " tc qdisc del dev " POSIX_XDP_FAR " root" );
+            printf( "PLANT xdp: kept datagram %d sent through a netem loss 100%% qdisc\n", i );
+            posix_xdp_add( &expect, adds );
+            return;
+        }
+        if ( plant_calls == 40 && plant_kind == 8 )
+        {
+            // a real veth drop: the near NAPI starved, its ring filled by
+            // datagrams to a port nobody serves, then this datagram
+            lossless_starve( 0.2 );
+            uint8_t filler[1] = { 0x40 };
+            for ( int k = 0; k < 600; k++ )
+            {
+                sendto( sender, filler, 1, 0, (const struct sockaddr *) &to_filler, to_bytes );
+            }
+            send_kept( i );
+            lossless_unpin();
+            printf( "PLANT xdp: kept datagram %d sent behind 600 filler datagrams into a starved ring\n", i );
+            posix_xdp_add( &expect, adds );
+            return;
+        }
+        // PLANT end
+        send_kept( i );
+        posix_xdp_add( &expect, adds );
+    };
+
+    // wait until the counters reach expect (and, with all_valid, every valid
+    // payload has arrived; and the other port's datagram, once sent); resend
+    // what is missing when the far veth counted its loss, bounded; then forget
+    // the chunk
+
+    auto settle = [&]( bool all_valid ) {
+        for ( int attempt = 0;; attempt++ )
+        {
+            const double deadline = rocketnet_platform_time() + POSIX_WEATHER_CHUNK_WAIT;
+            struct posix_xdp_expect_t now;
+            for ( ;; )
+            {
+                pump();
+                posix_xdp_read( server, &now );
+
+                if ( posix_xdp_over( &now, &expect ) )
+                {
+                    char what[96];
+                    snprintf( what, sizeof( what ), "%s: round %d counted more than was sent", case_name, round );
+                    posix_xdp_print( what, &now, &expect );
+                    posix_check( !posix_xdp_over( &now, &expect ) );
+                }
+
+                if ( posix_xdp_equal( &now, &expect ) && ( !all_valid || valid_seen == valid_sent ) && ( !other_in_flight || other_received_bytes >= 0 ) )
+                {
+                    chunk_count = 0;
+                    return;
+                }
+
+                if ( rocketnet_platform_time() >= deadline )
+                {
+                    break;
+                }
+
+                rocketnet_platform_sleep( 0.001 );
+            }
+
+            char what[128];
+            snprintf( what, sizeof( what ), "%s: round %d still short (valid %d/%d, other port %d bytes)", case_name, round, valid_seen, valid_sent,
+                      other_received_bytes );
+            posix_xdp_print( what, &now, &expect );
+
+            // the frames missing, and the far veth's word on them
+
+            struct posix_xdp_expect_t deficit = expect;
+            posix_xdp_sub( &deficit, &now );
+            const int valid_missing = all_valid ? valid_sent - valid_seen : 0;
+            const uint64_t missing = posix_xdp_total( &deficit ) + (uint64_t) valid_missing;
+            if ( missing == 0 )
+            {
+                // every frame reached the filter and was counted: what is
+                // missing is the other port's datagram, lost after the filter
+                // passed its fragments (the near stack's reassembly), which no
+                // resend from here can fill without counting its fragments twice
+                printf( "%s: round %d: every frame was counted at the filter, but the other port's socket has not read its datagram: lost after the filter, in the near stack's reassembly, not on the veth\n",
+                        case_name, round );
+                fflush( stdout );
+            }
+            posix_check( missing > 0 );
+
+            const uint64_t veth_now = posix_xdp_veth_drops();
+            const uint64_t drops = veth_now >= veth_drops_start ? veth_now - veth_drops_start : 0;
+            const uint64_t unused = drops >= veth_drops_used ? drops - veth_drops_used : 0;
+            if ( unused < missing )
+            {
+                printf( "%s: round %d: %llu frames missing at the deadline, and the far veth counted %llu transmit drops since the case began (%llu used by earlier resends): the loss is not the veth's\n",
+                        case_name, round, (unsigned long long) missing, (unsigned long long) drops, (unsigned long long) veth_drops_used );
+                fflush( stdout );
+            }
+            posix_check( unused >= missing );
+
+            if ( attempt >= POSIX_WEATHER_RESENDS )
+            {
+                printf( "%s: round %d: %llu frames still missing after %d resends (far veth transmit drops %llu since the case began)\n", case_name, round,
+                        (unsigned long long) missing, POSIX_WEATHER_RESENDS, (unsigned long long) drops );
+                fflush( stdout );
+            }
+            posix_check( attempt < POSIX_WEATHER_RESENDS );
+            veth_drops_used += missing;
+            resends++;
+
+            // the deficit, class by class, filled from the chunk's own
+            // datagrams: one is sent again only when everything it adds fits
+            // what is still missing
+
+            int resent = 0;
+            for ( int i = chunk_count - 1; i >= 0; i-- )
+            {
+                const struct posix_xdp_expect_t * c = &chunk_class[i];
+                if ( posix_xdp_total( c ) > 0 && posix_xdp_fits( c, &deficit ) )
+                {
+                    send_kept( i );
+                    posix_xdp_sub( &deficit, c );
+                    resent++;
+                }
+            }
+
+            if ( posix_xdp_total( &deficit ) != 0 )
+            {
+                struct posix_xdp_expect_t nothing;
+                memset( &nothing, 0, sizeof( nothing ) );
+                posix_xdp_print( "the deficit left (left/0) is not whole datagrams of the chunk", &deficit, &nothing );
+            }
+            posix_check( posix_xdp_total( &deficit ) == 0 );
+
+            int valid_resent = 0;
+            if ( all_valid )
+            {
+                for ( int index = valid_seen; index < valid_sent; index++ )
+                {
+                    send_valid( index );
+                    valid_resent++;
+                }
+            }
+
+            printf( "%s: round %d resend %d of %d: %llu frames missing, the far veth counted %llu transmit drops: %d storm datagrams and %d valid payloads sent again\n",
+                    case_name, round, attempt + 1, POSIX_WEATHER_RESENDS, (unsigned long long) missing, (unsigned long long) drops, resent, valid_resent );
+            fflush( stdout );
+        }
+    };
+
+
+    for ( round = 0; round < POSIX_WEATHER_ROUNDS; round++ )
+    {
+        // the valid traffic for this round leaves first, through the
+        // transport, so its datagram is in flight while the weather lands
+
+        send_valid( valid_sent );
+        valid_sent++;
 
         if ( round == 0 )
         {
+            // PLANT begin
+            if ( getenv( "LOSSLESS_XDP_STARVE" ) )
+            {
+                auto read_number = []( const char * command ) -> unsigned long long {
+                    FILE * f = popen( command, "r" );
+                    unsigned long long v = 0;
+                    if ( f )
+                    {
+                        if ( fscanf( f, "%llu", &v ) != 1 )
+                        {
+                            v = 0;
+                        }
+                        pclose( f );
+                    }
+                    return v;
+                };
+                const char * far_tx = "ip netns exec " POSIX_XDP_NETNS " cat /sys/class/net/" POSIX_XDP_FAR "/statistics/tx_dropped";
+                const int n = atoi( getenv( "LOSSLESS_XDP_STARVE" ) );
+                struct posix_xdp_expect_t before;
+                posix_xdp_read( server, &before );
+                const unsigned long long far0 = read_number( far_tx );
+                lossless_starve( 0.2 );
+                buffer[0] = 0x40;
+                int send_errors = 0;
+                for ( int k = 0; k < n; k++ )
+                {
+                    if ( sendto( sender, buffer, 1, 0, (const struct sockaddr *) &to, to_bytes ) != 1 )
+                    {
+                        send_errors++;
+                    }
+                }
+                lossless_unpin();
+                const double until = rocketnet_platform_time() + 2.0;
+                while ( rocketnet_platform_time() < until )
+                {
+                    pump();
+                    rocketnet_platform_sleep( 0.001 );
+                }
+                struct posix_xdp_expect_t after;
+                posix_xdp_read( server, &after );
+                const unsigned long long counted = after.too_small - before.too_small;
+                printf( "PLANT xdp starve: sent %d (send errors %d), filter counted %llu, lost %llu; far veth tx_dropped +%llu\n", n, send_errors, counted,
+                        (unsigned long long) n - counted, read_number( far_tx ) - far0 );
+                fflush( stdout );
+                expect.too_small += counted;
+            }
+            // PLANT end
+
             // the oversize datagram to the server's port: its first
             // fragment drops counted DROPPED_FIRST_FRAGMENT, the other N-1
             // pass counted PASSED_FRAGMENT, and nothing reaches the server
@@ -3651,13 +4098,14 @@ static void posix_xdp_weather( int ipv6 )
                 buffer[i] = (uint8_t) ( 0x11 + i );
             }
 
-            const uint64_t creates_before = posix_xdp_frag_creates( ipv6 );
+            struct posix_xdp_expect_t adds;
+            memset( &adds, 0, sizeof( adds ) );
+            adds.first_fragment = 1;
+            adds.fragment = expect_fragments - 1;
 
-            posix_set_dont_fragment( sender, ipv6, 0 );
-            posix_send_datagram( sender, &to, to_bytes, buffer, oversize, NULL );
+            const uint64_t creates_before = posix_xdp_frag_creates( ipv6 );
+            send_and_keep( buffer, oversize, &to, true, &adds );
             frag_creates = posix_xdp_frag_creates( ipv6 ) - creates_before;
-            expect.first_fragment += 1;
-            expect.fragment += expect_fragments - 1;
 
             // a fragmented datagram to another port: every fragment passes
             // counted PASSED_FRAGMENT, none is dropped, and the kernel
@@ -3668,27 +4116,38 @@ static void posix_xdp_weather( int ipv6 )
                 other_sent[i] = (uint8_t) ( 0xa5 ^ ( i * 7 ) ^ ( i >> 8 ) );
             }
 
+            memset( &adds, 0, sizeof( adds ) );
+            adds.fragment = expect_other_fragments;
+
             const uint64_t other_creates_before = posix_xdp_frag_creates( ipv6 );
-
-            posix_send_datagram( sender, &to_other, to_bytes, other_sent, POSIX_XDP_OTHER_BYTES, NULL );
+            send_and_keep( other_sent, POSIX_XDP_OTHER_BYTES, &to_other, true, &adds );
             other_frag_creates = posix_xdp_frag_creates( ipv6 ) - other_creates_before;
-            posix_set_dont_fragment( sender, ipv6, 1 );
-            expect.fragment += expect_other_fragments;
+            other_in_flight = true;
 
+            memset( &adds, 0, sizeof( adds ) );
+            adds.too_small = 1;
             buffer[0] = 0x40;
-            posix_send_datagram( sender, &to, to_bytes, buffer, 1, NULL );
-            expect.too_small++;
-            posix_send_datagram( sender, &to, to_bytes, buffer, ROCKETNET_PREFILTER_BYTES - 1, NULL );
-            expect.too_small++;
+            send_and_keep( buffer, 1, &to, false, &adds );
+            send_and_keep( buffer, ROCKETNET_PREFILTER_BYTES - 1, &to, false, &adds );
+            settle( false );
         }
+
+        // the seeded storm, a zero-length datagram between every few
 
         const int garbage_this_round = POSIX_WEATHER_GARBAGE / POSIX_WEATHER_ROUNDS;
         for ( int g = 0; g < garbage_this_round; g++ )
         {
             if ( g % ( garbage_this_round / POSIX_WEATHER_ZEROS ) == 0 )
             {
-                posix_send_datagram( sender, &to, to_bytes, buffer, 0, NULL );
-                expect.too_small++;
+                if ( chunk_count == POSIX_WEATHER_CHUNK )
+                {
+                    settle( false );
+                }
+
+                struct posix_xdp_expect_t adds;
+                memset( &adds, 0, sizeof( adds ) );
+                adds.too_small = 1;
+                send_and_keep( buffer, 0, &to, false, &adds );
             }
 
             const int bytes = (int) ( posix_next_random( &random_state ) % (uint64_t) max_whole ) + 1;
@@ -3697,64 +4156,28 @@ static void posix_xdp_weather( int ipv6 )
                 buffer[i] = (uint8_t) posix_next_random( &random_state );
             }
 
-            posix_send_datagram( sender, &to, to_bytes, buffer, bytes, NULL );
-            posix_xdp_classify( buffer, bytes, &expect );
+            if ( chunk_count == POSIX_WEATHER_CHUNK )
+            {
+                settle( false );
+            }
+
+            struct posix_xdp_expect_t adds;
+            memset( &adds, 0, sizeof( adds ) );
+            posix_xdp_classify( buffer, bytes, &adds );
+            send_and_keep( buffer, bytes, &to, false, &adds );
             garbage_sent++;
         }
 
-        const double deadline = rocketnet_platform_time() + 5.0;
-
-        for ( ;; )
-        {
-            posix_xdp_update( server, client );
-
-            const int num_payloads = rocketnet_server_transport_num_payloads( server );
-            for ( int i = 0; i < num_payloads; i++ )
-            {
-                int payload_client = -1;
-                int payload_bytes = 0;
-                uint8_t * payload = rocketnet_server_transport_payload( server, i, &payload_client, &payload_bytes );
-                posix_check( payload_client == client_index );
-                posix_check( valid_seen < valid_sent );
-                posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
-                valid_seen++;
-            }
-
-            struct posix_xdp_expect_t now;
-            posix_xdp_read( server, &now );
-
-            if ( round == 0 && fragments_counted == 0 )
-            {
-                fragments_counted = now.fragment - start.fragment;
-            }
-
-            if ( round == 0 && other_received_bytes < 0 )
-            {
-                const ssize_t got = recv( other_receiver, other_received, sizeof( other_received ), 0 );
-                if ( got >= 0 )
-                {
-                    other_received_bytes = (int) got;
-                }
-            }
-
-            if ( posix_xdp_equal( &now, &expect ) && valid_seen == valid_sent && ( round != 0 || other_received_bytes >= 0 ) )
-            {
-                break;
-            }
-
-            if ( rocketnet_platform_time() >= deadline )
-            {
-                char what[64];
-                snprintf( what, sizeof( what ), "round %d still short (valid %d/%d, other port %d bytes)", round, valid_seen, valid_sent, other_received_bytes );
-                posix_xdp_print( what, &now, &expect );
-                posix_check( rocketnet_platform_time() < deadline );
-            }
-
-            rocketnet_platform_sleep( 0.001 );
-        }
+        settle( true );
 
         posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         posix_check( rocketnet_server_transport_num_connected_clients( server ) == 1 );
+    }
+
+    if ( resends > 0 )
+    {
+        printf( "  %d resends: the far veth dropped frames this run\n", resends );
+        fflush( stdout );
     }
 
     // a few quiet updates: nothing more moves, nothing more arrives
@@ -3855,6 +4278,35 @@ static void posix_xdp_weather( int ipv6 )
         if ( xdp_send_failed != 1 )
         {
             printf( "%s: a refused xdp send moved SEND_FAILED by %llu, want 1\n", case_name, (unsigned long long) xdp_send_failed );
+            // PLANT begin
+            {
+                const struct rocketnet_counters_t * all = rocketnet_server_transport_counters( server );
+                printf( "DIAG counters nonzero:" );
+                for ( int k = 0; k < ROCKETNET_NUM_COUNTERS; k++ )
+                {
+                    if ( all->values[k] )
+                    {
+                        printf( " %d=%llu", k, (unsigned long long) all->values[k] );
+                    }
+                }
+                printf( "\n" );
+                fflush( stdout );
+                if ( system( "echo DIAG near; ip -s link show " POSIX_XDP_NEAR "; echo DIAG far; ip netns exec " POSIX_XDP_NETNS " ip -s link show " POSIX_XDP_FAR
+                             "; echo DIAG far udp; ip netns exec " POSIX_XDP_NETNS " nstat -az UdpSndbufErrors Udp6SndbufErrors; echo DIAG xsk; ss --xdp -e -m 2>&1 | head -20" ) != 0 )
+                {
+                    // informative only
+                }
+                rocketnet_server_socket_send_packets( xdp );
+                const double again = rocketnet_platform_time() + 1.0;
+                while ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] == failed_before && rocketnet_platform_time() < again )
+                {
+                    rocketnet_platform_sleep( 0.001 );
+                }
+                printf( "DIAG after one more send_packets: SEND_FAILED moved by %llu\n",
+                        (unsigned long long) ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before ) );
+                fflush( stdout );
+            }
+            // PLANT end
         }
 
         posix_check( xdp_send_failed == 1 );
