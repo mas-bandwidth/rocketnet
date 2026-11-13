@@ -3173,8 +3173,14 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 /// MAIN_THREAD_CALL_OVERLAP; so are rocketnet_server_update_client during a
 /// main thread call, and rocketnet_server_update_finish while a game thread
 /// is still in rocketnet_server_update_client. rocketnet_server_update or
-/// rocketnet_server_update_receive called again inside the update is not
-/// refused: it counts as API misuse and finishes the open update first.
+/// rocketnet_server_update_receive called while the update is open (no
+/// rocketnet_server_update_finish, or a refused one) is not refused: it
+/// counts as API misuse once, finishes the open update and begins none.
+/// Nobody is disconnected: the messages that finish delivers wait for
+/// rocketnet_server_receive_messages, and the call's time is not taken. A
+/// rocketnet_server_update_receive that finished the open update this way
+/// is followed by the game's update_client and update_finish calls as
+/// usual: update_client finds nothing, and update_finish returns.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time As rocketnet_server_update's.

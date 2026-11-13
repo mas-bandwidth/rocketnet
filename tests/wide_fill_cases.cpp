@@ -1411,6 +1411,118 @@ static void test_wide_fill_split_update_window()
     rocketnet_assert_function( NULL );
 }
 
+// the client sends one reliable message, the server's update_receive takes
+// it into the open update, and the update is left open (update_finish not
+// called, or refused)
+static void wide_fill_open_update_with_delivery( wide_fill_world_t * world, uint8_t fill )
+{
+    uint8_t * m = rocketnet_client_start_message( world->clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+    check( m != NULL );
+    if ( m )
+    {
+        memset( m, fill, 8 );
+        check( rocketnet_client_finish_message( world->clients[0], 8 ) != 0 );
+    }
+    rocketnet_server_send_packets( world->server );
+    wide_fill_clients_step( world );
+    rocketnet_server_update_receive( world->server, world->time );
+    world->time += 1.0 / 60.0;
+}
+
+// the message the open update took is handed to the game: one message, the
+// client's bytes
+static void wide_fill_check_delivered( wide_fill_world_t * world, int slot, uint8_t fill )
+{
+    int found = 0;
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( world->server ) ) != NULL )
+    {
+        for ( int i = 0; i < batch->num_messages; i++ )
+        {
+            check( batch->client_index[i] == slot );
+            check( batch->bytes[i] == 8 );
+            check( batch->data[i][0] == fill && batch->data[i][7] == fill );
+            found++;
+        }
+    }
+    check( found == 1 );
+}
+
+// An update call made while the update in three calls is open (update or
+// update_receive with no update_finish, or after a refused one) is API
+// misuse: it finishes the open update and begins none. The deliveries that
+// finish hands over wait for receive_messages, as after any finish: nobody
+// is disconnected for messages the game never had the chance to receive,
+// and the misuse is counted once
+static void test_wide_fill_split_update_open_update_call()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 1 );
+    wide_fill_connect_all( &world );
+    const int slot = rocketnet_client_index( world.clients[0] );
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+
+    // update_receive again: the open update finished, none begun, so
+    // update_client finds nothing (not misuse) and update_finish only returns
+
+    wide_fill_open_update_with_delivery( &world, 0x71 );
+    g_wide_fill_asserts = 0;
+    uint64_t misuse = rocketnet_api_misuse_count();
+    rocketnet_server_update_receive( world.server, world.time );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+    check( rocketnet_server_update_client( world.server, slot ) == 0 );
+    rocketnet_server_update_finish( world.server );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( rocketnet_server_client_connected( world.server, slot ) );
+    check( rocketnet_server_disconnect_reason( world.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    wide_fill_check_delivered( &world, slot, 0x71 );
+
+    // the one-call update inside the open update: the same
+
+    wide_fill_open_update_with_delivery( &world, 0x72 );
+    g_wide_fill_asserts = 0;
+    misuse = rocketnet_api_misuse_count();
+    rocketnet_server_update( world.server, world.time );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+    check( rocketnet_server_client_connected( world.server, slot ) );
+    wide_fill_check_delivered( &world, slot, 0x72 );
+
+    // a late join: update_finish refused while a game thread is still in
+    // update_client (a take held by hand), so the next frame's update_receive
+    // finds the update open. One refused finish disconnects nobody
+
+    wide_fill_open_update_with_delivery( &world, 0x73 );
+    g_wide_fill_asserts = 0;
+    check( rocketnet_fill_phase_take_begin( phase ) );
+    rocketnet_server_update_finish( world.server );
+    rocketnet_fill_phase_take_end( phase );
+    misuse = rocketnet_api_misuse_count();
+    rocketnet_server_update_receive( world.server, world.time );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 2 ) );       // the refused finish, the misuse
+    rocketnet_server_update_finish( world.server );
+    check( rocketnet_server_client_connected( world.server, slot ) );
+    check( rocketnet_server_disconnect_reason( world.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    wide_fill_check_delivered( &world, slot, 0x73 );
+
+    // and the next frame is an ordinary one: the client still sends and is
+    // received
+
+    wide_fill_open_update_with_delivery( &world, 0x74 );
+    misuse = rocketnet_api_misuse_count();
+    rocketnet_server_update_finish( world.server );
+    check( rocketnet_api_misuse_count() == misuse );
+    wide_fill_check_delivered( &world, slot, 0x74 );
+    check( rocketnet_server_client_connected( world.server, slot ) );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
 // a finish the check refuses leaves its start open; the next main-thread
 // operation closes it, counted MESSAGE_SEND_REFUSED; and a refused transport
 // start names no client, so its finish and abort claim none
@@ -2166,4 +2278,5 @@ REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );
 REGISTER_UNIT_TEST( test_wide_fill_main_refused_during_fill );
 REGISTER_UNIT_TEST( test_wide_fill_split_update_window );
+REGISTER_UNIT_TEST( test_wide_fill_split_update_open_update_call );
 REGISTER_UNIT_TEST( test_wide_fill_refused_finish_and_start );
