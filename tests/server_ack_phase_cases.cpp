@@ -39,6 +39,7 @@
 #include "rocketnet_fill_phase.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_message_object.h"
+#include "rocketnet_packet_lease.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +95,7 @@ struct ack_phase_world_t
     int num_clients;
     uint64_t messages_hash;             // every message the game took, both sides, in order
     uint64_t messages;
+    uint64_t next_ticket;               // its own packet ids (rocketnet_packet_lease_id_test_source)
 };
 
 static void ack_phase_hash( uint64_t * hash, uint64_t value )
@@ -105,11 +107,19 @@ static void ack_phase_hash( uint64_t * hash, uint64_t value )
     }
 }
 
+// packet ids are process-wide tickets: each world takes its own around every
+// call that can send, so the same sends take the same ids in both
+static void ack_phase_tickets( ack_phase_world_t * world )
+{
+    rocketnet_packet_lease_id_test_source = world ? &world->next_ticket : NULL;
+}
+
 static void ack_phase_world_create( ack_phase_world_t * world, int num_clients )
 {
     memset( world, 0, sizeof( *world ) );
     rocketnet_quiet( 1 );
     world->messages_hash = 0xcbf29ce484222325ULL;
+    world->next_ticket = 1;
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
@@ -425,33 +435,6 @@ static int ack_phase_compare( ack_phase_world_t * a, ack_phase_world_t * b )
         if ( !ea || !eb || !rocketnet_ack_endpoint_state_equal( ea, eb ) )
         {
             printf( "    ack endpoint %d differs\n", slot );
-            if ( ea && eb )
-            {
-                const uint8_t * pa = (const uint8_t *) ea;
-                const uint8_t * pb = (const uint8_t *) eb;
-                for ( size_t o = 0; o < sizeof( rocketnet_ack_endpoint_t ); o++ )
-                {
-                    if ( pa[o] != pb[o] )
-                    {
-                        printf( "      DIAG first byte %zu (sent at %zu, received at %zu, rtt_history at %zu, memo at %zu)\n", o,
-                                offsetof( rocketnet_ack_endpoint_t, sent ), offsetof( rocketnet_ack_endpoint_t, received ),
-                                offsetof( rocketnet_ack_endpoint_t, rtt_history ), offsetof( rocketnet_ack_endpoint_t, block_memo ) );
-                        break;
-                    }
-                }
-                printf( "      DIAG rtt %f %f jitter %f %f loss %f %f acked %llu %llu sum %f %f count %u %u eu %u %u ak %u %u\n", (double) ea->rtt, (double) eb->rtt, (double) ea->jitter, (double) eb->jitter, (double) ea->packet_loss, (double) eb->packet_loss,
-                        (unsigned long long) ea->largest_acked_sequence, (unsigned long long) eb->largest_acked_sequence, ea->stats_rtt_sum, eb->stats_rtt_sum, ea->stats_rtt_count, eb->stats_rtt_count,
-                        ea->stats_eligible_unacked, eb->stats_eligible_unacked, ea->stats_acked_count, eb->stats_acked_count );
-                printf( "      DIAG highest %llu %llu\n", (unsigned long long) ea->highest_sequence, (unsigned long long) eb->highest_sequence );
-                for ( int i = 0; i < 8; i++ )
-                {
-                    const rocketnet_sent_packet_record_t * ra = &ea->sent[i];
-                    const rocketnet_sent_packet_record_t * rb = &eb->sent[i];
-                    printf( "      DIAG sent[%d] seq %llu/%llu id %llu/%llu t %f/%f bytes %u/%u acked %d/%d hasid %d/%d ka %d/%d\n", i,
-                            (unsigned long long) ra->sequence, (unsigned long long) rb->sequence, (unsigned long long) ra->packet_id, (unsigned long long) rb->packet_id,
-                            ra->send_time, rb->send_time, ra->wire_bytes, rb->wire_bytes, ra->acked, rb->acked, ra->has_packet_id, rb->has_packet_id, ra->was_keep_alive, rb->was_keep_alive );
-                }
-            }
             differences++;
         }
         if ( oa->hot_connections[slot].state != ob->hot_connections[slot].state ||
@@ -512,7 +495,9 @@ static void ack_phase_differential( const ack_phase_run_t * run, ack_phase_tally
     double time = 1000.0;
     for ( int c = 0; c < run->num_clients; c++ )
     {
+        ack_phase_tickets( &a );
         ack_phase_connect( &a, c, time, next_token );
+        ack_phase_tickets( &b );
         ack_phase_connect( &b, c, time, next_token );
         next_token++;
     }
@@ -532,14 +517,18 @@ static void ack_phase_differential( const ack_phase_run_t * run, ack_phase_tally
             {
                 if ( ack_phase_below( &events, 2 ) == 0 )
                 {
+                    ack_phase_tickets( &a );
                     rocketnet_client_disconnect( a.clients[c] );
+                    ack_phase_tickets( &b );
                     rocketnet_client_disconnect( b.clients[c] );
                 }
                 else
                 {
                     const int slot = rocketnet_client_index( a.clients[c] );
                     check( slot == rocketnet_client_index( b.clients[c] ) );
+                    ack_phase_tickets( &a );
                     rocketnet_server_disconnect_client( a.server, slot );
+                    ack_phase_tickets( &b );
                     rocketnet_server_disconnect_client( b.server, slot );
                 }
                 down_until[c] = frame + 20 + ack_phase_below( &events, 30 );
@@ -552,22 +541,28 @@ static void ack_phase_differential( const ack_phase_run_t * run, ack_phase_tally
                  rocketnet_client_state( a.clients[c] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED &&
                  rocketnet_client_state( b.clients[c] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
             {
+                ack_phase_tickets( &a );
                 ack_phase_connect( &a, c, time, next_token );
+                ack_phase_tickets( &b );
                 ack_phase_connect( &b, c, time, next_token );
                 next_token++;
                 down_until[c] = 0;
             }
         }
 
+        ack_phase_tickets( &a );
         ack_phase_clients_send( &a, time, plan_seed, (uint32_t) frame );
+        ack_phase_tickets( &b );
         ack_phase_clients_send( &b, time, plan_seed, (uint32_t) frame );
 
         rocketnet_server_acks_test_entry_capacity = run->entry_capacity;
 
+        ack_phase_tickets( &a );
         rocketnet_server_acks_test_direct = 1;
         rocketnet_server_update( a.server, time );
         rocketnet_server_acks_test_direct = 0;
 
+        ack_phase_tickets( &b );
         ack_phase_split_update( &b, time, &deal, run->num_threads );
         rocketnet_server_acks_test_entry_capacity = 0;
 
@@ -582,7 +577,9 @@ static void ack_phase_differential( const ack_phase_run_t * run, ack_phase_tally
         const uint64_t * ids = NULL;
         tally->acked += (uint64_t) rocketnet_server_transport_acked_packets( ack_phase_transport( b.server ), &ci, &ids );
 
+        ack_phase_tickets( &a );
         ack_phase_server_after( &a, plan_seed, (uint32_t) frame );
+        ack_phase_tickets( &b );
         ack_phase_server_after( &b, plan_seed, (uint32_t) frame );
         check( a.messages_hash == b.messages_hash );
         check( a.messages == b.messages );
@@ -595,6 +592,7 @@ static void ack_phase_differential( const ack_phase_run_t * run, ack_phase_tally
     check( ack_phase_counter( b.server, ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == 0 );
     check( g_ack_phase_asserts == 0 );
 
+    ack_phase_tickets( NULL );
     ack_phase_world_destroy( &a );
     ack_phase_world_destroy( &b );
     rocketnet_assert_function( NULL );

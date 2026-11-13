@@ -10,6 +10,14 @@
 // Process-wide, non-repeating packet tickets. Zero means exhausted.
 uint64_t rocketnet_next_packet_lease_id();
 
+#if ROCKETNET_DEV
+// the test seam (tests/server_ack_phase_cases.cpp): when set, tickets come
+// from this counter instead, so two servers run in lockstep in one process,
+// each switched to its own counter around its calls, take the same ids for
+// the same sends. Set and read on the one thread that sends.
+extern uint64_t * rocketnet_packet_lease_id_test_source;
+#endif // #if ROCKETNET_DEV
+
 // Contexts remain convenient caller-owned views. This table owns the metadata
 // used by finish/abort. Slots are immutable during a fill; consuming a copied
 // context succeeds once. Only the joined main thread advances the epoch.
