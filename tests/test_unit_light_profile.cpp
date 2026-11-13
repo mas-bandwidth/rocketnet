@@ -127,8 +127,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453247 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -171,8 +171,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453599 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
+// Sending from the game threads (the per-client open message, the thread rule
+// check's lines, the message object's per-thread open lines, each region's
+// room_refusals, the per-thread send lines, the per-client wire totals on a
+// line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702175 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993034 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -244,16 +248,6 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads 912 bytes lower on the merged tree (stats_counted is gone among
 // read-round-1's client changes; the 912 is not split per change). Measured on the merged tree (bench-nyc-6, gcc, Debug and
 // Release, DEV ON, ROCKETNET_TEST_VERBOSE=1): actual=3111676851 and 15185170.
-// The counter union (53 rows, 424 bytes in every counter block) reads
-// actual=3111677747 and 15186002 (bench-nyc-4, gcc, Debug, DEV ON). The
-// protocol send reserve keeps, per send queue, a budget, its claims, the
-// grants staged, the own frames used and the reserve (five uint64_t by
-// ROCKETNET_SERVER_MAX_SEND_QUEUES, 2560 bytes), one own-frame flag a client
-// slot with their count (1008 bytes) and its queue count and test seam, and
-// appends the counter SEND_RESERVE_REFUSED (8 bytes in every counter block):
-// actual=3111681395, 3648 above the union with the object's alignment, and
-// actual=15186066, 64 above it (the counter crosses the client object's
-// 64-byte rounding). Measured on the same bench and build.
 // The XDP send queue back at 16384 per queue (two queues at 60 Hz start twice
 // 10 GbE line rate) with XDP's own receive sizing: each queue's receive
 // staging and fill frames 32768, the UMEM 98304 frames (384 MiB), and the XDP
@@ -263,16 +257,16 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
-// Sending from the game threads (the per-client open message, the thread rule
-// check's lines, the message object's per-thread open lines, each region's
-// room_refusals, the per-thread send lines, the per-client wire totals on a
-// line each) adds 237376 to the server and 4160 to the client: read on vision
-// (gcc, Debug and Release, DEV ON) before the send queue change as 3111681395
-// to 3111918771 and 15186066 to 15190226.
-// The gso transport's counter row RECEIVE_DROPPED_STOPPED (one more 8-byte
-// counter: 64 bytes to the server and 64 to the client, as the union's rows
-// did): read on amd-2 (gcc, Debug, DEV ON) as 5610689971 to 5610690035 and
-// 15190226 to 15190290; the other platforms' pins move by the same 64 each.
+// The protocol send reserve keeps, per send queue, a budget, its claims, the
+// grants staged, the own frames used, the reserve and the largest room seen
+// (six uint64_t by ROCKETNET_SERVER_MAX_SEND_QUEUES, 3072 bytes), one
+// own-frame word a client slot with their count (8008 bytes) and its queue
+// count and test seam, and appends the counter SEND_RESERVE_REFUSED (8 bytes
+// in every counter block). Measured on bench-nyc-4 (gcc, Debug, DEV ON) on
+// the counter union, which reads actual=5610448947 and 15186002:
+// actual=5610460147, 11200 above it with the object's alignment, and
+// actual=15186066, 64 above it (the counter crosses the client object's
+// 64-byte rounding).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker

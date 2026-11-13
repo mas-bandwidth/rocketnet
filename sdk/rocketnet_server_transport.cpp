@@ -398,6 +398,7 @@ struct rocketnet_server_transport_t
     int link_setting_busy_for_test; // the next setting takes that meet the lock held
     uint64_t link_lock_misses;      // link sends dropped because the simulator's lock was busy
     int refuse_fill_chunks_for_test; // the next reserve chunk claims refused as if past the budget
+    int steal_ring_chunk_for_test;   // the next payload ring chunk claims that find the line refilled, as by another thread on it
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -440,12 +441,17 @@ struct rocketnet_server_transport_t
     uint64_t fill_claims[ROCKETNET_SERVER_MAX_SEND_QUEUES];
     uint64_t fill_own_used[ROCKETNET_SERVER_MAX_SEND_QUEUES] = {};  // own frames taken, by the queue they staged in
     uint64_t send_reserve[ROCKETNET_SERVER_MAX_SEND_QUEUES]; // the last reserve computed, per queue (read by tests)
+    // The largest room each queue has reported when a budget opened: its
+    // staging, once it has been seen empty. The reserve is never more than
+    // half of it (rocketnet_server_transport_open_fill_budget).
+    uint64_t send_room_seen[ROCKETNET_SERVER_MAX_SEND_QUEUES] = {};
     // A connected client whose keep-alive is acknowledged owns its reserved
     // frame until the budget opens again: the game's first frame to it takes that frame (the
     // payload is what the keep-alive would have carried), and its later
-    // frames claim the queue's budget. Set by main at open; cleared by that
-    // client's packet start.
-    uint8_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
+    // frames claim the queue's budget. 1 while the frame is there. Set by
+    // main at open; taken with one atomic add by a packet start, so two game
+    // threads that start packets to one client at once take it once.
+    uint64_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
     uint64_t fill_own_frames_left = 0;                      // own frames not yet taken since the budget opened (atomic)
 #if ROCKETNET_DEV
     uint64_t retest_take_back_for_test = 0;                 // claims taken back, as by another thread, between a claim's refusal and its retest
@@ -1097,8 +1103,8 @@ static uint64_t rocketnet_server_transport_load_u64( const uint64_t * value )
 // only after their frame has left the room, so they are read before the
 // room: a frame staged between the reads is then counted nowhere, never
 // twice. Read again after the room and started over if either moved, so no
-// frame staged in between is lost to the game's packets either (RNSendReserve Read1,
-// Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
+// frame staged in between is lost to the game's packets either
+// (proofs/tla/RNSendReserve.tla Read1, Read2, Read3; witnesses RoomFirst and NoReread). Each start over follows a
 // frame some other thread staged, so the loop ends.
 // The grants the lines staged on the queue this phase, summed (rocketnet_server_fill_line_t started).
 static uint64_t rocketnet_server_transport_started_sum( const struct rocketnet_server_transport_t * server_transport, int queue )
@@ -1158,6 +1164,36 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
 
     rocketnet_server_transport_send_reserves( server_transport, server_transport->send_reserve );
 
+    // The reserve is never more than half of a queue's staging, so a config
+    // whose protocol allowances outgrow the staging (handshakes_per_update
+    // and disconnect_packets_per_update are each legal up to 1024, against a
+    // staging of 2048 frames) still leaves the game's packets half of it. The
+    // staging is the largest room the queue has reported at an open: the
+    // room now may be lower only because frames are still in flight, and a
+    // reserve cut to half of that would hand the game frames the protocol
+    // needs. A reserve cut here no longer covers every protocol frame of the
+    // worst update: one the staging cannot take is refused as before the
+    // reserve (SEND_RING_FULL) and is due again at the next update. Half is a
+    // chosen share, not a measured one. A transport that does not report its
+    // room reads INT_MAX and is never cut.
+    uint64_t smallest_reserve = UINT64_MAX;
+    for ( int queue = 0; queue < server_transport->send_queues; ++queue )
+    {
+        const int room = rocketnet_server_transport_queue_room( server_transport, queue );
+        if ( room > 0 && (uint64_t) room > server_transport->send_room_seen[queue] )
+        {
+            server_transport->send_room_seen[queue] = (uint64_t) room;
+        }
+        const uint64_t most = server_transport->send_room_seen[queue] / 2;
+        if ( server_transport->send_reserve[queue] > most )
+        {
+            server_transport->send_reserve[queue] = most;
+        }
+        if ( server_transport->send_reserve[queue] < smallest_reserve )
+        {
+            smallest_reserve = server_transport->send_reserve[queue];
+        }
+    }
     rocketnet_server_transport_return_fill_tails( server_transport );
 
     for ( int queue = 0; queue < server_transport->send_queues; ++queue )
@@ -1177,12 +1213,15 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
     // sweep, which stops at a full staging, serves that client first at the
     // next update. A client not yet acknowledged keeps its frame for the
     // protocol (its keep-alives are timed from the last keep-alive alone).
+    // The own frames come out of the reserve, so no more are handed out than
+    // the smallest queue's reserve holds (RNSendReserve MaxOwn <= Reserve):
+    // a reserve cut to half a small staging hands out that many, in slot order.
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
     const int max_clients = slots ? rocketnet_client_slots_max_clients( slots ) : 0;
     uint64_t own = 0;
     for ( int client_index = 0; client_index < max_clients && client_index < ROCKETNET_MAX_CLIENTS; ++client_index )
     {
-        const bool owned = rocketnet_client_slots_connected( slots, client_index ) && server_transport->protocol.acks &&
+        const bool owned = own < smallest_reserve && rocketnet_client_slots_connected( slots, client_index ) && server_transport->protocol.acks &&
                            server_transport->protocol.acks->endpoints[client_index].keep_alive_acked;
         server_transport->fill_own_frame[client_index] = owned ? 1 : 0;
         own += owned ? 1 : 0;
@@ -1200,8 +1239,9 @@ static uint64_t rocketnet_server_transport_refresh_fill_budget( struct rocketnet
     return rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
 }
 
-// RNSendReserve Claim, Check, Decide: size claims added on the queue's
-// claims in one add, granted when the whole claim fits under the budget
+// proofs/tla/RNSendReserve.tla Claim, Check, Decide: size claims added on the queue's
+// claims in one add (the reversed witness SplitClaim takes it as a load and a
+// store, ClaimStore), granted when the whole claim fits under the budget
 // (claim_index + size <= budget); else the budget is raised to what the
 // queue's state allows now (Read1-3) and the claims outstanding, this one
 // among them, are tested against it: not this claim's index, which a refused
@@ -1254,12 +1294,19 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
 {
     const int queue = rocketnet_server_transport_send_queue_of( server_transport, to );
 
-    if ( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS && server_transport->fill_own_frame[client_index] )
+    // OwnClaim: the flag is taken with one atomic add, which gives back what
+    // it held. Only the start that finds 1 there has the frame; a start that
+    // finds anything else (another game thread's start to this client took
+    // it first, or is taking it now) puts its one back and claims the budget.
+    if ( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS && rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1 )
     {
-        server_transport->fill_own_frame[client_index] = 0;
-        rocketnet_platform_atomic_add_u64( &server_transport->fill_own_frames_left, UINT64_MAX );
-        *own = true;
-        return queue;
+        if ( rocketnet_platform_atomic_add_u64( &server_transport->fill_own_frame[client_index], UINT64_MAX ) == 1 )
+        {
+            rocketnet_platform_atomic_add_u64( &server_transport->fill_own_frames_left, UINT64_MAX );
+            *own = true;
+            return queue;
+        }
+        rocketnet_platform_atomic_add_u64( &server_transport->fill_own_frame[client_index], 1 );
     }
 
     *own = false;
@@ -1336,7 +1383,7 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     return -1;
 }
 
-// RNSendReserve Count and OwnCount: a granted frame the transport staged has
+// proofs/tla/RNSendReserve.tla Count and OwnCount: a granted frame the transport staged has
 // left its queue's room, and only now is it counted. An own frame counted
 // before it left the room would lower the reserve the budget keeps back
 // while the room still held it (witness OwnCountFirst).
@@ -1345,10 +1392,10 @@ static void rocketnet_server_transport_fill_started( struct rocketnet_server_tra
     rocketnet_platform_atomic_add_u64( own ? &server_transport->fill_own_used[queue] : &line->started[queue], 1 );
 }
 
-// RNSendReserve Stage, a queue with no room, and End: the transport refused
+// proofs/tla/RNSendReserve.tla Stage, a queue with no room, and End: the transport refused
 // the granted frame, so the run ends: the frame's claim and the line's tail
 // go back in one add, and the grants go to the next frames. An own frame
-// refused stays taken: its client's keep-alive is still due and its frame
+// refused (OwnIo) stays taken: its client's keep-alive is still due and its frame
 // stays in the reserve.
 static void rocketnet_server_transport_fill_refused( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_fill_line_t * line, int queue, bool own )
 {
@@ -1753,7 +1800,7 @@ uint64_t rocketnet_server_transport_fill_own_used_for_test( const struct rocketn
 bool rocketnet_server_transport_fill_own_frame_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     rocketnet_assert( server_transport && client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS );
-    return server_transport->fill_own_frame[client_index] != 0;
+    return rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1;
 }
 
 void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims )
@@ -1766,6 +1813,12 @@ void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_serv
 {
     rocketnet_assert( server_transport );
     server_transport->retest_take_back_for_test = claims;
+}
+
+void rocketnet_server_transport_steal_ring_chunk_for_test( struct rocketnet_server_transport_t * server_transport, int chunks )
+{
+    rocketnet_assert( server_transport );
+    server_transport->steal_ring_chunk_for_test = chunks;
 }
 
 uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport )
@@ -4344,54 +4397,77 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 // the line). Otherwise, while the ring has ROCKETNET_SERVER_FILL_CHUNK free
 // slots for every line (the guard), one fetch-add of a chunk: its first slot
 // is this one and the rest, clipped at send_capacity, the line's chunk. A
-// line another thread on it refilled first keeps that one; this chunk's
-// other slots are marked empty here. Below the guard one fetch-add of one
-// slot. A slot at or past send_capacity is refused, though the counter has
-// moved past it. Main marks each line's unused slots empty before the flush
-// reads the ring (rocketnet_server_payload_ring_return_chunks), so every
-// slot below the counter is a frame or empty. false: the ring is full.
+// line another thread on it refilled first keeps that one: this whole chunk
+// is marked empty here and the slot is taken from the line's chunk instead,
+// so the slots a thread takes only rise, and the flush, which walks the ring
+// in slot order, sends one client's packets in the order they were started
+// (a slot of this chunk used beside the other thread's lower chunk would
+// leave before the packets this thread starts next). Below the guard one
+// fetch-add of one slot. A slot at or past send_capacity is refused, though
+// the counter has moved past it. Main marks each line's unused slots empty
+// before the flush reads the ring
+// (rocketnet_server_payload_ring_return_chunks), so every slot below the
+// counter is a frame or empty. false: the ring is full.
 static bool rocketnet_server_payload_ring_take( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_fill_line_t * line, uint64_t * slot )
 {
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
     const uint64_t capacity = (uint64_t) server_transport->send_capacity;
     volatile uint64_t * chunk = &line->ring;
 
-    uint64_t word = 0;
     for ( ;; )
     {
-        word = rocketnet_platform_atomic_load_u64( chunk );
-        const uint64_t next = word & ROCKETNET_SERVER_FILL_HALF_MASK;
-        const uint64_t end = word >> ROCKETNET_SERVER_FILL_HALF_BITS;
-        if ( next >= end )
+        uint64_t word = 0;
+        for ( ;; )
+        {
+            word = rocketnet_platform_atomic_load_u64( chunk );
+            const uint64_t next = word & ROCKETNET_SERVER_FILL_HALF_MASK;
+            const uint64_t end = word >> ROCKETNET_SERVER_FILL_HALF_BITS;
+            if ( next >= end )
+            {
+                break;
+            }
+            if ( rocketnet_platform_atomic_cas_u64( chunk, word, word + 1 ) )
+            {
+                *slot = next;
+                return true;
+            }
+        }
+
+        const uint64_t size = ROCKETNET_SERVER_FILL_CHUNK;
+        const uint64_t used = rocketnet_platform_atomic_load_u64( &ring->num_packets );
+        if ( used > capacity || capacity - used < size * ROCKETNET_FILL_PHASE_FILL_LINES )
         {
             break;
         }
-        if ( rocketnet_platform_atomic_cas_u64( chunk, word, word + 1 ) )
-        {
-            *slot = next;
-            return true;
-        }
-    }
 
-    const uint64_t size = ROCKETNET_SERVER_FILL_CHUNK;
-    const uint64_t used = rocketnet_platform_atomic_load_u64( &ring->num_packets );
-    if ( used <= capacity && capacity - used >= size * ROCKETNET_FILL_PHASE_FILL_LINES )
-    {
+#if ROCKETNET_DEV
+        if ( server_transport->steal_ring_chunk_for_test > 0 )
+        {
+            // another thread on this line claims a chunk, takes its first slot
+            // and installs the rest, between this thread's look at the line
+            // and its own install (the slot the other thread took is left empty)
+            server_transport->steal_ring_chunk_for_test--;
+            const uint64_t other = rocketnet_platform_atomic_add_u64( &ring->num_packets, size );
+            ring->info[other].wire_bytes = 0;
+            rocketnet_platform_atomic_store_u64( chunk, ( ( other + size ) << ROCKETNET_SERVER_FILL_HALF_BITS ) | ( other + 1 ) );
+        }
+#endif // #if ROCKETNET_DEV
+
         const uint64_t base = rocketnet_platform_atomic_add_u64( &ring->num_packets, size );
         if ( base >= capacity )
         {
             return false;
         }
         const uint64_t end = base + size < capacity ? base + size : capacity;
-        if ( end > base + 1 && !rocketnet_platform_atomic_cas_u64( chunk, word, ( end << ROCKETNET_SERVER_FILL_HALF_BITS ) | ( base + 1 ) ) )
+        if ( end == base + 1 || rocketnet_platform_atomic_cas_u64( chunk, word, ( end << ROCKETNET_SERVER_FILL_HALF_BITS ) | ( base + 1 ) ) )
         {
-            for ( uint64_t i = base + 1; i < end; ++i )
-            {
-                ring->info[i].wire_bytes = 0;
-            }
+            *slot = base;
+            return true;
         }
-        *slot = base;
-        return true;
+        for ( uint64_t i = base; i < end; ++i )
+        {
+            ring->info[i].wire_bytes = 0;
+        }
     }
 
     const uint64_t one = rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 );

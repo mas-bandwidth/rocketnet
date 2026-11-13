@@ -6,7 +6,11 @@
 (* opened (the queue, refilled once by the transport).                     *)
 (* MCRNSendReserveCalls.cfg is the code and passes.  The Broken configs    *)
 (* are the reversed witnesses and must fail: RoomOnly and AbortReturns on  *)
-(* ReserveKept, NoRefresh on NeverStarved.                                 *)
+(* ReserveKept, NoRefresh on NeverStarved.  Those four claim one frame at  *)
+(* a time (Chunk 1).  MCRNSendReserveCallsChunk.cfg is the code with       *)
+(* chunks of three in a queue of eight and passes;                         *)
+(* MCRNSendReserveCallsBrokenTailLeak.cfg, the same instance, must fail on *)
+(* NeverStarved.                                                           *)
 (***************************************************************************)
 EXTENDS RNSendReserveCalls
 

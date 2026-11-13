@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* The protocol send reserve of one send queue                             *)
 (* (sdk/rocketnet_server_transport.cpp: open_fill_budget, fill_claim,      *)
-(* queue_budget_now, fill_started, fill_take_back; README-RNSendReserve.md)*)
+(* queue_budget_now, fill_started, claim_frames; README-RNSendReserve.md)  *)
 (*                                                                         *)
 (* The game's fillers and the protocol share the queue's staging.  Main    *)
 (* opens a fill phase with a budget, the grants the fill may take: the     *)

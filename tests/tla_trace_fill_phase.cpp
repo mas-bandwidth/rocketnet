@@ -51,6 +51,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <new>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -556,7 +557,10 @@ static std::string fp_args( int actor, const fp_step_t * step )
 static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 {
     fp_walk_t * walk = new fp_walk_t();
-    walk->phase = new rocketnet_fill_phase_t();
+    // the check is cache-line aligned, which a plain new does not promise on
+    // every compiler: it is built in static storage of its own alignment
+    alignas( rocketnet_fill_phase_t ) static unsigned char phase_memory[sizeof( rocketnet_fill_phase_t )];
+    walk->phase = new ( phase_memory ) rocketnet_fill_phase_t();
     rocketnet_fill_phase_init( walk->phase, FP_CLIENTS, &walk->overlaps, &walk->two_fillers );
     walk->running = -1;
     walk->calls = steps;
@@ -801,7 +805,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                                   "    NoRestore = FALSE\n    ScanOne = FALSE\n" + "    Lines = " + lines + "\n";
     const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
-    delete walk->phase;
+    walk->phase->~rocketnet_fill_phase_t();
     delete walk;
     return written && !unknown ? 0 : 1;
 }

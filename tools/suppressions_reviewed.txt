@@ -18,3 +18,4 @@ sdk/rocketnet_fill_phase.h pragma-warning-disable f7147679f94b0731	MSVC C4324 on
 sdk/rocketnet_message_object.h pragma-warning-disable f7147679f94b0731	MSVC C4324 on the cache-line aligned per-thread open-message line: the padding keeps two threads off one line; push/pop scoped to that struct
 sdk/rocketnet_server_transport.cpp pragma-warning-disable f7147679f94b0731	MSVC C4324 on the cache-line aligned per-client wire totals: one client per line, written by the one thread sending to it; push/pop scoped to that struct
 sdk/rocketnet_server_transport.cpp pragma-warning-disable f7147679f94b0731:1	MSVC C4324 on the cache-line aligned per-thread send line (staged counts, ring chunk, reserve tails); push/pop scoped to that struct
+sdk/rocketnet_message_object.h pragma-warning-disable f7147679f94b0731:1	MSVC C4324 on the message object, padded by its cache-line aligned per-thread open lines; push/pop scoped to that struct

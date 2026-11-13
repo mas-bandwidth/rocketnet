@@ -106,7 +106,7 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     }
 }
 
-// RNFillPhase MainAnnounce, MainLook (one per fills_in line), MainIn
+// proofs/tla/RNFillPhase.tla MainAnnounce, MainLook (one per fills_in line), MainIn
 bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase )
 {
     rocketnet_assert( fill_phase );
@@ -154,7 +154,7 @@ bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase
     return true;
 }
 
-// RNFillPhase MainEpoch, MainDrop: the epoch moves, so the next fill phase begins with every client unclaimed
+// proofs/tla/RNFillPhase.tla MainEpoch, MainDrop: the epoch moves, so the next fill phase begins with every client unclaimed
 void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
 {
     rocketnet_assert( fill_phase );
@@ -174,7 +174,8 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
     RN_FILL_PHASE_TRACE( "MainDrop", -1, epoch, false );
 }
 
-// RNFillPhase FillBegin, FillLock, FillDecide, FillCount, FillLook
+// proofs/tla/RNFillPhase.tla FillBegin, FillLock, FillDecide, FillCount, FillLook. The lock is one
+// compare-and-swap; the reversed witness LoadStore takes it as a load (FillLoad) and a store (FillStore).
 bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index )
 {
     rocketnet_assert( fill_phase );
@@ -275,6 +276,14 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
             // refused claim stays, out, in place of the word it replaced
             fill_phase->clients[client_index].claim.store( rn_fill_phase_word( epoch, 0, false ) );
 #else  // #if defined( ROCKETNET_FILL_PHASE_PLANT )
+
+            // the word goes back to the lock's own form (in, depth 0: a
+            // claim being decided) before the owner does: with the word
+            // still [epoch, 1, in] and the owner already the thread it was,
+            // that thread's next call for the client would read itself as
+            // nested in a call it never made, and its end would then leave
+            // a fills_in line it never entered
+            fill_phase->clients[client_index].claim.store( before | ROCKETNET_FILL_PHASE_IN );
             fill_phase->clients[client_index].owner.store( owner_before );
             fill_phase->clients[client_index].claim.store( before );
 #endif // #if defined( ROCKETNET_FILL_PHASE_PLANT )
@@ -291,7 +300,7 @@ bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase
     return true;
 }
 
-// RNFillPhase FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
+// proofs/tla/RNFillPhase.tla FillUnclaim, FillLeave: only this thread writes the word while its in bit is set
 void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index )
 {
     rocketnet_assert( fill_phase );

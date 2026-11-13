@@ -79,17 +79,7 @@ static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
 static void sr_finish( void *, uint64_t, uint8_t *, int ) {}
 static void sr_abort( void *, uint64_t, uint8_t * ) {}
 static void sr_flush( void * ) {}
-// send_room with several queues is the fewest free frames of any queue, as
-// the xdp transport reports it (rocketnet_server_transport_io_send_room)
-static int sr_send_room( void * )
-{
-    int room = sr.room[0];
-    for ( int queue = 1; queue < sr.queues; queue++ )
-    {
-        room = sr.room[queue] < room ? sr.room[queue] : room;
-    }
-    return room;
-}
+static int sr_send_room( void * ) { return sr.room[0]; }
 static bool sr_send_idle( void * ) { return true; }
 static int sr_send_queues( void * ) { return sr.queues; }
 static int sr_send_queue_of( void *, const rocketnet_address_t * ) { return sr.queue_for_all; }
@@ -171,6 +161,8 @@ static void sr_connect( struct sr_rig_t * rig, int max_clients )
     check( connected );
 }
 
+static bool sr_prime = true;
+
 static void sr_swap_in_fake( struct sr_rig_t * rig, int queues )
 {
     memset( &rig->fake, 0, sizeof( rig->fake ) );
@@ -194,6 +186,20 @@ static void sr_swap_in_fake( struct sr_rig_t * rig, int queues )
     rocketnet_server_transport_swap_io_for_test( rig->server, &operations, &instance );
     rig->real_operations = operations;
     rig->real_instance = instance;
+
+    // The reserve is never more than half the largest room a queue has
+    // reported (the staging). The cases set rooms a little above the reserve,
+    // so they first show the server a large staging; the case of the half
+    // itself does not.
+    if ( sr_prime )
+    {
+        for ( int queue = 0; queue < SR_MAX_QUEUES; ++queue )
+        {
+            sr.room[queue] = 1 << 20;
+        }
+        rocketnet_server_transport_send_packets( rig->server );
+        memset( sr.room, 0, sizeof( sr.room ) );
+    }
 }
 
 static void sr_teardown( struct sr_rig_t * rig )
@@ -720,6 +726,92 @@ static void test_server_fill_ring_chunk()
     rn_test_server_transport_stop_and_destroy( rig.server );
 }
 
+// A thread whose chunk install finds the line refilled by another thread on
+// it gives its own chunk up whole and takes its slot from the line's chunk:
+// the slots it takes only rise, so the flush, which walks the ring in slot
+// order, sends one client's packets in the order they were started. Its
+// claimed chunk's first slot used beside the other thread's lower chunk
+// would leave after the packets this thread starts next.
+static void test_server_fill_ring_chunk_lost_install_keeps_start_order()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 640 );
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) >= 8 * ROCKETNET_FILL_PHASE_FILL_LINES );
+
+    struct rocketnet_server_transport_stats_t stats;
+    rocketnet_server_transport_stats( rig.server, &stats );
+    const uint64_t sent = stats.packets_sent;
+
+    rocketnet_server_transport_steal_ring_chunk_for_test( rig.server, 1 );
+
+    struct rocketnet_packet_context_t first;
+    struct rocketnet_packet_context_t second;
+    uint8_t * a = rocketnet_server_transport_start_packet( rig.server, 0, 8, &first );
+    check( a != NULL );
+    const uint64_t claimed = rocketnet_server_transport_payload_ring_count_for_test( rig.server );
+    check( claimed > 2 );                                                           // the other thread's chunk and this one's
+    uint8_t * b = rocketnet_server_transport_start_packet( rig.server, 0, 8, &second );
+    check( b != NULL );
+    check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == claimed );   // the second came from the line's chunk
+    check( b > a );                                                                 // the ring's frames lie in slot order
+    check( rocketnet_server_transport_finish_packet( rig.server, &first, 8 ) > 0 );
+    check( rocketnet_server_transport_finish_packet( rig.server, &second, 8 ) > 0 );
+
+    // the slot the other thread took, the chunk given up and the line's
+    // unused slots are all empty: two packets leave
+    rocketnet_server_transport_send_packets( rig.server );
+    rocketnet_server_transport_stats( rig.server, &stats );
+    check( stats.packets_sent == sent + 2 );
+    check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == 0 );
+
+    rn_test_client_transport_stop_and_destroy( rig.client );
+    rn_test_server_transport_stop_and_destroy( rig.server );
+}
+
+// The reserve is never more than half of the largest room a queue has
+// reported at an open: a staging smaller than twice the formula still gives
+// the game half of it, and once a larger staging has been seen the reserve
+// is the formula again.
+static void test_server_send_reserve_never_more_than_half_the_staging()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_prime = false;
+    sr_swap_in_fake( &rig, 0 );
+    sr_prime = true;
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    // a staging of the formula and 10 more: half of it is kept, half is the game's
+    const int staging = (int) reserve + 10;
+    sr.room[0] = staging;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == (uint64_t) ( staging / 2 ) );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == (uint64_t) ( staging - staging / 2 ) );
+    check( sr_fill( &rig, 1000 ) == staging - staging / 2 );
+    check( sr.room[0] == staging / 2 );
+
+    // frames in flight lower the room, not the staging: the reserve stays
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == (uint64_t) ( staging / 2 ) );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
+
+    // a staging of twice the formula or more: the formula
+    sr.room[0] = 2 * (int) reserve + 7;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_reserve_for_test( rig.server, 0 ) == reserve );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == reserve + 7 );
+
+    sr_teardown( &rig );
+}
+
 static void test_server_send_reserve_other_queue_full_drains()
 {
     // a burst waits for a queue with room while another queue is full: the
@@ -796,6 +888,7 @@ static void test_server_send_reserve_stop_drains_while_a_queue_has_room()
 }
 
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
+REGISTER_UNIT_TEST( test_server_send_reserve_never_more_than_half_the_staging );
 REGISTER_UNIT_TEST( test_server_send_reserve_refill );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );
 REGISTER_UNIT_TEST( test_server_send_reserve_refused_start_returns_claim );
@@ -808,6 +901,7 @@ REGISTER_UNIT_TEST( test_server_fill_chunk_refused_falls_back );
 REGISTER_UNIT_TEST( test_server_fill_refused_claim_retested );
 REGISTER_UNIT_TEST( test_server_fill_refusal_names_tails_held );
 REGISTER_UNIT_TEST( test_server_fill_ring_chunk );
+REGISTER_UNIT_TEST( test_server_fill_ring_chunk_lost_install_keeps_start_order );
 REGISTER_UNIT_TEST( test_server_send_reserve_other_queue_full_drains );
 REGISTER_UNIT_TEST( test_server_send_reserve_stop_drains_while_a_queue_has_room );
 

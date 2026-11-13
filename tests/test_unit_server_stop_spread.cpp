@@ -476,16 +476,21 @@ static void test_server_send_capacity_reports_staged_room()
 
     // the flush opens the budget: the room less the protocol reserve
     // (RNSendReserve: handshakes and disconnect seals per update, plus the
-    // one connected slot), which here is more than the whole staging
+    // one connected slot, never more than half the staging). A staging of 24
+    // is less than twice that, so half of it is kept
 
+    const int formula = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE + ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE + 1;
+    rocketnet_server_transport_send_packets( server );
+    rocketnet_unit_check( (int) server->send_reserve[0] == 12 );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 12 );
+
+    // a staging of twice the reserve and 24 more: the whole reserve is kept
+
+    f->capacity = 2 * formula + 24;
     rocketnet_server_transport_send_packets( server );
     const int reserve = (int) server->send_reserve[0];
-    rocketnet_unit_check( reserve == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE + ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE + 1 );
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 0 );
-
-    f->capacity = reserve + 24;
-    rocketnet_server_transport_send_packets( server );
-    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == 24 );
+    rocketnet_unit_check( reserve == formula );
+    rocketnet_unit_check( rocketnet_server_transport_send_capacity_available( server ) == formula + 24 );
 
     // a transport that does not report its room is unbounded, less the reserve
 

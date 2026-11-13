@@ -492,11 +492,12 @@ static void test_server_receive_leaves_send_staging_to_sends()
     check( counters->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before );
 
     // the update opened the budget again: the game may take the room less
-    // the protocol reserve (RNSendReserve). A staging of 8 is all reserve but
-    // for the connected client's own frame: its keep-alive is acknowledged, so
-    // the game's first frame to it is its own
+    // the protocol reserve (RNSendReserve), which is never more than half the
+    // staging it has seen (this room), plus the connected client's own frame:
+    // its keep-alive is acknowledged, so the game's first frame to it is its own
 
-    check( rocketnet_server_transport_send_capacity_available( pair.server ) == 1 );
+    const int room_now = server_receive_work_staging_send_room( fake );
+    check( rocketnet_server_transport_send_capacity_available( pair.server ) == room_now - room_now / 2 + 1 );
 
     server_receive_work_staging_swap_out( &pair, fake );
     server_receive_work_pair_teardown( &pair );

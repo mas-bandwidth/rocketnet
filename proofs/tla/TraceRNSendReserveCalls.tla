@@ -45,7 +45,7 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [free |-> free, budget |-> budget, claims |-> claims, started |-> started, ownUsed |-> ownUsed, own |-> own, ownLeft |-> ownLeft, refused |-> refused]
+VarsRec == [free |-> free, budget |-> budget, claims |-> claims, tail |-> tail, started |-> started, ownUsed |-> ownUsed, own |-> own, ownLeft |-> ownLeft, refused |-> refused]
 
 \* the actions each operation of the code can be
 OpActs == [open |-> {"Open"}, start |-> {"StartStaged", "StartIoRefused", "StartRefused"}, finish |-> {"Finish"}, abort |-> {"Abort"}, capacity |-> {"Capacity"}, retire |-> {"Retire"}]
@@ -97,10 +97,14 @@ TraceConsistent == ~rejected
 
 \* the row's reach predicates: some clean trace must stand exactly on the
 \* reserve after a grant (the edge where a start turns to a refusal), count
-\* a refusal, run the room out, and use every own frame handed out
+\* a refusal, run the room out, and use every own frame handed out; and in
+\* a queue big enough for chunks, hold a tail, and hold a single claim with
+\* no tail (the guard missed, or the tail spent)
 AtReserve == started > 0 /\ free + ownUsed = Reserve
 Counted == refused > 0
 RoomOut == free = 0
 OwnAllUsed == ownLeft = 0 /\ ownUsed = Cardinality(Clients)
+ChunkTail == tail > 0
+SingleInBigRoom == tail = 0 /\ claims > 0 /\ MaxFree >= Reserve + Guard
 
 =============================================================================
