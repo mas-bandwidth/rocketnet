@@ -3307,7 +3307,21 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
         char knob[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
         int first = 0, count = 0, stride = 1;
         char * comma = NULL;
-        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 )
+        if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 && strcmp( knob, "core" ) == 0 && iocp->num_endpoints > 1 )
+        {
+            // "core": send thread l on the core (every logical processor) of
+            // endpoint l % workers, beside that endpoint's receive worker
+            int l = 0;
+            while ( l < iocp->num_lanes && iocp->lanes[l] != lane )
+            {
+                ++l;
+            }
+            if ( !SetThreadGroupAffinity( GetCurrentThread(), &iocp->cores[l % iocp->num_endpoints], NULL ) )
+            {
+                rocketnet_warn( "iocp transport: send thread %d could not be pinned to its endpoint's core: %lu", l, GetLastError() );
+            }
+        }
+        else if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 )
         {
             first = (int) strtol( knob, &comma, 10 );
             count = comma && *comma == ',' ? (int) strtol( comma + 1, &comma, 10 ) : 0;
