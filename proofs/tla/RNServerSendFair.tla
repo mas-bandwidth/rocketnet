@@ -62,6 +62,26 @@
 (* from the due test.  The writer list is cleared at a flush's start: its  *)
 (* entries are read only below count, each written earlier in that flush,  *)
 (* so stale entries change no behaviour.                                   *)
+(*                                                                         *)
+(* Send queues: the slots in Q1 stage on a second send queue with its own  *)
+(* capacity K1 a flush (K1 = 0: a queue full for good); the others on the  *)
+(* first, with K.  Q1 = {} is the transport with one queue.  The capacity  *)
+(* a visit tests is its own queue's (rn_message_send_admit, the transport's *)
+(* send_capacity_to): a slot whose queue is spent while the other has room *)
+(* is held (Hold): it writes nothing this flush, its pass ends without a   *)
+(* visit's effects, and the round goes on; only both spent cuts the flush  *)
+(* (Cut).  The cursor then names the cursor held before the first slot     *)
+(* held after the flush's first frame, at a cut and at the end alike: the  *)
+(* first slot left unserved.  QueueRule = "perqueue" is the code; the      *)
+(* reversed witnesses: "mincut" cuts when either queue is spent (the code  *)
+(* before queues were judged one by one: the transport's capacity was the *)
+(* fewest of any queue), so one spent queue starves the other's slots;     *)
+(* "holdfirst" holds also before the flush's first frame, which pins the  *)
+(* cursor on a slot of a queue spent for good; "cutwalk" leaves the walk's *)
+(* cursor at a cut in a later round, past the held slot, which then waits  *)
+(* behind slots already served this flush; each fails FairService.        *)
+(* FairService is owed per queue: ceil(|Conn on q| / Kq) flushes, to the   *)
+(* slots of a queue with a capacity.                                       *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -74,8 +94,11 @@ CONSTANTS N,          \* slots 0..N-1
           Delay,      \* a dark slot's resend delay for U, in flushes
           DueRule,    \* "shared" (the code) or "head" (v1.1.0)
           Budget,     \* "first" (the code) or "frame" (v1.1.1)
-          Mode        \* "rounds" (the code), "fromzero", "inplace",
+          Mode,       \* "rounds" (the code), "fromzero", "inplace",
                       \* "revisit", "cutcursor", "reorder"
+          Q1,         \* the slots on the second send queue ({}: one queue)
+          K1,         \* frames the second queue starts per flush
+          QueueRule   \* "perqueue" (the code), "mincut", "holdfirst", "cutwalk"
 
 ASSUME N \in Nat \ {0}
 ASSUME K \in 1..N
@@ -86,11 +109,25 @@ ASSUME Delay \in Nat \ {0}
 ASSUME DueRule \in {"shared", "head"}
 ASSUME Budget \in {"first", "frame"}
 ASSUME Mode \in {"rounds", "fromzero", "inplace", "revisit", "cutcursor", "reorder"}
+ASSUME Q1 \subseteq Conn /\ K1 \in 0..N
+ASSUME QueueRule \in {"perqueue", "mincut", "holdfirst", "cutwalk"}
 
 Slots == 0..(N - 1)
 Entries == 0..(2 * N - 1)
 Healthy == Conn \ (Dark \cup Short)
-Window == (Cardinality(Conn) + K - 1) \div K
+
+\* the send queue a slot stages on, and each queue's capacity a flush
+QOf(s) == IF s \in Q1 THEN 1 ELSE 0
+Cap(q) == IF q = 1 THEN K1 ELSE K
+ConnOn(q) == {s \in Conn : QOf(s) = q}
+
+\* each queue's fairness window: ceil(|Conn on q| / Kq); one queue: ceil(|Conn| / K)
+WindowOn(q) == (Cardinality(ConnOn(q)) + Cap(q) - 1) \div Cap(q)
+Window == IF Q1 = {} \/ K1 = 0 THEN WindowOn(0)
+          ELSE IF WindowOn(0) > WindowOn(1) THEN WindowOn(0) ELSE WindowOn(1)
+
+\* the slots FairService is owed to: every connected slot of a queue with a capacity
+Owed == {s \in Conn : Cap(QOf(s)) > 0}
 
 VARIABLES \* the code's state
           pc,        \* "between" flushes, "first" round, "later" rounds
@@ -102,7 +139,9 @@ VARIABLES \* the code's state
           count,     \* the writer list's length
           k,         \* the later round's index into the list
           kept,      \* the compaction's length
-          used,      \* units of the capacity charged this flush (frames started)
+          used,      \* units of the (first queue's) capacity charged this flush (frames started)
+          usedB,     \* units of the second queue's capacity charged this flush
+          held,      \* the cursor before the first slot held after the flush's first frame, -1 for none
           ended,     \* the slots whose pass ended this flush (wrote nothing in a visit)
           \* the slots' state (the environment's, per flush)
           work,      \* frames a healthy slot has left; 1 while a short slot's packet is due
@@ -121,7 +160,7 @@ VARIABLES \* the code's state
           wasted,    \* units charged this flush to aborted frames
           harmed     \* a healthy slot ended a flush with work left while a unit went to an aborted frame
 
-vars == <<pc, snc, start, off, prev, w, count, k, kept, used, ended, work, uAge, pays,
+vars == <<pc, snc, start, off, prev, w, count, k, kept, used, usedB, held, ended, work, uAge, pays,
           visits, wrotePrev, wroteNow, lastPos, ok, started, wrote, writable, waiting,
           wasted, harmed>>
 
@@ -159,11 +198,25 @@ FullBefore(s, roundStart) ==
 
 RoundStart == IF pc = "first" THEN snc ELSE (prev + 1) % N
 
+\* the queues' capacities as rn_message_send_admit reads them
+UsedOf(q) == IF q = 1 THEN usedB ELSE used
+UsedTotal == used + usedB
+Spent(q) == UsedOf(q) >= Cap(q)
+AllSpent == Spent(0) /\ (Q1 = {} \/ Spent(1))
+\* Cut: no queue takes a frame (admit 0); "mincut" reads the fewest of any queue
+CutAt == IF QueueRule = "mincut" THEN Spent(0) \/ (Q1 # {} /\ Spent(1)) ELSE AllSpent
+\* Hold: slot i's own queue is spent while the other has room (admit -1)
+HoldAt(i) == ~CutAt /\ Spent(QOf(i))
+
+\* the cursor a flush's natural end leaves: the held one first, if any
+Settle(h, c) == IF h >= 0 THEN h ELSE c
+
 Init ==
     /\ pc = "between"
     /\ snc = 0 /\ start = 0 /\ off = 0 /\ prev = -1
     /\ w = [e \in Entries |-> 0]
     /\ count = 0 /\ k = 0 /\ kept = 0 /\ used = 0
+    /\ usedB = 0 /\ held = -1
     /\ ended = {}
     /\ work = [s \in Slots |-> 0]
     /\ uAge = [s \in Slots |-> IF s \in Dark THEN Delay - 1 ELSE 0]
@@ -198,6 +251,7 @@ BeginFlush ==
     /\ off' = 0 /\ prev' = -1
     /\ w' = [e \in Entries |-> 0]
     /\ count' = 0 /\ used' = 0
+    /\ usedB' = 0 /\ held' = -1
     /\ ended' = {}
     /\ visits' = 0 /\ wrotePrev' = {} /\ wroteNow' = {} /\ lastPos' = -1
     /\ started' = [s \in Slots |-> 0]
@@ -225,9 +279,11 @@ Aborted(i) == Frame(i) /\ ~Writable(i)
 Wr1(i)     == [wrote EXCEPT ![i] = IF Wrote(i) THEN Min(@ + 1, 2) ELSE @]
 Wk1(i)     == [work EXCEPT ![i] = IF Wrote(i) /\ i \notin Dark THEN @ - 1 ELSE @]
 Ws1(i)     == IF Aborted(i) THEN wasted + 1 ELSE wasted
-Used1(i)   == IF Frame(i) THEN used + 1 ELSE used
+\* the frames started this flush over both queues after the visit
+Used1(i)   == IF Frame(i) THEN UsedTotal + 1 ELSE UsedTotal
 WriteEffects(i) ==
-    /\ used' = Used1(i)
+    /\ used' = IF Frame(i) /\ QOf(i) = 0 THEN used + 1 ELSE used
+    /\ usedB' = IF Frame(i) /\ QOf(i) = 1 THEN usedB + 1 ELSE usedB
     /\ started' = [started EXCEPT ![i] = IF Frame(i) THEN Min(@ + 1, 2) ELSE @]
     /\ wrote' = Wr1(i)
     /\ work' = Wk1(i)
@@ -246,7 +302,7 @@ FirstVisit ==
           THEN \* not connected: continue (no capacity test, no cursor)
                /\ IF isLast
                   THEN IF count = 0
-                       THEN /\ EndFlush(IF prev >= 0 THEN NextC(prev) ELSE snc, ok, wrote, work, wasted)
+                       THEN /\ EndFlush(Settle(held, IF prev >= 0 THEN NextC(prev) ELSE snc), ok, wrote, work, wasted)
                             /\ UNCHANGED <<off, count, k, kept, wrotePrev, wroteNow, lastPos>>
                        ELSE /\ pc' = "later" /\ k' = 0 /\ kept' = 0
                             /\ wrotePrev' = wroteNow /\ wroteNow' = {} /\ lastPos' = -1
@@ -254,15 +310,40 @@ FirstVisit ==
                   ELSE /\ off' = off + 1
                        /\ UNCHANGED <<pc, snc, ok, count, k, kept, wrotePrev, wroteNow, lastPos,
                                       waiting, harmed>>
-               /\ UNCHANGED <<start, prev, w, used, ended, work, uAge, pays, started, wrote,
+               /\ UNCHANGED <<start, prev, w, used, usedB, held, ended, work, uAge, pays, started, wrote,
                               writable, wasted>>
-          ELSE IF used >= K
-          THEN \* send_capacity_available <= 0: goto flush, the cursor as last set
-               /\ EndFlush(snc, [ok EXCEPT !.cut = @ /\ snc = FullBefore(i, RoundStart),
-                                           !.cost = @ /\ visits + 1 <= N + used],
+          ELSE IF CutAt
+          THEN \* Cut: no queue takes a frame: goto flush, the cursor as last
+               \* set (the walk's), or the held one, which comes before it
+               /\ EndFlush(Settle(held, snc), [ok EXCEPT !.cut = @ /\ snc = FullBefore(i, RoundStart),
+                                                         !.cost = @ /\ visits + 1 <= N + UsedTotal],
                            wrote, work, wasted)
-               /\ UNCHANGED <<start, off, prev, w, count, k, kept, used, ended, work, uAge, pays,
+               /\ UNCHANGED <<start, off, prev, w, count, k, kept, used, usedB, held, ended, work, uAge, pays,
                               wrotePrev, wroteNow, lastPos, started, wrote, writable, wasted>>
+          ELSE IF HoldAt(i)
+          THEN \* Hold: i's own queue is spent, the other has room: i writes
+               \* nothing this flush and the round goes on; the cursor before
+               \* the first slot held after the flush's first frame is kept
+               LET h1 == IF held < 0 /\ (count > 0 \/ QueueRule = "holdfirst") THEN snc ELSE held
+                   ok1 == [ok EXCEPT !.order = @ /\ Pos(i) > lastPos,
+                                     !.cost = @ /\ visits + 1 <= N + UsedTotal]
+               IN
+               /\ held' = h1
+               /\ prev' = i
+               /\ IF isLast
+                  THEN IF count = 0
+                       THEN /\ EndFlush(Settle(h1, NextC(i)), ok1, wrote, work, wasted)
+                            /\ UNCHANGED <<off, k, kept, wrotePrev, wroteNow, lastPos>>
+                       ELSE /\ pc' = "later" /\ k' = 0 /\ kept' = 0
+                            /\ snc' = NextC(i) /\ ok' = ok1
+                            /\ wrotePrev' = wroteNow /\ wroteNow' = {} /\ lastPos' = -1
+                            /\ UNCHANGED <<off, waiting, harmed>>
+                  ELSE /\ off' = off + 1
+                       /\ snc' = NextC(i) /\ ok' = ok1
+                       /\ lastPos' = Pos(i)
+                       /\ UNCHANGED <<pc, k, kept, wrotePrev, wroteNow, waiting, harmed>>
+               /\ UNCHANGED <<start, w, count, used, usedB, ended, work, uAge, pays, started, wrote,
+                              writable, wasted>>
           ELSE LET wr == Wrote(i)
                    w1 == IF wr
                          THEN [w EXCEPT ![2 * count] = i,
@@ -277,7 +358,7 @@ FirstVisit ==
                /\ prev' = i
                /\ IF isLast
                   THEN IF c1 = 0
-                       THEN /\ EndFlush(NextC(i), ok1, Wr1(i), Wk1(i), Ws1(i))
+                       THEN /\ EndFlush(Settle(held, NextC(i)), ok1, Wr1(i), Wk1(i), Ws1(i))
                             /\ count' = c1
                             /\ UNCHANGED <<off, k, kept, wrotePrev, wroteNow, lastPos>>
                        ELSE /\ pc' = "later" /\ k' = 0 /\ kept' = 0 /\ count' = c1
@@ -290,7 +371,7 @@ FirstVisit ==
                        /\ wroteNow' = (IF wr THEN wroteNow \cup {i} ELSE wroteNow)
                        /\ lastPos' = Pos(i)
                        /\ UNCHANGED <<pc, k, kept, wrotePrev, waiting, harmed>>
-               /\ UNCHANGED <<start, pays, writable>>
+               /\ UNCHANGED <<start, pays, writable, held>>
 
 \* one entry of a later round: the writer list, compacted in place
 LaterVisit ==
@@ -299,20 +380,41 @@ LaterVisit ==
            i == w[2 * idx]
            stored == w[2 * idx + 1]
            cur == IF stored < 0 THEN NextC(prev) ELSE stored
+           walk == IF Mode = "cutcursor" THEN snc ELSE cur
            isLast == k + 1 = count
            okv == [ok EXCEPT !.order = @ /\ Pos(i) > lastPos,
                              !.writers = @ /\ i \in wrotePrev /\ i \notin ended]
        IN
        /\ visits' = visits + 1
-       /\ IF used >= K
-          THEN \* goto flush with the stored cursor
-               /\ EndFlush(IF Mode = "cutcursor" THEN snc ELSE cur,
-                           [okv EXCEPT !.cut = @ /\ (IF Mode = "cutcursor" THEN snc ELSE cur)
-                                                    = FullBefore(i, RoundStart),
-                                       !.cost = @ /\ visits + 1 <= N + used],
+       /\ IF CutAt
+          THEN \* Cut: goto flush with the stored cursor (the walk's), or the
+               \* held one, the first slot left unserved this flush
+               /\ EndFlush(IF QueueRule = "cutwalk" THEN walk ELSE Settle(held, walk),
+                           [okv EXCEPT !.cut = @ /\ walk = FullBefore(i, RoundStart),
+                                       !.cost = @ /\ visits + 1 <= N + UsedTotal],
                            wrote, work, wasted)
-               /\ UNCHANGED <<start, off, prev, w, count, k, kept, used, ended, work, uAge, pays,
+               /\ UNCHANGED <<start, off, prev, w, count, k, kept, used, usedB, held, ended, work, uAge, pays,
                               wrotePrev, wroteNow, lastPos, started, wrote, writable, wasted>>
+          ELSE IF HoldAt(i)
+          THEN \* Hold in a later round: served once this flush already, its
+               \* queue is spent now: its pass ends, the cursor past it
+               LET ok1 == [okv EXCEPT !.cost = @ /\ visits + 1 <= N + UsedTotal]
+               IN
+               /\ IF isLast
+                  THEN IF kept = 0
+                       THEN /\ EndFlush(Settle(held, NextC(prev)), ok1, wrote, work, wasted)
+                            /\ count' = 0
+                            /\ UNCHANGED <<k, kept, wrotePrev, wroteNow, lastPos>>
+                       ELSE /\ count' = kept /\ k' = 0 /\ kept' = 0
+                            /\ snc' = NextC(i) /\ ok' = ok1
+                            /\ wrotePrev' = wroteNow /\ wroteNow' = {} /\ lastPos' = -1
+                            /\ UNCHANGED <<pc, waiting, harmed>>
+                  ELSE /\ k' = k + 1
+                       /\ snc' = NextC(i) /\ ok' = ok1
+                       /\ lastPos' = Pos(i)
+                       /\ UNCHANGED <<pc, count, kept, wrotePrev, wroteNow, waiting, harmed>>
+               /\ UNCHANGED <<start, off, prev, w, used, usedB, held, ended, work, uAge, pays,
+                              started, wrote, writable, wasted>>
           ELSE LET wr == Wrote(i)
                    keep == wr \/ Mode = "revisit"
                    w1 == IF keep THEN [w EXCEPT ![2 * kept + 1] = stored, ![2 * kept] = i] ELSE w
@@ -324,7 +426,7 @@ LaterVisit ==
                /\ w' = w1
                /\ IF isLast
                   THEN IF kept1 = 0
-                       THEN /\ EndFlush(NextC(prev), ok1, Wr1(i), Wk1(i), Ws1(i))
+                       THEN /\ EndFlush(Settle(held, NextC(prev)), ok1, Wr1(i), Wk1(i), Ws1(i))
                             /\ count' = 0
                             /\ UNCHANGED <<k, kept, wrotePrev, wroteNow, lastPos>>
                        ELSE /\ count' = kept1 /\ k' = 0 /\ kept' = 0
@@ -335,7 +437,7 @@ LaterVisit ==
                        /\ snc' = NextC(i) /\ ok' = ok1
                        /\ wroteNow' = wn /\ lastPos' = Pos(i)
                        /\ UNCHANGED <<pc, count, wrotePrev, waiting, harmed>>
-               /\ UNCHANGED <<start, off, prev, pays, writable>>
+               /\ UNCHANGED <<start, off, prev, pays, writable, held>>
 
 Next == BeginFlush \/ FirstVisit \/ LaterVisit
 
@@ -349,16 +451,19 @@ TypeOK ==
     /\ prev \in -1..(N - 1)
     /\ w \in [Entries -> -1..(N - 1)]
     /\ count \in 0..N /\ kept \in 0..N /\ k \in 0..N
-    /\ used \in 0..K
+    /\ used \in 0..K /\ usedB \in 0..K1
+    /\ held \in -1..(N - 1)
     /\ ended \subseteq Conn
     /\ work \in [Slots -> 0..WorkMax]
     /\ uAge \in [Slots -> 0..Delay]
     /\ waiting \in [Slots -> 0..Window]
-    /\ wasted \in 0..K
+    /\ wasted \in 0..(K + K1)
 
 \* every slot with writable work at the start of a flush has a frame
-\* written within ceil(|Conn| / K) flushes
-FairService == \A s \in Slots : waiting[s] < Window
+\* written within ceil(|Conn on its queue| / its queue's capacity) flushes
+\* (one queue: ceil(|Conn| / K)); a slot of a queue with no capacity is
+\* owed nothing
+FairService == \A s \in Owed : waiting[s] < WindowOn(QOf(s))
 
 \* every unit of the shared capacity charged went to a written frame
 NoUnitWasted == wasted = 0
@@ -390,5 +495,5 @@ EndedWritesNothing == \A s \in ended : ~Writable(s)
 CursorAsFullWalk == ok.cut
 
 \* a flush costs at most N visits plus one per frame started
-VisitsBounded == ok.cost /\ visits <= N + used
+VisitsBounded == ok.cost /\ visits <= N + UsedTotal
 =============================================================================

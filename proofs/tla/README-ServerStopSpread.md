@@ -94,6 +94,27 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadBrokenStopInFlight.cfg` | `NoSendCutAtStop` violated |
 | `MCServerStopSpreadBrokenNoAbandon.cfg` | `StopFinishesWithoutRoom` violated (deadlock check off, as for the unreachable stall) |
 | `MCServerStopSpreadBrokenNoReread.cfg` | `NoDropWhileRoomCanReturn` violated |
+| `MCServerStopSpreadQueues.cfg` | pass, every invariant with two send queues (three connections, bursts of two, a bank of two a queue) |
+| `MCServerStopSpreadQueuesLive.cfg` | pass, `StopFinishes` and `StopFinishesWithoutRoom` under `FairSpec`, two send queues |
+| `MCServerStopSpreadBrokenPooledRoom.cfg` | `StopFinishesWithoutRoom` violated (deadlock check off) |
+
+The configs above `QueueCount = 1` are the transport with one send queue. With
+`QueueCount` queues, a connection's bursts go on queue `s % QueueCount`
+(`QueueOf`), the staging and in-flight sends are per queue, and `Complete` and
+`Jam` act on one queue. `SealOne` passes a burst whose own queue is full while
+another has room (the drain's full-queue pass in
+`rocketnet_server_transport_drain_disconnect_bursts`), and `AbandonNoRoom`,
+once every queue is idle, drops only the waiting bursts of queues with no
+room, counting each in SEND_RING_FULL (`rocketnet_server_transport_stop_step`).
+`OnlyJammedQueuesDrop` says no burst of a queue with room is dropped.
+
+`Defect = "pooledroom"` judges room over all queues pooled, as the code did
+before: the drain stops at a burst on a full queue while another queue has
+room, and the stop step abandons only when the room summed over the queues is
+0. With one queue jammed for good and the other with room, neither ever
+happens: the stop never finishes. This is the stop hang the unit test
+`test_server_stop_finishes_past_a_jammed_queue`
+(`tests/test_unit_server_send_queues.cpp`) shows red on the code before.
 
 ## The reversed witnesses
 
