@@ -3892,6 +3892,17 @@ void rocketnet_test_request_path_ordering()
 
     rocketnet_client_slots_release( test.server.client_slots, taken_slot );
 
+    // the same token again in this update is refused at the repeat rung,
+    // before the verify, by the same reason (TRANSPORT.md t12 rule 9 item
+    // 6); the next update verifies it again, and with the slot now free it
+    // is challenged below
+
+    before = test.counters;
+    rocketnet_check( rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED );
+    rocketnet_server_protocol_update( &test.server, 100.0 );
+
     // the resend rung fires for a garbage body from a mapped address --
     // pinning its position above the version check: a mapping is answered
     // with its stored challenge no matter what the bytes claim
@@ -11569,7 +11580,7 @@ void rocketnet_test_client_id_free_after_clean_disconnect()
 {
     // the slot a live client id holds is freed the moment the client's
     // disconnect packets reach the server: the same request that was
-    // refused now proceeds at the same time value.
+    // refused proceeds from the next update, at the same time value.
 
     static struct rocketnet_test_connected_pair_t pair;
     rocketnet_test_connected_pair_setup( &pair );
@@ -11613,9 +11624,19 @@ void rocketnet_test_client_id_free_after_clean_disconnect()
     rocketnet_check( !rocketnet_client_slots_connected( pair.test.server.client_slots, 0 ) );
     rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
 
-    // at the same time value the same request proceeds
+    // within the update that refused it the token is held (t12 rule 9 item
+    // 6): the same request is ignored again with no verify, counted under
+    // its first reason; the next update, at the same time value, verifies it
+    // again and it proceeds
 
     response_bytes = 0;
+
+    rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof( request ),
+                                                  ROCKETNET_TEST_CREATE_TS, pair.time, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_check( response_bytes == 0 );
+    rocketnet_check( pair.test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] == 2 );
+
+    rocketnet_server_protocol_update( &pair.test.server, pair.time );
 
     rocketnet_check( rocketnet_test_process_from( &pair.test, &second_address, request, sizeof( request ),
                                                   ROCKETNET_TEST_CREATE_TS, pair.time, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
