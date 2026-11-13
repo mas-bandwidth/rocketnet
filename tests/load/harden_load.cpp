@@ -2235,6 +2235,12 @@ static int harden_server_main( const harden_options_t & o )
         }
         printf( "harden_pool: shape=%s game_threads=%d first_cpu=%d pinned=%d realtime=%d world_ms=%.2f game_load=%.2f\n", o.space_shape ? "space" : "blocking", o.game_threads, o.pin_first_cpu,
                 harden_pin.pinned.load(), harden_pin.realtime.load(), o.world_ms, o.game_load );
+        // a setting the system refused is in the row (nothing prints when every setting held)
+        if ( harden_pin.pin_refused.load() > 0 || harden_pin.realtime_refused.load() > 0 )
+        {
+            printf( "harden_pool_refused: pin_refused=%d pin_error=%d realtime_refused=%d realtime_error=%d (error codes are errno, or GetLastError on Windows; priority is SCHED_FIFO max, or THREAD_PRIORITY_TIME_CRITICAL on Windows)\n",
+                    harden_pin.pin_refused.load(), harden_pin.pin_error.load(), harden_pin.realtime_refused.load(), harden_pin.realtime_error.load() );
+        }
         fflush( stdout );
     }
     double last_plan_time = 0.0; // space: when the frame the task staged was built from game state
