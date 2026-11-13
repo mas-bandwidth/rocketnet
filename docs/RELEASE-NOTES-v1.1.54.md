@@ -42,7 +42,14 @@ released id moved.
   `CLOCK_MONOTONIC` on macOS. Before, after a suspend longer than the
   30-second token creation skew, a server on token epoch 0 refused every
   fresh connect token until restart. Windows is unchanged.
-- CI: nightly shard summary jobs find their shards under the caller's prefix.
+- CI:
+  - Nightly shard summary jobs find their shards under the caller's prefix.
+  - The per-commit shard summary jobs read the run's job list with a bounded
+    retry: four tries inside one 45-second deadline, on server errors,
+    transport errors and short answers, honouring any wait the server names
+    (and failing at once when that wait cannot fit). A list that cannot be
+    read, arrives late, or has fewer rows than its total count stays red, and
+    the list is written whole or not at all.
 - Tests: the functional disconnect delivery case no longer counts a late
   duplicate connection response, arriving after the disconnect, as a fault
   (it reddened a macOS run of v1.1.53's main).
@@ -58,7 +65,7 @@ released id moved.
   RNMsgxReceiveFill's MainStop and Exit uncited in its header and Done not
   named as an environment action (cited and named).
 
-Eight fix branches and the flaky-test repair, at these commits:
+Nine fix branches and the flaky-test repair, at these commits:
 
 - `fix/v1.1.x/receive-handoff-latency`: `84f80fc1e91d58f69998aee1e340596f83bb5aee`
 - `fix/v1.1.x/client-stop-and-race`: `4e5719ef7799572ef8e9af501aaba38d0dfdf884`
@@ -71,6 +78,7 @@ Eight fix branches and the flaky-test repair, at these commits:
 - `fix/v1.1.x/iocp-stop-race`: `ae3af09f610706c8959613d691b36eeb63626f62`
 - `fix/v1.1.x/token-clock`: `a71da8e748e2efccf633422f88d1e9b36472c750`
 - `fix/v1.1.x/flaky-disconnect-delivery`: `0ceee9e847f783e71fc198f9e89adfadeef8402e` (tests only)
+- `fix/v1.1.x/summary-api-retry`: `624e206663ac75a14eefbb402bbff298d835a7a8` (CI only)
 
 - Tag: `v1.1.54`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.54).
