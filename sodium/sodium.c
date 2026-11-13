@@ -2074,7 +2074,8 @@ sodium_crit_leave(void)
 #elif defined(HAVE_PTHREAD) && !defined(__EMSCRIPTEN__)
 
 static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;
-static __thread int    _sodium_lock_held;
+static pthread_t       _sodium_lock_owner;
+static int             _sodium_lock_owned;
 
 int
 sodium_crit_enter(void)
@@ -2084,7 +2085,8 @@ sodium_crit_enter(void)
     if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {
         assert(locked == 0);
         locked = 1;
-        _sodium_lock_held = 1;
+        __atomic_store_n(&_sodium_lock_owner, pthread_self(), __ATOMIC_RELAXED);
+        __atomic_store_n(&_sodium_lock_owned, 1, __ATOMIC_RELEASE);
     }
     return ret;
 }
@@ -2092,13 +2094,15 @@ sodium_crit_enter(void)
 int
 sodium_crit_leave(void)
 {
-    if (_sodium_lock_held == 0 || locked == 0) {
+    if (__atomic_load_n(&_sodium_lock_owned, __ATOMIC_ACQUIRE) == 0 ||
+        !pthread_equal(__atomic_load_n(&_sodium_lock_owner, __ATOMIC_RELAXED), pthread_self()) ||
+        locked == 0) {
 # ifdef EPERM
         errno = EPERM;
 # endif
         return -1;
     }
-    _sodium_lock_held = 0;
+    __atomic_store_n(&_sodium_lock_owned, 0, __ATOMIC_RELAXED);
     locked = 0;
 
     return pthread_mutex_unlock(&_sodium_lock);

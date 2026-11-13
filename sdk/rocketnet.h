@@ -2678,8 +2678,8 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// loop rocketnet_client_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
 /// misuse: it asserts in a debug build, counts the SDK-internal counter
-/// MESSAGE_NOT_RECEIVED, and the connection ends in
-/// ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+/// MESSAGE_NOT_RECEIVED, and the connection ends in the client state of
+/// that name, ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 ///
 /// Callable in every client state. Before the first connect it only checks
 /// the time; after disconnect it steps the old attempt's shutdown. Thread: not
