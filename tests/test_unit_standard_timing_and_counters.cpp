@@ -431,8 +431,10 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     rocketnet_unit_check( packet[0] == ROCKETNET_CONNECTION_REQUEST_PACKET );
 
-    // the cookie moves the client to sending connection request; a request
-    // inside the interval is suppressed, and at the interval it is retransmitted
+    // the cookie moves the client to sending connection request; the advance
+    // brings the request forward to the next update, once (t11 rule 7), and
+    // the interval runs from that send: a request inside it is suppressed,
+    // and at the interval it is retransmitted
 
     rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.101,
                                                  response, &response_bytes,
@@ -442,36 +444,37 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     rocketnet_client_protocol_update( &client, t0 + 0.152, packet, &packet_bytes );
-    rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.203, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
-    rocketnet_client_protocol_update( &client, t0 + 0.254, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.203, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.305, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.253, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_client_protocol_update( &client, t0 + 0.304, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == 0 );
+    rocketnet_client_protocol_update( &client, t0 + 0.354, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 
     // the challenge moves the client to sending connection response; the
-    // stored response is retransmitted at the same send rate, byte-identical
+    // advance brings the stored response forward to the next update, once,
+    // and it is retransmitted at the same send rate from there, byte-identical
 
-    rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.305,
+    rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.354,
                                                  response, &response_bytes,
                                                  payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.305,
+    rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.354,
                                                                     payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
-    rocketnet_client_protocol_update( &client, t0 + 0.356, packet, &packet_bytes );
-    rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.407, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.405, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     rocketnet_unit_check( packet[0] == ROCKETNET_CONNECTION_RESPONSE_PACKET );
 
     uint8_t first_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
     memcpy( first_response, packet, sizeof( first_response ) );
 
-    rocketnet_client_protocol_update( &client, t0 + 0.458, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.456, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.509, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.506, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     rocketnet_unit_check( memcmp( first_response, packet, sizeof( first_response ) ) == 0 );
 

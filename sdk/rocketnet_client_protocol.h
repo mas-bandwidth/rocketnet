@@ -90,6 +90,7 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( integrity_failures, uint64_t integrity_failures ) \
     X( attempt_start_time, double attempt_start_time ) \
     X( last_send_time, double last_send_time ) \
+    X( handshake_early_send, int handshake_early_send ) \
     X( last_receive_time, double last_receive_time ) \
     X( total_deadline_seconds, uint64_t total_deadline_seconds ) \
     X( timeout_seconds, int32_t timeout_seconds ) \

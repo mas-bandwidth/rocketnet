@@ -448,6 +448,18 @@ arrived. Otherwise the packet becomes an amplifier pointed at the server — 38 
 chose. With the rule, the client's request rate is its own retransmit rate no matter how
 many cookie packets arrive, and the pair is not a provoked pair at all.
 
+*The one exception is an advance, and it is bounded by the states, not by the arrivals.*
+Waiting a whole send interval after each reply made a handshake on a fast link take
+three send intervals, about 200 ms at 10 Hz, and a clock summed from a 60 Hz step
+waited a seventh frame on every interval. So the advance from requesting cookie to
+sending connection request, and the advance from sending connection request to sending
+connection response, each bring the next scheduled send forward to the next update,
+once. It is still not a reply: nothing is sent from inside the processing of a packet,
+the packet sent is the one the schedule would have sent, and the schedule then runs from
+it. Each state is entered once per attempt, so an attempt sends at most two packets more
+than the rate alone, however many cookies arrive; a later cookie, genuine or forged,
+moves nothing and brings nothing forward.
+
 [RN-1 t8 Packet formats](TRANSPORT.md#t8)
 **A client must discard a cookie packet whose connection salt does not match its current
 attempt**, which is why the salt is echoed in the clear alongside the cookie. Without

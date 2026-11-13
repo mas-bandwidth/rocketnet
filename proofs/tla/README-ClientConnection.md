@@ -34,6 +34,8 @@ timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disco
 | `cSeen` | `replay_session` | ids of accepted server session packets |
 | `cPayloadDelivered` | none (ghost) | the application has been handed a payload in connected this attempt; recorded only by the reachability witness's step `ClientRecvPayloadWitness`, so it stays FALSE under `Spec` |
 | `cDiscPending`, `cDiscKeys` | the disconnect burst | copies still to send after `disconnect`, and their keys |
+| `cEarly` | `handshake_early_send` | an advance (1 → 2 by the first cookie, 2 → 3 by the challenge) armed one send at the next update (TRANSPORT.md t11 rule 7) |
+| `cEarlySends` | none (ghost) | the early sends of this attempt, bounded by `EarlySendPerAdvance` |
 
 **The server, as the client sees it**: one encryption mapping for the client's address
 (`sMap`: live, keys, slot held, handshake age, idle age, the keep-alive clock, the last
@@ -48,6 +50,7 @@ models in the module:
 | `AppConnect` | application | `rocketnet_client_protocol_connect`: struct reset, fresh salt and ephemeral, state 1 |
 | `AppDisconnect` | application | `rocketnet_client_protocol_disconnect`: the burst from 3 or 4, state 0, keys and ephemeral zeroed; from a terminal state, 0 alone |
 | `ClientSend` | the scheduled send | `rocketnet_client_protocol_update`: request in 1 and 2, the stored response in 3, keep-alive in 4, at the send interval |
+| `ClientEarlySend` | the advance | `rocketnet_client_protocol_update` with `handshake_early_send`: the new state's packet without waiting for the interval, once, in 2 or 3; any send clears the arm |
 | `ClientDiscCopy` | the client | one copy of the disconnect burst |
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
@@ -84,6 +87,7 @@ Safety, checked under every loss pattern with no fairness:
 | `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (STANDARD.md, ClientConnection TimeoutPairing) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
 | `NoSendOnArrival` | no receive sends (STANDARD.md, ClientConnection NoSendOnArrival) |
+| `EarlySendPerAdvance` | the early send is bounded by the advances, not by the arrivals: none in 1, at most one in 2, at most two in an attempt (TRANSPORT.md t11 rule 7) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
 | `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
@@ -239,12 +243,12 @@ only the measured changes the table names; the TSV has one row per run.
 | `L-silent` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | SilentServerTimesOut, AttemptResolves | 20 | pass |
 | `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | - at the 110 s stop | bench debt: crash-timeout-liveness-over-budget |
 | `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-none` is a reachability witness only) |
-| `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 2234 | pass (handshake up to the timeout) |
+| `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt since the early send: reaches connected; no reduced safety check (`Reach-first` is a reachability witness only) |
 | `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-alternate` is a reachability witness only) |
 | `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-burst` is a reachability witness only) |
 | `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: no reduced safety check (`Reach-arbitrary` is a reachability witness only) |
-| `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 12162 | pass (handshake up to the timeout) |
-| `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 2196 | pass (handshake up to the timeout) |
+| `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt since the early send: reaches connected; no reduced safety check (`Reach-firstkind` is a reachability witness only) |
+| `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt since the early send: reaches connected; no reduced safety check (`Reach-delay` is a reachability witness only) |
 | `Reach-none` | the S-none constants | SpecReach | NotReached | 86216 | fail as expected (NotReached violated) |
 | `Reach-first` | the S-first constants, Timeout 3 | SpecReach | NotReached | 19163 | fail as expected (NotReached violated) |
 | `Reach-alternate` | the S-alternate constants | SpecReach | NotReached | 118680 | fail as expected (NotReached violated) |
@@ -274,9 +278,13 @@ the safety at those constants is checked only by the weekly debt run. Under `Spe
 type-targeted drop of "What TLC found" 9, which is the fairness being too weak, not the
 protocol; the arbitrary-loss liveness therefore stands on the hand replay of that lasso
 and on the four deterministic patterns, not on a completed run. `S-first`, `S-firstkind`
-and `S-delay` pass at their `Timeout 2` constants, which is the handshake up to the idle
-timeout and never connected; their connected coverage is the reduced reachability
-witnesses `Reach-first`, `Reach-firstkind` and `Reach-delay`.
+and `S-delay` passed at their `Timeout 2` constants while the request waited a whole
+send interval after the cookie: the idle timeout fired first and the run covered the
+handshake up to it. With the early send (TRANSPORT.md t11 rule 7) the request leaves
+in the update the cookie advanced the client, the attempt reaches connected under the
+same constants, and the three cases explore the full environment like `S-none`: they
+are bench debt at the 110 s stop, and their connected coverage is the reduced
+reachability witnesses `Reach-first`, `Reach-firstkind` and `Reach-delay`.
 
 ### Loss patterns explored
 
@@ -450,12 +458,12 @@ original parameters and is not a completed proof.
 | 21 | `MCClientConnectionLSilent.cfg` | pass |
 | 22 | `MCClientConnectionLCrash.cfg` | pass; debt: crash-timeout-liveness-over-budget |
 | 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSNone.cfg-is-a-reachability-witness-only |
-| 24 | `MCClientConnectionSFirst.cfg` | pass (handshake up to the timeout) |
+| 24 | `MCClientConnectionSFirst.cfg` | pass; debt: first-loss-early-send-reaches-connected-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSFirst.cfg-is-a-reachability-witness-only |
 | 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSAlternate.cfg-is-a-reachability-witness-only |
 | 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSBurst.cfg-is-a-reachability-witness-only |
 | 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSArbitrary.cfg-is-a-reachability-witness-only |
-| 28 | `MCClientConnectionSFirstkind.cfg` | pass (handshake up to the timeout) |
-| 29 | `MCClientConnectionSDelay.cfg` | pass (handshake up to the timeout) |
+| 28 | `MCClientConnectionSFirstkind.cfg` | pass; debt: firstkind-loss-early-send-reaches-connected-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSFirstkind.cfg-is-a-reachability-witness-only |
+| 29 | `MCClientConnectionSDelay.cfg` | pass; debt: delay-early-send-reaches-connected-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSDelay.cfg-is-a-reachability-witness-only |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
@@ -626,3 +634,46 @@ predicate takes it to −7. Against the C: before revision 1.1 state 3 is
 below CONNECTED, so `current_time - attempt_start_time >=
 total_deadline_seconds` ended it with connect token expired; the code now
 skips the test in state 3 and only the silence timeout can end it there.
+
+### The early send is bounded by the advances (EarlySendPerAdvance)
+
+Standard rule: TRANSPORT.md t11 rule 7. The advance from requesting cookie
+(1) to sending connection request (2), made by the first accepted cookie,
+and the advance from 2 to sending connection response (3), made by the
+challenge, each arm one send of the new state's packet at the next update
+(`handshake_early_send`, set in `rocketnet_client_process_cookie` and
+`rocketnet_client_process_challenge`, taken in
+`rocketnet_client_protocol_update`). Before it the client waited out the send
+interval after every reply: on a fast link a handshake took three send
+intervals, about 200 ms at 10 Hz.
+
+`cEarly` is the arm; `ClientEarlySend` sends `ClientPacket` in 2 or 3 when it
+is set; every send (`ClientSendNow`, shared with `ClientSend`) clears it and
+restarts the interval. The ghost `cEarlySends` counts early sends per attempt,
+and `EarlySendPerAdvance` (in `SafetyInvariants`, so every run checks it)
+holds them to the advances: none in 1, at most one in 2, at most two in the
+attempt. `NoSendOnArrival` still holds: no receive step sends.
+
+| Case | Expected | Exit |
+|---|---|---:|
+| `MCClientConnectionForgedCookie.cfg` (a forger echoing the salt; `EarlySendPerAdvance` in `SafetyInvariants`) | pass | 0 |
+| `MCClientConnectionBrokenEarlyAnyCookie.cfg` (the same with `EarlyArmsOnAnyCookie`: every accepted cookie arms the send) | `EarlySendPerAdvance` | 12 |
+
+Witness trace, read by hand (8 states): connect (state 1); the forger sends
+a cookie echoing the salt; the client accepts it (state 2, armed); the early
+request goes out (`cEarlySends = 1`); the server answers that request with
+its own cookie; the client accepts it in state 2 and, under the witness, is
+armed again; a second early request goes out in state 2 (`cEarlySends = 2`).
+Against the C: `rocketnet_client_process_cookie` sets
+`handshake_early_send` only inside the branch that moves requesting cookie to
+sending connection request; a cookie accepted in state 2 replaces the latest
+cookie and arms nothing, so a stream of cookies, forged or genuine, brings no
+request forward after the first.
+
+Under the S environments the early send changes what three cases reach.
+`S-first`, `S-firstkind` and `S-delay` timed the client out at `Timeout 2`
+before the cookie-carrying request left, because that request waited a whole
+interval after the cookie; it now leaves in the same update, the attempt
+reaches connected, and the three are bench debt at the 110 s stop like
+`S-none`. `MCClientConnectionReachSFirstkind.cfg` grew from 42 s to 76 s and
+carries a declared budget. The `clientconnection` group now has 42 cases.

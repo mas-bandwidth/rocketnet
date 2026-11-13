@@ -499,6 +499,12 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 #define ROCKETNET_DEFAULT_SEND_RATE            10.0
 
+// the client's scheduled send is due this much before the interval has
+// elapsed exactly: the rounding of a fixed step summed in floating point,
+// and nothing more (RN-1 t17 rule 1)
+
+#define ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS 1.0e-6
+
 // the handshake work budget (handshakes_per_update): the most connection
 // requests one server update takes to the signature verify, each one Ed25519 verify
 // and, when it verifies, the sealed-block open, a keypair and the key
