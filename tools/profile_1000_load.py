@@ -39,18 +39,28 @@ EXPECTED_FRAME_CALLS = (
     "client_finish_message", "server_update", "server_send_packets",
     "server_client_connected", "server_num_connected_clients",
     "server_receive_messages", "server_start_message", "server_finish_message",
+    "server_disconnect_reason",
 )
-PROFILE_ENV_TRANSPORTS = {"ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT"}
-PROFILE_ENV_IMPAIRMENT_PREFIX = "ROCKETNET_DEV_"
+# The harness sets these itself for every child it starts (the two transports
+# and LOAD_PROFILE) or removes them (LOAD_PLAN_ONLY, and the rate unless the
+# rate option sets it), so an inherited value cannot reach the run.
+PROFILE_ENV_HARNESS_OWNED = {
+    "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT",
+    "LOAD_PROFILE", "LOAD_PLAN_ONLY", "LOAD_MESSAGES_PER_CLIENT_SECOND",
+}
+PROFILE_ENV_PREFIXES = ("ROCKETNET_", "LOAD_")
 
 
 def profile_environment_overrides(environment):
-    """Return ambient SDK settings that would change a claimed stock profile."""
+    """Return ambient SDK or load-harness settings that would change a claimed stock profile.
+
+    The SDK and tests/load/load.c read many ROCKETNET_* and LOAD_* names (log
+    level, gateway address, test seams, diagnostics, netns); any of them set in
+    the caller's environment changes the run, so every one is refused except
+    the names the harness owns."""
     return sorted(name for name, value in environment.items()
-                  if value and name not in PROFILE_ENV_TRANSPORTS and
-                  (name.startswith("ROCKETNET_CLIENT_") or
-                   name.startswith("ROCKETNET_SERVER_") or
-                   name.startswith(PROFILE_ENV_IMPAIRMENT_PREFIX)))
+                  if value and name not in PROFILE_ENV_HARNESS_OWNED and
+                  name.startswith(PROFILE_ENV_PREFIXES))
 
 
 def command(args, cwd=None):
@@ -248,18 +258,24 @@ def parse_memory_plan(stdout, expected_clients, expected_profile):
                                  "conservative operational reserve, not a proven upper bound"))
 
 
-def validate_transport_overhead_reserve(reserve_bytes, evidence, transport, clients,
-                                       source_head, system, profile):
+def validate_transport_overhead_reserve(reserve_bytes, evidence, server_transport, client_transport,
+                                       clients, source_head, system, profile):
+    """Check the operator's evidence text names this run's scope.
+
+    The text is operator-attested and recorded verbatim; this check only
+    proves it names the same head, OS, both transports and population as whole
+    words, so "1000" never matches inside "10000" or inside the head."""
     if reserve_bytes is None and evidence is None and profile == "light":
         return None
     if reserve_bytes is None or reserve_bytes <= 0:
         raise ValueError("a positive measured transport/native overhead reserve is required")
     if evidence is None or not evidence.strip():
         raise ValueError("transport overhead reserve requires evidence provenance")
-    normalized = evidence.casefold()
-    if (transport.casefold() not in normalized or str(clients) not in normalized or
-            source_head.casefold() not in normalized or system.casefold() not in normalized):
-        raise ValueError("transport overhead evidence must identify source head, OS, transport and population")
+    tokens = set(re.split(r"[^a-z0-9_]+", evidence.casefold()))
+    wanted = (source_head, system, server_transport, client_transport, str(clients))
+    if not all(word.casefold() in tokens for word in wanted):
+        raise ValueError("transport overhead evidence must identify source head, OS, "
+                         "server and client transports and population as whole words")
     return dict(bytes=reserve_bytes, evidence=evidence,
                 scope="measured OS/process/custom-transport overhead outside the lifecycle allocator plan")
 
@@ -385,7 +401,7 @@ def main():
     p.add_argument("--transport-overhead-reserve-bytes", type=positive_integer,
                    help="measured OS/process/custom-transport bytes beyond the lifecycle allocator plan; required for default profile")
     p.add_argument("--transport-overhead-evidence",
-                   help="receipt/path naming this source HEAD, OS, transport and client population; required with reserve")
+                   help="receipt/path naming this source HEAD, OS, server and client transports and client population as whole words; required with reserve")
     args = p.parse_args()
     if args.seconds < 60:
         p.error("use at least 60 seconds of traffic")
@@ -412,7 +428,7 @@ def main():
     try:
         ambient_overrides = profile_environment_overrides(os.environ)
         if ambient_overrides:
-            raise ValueError("ambient SDK profile overrides are unsupported: " +
+            raise ValueError("ambient SDK or load harness overrides are unsupported: " +
                              ", ".join(ambient_overrides))
         head = command(["git", "rev-parse", "HEAD"], source)
         status = command(["git", "status", "--porcelain"], source)
@@ -421,7 +437,8 @@ def main():
             raise ValueError("source is dirty or differs from expected head")
         overhead = validate_transport_overhead_reserve(
             args.transport_overhead_reserve_bytes, args.transport_overhead_evidence,
-            args.server_transport, args.clients, head, platform.system(), args.profile)
+            args.server_transport, args.client_transport, args.clients, head,
+            platform.system(), args.profile)
         record["transport_overhead_reserve"] = overhead
         record["preflight"] = preflight(out, args.clients)
         if record["preflight"]["failures"]:

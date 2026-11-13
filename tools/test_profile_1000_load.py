@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -200,7 +201,17 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result["reported_frame_calls"]["frame_server_update"]["count"], 6000)
         self.assertEqual(result["reported_calls_at_or_above_100us"], ["frame_server_update"])
         self.assertIn("frame_client_update", result["missing_frame_calls"])
+        self.assertIn("frame_server_disconnect_reason", result["missing_frame_calls"])
         self.assertEqual(result["every_main_call_budget"], "UNMEASURED")
+
+    def test_expected_calls_are_the_harness_timed_calls(self):
+        # tests/load/load.c names every call it times; clock_pair is a timing
+        # aid, not a frame call
+        source = (Path(__file__).resolve().parent.parent / "tests" / "load" / "load.c").read_text()
+        table = re.search(r"load_timing_names\[LOAD_TIMING_CALL_COUNT\]\s*=\s*\{(.*?)\};", source, re.S)
+        self.assertIsNotNone(table)
+        names = [name for name in re.findall(r'"([a-z_]+)"', table.group(1)) if name != "clock_pair"]
+        self.assertEqual(sorted(profile.EXPECTED_FRAME_CALLS), sorted(names))
 
     def test_zero_sample_category_is_present_but_unmeasured(self):
         result = profile.parse_load(SUMMARY.rstrip() + ZERO_CALL + "\n", "portable", "portable")
@@ -245,7 +256,8 @@ class ReceiptTests(unittest.TestCase):
 
 class ProvenanceTests(unittest.TestCase):
     def run_fake(self, wrong_source=False, missing_binary=False, clients=None, rate=None,
-                 load_profile=None, include_overhead=True, ambient=None):
+                 load_profile=None, include_overhead=True, ambient=None, evidence=None,
+                 server_transport="portable"):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = (root / "source").resolve()
@@ -301,7 +313,7 @@ class ProvenanceTests(unittest.TestCase):
 
             args = ["profile_1000_load.py", "--mode", "timings", "--source", str(source),
                     "--output", str(output), "--expected-head", HEAD,
-                    "--server-transport", "portable", "--seconds", "60"]
+                    "--server-transport", server_transport, "--seconds", "60"]
             if clients is not None:
                 args += ["--clients", str(clients)]
             if rate is not None:
@@ -311,12 +323,23 @@ class ProvenanceTests(unittest.TestCase):
             if include_overhead:
                 args += ["--transport-overhead-reserve-bytes", "4096",
                          "--transport-overhead-evidence",
-                         f"synthetic {HEAD} {profile.platform.system()} portable "
-                         f"{1000 if clients is None else clients} clients measured receipt"]
-            with mock.patch.dict(os.environ, ambient or {}, clear=False), \
+                         evidence or (f"synthetic {HEAD} {profile.platform.system()} portable "
+                                      f"{1000 if clients is None else clients} clients measured receipt")]
+            self.preflight_calls = []
+
+            def fake_preflight(out_dir, clients=profile.CLIENTS, required_available_bytes=None):
+                self.preflight_calls.append((clients, required_available_bytes))
+                return {"failures": []}
+
+            # the caller's own ROCKETNET_* and LOAD_* settings never reach the
+            # run under test; each test names the ambient values it means
+            environment = {name: value for name, value in os.environ.items()
+                           if not name.startswith(("ROCKETNET_", "LOAD_"))}
+            environment.update(ambient or {})
+            with mock.patch.dict(os.environ, environment, clear=True), \
                  mock.patch.object(sys, "argv", args), mock.patch.object(profile, "command", fake_command), \
                  mock.patch.object(profile, "run_capture", fake_run), \
-                 mock.patch.object(profile, "preflight", lambda *_: {"failures": []}), \
+                 mock.patch.object(profile, "preflight", fake_preflight), \
                  contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 code = profile.main()
             receipt = json.loads((output / "receipt.json").read_text())
@@ -360,6 +383,36 @@ class ProvenanceTests(unittest.TestCase):
         self.assertEqual(seen[3][1]["LOAD_PROFILE"], "light")
         self.assertEqual(receipt["memory_plan"]["minimum_available_memory_bytes"],
                          receipt["memory_plan"]["public_plan_with_headroom_bytes"] + 4096)
+
+    def test_capacity_guards_receive_the_planned_requirement(self):
+        code, receipt, _ = self.run_fake(clients=64, rate=2.5)
+        self.assertEqual(code, 0)
+        required = receipt["memory_plan"]["minimum_available_memory_bytes"]
+        self.assertEqual(required, receipt["memory_plan"]["public_plan_with_headroom_bytes"] + 4096)
+        # the first guard runs before the plan exists; the guard after the plan
+        # and the guard before each of the three runs carry the requirement
+        self.assertEqual(self.preflight_calls, [(64, None)] + [(64, required)] * 4)
+
+    def test_overhead_evidence_population_matches_as_a_whole_word(self):
+        system = profile.platform.system()
+        for clients, written in ((64, 1640), (1000, 10000), (4, 40)):
+            with self.subTest(clients=clients, written=written):
+                code, receipt, seen = self.run_fake(
+                    clients=clients, load_profile="default",
+                    evidence=f"synthetic {HEAD} {system} portable {written} clients measured receipt")
+                self.assertEqual(code, 1)
+                self.assertIn("whole words", receipt["error"])
+                self.assertNotIn("memory_plan", receipt)
+                self.assertEqual(seen, [])
+
+    def test_overhead_evidence_must_name_the_client_transport(self):
+        system = profile.platform.system()
+        code, receipt, seen = self.run_fake(
+            clients=64, load_profile="default", server_transport="gso",
+            evidence=f"synthetic {HEAD} {system} gso 64 clients measured receipt")
+        self.assertEqual(code, 1)
+        self.assertIn("whole words", receipt["error"])
+        self.assertEqual(seen, [])
 
     def test_default_profile_is_passed_and_recorded(self):
         code, receipt, seen = self.run_fake(clients=4, load_profile="default")
@@ -409,13 +462,35 @@ class ProvenanceTests(unittest.TestCase):
         self.assertNotIn(secret, receipt["error"])
         self.assertEqual(seen, [])
 
+    def test_ambient_log_level_and_load_settings_rejected(self):
+        code, receipt, seen = self.run_fake(ambient={
+            "ROCKETNET_LOG_LEVEL": "debug",
+            "ROCKETNET_TEST_GSO_PLAIN": "1",
+            "LOAD_SERVER_ADDRESS": "127.0.0.1:40000",
+            "LOAD_HANDSHAKE_DIAGNOSTICS": "1",
+        })
+        self.assertEqual(code, 1)
+        for name in ("ROCKETNET_LOG_LEVEL", "ROCKETNET_TEST_GSO_PLAIN",
+                     "LOAD_SERVER_ADDRESS", "LOAD_HANDSHAKE_DIAGNOSTICS"):
+            with self.subTest(name=name):
+                self.assertIn(name, receipt["error"])
+        self.assertNotIn("127.0.0.1", receipt["error"])
+        self.assertEqual(seen, [])
+
     def test_explicit_transport_names_are_not_ambient_config_overrides(self):
         names = profile.profile_environment_overrides({
             "ROCKETNET_SERVER_TRANSPORT": "portable",
             "ROCKETNET_CLIENT_TRANSPORT": "portable",
+            "LOAD_PROFILE": "default",
+            "LOAD_PLAN_ONLY": "1",
+            "LOAD_MESSAGES_PER_CLIENT_SECOND": "2",
             "ROCKETNET_CLIENT_SEND_KBPS": "32",
+            "ROCKETNET_LOG_LEVEL": "debug",
+            "LOAD_CLIENT_NETNS": "ns0",
+            "ROCKETNET_GATEWAY_ETHERNET_ADDRESS": "",
+            "PATH": "/usr/bin",
         })
-        self.assertEqual(names, ["ROCKETNET_CLIENT_SEND_KBPS"])
+        self.assertEqual(names, ["LOAD_CLIENT_NETNS", "ROCKETNET_CLIENT_SEND_KBPS", "ROCKETNET_LOG_LEVEL"])
 
     def test_uncalibrated_transport_overhead_fails_closed_before_build(self):
         code, receipt, seen = self.run_fake(include_overhead=False, load_profile="default")
@@ -447,19 +522,31 @@ class ArgumentTests(unittest.TestCase):
 
     def test_transport_overhead_reserve_requires_provenance_and_matching_scope(self):
         head = "a" * 40
+        check = profile.validate_transport_overhead_reserve
         with self.assertRaisesRegex(ValueError, "positive measured"):
-            profile.validate_transport_overhead_reserve(None, None, "portable", 64, head, "Linux", "default")
+            check(None, None, "portable", "portable", 64, head, "Linux", "default")
         with self.assertRaisesRegex(ValueError, "evidence provenance"):
-            profile.validate_transport_overhead_reserve(1024, None, "portable", 64, head, "Linux", "default")
+            check(1024, None, "portable", "portable", 64, head, "Linux", "default")
+        refused = (
+            f"{head} Linux portable 1000 client run",
+            f"{head} Linux portable 1640 clients",
+            f"{head} Linux portable clients=640",
+            f"{head[:39]} Linux portable 64 clients",
+            f"{head} Linuxish portable 64 clients",
+            f"{head} Linux portables 64 clients",
+        )
+        for evidence in refused:
+            with self.subTest(evidence=evidence), self.assertRaisesRegex(ValueError, "identify"):
+                check(1024, evidence, "portable", "portable", 64, head, "Linux", "default")
         with self.assertRaisesRegex(ValueError, "identify"):
-            profile.validate_transport_overhead_reserve(
-                1024, f"{head} Linux portable 1000 client run", "portable", 64, head, "Linux", "default")
-        result = profile.validate_transport_overhead_reserve(
-            1024, f"{head} Linux portable 64 clients measured receipt", "portable", 64,
-            head, "Linux", "default")
+            check(1024, f"{head} Linux gso 64 clients", "gso", "portable", 64, head, "Linux", "default")
+        result = check(1024, f"{head} Linux portable 64 clients measured receipt", "portable", "portable",
+                       64, head, "Linux", "default")
         self.assertEqual(result["bytes"], 1024)
-        self.assertIsNone(profile.validate_transport_overhead_reserve(
-            None, None, "portable", 64, head, "Linux", "light"))
+        result = check(1024, f"receipt {head}/linux/server=gso,client=portable/clients=64.json",
+                       "gso", "portable", 64, head, "Linux", "default")
+        self.assertEqual(result["bytes"], 1024)
+        self.assertIsNone(check(None, None, "portable", "portable", 64, head, "Linux", "light"))
 
     def test_preflight_uses_supplied_requirement_without_relaxing_baseline(self):
         with tempfile.TemporaryDirectory() as temp, \
