@@ -31,7 +31,9 @@
 // The I/O thread of docs/CLIENT-IO.md (proofs/tla/RNClientIo.tla) owns the socket and
 // calls the send path; the sender adds no state to that model: a send batch
 // is one synchronous call that returns with every datagram sent or counted
-// dropped, and the tier flag is the I/O thread's alone.
+// dropped, or, in the progress form on a full socket, a consumed prefix with
+// the rest left to the core's retry as the platform's progress batch leaves it;
+// the tier flag is the I/O thread's alone.
 //
 // The send path reaches the kernel only through rocketnet_client_gso_syscalls_t,
 // so the unit cases (tests/test_unit_client_gso.cpp) drive the batching, the

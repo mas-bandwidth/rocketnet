@@ -675,7 +675,7 @@ static void rocketnet_client_gso_send_batch_operation( void * transport, const r
     rocketnet_client_gso_send_batch( &client->gso, sends, num_packets );
 }
 
-static int rocketnet_client_gso_send_batch_progress( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
+static int rocketnet_client_gso_send_batch_progress_operation( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
 {
     rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( !client->socket->connected )
@@ -741,7 +741,7 @@ static bool rocketnet_client_gso_connect( void * transport, const rocketnet_addr
 const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations = {
     rocketnet_client_gso_create, rocketnet_client_gso_destroy, rocketnet_client_gso_send, rocketnet_client_gso_receive,
     rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch_operation, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
-    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close, rocketnet_client_gso_send_batch_progress
+    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close, rocketnet_client_gso_send_batch_progress_operation
 };
 
 // the bytes rocketnet_client_gso_create allocates for its record, so the client
