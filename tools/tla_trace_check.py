@@ -57,6 +57,10 @@ LAYERS = {
         "modules": ["RNSendGatherLayout.tla", "TraceRNSendGatherLayout.tla"],
         "quiet": False,
     },
+    "source-snapshot": {
+        "modules": ["RNSourceSnapshotLayout.tla", "TraceRNSourceSnapshotLayout.tla"],
+        "quiet": True,
+    },
 }
 
 HEADER = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
