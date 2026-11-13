@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* The protocol send reserve of one send queue                             *)
 (* (sdk/rocketnet_server_transport.cpp: open_fill_budget, fill_claim,      *)
-(* queue_budget_now, fill_started, fill_take_back; README-RNSendReserve.md)*)
+(* queue_budget_now, fill_started, fill_refused; README-RNSendReserve.md) *)
 (*                                                                         *)
 (* The game's fillers and the protocol share the queue's staging.  Main    *)
 (* opens a fill phase with a budget, the grants the fill may take: the     *)
@@ -19,9 +19,13 @@
 (* else the budget is recomputed from the queue as it reads now (the       *)
 (* grants staged and the own frames used, then the room, then those two    *)
 (* again, starting over if either moved), raised to that, never lowered,   *)
-(* and the claims outstanding tested against it.  A refused chunk is taken *)
+(* and the claims outstanding tested against it.  A refusal is decided    *)
+(* there and taken back after, its own atomic add, so two fillers may both *)
+(* test the claims before either takes back.  A refused chunk is taken     *)
 (* back whole and claimed again as one frame; a refused single claim is    *)
-(* taken back.  A granted claim is the filler's tail: each frame of it is  *)
+(* taken back, and claimed again when the add shows the claims, its own    *)
+(* gone, under the budget (the other refusal's take back already landed).  *)
+(* A granted claim is the filler's tail: each frame of it is  *)
 (* staged (it leaves the room) and then counted in the grants staged; the  *)
 (* run ends at any frame, and what is left of the tail goes back with one  *)
 (* add.  The transport may retire staged frames at any time (an            *)
@@ -37,7 +41,12 @@
 (* property as it stood before chunks).  TailsNamed: a refusal with room   *)
 (* for the frame past every filler in flight comes only while another      *)
 (* filler holds a tail, so the code counts it under its own name           *)
-(* (SEND_RESERVE_REFUSED_TAILS_HELD), apart from a true full.              *)
+(* (SEND_RESERVE_REFUSED_TAILS_HELD), apart from a true full.  NoneLeft:   *)
+(* no single claim is given up while its take back leaves the claims under *)
+(* the budget, a grant nobody claims (the double refusal).  Balanced: with *)
+(* every filler idle, the claims are the grants staged: every tail and     *)
+(* every refusal came back.  NeverStarved and TailsNamed are judged at the *)
+(* decision, on the room that decision read, and recorded at the give up.  *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -60,7 +69,8 @@ CONSTANTS
     NoReread,       \* the counts are read once, not again after the room (NeverStarved)
     IndexTest,      \* the recompute tests the claim's index, not the claims outstanding (NeverStarved)
     NoFallback,     \* a refused chunk is not claimed again as one frame  (NeverStarved)
-    NoTailReturn    \* a run's unused tail is never given back            (TailsNamed)
+    NoTailReturn,   \* a run's unused tail is never given back            (TailsNamed, Balanced)
+    NoRetry         \* a refused single claim is given up even when its take back leaves the claims under the budget (NoneLeft)
 
 ASSUME MaxOwn <= Reserve
 ASSUME Chunk >= 1
@@ -82,16 +92,21 @@ VARIABLES
     seenR,          \*   room
     starved,        \* a refusal came with room past every filler and tail (history)
     unnamed,        \* a refusal came with room and no tail held by another (history)
+    verdictS,       \* each filler's decision: refused with room past every filler and tail
+    verdictU,       \*   refused with room and no tail held by another
+    left,           \* a single claim was given up with the claims under the budget (history)
     claimsDone,
     retired,
     phases
 
 vars == <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, pc, size,
           claim, tail, seenS, seenO, seenR, starved, unnamed,
-          claimsDone, retired, phases>>
+          verdictS, verdictU, left, claimsDone, retired, phases>>
+
+ghosts == <<verdictS, verdictU, left>>
 
 Steps == {"idle", "sized", "loaded", "claimed", "read1", "read2", "read3",
-          "granted", "counting", "next", "ownio", "owncount"}
+          "refusing", "granted", "counting", "next", "ownio", "owncount"}
 
 Max(a, b) == IF a > b THEN a ELSE b
 
@@ -111,7 +126,7 @@ Busy(f) == Cardinality({g \in Fillers \ {f} : pc[g] /= "idle"})
 \* taken back, then the tail of it not yet staged (the code's tail_held:
 \* raised by the chunk at its add, lowered at a take back, per frame
 \* staged, and by the rest at the tail's return)
-Checking == {"claimed", "read1", "read2", "read3"}
+Checking == {"claimed", "read1", "read2", "read3", "refusing"}
 TailHeld(g) == tail[g] + (IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0)
 OthersTail(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE TailHeld(g)], Fillers)
 \* another filler's hold on the room: its chunk hold, plus the frame it has
@@ -143,6 +158,9 @@ TypeOK ==
     /\ seenR \in [Fillers -> Nat]
     /\ starved \in BOOLEAN
     /\ unnamed \in BOOLEAN
+    /\ verdictS \in [Fillers -> BOOLEAN]
+    /\ verdictU \in [Fillers -> BOOLEAN]
+    /\ left \in BOOLEAN
     /\ claimsDone \in [Fillers -> 0..MaxClaims]
     /\ retired \in 0..MaxRetire
     /\ phases \in 0..MaxPhases
@@ -165,6 +183,9 @@ Init ==
     /\ seenR = [f \in Fillers |-> 0]
     /\ starved = FALSE
     /\ unnamed = FALSE
+    /\ verdictS = [f \in Fillers |-> FALSE]
+    /\ verdictU = [f \in Fillers |-> FALSE]
+    /\ left = FALSE
     /\ claimsDone = [f \in Fillers |-> 0]
     /\ retired = 0
     /\ phases = 1
@@ -187,7 +208,7 @@ OpenFill ==
     /\ phases' = phases + 1
     /\ claimsDone' = [f \in Fillers |-> 0]
     /\ UNCHANGED <<pc, size, claim, tail, seenS, seenO, seenR, starved,
-                   unnamed, retired>>
+                   unnamed, retired, ghosts>>
 
 (***************************************************************************)
 (* A client's own frame: taken, staged, counted.                           *)
@@ -201,7 +222,7 @@ OwnClaim(f) ==
     /\ ownUsed' = IF OwnCountFirst THEN ownUsed + 1 ELSE ownUsed
     /\ pc' = [pc EXCEPT ![f] = "ownio"]
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
-    /\ UNCHANGED <<free, started, claims, budget, size, claim, tail, seenS, seenO, seenR, starved, unnamed, retired, phases>>
+    /\ UNCHANGED <<free, started, claims, budget, size, claim, tail, seenS, seenO, seenR, starved, unnamed, retired, phases, ghosts>>
 
 \* staged; a queue with no room refuses it, the client's keep-alive stays due
 \* and its frame stays in the reserve
@@ -216,7 +237,7 @@ OwnIo(f) ==
                /\ UNCHANGED free
     /\ UNCHANGED <<started, ownUsed, ownLeft, claims, budget, size, claim, tail,
                    seenS, seenO, seenR, starved, unnamed, claimsDone,
-                   retired, phases>>
+                   retired, phases, ghosts>>
 
 OwnCount(f) ==
     /\ pc[f] = "owncount"
@@ -224,7 +245,7 @@ OwnCount(f) ==
     /\ pc' = [pc EXCEPT ![f] = "idle"]
     /\ UNCHANGED <<free, started, ownTaken, ownLeft, claims, budget, size, claim,
                    tail, seenS, seenO, seenR, starved, unnamed,
-                   claimsDone, retired, phases>>
+                   claimsDone, retired, phases, ghosts>>
 
 (***************************************************************************)
 (* Any other frame: size, claim, check, recompute; then the run stages     *)
@@ -242,7 +263,7 @@ Size(f) ==
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, claim,
                    tail, seenS, seenO, seenR, starved, unnamed, retired,
-                   phases>>
+                   phases, ghosts>>
 
 Claim(f) ==
     /\ pc[f] = "sized"
@@ -254,7 +275,7 @@ Claim(f) ==
                /\ claims' = claims + size[f]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, size, tail,
                    seenS, seenO, seenR, starved, unnamed, claimsDone,
-                   retired, phases>>
+                   retired, phases, ghosts>>
 
 ClaimStore(f) ==
     /\ pc[f] = "loaded"
@@ -262,25 +283,43 @@ ClaimStore(f) ==
     /\ claims' = claim[f] + size[f]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, size, claim,
                    tail, seenS, seenO, seenR, starved, unnamed,
-                   claimsDone, retired, phases>>
+                   claimsDone, retired, phases, ghosts>>
 
-\* the refusal: the claim is taken back whole.  A chunk is claimed again as
-\* one frame.  A single claim refused is starved if the room the decision
-\* read had a frame for f past the reserve and past every frame and tail
-\* the other fillers hold; unnamed if that room had a frame for f past
-\* every filler in flight while no other filler held a tail.  Room that
-\* came back after the read, or that a filler claiming after the read
-\* takes, is no starvation.
-Refuse(f, r) ==
+\* the decision to refuse.  It is judged here, on the room this decision
+\* read: starved if that room had a frame for f past the reserve and past
+\* every frame and tail the other fillers hold; unnamed if it had a frame
+\* for f past every filler in flight while no other filler held a tail.
+\* Room that came back after the read, or that a filler claiming after the
+\* read takes, is no starvation.  The take back is the next step.
+Decline(f, r) ==
+    /\ pc' = [pc EXCEPT ![f] = "refusing"]
+    /\ verdictS' = [verdictS EXCEPT ![f] = RoomPastTails(f, r)]
+    /\ verdictU' = [verdictU EXCEPT ![f] = RoomFor(f, r) /\ OthersTail(f) = 0]
+    /\ UNCHANGED <<claims, size, starved, unnamed, left>>
+
+\* the take back, one atomic add: the claim goes back whole.  A chunk is
+\* claimed again as one frame.  A single claim is claimed again when the
+\* add shows the claims, its own gone, under the budget; else it is given
+\* up, and its decision's verdicts are recorded.
+TakeBack(f) ==
+    /\ pc[f] = "refusing"
     /\ claims' = claims - size[f]
-    /\ IF size[f] > 1 /\ ~NoFallback
-          THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
-               /\ size' = [size EXCEPT ![f] = 1]
-               /\ UNCHANGED <<starved, unnamed>>
-          ELSE /\ pc' = [pc EXCEPT ![f] = "idle"]
-               /\ starved' = (starved \/ RoomPastTails(f, r))
-               /\ unnamed' = (unnamed \/ (RoomFor(f, r) /\ OthersTail(f) = 0))
-               /\ UNCHANGED size
+    /\ LET after == claims - size[f]
+       IN IF size[f] > 1 /\ ~NoFallback
+             THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
+                  /\ size' = [size EXCEPT ![f] = 1]
+                  /\ UNCHANGED <<starved, unnamed, left>>
+             ELSE IF ~NoRetry /\ after < budget
+                     THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
+                          /\ UNCHANGED <<size, starved, unnamed, left>>
+                     ELSE /\ pc' = [pc EXCEPT ![f] = "idle"]
+                          /\ starved' = (starved \/ verdictS[f])
+                          /\ unnamed' = (unnamed \/ verdictU[f])
+                          /\ left' = (left \/ after < budget)
+                          /\ UNCHANGED size
+    /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, claim, tail,
+                   seenS, seenO, seenR, verdictS, verdictU, claimsDone, retired,
+                   phases>>
 
 Grant(f) ==
     /\ pc' = [pc EXCEPT ![f] = "granted"]
@@ -293,8 +332,8 @@ Decide(f, s, o, r) ==
     IN /\ budget' = b2
        /\ IF ok
              THEN /\ Grant(f)
-                  /\ UNCHANGED <<claims, starved, unnamed, size>>
-             ELSE /\ Refuse(f, r)
+                  /\ UNCHANGED <<claims, starved, unnamed, size, ghosts>>
+             ELSE /\ Decline(f, r)
                   /\ UNCHANGED tail
 
 \* the whole claim under the budget: granted; else the recompute begins
@@ -302,12 +341,12 @@ Check(f) ==
     /\ pc[f] = "claimed"
     /\ IF claim[f] + size[f] <= budget
           THEN /\ Grant(f)
-               /\ UNCHANGED <<claims, starved, unnamed, size>>
+               /\ UNCHANGED <<claims, starved, unnamed, size, ghosts>>
           ELSE IF NoRefresh
-                  THEN /\ Refuse(f, free)
+                  THEN /\ Decline(f, free)
                        /\ UNCHANGED tail
                   ELSE /\ pc' = [pc EXCEPT ![f] = "read1"]
-                       /\ UNCHANGED <<claims, starved, unnamed, size, tail>>
+                       /\ UNCHANGED <<claims, starved, unnamed, size, tail, ghosts>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, claim,
                    seenS, seenO, seenR, claimsDone, retired, phases>>
 
@@ -323,7 +362,7 @@ Read1(f) ==
                /\ UNCHANGED <<seenR>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
                    claim, tail, starved, unnamed, claimsDone, retired,
-                   phases>>
+                   phases, ghosts>>
 
 \* the second read: the room (RoomFirst: the counts, then decide)
 Read2(f) ==
@@ -336,7 +375,7 @@ Read2(f) ==
                /\ IF NoReread
                      THEN Decide(f, seenS[f], seenO[f], free)
                      ELSE /\ pc' = [pc EXCEPT ![f] = "read3"]
-                          /\ UNCHANGED <<claims, budget, starved, unnamed, size, tail>>
+                          /\ UNCHANGED <<claims, budget, starved, unnamed, size, tail, ghosts>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claim, claimsDone, retired, phases>>
 
 \* the counts again: moved, start over; else decide on the three reads
@@ -344,7 +383,7 @@ Read3(f) ==
     /\ pc[f] = "read3"
     /\ IF started /= seenS[f] \/ ownUsed /= seenO[f]
           THEN /\ pc' = [pc EXCEPT ![f] = "read1"]
-               /\ UNCHANGED <<claims, budget, starved, unnamed, size, tail>>
+               /\ UNCHANGED <<claims, budget, starved, unnamed, size, tail, ghosts>>
           ELSE Decide(f, seenS[f], seenO[f], seenR[f])
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claim, seenS, seenO, seenR, claimsDone, retired, phases>>
 
@@ -366,7 +405,7 @@ Stage(f) ==
           ELSE /\ EndRun(f)
                /\ UNCHANGED free
     /\ UNCHANGED <<started, ownUsed, ownTaken, ownLeft, budget, size, claim, seenS, seenO,
-                   seenR, starved, unnamed, claimsDone, retired, phases>>
+                   seenR, starved, unnamed, claimsDone, retired, phases, ghosts>>
 
 Count(f) ==
     /\ pc[f] = "counting"
@@ -374,7 +413,7 @@ Count(f) ==
     /\ pc' = [pc EXCEPT ![f] = "next"]
     /\ UNCHANGED <<free, ownUsed, ownTaken, ownLeft, claims, budget, size, claim,
                    tail, seenS, seenO, seenR, starved, unnamed,
-                   claimsDone, retired, phases>>
+                   claimsDone, retired, phases, ghosts>>
 
 \* the run stages its next frame from the tail, or ends at any frame
 Continue(f) ==
@@ -383,13 +422,13 @@ Continue(f) ==
     /\ pc' = [pc EXCEPT ![f] = "granted"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
                    claim, tail, seenS, seenO, seenR, starved, unnamed,
-                   claimsDone, retired, phases>>
+                   claimsDone, retired, phases, ghosts>>
 
 End(f) ==
     /\ pc[f] = "next"
     /\ EndRun(f)
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, size, claim, seenS,
-                   seenO, seenR, starved, unnamed, claimsDone, retired, phases>>
+                   seenO, seenR, starved, unnamed, claimsDone, retired, phases, ghosts>>
 
 \* the transport retires a staged frame (an asynchronous send completes)
 Retire ==
@@ -399,7 +438,7 @@ Retire ==
     /\ retired' = retired + 1
     /\ UNCHANGED <<started, ownUsed, ownTaken, ownLeft, claims, budget, pc, size,
                    claim, tail, seenS, seenO, seenR, starved, unnamed,
-                   claimsDone, phases>>
+                   claimsDone, phases, ghosts>>
 
 Done ==
     /\ \A f \in Fillers : pc[f] = "idle"
@@ -410,7 +449,7 @@ Next ==
     \/ \E f \in Fillers :
           \/ OwnClaim(f) \/ OwnIo(f) \/ OwnCount(f)
           \/ Size(f) \/ Claim(f) \/ ClaimStore(f) \/ Check(f)
-          \/ Read1(f) \/ Read2(f) \/ Read3(f)
+          \/ Read1(f) \/ Read2(f) \/ Read3(f) \/ TakeBack(f)
           \/ Stage(f) \/ Count(f) \/ Continue(f) \/ End(f)
 
 Spec == Init /\ [][Next]_vars
@@ -435,5 +474,15 @@ NeverStarved == ~starved
 \* a refusal with room for the frame past every filler in flight comes only
 \* while another filler holds a tail: the code names it apart from a full
 TailsNamed == ~unnamed
+
+\* no single claim is given up while its take back leaves a grant under the
+\* budget that nobody claims: two refusals that both tested the claims
+\* before either took back leave one such grant, and the later take back
+\* claims it again
+NoneLeft == ~left
+
+\* with every filler idle, the claims are the grants staged: every tail
+\* and every refused claim came back
+Balanced == (\A f \in Fillers : pc[f] = "idle") => claims = started
 
 =============================================================================

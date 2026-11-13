@@ -917,3 +917,4 @@ MCRNSendReserveChunk.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required
 MCRNSendReserveChunkNoGuard.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoFallback.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoTailReturn.cfg	MCRNSendReserve.tla	invariant	TailsNamed	check	rnsendreserve	required	-
+MCRNSendReserveBrokenNoRetry.cfg	MCRNSendReserve.tla	invariant	NoneLeft	check	rnsendreserve	required	-
