@@ -935,11 +935,11 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
             if ( walk.flush )
             {
                 // the commit: the kernel refuses each delete one time in
-                // three and each update one time in four, by batch or not
+                // two and each update one time in four, by batch or not
                 walk.batches = random.below( 2 ) == 0;
                 for ( int b = 0; b < RP_ADDRESSES; b++ )
                 {
-                    walk.refuse_forget[b] = random.below( 3 ) == 0;
+                    walk.refuse_forget[b] = random.below( 2 ) == 0;
                     walk.refuse_mark[b] = random.below( 4 ) == 0;
                     walk.kernel_refused_forget[b] = false;
                 }
