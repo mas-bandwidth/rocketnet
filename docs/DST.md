@@ -75,14 +75,18 @@ replay line names every non-default flag of the run (`--shape`, `--clients`,
 
 ## The same trace on every OS
 
-The same seeds and options print the same trace on Linux, macOS and Windows,
-so a seed that fails on one OS replays on the others. The reference is
+The same seeds and options must print the same trace on Linux, macOS and
+Windows, so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=4872414ac933a2a7
+    PASS seeds=1-50 runs=50 trace=7a207ea303f1dbc2
 
-measured equal, Release, at executable source 9045dc02c (the v1.1.2 send pass,
-fix/v1.1.2/no-aborted-frames) on Linux, macOS and Windows:
+measured on Linux (x64, gcc, Release) at W2-115, the change that set it.
+Whether macOS and Windows print the same value is first compared by the
+nightly (`.github/workflows/nightly-dst.yml`), whose legs on those OSes hold
+their PASS line to the same pin. The last reference measured equal on all
+three OSes was the one at executable source 9045dc02c (the v1.1.2 send pass,
+fix/v1.1.2/no-aborted-frames), Release:
 
     Linux   (x64, gcc)     PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
     macOS   (arm64, clang) PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
@@ -104,23 +108,27 @@ same source the trace is 255b8ae11ec099cb again; with only the early send
 reverted it is e6ad356616a575e5, with only the tolerance reverted
 4feb17ac1b822961. The fixed range and the nine schedules moved with it
 (`.github/workflows/nightly-dst.yml`, measured on Linux at e04c7f459).
+W2-115 moved it to 7a207ea303f1dbc2, measured on Linux (x64, gcc, Release):
+a standalone ack now stamps the client's send clock as any session packet
+does, so the next keep-alive is due a send interval after the ack rather
+than after the packet before it. The fixed range and the nine schedules
+moved with it again (measured on Linux at W2-115).
 A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
-per-commit Release unit job reads its pin from there), from
-three equal PASS lines. The nightly pins the fixed range 1-2050
-(`DST_FIXED_TRACE`, df95d06b07d3f187) and each fault schedule over seeds
-1-50 (`DST_TRACE_<SCHEDULE>`) beside it, set from the three equal lines of
-run 43203428903, and compares each step's whole PASS line; a change that
-moves one moves its pin by the same rule.
+per-commit Release unit job reads its pin from there). The nightly pins the
+fixed range 1-2050 (`DST_FIXED_TRACE`, 11e290abdf932865) and each fault schedule
+over seeds 1-50 (`DST_TRACE_<SCHEDULE>`) beside it, and compares each step's
+whole PASS line; a change that moves one moves its pin with it.
 
 The nightly holds the fixed range and every fault schedule the same way:
 `DST_FIXED_TRACE` (`--seeds 1-2050`) and one `DST_TRACE_<SCHEDULE>` per
-schedule (`--seeds 1-50 --schedule <name>`) in the same workflow, each equal
-on Linux, macOS and Windows in run 43203428903 (main 555eb5963). A step whose
-PASS line differs is red with `TRACE-MISMATCH`; a change that moves one
-updates it from three equal PASS lines. The nightly sweep's trace is printed
-and not compared: its range rolls each night and differs per OS.
+schedule (`--seeds 1-50 --schedule <name>`) in the same workflow. The current
+values, like the reference, are measured on Linux at W2-115; the nightly's
+macOS and Windows legs are the first comparison of them on those OSes. A step
+whose PASS line differs is red with `TRACE-MISMATCH`. The nightly sweep's
+trace is printed and not compared: its range rolls each night and differs per
+OS.
 
 ## The nightly
 

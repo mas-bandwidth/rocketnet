@@ -418,6 +418,9 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
 
+    // TRANSPORT.md t13, connected: any session packet sent stamps the send
+    // clock, the standalone ack as much as the scheduled keep-alive
+    client->last_send_time = current_time;
     client->ack.ack_debt = 0;
 
     return bytes;

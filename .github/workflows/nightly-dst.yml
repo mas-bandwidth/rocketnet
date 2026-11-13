@@ -55,24 +55,25 @@ on:
 
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
-  DST_REFERENCE_TRACE: 4872414ac933a2a7
+  DST_REFERENCE_TRACE: 7a207ea303f1dbc2
   # The fixed range and each fault schedule are compared too, not only
-  # printed (VERIFY-2 F-W6): equal on Linux, macOS and Windows in run
-  # 43203428903 (2026-11-12, main 555eb5963), read from its log. Each step
-  # compares its whole PASS line, so the OSes are compared every night.
-  # W2-51's handshake pacing (the early send and the 1 us send-interval
-  # tolerance) moved every pin; the values below are measured on Linux at
-  # e04c7f459 (Release, ROCKETNET_DEV=ON, aws-mut-4).
-  DST_FIXED_TRACE: df95d06b07d3f187
-  DST_TRACE_CLOCK_BACK: becf3d5e92acec86
-  DST_TRACE_SEQ_GAP: c4360bd775b9e7c9
-  DST_TRACE_SEQ_WRAP_31: c6fd33f14bca2245
-  DST_TRACE_SEQ_WRAP_32: 8dc7b094bb283f5b
-  DST_TRACE_BURST: 80bb562624982018
-  DST_TRACE_DUP_STORM: d37d034696316018
-  DST_TRACE_OUTAGE: 4690876d9b57e928
-  DST_TRACE_OUTAGE_PAST: 880b6fce3d60c4e2
-  DST_TRACE_SEND_FAIL: d461dbc4d1bc8b63
+  # printed (VERIFY-2 F-W6). Each step compares its whole PASS line, so the
+  # OSes are compared every night. W2-51's handshake pacing (the early send
+  # and the 1 us send-interval tolerance) moved every pin, and W2-115 (a
+  # standalone ack stamps the client's send clock) moved every pin again.
+  # DST_REFERENCE_TRACE and the values below are measured on Linux at W2-115
+  # (Release, ROCKETNET_DEV=ON); this workflow's macOS and Windows legs are
+  # the first comparison of them on those OSes.
+  DST_FIXED_TRACE: 11e290abdf932865
+  DST_TRACE_CLOCK_BACK: 6221752226e8a96d
+  DST_TRACE_SEQ_GAP: c6cf5eead813c70a
+  DST_TRACE_SEQ_WRAP_31: 4bc98d2c39b6955c
+  DST_TRACE_SEQ_WRAP_32: de856e3a0e81cc6b
+  DST_TRACE_BURST: 9981813649bc6953
+  DST_TRACE_DUP_STORM: 3c366dd927cd8dea
+  DST_TRACE_OUTAGE: 474c9443d41ceac6
+  DST_TRACE_OUTAGE_PAST: d0914123127642c8
+  DST_TRACE_SEND_FAIL: 671b803d9b2eab9f
 
 permissions:
   contents: read
