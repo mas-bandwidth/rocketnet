@@ -24,11 +24,14 @@
 // second request queue on a socket, so the rate past that is more sockets.
 //
 // With one lane the socket binds with SO_EXCLUSIVEADDRUSE, to any address and
-// port. With several, the address must be specific (create refuses 0.0.0.0
-// and :: with ROCKETNET_STATUS_INVALID_ADDRESS) and every lane socket binds
-// it with SO_REUSEADDR. For an explicit port create first binds a plain probe
-// socket there with SO_EXCLUSIVEADDRUSE, refusing if anything holds the port,
-// and closes it. For port 0, lane 0 binds port 0 and the others join the port
+// port. With several, the address must be specific (create refuses 0.0.0.0,
+// :: and any IPv4-mapped address with ROCKETNET_STATUS_INVALID_ADDRESS) and
+// every lane socket binds it with SO_REUSEADDR. For an explicit port create
+// first binds a plain probe socket there with SO_EXCLUSIVEADDRUSE, refusing if
+// anything holds the port, and closes it; between that close and lane 0's
+// bind a socket that binds the port with SO_REUSEADDR is first and, as
+// measured, would take every datagram. Port 0 has no such gap, so a server
+// that does not need a fixed port binds port 0. For port 0, lane 0 binds port 0 and the others join the port
 // it was given: the guarantee that nothing else holds that port rests on
 // Windows never handing a port-0 bind a held port, as measured (and checked
 // on every run by test_rio_transport_lanes_port_zero_never_held). The trade:
@@ -122,7 +125,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
 #if ROCKETNET_DEV
     // Development constructor control: fail after the socket, RIO table,
     // region, completion queues, request queue, first posted receive or last
-    // posted receive.
+    // posted receive (stages 1..7), in lane 0. A stage plus 16 * L fails lane
+    // L instead, once lanes 0..L-1 are made and running.
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV

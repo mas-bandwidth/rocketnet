@@ -1618,6 +1618,49 @@ jobs:
           set -euo pipefail
           bash tools/run_functional.sh dev ./bin/Release/functional.exe
 
+      # RIO lanes: the RIO server cases with ROCKETNET_TEST_RIO_LANES=4, each
+      # checking the lanes the transport actually made (rocketnet_server_rio_lanes,
+      # the lanes-made counter); the plant row (ROCKETNET_TEST_RIO_LANES_PLANT:
+      # the transport makes one lane whatever is asked) must turn every case
+      # red, so the leg cannot pass on one lane. Cases in parallel.
+      - name: "Functional: RIO server cases on four lanes, and their plant"
+        if: matrix.leg == 'c'
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: rio
+          ROCKETNET_TEST_RIO_LANES: "4"
+        run: |
+          set -euo pipefail
+          set +e -uo pipefail
+          cases="test_rio_transport_server_probe test_rio_transport_server_wire_ipv4 test_rio_transport_server_wire_ipv6 test_rio_transport_server_send_full test_rio_transport_lanes_through_the_server"
+          logs=$(mktemp -d "$RUNNER_TEMP/rio-lanes.XXXXXX")
+          for plant in 0 1; do
+            for case in $cases; do
+              (
+                if [ "$plant" = 1 ]; then export ROCKETNET_TEST_RIO_LANES_PLANT=1; fi
+                ./bin/Release/functional.exe --run "$case" > "$logs/$plant.$case.log" 2>&1
+                echo $? > "$logs/$plant.$case.rc"
+              ) &
+            done
+          done
+          wait
+          failed=0
+          for case in $cases; do
+            rc=$(cat "$logs/0.$case.rc" 2>/dev/null || echo missing)
+            if [ "$rc" = 0 ] && tr -d '\r' < "$logs/0.$case.log" | grep -qx "$case"; then
+              echo "PASS lanes=4 $case"
+            else
+              echo "FAIL lanes=4 $case (exit $rc)"; tr -d '\r' < "$logs/0.$case.log" | tail -20; failed=1
+            fi
+            rc=$(cat "$logs/1.$case.rc" 2>/dev/null || echo missing)
+            if [ "$rc" != 0 ] && [ "$rc" != missing ] && tr -d '\r' < "$logs/1.$case.log" | grep -q "check failed"; then
+              echo "PASS plant $case: red on one lane, as it must be"
+            else
+              echo "FAIL plant $case: one lane did not turn it red (exit $rc)"; failed=1
+            fi
+          done
+          exit $failed
+
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
       # functional.exe takes about 223 s per run on the fleet Windows runner,
