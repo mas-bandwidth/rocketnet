@@ -7,6 +7,8 @@ compile the list in cmake/RocketnetSources.cmake. This checks that
   - every sdk/*.cpp and sdk/*.c is listed exactly once, as a library source
     or as excluded (ROCKETNET_SDK_SOURCES_EXCLUDED);
   - every listed file exists;
+  - ROCKETNET_SDK_SOURCES, the list the build compiles, holds exactly the
+    COMMON, LINUX, APPLE and WINDOWS groups;
   - a *_linux / *_windows / *_apple file sits in its platform's list, and a
     common file carries no platform suffix;
 
@@ -35,9 +37,32 @@ def listed(root, directory):
     return rows
 
 
+def aggregate(root, directory):
+    """ROCKETNET_SDK_SOURCES, the one list the build compiles, read by
+    including the file in a wrapper script; the dump above writes the groups
+    only, so a group left out of the aggregate would be invisible."""
+    output = directory / "sdk-source-aggregate.txt"
+    wrapper = directory / "sdk-source-aggregate.cmake"
+    wrapper.write_text(
+        f'include("{(root / "cmake/RocketnetSources.cmake").as_posix()}")\n'
+        f'file(WRITE "{output.as_posix()}" "")\n'
+        "foreach(source IN LISTS ROCKETNET_SDK_SOURCES)\n"
+        f'    file(APPEND "{output.as_posix()}" "${{source}}\\n")\n'
+        "endforeach()\n", encoding="utf-8")
+    subprocess.run(["cmake", "-P", str(wrapper)], check=True)
+    return output.read_text(encoding="utf-8").splitlines()
+
+
 def problems(root, directory):
     rows = listed(root, directory)
     found = []
+    compiled = aggregate(root, directory)
+    grouped = [path for group, path in rows if group != "EXCLUDED"]
+    for path in sorted(set(grouped) - set(compiled)):
+        group = next(g for g, p in rows if p == path)
+        found.append(f"{path} is listed in {group} but ROCKETNET_SDK_SOURCES does not compile it")
+    for path in sorted(set(compiled) - set(grouped)):
+        found.append(f"{path} is in ROCKETNET_SDK_SOURCES but in no source group")
     seen = {}
     for group, path in rows:
         if path in seen:

@@ -8,7 +8,8 @@ temporary directory and asserts its exit code.
 The tool runs `cmake -P` to read the list. A fake `cmake` on PATH stands in
 for it: it reads the fixture's set(ROCKETNET_SDK_SOURCES_<GROUP> ...) lines and
 writes "<GROUP> <path>" rows in the real script's group order, so no cmake is
-needed."""
+needed. Given a wrapper script that include()s the fixture, it writes the
+ROCKETNET_SDK_SOURCES aggregate one path per line to the file the wrapper names."""
 
 import os
 import stat
@@ -22,10 +23,22 @@ TOOL = Path(__file__).resolve().parent / "check_sdk_sources.py"
 
 FAKE_CMAKE = """#!{python}
 import re, sys
-output = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("-DROCKETNET_SDK_SOURCE_LIST_OUTPUT="))
 script = sys.argv[sys.argv.index("-P") + 1]
+text = open(script).read()
+included = re.search(r'include\\("([^"]+)"\\)', text)
+lists = open(included.group(1)).read() if included else text
 groups = dict((m.group(1), m.group(2).split()) for m in
-              re.finditer(r"set\\(ROCKETNET_SDK_SOURCES_(\\w+)((?:\\s+[^)\\s]+)*)\\s*\\)", open(script).read()))
+              re.finditer(r"set\\(ROCKETNET_SDK_SOURCES_(\\w+)((?:\\s+[^)\\s]+)*)\\s*\\)", lists))
+if included:
+    compiled = re.search(r"set\\(ROCKETNET_SDK_SOURCES((?:\\s+[^)\\s]+)*)\\s*\\)", lists)
+    output = re.search(r'file\\(WRITE "([^"]+)"', text).group(1)
+    with open(output, "w") as out:
+        for item in (compiled.group(1).split() if compiled else []):
+            named = re.fullmatch(r"\\$\\{{ROCKETNET_SDK_SOURCES_(\\w+)\\}}", item)
+            for source in (groups.get(named.group(1), []) if named else [item]):
+                out.write(source + "\\n")
+    sys.exit(0)
+output = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("-DROCKETNET_SDK_SOURCE_LIST_OUTPUT="))
 with open(output, "w") as out:
     for group in ("COMMON", "LINUX", "APPLE", "WINDOWS", "EXCLUDED"):
         for source in groups.get(group, []):
@@ -34,6 +47,7 @@ with open(output, "w") as out:
 
 LISTS = """set(ROCKETNET_SDK_SOURCES_COMMON sdk/rocketnet.cpp)
 set(ROCKETNET_SDK_SOURCES_LINUX sdk/rocketnet_socket_linux.cpp)
+set(ROCKETNET_SDK_SOURCES ${ROCKETNET_SDK_SOURCES_COMMON} ${ROCKETNET_SDK_SOURCES_LINUX})
 set(ROCKETNET_SDK_SOURCES_EXCLUDED sdk/rocketnet_sodium_test.c)
 """
 SOURCES = ("rocketnet.cpp", "rocketnet_socket_linux.cpp", "rocketnet_sodium_test.c")
@@ -76,6 +90,23 @@ class CheckSdkSourcesTest(unittest.TestCase):
         result = self.run_tool(self.root)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("sdk/rocketnet_forgotten.cpp is neither listed nor excluded", result.stderr)
+
+    def test_a_group_the_aggregate_leaves_out_is_refused(self):
+        # the build compiles ROCKETNET_SDK_SOURCES only: a group missing from it
+        # is listed but never built
+        self.plant(LISTS.replace(" ${ROCKETNET_SDK_SOURCES_LINUX}", ""), SOURCES)
+        result = self.run_tool(self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sdk/rocketnet_socket_linux.cpp is listed in LINUX but ROCKETNET_SDK_SOURCES does not compile it",
+                      result.stderr)
+
+    def test_a_compiled_source_in_no_group_is_refused(self):
+        self.plant(LISTS.replace("${ROCKETNET_SDK_SOURCES_LINUX}",
+                                 "${ROCKETNET_SDK_SOURCES_LINUX} sdk/rocketnet_extra.cpp"),
+                   SOURCES + ("rocketnet_extra.cpp",))
+        result = self.run_tool(self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sdk/rocketnet_extra.cpp is in ROCKETNET_SDK_SOURCES but in no source group", result.stderr)
 
     def test_zero_sdk_sources_is_refused(self):
         self.plant(LISTS, ())
