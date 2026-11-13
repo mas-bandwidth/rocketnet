@@ -9,13 +9,11 @@
 (* high part, so the next fill would hand out ids already used) must be    *)
 (* rejected at that record                                                 *)
 (* (MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg, TraceConsistent).       *)
-(* Every record carries every variable.  One queue of two banks of two    *)
-(* slots, one thread, one destination.                                     *)
+(* Every record is [op, act, args, state] (README-TraceCheck.md), its      *)
+(* state every variable.  One queue of two banks of two slots, one thread, *)
+(* one destination.                                                        *)
 (***************************************************************************)
 EXTENDS TraceRNGsoQueueBankLayout
-
-SelfQueueOf(d) == 0
-SelfSkew == {0}
 
 Q0(x) == [q \in 0..0 |-> x]
 B2(x, y) == [b \in 0..1 |-> IF b = 0 THEN x ELSE y]
@@ -27,10 +25,10 @@ S1 == [prod |-> Q0(0), own |-> Q0(B2("prod", "free")), cnt |-> Q0(B2(0, 0)),
        demand |-> T1(0), flushes |-> 0, oob |-> FALSE, shared |-> FALSE,
        foreign |-> FALSE, routeBad |-> FALSE, workerWrite |-> FALSE]
 
-\* Load(1, 1): queue 0, its producer bank 0, counter 0
+\* Load(1, 1, 0): queue 0, its producer bank 0, counter 0
 S2 == [S1 EXCEPT !.load = T1([q |-> 0, b |-> 0, i |-> 0]), !.demand = T1(1)]
 
-\* Claim(1): the compare-and-swap takes slot 0; id (0 * 2 + 0) * 1 + 0
+\* Claim(1, r): the compare-and-swap takes slot 0; id (0 * 2 + 0) * 1 + 0
 S3 == [S2 EXCEPT !.load = T1(None), !.cnt = Q0(B2(1, 0)),
                  !.held = T1([q |-> 0, b |-> 0, slot |-> 0, ptr |-> 0, pid |-> 0]),
                  !.owner = [NoOwner EXCEPT ![<<0, 0, 0>>] = 1]]
@@ -45,11 +43,22 @@ S5 == [S4 EXCEPT !.prod = Q0(1), !.own = Q0(B2("worker", "prod")), !.turn = Q0(1
 \* WorkerReturn(0, 0): bank 0 free, its counter reset
 S6 == [S5 EXCEPT !.own = Q0(B2("free", "prod")), !.cnt = Q0(B2(0, 0))]
 
-GoodLog == << S1, S2, S3, S4, S5, S6 >>
+Rec(o, a, x, s) == [op |-> o, act |-> a, args |-> x, state |-> s]
+
+GoodLog == << Rec("init", "init", <<>>, S1),
+              Rec("load", "Load", <<1, 1, 0>>, S2),
+              Rec("start_packet", "Claim", <<1, [ptr |-> 0, pid |-> 0]>>, S3),
+              Rec("finish_packet", "Finish", <<1, 0>>, S4),
+              Rec("send_packets", "Flush", <<>>, S5),
+              Rec("take_return_send", "WorkerReturn", <<0, 0>>, S6) >>
 
 \* the turn-over from S4 without counting the turn: record 5 is no model step
 BadTurn == [S5 EXCEPT !.turn = Q0(0)]
 
-BadLog == << S1, S2, S3, S4, BadTurn >>
+BadLog == << Rec("init", "init", <<>>, S1),
+             Rec("load", "Load", <<1, 1, 0>>, S2),
+             Rec("start_packet", "Claim", <<1, [ptr |-> 0, pid |-> 0]>>, S3),
+             Rec("finish_packet", "Finish", <<1, 0>>, S4),
+             Rec("send_packets", "Flush", <<>>, BadTurn) >>
 
 =============================================================================

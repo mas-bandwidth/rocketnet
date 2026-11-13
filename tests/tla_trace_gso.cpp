@@ -5,29 +5,53 @@
 
 // layer L2 of the gso push: the per-queue send staging
 // (proofs/tla/RNGsoQueueBankLayout.tla), checked by
-// proofs/tla/TraceRNGsoQueueBankLayout.tla (README-TraceCheck.md): each record
-// the walk appends must be one TraceStep from the one before, and TraceReject
-// is TLC's verdict on the first that is not.
+// proofs/tla/TraceRNGsoQueueBankLayout.tla (README-TraceCheck.md).
 //
 //   tla_trace --layer gso --seed N --out DIR [--steps K]
 //
 // writes DIR/MCTraceGsoSeed<seed>.tla and .cfg (MCTraceGsoPlantSeed<seed>
-// from the plant build). The walk drives the real start, finish, abort,
-// send_packets (publish), take and return on the rocketnet_server_gso_test_open
-// fixture with two queues: no socket, no thread, no clock. It reads the model's
-// variables from the lanes' own fields, so the transport's source is compiled
-// into this file (the library's copy is not linked: every symbol it defines is
-// defined here first). The staging's slots per bank, ROCKETNET_GSO_SEND_QUEUE_SIZE,
-// is 3 in this file only, so a fill runs past a bank and each record stays
-// small: the io_uring walk's banks of three slots, where the slot count is an
-// argument. Every other constant is the code's.
+// from tla_trace_plant_gso). The walk drives the library's start, finish,
+// abort, send_packets (publish), take and return on the
+// rocketnet_server_gso_test_open_slots fixture with two queues: no socket, no
+// thread, no clock. Each producer bank hands out three slots (the fixture's
+// send_slots, which the walk writes as S), so a fill runs past a bank and each
+// record stays small; every other constant is the code's (NB is
+// ROCKETNET_GSO_TX_BANKS, Stride ROCKETNET_FRAME_STRIDE). The walk reads the
+// model's variables from the lanes as the library holds them
+// (rocketnet_server_gso_test_send_lane).
 //
-// The plant (ROCKETNET_GSO_SEND_SLOT_PLANT, set by ROCKETNET_TLA_PLANT in the
-// tla_trace_plant build) replaces finish and abort with copies whose slot is
-// divided out of the pointer's offset before any test (RNGsoQueueBankLayout
-// SlotRule "divide"): a pointer a byte early lands on the slot before, so its
-// trace must fail TraceConsistent. PLANT-FIRED counts the finishes and aborts
-// that wrote a slot not their own; the clean build's is 0.
+// One record per step (tla_step):
+//   load              rocketnet_server_gso_send_queue, then the lane's producer
+//                     and counter as start reads them      Load(t, d, q)
+//   start_packet      rocketnet_server_gso_start_packet    Claim(t, r)
+//   reload            a counter another thread moved since the load: the
+//                     compare-and-swap that lost, which compare_exchange_weak
+//                     reloads inside the one call; the walk calls nothing and
+//                     reads the counter again              Claim(t, None)
+//   finish_packet     rocketnet_server_gso_finish_packet with the pointer k
+//                     bytes off the one start returned     Finish(t, k)
+//   finish_abort      finish_packet at the exact pointer (so the abort's 0
+//                     shows), then rocketnet_server_gso_abort_packet k bytes
+//                     off                                  Finish(t, k)
+//   send_packets      rocketnet_server_gso_send_packets    Flush
+//   take_return_send  the queue worker's take and return  WorkerReturn(q, b)
+// What a call returns is an argument of its action: the queue the hash gave
+// (q), the pointer and id start returned (r, None for NULL), the bank the
+// worker took (b). The slot a finish or abort wrote is found by comparing
+// every slot's packet_bytes before and after the call.
+//
+// The plant (ROCKETNET_GSO_SEND_SLOT_PLANT, in rocketnet_server_gso_send_slot)
+// divides the slot out of the pointer's offset before any test (SlotRule
+// "divide"): a pointer a byte early on slot s writes slot s - 1, another
+// claim's. Its effect is a finish or abort that wrote a slot not its own,
+// reported at that record; the clean build's count is 0. The walk makes sure
+// of the condition once: the first finish of a claim on a slot past 0 is a
+// byte early.
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_GSO_SEND_SLOT_PLANT 1
+#include "../sdk/rocketnet_server_gso_linux.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_internal.h"
@@ -36,91 +60,6 @@
 
 #include "../sdk/rocketnet_server_gso.h"
 #include "../sdk/rocketnet_constants.h"
-#include "../sdk/rocketnet_platform.h"
-#include "../sdk/rocketnet_wire.h"
-#include "../sdk/rocketnet_xdp_frame.h"
-
-#undef ROCKETNET_GSO_SEND_QUEUE_SIZE
-#define ROCKETNET_GSO_SEND_QUEUE_SIZE 3
-
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_GSO_SEND_SLOT_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
-#if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
-void rocketnet_server_gso_finish_packet_unplanted( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data, int packet_bytes );
-void rocketnet_server_gso_abort_packet_unplanted( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data );
-#define rocketnet_server_gso_finish_packet rocketnet_server_gso_finish_packet_unplanted
-#define rocketnet_server_gso_abort_packet rocketnet_server_gso_abort_packet_unplanted
-#endif // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
-
-#include "../sdk/rocketnet_server_gso_linux.cpp"
-
-#if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
-#undef rocketnet_server_gso_finish_packet
-#undef rocketnet_server_gso_abort_packet
-
-// the plant's slot: the pointer's signed offset past the producer's first slot,
-// divided with C's truncation toward zero before the range is tested, and no
-// alignment test at all
-static int rocketnet_server_gso_plant_send_slot( struct rocketnet_server_gso_t * gso, uint64_t packet_id, const uint8_t * packet_data,
-                                                 rocketnet_server_gso_send_buffer_t ** bank_out )
-{
-    if ( !packet_data || gso->stopping )
-    {
-        return -1;
-    }
-
-    const int q = (int) ( packet_id % (uint64_t) gso->num_queues );
-    struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[q].send;
-    if ( lane->producer < 0 )
-    {
-        return -1;
-    }
-    rocketnet_server_gso_send_buffer_t * bank = &lane->banks[lane->producer];
-
-    const intptr_t offset = (intptr_t) ( (uintptr_t) packet_data - (uintptr_t) bank->data[0] );
-    const intptr_t slot = offset / (intptr_t) ROCKETNET_FRAME_STRIDE;
-    if ( slot < 0 || slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE )
-    {
-        return -1;
-    }
-
-    *bank_out = bank;
-    return (int) slot;
-}
-
-void rocketnet_server_gso_finish_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
-{
-    rocketnet_assert( gso );
-    rocketnet_assert( packet_data );
-    rocketnet_assert( packet_bytes > 0 );
-    rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
-
-    rocketnet_server_gso_send_buffer_t * bank = NULL;
-    const int slot = rocketnet_server_gso_plant_send_slot( gso, packet_id, packet_data, &bank );
-    if ( slot < 0 )
-    {
-        return;
-    }
-
-    bank->info[slot].packet_bytes = packet_bytes;
-}
-
-void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uint64_t packet_id, uint8_t * packet_data )
-{
-    rocketnet_assert( gso );
-
-    rocketnet_server_gso_send_buffer_t * bank = NULL;
-    const int slot = rocketnet_server_gso_plant_send_slot( gso, packet_id, packet_data, &bank );
-    if ( slot < 0 )
-    {
-        return;
-    }
-
-    bank->info[slot].packet_bytes = 0;
-}
-#endif // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -130,18 +69,21 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
 
 #include "tla_trace_record.h"
 
-// the instance: two queues of the code's three banks, two fill threads making
-// four starts each per fill so claims run past a bank, three destinations (two
-// on queue 0, one on queue 1, by the code's hash) and six flushes, so every
-// bank of a queue is returned and turned over onto again
+// the instance: two queues of the code's banks, each handing out three slots,
+// two fill threads making four starts each per fill so claims run past a
+// bank, and three destinations: destination d is an address the code's hash
+// puts on queue d % 2 (the model's QueueOf), so two on queue 1 and one on
+// queue 0. Flushes are bounded by the walk's length, so the walk takes a step
+// at every one of its steps.
 #define GSO_QUEUES 2
-#define GSO_SLOTS ROCKETNET_GSO_SEND_QUEUE_SIZE
+#define GSO_SLOTS 3
+#define GSO_BANKS ROCKETNET_GSO_TX_BANKS
 #define GSO_THREADS 2
 #define GSO_DESTS 3
 #define GSO_DEMAND 4
-#define GSO_MAX_FLUSH 6
-
-static const int gso_skew[] = { -1, 0, 1 };
+// a finish's pointer is -GSO_SKEW_SPAN..GSO_SKEW_SPAN bytes off the one start
+// returned (the model's SkewSpan)
+#define GSO_SKEW_SPAN 1
 
 struct gso_load_t
 {
@@ -165,18 +107,19 @@ struct gso_claim_t
 struct gso_walk_t
 {
     struct rocketnet_server_gso_t * gso;
-    struct rocketnet_address_t dest[GSO_DESTS + 1];     // destinations 1..GSO_DESTS
-    gso_load_t load[GSO_THREADS + 1];                   // threads 1..GSO_THREADS
+    struct rocketnet_server_gso_test_send_lane_t lane[GSO_QUEUES];     // read after every call
+    struct rocketnet_address_t dest[GSO_DESTS + 1];                     // destinations 1..GSO_DESTS
+    gso_load_t load[GSO_THREADS + 1];                                   // threads 1..GSO_THREADS
     gso_claim_t claim[GSO_THREADS + 1];
-    int owner[GSO_QUEUES][ROCKETNET_GSO_TX_BANKS][GSO_SLOTS + 1];
+    int owner[GSO_QUEUES][GSO_BANKS][GSO_SLOTS + 1];
     int demand[GSO_THREADS + 1];
     int flushes;
+    int max_flush;
     bool oob;
     bool shared;
     bool foreign;
     bool route_bad;
     bool worker_write;
-    int foreign_writes;     // finishes and aborts that wrote a slot not their own: the plant firing
     int finishes;           // finish calls so far: each writes packet_bytes no slot holds yet
     bool early_probed;      // a finish a byte early on a slot past 0 has run: the plant's condition
     bool worker_slow;       // this fill the queues' workers return nothing
@@ -195,15 +138,23 @@ struct gso_walk_t
     int steps_return;
 };
 
+// the lanes as the library holds them
+static bool gso_read( gso_walk_t & walk )
+{
+    for ( int q = 0; q < GSO_QUEUES; q++ )
+    {
+        if ( !rocketnet_server_gso_test_send_lane( walk.gso, q, &walk.lane[q] ) )
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // RNGsoQueueBankLayout Addr(q, b): the model lays the banks end to end
 static int64_t gso_addr( int q, int b )
 {
-    return (int64_t) ( q * ROCKETNET_GSO_TX_BANKS + b ) * GSO_SLOTS * ROCKETNET_FRAME_STRIDE;
-}
-
-static uintptr_t gso_first( const gso_walk_t & walk, int q, int b )
-{
-    return (uintptr_t) walk.gso->queues[q].send.banks[b].data[0];
+    return (int64_t) ( q * GSO_BANKS + b ) * GSO_SLOTS * ROCKETNET_FRAME_STRIDE;
 }
 
 // the bank a pointer the code returned lies in, and its byte offset there
@@ -212,10 +163,10 @@ static bool gso_locate( const gso_walk_t & walk, const uint8_t * pointer, int * 
     const uintptr_t address = (uintptr_t) pointer;
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
-            const uintptr_t first = gso_first( walk, q, b );
-            if ( address >= first && address - first < sizeof( walk.gso->queues[q].send.banks[b].data ) )
+            const uintptr_t first = (uintptr_t) walk.lane[q].first[b];
+            if ( address >= first && address - first < walk.lane[q].bank_bytes )
             {
                 *q_out = q;
                 *b_out = b;
@@ -229,15 +180,15 @@ static bool gso_locate( const gso_walk_t & walk, const uint8_t * pointer, int * 
 
 // RNGsoQueueBankLayout own: the producer, a bank in the lane's free FIFO, or
 // the worker's (published, taken, not yet returned)
-static std::string gso_own( const struct rocketnet_server_gso_send_lane_t * lane, int b )
+static std::string gso_own( const struct rocketnet_server_gso_test_send_lane_t & lane, int b )
 {
-    if ( b == lane->producer )
+    if ( b == lane.producer )
     {
         return "\"prod\"";
     }
-    for ( int i = 0; i < lane->free_count; i++ )
+    for ( int i = 0; i < lane.free_count; i++ )
     {
-        if ( lane->free_banks[( lane->free_head + i ) % ROCKETNET_GSO_TX_BANKS] == b )
+        if ( lane.free_banks[( lane.free_head + i ) % GSO_BANKS] == b )
         {
             return "\"free\"";
         }
@@ -245,20 +196,20 @@ static std::string gso_own( const struct rocketnet_server_gso_send_lane_t * lane
     return "\"worker\"";
 }
 
-static int gso_count( const gso_walk_t & walk, int q, int b )
-{
-    return walk.gso->queues[q].send.banks[b].num_packets.load( std::memory_order_relaxed );
-}
-
 // the next finish's packet_bytes, 1..ROCKETNET_RECEIVE_CEILING: distinct for a
-// walk.s first ROCKETNET_RECEIVE_CEILING finishes (a 400-step walk makes 800 at most),
-// so a write is seen whatever the slot held
+// walk's first ROCKETNET_RECEIVE_CEILING finishes (a 400-step walk makes 800 at
+// most), so a write is seen whatever the slot held
 static int gso_bytes( gso_walk_t & walk )
 {
     return 1 + walk.finishes++ % ROCKETNET_RECEIVE_CEILING;
 }
 
-static tla_record_t gso_record( const gso_walk_t & walk )
+static std::string gso_none()
+{
+    return "[none |-> TRUE]";
+}
+
+static tla_record_t gso_state( const gso_walk_t & walk )
 {
     std::vector<std::string> queue_keys;
     std::vector<std::string> prod;
@@ -267,18 +218,18 @@ static tla_record_t gso_record( const gso_walk_t & walk )
     std::vector<std::string> turn;
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        const struct rocketnet_server_gso_send_lane_t * lane = &walk.gso->queues[q].send;
+        const struct rocketnet_server_gso_test_send_lane_t & lane = walk.lane[q];
         queue_keys.push_back( tla_int( q ) );
-        prod.push_back( tla_int( lane->producer ) );
-        turn.push_back( tla_int( (int64_t) lane->turn ) );
+        prod.push_back( tla_int( lane.producer ) );
+        turn.push_back( tla_int( (int64_t) lane.turn ) );
         std::vector<std::string> bank_keys;
         std::vector<std::string> owners;
         std::vector<std::string> counts;
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
             bank_keys.push_back( tla_int( b ) );
             owners.push_back( gso_own( lane, b ) );
-            counts.push_back( tla_int( gso_count( walk, q, b ) ) );
+            counts.push_back( tla_int( lane.num_packets[b] ) );
         }
         own.push_back( tla_function( bank_keys, owners ) );
         cnt.push_back( tla_function( bank_keys, counts ) );
@@ -295,7 +246,7 @@ static tla_record_t gso_record( const gso_walk_t & walk )
         const gso_load_t & l = walk.load[t];
         if ( !l.loaded )
         {
-            load.push_back( "[none |-> TRUE]" );
+            load.push_back( gso_none() );
         }
         else
         {
@@ -304,7 +255,7 @@ static tla_record_t gso_record( const gso_walk_t & walk )
         const gso_claim_t & c = walk.claim[t];
         if ( !c.held )
         {
-            held.push_back( "[none |-> TRUE]" );
+            held.push_back( gso_none() );
         }
         else
         {
@@ -317,7 +268,7 @@ static tla_record_t gso_record( const gso_walk_t & walk )
     std::vector<std::string> owner;
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
             for ( int s = 0; s <= GSO_SLOTS; s++ )
             {
@@ -327,38 +278,44 @@ static tla_record_t gso_record( const gso_walk_t & walk )
         }
     }
 
-    tla_record_t record;
-    record.add( "prod", tla_function( queue_keys, prod ) );
-    record.add( "own", tla_function( queue_keys, own ) );
-    record.add( "cnt", tla_function( queue_keys, cnt ) );
-    record.add( "turn", tla_function( queue_keys, turn ) );
-    record.add( "load", tla_function( thread_keys, load ) );
-    record.add( "held", tla_function( thread_keys, held ) );
-    record.add( "owner", tla_function( slot_keys, owner ) );
-    record.add( "demand", tla_function( thread_keys, demand ) );
-    record.add( "flushes", tla_int( walk.flushes ) );
-    record.add( "oob", tla_bool( walk.oob ) );
-    record.add( "shared", tla_bool( walk.shared ) );
-    record.add( "foreign", tla_bool( walk.foreign ) );
-    record.add( "routeBad", tla_bool( walk.route_bad ) );
-    record.add( "workerWrite", tla_bool( walk.worker_write ) );
-    return record;
+    tla_record_t state;
+    state.add( "prod", tla_function( queue_keys, prod ) );
+    state.add( "own", tla_function( queue_keys, own ) );
+    state.add( "cnt", tla_function( queue_keys, cnt ) );
+    state.add( "turn", tla_function( queue_keys, turn ) );
+    state.add( "load", tla_function( thread_keys, load ) );
+    state.add( "held", tla_function( thread_keys, held ) );
+    state.add( "owner", tla_function( slot_keys, owner ) );
+    state.add( "demand", tla_function( thread_keys, demand ) );
+    state.add( "flushes", tla_int( walk.flushes ) );
+    state.add( "oob", tla_bool( walk.oob ) );
+    state.add( "shared", tla_bool( walk.shared ) );
+    state.add( "foreign", tla_bool( walk.foreign ) );
+    state.add( "routeBad", tla_bool( walk.route_bad ) );
+    state.add( "workerWrite", tla_bool( walk.worker_write ) );
+    return state;
 }
 
-// RNGsoQueueBankLayout Load(t, d): the first half of a start, the queue by
-// the code's hash and that queue's producer and counter as the code holds them
-static void gso_load( gso_walk_t & walk, int t, int d )
+static std::string gso_args( const std::vector<std::string> & args )
+{
+    return tla_sequence( args );
+}
+
+// RNGsoQueueBankLayout Load(t, d, q): the first half of a start, the queue the
+// code's hash returns and that queue's producer and counter as the lane holds
+// them
+static std::string gso_load( gso_walk_t & walk, int t, int d )
 {
     const int q = rocketnet_server_gso_send_queue( &walk.dest[d], GSO_QUEUES );
-    const struct rocketnet_server_gso_send_lane_t * lane = &walk.gso->queues[q].send;
     gso_load_t & l = walk.load[t];
     l.loaded = true;
     l.d = d;
     l.q = q;
-    l.b = lane->producer;
-    l.i = gso_count( walk, q, lane->producer );
+    l.b = walk.lane[q].producer;
+    l.i = walk.lane[q].producer >= 0 && walk.lane[q].producer < GSO_BANKS ? walk.lane[q].num_packets[walk.lane[q].producer] : -1;
     walk.demand[t]++;
     walk.steps_load++;
+    return gso_args( { tla_int( t ), tla_int( d ), tla_int( q ) } );
 }
 
 // the code's start returned a frame: read it back as the model's claim (the
@@ -397,54 +354,75 @@ static void gso_take_claim( gso_walk_t & walk, int t, const uint8_t * frame, uin
         walk.shared = true;
     }
     walk.owner[q][b][c.slot] = t;
-    if ( b != walk.gso->queues[q].send.producer )
+    if ( b != walk.lane[q].producer )
     {
         walk.worker_write = true;
     }
 }
 
-// RNGsoQueueBankLayout Claim(t): the second half. A loaded index at S is a
-// refused start (the code's start is called and must return NULL). A counter
-// another thread moved since the load is the compare-and-swap that lost:
-// compare_exchange_weak reloads the counter, which is the model's reload and
-// calls nothing. Otherwise the code's start is called and its claim recorded.
-static void gso_claim( gso_walk_t & walk, int t )
+// RNGsoQueueBankLayout Claim(t, r): the second half. A counter another
+// thread moved since the load is the compare-and-swap that lost: op reload,
+// no call, r = None. Otherwise the code's start is called; r is what it
+// returned, the pointer (as the model addresses it) and id, or None for NULL.
+static std::string gso_claim( gso_walk_t & walk, int t, const char ** op )
 {
     gso_load_t & l = walk.load[t];
-    const struct rocketnet_server_gso_send_lane_t * lane = &walk.gso->queues[l.q].send;
+    const struct rocketnet_server_gso_test_send_lane_t & lane = walk.lane[l.q];
 
-    if ( l.i < GSO_SLOTS && gso_count( walk, l.q, l.b ) != l.i )
+    if ( l.i < GSO_SLOTS && lane.num_packets[l.b] != l.i )
     {
-        l.b = lane->producer;
-        l.i = gso_count( walk, l.q, lane->producer );
+        l.b = lane.producer;
+        l.i = lane.num_packets[lane.producer];
         walk.steps_reload++;
-        return;
+        *op = "reload";
+        return gso_args( { tla_int( t ), gso_none() } );
     }
 
     uint64_t pid = 0;
     const uint8_t * frame = rocketnet_server_gso_start_packet( walk.gso, &walk.dest[l.d], &pid );
     l.loaded = false;
-    if ( frame )
-    {
-        gso_take_claim( walk, t, frame, pid );
-        walk.steps_claim++;
-    }
-    else
+    *op = "start_packet";
+    if ( !frame )
     {
         walk.steps_refused++;
+        return gso_args( { tla_int( t ), gso_none() } );
     }
+    // the lanes as they were when start returned, to locate the pointer
+    gso_read( walk );
+    gso_take_claim( walk, t, frame, pid );
+    walk.steps_claim++;
+    const gso_claim_t & c = walk.claim[t];
+    return gso_args( { tla_int( t ), "[ptr |-> " + tla_int( c.ptr ) + ", pid |-> " + tla_int( (int64_t) pid ) + "]" } );
+}
+
+// every slot's packet_bytes, in queue, bank, slot order
+static std::vector<int> gso_packet_bytes( const gso_walk_t & walk )
+{
+    std::vector<int> bytes;
+    for ( int q = 0; q < GSO_QUEUES; q++ )
+    {
+        for ( int b = 0; b < GSO_BANKS; b++ )
+        {
+            for ( int s = 0; s < GSO_SLOTS; s++ )
+            {
+                bytes.push_back( rocketnet_server_gso_test_send_packet_bytes( walk.gso, q, b, s ) );
+            }
+        }
+    }
+    return bytes;
 }
 
 // RNGsoQueueBankLayout Finish(t, k): the code's finish or abort with the
 // pointer k bytes off the one start returned; the slot it wrote is found by
-// comparing every slot's packet_bytes before and after
-static void gso_finish( gso_walk_t & walk, int t, int k, bool abort )
+// comparing every slot's packet_bytes before and after. Returns the finishes
+// and aborts that wrote a slot not their own: the plant firing.
+static int gso_finish( gso_walk_t & walk, int t, int k, bool abort )
 {
     gso_claim_t & c = walk.claim[t];
     struct rocketnet_server_gso_t * gso = walk.gso;
 
     const int64_t offset = c.ptr - gso_addr( c.q, c.b );
-    uint8_t * exact = (uint8_t *) ( gso_first( walk, c.q, c.b ) + (uintptr_t) offset );
+    uint8_t * exact = (uint8_t *) ( (uintptr_t) walk.lane[c.q].first[c.b] + (uintptr_t) offset );
     uint8_t * pointer = (uint8_t *) ( (uintptr_t) exact + (uintptr_t) (intptr_t) k );
 
     if ( abort )
@@ -454,17 +432,7 @@ static void gso_finish( gso_walk_t & walk, int t, int k, bool abort )
         rocketnet_server_gso_finish_packet( gso, c.pid, exact, gso_bytes( walk ) );
     }
 
-    std::vector<int> before;
-    for ( int q = 0; q < GSO_QUEUES; q++ )
-    {
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
-        {
-            for ( int s = 0; s < GSO_SLOTS; s++ )
-            {
-                before.push_back( gso->queues[q].send.banks[b].info[s].packet_bytes );
-            }
-        }
-    }
+    const std::vector<int> before = gso_packet_bytes( walk );
 
     if ( abort )
     {
@@ -477,24 +445,26 @@ static void gso_finish( gso_walk_t & walk, int t, int k, bool abort )
         walk.steps_finish++;
     }
 
+    const std::vector<int> after = gso_packet_bytes( walk );
+    int foreign_writes = 0;
     size_t index = 0;
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
             for ( int s = 0; s < GSO_SLOTS; s++ )
             {
-                if ( gso->queues[q].send.banks[b].info[s].packet_bytes != before[index] )
+                if ( after[index] != before[index] )
                 {
                     if ( q != c.q || b != c.b || s != c.slot )
                     {
-                        walk.foreign_writes++;
+                        foreign_writes++;
                     }
                     if ( walk.owner[q][b][s] != t || q != c.q || b != c.b || s != c.slot )
                     {
                         walk.foreign = true;
                     }
-                    if ( b != gso->queues[q].send.producer )
+                    if ( b != walk.lane[q].producer )
                     {
                         walk.worker_write = true;
                     }
@@ -510,6 +480,7 @@ static void gso_finish( gso_walk_t & walk, int t, int k, bool abort )
     }
 
     c.held = false;
+    return foreign_writes;
 }
 
 // RNGsoQueueBankLayout Flush: the code's send_packets with the fill joined;
@@ -519,22 +490,23 @@ static void gso_flush( gso_walk_t & walk )
     int before[GSO_QUEUES];
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        before[q] = walk.gso->queues[q].send.producer;
+        before[q] = walk.lane[q].producer;
     }
     rocketnet_server_gso_send_packets( walk.gso );
+    gso_read( walk );
     walk.steps_flush++;
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        if ( walk.gso->queues[q].send.producer == before[q] )
+        if ( walk.lane[q].producer == before[q] )
         {
-            if ( gso_count( walk, q, before[q] ) != 0 )
+            if ( before[q] >= 0 && before[q] < GSO_BANKS && walk.lane[q].num_packets[before[q]] != 0 )
             {
                 walk.steps_kept++;
             }
             continue;
         }
         walk.steps_turn++;
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
             for ( int s = 0; s <= GSO_SLOTS; s++ )
             {
@@ -551,32 +523,32 @@ static void gso_flush( gso_walk_t & walk )
 
 // RNGsoQueueBankLayout WorkerReturn(q, b): the queue's worker takes its oldest
 // published bank and gives it back, its counter reset (the send between is
-// layer L3's, RNGsoHandoff)
-static void gso_return( gso_walk_t & walk, int q )
+// layer L3's, RNGsoHandoff); b is the bank take returned
+static std::string gso_return( gso_walk_t & walk, int q )
 {
-    struct rocketnet_server_gso_queue_t * queue = &walk.gso->queues[q];
     bool final = false;
-    const int index = rocketnet_server_gso_take_send( queue, &final );
+    const int index = rocketnet_server_gso_test_take_send( walk.gso, q, &final );
     if ( index >= 0 && !final )
     {
-        rocketnet_server_gso_return_send( queue, index );
+        rocketnet_server_gso_test_return_send( walk.gso, q, index );
         walk.steps_return++;
     }
+    return gso_args( { tla_int( q ), tla_int( final ? -1 : index ) } );
 }
 
 static int trace_gso( uint64_t seed, int steps, const char * out )
 {
-    gso_walk_t walk;
+    static gso_walk_t walk;
     memset( &walk, 0, sizeof( walk ) );
-    walk.gso = rocketnet_server_gso_test_open( GSO_QUEUES );
+    walk.max_flush = steps;
+    walk.gso = rocketnet_server_gso_test_open_slots( GSO_QUEUES, GSO_SLOTS );
     if ( !walk.gso )
     {
+        fprintf( stderr, "tla_trace: gso: the fixture could not be opened\n" );
         return 1;
     }
 
-    // destinations: two on queue 0 and one on queue 1, by the code's hash
-    int found[GSO_QUEUES] = { 0, 0 };
-    const int want[GSO_QUEUES] = { 2, 1 };
+    // destinations: destination d on queue d % GSO_QUEUES, by the code's hash
     int d = 1;
     for ( int port = 40000; port < 41000 && d <= GSO_DESTS; port++ )
     {
@@ -586,17 +558,21 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         a.data.ipv4[0] = 10;
         a.data.ipv4[3] = 9;
         a.port = (uint16_t) port;
-        const int q = rocketnet_server_gso_send_queue( &a, GSO_QUEUES );
-        if ( found[q] < want[q] )
+        if ( rocketnet_server_gso_send_queue( &a, GSO_QUEUES ) == d % GSO_QUEUES )
         {
-            found[q]++;
             walk.dest[d++] = a;
         }
+    }
+    if ( d <= GSO_DESTS || !gso_read( walk ) )
+    {
+        fprintf( stderr, "tla_trace: gso: no destination for every queue, or the lanes could not be read\n" );
+        rocketnet_server_gso_test_close( walk.gso );
+        return 1;
     }
 
     for ( int q = 0; q < GSO_QUEUES; q++ )
     {
-        for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+        for ( int b = 0; b < GSO_BANKS; b++ )
         {
             for ( int s = 0; s <= GSO_SLOTS; s++ )
             {
@@ -606,8 +582,9 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     }
 
     tla_random_t random = { seed };
+    tla_report_t report;
     std::vector<tla_record_t> records;
-    records.push_back( gso_record( walk ) );
+    records.push_back( tla_step( "init", "init", "<<>>", gso_state( walk ) ) );
 
     for ( int step = 0; step < steps; step++ )
     {
@@ -646,14 +623,14 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         const bool offer_return = !walk.worker_slow && ( all_done || random.below( 4 ) == 0 );
         for ( int q = 0; q < GSO_QUEUES; q++ )
         {
-            if ( offer_return && walk.gso->queues[q].send.ready_count > 0 )
+            if ( offer_return && walk.lane[q].ready_count > 0 )
             {
                 can_return.push_back( q );
             }
         }
         // a flush before the threads have spent their demand is offered one
         // step in eight, so most fills run past a bank and stage on both queues
-        const bool can_flush = all_free && walk.flushes < GSO_MAX_FLUSH && ( all_done || random.below( 8 ) == 0 );
+        const bool can_flush = all_free && walk.flushes < walk.max_flush && ( all_done || random.below( 8 ) == 0 );
 
         const int n_load = (int) can_load.size();
         const int n_claim = (int) can_claim.size();
@@ -662,22 +639,30 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         const int choices = n_load + n_claim + n_finish + n_return + ( can_flush ? 1 : 0 );
         if ( choices == 0 )
         {
+            fprintf( stderr, "tla_trace: gso: no step enabled at step %d\n", step );
             break;
         }
 
         const int pick = random.below( choices );
+        const char * op = NULL;
+        const char * act = NULL;
+        std::string args;
+        int fired = 0;
         if ( pick < n_load )
         {
-            gso_load( walk, can_load[(size_t) pick], 1 + random.below( GSO_DESTS ) );
+            args = gso_load( walk, can_load[(size_t) pick], 1 + random.below( GSO_DESTS ) );
+            op = "load";
+            act = "Load";
         }
         else if ( pick < n_load + n_claim )
         {
-            gso_claim( walk, can_claim[(size_t) ( pick - n_load )] );
+            args = gso_claim( walk, can_claim[(size_t) ( pick - n_load )], &op );
+            act = "Claim";
         }
         else if ( pick < n_load + n_claim + n_finish )
         {
             const int t = can_finish[(size_t) ( pick - n_load - n_claim )];
-            int k = gso_skew[random.below( (int) ( sizeof( gso_skew ) / sizeof( gso_skew[0] ) ) )];
+            int k = random.below( 2 * GSO_SKEW_SPAN + 1 ) - GSO_SKEW_SPAN;
             bool abort = random.below( 4 ) == 0;
             // the plant's condition, a finish a byte early on a slot past 0,
             // is made sure once a walk: the first finish of such a claim
@@ -690,55 +675,69 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
             {
                 walk.early_probed = true;
             }
-            gso_finish( walk, t, k, abort );
+            fired = gso_finish( walk, t, k, abort );
+            op = abort ? "finish_abort" : "finish_packet";
+            act = "Finish";
+            args = gso_args( { tla_int( t ), tla_int( k ) } );
         }
         else if ( pick < n_load + n_claim + n_finish + n_return )
         {
-            gso_return( walk, can_return[(size_t) ( pick - n_load - n_claim - n_finish )] );
+            args = gso_return( walk, can_return[(size_t) ( pick - n_load - n_claim - n_finish )] );
+            op = "take_return_send";
+            act = "WorkerReturn";
         }
         else
         {
             gso_flush( walk );
             walk.worker_slow = random.below( 2 ) == 0;
+            op = "send_packets";
+            act = "Flush";
+            args = "<<>>";
         }
 
-        records.push_back( gso_record( walk ) );
-    }
-
-    std::string queue_of = "MCQueueOf(d) == CASE ";
-    for ( int i = 1; i <= GSO_DESTS; i++ )
-    {
-        if ( i > 1 )
+        if ( !gso_read( walk ) )
         {
-            queue_of += " [] ";
+            fprintf( stderr, "tla_trace: gso: the lanes could not be read\n" );
+            break;
         }
-        queue_of += "d = " + tla_int( i ) + " -> " + tla_int( rocketnet_server_gso_send_queue( &walk.dest[i], GSO_QUEUES ) );
+        report.act( act );
+        records.push_back( tla_step( op, act, args, gso_state( walk ) ) );
+        // the planted effect, where it shows: a finish or abort wrote a slot
+        // not its own
+        if ( fired > 0 )
+        {
+            report.planted( (int) records.size() );
+        }
     }
-    const std::string definitions = queue_of + "\nMCSkew == {-1, 0, 1}\n";
 
     rocketnet_server_gso_test_close( walk.gso );
 
-    // the plant build must fire for its trace to be a witness; the clean
-    // build never does
     printf( "WALK records=%d loads=%d claims=%d reloads=%d refused=%d finishes=%d aborts=%d flushes=%d turns=%d kept=%d returns=%d\n",
             (int) records.size(), walk.steps_load, walk.steps_claim, walk.steps_reload, walk.steps_refused, walk.steps_finish,
             walk.steps_abort, walk.steps_flush, walk.steps_turn, walk.steps_kept, walk.steps_return );
-    printf( "PLANT-FIRED %d\n", walk.foreign_writes );
+    report.print();
 
-    char constants[1024];
-    snprintf( constants, sizeof( constants ),
-              "    Q = %d\n    NB = %d\n    S = %d\n    Stride = %d\n    Threads = {1, 2}\n    Dests = {1, 2, 3}\n"
-              "    QueueOf <- MCQueueOf\n    Demand = %d\n    MaxFlush = %d\n    Skew <- MCSkew\n"
-              "    ClaimCmp = \"ge\"\n    ClaimRule = \"cas\"\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n    FlushRule = \"joined\"\n",
-              GSO_QUEUES, ROCKETNET_GSO_TX_BANKS, GSO_SLOTS, (int) ROCKETNET_FRAME_STRIDE, GSO_DEMAND, GSO_MAX_FLUSH );
+    std::string threads = "{";
+    for ( int t = 1; t <= GSO_THREADS; t++ )
+    {
+        threads += ( t > 1 ? ", " : "" ) + tla_int( t );
+    }
+    threads += "}";
+    std::string dests = "{";
+    for ( int i = 1; i <= GSO_DESTS; i++ )
+    {
+        dests += ( i > 1 ? ", " : "" ) + tla_int( i );
+    }
+    dests += "}";
 
-#if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
-    const std::string name = "MCTraceGsoPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
-    const std::string name = "MCTraceGsoSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
+    const std::string constants = "    Q = " + tla_int( GSO_QUEUES ) + "\n" + "    NB = " + tla_int( ROCKETNET_GSO_TX_BANKS ) + "\n" + "    S = " +
+                                  tla_int( walk.lane[0].slots ) + "\n" + "    Stride = " + tla_int( (int64_t) ROCKETNET_FRAME_STRIDE ) + "\n" +
+                                  "    Threads = " + threads + "\n" + "    Dests = " + dests + "\n" + "    Demand = " + tla_int( GSO_DEMAND ) + "\n" +
+                                  "    MaxFlush = " + tla_int( walk.max_flush ) + "\n" + "    SkewSpan = " + tla_int( GSO_SKEW_SPAN ) + "\n" +
+                                  "    ClaimCmp = \"ge\"\n    ClaimRule = \"cas\"\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n"
+                                  "    FlushRule = \"joined\"\n";
 
-    return tla_write_trace( out, name, "TraceRNGsoQueueBankLayout", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceGso", seed, "TraceRNGsoQueueBankLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "gso", trace_gso );

@@ -92,8 +92,6 @@ struct rocketnet_server_gso_send_info_t
 
 static_assert( sizeof( rocketnet_server_gso_send_info_t ) == 64, "one send info per cache line" );
 
-static const int ROCKETNET_GSO_TX_BANKS = 3;
-
 struct rocketnet_server_gso_send_buffer_t
 {
     uint8_t padding_0[4096];
@@ -282,6 +280,10 @@ struct rocketnet_server_gso_t
     void * context;
 
     int num_queues;
+    // the slots a producer bank hands out: ROCKETNET_GSO_SEND_QUEUE_SIZE, and
+    // fewer only on the trace check's fixture (rocketnet_server_gso_test_open_slots),
+    // so its walk fills a bank in a few steps. proofs/tla/RNGsoQueueBankLayout.tla S.
+    int send_slots = ROCKETNET_GSO_SEND_QUEUE_SIZE;
     int receive_start_queue = 0; // the next receive_packets call starts at this queue
     bool stopping = false;
     // main thread: what the queue workers received that main never took,
@@ -2000,7 +2002,7 @@ int rocketnet_server_gso_send_room_queue( struct rocketnet_server_gso_t * gso, i
         return 0;
     }
     const int used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
-    return used < 0 || used >= ROCKETNET_GSO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_GSO_SEND_QUEUE_SIZE - used;
+    return used < 0 || used >= gso->send_slots ? 0 : gso->send_slots - used;
 }
 
 // ---------------------------------------------------------------------------
@@ -2019,7 +2021,7 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso )
     {
         return 0;
     }
-    int room = ROCKETNET_GSO_SEND_QUEUE_SIZE;
+    int room = gso->send_slots;
     for ( int i = 0; i < gso->num_queues; i++ )
     {
         const struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[i].send;
@@ -2028,7 +2030,7 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso )
             return 0;
         }
         const int used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
-        const int free = used < 0 || used >= ROCKETNET_GSO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_GSO_SEND_QUEUE_SIZE - used;
+        const int free = used < 0 || used >= gso->send_slots ? 0 : gso->send_slots - used;
         if ( free < room )
         {
             room = free;
@@ -2079,7 +2081,7 @@ bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
 // read the queue back from it (IdRule). proofs/tla/RNGsoQueueBankLayout.tla
 // Load is the queue, producer and counter read below, and Claim the
 // compare-and-swap: one that loses reloads the counter it found (the model's
-// reload), and an index at ROCKETNET_GSO_SEND_QUEUE_SIZE is refused (ClaimCmp).
+// reload), and an index at send_slots is refused (ClaimCmp).
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )
 {
     rocketnet_assert( gso );
@@ -2100,7 +2102,7 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[lane->producer];
     int slot = bank->num_packets.load( std::memory_order_relaxed );
-    while ( slot >= 0 && slot < ROCKETNET_GSO_SEND_QUEUE_SIZE &&
+    while ( slot >= 0 && slot < gso->send_slots &&
             !bank->num_packets.compare_exchange_weak( slot, slot + 1, std::memory_order_relaxed ) )
     {
     }
@@ -2109,7 +2111,7 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
     // stages forever without flushing wraps the counter negative, and a
     // negative index is an out-of-bounds write, not a dropped packet
 
-    if ( slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE || slot < 0 )
+    if ( slot >= gso->send_slots || slot < 0 )
     {
         rocketnet_spam( "gso transport send staging full. packet dropped" );
         return NULL;
@@ -2118,7 +2120,7 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
     bank->info[slot].to = *to;
     bank->info[slot].packet_bytes = 0;
 
-    *packet_id = ( lane->turn * (uint64_t) ROCKETNET_GSO_SEND_QUEUE_SIZE + (uint64_t) slot ) * (uint64_t) gso->num_queues + (uint64_t) q;
+    *packet_id = ( lane->turn * (uint64_t) gso->send_slots + (uint64_t) slot ) * (uint64_t) gso->num_queues + (uint64_t) q;
 
     return bank->data[slot];
 }
@@ -2144,6 +2146,21 @@ static int rocketnet_server_gso_send_slot( struct rocketnet_server_gso_t * gso, 
     }
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[lane->producer];
 
+#if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
+    // the trace check's plant (tests/tla_trace_gso.cpp, the tla_trace_plant_gso
+    // binary only): the slot divided out of the pointer's signed offset, with
+    // C's truncation toward zero, before any test, and no alignment test
+    // (proofs/tla/RNGsoQueueBankLayout.tla SlotRule "divide"). A pointer a byte
+    // early on slot s lands on slot s - 1, another claim's.
+    const intptr_t planted = (intptr_t) ( (uintptr_t) packet_data - (uintptr_t) bank->data[0] ) / (intptr_t) ROCKETNET_FRAME_STRIDE;
+    if ( planted < 0 || planted >= gso->send_slots )
+    {
+        return -1;
+    }
+
+    *bank_out = bank;
+    return (int) planted;
+#else  // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
     const uintptr_t first = (uintptr_t) bank->data[0];
     const uintptr_t address = (uintptr_t) packet_data;
     if ( address < first || address - first >= sizeof( bank->data ) )
@@ -2156,13 +2173,14 @@ static int rocketnet_server_gso_send_slot( struct rocketnet_server_gso_t * gso, 
         return -1;
     }
     const int slot = (int) ( offset / ROCKETNET_FRAME_STRIDE );
-    if ( slot < 0 || slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE )
+    if ( slot < 0 || slot >= gso->send_slots )
     {
         return -1;
     }
 
     *bank_out = bank;
     return slot;
+#endif // #if defined( ROCKETNET_GSO_SEND_SLOT_PLANT )
 }
 
 // proofs/tla/RNGsoQueueBankLayout.tla Finish: the slot the id's queue and the
@@ -2773,6 +2791,72 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues )
     }
 
     return gso;
+}
+
+// the trace check's fixture (tests/tla_trace_gso.cpp): each producer bank
+// hands out send_slots slots, so a walk fills one in a few steps
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_queues, int send_slots )
+{
+    if ( send_slots < 1 || send_slots > ROCKETNET_GSO_SEND_QUEUE_SIZE )
+    {
+        return NULL;
+    }
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open( num_queues );
+    if ( gso )
+    {
+        gso->send_slots = send_slots;
+    }
+    return gso;
+}
+
+// one queue's send staging as the lane holds it, read on the thread that
+// drives the fixture (no worker runs on it)
+bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane )
+{
+    if ( !gso || !lane || queue_index < 0 || queue_index >= gso->num_queues )
+    {
+        return false;
+    }
+    const struct rocketnet_server_gso_send_lane_t * send = &gso->queues[queue_index].send;
+    lane->slots = gso->send_slots;
+    lane->producer = send->producer;
+    lane->turn = send->turn;
+    lane->free_head = send->free_head;
+    lane->free_count = send->free_count;
+    lane->ready_count = send->ready_count;
+    for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+    {
+        lane->free_banks[b] = send->free_banks[b];
+        lane->num_packets[b] = send->banks[b].num_packets.load( std::memory_order_relaxed );
+        lane->first[b] = send->banks[b].data[0];
+    }
+    lane->bank_bytes = sizeof( send->banks[0].data );
+    return true;
+}
+
+int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot )
+{
+    if ( !gso || queue_index < 0 || queue_index >= gso->num_queues || bank < 0 || bank >= ROCKETNET_GSO_TX_BANKS || slot < 0 ||
+         slot >= ROCKETNET_GSO_SEND_QUEUE_SIZE )
+    {
+        return -1;
+    }
+    return gso->queues[queue_index].send.banks[bank].info[slot].packet_bytes;
+}
+
+int rocketnet_server_gso_test_take_send( struct rocketnet_server_gso_t * gso, int queue_index, bool * final )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( final );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+    return rocketnet_server_gso_take_send( &gso->queues[queue_index], final );
+}
+
+void rocketnet_server_gso_test_return_send( struct rocketnet_server_gso_t * gso, int queue_index, int index )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+    rocketnet_server_gso_return_send( &gso->queues[queue_index], index );
 }
 
 // one queue, no socket, no thread: the fixture every stepped test runs on. Its

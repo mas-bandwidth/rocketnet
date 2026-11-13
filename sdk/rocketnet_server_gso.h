@@ -50,6 +50,12 @@ struct rocketnet_server_gso_t;
 
 #define ROCKETNET_GSO_SEND_QUEUE_SIZE                                     4096
 
+// the banks of one queue's send staging: the producer, one with the queue's
+// worker and one free (proofs/tla/RNBankFifoLayout.tla, whose Init literal is
+// right for three banks only)
+
+#define ROCKETNET_GSO_TX_BANKS                                               3
+
 // receive staging per queue per buffer: twice the send staging and half
 // the process array, so two queues at full tilt cover a whole drain and
 // a single flooded queue fills its pair between drains and drops
@@ -390,6 +396,32 @@ struct mmsghdr;
 // false when no queue had a bank or one was not sent whole.
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open( int num_queues );
 void rocketnet_server_gso_test_close( struct rocketnet_server_gso_t * gso );
+// The trace check's seams (tests/tla_trace_gso.cpp, proofs/tla/RNGsoQueueBankLayout.tla).
+// test_open_slots is test_open with each producer bank handing out
+// send_slots slots (1..ROCKETNET_GSO_SEND_QUEUE_SIZE) instead of all of
+// them, so a walk fills a bank in a few steps; NULL out of range.
+// test_send_lane reads one queue's send staging as the lane holds it, and
+// test_send_packet_bytes one slot's packet_bytes (-1 out of range).
+// test_take_send and test_return_send are the queue worker's take and
+// return of a published bank, on the calling thread.
+struct rocketnet_server_gso_test_send_lane_t
+{
+    int slots;                                          // the slots a producer bank hands out
+    int producer;
+    uint64_t turn;
+    int free_banks[ROCKETNET_GSO_TX_BANKS];
+    int free_head;
+    int free_count;
+    int ready_count;
+    int num_packets[ROCKETNET_GSO_TX_BANKS];
+    const uint8_t * first[ROCKETNET_GSO_TX_BANKS];      // each bank's slot 0
+    size_t bank_bytes;                                  // the bytes of each bank's slots
+};
+struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_queues, int send_slots );
+bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane );
+int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot );
+int rocketnet_server_gso_test_take_send( struct rocketnet_server_gso_t * gso, int queue_index, bool * final );
+void rocketnet_server_gso_test_return_send( struct rocketnet_server_gso_t * gso, int queue_index, int index );
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
                                          void * user );

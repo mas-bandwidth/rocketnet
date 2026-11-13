@@ -42,17 +42,22 @@ action (`Load` and `Claim` at start, `Finish` at finish and abort, `Flush` at
 the publish, `WorkerReturn` at the return; `Done` is the bound's terminal
 stutter, an environment action). The code is bound to the model by the trace
 check (`TraceRNGsoQueueBankLayout.tla`, tests/tla_trace_gso.cpp, `tla_trace
---layer gso`, README-TraceCheck.md): its plant, finish and abort dividing the
-pointer's offset before testing it, is rejected at the first finish a byte
-early on a slot past 0.
+--layer gso`, README-TraceCheck.md, record format v2): its plant, finish and
+abort dividing the pointer's offset before testing it, is rejected at the
+first finish or abort that writes another claim's slot.
 
 ## The instance (MCRNGsoQueueBankLayout.tla)
 
 - `Q` = 2 queues, each with `NB` = 3 banks (`ROCKETNET_GSO_TX_BANKS`) of `S` = 3
   slots; `Stride` = 4.
 - 2 fill threads, each making 2 starts per fill (`Demand`), one destination on
-  each queue.
-- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late.
+  each queue (`Dests` = {0, 1}: destination `d` is on queue `QueueOf(d)` =
+  `d % Q`; the trace walk picks addresses the code's hash puts there).
+- A caller may hand finish a pointer 1 byte early, exact, or 1 byte late
+  (`SkewSpan` = 1, and `Skew` is the definition `-SkewSpan..SkewSpan`: a cfg
+  set holds no negative number).
+- What start returns is `Claim`'s argument `r`, `ClaimResult(t)`: the slot's
+  address and the packet id, or `None` for a refused start or a lost swap.
 - `MaxFlush` = 2 in the control. At 3 (`MCRNGsoQueueBankLayoutFlush3.cfg`) a
   queue turns over onto a bank its worker returned; that instance is 32.2M
   distinct states, over the 110 s per-case budget, and is a `bench` case with
@@ -62,19 +67,23 @@ Each switch of the model is the code's in the controls; each witness changes
 one: `ClaimCmp` ("ge"), `ClaimRule` ("cas"), `SlotRule` ("check"), `IdRule`
 ("mul"), `FlushRule` ("joined").
 
-## Results (gx86, an AWS x86 bench; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-12; RUNS.tsv)
+## Results (bench-nyc-6, x86; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13, each case its own bounded run; RUNS.tsv)
+
+The model's move to the trace check's v2 record (`QueueOf` and `Skew` as
+definitions over the plain constants `Dests` and `SkewSpan`, `ClaimResult` as
+`Claim`'s argument) left every state count as it was before it.
 
 | cfg | expected | result | states generated (distinct) | seconds |
 |---|---|---|---|---|
-| MCRNGsoQueueBankLayout.cfg | pass | pass | 7,285,611 (1,323,990) | 26.3 |
+| MCRNGsoQueueBankLayout.cfg | pass | pass | 7,285,611 (1,323,990) | 29.6 |
 | MCRNGsoQueueBankLayoutFlush3.cfg | pass | timeout at the 110 s budget: FAIL, exit 124, declared bench debt | - | 110.2 |
-| MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 6,817 (2,915) | 1.1 |
-| MCRNGsoQueueBankLayoutBrokenBlindStore.cfg | NoSharedSlot | NoSharedSlot violated | 69 (49) | 0.8 |
-| MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 204 (118) | 0.8 |
-| MCRNGsoQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 204 (118) | 0.9 |
-| MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg | NoWorkerWrite | NoWorkerWrite violated | 432 (259) | 0.9 |
-| MCTraceRNGsoQueueBankLayoutSelf.cfg | pass | pass | 7 (6) | 0.9 |
-| MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg | TraceConsistent | TraceConsistent violated | 5 (5) | 0.7 |
+| MCRNGsoQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 6,817 (2,915) | 1.4 |
+| MCRNGsoQueueBankLayoutBrokenBlindStore.cfg | NoSharedSlot | NoSharedSlot violated | 69 (49) | 1.1 |
+| MCRNGsoQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 204 (118) | 1.2 |
+| MCRNGsoQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 204 (118) | 1.3 |
+| MCRNGsoQueueBankLayoutBrokenOpenFlush.cfg | NoWorkerWrite | NoWorkerWrite violated | 432 (259) | 1.0 |
+| MCTraceRNGsoQueueBankLayoutSelf.cfg | pass | pass | 7 (6) | 0.7 |
+| MCTraceRNGsoQueueBankLayoutSelfBrokenTurn.cfg | TraceConsistent | TraceConsistent violated | 5 (5) | 0.8 |
 
 Deadlock is checked in every case (no cfg turns it off): `Done` stutters at the
 bound, and no other state is without a successor.
@@ -106,33 +115,52 @@ Each was checked by hand against the broken rule.
 
 ## The trace check
 
-`tests/tla_trace_gso.cpp` compiles the transport's own source into the walk and
-drives the real `start_packet`, `finish_packet`, `abort_packet`,
-`send_packets` (publish), `take_send` and `return_send` on the
-`rocketnet_server_gso_test_open` fixture with two queues: no socket, no thread,
-no clock. It reads every model variable from the lanes' own fields after each
-step (`own` from the producer and the free FIFO, `cnt` from each bank's
-`num_packets`, `turn` from the lane), the environment's choices with them.
-`ROCKETNET_GSO_SEND_QUEUE_SIZE` is 3 in that file only, as the io_uring walk
-creates its banks with 3 slots; every other constant is the code's (`Stride` =
-`ROCKETNET_FRAME_STRIDE`, `NB` = `ROCKETNET_GSO_TX_BANKS`). The trace instance
-is 2 queues, 2 threads making 4 starts each per fill, 3 destinations (two on
-queue 0 by the code's hash), 6 flushes.
+`tests/tla_trace_gso.cpp` (record format v2, README-TraceCheck.md) drives the
+library's own `start_packet`, `finish_packet`, `abort_packet`, `send_packets`
+(publish), `take_send` and `return_send` on the
+`rocketnet_server_gso_test_open_slots` fixture with two queues: no socket, no
+thread, no clock. The fixture opens each producer bank with 3 slots
+(`send_slots`, which the walk writes as `S`); every other constant is the
+code's (`Stride` = `ROCKETNET_FRAME_STRIDE`, `NB` = `ROCKETNET_GSO_TX_BANKS`).
+After each step the walk reads every model variable from the lanes as the
+library holds them (`rocketnet_server_gso_test_send_lane`: `own` from the
+producer and the free FIFO, `cnt` from each bank's `num_packets`, `turn` from
+the lane), the environment's choices with them. The trace instance is 2
+queues, 2 threads making 4 starts each per fill, 3 destinations (destination
+`d` an address the code's hash puts on queue `d % 2`), a pointer up to a byte
+off either way, and flushes bounded by the walk's length.
 
-`Load` is a record of its own: the queue by the code's hash and the producer
-and count as the lane holds them. At `Claim` the walk calls start; a counter
-another thread moved since the load is the swap that lost, recorded as the
-model's reload (`compare_exchange_weak` reloads inside the one call), and an
-index at `S` is a start the code must refuse. A finish or abort writes a
-`packet_bytes` no slot holds yet, and the walk finds the slot it wrote by
-comparing every slot before and after. Returns are offered one step in four,
-and in a fill drawn with a slow worker not at all, so some flushes find no free
-bank and keep their producer.
+One record per call (`tla_step`), and the action a record names is the one
+the call's result names. `Load` is a record of its own: the queue the code's
+hash gave (an argument) and the producer and count as the lane holds them. At
+`Claim` the walk calls start, and the pointer and packet id it returned (or
+`None`) are `r`; a counter another thread moved since the load is the swap
+that lost, recorded as the model's reload with `r` = `None`
+(`compare_exchange_weak` reloads inside the one call), and an index at `S` is
+a start the code must refuse. A finish or abort writes a `packet_bytes` no
+slot holds yet, and the walk finds the slot it wrote by comparing every slot
+before and after. The worker's take and return are one record, the bank the
+take returned an argument. Returns are offered one step in four, and in a
+fill drawn with a slow worker not at all, so some flushes find no free bank
+and keep their producer. `Done` is untraced: the walk's flush bound is its
+length, so the model's end is never reached. The row's reach predicates are
+`BankFull`, `TurnedOverEveryBank` and `NoFreeBank`.
 
-At seeds 1-4 (the per-commit job) the traces are 141 to 171 records and each
-passes in 5 to 7 s; the plant's traces fail `TraceConsistent` at the first
-finish a byte early on a slot past 0, within 2.5 s. 256 seeds (1000-1255)
-passed clean and rejected the plant. The walk prints what it did (`WALK`):
-at seed 1, 53 loads, 19 claims, 4 lost swaps reloaded, 34 refused starts,
-15 finishes and 4 aborts, 6 flushes with 5 turn-overs and 6 producers kept
-for want of a free bank, and 5 returns.
+The plant (`ROCKETNET_GSO_SEND_SLOT_PLANT`, in
+`rocketnet_server_gso_send_slot`) divides the slot out of the pointer's
+offset before any test, so a pointer a byte early on slot `s` writes slot
+`s - 1`, another claim's. The walk reports it (`PLANT-AT`) at the record where
+a finish or abort wrote a slot not its own; TLC must reject the plant's trace
+there.
+
+At seeds 1-4 (the per-commit job, bench-nyc-6, 2026-11-13) every trace is
+401 records (400 steps) and TLC accepts each clean trace with 401 distinct
+states, about 22 s a trace with the JVM's start. The plant fired 10 to 16
+times a seed, first at records 11, 8, 6 and 7, and TLC rejected each plant
+trace at that first record. The walk prints what it did (`WALK`): at seed 1,
+138 loads, 70 claims, 14 lost swaps reloaded, 68 refused starts, 57 finishes
+and 12 aborts, 18 flushes with 25 turn-overs and 10 producers kept for want of
+a free bank, and 23 returns. The planted rows `ci/tla-trace/gso-plant-accepted`
+(the model letting a finish's foreign write pass) and
+`ci/tla-trace/gso-start-returns-wrong` (start's packet id naming slot 1 for
+slot 2) are red.

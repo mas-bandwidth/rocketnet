@@ -15,6 +15,10 @@
 (* the address-and-port hash the XDP transport uses) and claims the next  *)
 (* index of the queue's producer bank with a compare-and-swap that never   *)
 (* moves the counter past S: an index at S is refused (NULL, counted).     *)
+(* A destination d stands for an address the hash puts on queue d % Q     *)
+(* (the trace walk picks such addresses); Load takes the queue the hash    *)
+(* returned, and Claim what start_packet returned, so the trace check      *)
+(* compares both with the model's.                                         *)
 (* The packet id is (turn * S + slot) * Q + q, where turn is the queue's   *)
 (* producer turn-over count, written only by main while no fill runs: no   *)
 (* shared id counter.  finish_packet and abort_packet take the queue from  *)
@@ -69,14 +73,13 @@ EXTENDS Integers, FiniteSets
 
 CONSTANTS Q,            \* queues (num_queues)
           NB,           \* banks per queue (ROCKETNET_GSO_TX_BANKS)
-          S,            \* slots per bank (ROCKETNET_GSO_SEND_QUEUE_SIZE)
+          S,            \* slots per bank (the transport's send_slots: ROCKETNET_GSO_SEND_QUEUE_SIZE, fewer on the test fixture)
           Stride,       \* bytes per slot (ROCKETNET_FRAME_STRIDE)
           Threads,      \* fill threads
-          Dests,        \* destinations the fill sends to
-          QueueOf(_),   \* the destination's queue (rocketnet_server_gso_send_queue)
-          Demand,       \* start_packet calls one thread makes in one fill
+          Dests,        \* destinations the fill sends to: d is on queue QueueOf(d)
+          Demand,      \* start_packet calls one thread makes in one fill
           MaxFlush,     \* bound on flushes
-          Skew,         \* byte offsets a caller may add to the pointer it finishes
+          SkewSpan,     \* a caller may add -SkewSpan..SkewSpan bytes to the pointer it finishes (Skew)
           ClaimCmp,     \* "ge" (the code) or "gt"
           ClaimRule,    \* "cas" (the code) or "store"
           SlotRule,     \* "check" (the code) or "divide"
@@ -84,8 +87,8 @@ CONSTANTS Q,            \* queues (num_queues)
           FlushRule     \* "joined" (the code) or "open"
 
 ASSUME Q >= 1 /\ NB >= 2 /\ S >= 1 /\ Stride >= 2 /\ Demand >= 1 /\ MaxFlush >= 0
-ASSUME Skew \subseteq Int /\ 0 \in Skew
-ASSUME \A d \in Dests : QueueOf(d) \in 0..(Q - 1)
+ASSUME SkewSpan \in Nat
+ASSUME Dests \subseteq Nat
 ASSUME ClaimCmp \in {"ge", "gt"} /\ ClaimRule \in {"cas", "store"}
 ASSUME SlotRule \in {"check", "divide"} /\ IdRule \in {"mul", "add"}
 ASSUME FlushRule \in {"joined", "open"}
@@ -93,6 +96,14 @@ ASSUME FlushRule \in {"joined", "open"}
 Qs == 0..(Q - 1)
 Bs == 0..(NB - 1)
 None == [none |-> TRUE]
+
+\* the destination's queue (rocketnet_server_gso_send_queue): destination d
+\* stands for an address whose hash is d % Q
+QueueOf(d) == d % Q
+
+\* the byte offsets a caller may add to the pointer it finishes (a cfg cannot
+\* write a negative number, so the constant is the span)
+Skew == (-SkewSpan)..SkewSpan
 
 \* bank b of queue q starts here; slot s of it at Addr(q, b) + s * Stride
 Addr(q, b) == (q * NB + b) * S * Stride
@@ -136,20 +147,30 @@ Init ==
     /\ flushes = 0
     /\ oob = FALSE /\ shared = FALSE /\ foreign = FALSE /\ routeBad = FALSE /\ workerWrite = FALSE
 
-\* start_packet(to = d) on thread t, first half: pick the queue, read the
-\* producer and its counter
-Load(t, d) ==
+\* start_packet(to = d) on thread t, first half: pick the queue q the hash
+\* returned, read the producer and its counter
+Load(t, d, q) ==
     /\ held[t] = None /\ load[t] = None
     /\ demand[t] < Demand
-    /\ LET q == QueueOf(d) IN
-       load' = [load EXCEPT ![t] = [q |-> q, b |-> prod[q], i |-> cnt[q][prod[q]]]]
+    /\ q = QueueOf(d)
+    /\ load' = [load EXCEPT ![t] = [q |-> q, b |-> prod[q], i |-> cnt[q][prod[q]]]]
     /\ demand' = [demand EXCEPT ![t] = @ + 1]
     /\ UNCHANGED <<prod, own, cnt, turn, held, owner, flushes, oob, shared, foreign, routeBad, workerWrite>>
 
-\* second half: the CAS (or, under "store", a blind store). A loaded index
-\* the bound refuses is a NULL start; a CAS that lost the race reloads
-Claim(t) ==
+\* what the second half gives the thread back: the pointer and id of the
+\* slot it claims, or None for a NULL start and for a CAS that lost the race
+ClaimResult(t) ==
+    LET l == load[t]
+    IN IF l = None \/ ~Granted(l.i) \/ (ClaimRule = "cas" /\ cnt[l.q][l.b] # l.i)
+         THEN None
+         ELSE [ptr |-> Addr(l.q, l.b) + l.i * Stride, pid |-> PidOf(turn[l.q], l.i, l.q)]
+
+\* second half: the CAS (or, under "store", a blind store), returning r. A
+\* loaded index the bound refuses is a NULL start; a CAS that lost the race
+\* reloads
+Claim(t, r) ==
     /\ load[t] # None
+    /\ r = ClaimResult(t)
     /\ LET l == load[t]
            q == l.q
            b == l.b
@@ -228,8 +249,8 @@ Done ==
     /\ UNCHANGED vars
 
 Next ==
-    \/ \E t \in Threads, d \in Dests : Load(t, d)
-    \/ \E t \in Threads : Claim(t)
+    \/ \E t \in Threads, d \in Dests : Load(t, d, QueueOf(d))
+    \/ \E t \in Threads : Claim(t, ClaimResult(t))
     \/ \E t \in Threads, k \in Skew : Finish(t, k)
     \/ Flush
     \/ \E q \in Qs, b \in Bs : WorkerReturn(q, b)
