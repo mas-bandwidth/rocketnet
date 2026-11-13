@@ -288,8 +288,17 @@ void rocketnet_test_transport_disconnect_delivery()
     rocketnet_check( rocketnet_client_transport_state( client ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     rocketnet_check( rocketnet_server_transport_num_connected_clients( server ) == 0 );
 
+    // CONNECTION_RESPONSE_NO_MAPPING is this scenario on a slow host, not a
+    // fault: the client retransmits its response on the tick until it hears
+    // the server (TRANSPORT.md t17), so when a stall delays the answer to the
+    // first past one send interval, a second response is still in flight when
+    // the client connects. The test then disconnects at once, the mapping goes
+    // with the slot, and that duplicate arrives to no mapping. A duplicate
+    // that beats the disconnect reads ALREADY_CONNECTED, which is expected;
+    // this one only lost the race to the disconnect. Seen once on macOS CI.
+
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING );
 }
 
 void rocketnet_test_transport_reconnect_churn()
@@ -8425,7 +8434,32 @@ void rocketnet_test_server_gso_receive_overflow_counted()
     }
     rocketnet_check( queued == 0 );
 
-    // claim everything: the ready buffer, then the full one
+    // an empty socket is not yet a full buffer: on a loaded host the kernel
+    // can still hold sends before the socket (a deferred softirq). The worker
+    // has staged them all once its buffer's committed count is the queue size
+
+    int committed = -1;
+    const double full_deadline = rocketnet_time() + 5.0;
+    while ( rocketnet_time() < full_deadline )
+    {
+        committed = rocketnet_server_gso_test_receive_committed( gso, 0 );
+        if ( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    // read everything: the buffer main shares with the worker, then the full
+    // one. A buffer's tallies (its GRO batches and its overflow) reach the
+    // counters only when the worker has left it and main's next call makes it
+    // the tail (rocketnet_receive_handoff_begin); the worker leaves the full
+    // buffer at its next pass after main has started on it, so on a loaded
+    // host the last datagram can surface a call or two before the tallies
+    // do. The reads go on until
+    // the full buffer's GRO batches are counted, which folds its overflow
+    // with them.
 
     const uint64_t expected_received = 2 + (uint64_t) ( sends * segments - 1 );
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
@@ -8436,7 +8470,8 @@ void rocketnet_test_server_gso_receive_overflow_counted()
         rocketnet_server_gso_receive_packets( gso );
         surfaced += (uint64_t) rocketnet_server_gso_process_packets( gso )->num_packets;
         rocketnet_server_gso_counters( gso, counters );
-        if ( surfaced >= expected_received || rocketnet_time() >= claim_deadline )
+        const bool folded = counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] >= (uint64_t) sends;
+        if ( ( surfaced >= expected_received && folded ) || rocketnet_time() >= claim_deadline )
         {
             break;
         }
@@ -13881,6 +13916,11 @@ extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
 extern void rocketnet_test_server_gso_receive_buffer_request();
 extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
 extern bool rocketnet_test_server_receive_low_tick_measurement_requested();
+// receive latency (tests/functional/receive_latency.cpp): a message sent well
+// inside a frame is returned by the first update after its send, one case per
+// transport row
+extern void rocketnet_test_receive_latency_server_gso();
+extern void rocketnet_test_receive_latency_server_io_uring();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -15384,7 +15424,9 @@ void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_msgx_retired_socket_counted();
+void rocketnet_test_posix_msgx_finish_refused_counted();
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open();
+void rocketnet_test_posix_msgx_shared_receive_buffer_granted();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_transport_send_seam();
 void rocketnet_test_posix_send_burst();
@@ -16453,6 +16495,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
+    { "test_receive_latency_server_gso", rocketnet_test_receive_latency_server_gso, rocketnet_test_server_pin_allows_gso },
+    { "test_receive_latency_server_io_uring", rocketnet_test_receive_latency_server_io_uring, rocketnet_test_server_pin_allows_io_uring },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
@@ -16561,7 +16605,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
+    { "test_posix_msgx_finish_refused_counted", rocketnet_test_posix_msgx_finish_refused_counted, NULL },
     { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, NULL },
+    { "test_posix_msgx_shared_receive_buffer_granted", rocketnet_test_posix_msgx_shared_receive_buffer_granted, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },

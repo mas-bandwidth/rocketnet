@@ -449,22 +449,39 @@ static void test_claim_released_with_half_open_idle_mapping()
     handshake_server_build_request( client_request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
 
+#if ROCKETNET_DEV
+    const int free_claims = rocketnet_used_token_history_claim_free_count( test.server.used_token_history );
+#endif // #if ROCKETNET_DEV
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     check( handshake_server_process_from( &test, &attacker_address, attacker_request, 1000.0,
                                           response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
 
+    // while the attacker's half-open mapping holds the claim, the client's
+    // copy of the token is refused
+    response_bytes = -1;
+    check( handshake_server_process_from( &test, &client_address, client_request, 1000.0,
+                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( response_bytes == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
+
     const double idle_time = 1000.0 + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS;
     rocketnet_server_protocol_update( &test.server, idle_time );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
+#if ROCKETNET_DEV
+    check( rocketnet_used_token_history_claim_free_count( test.server.used_token_history ) == free_claims );
+#endif // #if ROCKETNET_DEV
 
     response_bytes = 0;
     check( handshake_server_process_from( &test, &client_address, client_request, idle_time,
                                           response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 0 );
+    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
 
     handshake_server_teardown( &test );
 }
@@ -1040,51 +1057,3 @@ static void test_copied_request_claim_released_at_handshake_deadline()
 }
 
 REGISTER_UNIT_TEST( test_copied_request_claim_released_at_handshake_deadline );
-
-#if ROCKETNET_DEV
-static void test_copied_request_claim_released_at_half_open_idle()
-{
-    struct handshake_server_t test;
-    handshake_server_setup( &test );
-    test.server.handshake_deadline_seconds = 30;
-
-    struct rocketnet_address_t holder;
-    struct rocketnet_address_t second;
-    check( rocketnet_address_parse( &holder, "198.51.100.7:56789" ) );
-    check( rocketnet_address_parse( &second, "198.51.100.8:56789" ) );
-
-    uint8_t holder_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    handshake_server_build_request( holder_request, "198.51.100.7:56789",
-                                    ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
-
-    uint8_t copied[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-    handshake_server_copy_request_for_address( copied, holder_request, "198.51.100.8:56789" );
-
-    const int free_claims = rocketnet_used_token_history_claim_free_count( test.server.used_token_history );
-    uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    int response_bytes = 0;
-    check( handshake_server_process_from( &test, &holder, holder_request, 1000.0,
-                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    check( handshake_server_process_from( &test, &second, copied, 1000.0,
-                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
-
-    const double idle_time = 1000.0 + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS;
-    rocketnet_server_protocol_update( &test.server, idle_time );
-    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
-    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
-    check( rocketnet_used_token_history_claim_free_count( test.server.used_token_history ) == free_claims );
-
-    response_bytes = 0;
-    check( handshake_server_process_from( &test, &second, copied, idle_time,
-                                          response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-    check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
-
-    handshake_server_teardown( &test );
-}
-
-REGISTER_UNIT_TEST( test_copied_request_claim_released_at_half_open_idle );
-#endif // #if ROCKETNET_DEV

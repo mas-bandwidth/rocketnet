@@ -59,7 +59,9 @@ next update's replay walk, which may retire or open that client's socket.
 - **`SendAll`**, **`SendPartial(k)`**, **`SendFull`**, **`SendRefused`**,
   **`SendDead`**, **`SendError`**: the connected send's answers. A partial
   send of `k` walks the cursor past exactly that many live packets
-  (`Advance`); nothing taken and full keep the run; a refusal goes again once
+  (`Advance`) and the call goes on at once (the socket took data; R124:
+  the call used to keep the bank and the worker slept its retry wait);
+  nothing taken and full keep the run; a refusal goes again once
   and a second is an error; dead reports the run's stamp and starts the
   resend loop; any other error drops the run, counted.
 - **`DeadDone`**, **`DeadSkip`**, **`DeadShared`**, **`DeadDropped`**,
@@ -92,6 +94,8 @@ pass ends (RNMsgxSocketTable `NoCrossClient`).
 - `ResumeExact`: when a call returns false, nothing at or past the cursor has
   left, so the next call resumes exactly where this one stopped.
 - `DeadReportsConnected`: a dead report names a connected stamp.
+- `KeptOnlyWhenNothingLeft` (an action property): the call keeps the bank,
+  and the worker waits, only on a step that put nothing on the wire.
 
 ## Instances
 
@@ -123,16 +127,17 @@ the stamp to carry the fill phase, which is outside the send path.
 ## Reversed witnesses
 
 Each switch is TRUE in the code. Each broken config sets one FALSE and lists
-only `TypeOK` and the invariant it must fail. The same four defects are
-`ROCKETNET_MSGX_SEND_RUNS_MUTATION` 1 to 4 in the header, and
+only `TypeOK` and the property it must fail. The same five defects are
+`ROCKETNET_MSGX_SEND_RUNS_MUTATION` 1 to 4 and 10 in the header, and
 `tests/test_unit_msgx_send_runs.cpp` turns red on each.
 
 | Config | Change | Fails | The counterexample |
 |---|---|---|---|
-| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `PartialSkipsAborted = FALSE`: a partial send counts every cursor step as taken | `ResumeExact` | four packets of client 1 on slot 0 at generation 1, packet 1 aborted; the run is [0, 2, 3]; the send takes 2 (packets 0 and 2); the cursor stops at position 2, on packet 2, which has left |
+| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `PartialSkipsAborted = FALSE`: a partial send counts every cursor step as taken | `ResumeExact` | four packets of client 1 on slot 0 at generation 1, packet 1 aborted; the run is [0, 2, 3]; the send takes 2 (packets 0 and 2); the cursor stops at position 2, on packet 2, which has left; the call goes on, the next run is [2, 3], the socket is full and the call keeps the bank with packet 2 (left) at the cursor |
 | `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `StableSort = FALSE`: placement from each bucket's end | `ClientOrder` | packets 2 and 3 of client 1 on the shared socket (0 and 1 aborted); the order is reversed in the bucket and packet 3 leaves before packet 2 |
 | `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `GenBreak = FALSE`: a run ends only at a change of slot | `NoCrossClient` | client 1's packet 0 on slot 0 at generation 1 (open), packets 1 and 2 aborted, client 2's packet 3 on slot 0 at generation 0 (stale); the run is [0, 3] and client 2's packet goes on client 1's socket |
 | `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `DeadResends = FALSE`: a dead run is skipped | `CursorSafe` | client 1's packet 0 alone on slot 0; the send answers dead; the cursor moves past packet 0, which never left |
+| `MCRNMsgxSendRunsBrokenPartialKeeps.cfg` | `PartialContinues = FALSE`: a partial send keeps the call (the code before R124) | `KeptOnlyWhenNothingLeft` | packets 0 and 3 of client 1 on slot 0 at generation 1 (1 and 2 aborted); the run is [0, 3]; the send takes 1 (packet 0) and the call keeps the bank, the worker's retry wait after the socket took data |
 
 Each counterexample was read state by state against the header: the steps are
 the header's loop in the order shown, and without the change the code
@@ -145,18 +150,19 @@ socket before the cursor passes it).
 ## Results
 
 Pinned `tlacheck` and `tla2tools.jar`, each case its own shard (2 workers),
-linux-amd64 bench (amd-1); the records are in `RUNS.tsv`.
+linux-amd64 bench (amd-3, 2026-11-13, after R124); the records are in `RUNS.tsv`.
 
 | Config | Result | Distinct | Generated | Seconds |
 |---|---|---|---|---|
-| `MCRNMsgxSendRuns.cfg` | pass | 3,314,496 | 5,699,384 | 36.9 |
-| `MCRNMsgxSendRunsBatch3.cfg` | pass | 3,337,696 | 5,722,504 | 47.0 |
-| `MCRNMsgxSendRunsRestamp.cfg` | pass | 1,494,692 | 2,531,864 | 15.5 |
-| `MCRNMsgxSendRunsRestampOrder.cfg` | `ClientOrder` | 43,320 | 52,611 | 5.0 |
-| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `ResumeExact` | 36,807 | 45,517 | 21.8 |
-| `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `ClientOrder` | 27,832 | 32,726 | 15.4 |
-| `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,460 | 8.5 |
-| `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 19.5 |
+| `MCRNMsgxSendRuns.cfg` | pass | 3,439,048 | 5,957,936 | 21.8 |
+| `MCRNMsgxSendRunsBatch3.cfg` | pass | 3,478,216 | 6,013,112 | 22.5 |
+| `MCRNMsgxSendRunsRestamp.cfg` | pass | 1,514,132 | 2,570,448 | 9.3 |
+| `MCRNMsgxSendRunsRestampOrder.cfg` | `ClientOrder` | 43,320 | 52,611 | 1.6 |
+| `MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg` | `ResumeExact` | 163,908 | 219,399 | 5.3 |
+| `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `ClientOrder` | 27,832 | 32,726 | 4.1 |
+| `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,461 | 4.4 |
+| `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 4.3 |
+| `MCRNMsgxSendRunsBrokenPartialKeeps.cfg` | `KeptOnlyWhenNothingLeft` | 36,719 | 45,423 | 4.3 |
 
 ## Bound to the code
 

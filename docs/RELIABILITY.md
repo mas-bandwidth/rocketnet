@@ -28,7 +28,12 @@ An ACK receipt reports acceptance by the remote library, not application process
 Only unreliable receipt sends can report LOSS; a send promoted to reliable
 reports ACKED only. A send still in flight when its connection ends gets no
 terminal receipt. Already recorded outcomes remain readable until the next
-update; reads do not consume them. A receipt call returns the available count,
+update; reads do not consume them. A connection ended by an explicit
+disconnect or kick, or by the message layer at the end of an update or
+between updates, keeps its outcomes readable until the next update (or, on
+the client, a connect that ends it); a connection the transport ends inside
+an update, or that an update ends for a message not received, reports no
+outcomes from that update on. A receipt call returns the available count,
 which can exceed the supplied capacity: inspect only
 `min(returned_count, capacity)` entries and reread with a larger buffer before
 the next update if necessary. A full receipt ring drops its oldest outcome.

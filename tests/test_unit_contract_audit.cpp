@@ -627,6 +627,72 @@ static void test_contract_receipts_after_disconnect()
 
 REGISTER_UNIT_TEST( test_contract_receipts_after_disconnect );
 
+// U3: the ended connection's outcomes are readable until the next update or
+// the next connect, whichever comes first. A step-driven client's ended
+// worker stops only as update steps it, so a connect right after the
+// disconnect is refused (CLIENT_NOT_DISCONNECTED) and the outcomes stay
+// readable through it; the next update ends them, and the connect after
+// that update starts with none. (A threaded worker can stop before the next
+// update; then the connect ends them, which this step-driven case cannot
+// reach without real time.)
+
+static void test_contract_receipts_after_disconnect_through_connect()
+{
+    rocketnet_quiet( 1 );
+
+    contract_identity_t identity;
+    contract_identity( &identity );
+
+    double time = 1000.0;
+    contract_now = time;
+
+    rocketnet_server_t * server = contract_server_create( &identity );
+    rocketnet_client_t * client = contract_client_create();
+    contract_connect( &identity, server, client, 0xC7, &time );
+
+    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 4 );
+    check( p != NULL );
+    memset( p, 1, 4 );
+    check( rocketnet_client_finish_message( client, 4 ) != 0 );
+
+    int receipts = 0;
+    for ( int i = 0; i < 64 && receipts == 0; i++ )
+    {
+        contract_pump( server, client, &time );
+        while ( rocketnet_server_receive_messages( server ) != NULL )
+        {
+        }
+
+        receipts = rocketnet_client_receipts( client, NULL, 0 );
+    }
+
+    check( receipts == 1 );
+
+    rocketnet_client_disconnect( client );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 1 );
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    contract_token( &identity, rocketnet_server_port( server ), 0xC8, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 1 );
+
+    for ( int i = 0; i < 64 && !rocketnet_client_disconnected( client ); i++ )
+    {
+        contract_pump( server, client, &time );
+    }
+    check( rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    contract_token( &identity, rocketnet_server_port( server ), 0xC9, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+}
+
+REGISTER_UNIT_TEST( test_contract_receipts_after_disconnect_through_connect );
+
 // U5: a NULL out with room to fill is a NULL required argument, counted in
 // every state: a client never connected and a stopped server count it as a
 // connected client and a running server do

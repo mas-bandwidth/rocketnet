@@ -89,6 +89,8 @@ sdk/rocketnet_packet_lease.h	process-wide packet tickets
 sdk/rocketnet_pending_frames.h	producer frame reservations
 sdk/rocketnet_platform.cpp	platform sockets, time and threads
 sdk/rocketnet_platform.h	platform sockets, time and threads
+sdk/rocketnet_receive_delivery_check.h	the shared unit-test check of the receive delivery rule (development builds only); reads and writes no byte
+sdk/rocketnet_receive_handoff.h	the receive buffer handoff between a worker and main: indices and counts under the mutex; reads and writes no byte
 sdk/rocketnet_rio_layout.h	Windows RIO region layout
 sdk/rocketnet_send_budget.h	per-connection send budget accounting
 sdk/rocketnet_send_gather.cpp	the gather orders staged send slots into one-destination runs; it reads each slot's destination and byte count and writes no packet byte
@@ -147,6 +149,8 @@ sdk/rocketnet_msgx_socket_table.h	the macOS per-client socket table: slots, pass
 sdk/rocketnet_msgx_socket_table.cpp	the table's retire (the trace check's plant lives here); reads and writes no packet byte
 sdk/rocketnet_msgx_send_runs.h	the macOS send path over a taken bank: sort by slot, runs, the cursor a send result moves, over a fake-able send; reads and writes no packet byte
 sdk/rocketnet_msgx_send_runs.cpp	the send runs' generation test (the trace check's plant lives here); reads and writes no packet byte
+sdk/rocketnet_msgx_receive_fill.h	the macOS receive worker over its banks: the drain of one socket into room only, and the bank handoff, over a fake-able read; reads and writes no packet byte
+sdk/rocketnet_msgx_receive_fill.cpp	the receive drain's errno classes and read size (the trace check's plant lives here); reads and writes no packet byte
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.

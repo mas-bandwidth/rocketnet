@@ -51,9 +51,10 @@ worker reads every datagram still queued on its socket, counts each as
 `close` operation (`rocketnet_client_io_discard_at_stop`,
 `proofs/tla/RNClientIoShutdown.tla` `WorkerQuiesce`). A datagram that arrives
 later meets a closed port, which the operating system counts, so none waits
-unread for destroy to free it. A transport racing both address families has
-no `close` of its own: its worker reads and counts the queue at the exit, and
-its sockets close at destroy (`proofs/tla/RNClientRace.tla`).
+unread for destroy to free it. A transport racing both address families does
+the same for both: its worker reads and counts what is queued on every family
+still open, then closes them, the losing family already closed if the race
+committed (`proofs/tla/RNClientRace.tla` `ReaderExit`).
 
 Custom BASE drivers without wait/wake retain caller-thread per-packet sends for
 normal traffic, while the disconnect burst is sent from the library's receive

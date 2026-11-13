@@ -1162,18 +1162,32 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 
 #if defined( __APPLE__ )
 #include <mach/mach.h>
-#include <mach/mach_time.h>
 #include <TargetConditionals.h>
 #include <dlfcn.h>
 #include <sys/event.h>
 #endif // #if defined( __APPLE__ )
 
-// the BSDs have no CLOCK_MONOTONIC_RAW; CLOCK_MONOTONIC is their
-// unadjusted-rate monotonic clock
+// The clock rocketnet_platform_time reads, and so rocketnet_time. Linux:
+// CLOCK_BOOTTIME, CLOCK_MONOTONIC's rate (the rate time sync sets; without
+// time sync, the boot-calibrated rate) that also counts suspend
+// (clock_gettime(2)), so a game passing rocketnet_time keeps the
+// connect token clock (epoch plus that time) on the wall clock's rate and
+// across a suspend. It is required on Linux, with no fallback: CLOCK_MONOTONIC
+// would stop during suspend, and every kernel (2.6.39 on) and libc the docs
+// name has CLOCK_BOOTTIME, so a header without it fails here, at compile time.
+// It is in the vDSO with CLOCK_MONOTONIC from Linux 5.3
+// (include/vdso/datapage.h, VDSO_HRES), the expected fast path; the oldest
+// kernel the docs name is 5.10 (docs/GAMELIFT.md). Elsewhere on POSIX:
+// CLOCK_MONOTONIC. On macOS that is the wall clock less the boot time, whose
+// rate the NTP adjustment sets and which counts sleep, at 1 us resolution
+// (Libc gen/clock_gettime.c); the sleeps below wait on the same clock. Neither
+// follows a wall-clock step.
 
-#if !defined( __APPLE__ ) && !defined( CLOCK_MONOTONIC_RAW )
-#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
-#endif // #if !defined( __APPLE__ ) && !defined( CLOCK_MONOTONIC_RAW )
+#if defined( __linux__ )
+#define ROCKETNET_PLATFORM_TIME_CLOCK CLOCK_BOOTTIME
+#else // #if defined( __linux__ )
+#define ROCKETNET_PLATFORM_TIME_CLOCK CLOCK_MONOTONIC
+#endif // #if defined( __linux__ )
 
 // ---------------------------------------------------
 
@@ -1208,18 +1222,71 @@ static rocketnet_recvmsg_x_fn rocketnet_recvmsg_x = NULL;
 
 // ---------------------------------------------------
 
-#if defined( __APPLE__ )
-static mach_timebase_info_data_t timebase_info;
-static uint64_t time_start;
-#else // #if defined( __APPLE__ )
 static double time_start;
-#endif // #if defined( __APPLE__ )
 
 // set once the first init has set up the clock; until then
-// rocketnet_platform_time is 0 (on macOS the timebase denominator is still
-// zero). The clock and its origin stay set up across term, so this is never
-// cleared and a later init leaves them as they are.
+// rocketnet_platform_time is 0. The clock and its origin stay set up across
+// term, so this is never cleared and a later init leaves them as they are.
 static std::atomic<bool> clock_ready( false );
+
+#if ROCKETNET_DEV
+// test seam for the clock (rocketnet_internal.h): NULL reads clock_gettime;
+// a unit case's fake answers for each clock id instead
+static std::atomic<int ( * )( int, struct timespec * )> rocketnet_platform_clock_override{ NULL };
+#endif // #if ROCKETNET_DEV
+
+// ROCKETNET_PLATFORM_TIME_CLOCK in seconds
+
+static double rocketnet_platform_clock_seconds()
+{
+    timespec ts = {};
+#if ROCKETNET_DEV
+    int ( *clock )( int, struct timespec * ) = rocketnet_platform_clock_override.load( std::memory_order_acquire );
+    if ( clock )
+    {
+        clock( (int) ROCKETNET_PLATFORM_TIME_CLOCK, &ts );
+    }
+    else
+    {
+        clock_gettime( ROCKETNET_PLATFORM_TIME_CLOCK, &ts );
+    }
+#else // #if ROCKETNET_DEV
+    clock_gettime( ROCKETNET_PLATFORM_TIME_CLOCK, &ts );
+#endif // #if ROCKETNET_DEV
+    return (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
+}
+
+#if ROCKETNET_DEV
+// a fake installed takes its own origin, so rocketnet_platform_time reads
+// zero there and then the fake's elapsed time; NULL puts the real clock and
+// its origin back. Called after rocketnet_init (the origin it saves is set),
+// from a unit case in its own process with no thread reading the clock
+void rocketnet_platform_set_clock_for_testing( int ( *clock )( int clock_id, struct timespec * ts ) )
+{
+    rocketnet_assert( clock_ready.load( std::memory_order_acquire ) );
+    static double real_start;
+    static bool faked;
+    if ( clock )
+    {
+        if ( !faked )
+        {
+            real_start = time_start;
+            faked = true;
+        }
+        rocketnet_platform_clock_override.store( clock, std::memory_order_release );
+        time_start = rocketnet_platform_clock_seconds();
+    }
+    else
+    {
+        rocketnet_platform_clock_override.store( NULL, std::memory_order_release );
+        if ( faked )
+        {
+            time_start = real_start;
+            faked = false;
+        }
+    }
+}
+#endif // #if ROCKETNET_DEV
 
 bool rocketnet_platform_init()
 {
@@ -1235,14 +1302,7 @@ bool rocketnet_platform_init()
 
     if ( !clock_ready.load( std::memory_order_acquire ) )
     {
-#if defined( __APPLE__ )
-        mach_timebase_info( &timebase_info );
-        time_start = mach_absolute_time();
-#else // #if defined( __APPLE__ )
-        timespec ts;
-        clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-        time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
-#endif // #if defined( __APPLE__ )
+        time_start = rocketnet_platform_clock_seconds();
         clock_ready.store( true, std::memory_order_release );
     }
 
@@ -1314,15 +1374,7 @@ double rocketnet_platform_time()
     {
         return 0.0;
     }
-#if defined( __APPLE__ )
-    uint64_t current = mach_absolute_time();
-    return ( (double) ( current - time_start ) ) * ( (double) timebase_info.numer ) / ( (double) timebase_info.denom ) / 1000000000.0;
-#else // #if defined( __APPLE__ )
-    timespec ts;
-    clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
-    double current = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
-    return current - time_start;
-#endif // #if defined( __APPLE__ )
+    return rocketnet_platform_clock_seconds() - time_start;
 }
 
 // sleeps until a CLOCK_MONOTONIC deadline; a signal that interrupts the
@@ -1398,7 +1450,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 // refuse it. On refusal walk down by halves to what the kernel grants, and
 // fail only when nothing can be set. warn names a grant below the request.
 
-static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction, bool warn )
+bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction, bool warn )
 {
     int size = requested_bytes;
     if ( setsockopt( handle, SOL_SOCKET, option, (char *) ( &size ), sizeof( int ) ) == 0 )
@@ -2980,6 +3032,44 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 // ---------------------------------------------------
 
+// A wake create that fails at its kernel object (a kqueue, an eventfd or a
+// pipe) for want of memory writes OUT_OF_MEMORY through status, as
+// rocketnet_platform_windows_create_status maps the Windows errors, so the
+// transport list ends the create there instead of trying the next
+// transport: ENOMEM and ENOBUFS. Any other error leaves status as it is, a
+// refusal like any other.
+static void rocketnet_platform_wake_create_status( int * status, int error )
+{
+    if ( error == ENOMEM || error == ENOBUFS )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+    }
+}
+
+#if ROCKETNET_DEV
+// rocketnet_dev_fail_wake_create (sdk/rocketnet_test_seams.h)
+static int rn_wake_create_fail_errno = 0;
+
+void rocketnet_dev_fail_wake_create( int error )
+{
+    rn_wake_create_fail_errno = error;
+}
+#endif // #if ROCKETNET_DEV
+
+// true, with errno set, when a DEV build fails the wake's kernel object
+// with a chosen errno
+static bool rocketnet_platform_wake_failed_for_test()
+{
+#if ROCKETNET_DEV
+    if ( rn_wake_create_fail_errno != 0 )
+    {
+        errno = rn_wake_create_fail_errno;
+        return true;
+    }
+#endif // #if ROCKETNET_DEV
+    return false;
+}
+
 #if defined( __APPLE__ )
 
 // The client I/O wake on darwin: one kqueue holding the socket's EVFILT_READ
@@ -3009,9 +3099,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->context = context;
     wake->socket_fd = socket ? socket->handle : -1;
     wake->read_enabled = socket != NULL;
-    wake->kq = kqueue();
+    wake->kq = rocketnet_platform_wake_failed_for_test() ? -1 : kqueue();
     if ( wake->kq < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
@@ -3019,6 +3110,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // close-on-exec, as every platform descriptor is: a spawned child never holds the wake
     if ( fcntl( wake->kq, F_SETFD, FD_CLOEXEC ) != 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( wake->kq );
         rocketnet_free( context, wake );
         return NULL;
@@ -3036,6 +3128,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 
     if ( kevent( wake->kq, changes, num_changes, NULL, 0, NULL ) < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( wake->kq );
         rocketnet_free( context, wake );
         return NULL;
@@ -3172,22 +3265,25 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->socket_fd = socket ? socket->handle : -1;
 
 #if defined( __linux__ )
-    wake->read_fd = eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
+    wake->read_fd = rocketnet_platform_wake_failed_for_test() ? -1 : eventfd( 0, EFD_NONBLOCK | EFD_CLOEXEC );
     wake->write_fd = wake->read_fd;
     if ( wake->read_fd < 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
 #else // #if defined( __linux__ )
     int fds[2];
-    if ( pipe( fds ) != 0 )
+    if ( rocketnet_platform_wake_failed_for_test() || pipe( fds ) != 0 )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         rocketnet_free( context, wake );
         return NULL;
     }
     if ( !rocketnet_platform_wake_fd_flags( fds[0] ) || !rocketnet_platform_wake_fd_flags( fds[1] ) )
     {
+        rocketnet_platform_wake_create_status( status, errno );
         close( fds[0] );
         close( fds[1] );
         rocketnet_free( context, wake );

@@ -106,7 +106,9 @@ TraceConsistent == ~rejected
 \* the row's reach predicates: some clean trace must show the index probing
 \* past an entry's home and wrapping past the last entry, a retired socket
 \* held in quarantine by a holder's open pass, and a socket retired on a
-\* holder's dead report
+\* holder's dead report, and an open socket the poller refused, reported dead
+\* by main
+RegisterRefused == \E s \in Slots : state[s] = OPEN /\ ~(\E e \in poller : e[2] = s) /\ deadRep[s] = gen[s] + 1
 IndexProbed == \E e \in DOMAIN index : Home(addr[index[e]]) # e
 IndexWrapped == \E e \in DOMAIN index : Home(addr[index[e]]) > e
 Held == \E s \in Slots : state[s] = RETIRED /\ ~Quiescent(MainV, s)

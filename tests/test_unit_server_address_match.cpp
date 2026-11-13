@@ -4,9 +4,10 @@
 */
 
 // A dual-stack server advertises its IPv4 wildcard alongside its IPv6
-// address, so a connect token naming the IPv4 loopback is accepted, a
-// v4-mapped token address normalises to native IPv4 and matches the same
-// way, and a foreign address is still refused. Runs on the real protocol
+// address, so a connect token must name that wildcard: one naming the IPv4
+// loopback is refused (t12 rule 6) unless the server was created naming the
+// loopback. A v4-mapped token address normalises to native IPv4 and matches
+// the same way, and a foreign address is refused. Runs on the real protocol
 // objects with time passed in and no sockets, no network and no real clock.
 
 #include "test_unit_registry.h"

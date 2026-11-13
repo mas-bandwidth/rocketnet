@@ -1096,3 +1096,87 @@ static void test_window_send_mark_acked_refuses_duplicate_and_out_of_window()
 }
 
 REGISTER_UNIT_TEST( test_window_send_mark_acked_refuses_duplicate_and_out_of_window );
+
+// rn_window_receive_duplicate repeats rn_window_receive_accept's duplicate
+// test, read only (proofs/tla/RNOrderingWrap.tla ReceiveDuplicate), so the
+// reservation can ask it first. The two must agree: over every state below,
+// duplicate() is true exactly when accept() returns DUPLICATE, and it changes
+// nothing. W = 64; R at 0, either side of the half range, either side of the
+// 2^24 wrap, past 2^32 and at the top of uint64_t (accept's overflow refusal);
+// numbers from 80 behind R to 140 ahead (negative deltas, every in-window
+// delta, deltas at and past W) and at the half-range boundary; the received
+// bits clear, set and in two alternating patterns; descriptors free or live
+// under another number (SLOT_COLLISION); no violation, or one latched.
+
+static rn_receive_descriptor_t g_agree_desc[64];
+static uint64_t g_agree_bits[1];
+
+static void test_window_receive_duplicate_agrees_with_accept()
+{
+    const uint32_t W = 64;
+    const uint32_t half = ROCKETNET_MESSAGE_HALF_RANGE;
+    const uint64_t starts[] = { 0, 1, 63, 64, 65, half - 1, half, half + 1, 0xFFFFC0, 0xFFFFFF, 0x1000000, 0x1000005,
+                                0x100000007ULL, UINT64_MAX - 70, UINT64_MAX - 3, UINT64_MAX };
+    const int64_t far[] = { (int64_t) half - 1, (int64_t) half, (int64_t) half + 1, -(int64_t) half, -(int64_t) half + 1 };
+    const uint64_t patterns[] = { 0, ~0ULL, 0xAAAAAAAAAAAAAAAAULL, 0x5555555555555555ULL };
+    const int violations[] = { ROCKETNET_MESSAGE_VIOLATION_NONE, ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW };
+
+    rn_region_t region;
+    memset( &region, 0, sizeof( region ) );
+    region.window = W;
+    region.receive_descriptors = g_agree_desc;
+    region.received_bits = g_agree_bits;
+
+    uint64_t cases = 0, duplicates = 0, accepted = 0, refused = 0;
+    for ( uint64_t R : starts )
+    {
+        for ( int64_t k = -80; k <= 140 + 5; k++ )
+        {
+            const int64_t offset = k <= 140 ? k : far[k - 141];
+            const uint32_t number = (uint32_t) ( ( (int64_t) ( R & ROCKETNET_MESSAGE_U24_MASK ) + offset ) & ROCKETNET_MESSAGE_U24_MASK );
+            for ( uint64_t pattern : patterns )
+            {
+                for ( int live = 0; live < 2; live++ )
+                {
+                    for ( int violation : violations )
+                    {
+                        rn_window_receive_t receive;
+                        rn_window_receive_init( &receive, &region, R );
+                        receive.violation = violation;
+                        g_agree_bits[0] = pattern;
+                        memset( g_agree_desc, 0, sizeof( g_agree_desc ) );
+                        for ( uint32_t i = 0; i < W; i++ )
+                        {
+                            g_agree_desc[i].live = (uint8_t) live;
+                            g_agree_desc[i].number = R + 7 * (uint64_t) W + i + 1;      // never a number this case names
+                        }
+
+                        rocketnet_message_record_t record;
+                        memset( &record, 0, sizeof( record ) );
+                        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+                        record.number = number;
+                        record.bytes = 1;
+
+                        const bool duplicate = rn_window_receive_duplicate( &receive, &record );
+                        rocketnet_unit_check( receive.R == R && g_agree_bits[0] == pattern && receive.violation == violation );
+
+                        uint32_t slot = RN_DESCRIPTOR_NONE;
+                        const int result = rn_window_receive_accept( &receive, &record, &slot );
+                        rocketnet_unit_check( duplicate == ( result == RN_WINDOW_RECEIVE_DUPLICATE ) );
+
+                        cases++;
+                        duplicates += result == RN_WINDOW_RECEIVE_DUPLICATE;
+                        accepted += result == RN_WINDOW_RECEIVE_ACCEPT;
+                        refused += result == RN_WINDOW_RECEIVE_VIOLATION;
+                    }
+                }
+            }
+        }
+    }
+
+    // every outcome is reached, so the agreement is not vacuous
+    rocketnet_unit_check( cases == duplicates + accepted + refused );
+    rocketnet_unit_check( duplicates > 0 && accepted > 0 && refused > 0 );
+}
+
+REGISTER_UNIT_TEST( test_window_receive_duplicate_agrees_with_accept );

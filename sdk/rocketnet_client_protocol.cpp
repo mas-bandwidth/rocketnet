@@ -1157,13 +1157,17 @@ static int rocketnet_client_open_session( struct rocketnet_client_protocol_t * c
 }
 
 // The keep-alive's eight type bytes name the client index and the slot
-// count: the client is in slot x of y. The slot count is at least 1 and the
-// index is below it; the client has no opinion about the server's slot
-// count, which the server alone decides. Checked here, as the open's
-// type-data validator, so a keep-alive whose index is invalid is refused
-// before the open commits: per the reading order it then keeps only its
-// replay-window mark and does not refresh the idle timeout or feed the
-// trackers. The refusal keeps its existing counter.
+// count: the client is in slot x of y. The slot count is at least 1 and at
+// most ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT, the most clients any server can be
+// built with, and the index is below it; within that the client has no
+// opinion about the server's slot count, so a client of any build connects
+// to a server of any build. Checked here, as the open's type-data validator,
+// so a keep-alive whose index or count is invalid is refused before the open
+// commits: per the reading order it then keeps only its replay-window mark
+// and does not refresh the idle timeout or feed the trackers. The refusal
+// keeps its existing counter.
+
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT, "every build's slot count fits a keep-alive" );
 
 static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protocol_t * client,
                                                  const uint8_t * type_data,
@@ -1171,15 +1175,16 @@ static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protoco
 {
     (void) type_data_bytes;         // the open sized the eight type bytes
 
-    // both fields are u32 (t10 step 17, t13.1): the index below the slot
-    // count, which is then at least 1; compared as read, so a value with the
-    // top bit set is no negative int
+    // both fields are u32 (t10 step 17, t13.1), compared as read, before the
+    // client stores them as int: the count at most the build ceiling, the
+    // index below the count, which is then at least 1. Neither can then be a
+    // negative int.
 
     const uint8_t * p = type_data;
     const uint32_t client_index = rocketnet_read_uint32( &p );
     const uint32_t max_clients = rocketnet_read_uint32( &p );
 
-    if ( client_index >= max_clients )
+    if ( max_clients > ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT || client_index >= max_clients )
     {
         rocketnet_spam( "client rejected keep-alive. invalid index" );
 

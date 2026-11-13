@@ -8,9 +8,12 @@
 // time, floored to whole seconds, and no wall clock is read. With the field
 // zero the check reads the wall clock: here the suite's fixed clock
 // (ROCKETNET_UNIT_WALL_CLOCK); the real clock is the functional tier's case
-// test_token_time_game_clock_off_reads_the_wall_clock. Time is an argument
-// starting at 1000.0; client refusals and the in-memory server protocol need
-// no socket.
+// test_token_time_game_clock_off_reads_the_wall_clock. The client half here
+// creates a client transport on a configured epoch; the server half drives
+// the server protocol with the timestamp the server transport derives, and
+// the server transport's own reading of token_epoch_unix_seconds is
+// test_unit_token_epoch_compat.cpp's. Time is an argument starting at 1000.0;
+// the client transports and the in-memory server protocol need no socket.
 
 #include "test_unit_registry.h"
 #include "unit_shutdown.h"
@@ -185,9 +188,19 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         check( read.time_callback == NULL );
         check( read.token_epoch_unix_seconds == 0 );
     }
+    // the client transport admits the token only by reading the configured
+    // epoch: the wall clock, real or the suite's, is long past its expiry
+    check( token_time_game_client_create( create, expire, TOKEN_EPOCH_UNIX_SECONDS, GAME_CLOCK_NOW ) == ROCKETNET_STATUS_OK );
+
+    // the server half takes its timestamp from the same epoch and game time,
+    // through the functions the server transport calls (its own wiring of the
+    // field is test_unit_token_epoch_compat.cpp's)
+    const uint64_t server_timestamp = rocketnet_platform_token_clock( rocketnet_platform_token_epoch( TOKEN_EPOCH_UNIX_SECONDS, GAME_CLOCK_NOW ), GAME_CLOCK_NOW );
+    check( server_timestamp == TOKEN_EPOCH_UNIX_SECONDS + 1000 );
+
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, create, expire, TOKEN_EPOCH_UNIX_SECONDS + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( token_time_game_server_request( &t, create, expire, server_timestamp ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
     token_time_game_server_teardown( &t );
 }

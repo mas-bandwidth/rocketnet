@@ -367,6 +367,7 @@ Registry rules:
 | client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
 | ack debt threshold | `1` | packet | send on the next update after an eliciting packet | [t15 Acknowledgement](#t15) |
 | used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
+| slot count maximum | `32768` | slots | protocol value | [t10 Receive processing](#t10) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
 identifier size and with no key, of the token's signed connect data. For the
@@ -1462,7 +1463,7 @@ The keep-alive is a session packet. Its sealed plaintext is the ack block follow
 | sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | client index | 10 plus the ack block size | 4 | u32 | the slot that holds this connection | below max clients |
-| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | any |
+| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | 1 to the slot count maximum |
 | AEAD tag | 18 plus the ack block size | 16 | bytes[16] | the tag over the ack block and the keep-alive fields | any |
 
 <a id="t8.6"></a>
@@ -2112,10 +2113,10 @@ a row marked server or client applies only at that end.
 16. For session types, a receiver MUST check the opened size less the ack
     block against the type. A mismatch is `WRONG_OPENED_SIZE`.
 17. Before applying the ack block, a client MUST validate the index and
-    slot count in a keep-alive. The slot count MUST be at least 1 and the
-    index MUST be less than the slot count; the client has no opinion about
-    the server's slot count. An invalid value is
-    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+    slot count in a keep-alive. The slot count MUST be at least 1 and at
+    most the slot count maximum, and the index MUST be less than the slot
+    count; within that the client has no opinion about the server's slot
+    count. An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
@@ -2935,7 +2936,7 @@ The type data of a keep-alive is:
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
 | client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
-| client slot count | 4 | 4 | u32 | the server's configured number of client slots | at least 1 |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the slot count maximum |
 
 A keep-alive's type data is eight bytes and follows the ack block
 ([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
@@ -3859,7 +3860,7 @@ frames. These rows alias, one event moving each named row once:
 | Shared row | Transport rows counting the same events |
 |---|---|
 | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_DROPPED` (its size drops) and `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
-| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW`; `URING_RECEIVE_DROPPED_OVERFLOW` |
+| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` (which also counts the kernel's drops at a full gso queue socket, SO_RXQ_OVFL, which no shared row counts, as `URING_RECEIVE_DROPPED_SOCKET` does for io_uring); `URING_RECEIVE_DROPPED_OVERFLOW` |
 | `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE` and `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |

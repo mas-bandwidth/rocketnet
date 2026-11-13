@@ -882,6 +882,19 @@ static void budgets_honest_challenged( struct budgets_server_t * test, const str
     check( test->server.counters->handshakes_processed_this_update == 1 );
 }
 
+// Three rungs count TOKEN_ALREADY_USED: the used-token history, the bound
+// token that would replace a half-open mapping, and the claim. The counter
+// cannot say which refused, so the two cases below read the tables
+// themselves: for a flood address, whether the history alone refuses the
+// token, and whether the claim alone does. A flood address holds no mapping,
+// so the replacement rung never runs for it.
+
+static void budgets_request_token_identifier( uint8_t * token_identifier, const uint8_t * request )
+{
+    rocketnet_connect_token_identifier( token_identifier, request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
+                                                          ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES );
+}
+
 // a token bound to another address: one client connects with it, then a
 // flood replays it from other addresses
 
@@ -902,6 +915,14 @@ static void test_handshake_used_token_spends_no_work_budget()
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
     budgets_flood_spends_nothing( &test, request, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED, 1000.1 );
+
+    // the connect bound the token in the history, so the history rung is the
+    // one that refuses a flood address
+    uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    budgets_request_token_identifier( token_identifier, request );
+    struct rocketnet_address_t flood_address;
+    budgets_forged_address( &flood_address, 0 );
+    check( rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &flood_address, ROCKETNET_TEST_CREATE_TS ) == 0 );
 
     struct rocketnet_address_t honest;
     budgets_honest_address( &honest, 0 );
@@ -931,6 +952,17 @@ static void test_handshake_claimed_token_spends_no_work_budget()
     rocketnet_server_protocol_update( &test.server, 1000.1 );
 
     budgets_flood_spends_nothing( &test, request, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED, 1000.1 );
+
+    // the token is claimed, not used: the history passes a flood address, so
+    // the claim rung is the one that refused it, and no flood request got a
+    // mapping
+    uint8_t token_identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    budgets_request_token_identifier( token_identifier, request );
+    struct rocketnet_address_t flood_address;
+    budgets_forged_address( &flood_address, 0 );
+    check( rocketnet_used_token_history_check( test.server.used_token_history, token_identifier, &flood_address, ROCKETNET_TEST_CREATE_TS ) == 1 );
+    check( rocketnet_used_token_history_claim_check( test.server.used_token_history, token_identifier, &flood_address, 1000.1 ) == 0 );
+    check( rocketnet_encryption_map_find( test.server.encryption_map, &flood_address ) == -1 );
 
     struct rocketnet_address_t honest;
     budgets_honest_address( &honest, 0 );
@@ -1259,8 +1291,9 @@ REGISTER_UNIT_TEST( test_handshake_burst_spreads_across_updates );
 // The cookie reply limit (standard/TRANSPORT.md t12 rule 7;
 // proofs/tla/RNCookieReplyLimits.tla): a request that is about to be answered
 // with a fresh cookie is ignored, unanswered, when its source address and
-// port has already had a cookie reply this update. It is counted only by its
-// cookie's reason (NO_COOKIE here), as v1.0.0 counted it, and never as
+// port has already had a cookie reply this update. It is counted by its
+// cookie's reason (NO_COOKIE here), as v1.0.0 counted it, and as
+// CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, and never as
 // CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED. There is no limit on the
 // cookie replies of one update in all: the update's receive bound is the
 // bound. The limit does not touch the handshake work budget, and the work
@@ -1295,15 +1328,16 @@ static int budgets_send_cookieless( struct budgets_server_t * test, const struct
 }
 
 // one source address and port: five first-contact requests in one update earn
-// one cookie, and the other four are ignored, each counted once as NO_COOKIE
-// and nowhere else; the next update answers it again. Two ports on one IP,
-// as behind a NAT, are two sources.
+// one cookie, and the other four are ignored, each counted as NO_COOKIE and
+// as COOKIE_REPLY_WITHHELD and nowhere else; the next update answers it
+// again. Two ports on one IP, as behind a NAT, are two sources.
 
 static void test_handshake_cookie_reply_once_per_source_per_update()
 {
     struct budgets_server_t test;
     budgets_server_setup( &test );
 
+    const struct rocketnet_counters_t before = test.counters;
     int replies = 0;
     for ( int i = 0; i < 5; i++ )
     {
@@ -1319,8 +1353,10 @@ static void test_handshake_cookie_reply_once_per_source_per_update()
     }
 
     check( replies == 1 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 5 );
-    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    rocketnet_counters_expect( &before, &test.counters,
+                               { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 5 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 5 },
+                                 { ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD, 4 } } );
     check( test.server.counters->handshakes_processed_this_update == 0 );
 
     rocketnet_server_protocol_update( &test.server, 1000.1 );

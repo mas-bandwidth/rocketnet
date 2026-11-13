@@ -6,14 +6,14 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Audit items not yet fixed](#audit-items-not-yet-fixed) (20)
+- [Audit items not yet fixed](#audit-items-not-yet-fixed) (21)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (6)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
-- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (7)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (18)
+- [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (8)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (20)
 
 ## Audit items not yet fixed
 
@@ -102,6 +102,12 @@ From: Piece L (io_uring), amd-3 run and cold reader
 The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model.
 
 From: Piece L (io_uring), cold reader
+
+### test_transport_reply_opens_a_later_update failed once on a loaded macOS runner
+
+On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on studio-4 failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on mini-m5, and the case passed 40 of 40 on amd-2 (Linux) both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause.
+
+From: PR #1124 CI, studio-4
 
 ### Offline cpu holes in the io_uring pin
 
@@ -441,9 +447,15 @@ From: io_uring re-measure on main 3afea2aed: lost = 15 x qdisc dropped in every 
 
 ### URING_SEND_DEFERRED: the row text says something other than what is counted
 
-sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back -EAGAIN (send buffer full; the run is sent again after POLLOUT); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says.
+sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back full (-EAGAIN, -EINTR, -ENOBUFS or -ENOMEM; the run is sent again after its retry wait); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says.
 
 From: io_uring re-measure on main 3afea2aed
+
+### io_uring full-socket retry: probe with one run before sending the rest
+
+The io_uring worker waits on a 1 ms timer after a full answer (the gso worker's wait; never POLLOUT, which would spin on -ENOBUFS). When the timer fires it sends every held run again, and on a socket that is still full most come back refused. Measured on amd-3 at 1 Gbit tbf, 4096 packets a frame: URING_SEND_DEFERRED 191.9k/s and 0.29 worker cores, against 41.6k/s and 0.16 cores with the old POLLOUT wait, for the same packets sent (86.0k/s against 82.0k/s). Send one run first after the timer, and the rest only once it is sent, so a socket still full refuses one run a wait, not all of them. Model it in RNUringQueueWorker.tla with the change.
+
+From: io_uring review fixes (E1, E6, L1, L3), the after-fix repro
 
 ### PREFILTER_WRONG_VALUE seen once on io_uring under heavy bench load
 
@@ -580,3 +592,15 @@ From: Review before v1.2.0, macOS reader, finding P3
 When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run).
 
 From: Review before v1.2.0, Stella's finding S3
+
+### A code-4 block fragment walks its block's count twice
+
+In sdk/rocketnet_channel_sequenced.cpp a fragment that anchors a new in-turn code-4 block runs the stale-sibling scan over the block's count (about 272-288), and a newer one releases the old block by walking its count (rn_sequenced_release_slot, about 123-140), whatever arrived. Measured on amd-3 (Release, rn_ordered_receive called directly, W = 1024): a first fragment of a 910-fragment block costs 1.71 us against 0.11 us for a block of 2. The cost is bounded by the count, which max_message_bytes caps (at most 911 fragments at 1 MiB), not by W. To repeat it a sender must also send the block's other numbers, because a newer block whose numbers overlap a live code-4 one ends the connection (BAD_BLOCK). That makes about 13 more packets for each walk, so per byte received the cost stays flat. Dense 1-byte last fragments (70 a payload) cost 2.7-4.1 us a payload at either count, because the stale scan stops at the first released sibling. Not a point-release defect. A walk over only the fragments received (the anchor's block_have) would make it proportional.
+
+From: Audit round 1, ordered duplicate scan fix: measured the second reader's code-4 estimate
+
+### The receive reservation's models are bound by citation only
+
+RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and it agrees with rn_window_receive_accept only by reading the two functions: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap.
+
+From: Audit round 1, ordered duplicate scan fix
