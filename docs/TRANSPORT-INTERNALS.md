@@ -793,6 +793,11 @@ applied again at the next commit, and counted as `XDP_REPLAY_COMMIT_FAILED`; a
 keep-alive held because its session's first mark is not yet applied is counted
 as `XDP_REPLAY_GREETING_HELD`.
 
+Each queue's thread pins itself once, at start, to cpu `num_os_cpus + queue`
+(never core 0). A pin the system refuses (the cpu outside the set or not
+online, or the affinity call refused) is counted as `XDP_PIN_REFUSALS`, and the
+thread runs on its allowed cpus less core 0.
+
 `test_xdp_filter` judges the program with the kernel. It loads the object
 through the verifier and runs crafted frames with `BPF_PROG_TEST_RUN`, which
 returns the program's verdict and transmits nothing. It swaps the XSKMAP for a

@@ -4322,13 +4322,31 @@ static int pin_fake_set( const cpu_set_t * mask )
     return 0;
 }
 
-bool rocketnet_server_socket_test_pin_refusals()
+// the public row XDP_PIN_REFUSALS as the transport's counter read takes it,
+// by value; a dispatch that does not answer reads UINT64_MAX
+static uint64_t pin_row( rocketnet_server_socket_test_transport_counters_t * dispatch, const rocketnet_server_transport_io_operations_t * xdp,
+                         rocketnet_server_socket_t * server )
+{
+    uint64_t values[ROCKETNET_NUM_COUNTERS] = {};
+    values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = UINT64_MAX;
+    if ( !dispatch( xdp, server, values ) )
+    {
+        return UINT64_MAX;
+    }
+    return values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS];
+}
+
+bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_transport_counters_t * dispatch,
+                                                const rocketnet_server_transport_io_operations_t * xdp )
 {
     // two synthetic queues, no worker, no affinity changed: each queue's pin
     // runs through xdp_thread_pin with fake affinity calls. A granted pin is
     // not counted; each refusal (the affinity call refused, the cpu not
     // online, the cpu outside the set) is counted once on its queue, summed
-    // over the queues, and leaves the thread on its allowed cpus less core 0
+    // over the queues, and leaves the thread on its allowed cpus less core 0.
+    // The sum reaches the public row XDP_PIN_REFUSALS through dispatch (the
+    // builtin one the transport's counter read calls, given the xdp table),
+    // read by value
     void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
     void * queue_storage = rocketnet_malloc( NULL, 2 * sizeof( rocketnet_server_xdp_socket_t ) );
     if ( !server_storage || !queue_storage )
@@ -4338,13 +4356,13 @@ bool rocketnet_server_socket_test_pin_refusals()
         return false;
     }
 
-    // the queues default-initialised: their members take their own
-    // initialisers and their buffers stay untouched
+    // value-initialised, as rocketnet_server_socket_test_receive_dropped's: the
+    // transport's whole counter read may walk the queues
     auto * server = new ( server_storage ) rocketnet_server_socket_t();
     auto * queues = (rocketnet_server_xdp_socket_t *) queue_storage;
     for ( int q = 0; q < 2; q++ )
     {
-        new ( &queues[q] ) rocketnet_server_xdp_socket_t;
+        new ( &queues[q] ) rocketnet_server_xdp_socket_t();
         queues[q].queue = q;
         queues[q].num_os_cpus = 1;
     }
@@ -4360,28 +4378,28 @@ bool rocketnet_server_socket_test_pin_refusals()
     xdp_thread_pin( &queues[0], online, &fake );
     xdp_thread_pin( &queues[1], online, &fake );
     bool valid = pin_fake_sets == 2 && CPU_COUNT( &pin_fake_mask ) == 1 && CPU_ISSET( 2, &pin_fake_mask );
-    valid = valid && rocketnet_server_socket_pin_refusals( server ) == 0;
+    valid = valid && pin_row( dispatch, xdp, server ) == 0 && rocketnet_server_socket_pin_refusals( server ) == 0;
 
     // the affinity call refused: counted, and the thread leaves core 0 (1 .. 3)
     pin_fake_refuse = true;
     pin_fake_sets = 0;
     xdp_thread_pin( &queues[0], online, &fake );
     valid = valid && pin_fake_sets == 1 && CPU_COUNT( &pin_fake_mask ) == 3 && !CPU_ISSET( 0, &pin_fake_mask );
-    valid = valid && queues[0].pin_refusals.load() == 1 && rocketnet_server_socket_pin_refusals( server ) == 1;
+    valid = valid && queues[0].pin_refusals.load() == 1 && pin_row( dispatch, xdp, server ) == 1 && rocketnet_server_socket_pin_refusals( server ) == 1;
 
     // the cpu not online (queue 1 asks for cpu 2 of 2 online): counted, no pin tried
     pin_fake_refuse = false;
     pin_fake_sets = 0;
     xdp_thread_pin( &queues[1], 2, &fake );
     valid = valid && pin_fake_sets == 1 && CPU_COUNT( &pin_fake_mask ) == 3 && !CPU_ISSET( 0, &pin_fake_mask );
-    valid = valid && queues[1].pin_refusals.load() == 1 && rocketnet_server_socket_pin_refusals( server ) == 2;
+    valid = valid && queues[1].pin_refusals.load() == 1 && pin_row( dispatch, xdp, server ) == 2 && rocketnet_server_socket_pin_refusals( server ) == 2;
 
     // the cpu outside the set: counted, no pin tried
     queues[1].num_os_cpus = CPU_SETSIZE;
     pin_fake_sets = 0;
     xdp_thread_pin( &queues[1], online, &fake );
     valid = valid && pin_fake_sets == 1 && !CPU_ISSET( 0, &pin_fake_mask );
-    valid = valid && queues[1].pin_refusals.load() == 2 && rocketnet_server_socket_pin_refusals( server ) == 3;
+    valid = valid && queues[1].pin_refusals.load() == 2 && pin_row( dispatch, xdp, server ) == 3 && rocketnet_server_socket_pin_refusals( server ) == 3;
 
     queues[1].~rocketnet_server_xdp_socket_t();
     queues[0].~rocketnet_server_xdp_socket_t();

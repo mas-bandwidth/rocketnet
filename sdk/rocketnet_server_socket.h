@@ -413,8 +413,13 @@ bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_
                                                    rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
 // the unit suite's case: each refusal of a queue's pin, driven through fake
-// affinity calls, is counted once (rocketnet_server_socket_pin_refusals)
-bool rocketnet_server_socket_test_pin_refusals();
+// affinity calls, is counted once (rocketnet_server_socket_pin_refusals) and
+// reaches ROCKETNET_COUNTER_XDP_PIN_REFUSALS through dispatch,
+// rocketnet_server_transport_io_transport_counters given xdp the xdp table
+typedef bool rocketnet_server_socket_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                uint64_t * values );
+bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_transport_counters_t * dispatch,
+                                                const struct rocketnet_server_transport_io_operations_t * xdp );
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 bool rocketnet_server_socket_test_worker_stack();

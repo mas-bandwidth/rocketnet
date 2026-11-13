@@ -2952,10 +2952,18 @@ bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_tr
 {
     // builtin-only, matched on the operations table as receive_drops is: the
     // transport's own counts are rows of the public table (the GSO_, URING_,
-    // IOCP_ and RIO_ rows of sdk/rocketnet_counters.h); the transport writes
-    // its rows of values, an array of ROCKETNET_NUM_COUNTERS, and nothing else
+    // IOCP_ and RIO_ rows and XDP_PIN_REFUSALS of sdk/rocketnet_counters.h);
+    // the transport writes its rows of values, an array of
+    // ROCKETNET_NUM_COUNTERS, and nothing else
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_XDP
+    if ( operations == &xdp_operations )
+    {
+        values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = rocketnet_server_socket_pin_refusals( (rocketnet_server_socket_t *) transport );
+        return true;
+    }
+#endif // #if ROCKETNET_XDP
     if ( operations == &gso_operations )
     {
         rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, values );
