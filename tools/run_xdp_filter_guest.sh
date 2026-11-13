@@ -415,7 +415,7 @@ if [ -n "$guest_leftover_ifaces" ] || [ -n "$guest_leftover_netns" ] || [ -n "$g
     fail_qualification "leftover guest state after test_xdp_filter (ifaces='$guest_leftover_ifaces' netns='$guest_leftover_netns' xdp='$guest_leftover_xdp' pins='$guest_leftover_pins' procs='$guest_leftover_procs')"
 fi
 
-# The host snapshots (host_before, host_after in cleanup.txt) are evidence
+# The host records (host_before, host_after in cleanup.txt) are evidence
 # only, never a gate: every case runs in the guest's own kernel, processes
 # and namespaces, so nothing this run starts can appear on the host, and a
 # host interface or a bin/server there is other work on a shared runner.
