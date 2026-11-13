@@ -37,35 +37,69 @@
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 
-// The send staging is sized by rate. A lane stages at most
-// ROCKETNET_IOCP_LANE_PACKETS frames per flush; the lanes together stage
+// The send staging is sized by rate. The lanes together stage
 // ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT for every sized client: 32 at 1000
 // clients is 8 lanes of 4096, twice the 17 a client's share of 10 Gb/s of
 // 1200-byte packets is per 60 Hz update, so the frames a flush posts while the
-// last flush's sends complete fit too. Packet handles keep sixteen bits for
-// the operation index, so every lane's operations together fit them.
+// last flush's sends complete fit too. Lanes are of ROCKETNET_IOCP_LANE_PACKETS
+// unless a lane must be larger: the protocol's send reserve
+// (rocketnet_server_transport_send_reserves) holds every client slot not
+// connected in every lane, so a lane holds every sized client plus
+// ROCKETNET_IOCP_LANE_HEADROOM (the handshake and disconnect allowance, 80 by
+// default, and fill), or the reserve would leave it no fill at all. Packet
+// handles keep sixteen bits for the operation index, so every lane's
+// operations together are at most ROCKETNET_IOCP_MAX_OPERATIONS; past that,
+// larger lanes are fewer: 4 lanes of 16384 at 10000 clients, 6.5 frames a
+// client, the most sixteen bits allow.
 #define ROCKETNET_IOCP_LANE_PACKETS 4096
+#define ROCKETNET_IOCP_LANE_HEADROOM 1024
 #define ROCKETNET_IOCP_MAX_LANES 16
+#define ROCKETNET_IOCP_MAX_OPERATIONS 65536
 #define ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT 32
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES * ROCKETNET_IOCP_LANE_PACKETS <= UINT16_MAX + 1,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES * ROCKETNET_IOCP_LANE_PACKETS <= ROCKETNET_IOCP_MAX_OPERATIONS &&
+                             ROCKETNET_IOCP_MAX_OPERATIONS == UINT16_MAX + 1,
                          "every lane's send operations fit the packet handle's sixteen index bits" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS + ROCKETNET_IOCP_LANE_HEADROOM <= ROCKETNET_IOCP_MAX_OPERATIONS,
+                         "one lane holds every client slot and the headroom within sixteen index bits" );
+
+// one lane's staging and operation pool for sized clients (a power of two):
+// a fair share of the rate, at most ROCKETNET_IOCP_LANE_PACKETS, and never
+// less than every client slot plus the headroom. A function of the sized
+// count, so a unit test reaches every build's sizes.
+static inline int rocketnet_server_iocp_lane_size_for( int sized )
+{
+    const int packets = ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * sized;
+    int lanes = ( packets + ROCKETNET_IOCP_LANE_PACKETS - 1 ) / ROCKETNET_IOCP_LANE_PACKETS;
+    lanes = lanes < 1 ? 1 : ( lanes > ROCKETNET_IOCP_MAX_LANES ? ROCKETNET_IOCP_MAX_LANES : lanes );
+    int size = rocketnet_power_of_two_at_least( ( packets + lanes - 1 ) / lanes );
+    size = size < ROCKETNET_IOCP_LANE_PACKETS ? size : ROCKETNET_IOCP_LANE_PACKETS;
+    const int floor = rocketnet_power_of_two_at_least( sized + ROCKETNET_IOCP_LANE_HEADROOM );
+    return size > floor ? size : floor;
+}
+
+// the lanes for sized clients: enough for the rate in lanes of the size
+// above, at most ROCKETNET_IOCP_MAX_LANES and at most the lanes of that size
+// sixteen index bits hold
+static inline int rocketnet_server_iocp_lanes_for( int sized )
+{
+    const int packets = ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * sized;
+    const int size = rocketnet_server_iocp_lane_size_for( sized );
+    int lanes = ( packets + ROCKETNET_IOCP_LANE_PACKETS - 1 ) / ROCKETNET_IOCP_LANE_PACKETS;
+    lanes = lanes > ROCKETNET_IOCP_MAX_LANES ? ROCKETNET_IOCP_MAX_LANES : lanes;
+    lanes = lanes > ROCKETNET_IOCP_MAX_OPERATIONS / size ? ROCKETNET_IOCP_MAX_OPERATIONS / size : lanes;
+    return lanes < 1 ? 1 : lanes;
+}
 
 static inline int rocketnet_server_iocp_send_lanes( int max_clients )
 {
-    const int packets = ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( max_clients );
-    const int lanes = ( packets + ROCKETNET_IOCP_LANE_PACKETS - 1 ) / ROCKETNET_IOCP_LANE_PACKETS;
-    return lanes < 1 ? 1 : ( lanes > ROCKETNET_IOCP_MAX_LANES ? ROCKETNET_IOCP_MAX_LANES : lanes );
+    return rocketnet_server_iocp_lanes_for( rocketnet_server_sized_clients( max_clients ) );
 }
 
-// one lane's staging and operation pool: a power of two, at most
-// ROCKETNET_IOCP_LANE_PACKETS (4096 at 1000 clients)
+// one lane's staging and operation pool (4096 at 1000 clients)
 static inline int rocketnet_server_iocp_send_queue_size( int max_clients )
 {
-    const int lanes = rocketnet_server_iocp_send_lanes( max_clients );
-    const int packets = ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT * rocketnet_server_sized_clients( max_clients );
-    const int size = rocketnet_power_of_two_at_least( ( packets + lanes - 1 ) / lanes );
-    return size < ROCKETNET_IOCP_LANE_PACKETS ? size : ROCKETNET_IOCP_LANE_PACKETS;
+    return rocketnet_server_iocp_lane_size_for( rocketnet_server_sized_clients( max_clients ) );
 }
 
 // A completion worker's receive bank is sized by rate, not by the send
