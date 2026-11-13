@@ -1734,22 +1734,25 @@ static void harden_game_job( platform_task_args_t * args )
     space->game_busy[args->thread_index].seconds += harden_now() - began;
 }
 
-// the world update's stand-in, the same in both shapes: the main thread's own
-// share, then the game jobs across all game threads, which it waits on (as
-// space waits on its object and collision jobs)
+// the world update's stand-in, the same in both shapes: the game jobs are
+// handed to the game threads first and the main thread does its own share
+// while they run (as space's main thread does beside its object and collision
+// jobs), then waits for them: the update takes the longer of the two, not the
+// sum
 static void harden_world_update( harden_space_t * space, const harden_options_t & o )
 {
-    harden_spin_for( o.world_ms * 1e-3 );
+    Task * game = NULL;
     if ( o.game_load > 0.0 && space->pool.NumThreads() > 1 )
     {
         const int game_threads = space->pool.NumThreads() - 1;
         const int items = 8 * space->pool.NumThreads();
         space->game_item_seconds = o.game_load * ( 1.0 / o.hz ) * (double) game_threads / (double) items;
-        Task * game = space->pool.AddTask( harden_game_job, space, items );
-        if ( game )
-        {
-            game->Wait();
-        }
+        game = space->pool.AddTask( harden_game_job, space, items );
+    }
+    harden_spin_for( o.world_ms * 1e-3 );
+    if ( game )
+    {
+        game->Wait();
     }
 }
 
