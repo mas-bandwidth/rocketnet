@@ -1,0 +1,14 @@
+------------------------ MODULE MCRNSendReserveCalls ------------------------
+(***************************************************************************)
+(* The small instance of RNSendReserveCalls: two clients, a reserve of     *)
+(* three in a queue of five.  The calls never end, so Bound stops a        *)
+(* behaviour at three refusals and at seven frames staged since the budget *)
+(* opened (the queue, refilled once by the transport).                     *)
+(* MCRNSendReserveCalls.cfg is the code and passes.  The Broken configs    *)
+(* are the reversed witnesses and must fail: RoomOnly and AbortReturns on  *)
+(* ReserveKept, NoRefresh on NeverStarved.                                 *)
+(***************************************************************************)
+EXTENDS RNSendReserveCalls
+
+Bound == refused <= 3 /\ started + ownUsed <= MaxFree + 2
+=============================================================================

@@ -1126,10 +1126,18 @@ static void rocketnet_server_transport_fill_started( struct rocketnet_server_tra
 // due and its frame stays in the reserve.
 static void rocketnet_server_transport_fill_refused( struct rocketnet_server_transport_t * server_transport, int queue, bool own )
 {
+#if defined( ROCKETNET_SEND_RESERVE_PLANT )
+    // the trace check's plant (tests/tla_trace_send_reserve.cpp): the
+    // refused frame's claim is kept
+    (void) server_transport;
+    (void) queue;
+    (void) own;
+#else  // #if defined( ROCKETNET_SEND_RESERVE_PLANT )
     if ( !own )
     {
         rocketnet_platform_atomic_add_u64( &server_transport->fill_claims[queue], UINT64_MAX );
     }
+#endif // #if defined( ROCKETNET_SEND_RESERVE_PLANT )
 }
 
 // A refused start with room left refused that one frame; without room, or
@@ -1413,6 +1421,24 @@ uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet
 {
     rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
     return rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
+}
+
+uint64_t rocketnet_server_transport_fill_started_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_started[queue] );
+}
+
+uint64_t rocketnet_server_transport_fill_own_used_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_own_used[queue] );
+}
+
+bool rocketnet_server_transport_fill_own_frame_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    rocketnet_assert( server_transport && client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS );
+    return server_transport->fill_own_frame[client_index] != 0;
 }
 
 void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims )
