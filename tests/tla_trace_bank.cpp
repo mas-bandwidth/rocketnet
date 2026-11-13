@@ -449,7 +449,7 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
                 return 1;
             }
             report.act( act );
-            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ), tla_int( abort ? 0 : 1 ) } ), bank_record( walk ) ) );
+            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ), tla_bool( !abort ) } ), bank_record( walk ) ) );
         }
         else
         {

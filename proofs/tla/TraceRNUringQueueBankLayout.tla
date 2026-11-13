@@ -43,7 +43,7 @@ OpActs == [start |-> {"Start", "StartFull"}, finish |-> {"Finish", "FinishRefuse
 \* lacks stops TLC with an error
 Act(a, x) == CASE a = "Start" -> Start(x[1], x[2], x[3], x[4])
                [] a = "StartFull" -> StartFull(x[1], x[2], x[3])
-               [] a = "Finish" -> Finish(x[1], x[2], x[3] = 1)
+               [] a = "Finish" -> Finish(x[1], x[2], x[3])
                [] a = "FinishRefused" -> FinishRefused(x[1], x[2])
                [] a = "Flush" -> Flush(x[1])
 
