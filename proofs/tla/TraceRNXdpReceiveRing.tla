@@ -31,7 +31,8 @@
 (* successor from each state.  This layer writes none.                     *)
 (*                                                                         *)
 (* TraceStep allows only the recorded action, and only when the operation  *)
-(* can be that action (OpActs).  When no step matches, TraceReject sets    *)
+(* can be that action (OpActs), into a state that keeps the model's        *)
+(* invariants (TraceInvariant).  When no step matches, TraceReject sets    *)
 (* rejected, so TraceConsistent fails; record ti + 1 is the first code     *)
 (* step that is not a model step.  The log is read through Records, a      *)
 (* definition, which TLC evaluates once; TraceLog, an overridden constant, *)
@@ -78,8 +79,27 @@ Act(a, x) == CASE a = "KernelReceive" -> KernelReceive
 \* the successor is the record's state, or the record is a hidden step
 Matches(r) == IF DOMAIN r.state = {} THEN TRUE ELSE VarsRec' = r.state
 
+\* the invariants MCRNXdpReceiveRing.cfg checks, on every state the code
+\* reaches; FillNeverEmptyWhileFramesFree only at a fill ring of twice the
+\* frames (at the frames' size it is MCRNXdpReceiveRingBrokenFillOfTheFrames,
+\* false by design)
+TraceInvariant ==
+    /\ TypeOK
+    /\ FrameConservation
+    /\ StagingInBounds
+    /\ PendingInBounds
+    /\ ConsumerNotBehind
+    /\ PendingReturnedEachPass
+    /\ (FillSize >= 2 * Cardinality(Frames) => FillNeverEmptyWhileFramesFree)
+
+\* record 1's fill order when it is one; any other is a mismatch for
+\* rejected below, never an empty set of initial states
+FirstFill == IF Records[1].state.fq \in Orders(Frames)
+             THEN Records[1].state.fq
+             ELSE CHOOSE s \in Orders(Frames) : TRUE
+
 TraceInit ==
-    /\ fq = Records[1].state.fq
+    /\ fq = FirstFill
     /\ Init
     /\ ti = 1
     /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
@@ -92,6 +112,7 @@ TraceStep ==
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
           /\ Matches(r)
+          /\ TraceInvariant'
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 

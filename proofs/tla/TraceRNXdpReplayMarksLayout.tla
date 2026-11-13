@@ -9,10 +9,12 @@
 (* variable after it.  Record 1 is "init".                                 *)
 (*                                                                         *)
 (* The operations:                                                         *)
-(*   forget  rocketnet_xdp_replay_marks_forget: Forget(k)                  *)
-(*   mark    rocketnet_xdp_replay_marks_mark: Mark(k, v)                   *)
-(*   commit  the kernel's answer, chosen by the walk (no library call):    *)
-(*           Commit, args <<failed, applied>>                              *)
+(*   forget  rocketnet_xdp_replay_marks_forget: Forget(k), args <<k, ok>>  *)
+(*   mark    rocketnet_xdp_replay_marks_mark: Mark(k, v), args             *)
+(*           <<k, v, ok>>                                                  *)
+(*   commit  the kernel's answer, chosen by the walk: Commit, args         *)
+(*           <<failed, applied, refusals>>, refusals what                  *)
+(*           reset_keeping returned                                        *)
 (*   reset_keeping  rocketnet_xdp_replay_marks_reset_keeping: one          *)
 (*           CompactForgetStep per iteration of its forget loop and one    *)
 (*           for its end, then the same for its mark loop                  *)
@@ -35,7 +37,8 @@
 (* update at Commit is checked against what the code's compaction did.     *)
 (*                                                                         *)
 (* TraceStep allows only the recorded action, and only when the operation  *)
-(* can be that action (OpActs).  A state that names fewer or other fields  *)
+(* can be that action (OpActs), into a state that keeps the model's        *)
+(* invariants (TraceInvariant).  A state that names fewer or other fields  *)
 (* than VarsRec never matches, and a record that is not [op, act, args,    *)
 (* state] fails the ASSUME.  When no step matches, TraceReject sets        *)
 (* rejected, so TraceConsistent fails; record ti + 1 is the first code     *)
@@ -69,15 +72,23 @@ OpActs == [forget |-> {"Forget"},
            commit |-> {"Commit"},
            reset_keeping |-> {"CompactForgetStep", "CompactMarkStep"}]
 
-\* the action a record names; a name this CASE lacks stops TLC with an error
-Act(a, x) == CASE a = "Forget" -> Forget(x[1])
-               [] a = "Mark" -> Mark(x[1], x[2])
-               [] a = "Commit" -> Commit
+\* the action a record names; a name this CASE lacks stops TLC with an error.
+\* The calls' results the transport acts on are bound: forget's and mark's
+\* bool (args[2] and args[3]) is TRUE exactly when the step refused nothing,
+\* and reset_keeping's count (the commit's args[3]) is the refusals before
+\* it zeroes them
+Act(a, x) == CASE a = "Forget" -> Forget(x[1]) /\ x[2] = (refused' = refused)
+               [] a = "Mark" -> Mark(x[1], x[2]) /\ x[3] = (refused' = refused)
+               [] a = "Commit" -> Commit /\ x[3] = refused
                [] a = "CompactForgetStep" -> CompactForgetStep
                [] a = "CompactMarkStep" -> CompactMarkStep
 
 \* the successor is the record's state, or the record is a hidden step
 Matches(r) == IF DOMAIN r.state = {} THEN TRUE ELSE VarsRec' = r.state
+
+\* the invariants MCRNXdpReplayMarksLayout.cfg checks, on every state the
+\* code reaches (the walk fills the lists the model's own run does not)
+TraceInvariant == TypeOK /\ InBounds /\ LayoutIsQueue /\ KeptKeysUnique
 
 TraceInit ==
     /\ Init
@@ -92,6 +103,7 @@ TraceStep ==
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
           /\ Matches(r)
+          /\ TraceInvariant'
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 

@@ -18,8 +18,12 @@
 (* record is used for a deterministic action only.                         *)
 (*                                                                         *)
 (* TraceStep allows only the recorded action, and only when the operation  *)
-(* can be that action (OpActs).  A state that names fewer or other fields  *)
-(* than VarsRec never matches.  When no step matches, TraceReject sets     *)
+(* can be that action (OpActs), into a state that keeps the model's        *)
+(* invariants (TraceInvariant).  NoTornMac here rests on the walk's own    *)
+(* order of refresh, fills and join (the real fill copy and the driver's   *)
+(* join are not driven): it binds the refresh's deadline and writes, not   *)
+(* the join.  A state that names fewer or other fields than VarsRec never  *)
+(* matches.  When no step matches, TraceReject sets                        *)
 (* rejected, so TraceConsistent fails; record ti + 1 is the first code     *)
 (* step that is not the model step it names.  At the last record the trace *)
 (* stutters (TraceDone).                                                   *)
@@ -66,6 +70,10 @@ Act(a, x) == CASE a = "Refresh" -> Refresh
 \* a hidden record (state <<>>) takes the model's step; any other must equal it
 Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
 
+\* the invariants MCRNXdpGatewayRefresh.cfg checks, on every state the code
+\* reaches
+TraceInvariant == TypeOK /\ NoTornMac /\ FreshAfterPeriod
+
 TraceInit ==
     /\ Init
     /\ ti = 1
@@ -79,6 +87,7 @@ TraceStep ==
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
           /\ Matches(r)
+          /\ TraceInvariant'
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 

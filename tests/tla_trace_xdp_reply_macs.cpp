@@ -9,14 +9,17 @@
 //
 // The walk binds the smallest table the code accepts (4 *
 // ROCKETNET_XDP_REPLY_MAC_PROBES entries) with no gateway, and drives it with
-// addresses whose home slots (the code's own FNV hash) all fall in a few
+// ipv4 and ipv6 addresses whose home slots (the code's own FNV hash) all fall in a few
 // adjacent slots across the table's end, so probe windows fill, wrap and
 // evict. Each step is one call of the code:
 //
-//   learn   rocketnet_xdp_reply_macs_learn of a usable MAC: Learn
-//   reply   rocketnet_xdp_reply_mac with a usable answered MAC: Answer when it
-//           returns the answered MAC (no learned entry); a learned address
-//           returns its learned MAC and changes nothing, no step
+//   learn   rocketnet_xdp_reply_macs_learn of a usable MAC: Learn; of a
+//           multicast or zero MAC: Ignored, which changes nothing
+//   reply   rocketnet_xdp_reply_mac: Answer when it returns the answered MAC
+//           (no learned entry); Skip when it returns another MAC the table
+//           has (a learned address, or an ANSWERED entry when the call
+//           passes no answered MAC); Refused when it returns none. Skip and
+//           Refused change nothing; the call's refusal count is an argument
 //   forget  rocketnet_xdp_reply_macs_forget: Forget
 //   reset   rocketnet_xdp_reply_macs_reset with no gateway: Reset
 //
@@ -204,19 +207,30 @@ static bool reply_macs_evicted_newer( const reply_macs_walk_t & walk, const stru
 
 static void reply_macs_addresses( reply_macs_walk_t * walk, uint64_t seed )
 {
-    // REPLY_MACS_ADDRESSES distinct ipv4 addresses whose home slots are the
-    // REPLY_MACS_HOMES slots ending at slot 1, across the table's end; the
-    // search starts where the seed puts it and is deterministic
+    // REPLY_MACS_ADDRESSES distinct addresses, ipv4 and ipv6 in turn, whose
+    // home slots are the REPLY_MACS_HOMES slots ending at slot 1, across the
+    // table's end; the search starts where the seed puts it and is
+    // deterministic
     int count = 0;
     for ( uint32_t n = (uint32_t) ( seed * 7919 ) & 0xFFFF; count < REPLY_MACS_ADDRESSES; n++ )
     {
         rocketnet_address_t candidate;
         memset( &candidate, 0, sizeof( candidate ) );
-        candidate.type = ROCKETNET_ADDRESS_IPV4;
-        candidate.data.ipv4[0] = 10;
-        candidate.data.ipv4[1] = (uint8_t) ( n >> 16 );
-        candidate.data.ipv4[2] = (uint8_t) ( n >> 8 );
-        candidate.data.ipv4[3] = (uint8_t) n;
+        if ( count % 2 == 0 )
+        {
+            candidate.type = ROCKETNET_ADDRESS_IPV4;
+            candidate.data.ipv4[0] = 10;
+            candidate.data.ipv4[1] = (uint8_t) ( n >> 16 );
+            candidate.data.ipv4[2] = (uint8_t) ( n >> 8 );
+            candidate.data.ipv4[3] = (uint8_t) n;
+        }
+        else
+        {
+            candidate.type = ROCKETNET_ADDRESS_IPV6;
+            candidate.data.ipv6[0] = 0xfd00;
+            candidate.data.ipv6[6] = (uint16_t) ( n >> 16 );
+            candidate.data.ipv6[7] = (uint16_t) n;
+        }
         candidate.port = 40000;
         const uint32_t home = rocketnet_xdp_reply_macs_slot( &walk->table, &candidate );
         if ( ( ( home + REPLY_MACS_HOMES - 2 ) & walk->table.mask ) < REPLY_MACS_HOMES )
@@ -254,8 +268,21 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
         const int a = random.below( REPLY_MACS_ADDRESSES );
         const int m = random.below( REPLY_MACS_MACS );
         std::vector<std::string> args;
+        // one call in eight passes a MAC the code must not keep: a learn of
+        // a multicast or zero MAC, a reply with one as the answered MAC
+        const int unusable = random.below( 8 ) == 0 ? 1 + random.below( 2 ) : 0;
         if ( roll < 55 )
         {
+            if ( unusable )
+            {
+                const uint8_t ignored[6] = { (uint8_t) ( unusable == 1 ? 0x01 : 0x00 ), 0x00, (uint8_t) ( unusable == 1 ? 0x5e : 0x00 ), 0x00, 0x00, 0x00 };
+                rocketnet_xdp_reply_macs_learn( &walk.table, &walk.address[a], ignored );
+                report.act( "Ignored" );
+                args.push_back( reply_macs_address_name( a ) );
+                args.push_back( tla_string( "unusable" ) );
+                records.push_back( tla_step( "learn", "Ignored", tla_sequence( args ), reply_macs_state( walk ) ) );
+                continue;
+            }
             memcpy( before, walk.entries, sizeof( before ) );
             rocketnet_xdp_reply_macs_learn( &walk.table, &walk.address[a], walk.mac[m] );
             report.act( "Learn" );
@@ -270,20 +297,24 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
         else if ( roll < 85 )
         {
             // the answered MAC from a buffer of the walk's own, so the return
-            // says which branch the code took
+            // says which branch the code took: the answered MAC kept
+            // (Answer), another MAC the table already had (Skip), or none
+            // (Refused); one reply in eight has no answered MAC at all
             uint8_t answered[6];
             memcpy( answered, walk.mac[m], 6 );
-            uint64_t refused = 0;
-            const uint8_t * reply = rocketnet_xdp_reply_mac( &walk.table, &walk.address[a], answered, &refused );
-            if ( reply != NULL && reply != answered )
+            if ( unusable )
             {
-                // a learned address: its learned MAC, nothing kept, no step
-                continue;
+                memset( answered, 0, sizeof( answered ) );
+                answered[0] = unusable == 1 ? 0x01 : 0x00;
             }
-            const char * act = reply == answered ? "Answer" : "Refused";
+            const bool none = !unusable && random.below( 8 ) == 0;
+            uint64_t refused = 0;
+            const uint8_t * reply = rocketnet_xdp_reply_mac( &walk.table, &walk.address[a], none ? NULL : answered, &refused );
+            const char * act = reply == NULL ? "Refused" : ( reply == answered ? "Answer" : "Skip" );
             report.act( act );
             args.push_back( reply_macs_address_name( a ) );
-            args.push_back( reply_macs_mac_name( m ) );
+            args.push_back( none ? tla_string( "none" ) : ( unusable ? tla_string( "unusable" ) : reply_macs_mac_name( m ) ) );
+            args.push_back( tla_int( (int64_t) refused ) );
             records.push_back( tla_step( "reply", act, tla_sequence( args ), reply_macs_state( walk ) ) );
         }
         else if ( roll < 99 )
