@@ -423,6 +423,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
                    "the record rings are one span, before the rtt history" );
 
     memset( (void *) endpoint, 0, offsetof( rocketnet_ack_endpoint_t, sent ) );
+    endpoint->block_memo.valid = 0;
 
     for ( int i = 0; i < ROCKETNET_RTT_HISTORY_SIZE; i++ )
     {
@@ -1334,6 +1335,10 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     endpoint->sent_held[slot >> 6] |= 1ull << ( slot & 63 );
     endpoint->sent_unacked[slot >> 6] |= 1ull << ( slot & 63 );
 
+    // a new unacknowledged slot: the last applied block, applied again,
+    // could now ack it, so it is no longer known to be a no-op
+    endpoint->block_memo.valid = 0;
+
     // fill-phase threads record concurrently under distinct sequences, so
     // the high-water fold is a compare-exchange max: whatever the
     // interleaving, the mark ends at the largest recorded sequence
@@ -1789,25 +1794,8 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     return newly_acked;
 }
 
-int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
-                                          const struct rocketnet_ack_block_t * block,
-                                          double time,
-                                          uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
-                                          uint64_t * unknown_sequence_counter,
-                                          uint64_t * batch_full_counter )
+static void rn_ack_reconcile( struct rocketnet_ack_endpoint_t * endpoint )
 {
-    rocketnet_assert( endpoint );
-    rocketnet_assert( block );
-    rocketnet_assert( acked_packet_ids );
-    rocketnet_assert( acked_count );
-    rocketnet_assert( unknown_sequence_counter );
-    rocketnet_assert( batch_full_counter );
-
-    if ( block->largest == 0 )
-    {
-        return 0;
-    }
-
     // Reconcile the shadow bitmaps to the ring (update thread only; update
     // and the fill phase never overlap). Every sequence at or above the window
     // low whose record does not hold that exact sequence -- a burned or
@@ -1842,7 +1830,17 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
         endpoint->sent_bits_checked = endpoint->highest_sequence;
     }
+}
 
+// the block's runs, highest first, then the published aggregates
+
+static int rn_ack_apply_block( struct rocketnet_ack_endpoint_t * endpoint,
+                               const struct rocketnet_ack_block_t * block,
+                               double time,
+                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                               uint64_t * unknown_sequence_counter,
+                               uint64_t * batch_full_counter )
+{
     int newly_acked = 0;
 
     // the first range: a received run ending at largest inclusive. validity already proved every subtraction here safe.
@@ -1868,6 +1866,116 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     {
         rocketnet_ack_stats_publish_rtt( endpoint );
         rocketnet_ack_stats_publish_sent( endpoint );
+    }
+
+    return newly_acked;
+}
+
+int rocketnet_ack_endpoint_process_block_full( struct rocketnet_ack_endpoint_t * endpoint,
+                                               const struct rocketnet_ack_block_t * block,
+                                               double time,
+                                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                               uint64_t * unknown_sequence_counter,
+                                               uint64_t * batch_full_counter )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( block );
+    rocketnet_assert( acked_packet_ids );
+    rocketnet_assert( acked_count );
+    rocketnet_assert( unknown_sequence_counter );
+    rocketnet_assert( batch_full_counter );
+
+    if ( block->largest == 0 )
+    {
+        return 0;
+    }
+
+    rn_ack_reconcile( endpoint );
+
+    return rn_ack_apply_block( endpoint, block, time, acked_packet_ids, acked_capacity, acked_count,
+                               unknown_sequence_counter, batch_full_counter );
+}
+
+static bool rn_ack_block_memo_matches( const struct rocketnet_ack_endpoint_t * endpoint, const struct rocketnet_ack_block_t * block )
+{
+    const struct rocketnet_ack_block_memo_t * memo = &endpoint->block_memo;
+
+    if ( !memo->valid || memo->highest_sequence != endpoint->highest_sequence || memo->largest != block->largest ||
+         memo->first_range_length != block->first_range_length || (int) memo->num_ranges != block->num_ranges )
+    {
+        return false;
+    }
+
+    for ( int i = 0; i < block->num_ranges; i++ )
+    {
+        if ( memo->range_gap[i] != block->range_gap[i] || memo->range_length[i] != block->range_length[i] )
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// proofs/tla/SessionAcks.tla RecvAck, and RecvAckRepeat for a block equal to
+// the memo. Why the repeat is exact: the full apply that set the memo
+// deferred nothing, so it cleared the unacknowledged bit of every slot its
+// runs name (a set bit whose record does not hold the sequence is a reconcile
+// failure, asserted, and stays set under either path). Since then nothing was
+// sent: only record_sent sets a bit or moves highest_sequence, and it clears
+// the memo; the reconcile ran again above and, highest_sequence unchanged,
+// changed nothing. So the same block applied again visits no record, acks
+// nothing, publishes nothing, and its unknown count -- arithmetic over the
+// runs, highest_sequence and sent_held, all unchanged -- is the memo's.
+
+int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
+                                          const struct rocketnet_ack_block_t * block,
+                                          double time,
+                                          uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                          uint64_t * unknown_sequence_counter,
+                                          uint64_t * batch_full_counter )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( block );
+    rocketnet_assert( acked_packet_ids );
+    rocketnet_assert( acked_count );
+    rocketnet_assert( unknown_sequence_counter );
+    rocketnet_assert( batch_full_counter );
+
+    if ( block->largest == 0 )
+    {
+        return 0;
+    }
+
+    rn_ack_reconcile( endpoint );
+
+    if ( rn_ack_block_memo_matches( endpoint, block ) )
+    {
+        *unknown_sequence_counter += endpoint->block_memo.unknown;
+        return 0;
+    }
+
+    const uint64_t unknown_before = *unknown_sequence_counter;
+    const uint64_t batch_full_before = *batch_full_counter;
+
+    const int newly_acked = rn_ack_apply_block( endpoint, block, time, acked_packet_ids, acked_capacity, acked_count,
+                                                unknown_sequence_counter, batch_full_counter );
+
+    struct rocketnet_ack_block_memo_t * memo = &endpoint->block_memo;
+    memo->valid = 0;
+    if ( *batch_full_counter == batch_full_before && block->num_ranges >= 0 && block->num_ranges <= ROCKETNET_ACK_BLOCK_MEMO_RANGES )
+    {
+        memo->largest = block->largest;
+        memo->highest_sequence = endpoint->highest_sequence;
+        memo->unknown = *unknown_sequence_counter - unknown_before;
+        memo->first_range_length = block->first_range_length;
+        memo->num_ranges = (uint8_t) block->num_ranges;
+        for ( int i = 0; i < block->num_ranges; i++ )
+        {
+            memo->range_gap[i] = block->range_gap[i];
+            memo->range_length[i] = block->range_length[i];
+        }
+        memo->valid = 1;
     }
 
     return newly_acked;

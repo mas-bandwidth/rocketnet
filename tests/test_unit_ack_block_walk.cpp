@@ -421,3 +421,335 @@ static void test_ack_block_walk_reports_only_message_packets()
     rocketnet_free( NULL, ep );
 }
 REGISTER_UNIT_TEST( test_ack_block_walk_reports_only_message_packets );
+
+// The block memo (process_block's repeat path) against the full apply. Two
+// endpoints take the same sends, keep-alive marks and blocks; one applies
+// through process_block, the other through process_block_full. After every
+// block the returns, the acked id batches, both side counters and the whole
+// endpoint state (state_equal) must be equal. The blocks mix fresh ones with
+// the adversarial kinds: the last block again (the memo's case), the last
+// block one sequence different, an older block again, a block above
+// everything sent, a long block reaching below the window, a block with more
+// ranges than the memo keeps, and a small batch that defers ids. Sequences
+// run past the ring several times, with burned sequences and session
+// (number-less) packets.
+
+static uint64_t memo_next( uint64_t * state )
+{
+    uint64_t z = ( *state += 0x9E3779B97F4A7C15ull );
+    z = ( z ^ ( z >> 30 ) ) * 0xBF58476D1CE4E5B9ull;
+    z = ( z ^ ( z >> 27 ) ) * 0x94D049BB133111EBull;
+    return z ^ ( z >> 31 );
+}
+
+static uint64_t memo_below( uint64_t * state, uint64_t n )
+{
+    return n ? memo_next( state ) % n : 0;
+}
+
+static void memo_fresh_block( uint64_t * rng, uint64_t highest, struct rocketnet_ack_block_t * block )
+{
+    const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    memset( block, 0, sizeof( *block ) );
+
+    uint64_t largest = highest;
+    const uint64_t kind = memo_below( rng, 16 );
+    if ( kind == 0 )
+    {
+        largest = highest + 1 + memo_below( rng, 3 );                    // above everything sent
+    }
+    else
+    {
+        const uint64_t lag = memo_below( rng, 24 );
+        largest = highest > lag ? highest - lag : 1;
+    }
+    if ( largest == 0 )
+    {
+        largest = 1;
+    }
+
+    uint64_t first = 1 + memo_below( rng, 40 );
+    if ( kind == 1 )
+    {
+        first = N - 64 + memo_below( rng, 256 );                         // reaches below the window
+    }
+    if ( first > largest )
+    {
+        first = largest;
+    }
+    block->largest = largest;
+    block->first_range_length = (uint32_t) first;
+
+    const int ranges = kind == 2 ? 5 + (int) memo_below( rng, 4 ) : (int) memo_below( rng, ROCKETNET_ACK_BLOCK_MEMO_RANGES + 1 );
+    uint64_t low = largest - first + 1;
+    for ( int i = 0; i < ranges; i++ )
+    {
+        const uint64_t gap = 1 + memo_below( rng, 8 );
+        const uint64_t length = 1 + memo_below( rng, 24 );
+        if ( low <= gap + length + 1 )
+        {
+            break;
+        }
+        block->range_gap[i] = (uint16_t) gap;
+        block->range_length[i] = (uint16_t) length;
+        block->num_ranges = i + 1;
+        low = low - 1 - gap - length + 1;
+    }
+}
+
+// the lowest sequence a block names
+static uint64_t memo_block_low( const struct rocketnet_ack_block_t * block )
+{
+    uint64_t low = block->largest - block->first_range_length + 1;
+    for ( int i = 0; i < block->num_ranges; i++ )
+    {
+        low = low - 1 - block->range_gap[i] - block->range_length[i] + 1;
+    }
+    return low;
+}
+
+// one sequence different: a run one longer or shorter at its low end, or the
+// largest one lower (a smaller first range keeps the rest in place)
+static bool memo_one_off( uint64_t * rng, struct rocketnet_ack_block_t * block )
+{
+    const uint64_t which = memo_below( rng, 3 );
+    if ( which == 0 && block->num_ranges > 0 )
+    {
+        const int i = (int) memo_below( rng, (uint64_t) block->num_ranges );
+        if ( block->range_length[i] > 1 && memo_below( rng, 2 ) )
+        {
+            block->range_length[i]--;
+            return true;
+        }
+        if ( i == block->num_ranges - 1 && block->range_length[i] < 24 && memo_block_low( block ) > 1 )
+        {
+            block->range_length[i]++;                                    // the lowest run, one lower
+            return true;
+        }
+        return false;
+    }
+    if ( which == 1 && block->first_range_length > 1 )
+    {
+        block->first_range_length--;
+        block->largest--;                                                // the first run ends one lower
+        return true;
+    }
+    if ( block->num_ranges == 0 && block->first_range_length < block->largest )
+    {
+        block->first_range_length++;                                     // the only run, one lower at its low end
+        return true;
+    }
+    return false;
+}
+
+static void memo_differential( uint64_t seed, int steps )
+{
+    struct rocketnet_ack_endpoint_t * a = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
+    struct rocketnet_ack_endpoint_t * b = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
+    rocketnet_unit_check( a && b );
+    rocketnet_ack_endpoint_reset( a );
+    rocketnet_ack_endpoint_reset( b );
+
+    uint64_t rng = seed;
+    uint64_t next_sequence = 1;
+    double time = 1000.0;
+
+    struct rocketnet_ack_block_t last;
+    memset( &last, 0, sizeof( last ) );
+    struct rocketnet_ack_block_t older[8];
+    memset( older, 0, sizeof( older ) );
+    int older_count = 0;
+
+    int repeats_skipped = 0;
+    int one_off = 0;
+    int older_again = 0;
+    int deferred = 0;
+    int unmemoized = 0;
+
+    for ( int step = 0; step < steps; step++ )
+    {
+        time += 0.001 * (double) ( 1 + memo_below( &rng, 20 ) );
+
+        // sends: none (so the last block can repeat), or a few, some burned,
+        // some number-less, some keep-alives
+
+        const uint64_t sends = memo_below( &rng, 3 ) == 0 ? 0 : memo_below( &rng, 4 );
+        for ( uint64_t k = 0; k < sends; k++ )
+        {
+            if ( memo_below( &rng, 10 ) == 0 )
+            {
+                next_sequence++;                                         // burned: never recorded
+            }
+            const uint64_t sequence = next_sequence++;
+            const int has_id = memo_below( &rng, 5 ) != 0;
+            const int bytes = 40 + (int) memo_below( &rng, 1200 );
+            const enum rocketnet_ack_sent_result_t ra = rocketnet_ack_endpoint_record_sent_classified( a, sequence, bytes, has_id ? 500000 + sequence : 0, has_id, time );
+            const enum rocketnet_ack_sent_result_t rb = rocketnet_ack_endpoint_record_sent_classified( b, sequence, bytes, has_id ? 500000 + sequence : 0, has_id, time );
+            rocketnet_unit_check( ra == rb );
+            if ( memo_below( &rng, 8 ) == 0 )
+            {
+                rocketnet_ack_endpoint_mark_keep_alive( a, sequence );
+                rocketnet_ack_endpoint_mark_keep_alive( b, sequence );
+            }
+        }
+
+        // the block
+
+        struct rocketnet_ack_block_t block;
+        const uint64_t kind = memo_below( &rng, 10 );
+        bool from_last = false;
+        if ( kind < 4 && last.largest )
+        {
+            block = last;                                                // the last block again
+            from_last = true;
+        }
+        else if ( kind == 4 && last.largest )
+        {
+            block = last;
+            if ( memo_one_off( &rng, &block ) )
+            {
+                one_off++;
+            }
+        }
+        else if ( kind == 5 && older_count > 0 )
+        {
+            block = older[memo_below( &rng, (uint64_t) ( older_count < 8 ? older_count : 8 ) )];
+            older_again++;
+        }
+        else
+        {
+            memo_fresh_block( &rng, a->highest_sequence ? a->highest_sequence : 1, &block );
+        }
+
+        if ( block.num_ranges > ROCKETNET_ACK_BLOCK_MEMO_RANGES )
+        {
+            unmemoized++;
+        }
+
+        const int capacity = memo_below( &rng, 6 ) == 0 ? 1 + (int) memo_below( &rng, 3 ) : 64;
+        uint64_t ids_a[64];
+        uint64_t ids_b[64];
+        int count_a = 0;
+        int count_b = 0;
+        uint64_t unknown_a = 7;
+        uint64_t unknown_b = 7;
+        uint64_t full_a = 3;
+        uint64_t full_b = 3;
+
+        const bool memo_was_valid = a->block_memo.valid != 0;
+        const int na = rocketnet_ack_endpoint_process_block( a, &block, time, ids_a, capacity, &count_a, &unknown_a, &full_a );
+        const int nb = rocketnet_ack_endpoint_process_block_full( b, &block, time, ids_b, capacity, &count_b, &unknown_b, &full_b );
+
+        rocketnet_unit_check( na == nb );
+        rocketnet_unit_check( count_a == count_b );
+        for ( int i = 0; i < count_a; i++ )
+        {
+            rocketnet_unit_check( ids_a[i] == ids_b[i] );
+        }
+        rocketnet_unit_check( unknown_a == unknown_b );
+        rocketnet_unit_check( full_a == full_b );
+        rocketnet_unit_check( rocketnet_ack_endpoint_state_equal( a, b ) );
+        rocketnet_unit_check( a->largest_acked_sequence == b->largest_acked_sequence );
+        rocketnet_unit_check( a->highest_sequence == b->highest_sequence );
+
+        if ( from_last && memo_was_valid )
+        {
+            repeats_skipped++;
+            rocketnet_unit_check( na == 0 );
+        }
+        if ( full_a != 3 )
+        {
+            deferred++;
+            rocketnet_unit_check( !a->block_memo.valid );
+        }
+
+        if ( block.largest )
+        {
+            older[older_count % 8] = last;
+            if ( last.largest )
+            {
+                older_count++;
+            }
+            last = block;
+        }
+    }
+
+    // every kind ran, the repeat path many times, and the ring wrapped
+
+    rocketnet_unit_check( repeats_skipped > steps / 10 );
+    rocketnet_unit_check( one_off > steps / 40 );
+    rocketnet_unit_check( older_again > steps / 40 );
+    rocketnet_unit_check( deferred > steps / 100 );
+    rocketnet_unit_check( unmemoized > 0 );
+    rocketnet_unit_check( next_sequence > 3 * ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+
+    rocketnet_free( NULL, a );
+    rocketnet_free( NULL, b );
+}
+
+static void test_ack_block_memo_matches_the_full_apply()
+{
+    memo_differential( 0x5EED0001ull, 12000 );
+    memo_differential( 0xACC0FFEEull, 12000 );
+    memo_differential( 0xBADC0DEull, 12000 );
+}
+REGISTER_UNIT_TEST( test_ack_block_memo_matches_the_full_apply );
+
+// The memo itself: a repeated block is skipped only while nothing is sent.
+// A send clears it, and the same block then acks the new sequence; a block
+// that deferred an id is never remembered, so its repeat surfaces the id.
+
+static void test_ack_block_memo_cleared_by_send_and_by_deferral()
+{
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
+    rocketnet_unit_check( ep );
+    rocketnet_ack_endpoint_reset( ep );
+    rocketnet_unit_check( !ep->block_memo.valid );
+
+    for ( uint64_t s = 1; s <= 4; s++ )
+    {
+        rec_sent( ep, s );
+    }
+
+    uint64_t acked[8];
+    int acked_count = 0;
+    uint64_t unknown = 0, batch_full = 0;
+    struct rocketnet_ack_block_t block;
+    memset( &block, 0, sizeof( block ) );
+    block.largest = 6;                       // 5 and 6 never sent: unknown 2
+    block.first_range_length = 6;
+
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, 8, &acked_count, &unknown, &batch_full ) == 4 );
+    rocketnet_unit_check( unknown == 2 && acked_count == 4 && ep->block_memo.valid );
+
+    g_ack_visit_count = 0;
+    acked_count = 0;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3001.0, acked, 8, &acked_count, &unknown, &batch_full ) == 0 );
+    rocketnet_unit_check( unknown == 4 && acked_count == 0 && g_ack_visit_count == 0 );
+
+    rec_sent( ep, 5 );
+    rocketnet_unit_check( !ep->block_memo.valid );
+    acked_count = 0;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3002.0, acked, 8, &acked_count, &unknown, &batch_full ) == 1 );
+    rocketnet_unit_check( unknown == 5 && acked_count == 1 && acked[0] == 1000005 );
+
+    // a batch of one defers: the memo stays clear, and the repeat acks the rest
+
+    rec_sent( ep, 6 );
+    rec_sent( ep, 7 );
+    block.largest = 7;
+    block.first_range_length = 2;
+    acked_count = 0;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3003.0, acked, 1, &acked_count, &unknown, &batch_full ) == 1 );
+    rocketnet_unit_check( batch_full == 1 && !ep->block_memo.valid );
+    acked_count = 0;
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3004.0, acked, 1, &acked_count, &unknown, &batch_full ) == 1 );
+    rocketnet_unit_check( batch_full == 1 && acked_count == 1 && ep->block_memo.valid );
+
+    rocketnet_ack_endpoint_reset( ep );
+    rocketnet_unit_check( !ep->block_memo.valid );
+
+    rocketnet_free( NULL, ep );
+}
+REGISTER_UNIT_TEST( test_ack_block_memo_cleared_by_send_and_by_deferral );
