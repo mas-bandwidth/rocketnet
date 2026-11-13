@@ -38,7 +38,10 @@
 // before its end, and then stops the worker once nothing waits (the
 // driver's send_idle), else QWORK_DRAIN_STEPS / 2 before the end; in the
 // last third it may also stop the worker at once, with no begin (the
-// transport's free). Before the server is stopping the kernel answers full
+// transport's free); an even seed's walk is patient: it never stops the
+// worker before nothing waits, so its records reach the shutdown-only tail
+// (BoundBeforeQuit: the bound reached with the bank held and no stop yet).
+// Before the server is stopping the kernel answers full
 // only in that last third, so the timer may be in the kernel there; once it
 // is stopping the socket stays full more often than not. Once the worker
 // has exited, a step is still taken, and its EXIT is Done (the exited
@@ -153,6 +156,10 @@ struct qwork_walk_t
     bool wake_count;
     // main has begun the server's stop (the model's stopping)
     bool stopping;
+    // the patient walk (even seeds): main stops the worker only once nothing
+    // waits, never at once, so the recorded steps reach the shutdown-only
+    // tail: the bound reached with the bank held, the abandon, then idle
+    bool patient;
     const char * st;
     int handed;
     int agains_before;
@@ -648,7 +655,7 @@ static void qwork_choices( const qwork_walk_t & walk, bool main_works, bool may_
         can.push_back( QWORK_BEGIN );
         return;
     }
-    if ( main_works && stop_now && !quit )
+    if ( main_works && stop_now && !quit && !walk.patient )
     {
         can.push_back( QWORK_STOP );
         return;
@@ -677,7 +684,7 @@ static void qwork_choices( const qwork_walk_t & walk, bool main_works, bool may_
         can.push_back( QWORK_STOP );
         can.push_back( QWORK_STOP );
     }
-    if ( main_works && !quit && late && walk.timer_in )
+    if ( main_works && !quit && late && walk.timer_in && !walk.patient )
     {
         can.push_back( QWORK_STOP );
     }
@@ -991,6 +998,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
         return 1;
     }
 
+    walk.patient = seed % 2 == 0;
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
     tla_report_t report;

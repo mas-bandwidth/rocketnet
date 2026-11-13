@@ -133,7 +133,11 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 TraceConsistent == ~rejected
 
 \* the reach predicates (tools/tla_trace_check.py): a refused receive waits
-\* for its timer, the worker asleep meanwhile
+\* for its timer, the worker asleep meanwhile (RecvWaits); the server
+\* stopping, the worker not stopped, its bank held and the bound on waits
+\* reached, the shutdown-only tail before the abandon (BoundBeforeQuit: a
+\* patient walk's, which never stops the worker before nothing waits)
 RecvWaits == recvWait /\ recvTimer = "armed" /\ st = "asleep"
+BoundBeforeQuit == shutdown /\ ~quit /\ held /\ agains >= MaxRetry
 
 =============================================================================

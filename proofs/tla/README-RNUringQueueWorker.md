@@ -81,6 +81,10 @@ has the receive waiting on its timer asleep (`RecvWaits`) fails the check.
 - Late in the walk main begins the server's stop, mostly while a wait is on, and stops
   the worker once the queue is idle; it may also stop the worker at once with no begin
   (the transport's free).
+- An even seed's walk is patient: it never stops the worker before the queue is idle,
+  so its records reach the shutdown-only tail (the bound reached with the bank held
+  and no stop yet, then the abandon). A trace set without that state
+  (`BoundBeforeQuit`) fails the check.
 - After the recorded steps, a server that is stopping and has not stopped the worker is
   driven, unrecorded and with no publish, until the queue is idle (ShutdownDrains).
   Then the walk stops main and drives the worker and the kernel until the worker exits.
