@@ -550,7 +550,7 @@ port, and `xdp` attaches to the interface that carries the address. On a
 server that serves one family, the config's `bind_ipv4_address` or
 `bind_ipv6_address` for that family binds one local address instead (behind
 NAT, the private address the public one reaches). A server that serves both
-families binds one dual-stack socket on the IPv6 wildcard, and start refuses
+families binds the IPv6 wildcard with dual-stack sockets, and start refuses
 either bind field with `ROCKETNET_STATUS_INVALID_ADDRESS` (the environment
 forms are ignored there, with a log line). A server
 created at `0.0.0.0:40000` advertises `0.0.0.0:40000` and accepts only tokens
