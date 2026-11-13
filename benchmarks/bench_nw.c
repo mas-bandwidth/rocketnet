@@ -13,7 +13,9 @@
       size 1 by construction. "syscalls" in the WINDOW line counts
       receive completions -- the framework owns the real syscalls, so
       per-packet kernel cost attribution belongs to the profiler, not
-      the harness.
+      the harness. The batch timer starts inside the completion, after
+      the datagram is delivered, so p50_ns/p99_ns cover the fold only and
+      are not comparable with the other harnesses' (PROTOCOL.md).
     - send: nw_connection_send in batches of 32 with a semaphore waiting
       for the batch's completions -- the pump's fill-then-flush shape,
       as close as the API allows.

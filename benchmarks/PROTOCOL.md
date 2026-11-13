@@ -75,7 +75,7 @@ reads exactly like a very slow transport.
 new bench host before the campaign — it takes seconds and it is the difference
 between "the harness aborts loudly" being a claim and being a fact:
 
-    make -C bench selftest
+    make -C benchmarks selftest
 
 ## strace: verifying the syscall columns externally
 
@@ -100,11 +100,13 @@ Two known discrepancies to expect rather than chase:
   entering the kernel, so many `io_uring_wait_cqe` calls make no syscall at
   all; the harness counts every one as an enter. The ZC row's syscall column is
   an ordering, not a count (#98 item 4).
-- **Sender counts are by construction.** The runner kills the sender when the
-  receiver's last window closes, so the `SENDER` summary line is usually lost.
-  The send-side counts are one per packet for the portable control and one per
-  batch for GSO and io_uring, by construction, and were confirmed in short
-  runs.
+- **The sender runs to its bound.** The runner gives the sender a fixed run
+  (warm-up plus every window plus 2 s, `SEND_SECONDS`) and waits for it after
+  the receiver's last window closes (`pair_common.sh`), so the `SENDER` summary
+  line is printed. A send that failed for a reason other than back pressure
+  makes the sender exit nonzero (`bench_send_validate`), and that exit status
+  fails the pair. The send-side syscall counts are one per packet for the
+  portable control and one per batch for GSO and io_uring.
 
 ## Reading the columns
 
@@ -117,6 +119,13 @@ every packet in the batch, so one slow packet among thirty-one fast ones
 reports thirty-two medium packets. The tail is smeared and **p99 understates a
 real per-packet tail**. Any table quoting these columns restates that in one
 sentence (#98 item 1).
+
+**`bench_nw`'s ns columns are not comparable with the others.** Its timer
+starts inside the receive completion, after Network.framework has delivered
+the datagram, so its `p50_ns` / `p99_ns` cover the fold of one datagram and no
+receive cost, while every other harness's timer includes its receive
+syscalls. Do not put them beside another harness's ns columns; its `pps`
+stands.
 
 **`timed=`** says how many batches in the window fed the ns columns, and
 **`timed_pkts=`** how many packets those batches carried. Batches that ended on
