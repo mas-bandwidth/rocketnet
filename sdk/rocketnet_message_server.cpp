@@ -1560,7 +1560,7 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
     }
 
     // the writer's finish of a start that found no capacity: refused, so
-    // nothing of it waits for send_packets (RNWriterFinish RefuseNoCapacity).
+    // nothing of it waits for send_packets (proofs/tla/RNWriterFinish.tla RefuseNoCapacity).
     // Its room goes back to the region; the game sees 0
 
     if ( writer && open->pending == RN_MESSAGE_OPEN_PENDING_NO_CAPACITY )
