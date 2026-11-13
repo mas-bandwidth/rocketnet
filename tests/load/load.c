@@ -40,7 +40,7 @@
       gso        ROCKETNET_SERVER_TRANSPORT=gso
       gso plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1: the
                  development library load links skips the UDP_SEGMENT and
-                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp)
+                 UDP_GRO probes (sdk/rocketnet_server_gso_linux.cpp:657-659)
       io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring, where
                  /proc/sys/kernel/io_uring_disabled reads 0
       xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
@@ -48,7 +48,7 @@
                  guest booted with irqaffinity=0 isolcpus=1 nohz_full=1, on a
                  veth pair whose far end sits in its own namespace:
                  LOAD_SERVER_ADDRESS=<near address>:<port> binds the server
-                 (load.c; xdp discovers no port, its row in sdk/rocketnet_drivers.inc)
+                 (load.c; xdp discovers no port, sdk/rocketnet_drivers.inc:7)
                  and LOAD_CLIENT_NETNS=/var/run/netns/<name> opens every client
                  socket in the far namespace.
     load raises RLIMIT_NOFILE to 65536 or the hard limit and refuses by name
@@ -562,28 +562,7 @@ enum
     LOAD_PHASES
 };
 static struct load_census_t load_census_phase[LOAD_PHASES];
-
-/* A later phase is taken against the phase it is compared with
- * (load_resource_verdict: PRE_TERM against POST_INIT, POST_TERM against
- * PRE_INIT), so a thread joined just before it is not read as a survivor
- * (load_census_take_after). The two earlier phases are plain takes. */
-static void load_census_phase_take( int phase )
-{
-    if ( phase == LOAD_PRE_TERM )
-    {
-        (void) load_census_take_after( &load_census_phase[LOAD_POST_INIT], &load_census_phase[phase], LOAD_CENSUS_SETTLE_WAITS );
-    }
-    else if ( phase == LOAD_POST_TERM )
-    {
-        (void) load_census_take_after( &load_census_phase[LOAD_PRE_INIT], &load_census_phase[phase], LOAD_CENSUS_SETTLE_WAITS );
-    }
-    else
-    {
-        (void) load_census_take( &load_census_phase[phase] );
-    }
-}
-
-#define LOAD_CENSUS( phase ) load_census_phase_take( phase )
+#define LOAD_CENSUS( phase ) ( (void) load_census_take( &load_census_phase[phase] ) )
 
 /* One warm cycle before the baseline: init, a one-client server on an
  * ephemeral loopback port, one client that connects to it, a few frames of
