@@ -751,8 +751,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_status_codes_reached.cpp
             tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
-            tests/test_unit_uring_reap_budget.cpp
-            tests/test_unit_uring_rearm.cpp
             tests/test_unit_xdp_frame.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES})
@@ -1375,6 +1373,10 @@ if(ROCKETNET_BUILD_TOOLS)
         rocketnet_use_sodium(${target})
         rocketnet_warning_floor(${target})
         target_compile_features(${target} PRIVATE cxx_std_11)
+        if(TARGET RocketNet::Uring)
+            # the io_uring layers walk the queue modules, which call liburing
+            target_link_libraries(${target} PRIVATE RocketNet::Uring)
+        endif()
     endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
