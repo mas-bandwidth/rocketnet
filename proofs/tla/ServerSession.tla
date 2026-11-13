@@ -72,7 +72,17 @@
 \* coarsened into the Stop step, and ServerStopSpread.tla models them across
 \* the stop steps within the transport's send room, before StopCompletes,
 \* with the ring's own layout. The ghost overspent is TRUE once one update
-\* sealed more than its allowance.
+\* sealed more than its allowance. A message-layer end (MessageEnd) goes
+\* through link.disconnect, which is rocketnet_server_transport_disconnect_client,
+\* so it leaves its burst waiting, or discards it on a full queue, exactly
+\* as disconnect_client does.
+\*
+\* A stop, disconnect_client or disconnect_all_clients called while a fill
+\* call or another main-thread operation runs is refused by the fill-phase
+\* check (rocketnet_fill_phase_main_scope_t in rocketnet_server_stop,
+\* rocketnet_server_disconnect_client and rocketnet_server_disconnect_all_clients,
+\* sdk/rocketnet_api.cpp; counted) and changes no state, so it is a
+\* stutter here and has no step of its own.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS SlotCount, MaxSessions, MaxTokens, MaxStarts, MaxCreates, Defect, UnresetField,
@@ -87,7 +97,11 @@ ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"
 
 \* The burst is one packet at the model's scale. SealsPerUpdate and the
 \* finite DisconnectQueueCapacity are checked constants, standing for the
-\* configured 1..1024 allowance and the code's ROCKETNET_MAX_CLIENTS ring.
+\* configured 1..1024 allowance and the most bursts a running server keeps
+\* waiting, max_clients (disconnect_burst_steady_cap in
+\* sdk/rocketnet_server_transport.cpp). The ring itself holds 2 * max_clients
+\* (rocketnet_server_disconnect_bursts): the other half is kept for the
+\* stop's bursts, which ServerStopSpread.tla models (RingSize, SteadyCap).
 \* The smallest scale keeps MCServerSession.cfg, with the STOPPING and read
 \* steps beside the drain, inside its TLC budget.
 Burst == 1
@@ -607,7 +621,7 @@ SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' =
 Next ==
     \/ /\ \/ Create \/ Start \/ StartFailsKept \/ StopCompletes
           \/ \E i \in Slots : \/ Deny(i) \/ SlotTimeout(i)
-                              \/ ClientLeaves(i) \/ ServerSend(i) \/ MessageEnd(i)
+                              \/ ClientLeaves(i) \/ ServerSend(i)
           \/ \E s \in Sessions : ClientSend(s) \/ Lose(s)
        /\ UNCHANGED drain
        /\ droppedIn' = {}
@@ -621,9 +635,15 @@ Next ==
     \/ /\ Destroy
        /\ waiting' = NoneWaiting /\ discarded' = {} /\ UNCHANGED overspent
        /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' = readIn /\ admitIn' = admitIn
+    \* disconnect_client and the message layer's kick (whose link.disconnect is
+    \* disconnect_client): a CONNECTED slot's burst waits, or is discarded on
+    \* a full queue; a slot not CONNECTED (only under the defect
+    \* "messageendbeforeconnected") sends none.
     \/ /\ \E i \in Slots :
-             /\ DisconnectClient(i)
-             /\ IF Cardinality(WaitingSessions) < DisconnectQueueCapacity
+             /\ DisconnectClient(i) \/ MessageEnd(i)
+             /\ IF slot[i].st # "CONNECTED"
+                   THEN UNCHANGED <<waiting, discarded>>
+                   ELSE IF Cardinality(WaitingSessions) < DisconnectQueueCapacity
                    THEN /\ waiting' = [waiting EXCEPT ![slot[i].sess] = Burst]
                         /\ UNCHANGED discarded
                    ELSE /\ UNCHANGED waiting

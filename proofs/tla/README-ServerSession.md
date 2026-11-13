@@ -113,7 +113,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst. The reasons TIMED_OUT, CLIENT_DISCONNECTED and SERVER_DISCONNECTED are `ROCKETNET_DISCONNECT_REASON_TIMED_OUT`, `_CLIENT_DISCONNECTED` and `_SERVER_DISCONNECTED`: the transport's reset records the first two and the message layer reads them for the slot it finds dropped (`proofs/tla/RNSlots.tla` `Observe`). DENIED, and TIMED_OUT for a HANDSHAKE slot, are abstractions: the code assigns the slot only when the session is established, so those ends leave the slot's reason as it was |
 | `ServerSend(i)` | message start/finish to a connected slot (the `sendbeforeconnected` defect also enables it for a FREE or HANDSHAKE slot) |
-| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE. The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
+| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE and, as for `DisconnectClient(i)`, the burst waits in the queue (or is discarded when `DisconnectQueueCapacity` bursts already wait), adding the same ring pressure. The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
 | `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running, stopping or stopped server (`rocketnet_server_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ClientSend(s)`, `Deliver(s)`, `Lose(s)` | the client of any session ever started sends (also after its connection ended); the packet arrives at that session's slot (the same address reconnecting into the same slot is the worst case) and opens only under the keys it was sealed with, into a connected slot |
 
@@ -248,6 +248,21 @@ when the reliable timeout is configured (m9.3). The state space is unchanged:
 send-side end is checked where its state lives, in RNConnectionMemory,
 RNChannelTypes and ClientSession (`SendNeverEnds` in each); no reversed
 witness is added here because no step of this model changes.
+
+## Revision 1.2: a message-layer end queues its burst (2026-11-13)
+
+`MessageEnd(i)` used to leave the disconnect queue unchanged, though its
+kick's `link.disconnect` is `rocketnet_server_transport_disconnect_client`,
+which defers a connected slot's burst like an API kick. It now takes the
+same step as `DisconnectClient(i)` in `Next`: the burst waits, or is
+discarded on a full queue, so `DisconnectQueueFinite`, `WaitingOnlyForEnded`,
+`DiscardedOnlyForEnded` and `BurstsDrain` are checked over message-layer ends
+too. `DisconnectQueueCapacity` stands for the running server's cap of
+`max_clients` waiting bursts (`disconnect_burst_steady_cap`); the ring is
+`2 * max_clients`, the other half kept for the stop's bursts
+(ServerStopSpread.tla). The stop's seals stay coarsened into `Stop` here;
+ServerStopSpread.tla takes them across the stop steps. A stop or disconnect
+call the fill-phase check refuses changes nothing and is a stutter.
 
 `MCServerSessionTwoClients.cfg` ran past the 110-second budget on the
 2026-11-11 bench (exit 124, recorded as such in `RUNS.tsv`). Run there with no

@@ -16,6 +16,7 @@ its Stop step; this model is the stop as a state machine across steps.
 | `ring`, `head`, `count`, `cursor` | the ring of `RingSize` entries, each a session and its sealed count | `disconnect_bursts`, `disconnect_burst_head`, `disconnect_burst_count`, `disconnect_burst_cursor` |
 | `staged`, `inflight` | frames started since the last flush, and frames flushed that the transport still holds | the staged bank (the io_uring array, the gso producer bank, the IOCP send operations, the RIO fill phase, an XDP queue) |
 | `phase` | `RUNNING`, `STOPPING`, `IOSTOP` (the I/O told to stop), `STOPPED` | `state`, `io_stop_requested`, the I/O's stopped |
+| `held` | copies the development link simulator holds (always 0 with `Simulator = FALSE`) | the simulator's queue; `rocketnet_server_commit_staged` hands it the datagram and aborts the staging slot, so a held copy is neither `staged` nor `inflight` |
 | `jammed` | environment: the transport has lost its send room for good | an XDP queue whose TX wakeup failed hard (`send_hard_error`) with its producer full |
 | `sent`, `owed`, `abandoned`, `refused`, `overflow`, `cut` | ghosts | |
 | `dropped`, `ringFull`, `early` | ghosts: bursts abandoned at a stop step for want of room, the `SEND_RING_FULL` counts those abandons added, and an abandon while room could still return | |
@@ -33,8 +34,8 @@ already spent. `Idle` is `inflight = 0 \/ jammed`: the transport's
 | `Kick(i)` | `rocketnet_server_transport_disconnect_client` on a running server: the burst appended at `( head + count ) % RingSize` while fewer than `SteadyCap` wait, else its copies dropped (the immediate seal is this append and its seals in the same update) |
 | `Stop` | `rocketnet_server_stop`: every connected slot's burst appended (`rocketnet_server_transport_disconnect_client_shutdown`), then STOPPING |
 | `SealOne` | one position of the drain's pass: a complete entry passed over, an unreachable start abandoning its burst, or one packet sealed while `Room > 0`; a completed head leaves with the cursor |
-| `Flush` | the stop step's or the update's flush |
-| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop`; with the development link simulator the step also drains it (`rocketnet_server_link_drain` with `shutdown`) and waits until it holds nothing, so a packet the simulator holds is a flushed send not yet finished (`inflight`) and its drain is `Complete` |
+| `Flush` | the stop step's or the update's flush; with the simulator, also one copy of its shutdown drain (`rocketnet_server_link_drain` with `shutdown`), which re-stages a held copy on a queue and stops once `rocketnet_server_transport_io_send_room` (the fewest free slots over the queues, `FewestRoom`) is 0 |
+| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed, the transport's `send_idle` true (every flushed send finished) and, with the simulator, `link_empty` (it holds nothing, `held = 0`) calls `rocketnet_server_transport_io_stop` |
 | `AbandonNoRoom` | the stop step after its flush (`rocketnet_server_transport_stop_step`) that finds bursts waiting, `send_room` 0, `send_idle` true and `send_room` still 0: every waiting burst is abandoned (key wiped, popped from the head, cursor reset), each one not yet complete counted once as `SEND_RING_FULL`. The reads are not one atomic look: the transport may finish some of its flushed frames before `send_idle` reads idle (the portable transport's `send_idle` publishes its producer and its worker may send it first), which frees room only the second read sees |
 | `IoStopped` | the workers exit; `rocketnet_server_stopped` is true |
 | `Connect(i)` | environment: a client takes a free slot |
@@ -73,6 +74,10 @@ already spent. `Idle` is `inflight = 0 \/ jammed`: the transport's
   I/O stop.
 - `StopFinishesWithoutRoom` (liveness): STOPPING on a jammed transport leads to
   STOPPED.
+- `NoCopyHeldAtStop`: the I/O is told to stop only once the link simulator
+  holds nothing.
+- `StopFinishesWhileUnjammed` (liveness, simulator configs): STOPPING with no
+  queue jammed leads to STOPPED or to a jam.
 
 ## Instance
 
@@ -98,6 +103,19 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadQueues.cfg` | pass, every invariant with two send queues (three connections, bursts of two, a bank of two a queue) |
 | `MCServerStopSpreadQueuesLive.cfg` | pass, `StopFinishes` and `StopFinishesWithoutRoom` under `FairSpec`, two send queues |
 | `MCServerStopSpreadBrokenPooledRoom.cfg` | `StopFinishesWithoutRoom` violated (deadlock check off) |
+| `MCServerStopSpreadSimulator.cfg` | pass, every invariant and `NoCopyHeldAtStop`, two queues, the link simulator on |
+| `MCServerStopSpreadSimulatorLive.cfg` | pass, `StopFinishesWhileUnjammed` under `FairSpec` |
+| `MCServerStopSpreadSimulatorJam.cfg` | `StopFinishesWithoutRoom` violated (deadlock check off): the open code defect below |
+| `MCServerStopSpreadBrokenStopWithHeld.cfg` | `NoCopyHeldAtStop` violated |
+| `MCServerStopSpreadBrokenNoLinkDrain.cfg` | `StopFinishesWhileUnjammed` violated (deadlock check off) |
+
+Measured on aws-mut-3 (TLC 2.19, 8 workers, 2026-11-13): the control 3,506,156
+distinct states in 59.0 s; `Live` and `LiveNoRoom` 804,126 in 67.9 s and
+64.6 s; `Queues` 303,256 in 8.9 s and `QueuesLive` in 56.8 s; `NoAbandon`
+fails at 713,340 in 72.5 s; `PooledRoom` at 162,994 in 18.6 s; the simulator
+configs reach 32,150 distinct states (2.2 s, 4.4 s, and 6.3 s for the jam);
+`StopWithHeld` fails at 187 and `NoLinkDrain` at 2,336. `RUNS.tsv` holds the
+records.
 
 The configs above `QueueCount = 1` are the transport with one send queue. With
 `QueueCount` queues, a connection's bursts go on queue `s % QueueCount`
@@ -116,6 +134,41 @@ room, and the stop step abandons only when the room summed over the queues is
 happens: the stop never finishes. This is the stop hang the unit test
 `test_server_stop_finishes_past_a_jammed_queue`
 (`tests/test_unit_server_send_queues.cpp`) shows red on the code before.
+
+## The link simulator, and an open code defect
+
+With `Simulator = TRUE` a sealed packet goes to the development link
+simulator instead of the staging: `rocketnet_server_commit_staged` hands the
+datagram to the simulator and aborts its staging slot, so `SealOne` raises
+`held` and leaves `staged` alone. The stop step's flush drains the simulator
+with `shutdown` (`rocketnet_server_link_drain`), re-staging held copies one
+by one while `rocketnet_server_transport_io_send_room` is above 0; that room
+is the fewest free slots over the queues, so one full queue stops the drain.
+The stop step calls `rocketnet_server_transport_io_stop` only when
+`link_empty` holds (`rocketnet_server_transport_stop_step`), and nothing in
+the code discards a held copy.
+
+**Open code defect (MM080), owned by the send-queue-capacity follow-up.**
+The stop's abandon branch frees the ring when no queue has room and every
+queue is idle, but it does not touch the simulator. Once a queue is jammed
+for good, `FewestRoom` stays 0, the drain never re-stages a held copy, and
+`link_empty` never holds: the stop never reaches the I/O stop.
+`MCServerStopSpreadSimulatorJam.cfg` is that trace and fails
+`StopFinishesWithoutRoom`, as the code does. TLC's trace: a client connects,
+queue 0 jams, the server stops, both packets of the burst are sealed into the
+simulator (`held = 2`), queue 1 jams, and the run stutters in STOPPING with
+the ring empty, `held = 2` and no room. Against the code by hand: the stop
+step at the merged head reaches the `link_empty` test with
+`disconnect_burst_count == 0`, `link_drain` breaks at once on
+`io_send_room <= 0`, and nothing else empties the simulator. The model takes
+no step the code cannot take; the committed case is expected to fail until
+the code fix lands, and its expected column then turns to pass.
+
+`Defect = "stopwithheld"` drops the `link_empty` test: TLC's trace seals a
+stopping client's burst into the simulator, the ring empties, and the I/O
+stop is requested with `held = 2` (`NoCopyHeldAtStop`). `Defect =
+"nolinkdrain"` removes the drain: with no queue jammed, a held copy never
+leaves and the stop stutters (`StopFinishesWhileUnjammed`).
 
 ## The reversed witnesses
 
@@ -147,10 +200,15 @@ of the drain's loop.
 `Defect = "stopinflight"` tells the I/O to stop once the ring is empty and
 its seals flushed, without waiting for the transport to finish them: TLC's
 trace stops one client, seals and flushes its burst, and requests the I/O
-stop with those frames in flight. On IOCP and RIO the send worker that wakes
-to a stopping transport retires the bank it finds
-(docs/audits/2026-10-24-area-transports-windows.md); the stop step now waits
-for `send_idle` (`rocketnet_server_transport_stop_step`).
+stop with those frames in flight. On IOCP the send turn ends once the
+transport is stopping and no bank is ready (`finish = index < 0 && stopping`
+in `rocketnet_iocp_send_lane_turn`, `sdk/rocketnet_server_iocp_windows.cpp`).
+On RIO, once stopping, `rocketnet_rio_lane_send_room` reports 0 and
+`rocketnet_rio_lane_start_packet` refuses, and `rocketnet_rio_worker` turns to
+`rocketnet_rio_stop_pass` (`sdk/rocketnet_server_rio_windows.cpp`), which
+posts what is ready and closes the socket; closing a UDP socket cancels the
+RIO requests still pending. A send not finished by then is cut. The stop step
+now waits for `send_idle` (`rocketnet_server_transport_stop_step`).
 
 `Defect = "unreachablestalls"` ends the drain at an unreachable start as at a
 full staging: the abandoned burst waits forever and STOPPING never reaches
@@ -197,6 +255,7 @@ each step's work stays bounded by the room.
 
 The model abstracts the seal itself, the key wipe and the allowance of a
 running update (any interleaving of `SealOne` covers every allowance). Room
-is one bank; XDP reports its fullest queue, so its room is conservative. The
-I/O's own stop (the transport's workers and its last flush) is its
+is per queue (`Room(q)`), and `Jam` acts on one queue; the configs with one
+queue are the transport with one send queue. The link simulator is one pool
+of held copies, re-staged on any queue with room. The I/O's own stop (the transport's workers and its last flush) is its
 transport's model's subject.

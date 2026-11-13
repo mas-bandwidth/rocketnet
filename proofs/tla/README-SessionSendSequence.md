@@ -15,15 +15,32 @@ phase rules that keep control sends and fills apart. The ack baseline
 (`rocketnet_*_protocol_highest_sent_session`) is the ack endpoint's
 `highest_sequence`, folded from each sealed sequence.
 
+The server has a third party on the counter: the deferred disconnect burst.
+`rocketnet_server_transport_defer_disconnect_burst`
+(`sdk/rocketnet_server_transport.cpp`) takes the burst's
+`ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS` sequences in one
+`rocketnet_platform_atomic_add_u64` on the mapping's `send_sequence_session`
+(`first_sequence`, `BurstTake`), and
+`rocketnet_server_transport_drain_disconnect_bursts` seals packet `sealed`
+at `first_sequence + sealed`, one at a time and later, under the copied key
+(`BurstSeal`). A failed write or an abandon marks the burst complete and
+burns the rest of its range. The burst's seals are not folded into the ack
+bookkeeping, since the connection has ended, so the baseline invariant
+excludes the burst's range. `BurstTake` and `BurstSeal` are environment
+actions for the two protocol files' COVERAGE rows: their code is in the
+transport, and the client never takes a burst.
+
 Invariants: `TypeOK`, `SequencesUnique`, `NoZeroSequence` and
 `BaselineIsHighestSealed`. Instance: sequences 1..5, two fills, one control
-send.
+send, one burst of two (`Burst = 2`; the code's burst is ten, and two is
+enough for a take of more than one sequence to overlap any other sender).
 
 | Case | Expected | Result |
 |---|---|---|
-| `MCSessionSendSequence.cfg` | pass | 1208 distinct states, every invariant holds |
+| `MCSessionSendSequence.cfg` | pass | every invariant holds; `RUNS.tsv` holds the states and seconds |
 | `MCSessionSendSequenceBrokenReadIncrement.cfg` | `SequencesUnique` violated | exit 12 |
 | `MCSessionSendSequenceBrokenBaseline.cfg` | `BaselineIsHighestSealed` violated | exit 12 |
+| `MCSessionSendSequenceBrokenBurstOne.cfg` | `SequencesUnique` violated | exit 12 |
 
 ## Witness traces, replayed against the code by hand
 
@@ -48,3 +65,13 @@ send through the DEV sequence-taken seam and failed on this before the fix.
 The baseline reads 1, a sequence never sent; the highest sealed is 0. The same
 unit cases check the baseline between the control seal and the fill seal and
 failed on this with the sequence fix alone.
+
+`BrokenBurstOne` takes one sequence for the whole burst (an add of 1 where
+the code adds `ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS`). The trace TLC
+prints is recorded with the run; its shape is: `BurstTake` takes 1 and moves
+the counter to 2, a fill or the control send takes 2 and seals it, and
+`BurstSeal` twice seals 1 and then 2 again. Against the code: the drain
+seals at `first_sequence + sealed` for `sealed` up to nine, so an add of
+less than ten would hand the next sender a sequence inside the burst's
+range; the add at the defer is the full count, so the code has no such
+repeat.

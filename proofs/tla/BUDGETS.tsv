@@ -4,4 +4,5 @@ MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
 MCServerSessionTwoClients.cfg	240	75.202	110.0	vision
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
-MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
+MCServerStopSpreadBrokenNoAbandon.cfg	150	72.483	72.586	bench-xdp-9
+MCServerStopSpreadLive.cfg	140	67.861	67.861	aws-mut-3
