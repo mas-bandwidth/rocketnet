@@ -1719,18 +1719,22 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // Disconnect hands the ended connection's clock to it (rn_client_disconnect),
 // so the update after a disconnect is held to the times before it. A new
 // connection's clock starts at its first update.
+//
+// Update times are finite and non-negative, the first included (rocketnet.h
+// rocketnet_client_update). This clock starts at 0.0, as a connection's
+// message clock is seeded (rn_message_object_create), and takes every time
+// through the same advance: a negative first time is a step back from 0.0,
+// counted and logged, and the clock starts at the first time it accepts, so
+// both clocks agree.
 
 static void rn_client_update_time( struct rocketnet_client_t * client, double time )
 {
-    if ( !client->update_timed && isfinite( time ) )
+    bool clamped = false;
+    client->update_time = rocketnet_update_clock_advance( client->update_time, &client->update_raw_time, &client->update_time_offset, time, &clamped );
+    if ( !clamped )
     {
         client->update_timed = 1;
-        client->update_time = time;
-        client->update_raw_time = time;
-        client->update_time_offset = 0.0;
     }
-
-    client->update_time = rocketnet_update_clock_advance( client->update_time, &client->update_raw_time, &client->update_time_offset, time, NULL );
 }
 
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )

@@ -1253,8 +1253,10 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - Create runs before rocketnet_init, or init refuses its allocator: one
 ///   function NULL, live allocations, or a library already initialized with
 ///   another allocator.
-/// - Update receives a non-finite time or a time that goes backwards, with or
-///   without a connection. The last good time is kept, and the call logs.
+/// - Update receives a non-finite time or a time below the time before it,
+///   with or without a connection. The clock starts at 0.0, so a negative
+///   first time is a step back. The last good time is kept, and the call
+///   logs; later times move the clock on by the caller's steps.
 /// - A started message stays open at update or send_packets. On the server
 ///   every open message is aborted there. On the client an in-place start is
 ///   aborted there (an unreliable message of at most
@@ -2615,9 +2617,10 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// thread-safe; the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and does nothing.
-/// @param time The game clock in seconds, the same clock on every call. A
-/// time that is not finite or goes backwards is clamped to the last good time
-/// and counted as API misuse.
+/// @param time The game clock in seconds, the same clock on every call,
+/// finite and non-negative. The clock starts at 0.0: a time that is not
+/// finite, or is below the time before it (a negative first time is), is
+/// clamped to the last good time and counted as API misuse.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
@@ -2821,10 +2824,19 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 /// LOSS comes only from unreliable receipt messages. Reliable ones, including
 /// unreliable sends that became reliable, report ACKED only; ending a
 /// connection produces no LOSS for them.
-/// The outcomes recorded for a connection remain readable after that
-/// connection ends, until its next update. A receipt-bearing send, reliable
-/// or UNRELIABLE_WITH_ACK_RECEIPT, that is still in flight when its
-/// connection ends gets no terminal outcome.
+/// A connection ended by rocketnet_client_disconnect, or by the message
+/// layer at the end of an update or between updates (a reliable timeout, a
+/// protocol violation, a CONFIG mismatch, memory exhausted), keeps the
+/// outcomes recorded for it readable until the next update or until a
+/// connect ends it, whichever comes first; a connect refused with
+/// ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED, or for a token string that does
+/// not decode, leaves them. A connection the transport ends inside an update
+/// (timed out, disconnected by the server), or that an update ends because a
+/// delivered message was not received, reports no outcomes from that update
+/// on: outcomes recorded since the previous update are dropped. A
+/// receipt-bearing send, reliable or
+/// UNRELIABLE_WITH_ACK_RECEIPT, that is still in flight when its connection
+/// ends gets no terminal outcome.
 ///
 /// Read receipts after update. They remain until the next update.
 /// Reading does not consume them. Repeated reads copy the same first entries.
@@ -3138,9 +3150,10 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /// thread-safe; the caller owns the server one thread at a time.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
-/// @param time The game clock in seconds, the same clock on every call. A
-/// time that is not finite or goes backwards is clamped to the last good time
-/// and counted as API misuse.
+/// @param time The game clock in seconds, the same clock on every call,
+/// finite and non-negative. The clock starts at 0.0: a time that is not
+/// finite, or is below the time before it (a negative first time is), is
+/// clamped to the last good time and counted as API misuse.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
@@ -3602,10 +3615,16 @@ ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// Copies receipts for the client in this slot.
-/// Uses the same rules as rocketnet_client_receipts. For a slot whose
-/// connection has ended, the outcomes recorded for it remain readable
-/// until that slot's next update; a receipt-bearing send still in flight
-/// at the end gets no terminal outcome.
+/// Uses the same rules as rocketnet_client_receipts. For a slot kicked by
+/// rocketnet_server_disconnect_client, or by the message layer at the end of
+/// an update or between updates (a reliable timeout, a protocol violation, a
+/// CONFIG mismatch, memory exhausted), the outcomes recorded for it remain
+/// readable until that slot's next update. A slot whose connection the
+/// transport ends inside an update (timed out, disconnected by the client),
+/// or that an update ends because a delivered message was not received,
+/// reports no outcomes from that update on: outcomes recorded since the
+/// previous update are dropped. A receipt-bearing send still in flight at the end gets no
+/// terminal outcome.
 ///
 /// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

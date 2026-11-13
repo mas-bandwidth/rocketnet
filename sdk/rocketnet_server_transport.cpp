@@ -3287,8 +3287,10 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
         // reported -- on the fall it stays a warn, because a fall is not a
         // failure and an error line would be a lie about the outcome.
 
-        if ( port_zero_refused_names[0] != '\0' )
+        if ( port_zero_refused_names[0] != '\0' && open_refusals == 0 )
         {
+            // only when the port-zero rule is the whole story: a transport
+            // that discovers its port and was tried has its own reason.
             // the remedy does NOT point at the per-rung warns: this error
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
@@ -3297,9 +3299,16 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
                              port_zero_refused_names, rocketnet_transport_discovering_names() );
         }
 
+        // TRANSPORT_PORT_ZERO_UNSUPPORTED says no listed transport can report
+        // the port it was granted, so it is the status only when no candidate
+        // was opened at all. A port-reporting transport that was tried and
+        // refused names its own reason below (a refused bind is
+        // TRANSPORT_BIND_REFUSED), and refusals for different reasons are
+        // NO_TRANSPORT_FOUND.
+
         if ( status )
         {
-            if ( port_zero_refused_names[0] != '\0' )
+            if ( port_zero_refused_names[0] != '\0' && open_refusals == 0 )
             {
                 *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
             }
@@ -3895,18 +3904,82 @@ bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport
     return server_transport->io_stop_requested && rocketnet_server_transport_io_stopped( &server_transport->io );
 }
 
+#if ROCKETNET_DEV
+// rocketnet_dev_set_server_abort_create_hold_hook (sdk/rocketnet_test_seams.h)
+static rocketnet_dev_server_abort_create_hold_function_t * rn_server_abort_create_hold;
+static void * rn_server_abort_create_hold_context;
+
+void rocketnet_dev_set_server_abort_create_hold_hook( rocketnet_dev_server_abort_create_hold_function_t * function, void * context )
+{
+    rn_server_abort_create_hold = function;
+    rn_server_abort_create_hold_context = context;
+}
+#endif // #if ROCKETNET_DEV
+
+// The failed-create unwind waits as the message layer's does
+// (rn_message_link_stop_and_wait, sdk/rocketnet_message_server.cpp): one
+// second, the budget rocketnet_client_destroy polls a worker for.
+static const double RN_SERVER_ABORT_CREATE_WAIT_SECONDS = 1.0;
+
 // A failed create cannot return a live partially constructed object. This
-// private construction-only unwind is allowed to wait; successful objects use
-// the explicit request/completion/destroy contract above.
+// private construction-only unwind waits for the I/O to stop, at most
+// RN_SERVER_ABORT_CREATE_WAIT_SECONDS; successful objects use the explicit
+// request/completion/destroy contract above. On the deadline it logs once
+// and keeps the transport rather than free it under a worker that still
+// owns it; the create still returns its failure status.
 static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport )
 {
     transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
     transport->io_stop_requested = true;
     rocketnet_server_transport_io_stop( &transport->io );
-    while ( !rocketnet_server_transport_stopped( transport ) )
+
+    bool held = false;
+    double now = 0.0;
+#if ROCKETNET_DEV
+    held = rn_server_abort_create_hold != NULL;
+#endif // #if ROCKETNET_DEV
+    if ( !held )
     {
-        rocketnet_platform_sleep( 0.001 );
+        now = rocketnet_platform_time();
     }
+
+    const double deadline = now + RN_SERVER_ABORT_CREATE_WAIT_SECONDS;
+    for ( ;; )
+    {
+        bool stopped = false;
+#if ROCKETNET_DEV
+        if ( held )
+        {
+            stopped = !rn_server_abort_create_hold( rn_server_abort_create_hold_context, transport );
+        }
+#endif // #if ROCKETNET_DEV
+        if ( !held )
+        {
+            stopped = rocketnet_server_transport_stopped( transport );
+        }
+        if ( stopped )
+        {
+            break;
+        }
+
+        if ( now >= deadline )
+        {
+            rocketnet_error( "server transport create: the worker has not exited after %.1f seconds; the transport is kept, not freed",
+                             RN_SERVER_ABORT_CREATE_WAIT_SECONDS );
+            return;
+        }
+
+        if ( held )
+        {
+            now += 0.001;
+        }
+        else
+        {
+            rocketnet_platform_sleep( 0.001 );
+            now = rocketnet_platform_time();
+        }
+    }
+
     rocketnet_server_transport_destroy( transport );
 }
 

@@ -219,8 +219,9 @@ makes the same checks required on `main` itself.
 6. `python3 tools/release.py <version> <commit>`. What the tool does:
    - checks the version format, that the commit is on `main` (an ancestor of
      `origin/main`), that the shipping `ROCKETNET_VERSION_FULL` at the commit
-     equals the version, that the notes file exists at the commit and that the
-     tag does not exist;
+     equals the version, that the notes file exists at the commit, that the
+     tag does not exist and that the version is not below the newest version
+     tag (the release is published as latest);
    - judges every gate in force for the version (above) and refuses on any red;
    - creates the annotated tag `vMAJOR.MINOR.PATCH[-PRERELEASE]` on the commit
      and pushes it;

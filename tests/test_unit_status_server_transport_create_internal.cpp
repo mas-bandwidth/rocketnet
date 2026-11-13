@@ -19,6 +19,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_test_seams.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -329,3 +330,85 @@ static void test_protocol_id_zero_refused( void )
 }
 
 REGISTER_UNIT_TEST( test_protocol_id_zero_refused );
+
+#if ROCKETNET_DEV
+// A failed create's unwind waits for its transport to stop at most one
+// second. The hold seam (rocketnet_test_seams.h) answers the stopped query as
+// not stopped and counts polls, on a counter clock each poll advances by 1 ms;
+// past the ceiling the case fails, so a wait with no deadline cannot hang the
+// suite. The create still returns NULL with its failure status, the deadline
+// logs once, and the transport is kept, not freed: the case stops and
+// destroys it. The failure is a second loopback server on a port the first
+// holds, so the create fails after its transport is allocated. No socket.
+
+struct abort_create_hold_t
+{
+    int polls;
+    int ceiling;
+    int logged;
+    struct rocketnet_server_transport_t * kept;
+};
+
+static int abort_create_hold( void * context, struct rocketnet_server_transport_t * transport )
+{
+    abort_create_hold_t * hold = (abort_create_hold_t *) context;
+    hold->polls++;
+    hold->kept = transport;
+    if ( hold->polls > hold->ceiling )
+    {
+        rocketnet_unit_check( 0 );
+    }
+    return 1;
+}
+
+static void abort_create_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "the transport is kept, not freed" ) != NULL )
+    {
+        ( (abort_create_hold_t *) context )->logged++;
+    }
+}
+
+static void test_server_transport_failed_create_wait_is_bounded()
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    memset( config.backend_public_key, 0x42, 32 );
+    memset( config.server_public_key, 0x43, 32 );
+    memset( config.server_secret_key, 0x44, 32 );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.max_clients = 1;
+    config.protocol_id = 1;
+
+    int status = -1;
+    struct rocketnet_server_transport_t * holder = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40777", &config, 1000.0, &status );
+    rocketnet_unit_check( holder != NULL );
+    rocketnet_unit_check( status == ROCKETNET_STATUS_OK );
+
+    abort_create_hold_t hold = {};
+    hold.ceiling = 1000 + 4;
+
+    rocketnet_dev_set_server_abort_create_hold_hook( abort_create_hold, &hold );
+    rocketnet_log_function( abort_create_log, &hold );
+
+    status = -1;
+    struct rocketnet_server_transport_t * second = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40777", &config, 1000.0, &status );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_dev_set_server_abort_create_hold_hook( NULL, NULL );
+
+    rocketnet_unit_check( second == NULL );
+    rocketnet_unit_check( status != ROCKETNET_STATUS_OK && status != -1 );
+    rocketnet_unit_check( hold.logged == 1 );
+    rocketnet_unit_check( hold.polls >= 1000 );
+    rocketnet_unit_check( hold.kept != NULL );
+
+    rocketnet_unit_check( rocketnet_server_transport_stopped( hold.kept ) );
+    rocketnet_server_transport_destroy( hold.kept );
+    rn_test_server_transport_stop_and_destroy( holder );
+}
+
+REGISTER_UNIT_TEST( test_server_transport_failed_create_wait_is_bounded );
+#endif // #if ROCKETNET_DEV

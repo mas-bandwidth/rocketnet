@@ -62,6 +62,30 @@ void rocketnet_dev_session_sequence_taken( uint64_t sequence );
 typedef int rocketnet_dev_link_stop_wait_hold_function_t( void * context );
 
 void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context );
+
+// The server transport's failed-create stop hold. While set, the unwind of a
+// failed server transport create (rocketnet_server_transport_abort_create in
+// sdk/rocketnet_server_transport.cpp) treats the transport as not stopped
+// and calls this once per poll, with the transport, instead of sleeping on
+// the platform clock: its 1 s deadline runs on a counter clock each poll
+// advances by 1 ms. Return 1 to keep polling, 0 when the worker has stopped.
+// A transport kept at the deadline is the test's to stop and destroy. NULL
+// is the transport's own stopped(). Per process, null by default.
+
+struct rocketnet_server_transport_t;
+
+typedef int rocketnet_dev_server_abort_create_hold_function_t( void * context, struct rocketnet_server_transport_t * transport );
+
+void rocketnet_dev_set_server_abort_create_hold_hook( rocketnet_dev_server_abort_create_hold_function_t * function, void * context );
+
+// The POSIX wake create failure seam: while nonzero, every
+// rocketnet_platform_wake_create fails at its kernel object (the kqueue, the
+// eventfd or the pipe) as if the call had set errno to this value, so a unit
+// case reaches the create's failure status without exhausting the kernel.
+// Per process, 0 by default. Defined in sdk/rocketnet_platform.cpp (POSIX).
+
+void rocketnet_dev_fail_wake_create( int error );
+
 // The server keygen failure seam: while set, rocketnet_server_create fails
 // its X25519 key generation / derivation step as if
 // rocketnet_generate_server_keypair / crypto_scalarmult_base had failed, so

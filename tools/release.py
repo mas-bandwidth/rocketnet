@@ -9,7 +9,9 @@ tools/release_gates.py. In order:
  1. Preconditions: the version is vMAJOR.MINOR.PATCH[-PRERELEASE]; the commit is
     on main (an ancestor of origin/main); sdk/rocketnet.h's shipping
     ROCKETNET_VERSION_FULL at the commit equals the version;
-    docs/RELEASE-NOTES-<version>.md exists at the commit; the tag does not exist.
+    docs/RELEASE-NOTES-<version>.md exists at the commit; the tag does not exist;
+    the version is not below the newest vMAJOR.MINOR.PATCH[-PRERELEASE] tag,
+    since a release is published as latest.
  2. Every gate in force for the version, for exactly that commit, each printed
     with its run id and conclusion: the per-commit push run on main of each
     per-commit workflow, the nightly tier (Nightly CI, CBMC, TLC records and

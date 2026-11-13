@@ -201,6 +201,17 @@ def paged(api, path, key, params=None, max_pages=30):
     raise ApiError(f"GET {path}: more than {max_pages} pages")
 
 
+def newest_version_tag(api, repo):
+    """The highest vMAJOR.MINOR.PATCH[-PRERELEASE] tag in the repository by
+    version order, or None when there is none; other tags are ignored."""
+    refs = api.get(f"/repos/{repo}/git/matching-refs/tags/v")
+    if not isinstance(refs, list):
+        raise ApiError(f"GET /repos/{repo}/git/matching-refs/tags/v: not a list")
+    names = [r.get("ref", "").rsplit("/", 1)[-1] for r in refs]
+    versions = [n for n in names if VERSION.match(n)]
+    return max(versions, key=version_key) if versions else None
+
+
 def file_at(api, repo, path, ref):
     """Text of a file at a ref, or None when the file is not there."""
     try:
@@ -584,6 +595,12 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
                       f"--resume waits for its Release Check and publishes)", file=out)
         except NotFound:
             say(True, f"tag {version} does not exist yet")
+        # a release is published as latest: one below a version already
+        # tagged would take latest from it
+        newest = newest_version_tag(api, repo)
+        if newest is not None:
+            say(version_key(version) >= version_key(newest),
+                f"version {version} is not below the newest version tag {newest}")
 
     contexts = required_contexts(api, repo, sha)
     point = is_point_release(version)
