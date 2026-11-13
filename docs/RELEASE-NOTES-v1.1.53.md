@@ -61,6 +61,10 @@ The branches merged, at these commits:
 - `fix/v1.1.x/ordered-duplicate-scan`: `2dd95eb38c64f2a828b6b70ae036fcee33b9396d`
 - `fix/v1.1.x/sequenced-acked-holds`: `8c6c753420ac5b0ca13b52edc36453603a7514dc`
 - `roadmap/flaky-macos-reply-later-update`: `9d4dfd86395700e020e09ec2ee6a94865e5aa5e7`
+- `fix/v1.1.x/trace-reach-shard`: `3f0bf70355a1dd94f32aa92dc4bc0acd55cdc8a3` (tests
+  only: the per-commit trace check may run a layer's reach predicates in a shard of
+  their own, and msgx's run beside its fourth seed, so its first seed's shard stays
+  under the job's 2-minute cap)
 
 - Tag: `v1.1.53`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.53).
