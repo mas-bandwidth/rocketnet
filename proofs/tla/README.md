@@ -151,6 +151,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsendstore` | One store class, abstractly (README-RNSendStore.md). |
 | `rnsendstorelayout` | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md). |
 | `rnupdateclock` | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md). |
+| `rncreateunwind` | Who owns a transport whose create fails after its worker started: the unwind waits, frees, or hands it to a retained slot (README-RNCreateUnwind.md). |
 | `rnclienttransportorder` | The client transport order at create with the family fallback (README-RNClientTransportOrder.md). |
 | `rnring` | Existing committed control and four invariant witnesses |
 | `rnsendspans` | Send-span ring storage and ownership. |

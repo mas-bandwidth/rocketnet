@@ -195,6 +195,23 @@ class Release(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("a tag is never moved", text)
 
+    def test_version_below_the_newest_tag_refuses(self):
+        api = green_release(FakeApi())
+        api.tags["v1.2.1"] = OTHER
+        api.tags["v1.10.0-rc1"] = OTHER
+        code, text = run_release(api)
+        self.assertEqual(code, 1)
+        self.assertIn(f"FAIL  version {VERSION} is not below the newest version tag v1.10.0-rc1", text)
+
+    def test_version_above_every_tag_passes(self):
+        api = green_release(FakeApi())
+        api.tags["v1.1.9"] = OTHER
+        api.tags["v1.2.0-rc2"] = OTHER
+        api.tags["nightly"] = OTHER
+        code, text = run_release(api)
+        self.assertEqual(code, 0, text)
+        self.assertIn(f"PASS  version {VERSION} is not below the newest version tag v1.2.0-rc2", text)
+
     def test_newest_completed_run_decides(self):
         api = green_release(FakeApi())
         api.add_run("cbmc.yml", [job("cbmc (arithmetic leaf proofs)", "failure")], SHA, "schedule",
