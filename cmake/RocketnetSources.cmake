@@ -83,12 +83,21 @@ set(ROCKETNET_SDK_SOURCES
 set(ROCKETNET_SDK_SOURCES_EXCLUDED
     sdk/rocketnet_tests.cpp)
 
-# Let tools/check_sdk_sources.py read the same lists the build compiles.
+# Let tools/check_sdk_sources.py read these lists: the five groups, one
+# "<group> <path>" row each, and, to a second file, the aggregate
+# ROCKETNET_SDK_SOURCES the build compiles (CMakeLists.txt), one path per row,
+# so a group left out of the aggregate can be seen.
 if(DEFINED ROCKETNET_SDK_SOURCE_LIST_OUTPUT)
     file(WRITE "${ROCKETNET_SDK_SOURCE_LIST_OUTPUT}" "")
     foreach(group COMMON LINUX APPLE WINDOWS EXCLUDED)
         foreach(source IN LISTS ROCKETNET_SDK_SOURCES_${group})
             file(APPEND "${ROCKETNET_SDK_SOURCE_LIST_OUTPUT}" "${group} ${source}\n")
         endforeach()
+    endforeach()
+endif()
+if(DEFINED ROCKETNET_SDK_SOURCE_AGGREGATE_OUTPUT)
+    file(WRITE "${ROCKETNET_SDK_SOURCE_AGGREGATE_OUTPUT}" "")
+    foreach(source IN LISTS ROCKETNET_SDK_SOURCES)
+        file(APPEND "${ROCKETNET_SDK_SOURCE_AGGREGATE_OUTPUT}" "${source}\n")
     endforeach()
 endif()
