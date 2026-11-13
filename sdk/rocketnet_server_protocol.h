@@ -145,9 +145,10 @@ struct rocketnet_server_protocol_t
     uint64_t * acked_connection_ids;
     // why each slot's last connection ended, a ROCKETNET_DISCONNECT_REASON_*:
     // written by rocketnet_server_connection_reset with the ending path's
-    // reason (TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED, NONE for
-    // the integrity limit) and cleared to NONE when the slot is next
-    // assigned. NULL, as connection_ids, in a protocol built without it.
+    // reason (TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED,
+    // PROTOCOL_VIOLATION for the integrity limit) and cleared to NONE when
+    // the slot is next assigned. NULL, as connection_ids, in a protocol
+    // built without it.
     int * end_reasons;
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
