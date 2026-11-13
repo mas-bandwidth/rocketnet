@@ -150,6 +150,18 @@ jobs:
           # exec binaries below run under the same bound: each is one functional
           # case per commit, inside its 120 s case limit.
           limit=300
+          one() {
+            out="$logs/case.$1.log"
+            inspect "$out" "$bin" $run "$1" || { echo "TIMEOUT $1 after ${limit}s"; return 1; }
+            # an exec binary's own lines name no registered case: the suite answers "unknown ... test".
+            # Only those names (inspected whole below) may answer so; any other unknown is red.
+            if grep -q "^unknown .* test $1\$" "$out"; then
+              case " $exec_names " in *" $1 "*) rm -f "$out"; return 0 ;; esac
+              echo "UNKNOWN $1: the suite printed it but does not run it"; return 1
+            fi
+            if grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$out"; then rm -f "$out"; return 0; fi
+            echo "LEAKS $1"; grep -E 'Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1
+          }
           # inspect <log> <command...>: the command under leaks --atExit in its own
           # process group; 1 when it ran past the limit and its group was killed
           inspect() {
@@ -163,20 +175,8 @@ jobs:
             wait "$pid"
             return 0
           }
-          one() {
-            out="$logs/case.$1.log"
-            inspect "$out" "$bin" $run "$1" || { echo "TIMEOUT $1 after ${limit}s"; return 1; }
-            # an exec binary's own lines name no registered case: the suite answers "unknown ... test".
-            # Only those names (inspected whole below) may answer so; any other unknown is red.
-            if grep -q "^unknown .* test $1\$" "$out"; then
-              case " $exec_names " in *" $1 "*) rm -f "$out"; return 0 ;; esac
-              echo "UNKNOWN $1: the suite printed it but does not run it"; return 1
-            fi
-            if grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$out"; then rm -f "$out"; return 0; fi
-            echo "LEAKS $1"; grep -E 'Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1
-          }
           exec_names="test_transport_control test_msgx"
-          export -f inspect one; export bin logs run limit exec_names
+          export -f one; export -f inspect; export bin logs run limit exec_names
           xargs -P "$jobs" -I{} bash -c 'one "$@"' _ {} < "$logs/names.txt"; bad=$?
           if [ "$(basename "$bin")" = functional ]; then
             for x in $exec_names; do
