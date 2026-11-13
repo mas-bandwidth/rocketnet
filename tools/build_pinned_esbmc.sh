@@ -21,13 +21,108 @@
 # Usage: bash tools/build_pinned_esbmc.sh <prefix> <esbmc version>
 #   A prefix already holding this toolchain-id is left as it is. A version
 #   with no sha256 here is refused. ESBMC is installed at <prefix>/bin/esbmc;
-#   its dependencies under <prefix>/deps.
+#   its dependencies under <prefix>/deps. A download whose sha256 is not the
+#   pinned one stops the build with exit 1, naming the file.
+# bash tools/build_pinned_esbmc.sh --self-test
+#   checks fetch's refusals on a local fixture (file:// URLs, no network).
 #
 # Host needs: a C and C++ compiler (cc, c++), cmake, ninja, python3, curl,
 # tar, xz, bzip2, shasum, and about 40 GB free under TMPDIR. On macOS the
 # Xcode or command line tools SDK (ESBMC parses against it). A missing tool
 # is reported as TOOL-MISSING and the script exits 1 without building.
 set -euo pipefail
+
+# fetch <url> <sha256> <directory>: download into $work, verify, unpack into
+# its own empty directory, and set fetched to the single top-level directory
+# it holds. Every step is checked here and a failure exits the script: fetch
+# never relies on errexit, which bash clears inside a command substitution
+# (so fetch sets a variable rather than printing for a $(...) caller).
+fetched=
+fetch() {
+    local url=$1 sha=$2 dir=$3 file got
+    fetched=
+    file="$work/$(basename "$url")"
+    if ! curl -fsSL -o "$file" "$url"; then
+        echo "build_pinned_esbmc: download failed: $url" >&2
+        exit 1
+    fi
+    got=$(shasum -a 256 "$file" | cut -d' ' -f1)
+    if [ "$got" != "$sha" ]; then
+        echo "build_pinned_esbmc: sha256 mismatch for $(basename "$file"): pinned $sha, got ${got:-no digest}" >&2
+        rm -f "$file"
+        exit 1
+    fi
+    if ! mkdir -p "$dir" || ! tar -xf "$file" -C "$dir"; then
+        echo "build_pinned_esbmc: could not unpack $(basename "$file") into $dir" >&2
+        exit 1
+    fi
+    rm -f "$file"
+    fetched=$(find "$dir" -mindepth 1 -maxdepth 1 -type d | head -1)
+    if [ -z "$fetched" ]; then
+        echo "build_pinned_esbmc: $(basename "$file") holds no top-level directory" >&2
+        exit 1
+    fi
+}
+
+# --self-test: a fixture tarball fetched by file:// URL. The pinned digest
+# unpacks; a wrong digest exits 1 naming the file and unpacks nothing. Each
+# call runs where errexit does not act (a subshell on the left of && / ||,
+# and an `if` condition), so only fetch's own checks can stop it.
+self_test() {
+    local fixture right bad out status failures=0
+    work=$(mktemp -d "${TMPDIR:-/tmp}/pinned-esbmc-selftest.XXXXXX")
+    trap 'rm -rf "$work"' EXIT
+    fixture="$work/fixture"
+    mkdir -p "$fixture/src/pkg-1.0"
+    echo "content" > "$fixture/src/pkg-1.0/file"
+    tar -cf "$fixture/pkg.tar" -C "$fixture/src" pkg-1.0
+    right=$(shasum -a 256 "$fixture/pkg.tar" | cut -d' ' -f1)
+    bad=0000000000000000000000000000000000000000000000000000000000000000
+
+    out=$( (fetch "file://$fixture/pkg.tar" "$right" "$work/good" && echo "$fetched") 2>&1 ) && status=0 || status=$?
+    if [ "$status" -ne 0 ] || [ "$out" != "$work/good/pkg-1.0" ]; then
+        echo "FAIL pinned digest: status $status, output '$out'"
+        failures=$((failures + 1))
+    else
+        echo "PASS pinned digest unpacks"
+    fi
+
+    out=$( (fetch "file://$fixture/pkg.tar" "$bad" "$work/plain"; echo "after fetch") 2>&1 ) && status=0 || status=$?
+    case "$status:$out" in
+        1:*"sha256 mismatch for pkg.tar"*) ;;
+        *) echo "FAIL wrong digest: status $status, output '$out'"; failures=$((failures + 1)) ;;
+    esac
+    case "$out" in
+        *"after fetch"*) echo "FAIL wrong digest: the caller went on"; failures=$((failures + 1)) ;;
+    esac
+    if [ -e "$work/plain" ]; then
+        echo "FAIL wrong digest: unpacked unverified content"
+        failures=$((failures + 1))
+    fi
+
+    out=$( (if fetch "file://$fixture/pkg.tar" "$bad" "$work/cond"; then echo "condition true"; fi; echo "after condition") 2>&1 ) && status=0 || status=$?
+    case "$status:$out" in
+        1:*"sha256 mismatch for pkg.tar"*) ;;
+        *) echo "FAIL wrong digest as a condition: status $status, output '$out'"; failures=$((failures + 1)) ;;
+    esac
+
+    out=$( (fetch "file://$fixture/absent.tar" "$right" "$work/absent"; echo "after fetch") 2>&1 ) && status=0 || status=$?
+    case "$status:$out" in
+        1:*"download failed: file://$fixture/absent.tar"*) ;;
+        *) echo "FAIL failed download: status $status, output '$out'"; failures=$((failures + 1)) ;;
+    esac
+
+    if [ "$failures" -ne 0 ]; then
+        echo "build_pinned_esbmc self-test: $failures failed"
+        exit 1
+    fi
+    echo "build_pinned_esbmc self-test: 4 cases passed"
+    exit 0
+}
+
+if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
+    self_test
+fi
 
 if [ "$#" -ne 2 ]; then
     echo "usage: build_pinned_esbmc.sh <prefix> <esbmc version>" >&2
@@ -84,26 +179,13 @@ fi
 
 jobs=$(getconf _NPROCESSORS_ONLN)
 
-# fetch <url> <sha256> <directory>: download, verify, unpack into its own
-# empty directory, and print the single top-level directory it holds
-fetch() {
-    local url=$1 sha=$2 dir=$3 file
-    file="$work/$(basename "$url")"
-    curl -fsSL -o "$file" "$url"
-    echo "$sha  $file" | shasum -a 256 -c - >&2
-    mkdir -p "$dir"
-    tar -xf "$file" -C "$dir"
-    rm -f "$file"
-    find "$dir" -mindepth 1 -maxdepth 1 -type d | head -1
-}
-
 rm -rf "$prefix"
 deps="$prefix/deps"
 mkdir -p "$deps"
 
 # LLVM and clang: static libraries, the two targets ESBMC parses for, nothing
 # the frontend does not link
-llvm_src=$(fetch "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvm_version/llvm-project-$llvm_version.src.tar.xz" "$llvm_sha256" "$work/llvm")
+fetch "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvm_version/llvm-project-$llvm_version.src.tar.xz" "$llvm_sha256" "$work/llvm"; llvm_src=$fetched
 cmake -G Ninja -S "$llvm_src/llvm" -B "$work/llvm-build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$deps" \
@@ -118,7 +200,7 @@ ninja -C "$work/llvm-build" -j "$jobs" install
 rm -rf "$work/llvm" "$work/llvm-build"
 
 # Z3: the static library and headers
-z3_src=$(fetch "https://github.com/Z3Prover/z3/archive/refs/tags/z3-$z3_version.tar.gz" "$z3_sha256" "$work/z3")
+fetch "https://github.com/Z3Prover/z3/archive/refs/tags/z3-$z3_version.tar.gz" "$z3_sha256" "$work/z3"; z3_src=$fetched
 cmake -G Ninja -S "$z3_src" -B "$work/z3-build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$deps" \
@@ -132,7 +214,7 @@ rm -rf "$work/z3" "$work/z3-build"
 
 # Boost: the compiled libraries ESBMC links, static, with no
 # compression backends (ESBMC reads goto binaries from memory only)
-boost_src=$(fetch "https://archives.boost.io/release/$boost_version/source/boost_${boost_version//./_}.tar.bz2" "$boost_sha256" "$work/boost")
+fetch "https://archives.boost.io/release/$boost_version/source/boost_${boost_version//./_}.tar.bz2" "$boost_sha256" "$work/boost"; boost_src=$fetched
 ( cd "$boost_src" \
   && ./bootstrap.sh --with-libraries=date_time,program_options,iostreams,filesystem --prefix="$deps" \
   && ./b2 -j "$jobs" link=static variant=release threading=multi \
@@ -142,11 +224,11 @@ rm -rf "$work/boost"
 
 # ESBMC: FetchContent takes each library from its verified tree; LLVM and Z3
 # come from deps, so nothing is downloaded at configure time
-fmt_src=$(fetch "https://github.com/fmtlib/fmt/archive/refs/tags/$fmt_version.tar.gz" "$fmt_sha256" "$work/fmt")
-json_src=$(fetch "https://github.com/nlohmann/json/releases/download/v$json_version/json.tar.xz" "$json_sha256" "$work/json")
-yaml_src=$(fetch "https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-$yaml_version.tar.gz" "$yaml_sha256" "$work/yaml-cpp")
-immer_src=$(fetch "https://github.com/arximboldi/immer/archive/refs/tags/v$immer_version.tar.gz" "$immer_sha256" "$work/immer")
-esbmc_src=$(fetch "https://github.com/esbmc/esbmc/archive/refs/tags/$esbmc_tag.tar.gz" "$esbmc_sha256" "$work/esbmc")
+fetch "https://github.com/fmtlib/fmt/archive/refs/tags/$fmt_version.tar.gz" "$fmt_sha256" "$work/fmt"; fmt_src=$fetched
+fetch "https://github.com/nlohmann/json/releases/download/v$json_version/json.tar.xz" "$json_sha256" "$work/json"; json_src=$fetched
+fetch "https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-$yaml_version.tar.gz" "$yaml_sha256" "$work/yaml-cpp"; yaml_src=$fetched
+fetch "https://github.com/arximboldi/immer/archive/refs/tags/v$immer_version.tar.gz" "$immer_sha256" "$work/immer"; immer_src=$fetched
+fetch "https://github.com/esbmc/esbmc/archive/refs/tags/$esbmc_tag.tar.gz" "$esbmc_sha256" "$work/esbmc"; esbmc_src=$fetched
 cmake -G Ninja -S "$esbmc_src" -B "$work/esbmc-build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
