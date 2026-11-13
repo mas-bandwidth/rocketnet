@@ -1094,6 +1094,12 @@ bool rocketnet_server_transport_update_acks( struct rocketnet_server_transport_t
  * @param server_transport [in,out] Created transport; NULL is a counted no-op.
  */
 void rocketnet_server_transport_update_end( struct rocketnet_server_transport_t * server_transport );
+
+#if ROCKETNET_DEV
+struct rocketnet_ack_endpoint_t;
+/** @brief A client's ack endpoint, for a test comparing two servers' delivery state (tests/server_ack_phase_cases.cpp); NULL out of range. */
+const struct rocketnet_ack_endpoint_t * rocketnet_server_transport_ack_endpoint_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index );
+#endif // #if ROCKETNET_DEV
 // internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 

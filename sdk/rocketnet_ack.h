@@ -673,4 +673,14 @@ int rocketnet_server_acks_client_acked( const struct rocketnet_server_acks_t * a
 void rocketnet_server_acks_gather( struct rocketnet_server_acks_t * acks, uint64_t * connection_ids,
                                    uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter );
 
+#if ROCKETNET_DEV
+// the test seams (tests/server_ack_phase_cases.cpp), read at each update's
+// start and each defer, on the updating thread: direct 1 leaves the update
+// applying each block in the receive loop, the serial reference the ack
+// phase is compared with; entry_capacity above 0 and below the entries an
+// update defers before it spills
+extern int rocketnet_server_acks_test_direct;
+extern int rocketnet_server_acks_test_entry_capacity;
+#endif // #if ROCKETNET_DEV
+
 #endif // ROCKETNET_SDK_ROCKETNET_ACK_H

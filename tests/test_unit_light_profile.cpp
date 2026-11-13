@@ -139,7 +139,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on Windows, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468709567 )
+// The ack phase's per-client segment, entries, block store and line (the
+// Linux note below) add 33860515 bytes to the server: computed from the Linux
+// reading, not measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502570082 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14214460 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -195,7 +198,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client: computed, not measured
 // on macOS, from the 48000 and the 64 Linux measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468709983 )
+// The ack phase's per-client segment, entries, block store and line (the
+// Linux note below) add 33860515 bytes to the server: computed from the Linux
+// reading, not measured on macOS.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502570498 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992202 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -285,8 +291,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
 // clients, and one 64-byte rounding to the client (measured alone on the ack
 // branch, gcc Debug, +48000 and +64; added here to the wide fill's figures,
-// computed, not re-read on the merged tree).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110885619ULL )
+// computed, and read on the merged tree: bench-nyc-5, gcc, Debug, the case
+// passes at 39b8fb9e4).
+// The ack phase (sdk/rocketnet_ack.h, SERVER-UPDATE-ACK.md P3) keeps, per
+// client, a segment of ROCKETNET_SENT_PACKET_BUFFER_SIZE acked ids (32768
+// bytes), 16 deferred-block entries (512), 512 bytes of deferred blocks, its
+// ack-phase line (64) and its place in the pending list (4): 33860515 bytes
+// at 1000 clients with the allocation overheads and struct growth (measured,
+// bench-nyc-5, gcc, Debug: actual=3145794710), nothing to the client.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3144746134ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141858 )
 #endif // #if defined( _WIN32 )
 

@@ -4017,6 +4017,17 @@ void rocketnet_server_transport_update_end( struct rocketnet_server_transport_t 
     }
 }
 
+#if ROCKETNET_DEV
+const struct rocketnet_ack_endpoint_t * rocketnet_server_transport_ack_endpoint_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !server_transport || !server_transport->protocol.acks || client_index < 0 || client_index >= server_transport->protocol.acks->max_clients )
+    {
+        return NULL;
+    }
+    return &server_transport->protocol.acks->endpoints[client_index];
+}
+#endif // #if ROCKETNET_DEV
+
 static bool rocketnet_server_transport_update_receive( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

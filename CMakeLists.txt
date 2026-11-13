@@ -1062,7 +1062,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # (which starts no thread). No socket (the development loopback driver),
     # no real time. CI runs it in the functional legs and under tsan.
     if(ROCKETNET_DEV)
-        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp)
+        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp tests/server_ack_phase_cases.cpp)
         target_include_directories(test_wide_fill PRIVATE tests)
         target_link_libraries(test_wide_fill PRIVATE rocketnet_dev Threads::Threads)
         rocketnet_use_sodium(test_wide_fill)

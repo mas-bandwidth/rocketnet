@@ -2460,12 +2460,23 @@ static int rocketnet_server_ack_stored_bytes( int num_ranges )
     return ( bytes + 7 ) & ~7;
 }
 
+#if ROCKETNET_DEV
+int rocketnet_server_acks_test_direct = 0;
+int rocketnet_server_acks_test_entry_capacity = 0;
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_server_acks_begin_update( struct rocketnet_server_acks_t * acks, double time )
 {
     rocketnet_assert( acks );
     rocketnet_assert( acks->num_pending_clients == 0 );
 
     acks->mode = ROCKETNET_SERVER_ACKS_DEFERRING;
+#if ROCKETNET_DEV
+    if ( rocketnet_server_acks_test_direct )
+    {
+        acks->mode = ROCKETNET_SERVER_ACKS_DIRECT;
+    }
+#endif // #if ROCKETNET_DEV
     acks->time = time;
     acks->num_entries = 0;
     acks->store_bytes = 0;
@@ -2483,9 +2494,17 @@ bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks, int cli
         return false;
     }
 
+    int entry_capacity = acks->entry_capacity;
+#if ROCKETNET_DEV
+    if ( rocketnet_server_acks_test_entry_capacity > 0 && rocketnet_server_acks_test_entry_capacity < entry_capacity )
+    {
+        entry_capacity = rocketnet_server_acks_test_entry_capacity;
+    }
+#endif // #if ROCKETNET_DEV
+
     const int num_ranges = block->num_ranges < 0 ? 0 : block->num_ranges;
     const int bytes = rocketnet_server_ack_stored_bytes( num_ranges );
-    if ( acks->num_entries >= acks->entry_capacity || acks->store_bytes + bytes > acks->store_capacity )
+    if ( acks->num_entries >= entry_capacity || acks->store_bytes + bytes > acks->store_capacity )
     {
         return false;
     }
