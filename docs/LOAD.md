@@ -18,16 +18,16 @@ one 1,415-byte message (`ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1`, which fits one
 1,500-byte MTU packet) per 100 ms in each direction at 10 Hz. It does not
 change public defaults; the `default` profile remains the stock acceptance.
 
-## Low-bandwidth population ladder
+## Low-bandwidth population steps
 
-The requested ladder is 10, 100, 250, 500 and 1,000 clients. At each rung,
+The requested steps is 10, 100, 250, 500 and 1,000 clients. At each rung,
 offer one 32-byte application message per client per second in each direction
 with the fixed-rate option below. For the stock 1,000-client acceptance, run
 the `default` profile so the result covers SDK-default sizing. The `light`
 profile is a separate, additional bounded-memory workload; it cannot substitute
 for the default-profile acceptance. The current `bin/load` harness is capped
 at the build's `ROCKETNET_MAX_CLIENTS` (1,000 by default) and records no
-fixed-rate ladder results (below). The
+fixed-rate step results (below). The
 recorded 1,000-client results are the LAN proof cells in
 [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md)
 ([Linux gso and io_uring](runs/lan-1000-proof-linux.md),
@@ -50,7 +50,7 @@ population, profile, transports and receipt. Report the highest population that
 passed all functional and rate criteria, the first population with a functional
 failure, and any higher population blocked by a capacity guard as `UNRUN`.
 A capacity refusal is not a functional failure, and an unrun rung has no pass
-result. Product documentation records no current ladder results.
+result. Product documentation records no current step results.
 
 `bin/load` puts the public server and all clients in one process on loopback.
 Its byte and rate counters measure this colocated logic workload; they do not
@@ -76,7 +76,7 @@ endpoint. The receipt reports `client_public_required_bytes`,
 `total_public_required_bytes = server + clients * client`. A zero required
 size, arithmetic overflow or failed SDK termination returns a FAIL receipt and
 nonzero exit. Required-memory figures bound allocator memory over the
-lifecycle for the largest planned built-in transport in the configured ladder,
+lifecycle for the largest planned built-in transport in the configured transports,
 including create and connect/start allocations. Development builds include the
 link simulator. Operating-system-owned memory, custom-transport allocations
 and configuration or environment overrides changed after planning remain
@@ -191,7 +191,7 @@ require both per-client maxima to stay strictly below 100 kbps; the summary
 reports `client_wire_under_100kbps`. `session_*_wire_bytes_*` covers
 handshake, traffic and drain before teardown, as labeled by
 `wire_session_scope`. These SDK counters do not establish the physical NIC's
-line rate, so a scaling ladder must compare its aggregate measured traffic
+line rate, so a scaling series must compare its aggregate measured traffic
 with the actual host link capacity separately. The fixed-rate workload has
 `timing_baseline=fixed_rate_v1`; compare its frame timings only with runs that
 share rate, population, transport and measurement scope.
@@ -491,14 +491,14 @@ requirements to each configuration group:
 ### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_queues`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
 
 - **Transport selection (`transport`)**:
-  - Leaving `transport = NULL` or `"auto"` selects the platform ladder (`xdp -> gso -> io_uring -> portable`
+  - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> gso -> io_uring -> portable`
     on Linux server; `gso -> portable` on Linux client; `msgx -> portable` on
     macOS; production Windows servers prefer `iocp -> rio -> portable`, while
     development Windows servers prefer `portable -> iocp -> rio`).
   - Because `rocketnet_server_required_memory` and `rocketnet_client_required_memory`
     are called **before** `rocketnet_server_start` / `rocketnet_client_connect`
-    probes the host, an unpinned ladder must size the caller allocator for the
-    largest compiled-in candidate in that ladder (`xdp` on a Linux server build
+    probes the host, an unpinned transport order must size the caller allocator for the
+    largest compiled-in candidate in that order (`xdp` on a Linux server build
     with `ROCKETNET_XDP=ON`).
   - If a deployment will run on `gso` or `portable` (for example in a container
     or VM without AF_XDP), pin `config.transport = "gso"` or `"portable"` (or
@@ -543,11 +543,11 @@ requirements to each configuration group:
     is not a hard ceiling on the endpoint/message block allocated at create,
     and it does not change the value from `rocketnet_*_required_memory`.
   - At `rocketnet_client_connect` / `rocketnet_server_start`, each candidate in
-    the transport ladder is checked against the remaining budget, including both
+    the transport list is checked against the remaining budget, including both
     user-space transport allocator bytes and AF_XDP `umem_bytes`
     (`total_bytes = allocator_bytes + umem_bytes`). Candidates that exceed the
-    budget are skipped; if no candidate in the ladder fits, connect/start
-    returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+    budget are skipped; if no candidate in the transport order fits, connect/start
+    returns `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`.
 
 ---
 
@@ -665,7 +665,7 @@ match:
 
 | Client profile | `transport` setting | Per-connection message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes | Notes |
 | --- | --- | ---: | ---: | ---: | --- |
-| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,282` (21.12 MiB) | `21,364,374` (20.37 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
+| `default` | `NULL` / `"auto"` or `"gso"` | `7,924,608` (7.56 MiB) | `22,149,282` (21.12 MiB) | `21,364,374` (20.37 MiB) | Client `send_kbps = 1000`; automatic transport order `gso -> portable`, sized for `gso` (`11,067,211` dev transport bytes) |
 | `default` | `"portable"` | `7,924,608` (7.56 MiB) | `21,999,026` (20.98 MiB) | `21,214,118` (20.23 MiB) | Single UDP socket, one client I/O worker |
 | `default` | `"loopback"` | `7,924,608` (7.56 MiB) | `21,998,041` (20.98 MiB) | `21,213,133` (20.23 MiB) | Caller-owned hub and its datagram queues are additional; see the note below |
 | `light` | `NULL` / `"auto"` or `"gso"` | `963,136` (0.92 MiB) | `15,186,082` (14.48 MiB) | `14,401,174` (13.73 MiB) | `max_message_bytes = 1415`, `send_kbps = 256` |

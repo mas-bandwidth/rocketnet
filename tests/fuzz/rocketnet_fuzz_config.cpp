@@ -8,7 +8,7 @@
 // over every env-backed field of the real tables -- the client and server
 // transport tables, the message table under both endpoint names, and the two
 // send budgets. rocketnet_fuzz.cpp selector 3 drives the value parsers on
-// their own (the integer parse, the transport ladder, the env name); this
+// their own (the integer parse, the transport list, the env name); this
 // target drives the overlay as create runs it: one variable set in the
 // process environment, the table applied to a default struct, the result
 // validated.
@@ -19,7 +19,7 @@
 //   field:     index into the table's real descriptors
 //   mode bit 0: set the retired process-wide name ROCKETNET_<FIELD> instead
 //              of the per-endpoint ROCKETNET_<ENDPOINT>_<FIELD>
-//   mode bit 1: the value is the transport ladder too, parsed against both
+//   mode bit 1: the value is the transport list too, parsed against both
 //              the server's and the client's available transports
 //   value:     the bytes up to the first NUL, at most 5000 of them, so the
 //              platform's 4096-byte env read limit is crossed
@@ -172,9 +172,9 @@ static void fuzz_check_ladder( const char * value )
         const int * available = side == 0 ? rocketnet_server_transport_io_availability( &num_available )
                                           : rocketnet_client_transport_io_availability( &num_available );
 
-        struct rocketnet_transport_ladder_t ladder;
+        struct rocketnet_transport_order_t ladder;
         memset( &ladder, 0, sizeof( ladder ) );
-        if ( !rocketnet_transport_ladder_parse( value, available, num_available, &ladder ) )
+        if ( !rocketnet_transport_order_parse( value, available, num_available, &ladder ) )
         {
             continue;
         }
@@ -471,7 +471,7 @@ static void fuzz_write_seeds( const char * dir, const char * from )
         snprintf( ladder + used, sizeof( ladder ) - used, "%s%s", ladder[0] != '\0' ? "," : "", transport );
     }
 
-    fuzz_write_seed( dir, "server_transport_ladder_available", 1, transport_field, 2, ladder );
+    fuzz_write_seed( dir, "server_transport_order_available", 1, transport_field, 2, ladder );
 
     if ( from == NULL || from[0] == '\0' )
     {

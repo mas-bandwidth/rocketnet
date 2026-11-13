@@ -1735,6 +1735,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
     if ( bind( iocp->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
+        if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
         goto failed;
     }
     address_bytes = sizeof( address );

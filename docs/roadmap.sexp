@@ -114,7 +114,7 @@
 
   (item "uring-enomem-status" :group "after-v1-0-1" :area "rocketnet"
    :title "io_uring setup ENOMEM: a status, or the gso fallback"
-   :text "Under kernel memory pressure io_uring ring setup can fail with ENOMEM, and create treats it as an ordinary refusal: auto falls to gso and a pinned io_uring ends TRANSPORT_LADDER_EXHAUSTED. Reporting an out-of-memory status instead would stop that fallback, a behaviour change, so it belongs in a minor release. Decide which, then pin it with a test."
+   :text "Under kernel memory pressure io_uring ring setup can fail with ENOMEM, and create treats it as an ordinary refusal: auto falls to gso and a pinned io_uring ends NO_TRANSPORT_FOUND. Reporting an out-of-memory status instead would stop that fallback, a behaviour change, so it belongs in a minor release. Decide which, then pin it with a test."
    :date "2026-11-11" :origin "v1.0.1 CI: io_uring ENOMEM on a loaded bench, errno now logged by posix_check")
 
   (item "xdp-stop-abandoned-buffers" :group "after-v1-0-1" :area "rocketnet"
@@ -234,7 +234,7 @@
 
   (item "xdp-private-link" :group "quiet-host" :area "fleet"
    :title "Private 10G link for XDP packet blaster and bare-metal LAN runs"
-   :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split ladder need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
+   :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split series need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
    :date "2026-11-10" :origin "Owner request, 2026-11-10; docs/runs/xdp-zero-copy.md")
 
   (item "trace-spec-invariants" :group "trace-check" :area "proofs"

@@ -466,7 +466,7 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
         {
             return server;
         }
-        if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )
+        if ( status != ROCKETNET_STATUS_NO_TRANSPORT_FOUND )
         {
             return NULL;
         }

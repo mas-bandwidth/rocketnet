@@ -719,7 +719,7 @@ way to occupy a slot with a zombie client that is not really there. A shared-sec
 design gets both from one symmetric check, because the shared key makes the bar real
 *and* makes enforcing it cost about a microsecond, so cheap rejection and a high bar are
 the same operation. Without a shared secret the two separate, and they are rebuilt as a
-ladder, each rung rejecting what it can at its own cost so the expensive rung is reached
+series of checks, each rejecting what it can at its own cost so the expensive check is reached
 only by traffic that has already cleared the cheap ones ([RN-1 t12 Handshake: server](TRANSPORT.md#t12)).
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
@@ -865,7 +865,7 @@ the client's own address after that client's session has ended. The replay plant
 half-open mapping, and if the stored challenge answered every later request from that
 address, the client's reconnect with a fresh token would get a challenge it cannot open
 until the handshake deadline removed the mapping. So a request for another token under
-another salt is treated as a new attempt and goes down the whole ladder. It replaces the
+another salt is treated as a new attempt and goes through every check. It replaces the
 mapping only once its signature has verified and its token is bound to no address, so a
 forged request cannot evict a handshake in flight, and neither can the replay of a token
 that has already connected. It pays the handshake work budget like any other verify.

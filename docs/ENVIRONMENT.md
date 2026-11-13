@@ -114,11 +114,11 @@ development key must not be used for production.
     compile-time caps.
   - The budget applies to each transport candidate's connect/start plan, not
     to the endpoint and message block allocated at create. As the endpoint
-    walks its resolved transport ladder, each candidate's `total_bytes`
+    walks its resolved transport list, each candidate's `total_bytes`
     (`allocator_bytes + umem_bytes`, including page-aligned AF_XDP UMEM) is
     checked against the stored budget before that transport allocates. A
     candidate over budget is skipped; if no candidate can be granted,
-    connect/start returns `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`.
+    connect/start returns `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`.
     `rocketnet_*_required_memory` still reports the complete caller-allocator
     lifecycle peak (plus its 1 MiB slack) and does not return `0` merely because this transport budget
     is smaller than the create-time endpoint/message block.
@@ -138,7 +138,7 @@ For full workload sizing formulas and deterministic memory tables, see
 [`docs/LOAD.md`](LOAD.md). Common operational uses of the environment layer
 include:
 
-- **Pinning or narrowing the transport ladder per host**: set
+- **Pinning or narrowing the transport list per host**: set
   `ROCKETNET_SERVER_TRANSPORT=gso` or `ROCKETNET_SERVER_TRANSPORT=portable` on
   machines or containers that do not use `xdp` or `io_uring`, so both
   `rocketnet_server_required_memory` and `rocketnet_server_create` size for the

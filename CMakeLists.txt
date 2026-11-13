@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.25 of v1.1.25;
+# CMake's VERSION holds numbers only, so it is the 1.1.28 of v1.1.28;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.25 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.28 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -1175,6 +1175,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/posix_hard_killed_client.cpp
         tests/functional/posix_lifecycle_stress.cpp
         tests/functional/posix_socket_errors.cpp
+        tests/functional/server_bind_address.cpp
         tests/functional/corpus_consistency.cpp
         tests/functional/shared_library_tokens.cpp
         tests/functional/loopback_hub_shared_objects.cpp
@@ -1315,6 +1316,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/functional/windows_connreset.cpp
             tests/functional/posix_lifecycle_stress.cpp
             tests/functional/posix_socket_errors.cpp
+            tests/functional/server_bind_address.cpp
             tests/functional/corpus_consistency.cpp
             tests/functional/session_reconnect_isolation.cpp
             tests/functional/disconnect_reasons_real.cpp
@@ -1535,8 +1537,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.25; the label
-# v1.1.25 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.28; the label
+# v1.1.28 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
