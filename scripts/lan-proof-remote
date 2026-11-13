@@ -107,18 +107,21 @@ windows_tool()
 
 # Every command on a Windows host runs inside winlock. Facts, builds, log
 # reads and process checks take a shared slot; the server cell holds the
-# exclusive lock, and while it is held (cell.holder names its live holder)
-# a command of that cell runs inside it rather than queueing behind it.
+# exclusive lock, and while it is held (cell.holder names its live holder and
+# its run) a command of that same run runs inside it rather than queueing
+# behind it. A command of any other run, or one that names no run, queues.
 cell_holder="$BASE/cell.holder"
 
 cell_held()
 {
-    local pid
+    local pid run
+    [ -n "$LAN_PROOF_RUN" ] || return 1
     [ -f "$cell_holder" ] || return 1
-    pid=$( cat "$cell_holder" 2>/dev/null )
+    read -r pid run < "$cell_holder" 2>/dev/null || [ -n "${pid:-}" ] || return 1
     case "$pid" in
         ''|*[!0-9]*) return 1 ;;
     esac
+    [ "${run:-}" = "$LAN_PROOF_RUN" ] || return 1
     kill -0 "$pid" 2>/dev/null
 }
 
@@ -127,6 +130,9 @@ windows_lock()
     [ "$( host_os )" = "windows" ] || return 0
     [ -z "${LAN_PROOF_LOCKED:-}" ] || return 0
     cell_held && return 0
+    if [ -n "$LAN_PROOF_RUN" ]; then
+        LAN_PROOF_LOCKED=1 exec winlock --slots 3 --card "lan-proof-$LAN_PROOF_RUN" -- "$0" --run "$LAN_PROOF_RUN" "$@"
+    fi
     LAN_PROOF_LOCKED=1 exec winlock --slots 3 --card "${LAN_PROOF_CARD:-lan-proof}" -- "$0" "$@"
 }
 
@@ -247,8 +253,11 @@ if (\$i -ne '') {
 'nproc=' + (\$p | Measure-Object NumberOfLogicalProcessors -Sum).Sum
 'cpu_percent=' + (\$p | Measure-Object LoadPercentage -Average).Average
 'queue=' + (Get-CimInstance Win32_PerfFormattedData_PerfOS_System).ProcessorQueueLength"
-    "$ps" -NoProfile -NonInteractive -Command "$script" 2>/dev/null | tr -d '\r' ||
-        fail "facts: powershell failed"
+    # PowerShell's own status decides, and its error text stays on stderr;
+    # only then are the carriage returns stripped
+    local out
+    out=$( "$ps" -NoProfile -NonInteractive -Command "$script" ) || fail "facts: powershell failed"
+    printf '%s\n' "$out" | tr -d '\r'
 }
 
 field()
@@ -426,7 +435,8 @@ cmd_start_server()
 cmd_hold_server()
 {
     local dir=$2 pid ready="" status
-    echo $$ > "$cell_holder" || fail "hold-server: cannot mark the cell"
+    # the mark names this run: only its own commands run inside the cell
+    echo "$$ $6" > "$cell_holder" || fail "hold-server: cannot mark the cell"
     trap 'rm -f "$cell_holder"' EXIT
     cmd_start_server "$@"
     pid=$( cat "$dir/server.pid" ) || fail "hold-server: no server pidfile"
@@ -650,6 +660,18 @@ cmd_collect()
 {
     cat "$1"
 }
+
+# --run ID (first, optional): the run this command belongs to, for the Windows
+# cell lock above; scripts/lan-proof always names it
+LAN_PROOF_RUN=""
+if [ "${1:-}" = "--run" ]; then
+    [ $# -ge 2 ] || usage
+    LAN_PROOF_RUN=$2
+    case "$LAN_PROOF_RUN" in
+        ""|*[!0-9a-fA-F]*) fail "--run takes the run id (hex)" ;;
+    esac
+    shift 2
+fi
 
 case "${1:-}" in
     build|hostinfo|load|start-server|start-shard|alive|stop|collect) windows_lock "$@" ;;

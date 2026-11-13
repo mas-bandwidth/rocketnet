@@ -36,7 +36,7 @@ exit 9
 EOF
 chmod +x "$tmp/bin/ssh"
 
-out=$("$proof" --dry-run --inventory "$tmp/inventory" --cell gso --duration 120) || say "gso dry-run exited $?"
+out=$(PATH="$tmp/bin:$PATH" "$proof" --dry-run --inventory "$tmp/inventory" --cell gso --duration 120) || say "gso dry-run exited $?"
 echo "$out" | grep -q 'dry-run: no host contacted' || say "dry-run did not say it contacted no host"
 echo "$out" | grep -q 'cell gso' || say "dry-run missed the cell"
 echo "$out" | grep -q 'check_split_load.py --load proof' || say "dry-run missed the proof check"
@@ -125,6 +125,20 @@ grep -q 'stop lan-proof-xdp-detach-0123456789abcdef.timer' "$tmp/uplinklog/syste
 grep -q 'link set dev eth0 xdp off' "$tmp/uplinklog/ip.args" || say "the detach did not set xdp off"
 [ -f "$tmp/uplinklog/timer.armed" ] && say "the detach left the timer armed"
 
+# only the server's interface marked uplink refuses the xdp cell; a client's
+# uplink mark does not
+cat > "$tmp/client-uplink" <<'EOF'
+server-a server-a.invalid server linux eth0 -
+client-a client-a.invalid client linux eth0 uplink
+EOF
+PATH="$tmp/bin:$PATH" "$proof" --dry-run --inventory "$tmp/client-uplink" --cell xdp --duration 120 >"$tmp/xdp-client-uplink" 2>&1 ||
+    say "xdp refused a client's uplink mark: $(cat "$tmp/xdp-client-uplink")"
+
+# an inventory whose last row has no newline still has that row
+printf 'server-a server-a.invalid server linux eth0 -\nclient-a client-a.invalid client linux eth0 -' > "$tmp/no-newline"
+PATH="$tmp/bin:$PATH" "$proof" --dry-run --inventory "$tmp/no-newline" --cell gso --duration 120 >"$tmp/no-newline.out" 2>&1 ||
+    say "the last inventory row without a newline was dropped: $(cat "$tmp/no-newline.out")"
+
 sed 's/server linux/server macos/' "$tmp/inventory" > "$tmp/nonlinux"
 "$proof" --dry-run --inventory "$tmp/nonlinux" --cell xdp --duration 120 >"$tmp/xdp-nonlinux" 2>&1 &&
     say "xdp accepted a non-Linux server"
@@ -165,6 +179,15 @@ split_proof_cell: verdict=PASS transport=gso total=1000 streams=26000 messages_s
 EOF
 row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server.log" "$tmp/merge.log") || say "cell-row exited $?"
 [ "$row" = 'gso|server-a|1000|1000|120|yes|0|0:pass,1:pass,2:pass,3:pass,4:pass,5:pass,6:pass,7:pass|small:pass,fragmented:pass|277|pass' ] || say "cell-row printed '$row'"
+# a disconnect makes the row's verdict fail, and that is the exit status
+sed 's/disconnects=0/disconnects=2/' "$tmp/server.log" > "$tmp/server-disc.log"
+row=$("$proof" --cell-row gso server-a 1000 1000 120 "$tmp/server-disc.log" "$tmp/merge.log")
+status=$?
+[ "$status" -eq 1 ] || say "cell-row with a fail verdict exited $status, not 1"
+case "$row" in
+    *'|no|2|'*'|fail') ;;
+    *) say "cell-row with a disconnect printed '$row'" ;;
+esac
 
 # Per-OS host facts, load and build through fakes: no host, no socket.
 remote="$here/lan-proof-remote"
@@ -196,6 +219,7 @@ printf '%s\n' 'Hardware Port: Thunderbolt Bridge' 'Device: bridge0' '' 'Hardware
 EOF
 cat > "$fake/powershell.exe" <<'EOF'
 #!/bin/sh
+if [ -n "${FAKE_PS_FAIL:-}" ]; then echo "powershell: the query failed" >&2; exit 1; fi
 case "$*" in
     *"\$i = ''"*) ;;
     *) printf 'name=Ethernet_4\r\nmodel=Example 10G Adapter\r\ndriver=example.sys\r\nspeed_bps=10000000000\r\nfull_duplex=True\r\naddress=192.0.2.46\r\nkernel=10.0.26200\r\n' ;;
@@ -268,14 +292,27 @@ for step in "alive $tmp/none.pid" "stop $tmp/none.pid" "collect $tmp/inventory";
     grep -q -- "--slots 3 .*lan-proof-remote ${step%% *}" "$tmp/log/winlock.args" 2>/dev/null ||
         say "windows ${step%% *} did not run inside a shared slot"
 done
-# inside a held cell a command runs within that lock instead of queueing
+# inside a held cell a command of that cell's run runs within that lock
+# instead of queueing; a command of another run, or of no run, queues
 mkdir -p "$tmp/base"
-echo $$ > "$tmp/base/cell.holder"
+echo "$$ 0123456789abcdef" > "$tmp/base/cell.holder"
 rm -f "$tmp/log/winlock.args"
-win=$( fakes env LAN_PROOF_OS=windows "$remote" load ) || say "windows load in a held cell exited $?"
+win=$( fakes env LAN_PROOF_OS=windows "$remote" --run 0123456789abcdef load ) || say "windows load in a held cell exited $?"
 [ "$win" = "load1=1.92 nproc=64" ] || say "windows load in a held cell printed '$win'"
 [ -f "$tmp/log/winlock.args" ] && say "a command inside the held cell queued for another lock"
+rm -f "$tmp/log/winlock.args"
+fakes env LAN_PROOF_OS=windows "$remote" --run fedcba9876543210 load >/dev/null 2>&1 || say "windows load of another run exited $?"
+grep -q -- '--slots 3 --card lan-proof-fedcba9876543210 -- .*lan-proof-remote --run fedcba9876543210 load' "$tmp/log/winlock.args" 2>/dev/null ||
+    say "a command of another run used the held cell instead of queueing for a shared slot"
+rm -f "$tmp/log/winlock.args"
+fakes env LAN_PROOF_OS=windows "$remote" load >/dev/null 2>&1 || say "windows load of no run exited $?"
+[ -f "$tmp/log/winlock.args" ] || say "a command naming no run used the held cell"
 rm -f "$tmp/base/cell.holder"
+# a failed PowerShell query is refused by name, its own error kept
+fakes env LAN_PROOF_OS=windows FAKE_PS_FAIL=1 "$remote" hostinfo Ethernet_4 >"$tmp/ps-fail" 2>&1 &&
+    say "windows hostinfo passed a failed PowerShell query"
+grep -q "facts: powershell failed" "$tmp/ps-fail" && grep -q "the query failed" "$tmp/ps-fail" ||
+    say "a failed PowerShell query was not named: $(cat "$tmp/ps-fail")"
 fakes env LAN_PROOF_OS=windows FAKE_NPROC=x "$remote" hostinfo Ethernet_4 >/dev/null 2>&1 &&
     say "windows hostinfo accepted a non-numeric core count"
 fakes env LAN_PROOF_OS=windows "$remote" hostinfo "Ethernet 4;x" >/dev/null 2>&1 &&
@@ -316,11 +353,128 @@ held=$( fakes env LAN_PROOF_OS=windows "$remote" hold-server $fake_commit "$tmp/
 printf '%s\n' "$held" | grep -q '^split_ready: ' || say "hold-server did not report the ready line"
 [ -f "$tmp/base/cell.holder" ] && say "hold-server left its cell mark"
 [ -f "$tmp/log/winlock.args" ] && say "hold-server queued for a lock inside its own cell"
-grep -q 'winlock --slots 3 --card "lan-proof-$run_id" -- "$install_cmd"' "$proof" ||
-    say "the Windows copy step does not run inside a shared slot"
-grep -q 'winlock --exclusive --card "lan-proof-$run_id" --' "$proof" &&
-    grep -q '"$remote_path" hold-server' "$proof" ||
-    say "the Windows server is not started by hold-server under the exclusive lock"
+# The live run against fake hosts: a fake ssh records every call and answers
+# each step of lan-proof-remote, scp copies nothing, sleep returns at once and,
+# where a case asks, `date +%s` reads 100 s later on every call. No host, no
+# socket, and no time passes.
+live="$tmp/live"
+mkdir -p "$live/bin"
+cat > "$live/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) shift 2 ;;
+        -*) shift ;;
+        *) break ;;
+    esac
+done
+host=$1
+shift
+echo "$host $*" >> "$FAKE_LOG"
+# ssh joins its arguments into one line for the remote shell: split it here too
+set -- $*
+case "$1" in
+    mkdir|chmod) exit 0 ;;
+    winlock)
+        case " $* " in
+            *" --exclusive "*)
+                # hold-server: the ready line, then held until teardown ends it
+                echo "split_ready: role=server address=192.0.2.10:40000 key=00"
+                exec /bin/sleep 600 ;;
+        esac
+        exit 0 ;;
+esac
+shift
+[ "${1:-}" = "--run" ] && shift 2
+sub=${1:-}
+case "$sub" in
+    build) echo "$FAKE_COMMIT" ;;
+    hostinfo) echo "os=Linux kernel=6 iface=eth0 model=m driver=d speed_mbps=1000 duplex=Full address=192.0.2.10 load1=0.10 nproc=64" ;;
+    load) echo "load1=0.10 nproc=64" ;;
+    start-server) : ;;
+    start-shard)
+        if [ "$4" = "${FAKE_TERM_SHARD:-none}" ]; then
+            kill -TERM "$( cat "$FAKE_PID_FILE" )"
+        fi
+        [ "$4" = "${FAKE_FAIL_SHARD:-none}" ] && exit 1 ;;
+    collect)
+        case "$2" in
+            *server.log) echo "split_ready: role=server address=192.0.2.10:40000 key=00" ;;
+        esac ;;
+    alive) [ -n "${FAKE_ALIVE:-}" ] || exit 1 ;;
+    stop) : ;;
+    *) echo "fake ssh: unexpected step: $*" >&2; exit 99 ;;
+esac
+exit 0
+EOF
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$live/bin/scp"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$live/bin/sleep"
+cat > "$live/bin/date" <<'EOF'
+#!/usr/bin/env bash
+if [ "$*" = "+%s" ] && [ -n "${FAKE_CLOCK_FILE:-}" ]; then
+    ticks=$( cat "$FAKE_CLOCK_FILE" 2>/dev/null || echo 0 )
+    echo $(( ticks + 1 )) > "$FAKE_CLOCK_FILE"
+    echo $(( 1000 + ticks * 100 ))
+    exit 0
+fi
+exec /bin/date "$@"
+EOF
+chmod +x "$live/bin"/*
+printf '%s\n' 'server-a server-a.invalid server linux eth0 -' 'client-a client-a.invalid client linux eth0 -' > "$live/inventory"
+printf '%s\n' 'server-w server-w.invalid server windows Ethernet_4 -' 'client-a client-a.invalid client linux eth0 -' > "$live/inventory-windows"
+live_run_id=0123456789abcdef
+
+# live_run NAME INVENTORY CLIENTS DURATION [VAR=VALUE...]: one run, its calls in
+# $live/NAME.log, its output in $live/NAME.out and its status returned
+live_run()
+{
+    local name=$1 inv=$2 clients=$3 duration=$4 pid status
+    shift 4
+    : > "$live/$name.log"
+    env "$@" PATH="$live/bin:$PATH" FAKE_LOG="$live/$name.log" FAKE_COMMIT=$fake_commit FAKE_PID_FILE="$live/$name.pid" \
+        bash "$proof" --inventory "$inv" --cell gso --duration "$duration" --clients "$clients" \
+        --commit "$fake_commit" --run-id "$live_run_id" --run-dir "$live/$name.run" > "$live/$name.out" 2>&1 < /dev/null &
+    pid=$!
+    echo "$pid" > "$live/$name.pid"
+    wait "$pid"
+    status=$?
+    return "$status"
+}
+
+# teardown stops every shard the run started, however many: --clients 2500
+# is shard0 .. shard9, and the start of shard9 fails
+live_run shards "$live/inventory" 2500 1 FAKE_FAIL_SHARD=shard9 && say "a run whose shard9 failed to start passed"
+for s in 0 7 8 9; do
+    grep -q "^client-a.invalid .*lan-proof-remote.* stop ~/lan-proof-live/runs/$live_run_id/shard$s.pid" "$live/shards.log" ||
+        say "teardown did not stop shard$s"
+done
+
+# a TERM tears down and ends the run: no step after it runs
+live_run term "$live/inventory" 1000 1 FAKE_TERM_SHARD=shard1
+status=$?
+[ "$status" -eq 130 ] || say "a TERM mid-run exited $status, not 130"
+grep -q "start-shard .* shard2 " "$live/term.log" && say "a step after the TERM ran: shard2 was started"
+grep -q "stop ~/lan-proof-live/runs/$live_run_id/shard1.pid" "$live/term.log" || say "the TERM did not tear down"
+
+# the wait for the started processes is bounded by the wall clock: with every
+# round taking 100 s (each date call), a 1 s cell (bound 301 s) ends within a
+# few rounds, not after 60 sleeps of 5 s
+live_run wallclock "$live/inventory" 250 1 FAKE_ALIVE=1 FAKE_CLOCK_FILE="$live/wallclock.clock" &&
+    say "a run whose processes never ended passed"
+grep -q "outlived its bound" "$live/wallclock.out" || say "a run whose processes never ended was not bounded: $(tail -n 2 "$live/wallclock.out")"
+rounds=$( grep -c "alive ~/lan-proof-live/runs/$live_run_id/server.pid" "$live/wallclock.log" )
+[ "$rounds" -le 10 ] || say "the wait ran $rounds rounds: its bound counts sleeps, not the wall clock"
+
+# a Windows server: the script copy takes a shared slot and the server is
+# started by hold-server under the exclusive lock, both carded for this run,
+# and every remote step names the run
+live_run windows "$live/inventory-windows" 250 1 FAKE_FAIL_SHARD=shard0 && say "a Windows run whose shard0 failed passed"
+grep -q "^server-w.invalid winlock --slots 3 --card lan-proof-$live_run_id -- " "$live/windows.log" ||
+    say "the Windows copy step did not run inside a shared slot"
+grep -q "^server-w.invalid winlock --exclusive --card lan-proof-$live_run_id -- ~/lan-proof-live/lan-proof-remote --run $live_run_id hold-server " "$live/windows.log" ||
+    say "the Windows server was not started by hold-server under the exclusive lock, named for its run"
+grep -q "^server-w.invalid ~/lan-proof-live/lan-proof-remote --run $live_run_id build $fake_commit" "$live/windows.log" ||
+    say "a remote step did not name the run"
 
 if [ "$fail" -ne 0 ]; then
     echo "lan-proof-selftest: failed" >&2

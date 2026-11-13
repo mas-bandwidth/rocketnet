@@ -93,6 +93,9 @@ if [ "${1:-}" = "--cell-row" ]; then
     size_row="small:$category_row,fragmented:$category_row"
     printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
         "$2" "$3" "$4" "$5" "$6" "$connected" "$disconnects" "$mode_row" "$size_row" "$min_kbps" "$verdict"
+    # the row is printed either way; a fail verdict (a disconnect, or delivery
+    # not PASS) is the exit status too, 1, apart from a refusal's 2
+    [ "$verdict" = pass ] || exit 1
     exit 0
 fi
 
@@ -141,7 +144,8 @@ client_sshs=""
 client_ifaces=""
 client_oses=""
 uplink=0
-while read -r label ssh_name role os iface mark extra; do
+# a last row without a newline is read too (read fails on it but sets the fields)
+while read -r label ssh_name role os iface mark extra || [ -n "${label:-}" ]; do
     case "$label" in
         ''|\#*) continue ;;
     esac
@@ -155,8 +159,9 @@ while read -r label ssh_name role os iface mark extra; do
         *) refuse "os must be linux, macos or windows: $label" ;;
     esac
     [ "$mark" = "-" ] || [ "$mark" = "uplink" ] || refuse "uplink must be - or uplink: $label"
-    [ "$mark" = "uplink" ] && uplink=1
     if [ "$role" = "server" ]; then
+        # only the server's interface being the uplink matters to the xdp cell
+        [ "$mark" = "uplink" ] && uplink=1
         [ -z "$server_label" ] || refuse "inventory has two servers"
         server_label=$label
         server_ssh=$ssh_name
@@ -252,7 +257,10 @@ ready_wait=60
 lock_wait=900
 hold_bound=$(( lock_wait + duration + 600 ))
 server_hold_pid=""
-remote_path="~/lan-proof-live/lan-proof-remote"
+# every remote step names this run (--run): a Windows command runs inside the
+# held cell only when the cell is this run's. ssh joins its arguments into
+# one command line, so the remote shell splits this into its three words.
+remote_path="~/lan-proof-live/lan-proof-remote --run $run_id"
 remote_run="~/lan-proof-live/runs/$run_id"
 
 # A Windows host runs every command inside winlock, which may queue first.
@@ -270,6 +278,9 @@ fail()
 }
 
 started=0
+# the client shards started (or being started) and their hosts, in order
+shard_hosts=""
+shard_names=""
 # uplink mode: 1 once the self-detach timer is armed; server_lost is 1 once
 # an ssh check of the server machine went unanswered, after which nothing
 # more is sent to it and its timer does the detach
@@ -289,12 +300,13 @@ teardown()
     for host in $server_ssh $client_sshs; do
         [ "$host" = "$server_ssh" ] && [ "$server_lost" -eq 1 ] && continue
         ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/server.pid" >/dev/null 2>&1
-        n=0
-        for name in shard0 shard1 shard2 shard3 shard4 shard5 shard6 shard7; do
-            ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/$name.pid" >/dev/null 2>&1
-            n=$(( n + 1 ))
-            [ "$n" -ge 8 ] && break
-        done
+    done
+    # every shard this run started or tried to start, on the host it went to
+    # (shard_count is unbounded: --clients 3000 is shard0 .. shard11)
+    set -- $shard_names
+    for host in $shard_hosts; do
+        ssh_run "$host" "$remote_path" stop "~/lan-proof-live/runs/$run_id/$1.pid" >/dev/null 2>&1
+        shift
     done
     # the Windows lock holder returns once its server is stopped; end it if not
     if [ -n "$server_hold_pid" ]; then
@@ -304,7 +316,11 @@ teardown()
     fi
     detach_server
 }
-trap 'teardown' EXIT INT TERM HUP
+# a signal tears down and ends the run; the EXIT trap then finds nothing
+# started (teardown clears started), so nothing runs twice and no step
+# after the signal runs unguarded
+trap 'teardown' EXIT
+trap 'teardown; exit 130' INT TERM HUP
 
 # The OS the inventory names for an ssh host.
 host_os_of()
@@ -511,8 +527,6 @@ shard_size=250
 shard_count=$(( (clients_total + shard_size - 1) / shard_size ))
 client_count=0
 for host in $client_sshs; do client_count=$(( client_count + 1 )); done
-shard_hosts=""
-shard_names=""
 s=0
 while [ "$s" -lt "$shard_count" ]; do
     idx=$(( s % client_count ))
@@ -526,16 +540,21 @@ while [ "$s" -lt "$shard_count" ]; do
     first=$(( s * shard_size ))
     count=$shard_size
     [ $(( first + count )) -gt "$clients_total" ] && count=$(( clients_total - first ))
-    ssh_run "$host" "$remote_path" start-shard "$commit" "$remote_run" "shard$s" "$clients_total" "$duration" "$run_id" "$first" "$count" "$server_address:$port" "$key" "$cap_kbps" > "$run_dir/shard$s.start" 2>&1 ||
-        fail "cannot start shard$s"
+    # named before the start, so teardown stops a shard whose start step
+    # failed after the process was launched
     shard_hosts="$shard_hosts $host"
     shard_names="$shard_names shard$s"
+    ssh_run "$host" "$remote_path" start-shard "$commit" "$remote_run" "shard$s" "$clients_total" "$duration" "$run_id" "$first" "$count" "$server_address:$port" "$key" "$cap_kbps" > "$run_dir/shard$s.start" 2>&1 ||
+        fail "cannot start shard$s"
     s=$(( s + 1 ))
 done
 
-# wait for every started process to finish, bounded
+# wait for every started process to finish, bounded by the wall clock: each
+# round's ssh checks and load samples take time of their own
 deadline=$(( duration + 300 ))
+wait_start=$( date +%s )
 elapsed=0
+next_sample=60
 while [ "$elapsed" -lt "$deadline" ]; do
     running=0
     if [ -n "$server_hold_pid" ]; then
@@ -565,8 +584,11 @@ while [ "$elapsed" -lt "$deadline" ]; do
     done
     [ "$running" -eq 0 ] && break
     sleep 5
-    elapsed=$(( elapsed + 5 ))
-    [ $(( elapsed % 60 )) -ne 0 ] || sample_loads "runtime-$elapsed"
+    elapsed=$(( $( date +%s ) - wait_start ))
+    if [ "$elapsed" -ge "$next_sample" ]; then
+        sample_loads "runtime-$elapsed"
+        next_sample=$(( elapsed + 60 ))
+    fi
 done
 [ "$elapsed" -lt "$deadline" ] || fail "a started process outlived its bound"
 
@@ -646,7 +668,11 @@ python3 "$root/tools/check_split_load.py" --server "$run_dir/server.log" $merge_
     --load proof > "$run_dir/merge.log" 2>&1
 merge_status=$?
 cat "$run_dir/merge.log"
-"$here/lan-proof" --cell-row "$cell" "$server_label" "$server_speed" "$clients_total" "$duration" "$run_dir/server.log" "$run_dir/merge.log" | tee "$run_dir/row.txt"
+"$here/lan-proof" --cell-row "$cell" "$server_label" "$server_speed" "$clients_total" "$duration" "$run_dir/server.log" "$run_dir/merge.log" > "$run_dir/row.txt"
+row_status=$?
+cat "$run_dir/row.txt"
 [ "$merge_status" -eq 0 ] || fail "the merger refused the cell; see $run_dir/merge.log"
 grep -q '^split_proof_cell: verdict=PASS' "$run_dir/merge.log" || fail "the cell verdict is not PASS"
+[ "$row_status" -ne 2 ] || fail "the cell row was refused; see $run_dir/row.txt"
+[ "$row_status" -eq 0 ] || fail "the cell row's verdict is fail (a disconnect, or delivery not PASS); see $run_dir/row.txt"
 echo "lan-proof: run kept in $run_dir"
