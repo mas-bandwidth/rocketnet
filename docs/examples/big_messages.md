@@ -11,7 +11,7 @@ in-memory `loopback` transport, so it needs no socket and no network.
    The 1 MiB defaults already hold 200 KiB; this example uses a smaller explicit profile.
 2. Configure the development backend public key with
    `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`; server create generates the server key.
-   Read its public key and bound address after start, then create an opaque
+   Read its public key and served address with its bound port after start, then create an opaque
    base64 development token with `rocketnet_create_dev_connect_token`.
 3. Send a 200 KiB `ROCKETNET_RELIABILITY_RELIABLE` message with `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, a
    known pattern copied into the returned buffer, and

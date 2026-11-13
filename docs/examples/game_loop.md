@@ -60,8 +60,11 @@ latency in frames.
    the game threads never call at once, one thread sends to a client between
    two main thread calls, and the join is the barrier in both directions.
 
-   The split-off half is joined for the next frame, so a game accepts up to
-   one frame of send latency for it: 16.67 ms on average at 60 Hz.
+   The split-off half sends this frame's state updates in the same frame.
+   Its update takes in the clients' messages, which the main thread reads
+   only after the next frame's join, so a client message can wait up to one
+   frame more than in the default frame: up to 16.7 ms of added delay at
+   60 Hz.
 4. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
    1); the server sends each client a state update every frame. Each message
@@ -119,7 +122,7 @@ PASS
 
 (Samples from a Linux bench.)
 
-A `[1s]` line prints every second and `[end]` covers the run. `client frame`
+The `[end]` line covers the whole run. `client frame`
 is one client's update, receive, queue and send calls in one frame: p50 is the
 typical frame, p99 the slow one in a hundred. The budget verdict never fails
 the run, because a shared machine's noise is not the library's cost.
