@@ -177,8 +177,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bind_ipv6_address) add 512 bytes to the server (the object holding the
 // config crosses its rounding) and nothing to the client (measured); the
 // probe's actual= line is 1469501727.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468454239 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988810 )
+// The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
+// send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
+// frames, plus the receive banks, add 121676072 bytes to the server (measured on the
+// studio, Apple clang, Release, DEV=ON; the probe's actual= line is 1591178887) and
+// the appended counter RECEIVE_DROPPED_STOPPED one 64-byte rounding to the client
+// (actual= 15037450).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1590130311 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
