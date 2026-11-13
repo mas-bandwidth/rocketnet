@@ -41,6 +41,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_socket_config.h"
+#include "suite_runner.h"
 
 #include <stddef.h>
 
@@ -268,6 +269,26 @@ typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketne
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
                                                    rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
+uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_clients );
+
+// The case builds two whole queue objects, zeroed at construction, each
+// holding its receive staging and send buffers (about 583 MiB a queue at
+// 32768 receive and 16384 send slots, ROCKETNET_XDP_NUM_BUFFERS of each):
+// past the suite's default bound of 698 MiB. Its bound is the XDP plan of a
+// two-queue server less the UMEM it never maps, plus 64 MiB for the process
+// (measured 1180 MiB in a Debug build on CI).
+static long xdp_two_queue_rss_bound_mb()
+{
+    const uint64_t plan = rocketnet_server_socket_memory_required( 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const uint64_t umem = rocketnet_xdp_umem_bytes( 2 );
+    if ( !plan || !umem || plan <= umem )
+    {
+        return 0;
+    }
+    return suite_rss_bound_mb( plan - umem, 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_xdp_transport_receive_frames_dropped_counted, xdp_two_queue_rss_bound_mb );
 
 static void test_xdp_transport_receive_frames_dropped_counted()
 {
