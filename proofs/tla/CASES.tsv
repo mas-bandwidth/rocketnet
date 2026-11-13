@@ -616,6 +616,8 @@ MCRNChannelQueuesLayoutBrokenRemoveKeepsEnds.cfg	MCRNChannelQueuesLayout.tla	inv
 MCRNOrderingWrap.cfg	MCRNOrderingWrap.tla	pass	-	check	rnorderingwrap	required	-
 MCRNOrderingWrapBrokenUnmasked.cfg	MCRNOrderingWrap.tla	invariant	NoExhaust	check	rnorderingwrap	required	-
 MCRNOrderingWrapBrokenSeqHold.cfg	MCRNOrderingWrap.tla	invariant	NeverDeferWithRoom	check	rnorderingwrap	required	-
+MCRNOrderingWrapBrokenDupRun.cfg	MCRNOrderingWrap.tla	invariant	NeverDeferWithRoom	check	rnorderingwrap	required	-
+MCRNOrderingWrapBrokenPartialRun.cfg	MCRNOrderingWrap.tla	invariant	NeverDeferWithRoom	check	rnorderingwrap	required	-
 MCRNResendFifoLayout.cfg	MCRNResendFifoLayout.tla	pass	-	check	rnresendfifolayout	required	-
 MCRNResendFifoLayoutBrokenNoSelfTailFix.cfg	MCRNResendFifoLayout.tla	invariant	ListsMatch	check	rnresendfifolayout	required	-
 MCRNResendFifoLayoutBrokenNoTailOnEnd.cfg	MCRNResendFifoLayout.tla	invariant	ListsMatch	check	rnresendfifolayout	required	-
