@@ -8,7 +8,8 @@
 # hold: three of T - 1 and one of T + 2, with T read from the client's
 # `outage_pair client token timeout T s` line. A client that prints no T,
 # a second pair with another T, and a T whose outages do not fit the send
-# time are each refused by name. No namespace, socket, root or real wait is
+# time are each refused by name, and the survive server must be given the
+# client's send seconds. No namespace, socket, root or real wait is
 # used; every case runs, and the selftest exits non-zero if any failed.
 # Uses $TMPDIR only.
 set -uo pipefail
@@ -51,10 +52,12 @@ cat > "$bin/outage_pair" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
     server)
+        echo "$*" >> "$FAKE_ARGS_LOG"
         echo "outage_pair server public key 0000000000000000000000000000000000000000000000000000000000000000"
         echo "outage_pair server PASS"
         ;;
     client)
+        echo "$*" >> "$FAKE_ARGS_LOG"
         name="FAKE_T_$4"
         t="${!name:-}"
         if [ -n "$t" ]; then
@@ -75,7 +78,8 @@ run_case()
     local name=$1
     mkdir -p "$tmp/$name"
     : > "$tmp/$name/sleep.log"
-    out=$(PATH="$fake:$PATH" FAKE_SLEEP_LOG="$tmp/$name/sleep.log" FAKE_T_survive="$2" FAKE_T_timeout="$3" \
+    : > "$tmp/$name/args.log"
+    out=$(PATH="$fake:$PATH" FAKE_SLEEP_LOG="$tmp/$name/sleep.log" FAKE_ARGS_LOG="$tmp/$name/args.log" FAKE_T_survive="$2" FAKE_T_timeout="$3" \
         bash "$script" --bin-dir "$bin" --log-dir "$tmp/$name/logs" --neighbours dynamic 2>&1)
     rc=$?
     holds=$(grep -v '^0\.1$' "$tmp/$name/sleep.log" | tr '\n' ' ')
@@ -88,6 +92,13 @@ if [ "$rc" -ne 0 ]; then
 fi
 if [ "$holds" != "5 11 5 11 5 11 5 14 " ]; then
     fail_case "with T = 12 s the holds were '$holds', not three outages of 11 s and one of 14 s"
+fi
+
+# the survive server is bounded by the same send time as its client
+server_send=$(sed -n 's/^server [^ ]* survive \([0-9][0-9]*\)$/\1/p' "$tmp/t12/args.log")
+client_send=$(sed -n 's/^client [^ ]* [^ ]* survive \([0-9][0-9]*\)$/\1/p' "$tmp/t12/args.log")
+if [ -z "$client_send" ] || [ "$server_send" != "$client_send" ]; then
+    fail_case "the survive server was given send seconds '$server_send', not the client's '$client_send'"
 fi
 
 # the default T, 10 s: outages of 9 s and 12 s

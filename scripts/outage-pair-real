@@ -265,13 +265,15 @@ wait_for_line()
     return 0
 }
 
-# $1 = case name, $2 = server/client mode; the client's extra arguments follow
+# $1 = case name, $2 = server/client mode, $3 = port; the extra arguments
+# (the survive case's send seconds) go to both programs, so each bounds its
+# run by the same send time
 start_pair()
 {
     local case_name=$1 mode=$2 port=$3
     shift 3
     local server_log="$LOG_DIR/$case_name-server.log" client_log="$LOG_DIR/$case_name-client.log" key
-    ip netns exec "$NS_SERVER" "$BIN_DIR/outage_pair" server "$SERVER_ADDRESS:$port" "$mode" > "$server_log" 2>&1 &
+    ip netns exec "$NS_SERVER" "$BIN_DIR/outage_pair" server "$SERVER_ADDRESS:$port" "$mode" "$@" > "$server_log" 2>&1 &
     SERVER_PID=$!
     PIDS+=("$SERVER_PID")
     wait_for_line "$server_log" "outage_pair server public key " 10 || fail "$case_name: the server printed no public key"
