@@ -43,7 +43,8 @@ VARIABLES ti,        \* the index of the record the state matches
 \* every model variable by the field name the harness writes
 VarsRec == [mpc |-> mpc, mscan |-> mscan, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
             seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, fillsIn |-> fillsIn,
-            fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, fbroke |-> fbroke,
+            fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed, opted |-> opted,
+            fbroke |-> fbroke,
             phaseIn |-> phaseIn, falseAlarm |-> falseAlarm, mainsDone |-> mainsDone,
             fillsDone |-> fillsDone]
 
@@ -51,7 +52,10 @@ VarsRec == [mpc |-> mpc, mscan |-> mscan, fpc |-> fpc, fclient |-> fclient, fepo
 OpActs == [main_begin |-> {"MainAnnounce", "MainLook", "MainIn"},
            main_end |-> {"MainEpoch", "MainDrop"},
            fill_begin |-> {"FillBegin", "FillLock", "FillDecide", "FillCount", "FillLook"},
-           fill_end |-> {"FillUnclaim", "FillLeave"}]
+           fill_end |-> {"FillUnclaim", "FillLeave"},
+           fill_scope |-> {"FillSkip"},
+           main_scope |-> {"MainSkip"},
+           arm |-> {"Arm"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
@@ -60,6 +64,9 @@ Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce
                [] a = "MainIn" -> MainIn
                [] a = "MainEpoch" -> MainEpoch
                [] a = "MainDrop" -> MainDrop
+               [] a = "MainSkip" -> MainSkip
+               [] a = "FillSkip" -> FillSkip(x[1])
+               [] a = "Arm" -> Arm
                [] a = "FillBegin" -> FillBegin(x[1], x[2])
                [] a = "FillLock" -> FillLock(x[1], x[2])
                [] a = "FillDecide" -> FillDecide(x[1], x[2])

@@ -73,6 +73,7 @@
 #define FP_ACTORS ( 1 + FP_FILLERS )
 #define FP_LINES ROCKETNET_FILL_PHASE_FILL_LINES
 #define FP_NO_LINE -1
+#define FP_ARM_AT  12  // the records before the walk arms the check: whole calls skipped
 
 // an actor between steps: parked before its next call (READY), parked in the
 // hook at the end of a step (STEP), running, or done with its calls
@@ -147,6 +148,9 @@ struct fp_walk_t
     bool false_alarm;
     int mains_done;
     int fills_done[FP_FILLERS];
+
+    // the latch's ghost: the game has named a client (the walk's own arm step)
+    bool opted;
 };
 
 static thread_local int fp_this_actor = -1;
@@ -279,6 +283,8 @@ static tla_record_t fp_state( fp_walk_t * walk )
     record.add( "epoch", tla_int( (int64_t) walk->phase->epoch.load() ) );
     record.add( "word", tla_function( clients, words ) );
     record.add( "owner", tla_function( clients, owners ) );
+    record.add( "armed", tla_bool( rocketnet_fill_phase_armed( walk->phase ) ) );
+    record.add( "opted", tla_bool( walk->opted ) );
     record.add( "fbroke", tla_function( fillers, fbroke ) );
     record.add( "phaseIn", tla_function( clients, phase_in ) );
     record.add( "falseAlarm", tla_bool( walk->false_alarm ) );
@@ -485,20 +491,15 @@ static void fp_actor( fp_walk_t * walk, int me )
     for ( int call = 0; call < walk->calls; call++ )
     {
         fp_park_ready( walk, me );
+        // the call sites' own scopes: not armed, a scope does nothing and
+        // the call takes no step of the check (RNFillPhase MainSkip, FillSkip)
         if ( me == 0 )
         {
-            if ( rocketnet_fill_phase_main_begin( walk->phase ) )
-            {
-                rocketnet_fill_phase_main_end( walk->phase );
-            }
+            rocketnet_fill_phase_main_scope_t scope( walk->phase );
         }
         else
         {
-            const int client = walk->next_client[me];
-            if ( rocketnet_fill_phase_fill_begin( walk->phase, client ) )
-            {
-                rocketnet_fill_phase_fill_end( walk->phase, client );
-            }
+            rocketnet_fill_phase_fill_scope_t scope( walk->phase, walk->next_client[me] );
         }
     }
     std::unique_lock<std::mutex> lock( walk->mutex );
@@ -562,6 +563,10 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     alignas( rocketnet_fill_phase_t ) static unsigned char phase_memory[sizeof( rocketnet_fill_phase_t )];
     walk->phase = new ( phase_memory ) rocketnet_fill_phase_t();
     rocketnet_fill_phase_init( walk->phase, FP_CLIENTS, &walk->overlaps, &walk->two_fillers );
+
+    // as the server makes it: not armed until the game names a client, which
+    // the walk does once, after FP_ARM_AT records of skipped calls (RNFillPhase Arm)
+    rocketnet_fill_phase_arm( walk->phase, false );
     walk->running = -1;
     walk->calls = steps;
     for ( int a = 0; a < FP_ACTORS; a++ )
@@ -636,6 +641,16 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
         while ( (int) records.size() < steps + 1 )
         {
+            if ( !walk->opted && (int) records.size() > FP_ARM_AT )
+            {
+                // every actor is parked between calls: the latch is set
+                rocketnet_fill_phase_arm( walk->phase, true );
+                walk->opted = true;
+                report.act( "Arm" );
+                records.push_back( tla_step( "arm", "Arm", "<<>>", fp_state( walk ) ) );
+                continue;
+            }
+
             int live[FP_ACTORS];
             int num_live = 0;
             int free_live[FP_ACTORS];
@@ -672,6 +687,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                 walk->next_client[a] = random.below( FP_CLIENTS );
             }
 
+            const bool was_ready = walk->state[a] == FP_READY;
             walk->running = a;
             walk->changed.notify_all();
             walk->changed.wait( lock, [&]
@@ -679,6 +695,23 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
 
             if ( walk->state[a] != FP_STEP )
             {
+                if ( was_ready )
+                {
+                    // a whole call with no step of the check: its scope found
+                    // the check not armed
+                    if ( a == 0 )
+                    {
+                        walk->mains_done++;
+                        report.act( "MainSkip" );
+                        records.push_back( tla_step( "main_scope", "MainSkip", "<<>>", fp_state( walk ) ) );
+                    }
+                    else
+                    {
+                        walk->fills_done[a - 1]++;
+                        report.act( "FillSkip" );
+                        records.push_back( tla_step( "fill_scope", "FillSkip", tla_sequence( { fp_filler_name( a - 1 ) } ), fp_state( walk ) ) );
+                    }
+                }
                 continue;                           // the call returned: no step of the model
             }
 
@@ -802,7 +835,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     const std::string constants = "    Fillers = " + fillers + "\n" + "    Clients = " + clients + "\n" + "    NoOwner = \"none\"\n" +
                                   "    MaxMain = " + tla_int( walk->calls ) + "\n" + "    MaxFills = " + tla_int( walk->calls ) + "\n" +
                                   "    LookFirst = FALSE\n    LoadStore = FALSE\n    ResetOnLeave = TRUE\n    NoEpochLook = FALSE\n" +
-                                  "    NoRestore = FALSE\n    ScanOne = FALSE\n" + "    Lines = " + lines + "\n";
+                                  "    NoRestore = FALSE\n    ScanOne = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" + "    Lines = " + lines + "\n";
     const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
     walk->phase->~rocketnet_fill_phase_t();
