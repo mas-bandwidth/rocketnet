@@ -2127,7 +2127,7 @@ static void harden_pin_network_threads( int first_cpu )
     {
         cpu_set_t set;
         CPU_ZERO( &set );
-        CPU_SET( cpu, &set );
+        CPU_SET( (size_t) cpu, &set );
         const int rc = sched_setaffinity( tid, sizeof( set ), &set );
         printf( "harden_net_threads: tid=%d cpu=%d rc=%d\n", (int) tid, cpu, rc );
         cpu++;
