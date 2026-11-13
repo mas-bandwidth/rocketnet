@@ -14537,6 +14537,14 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             rocketnet_check( estimate.xdp_ring_bytes > 0 );
             rocketnet_check( estimate.socket_send_buffer_bytes == 0 && estimate.socket_receive_buffer_bytes == 0 );
         }
+        else if ( strcmp( transport, "msgx" ) == 0 )
+        {
+            // msgx's sockets ask for different buffers: the plan's sums, by value below
+            rocketnet_check( estimate.umem_bytes == 0 && estimate.xdp_ring_bytes == 0 );
+            rocketnet_check( io_plan.socket_buffers_planned );
+            rocketnet_check( estimate.socket_send_buffer_bytes == io_plan.socket_send_buffer_bytes );
+            rocketnet_check( estimate.socket_receive_buffer_bytes == io_plan.socket_receive_buffer_bytes );
+        }
         else
         {
             rocketnet_check( estimate.umem_bytes == 0 && estimate.xdp_ring_bytes == 0 );
@@ -14566,6 +14574,45 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
     }
 
     rocketnet_check( estimated >= 1 );
+
+#if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // msgx asks for what each kind of socket asks: the shared socket 1,000,000
+    // send and the receive request at the client count (25,000 B a client at
+    // 1000 kbps over 10 Hz with margin 2, never under 1,000,000), each
+    // client's connected socket 65,536 each way. Not one shared socket's
+    // request for every socket (review E7: 26,026,000,000 at 1000 clients)
+    {
+        struct rocketnet_msgx_estimate_case_t
+        {
+            int max_clients;
+            uint64_t send_bytes;
+            uint64_t receive_bytes;
+        };
+
+        const uint64_t max_clients = (uint64_t) ROCKETNET_MAX_CLIENTS;
+        const uint64_t max_shared_receive = max_clients * 25000ull > 1000000ull ? max_clients * 25000ull : 1000000ull;
+        const struct rocketnet_msgx_estimate_case_t cases[] = {
+            { 1, 1065536ull, 1065536ull },
+            { 1000, 66536000ull, 90536000ull },
+            { ROCKETNET_MAX_CLIENTS, 1000000ull + max_clients * 65536ull, max_shared_receive + max_clients * 65536ull },
+        };
+
+        for ( const struct rocketnet_msgx_estimate_case_t & c : cases )
+        {
+            struct rocketnet_server_transport_config_t config;
+            rocketnet_server_transport_default_config( &config );
+            config.max_clients = c.max_clients;
+
+            struct rocketnet_host_memory_estimate_t estimate;
+            rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "msgx", &estimate ) );
+
+            rocketnet_check( estimate.sockets == 1 + c.max_clients );
+            rocketnet_check( estimate.socket_send_buffer_bytes == c.send_bytes );
+            rocketnet_check( estimate.socket_receive_buffer_bytes == c.receive_bytes );
+            rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
+        }
+    }
+#endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // The socket requests and transport stacks scale with num_gso_workers:

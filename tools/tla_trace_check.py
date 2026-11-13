@@ -110,6 +110,11 @@ LAYERS = {
         # template's ASSUME
         "steps": 150,
     },
+    "msgxreceivefill": {
+        "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
+        "untraced": {},
+        "reach": ["ShortRoom", "Held"],
+    },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
         "untraced": {},
@@ -269,7 +274,7 @@ SHARDS = [
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive"],
+    ["ackapply", "bank", "receive", "msgxreceivefill"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
 ]
 

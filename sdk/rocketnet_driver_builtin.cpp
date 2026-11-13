@@ -2948,6 +2948,17 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         plan.transport_io_bytes = rocketnet_server_msgx_allocation_bytes( workers, config->max_clients );
         plan.worker_threads = workers + 1;
         plan.sockets = 1 + config->max_clients;
+
+        // the shared socket asks for the shared send buffer and the receive
+        // request at the client count; each client's connected socket asks for
+        // ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER each way (rocketnet_server_msgx_create
+        // and its table's open). What Darwin grants the shared socket may be
+        // less (its halving walk): the estimate is what is asked
+        plan.socket_buffers_planned = true;
+        plan.socket_send_buffer_bytes = (uint64_t) ROCKETNET_SOCKET_SEND_BUFFER_SIZE +
+                                        (uint64_t) config->max_clients * (uint64_t) ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER;
+        plan.socket_receive_buffer_bytes = (uint64_t) rocketnet_server_transport_receive_buffer_request( "msgx", config->max_clients ) +
+                                           (uint64_t) config->max_clients * (uint64_t) ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER;
     }
 #endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     else if ( strcmp( transport, "portable" ) == 0 )

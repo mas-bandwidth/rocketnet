@@ -237,6 +237,12 @@ struct rocketnet_server_memory_plan_t
     uint64_t transport_io_bytes, umem_bytes, registered_region_bytes, total_bytes;
     uint64_t allocator_bytes, thread_stack_bytes, mapped_ring_bytes, os_bytes;
     int worker_threads, sockets;
+    // the kernel buffer bytes the sockets ask for, when they differ by socket
+    // (msgx: one shared socket and a small socket per client). Not planned:
+    // every socket asks for ROCKETNET_SOCKET_SEND_BUFFER_SIZE and the
+    // transport's receive request (rocketnet_server_host_memory_estimate)
+    bool socket_buffers_planned;
+    uint64_t socket_send_buffer_bytes, socket_receive_buffer_bytes;
 };
 bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_config_t * config,
                                              const char * transport, rocketnet_server_memory_plan_t & plan );

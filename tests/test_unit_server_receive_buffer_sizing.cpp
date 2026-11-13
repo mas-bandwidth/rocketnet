@@ -16,6 +16,7 @@
 #include "rocketnet_layers.h"
 
 #include <limits.h>
+#include <string.h>
 
 #define check rocketnet_unit_check
 
@@ -143,6 +144,16 @@ static void test_server_host_estimate_charges_the_receive_request()
                 const uint64_t request = (uint64_t) rocketnet_server_transport_receive_buffer_request( transport, max_clients );
                 check( request > 0 );
                 check( estimate.sockets >= 1 );
+                if ( strcmp( transport, "msgx" ) == 0 )
+                {
+                    // one shared socket asks for the request; each client's
+                    // connected socket asks for 65,536 each way
+                    const uint64_t clients = (uint64_t) max_clients;
+                    check( estimate.sockets == 1 + max_clients );
+                    check( estimate.socket_receive_buffer_bytes == request + clients * 65536ull );
+                    check( estimate.socket_send_buffer_bytes == (uint64_t) ROCKETNET_SOCKET_SEND_BUFFER_SIZE + clients * 65536ull );
+                    continue;
+                }
                 check( estimate.socket_receive_buffer_bytes == (uint64_t) estimate.sockets * request );
                 check( estimate.socket_send_buffer_bytes == (uint64_t) estimate.sockets * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
             }
