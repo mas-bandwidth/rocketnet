@@ -14258,6 +14258,7 @@ extern void rocketnet_test_aborted_messages_send_nothing();
 extern void rocketnet_test_client_io_threaded_progress_batch();
 extern void rocketnet_test_client_io_threaded_batch_flushes_mid_ring();
 extern void rocketnet_test_client_io_threaded_single_datagrams();
+extern void rocketnet_test_gaps_r2_ct_loopback_client_runs_the_io_core();
 extern void rocketnet_test_session_reconnect_isolation_portable();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_session_reconnect_isolation_gso();
@@ -14815,6 +14816,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_io_threaded_progress_batch", rocketnet_test_client_io_threaded_progress_batch, NULL },
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
+    { "test_gaps_r2_ct_loopback_client_runs_the_io_core", rocketnet_test_gaps_r2_ct_loopback_client_runs_the_io_core, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },

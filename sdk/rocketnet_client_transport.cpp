@@ -1408,6 +1408,15 @@ static void rocketnet_client_thread_release( void * context, rocketnet_platform_
     rocketnet_platform_thread_destroy( thread );
 }
 
+// mutation gaps r2-ct begin
+#if ROCKETNET_DEV
+// set by rocketnet_client_transport_thread_stack_fault_for_test: the plan reads
+// the thread stack size as 0, as when pthread_attr_init or
+// pthread_attr_getstacksize fails
+static bool rocketnet_client_thread_stack_fault = false;
+#endif // #if ROCKETNET_DEV
+// mutation gaps r2-ct end
+
 static bool rocketnet_client_transport_memory_plan( const rocketnet_client_transport_config_t * config,
                                                     const char * transport, rocketnet_client_memory_plan_t & plan )
 {
@@ -1544,6 +1553,15 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( threaded )
     {
         plan.thread_stack_bytes = rocketnet_thread_stack_bytes();
+        // mutation gaps r2-ct begin
+#if ROCKETNET_DEV
+        if ( rocketnet_client_thread_stack_fault )
+        {
+            plan.thread_stack_bytes = 0;
+        }
+#endif // #if ROCKETNET_DEV
+
+        // mutation gaps r2-ct end
         if ( !plan.thread_stack_bytes )
         {
             return false;
@@ -4767,6 +4785,14 @@ bool rocketnet_client_transport_drop_link_simulator_for_test( rocketnet_client_t
     rocketnet_network_simulator_destroy( client_transport->link_simulator );
     client_transport->link_simulator = NULL;
     return true;
+}
+
+// The memory plan reads the thread stack size as 0 while set, as when the
+// platform cannot report it; it changes nothing else.
+
+void rocketnet_client_transport_thread_stack_fault_for_test( bool fault )
+{
+    rocketnet_client_thread_stack_fault = fault;
 }
 #endif // #if ROCKETNET_DEV
 // mutation gaps r2-ct end
