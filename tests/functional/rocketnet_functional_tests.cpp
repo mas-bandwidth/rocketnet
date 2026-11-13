@@ -15769,7 +15769,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_rio_transport_server_send_full", rocketnet_test_server_rio_send_full, NULL },
     { "test_rio_transport_server_unroutable_takes_no_slot", rocketnet_test_server_rio_unroutable_takes_no_slot, NULL },
 #if ROCKETNET_DEV
-    { "test_rio_transport_lanes_through_the_server", rocketnet_test_server_rio_lanes_through_the_server, NULL },
+    { "test_rio_transport_lanes_through_the_server", rocketnet_test_server_rio_lanes_through_the_server, rocketnet_test_server_pin_allows_rio },
 #endif // #if ROCKETNET_DEV
     { "test_iocp_transport_server_uso_uro_probe", rocketnet_test_server_iocp_uso_uro_probe, NULL },
     { "test_iocp_transport_server_uso_wire", rocketnet_test_server_iocp_uso_wire, NULL },
