@@ -169,6 +169,10 @@ typedef int harden_socket_t;
 #define HARDEN_SLOT_PACKETS_RECEIVED ( HARDEN_COUNTER_SLOTS + 1 )
 #define HARDEN_CLIENT_SLOTS ( HARDEN_COUNTER_SLOTS + 2 )
 
+// the development library's count of the receive workers' refusals
+// (sdk/rocketnet_server_transport.cpp)
+uint64_t rocketnet_server_transport_worker_refused_for_testing( struct rocketnet_server_transport_t * server_transport );
+
 // ---------------------------------------------------------------- time and text
 
 static double harden_now()
@@ -2987,6 +2991,9 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_phase: role=server phase=cut_c2s utc=%s\n", utc );
         harden_print_term( role, "c2s_packets_received", (int64_t) cut.packets_received );
         harden_print_counters( "c2s_transport", role, transport ? rocketnet_server_transport_counters( transport ) : NULL, true );
+        // the receive workers' own refusal totals, as of that counters read:
+        // the reconcile's refused term (harden_chain.h)
+        harden_print_term( role, "c2s_worker_refused", transport ? (int64_t) rocketnet_server_transport_worker_refused_for_testing( transport ) : 0 );
         harden_print_cut_network( role, "c2s", o );
     }
     // a send the transport kept for its next send_packets leaves now: a few
@@ -4497,35 +4504,27 @@ static int harden_reconcile_main( const harden_options_t & o )
             return 2;
         }
     }
-    if ( !t.has( "server.s2c_packets_sent" ) || !t.has( "clients.c2s_packets_sent" ) || !t.has( "server.c2s_packets_received" ) || !t.has( "clients.s2c_packets_received" ) )
+    if ( !t.has( "server.s2c_packets_sent" ) || !t.has( "clients.c2s_packets_sent" ) || !t.has( "server.c2s_packets_received" ) || !t.has( "server.c2s_worker_refused" ) ||
+         !t.has( "clients.s2c_packets_received" ) )
     {
         printf( "harden_reconcile: verdict=FAIL reason=missing_cut (a role ended before its cut)\n" );
         return 1;
     }
 
-    harden_chain_t up;
-    up.library_sent = t.get( "clients.c2s_packets_sent" ) + t.get( "hostile.sent" );
-    up.kernel_out = t.get( "clients.c2s_udp_out" );
-    up.kernel_sndbuf = t.get( "clients.c2s_udp_sndbuf" );
-    up.qdisc_sent = t.get( "clients.c2s_tc_sent" );
-    up.qdisc_dropped = t.get( "clients.c2s_tc_dropped" );
-    up.device_dropped = t.get( "clients.c2s_dev_tx_dropped" );
-    up.arrived_in = t.get( "server.c2s_udp_in" );
-    up.arrived_inerrors = t.get( "server.c2s_udp_inerrors" );
-    up.arrived_noports = t.get( "server.c2s_udp_noports" );
-    up.arrived_noports_strays = t.get( "server.c2s_udp_noports_strays" );
-    up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
-    up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
-    up.sender_counters = t.get( "clients.c2s_kernel_read" ) != 0;
-    up.receiver_counters = t.get( "server.c2s_kernel_read" ) != 0;
-    up.device_overlap = t.get( "server.c2s_dev_rx_inexact" ) != 0 ? std::max<int64_t>( up.arrived_device_dropped, 0 ) : 0;
-    up.library_received = t.get( "server.c2s_packets_received" );
-    // the refusals before the library's received count, both parts on every
-    // transport and with or without a hostile role (harden_chain.h,
-    // harden_refused_from_terms)
-    up.library_refused_before_received = harden_refused_from_terms( [&t]( const char * key )
-                                                                    { return t.get( key ); } );
-    up.refused_source = "transport PACKETS_RECEIVED - library received (refused off the main thread) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE)";
+    // the clients to server chain from the printed terms (harden_chain.h,
+    // harden_chain_up_from_terms: the unit suite judges the same function)
+    const auto term = [&t]( const char * key )
+    {
+        return t.get( key );
+    };
+    harden_chain_t up = harden_chain_up_from_terms( term );
+    // the transport's count against the library's, judged with the up chain:
+    // the chain no longer reads PACKETS_RECEIVED, so a refusal the transport
+    // counted there and no worker total names is red here
+    const int64_t handoff_gap = harden_handoff_gap_from_terms( term );
+    printf( "harden_chain: clients_to_server transport PACKETS_RECEIVED=%" PRId64 " = library_received=%" PRId64 " + worker_refused=%" PRId64 " (handoff_gap=%" PRId64 ") verdict=%s\n",
+            t.get( "server.c2s_transport_PACKETS_RECEIVED" ), t.get( "server.c2s_packets_received" ), t.get( "server.c2s_worker_refused" ), handoff_gap,
+            handoff_gap == 0 ? "PASS" : "FAIL" );
 
     harden_chain_t down;
     down.library_sent = t.get( "server.s2c_packets_sent" );
@@ -4545,7 +4544,7 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.device_overlap = t.get( "clients.s2c_dev_rx_inexact" ) != 0 ? std::max<int64_t>( down.arrived_device_dropped, 0 ) : 0;
     down.library_received = t.get( "clients.s2c_packets_received" ) + t.get( "hostile.received" );
 
-    const bool up_ok = harden_chain_print( "clients_to_server", up, o.netem_duplicates );
+    const bool up_ok = harden_up_ok( harden_chain_print( "clients_to_server", up, o.netem_duplicates ), handoff_gap );
     const bool down_ok = harden_chain_print( "server_to_clients", down, o.netem_duplicates );
     // a cloud NIC's allowance counters, not judged (the provider counts a
     // packet queued or dropped): nonzero beside a library gap names the link

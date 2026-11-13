@@ -321,6 +321,11 @@
    :text "In an AddressSanitizer build the rio transport's sized block (rocketnet_rio_sized_layout: slot bytes, retry slices, process arrays, drops, each bank's data, from and packet bytes) carries poisoned red zones between its carves. The registered region laid out by sdk/rocketnet_rio_layout.h (send frames, send addresses, receive slices, receive addresses; one RIORegisterBuffer) does not: its offsets are the layout RNRioLaneLayout models and the trace check binds, so a pad there changes a modelled layout. Add the pads to the layout and its model together, or record why that region stays uncovered."
    :date "2026-11-13" :origin "#1047 merge with the rebuilt rio")
 
+  (item "sodium-windows-lock-owner" :group "audit-remaining" :area "sdk"
+   :title "Owner-aware leave for the vendored sodium's Windows lock"
+   :text "sodium_misuse leaves sodium's critical section before taking it again. On POSIX the vendored leave refuses unless this thread holds the lock (a thread-local flag, tools/generate_sodium.py LIFECYCLE_ADAPTATIONS, sodium/README.md \"POSIX lock\"). The Windows branch keeps upstream's check of the process-wide locked flag, so a fatal misuse on a thread outside the section while another thread holds the SRW lock clears that thread's flag and releases a lock it does not own. Reachable only on the abort path. Give the Windows branch the same thread-local owner flag (__declspec(thread) under MSVC, __thread under MinGW), carried through the generator."
+   :date "2026-11-13" :origin "fix-review build-sanitizers 4703c70f0 B02")
+
   (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
    :title "The io_uring provided buffers are 264 MiB a queue whatever the GRO tier"
    :text "With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against 698 MB, which is the suite's per-case bound (suite_case_rss_mb), not a plan bound. The cause is the receive buffers: 4096 buffers of 66 KiB a queue (ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES), 264 MiB a queue and two queues by default (num_io_uring_workers), made resident once the multishot writes into them, whether or not UDP_GRO was granted. Size the buffers by the tier (a buffer need only hold a whole datagram without GRO) or lower the count, and say so in the plan."

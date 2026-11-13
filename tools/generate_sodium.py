@@ -83,7 +83,8 @@ SANITIZER_ADAPTATIONS = {
 # takes the lock outside rocketnet_init..rocketnet_term (the key generators),
 # so no term can delete it safely. A statically initialised SRWLOCK has no
 # init and nothing to delete; sodium never takes the lock recursively (enter
-# asserts locked == 0), which an SRWLOCK requires. POSIX branches unchanged.
+# asserts locked == 0), which an SRWLOCK requires. The POSIX lock's
+# adaptations follow the Windows ones (sodium/README.md, "POSIX lock").
 LIFECYCLE_ADAPTATIONS = {
     'sodium.c': [
         ('static CRITICAL_SECTION _sodium_lock;\nstatic volatile LONG    _sodium_lock_initialized;\n\n'
@@ -112,6 +113,24 @@ LIFECYCLE_ADAPTATIONS = {
          'static volatile int initialized;\n#ifdef _WIN32\nstatic volatile int locked;\n#endif // #ifdef _WIN32\n',
          '#ifdef _WIN32\n# include <windows.h>\n#else\n# include <pthread.h>\n# ifndef HAVE_PTHREAD\n#  define HAVE_PTHREAD 1\n# endif\n#endif\n\n\n'
          'static volatile int initialized;\nstatic volatile int locked;\n'),
+        # POSIX lock ownership (sodium/README.md, "POSIX lock"). sodium_misuse
+        # leaves the critical section before taking it again, so a misuse
+        # inside sodium_init (which holds it) can reach the handler. Upstream's
+        # leave decides from the process-wide flag, which says some thread
+        # holds the lock, not this one: a fatal misuse on a thread outside the
+        # section while another holds it would clear that thread's flag and
+        # unlock its mutex. A thread-local flag records that this thread
+        # holds the lock; leave refuses (EPERM, as for an unlocked lock)
+        # unless it does, and reads the shared flag only when it does.
+        ('static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;\n',
+         'static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;\nstatic __thread int    _sodium_lock_held;\n'),
+        ('    if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {\n        assert(locked == 0);\n        locked = 1;\n    }\n',
+         '    if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {\n        assert(locked == 0);\n        locked = 1;\n'
+         '        _sodium_lock_held = 1;\n    }\n'),
+        ('    if (locked == 0) {\n# ifdef EPERM\n        errno = EPERM;\n# endif\n        return -1;\n    }\n'
+         '    locked = 0;\n\n    return pthread_mutex_unlock(&_sodium_lock);\n',
+         '    if (_sodium_lock_held == 0 || locked == 0) {\n# ifdef EPERM\n        errno = EPERM;\n# endif\n        return -1;\n    }\n'
+         '    _sodium_lock_held = 0;\n    locked = 0;\n\n    return pthread_mutex_unlock(&_sodium_lock);\n'),
     ],
 }
 UPSTREAM_ADAPTATIONS = {

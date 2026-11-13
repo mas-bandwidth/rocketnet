@@ -34,7 +34,7 @@ struct harden_chain_t
     // refused by the receiving server before the library counts the packet
     // received: harden_refused_before_received below
     int64_t library_refused_before_received = 0;
-    const char * refused_source = "transport PACKETS_RECEIVED - library received + the receive path's size drops"; // printed with the chain
+    const char * refused_source = "the receive workers' refusals + the receive path's size drops"; // printed with the chain
     // the receiving device's discard delta includes the stop window (a Windows adapter's counter): up to that many
     // more packets than the library lost are named, so the library gap may be that far below zero
     int64_t device_overlap = 0;
@@ -59,23 +59,26 @@ struct harden_chain_result_t
 };
 
 // The datagrams the receiving server refused before its library counted them
-// received, as two disjoint parts:
-//  - transport_received - library_received: a worker's prefilter (off the
-//    main thread) counts each refusal into the transport's PACKETS_RECEIVED
-//    and its reason, and main's stats never see it. Main's own prefilter
-//    counts into both, so its refusals are in neither part of the difference.
-//    Every sender's datagrams are in it, the hostile role's included (the
-//    chain's library_sent counts hostile.sent).
+// received, each part counted where the refusal happened, never inferred from
+// the received count. PACKETS_RECEIVED less the received count would cancel
+// the received count out of the chain, which then judged PACKETS_RECEIVED
+// alone: a datagram the transport counted and the library's received count
+// missed would read as refused:
+//  - worker_refused: the receive workers' prefilter refusals (off the main
+//    thread), from the workers' own per-reason totals
+//    (rocketnet_server_transport_worker_refused_for_testing, printed by the
+//    server at its cut as c2s_worker_refused). Main's own prefilter
+//    refusals are inside the library's received count. Every sender's
+//    datagrams are in it, the hostile role's included (the chain's
+//    library_sent counts hostile.sent).
 //  - outside_size_drops: the receive path's own size drops (io_uring's
 //    URING_RECEIVE_DROPPED_SIZE, IOCP_ and RIO_RECEIVE_TOO_SHORT/TOO_LARGE),
 //    which the transport folds into PREFILTER_TOO_SHORT/TOO_LARGE outside
 //    PACKETS_RECEIVED. The other transports count their size drops inside it.
 // PREFILTER_TOO_SHORT/TOO_LARGE are never added whole: they mix both parts.
-// A difference below zero is not clamped: it is a counter defect, and the
-// chain shows it red.
-static inline int64_t harden_refused_before_received( int64_t transport_received, int64_t library_received, int64_t outside_size_drops )
+static inline int64_t harden_refused_before_received( int64_t worker_refused, int64_t outside_size_drops )
 {
-    return ( transport_received - library_received ) + outside_size_drops;
+    return worker_refused + outside_size_drops;
 }
 
 // the same term from the reconcile's printed terms: get( key ) is a term's
@@ -84,7 +87,51 @@ static inline int64_t harden_refused_before_received( int64_t transport_received
 template <typename Get> static inline int64_t harden_refused_from_terms( const Get & get )
 {
     const int64_t outside_size_drops = get( "server.c2s_transport_URING_RECEIVE_DROPPED_SIZE" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_LARGE" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_LARGE" );
-    return harden_refused_before_received( get( "server.c2s_transport_PACKETS_RECEIVED" ), get( "server.c2s_packets_received" ), outside_size_drops );
+    return harden_refused_before_received( get( "server.c2s_worker_refused" ), outside_size_drops );
+}
+
+// the clients to server chain, every term from the roles' printed terms: the
+// reconcile's (tests/load/harden_load.cpp) and the unit suite's one path
+template <typename Get> static inline harden_chain_t harden_chain_up_from_terms( const Get & get )
+{
+    harden_chain_t up;
+    up.library_sent = get( "clients.c2s_packets_sent" ) + get( "hostile.sent" );
+    up.kernel_out = get( "clients.c2s_udp_out" );
+    up.kernel_sndbuf = get( "clients.c2s_udp_sndbuf" );
+    up.qdisc_sent = get( "clients.c2s_tc_sent" );
+    up.qdisc_dropped = get( "clients.c2s_tc_dropped" );
+    up.device_dropped = get( "clients.c2s_dev_tx_dropped" );
+    up.arrived_in = get( "server.c2s_udp_in" );
+    up.arrived_inerrors = get( "server.c2s_udp_inerrors" );
+    up.arrived_noports = get( "server.c2s_udp_noports" );
+    up.arrived_noports_strays = get( "server.c2s_udp_noports_strays" );
+    up.arrived_ipdiscards = get( "server.c2s_ip_indiscards" );
+    up.arrived_device_dropped = get( "server.c2s_dev_rx_dropped" );
+    up.sender_counters = get( "clients.c2s_kernel_read" ) != 0;
+    up.receiver_counters = get( "server.c2s_kernel_read" ) != 0;
+    up.device_overlap = get( "server.c2s_dev_rx_inexact" ) != 0 && up.arrived_device_dropped > 0 ? up.arrived_device_dropped : 0;
+    up.library_received = get( "server.c2s_packets_received" );
+    // the refusals before the library's received count, both parts on every
+    // transport and with or without a hostile role, each from its own count
+    up.library_refused_before_received = harden_refused_from_terms( get );
+    up.refused_source = "c2s_worker_refused (the receive workers' own totals) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE)";
+    return up;
+}
+
+// the transport's count against the library's: every datagram the transport
+// counts in PACKETS_RECEIVED is a worker refusal (folded from the workers'
+// totals) or one main took (main counts it there and in the received count).
+// Judged with the up chain, which no longer reads PACKETS_RECEIVED: not zero
+// names a datagram one side counted and the other did not
+template <typename Get> static inline int64_t harden_handoff_gap_from_terms( const Get & get )
+{
+    return get( "server.c2s_transport_PACKETS_RECEIVED" ) - ( get( "server.c2s_packets_received" ) + get( "server.c2s_worker_refused" ) );
+}
+
+// the up direction's verdict: its chain, and the handoff balanced
+static inline bool harden_up_ok( bool chain_ok, int64_t handoff_gap )
+{
+    return chain_ok && handoff_gap == 0;
 }
 
 static inline harden_chain_result_t harden_chain_judge( const harden_chain_t & c, int duplicates_expected )

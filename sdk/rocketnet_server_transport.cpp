@@ -5809,6 +5809,30 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+// development library only: the datagrams the transport's receive workers
+// refused that are folded into PACKETS_RECEIVED (each prefilter reason's
+// cumulative total, as of the last counters read), apart from main's own
+// count. The load harness (tests/load/harden_load.cpp) reads it at its cut
+// after the counters, so its chain names these refusals from the workers'
+// own totals rather than from PACKETS_RECEIVED less the received count
+uint64_t rocketnet_server_transport_worker_refused_for_testing( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    uint64_t refused = 0;
+    for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+    {
+        int counters[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+        const int num_counters = rocketnet_receive_drop_counters( (enum rocketnet_receive_drop_t) drop, counters );
+        if ( num_counters > 0 && counters[0] == ROCKETNET_COUNTER_PACKETS_RECEIVED )
+        {
+            refused += server_transport->transport_receive_drop_totals[drop];
+        }
+    }
+    return refused;
+}
+#endif // #if ROCKETNET_DEV
+
 static void rocketnet_server_transport_fold_receive_drops( struct rocketnet_server_transport_t * server_transport )
 {
     uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS] = {};

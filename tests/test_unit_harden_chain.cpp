@@ -192,45 +192,132 @@ static void test_harden_chain_duplicates_row()
     check( !harden_chain_judge( c, 1 ).ok );
 }
 
-// the refusals before received, with a hostile role: the clients sent 1000,
-// the hostile role 10 (2 too short, 1 too large, 7 the gso workers' prefilter
-// refused for another reason); the server's library received the clients'
-// 1000. The workers count all 10 into the transport's PACKETS_RECEIVED, the 3
-// size refusals into PREFILTER_TOO_SHORT/TOO_LARGE as well
-static harden_chain_t harden_chain_test_hostile_gso()
+// The refusals before received, through the reconcile's own path: one map of
+// the terms the roles print, read by harden_chain_up_from_terms (the chain the
+// reconcile judges) and harden_handoff_gap_from_terms. The transport counter
+// keys are the server's c2s_transport_ prefix and the library's own counter
+// name, so a renamed counter reads 0 and fails here
+
+typedef std::map<std::string, int64_t> harden_terms_t;
+
+static std::string harden_transport_key( int counter )
 {
-    harden_chain_t c;
-    c.library_sent = 1010;
-    c.kernel_out = 1010;
-    c.arrived_in = 1010;
-    c.library_received = 1000;
-    return c;
+    return std::string( "server.c2s_transport_" ) + rocketnet_counter_name( counter );
+}
+
+static harden_chain_t harden_chain_test_up( const harden_terms_t & terms )
+{
+    return harden_chain_up_from_terms( [&terms]( const char * key ) -> int64_t
+                                       {
+                                           harden_terms_t::const_iterator it = terms.find( key );
+                                           return it == terms.end() ? 0 : it->second; } );
+}
+
+static int64_t harden_chain_test_handoff_gap( const harden_terms_t & terms )
+{
+    return harden_handoff_gap_from_terms( [&terms]( const char * key ) -> int64_t
+                                          {
+                                              harden_terms_t::const_iterator it = terms.find( key );
+                                              return it == terms.end() ? 0 : it->second; } );
+}
+
+// a gso cell with a hostile role: the clients sent 1000, the hostile role 10
+// (2 too short, 1 too large, 7 the workers' prefilter refused for another
+// reason); the server's library received the clients' 1000. The workers count
+// all 10 into the transport's PACKETS_RECEIVED and into their own totals
+// (c2s_worker_refused), the 3 size refusals into PREFILTER_TOO_SHORT/TOO_LARGE
+// as well
+static harden_terms_t harden_terms_test_hostile_gso()
+{
+    harden_terms_t t;
+    t["clients.c2s_packets_sent"] = 1000;
+    t["hostile.sent"] = 10;
+    t["clients.c2s_udp_out"] = 1010;
+    t["server.c2s_udp_in"] = 1010;
+    t["clients.c2s_kernel_read"] = 1;
+    t["server.c2s_kernel_read"] = 1;
+    t["server.c2s_packets_received"] = 1000;
+    t["server.c2s_worker_refused"] = 10;
+    t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1010;
+    t[harden_transport_key( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT )] = 2;
+    t[harden_transport_key( ROCKETNET_COUNTER_PREFILTER_TOO_LARGE )] = 1;
+    return t;
 }
 
 static void test_harden_chain_refused_hostile_worker_prefilter()
 {
-    harden_chain_t c = harden_chain_test_hostile_gso();
-    c.library_refused_before_received = harden_refused_before_received( 1010, 1000, 0 );
+    harden_terms_t t = harden_terms_test_hostile_gso();
+    harden_chain_t c = harden_chain_test_up( t );
+    check( c.library_sent == 1010 );
     check( c.library_refused_before_received == 10 );
     harden_chain_result_t r = harden_chain_judge( c, 0 );
     check( r.ok );
     check( r.library_gap == 0 );
     check( r.receive_gap == 0 );
+    check( harden_chain_test_handoff_gap( t ) == 0 );
 
-    // the size counters alone (the term with a hostile role before this fix)
-    // leave the 7 other refusals unnamed: the chain fails a cell that lost nothing
+    // the size counters alone (the term with a hostile role before R42) leave
+    // the 7 other refusals unnamed: the chain fails a cell that lost nothing
 
     c.library_refused_before_received = 2 + 1;
     r = harden_chain_judge( c, 0 );
     check( !r.ok );
     check( r.library_gap == 7 );
+}
 
-    // a datagram lost after the workers counted it is still caught
+static void test_harden_chain_refused_received_count_short_is_red()
+{
+    // the library's received count short of the transport's: the transport
+    // counted 1010 in PACKETS_RECEIVED, the workers refused 10, the library
+    // counted 999 received. The term is the workers' own count, so the chain
+    // judges the received count: the missing one stays in the gap and the
+    // chain fails, and so does the handoff. A term of PACKETS_RECEIVED less the
+    // received count (4703c70f0) reads 11 refused here and passes
 
-    c = harden_chain_test_hostile_gso();
-    c.library_received = 999;
-    c.library_refused_before_received = harden_refused_before_received( 1010, 1000, 0 );
-    r = harden_chain_judge( c, 0 );
+    harden_terms_t t = harden_terms_test_hostile_gso();
+    t["server.c2s_packets_received"] = 999;
+    harden_chain_t c = harden_chain_test_up( t );
+    check( c.library_refused_before_received == 10 );
+    harden_chain_result_t r = harden_chain_judge( c, 0 );
+    check( !r.ok );
+    check( r.library_gap == 1 );
+    check( r.receive_gap == 1 );
+    check( harden_chain_test_handoff_gap( t ) == 1 );
+
+    // a datagram a worker handed on and main never took: main counts both
+    // PACKETS_RECEIVED and the received count, so both read one short. The
+    // chain fails on the gap and the handoff balances
+
+    t = harden_terms_test_hostile_gso();
+    t["server.c2s_packets_received"] = 999;
+    t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1009;
+    r = harden_chain_judge( harden_chain_test_up( t ), 0 );
+    check( !r.ok );
+    check( r.library_gap == 1 );
+    check( harden_chain_test_handoff_gap( t ) == 0 );
+    check( !harden_up_ok( r.ok, harden_chain_test_handoff_gap( t ) ) );
+
+    // the transport counting one more in PACKETS_RECEIVED than main took or a
+    // worker refused: the chain balances on the library's counts and the
+    // handoff alone is red
+
+    t = harden_terms_test_hostile_gso();
+    t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1011;
+    r = harden_chain_judge( harden_chain_test_up( t ), 0 );
+    check( r.ok );
+    check( harden_chain_test_handoff_gap( t ) == 1 );
+    check( !harden_up_ok( r.ok, harden_chain_test_handoff_gap( t ) ) );
+    check( harden_up_ok( r.ok, 0 ) );
+
+    // and with no hostile role: the received count one short
+
+    harden_terms_t clean;
+    clean["clients.c2s_packets_sent"] = 1000;
+    clean["clients.c2s_udp_out"] = 1000;
+    clean["server.c2s_udp_in"] = 1000;
+    clean["server.c2s_packets_received"] = 999;
+    clean[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1000;
+    r = harden_chain_judge( harden_chain_test_up( clean ), 0 );
     check( !r.ok );
     check( r.library_gap == 1 );
 }
@@ -240,74 +327,54 @@ static void test_harden_chain_refused_both_parts_io_uring()
     // io_uring, 7 hostile datagrams and no client traffic: 3 dropped for size on
     // the receive path (URING_RECEIVE_DROPPED_SIZE, outside PACKETS_RECEIVED), 4
     // refused by the workers' prefilter (inside it). The term is both parts; either
-    // part alone (the two branches before this fix) leaves a gap
+    // part alone (the two branches before R42) leaves a gap
 
-    harden_chain_t c;
-    c.library_sent = 7;
-    c.kernel_out = 7;
-    c.arrived_in = 7;
-    c.library_received = 0;
-    c.library_refused_before_received = harden_refused_before_received( 4, 0, 3 );
+    harden_terms_t t;
+    t["hostile.sent"] = 7;
+    t["clients.c2s_udp_out"] = 7;
+    t["server.c2s_udp_in"] = 7;
+    t["server.c2s_worker_refused"] = 4;
+    t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 4;
+    t[harden_transport_key( ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE )] = 3;
+    harden_chain_t c = harden_chain_test_up( t );
     check( c.library_refused_before_received == 7 );
     harden_chain_result_t r = harden_chain_judge( c, 0 );
     check( r.ok );
     check( r.library_gap == 0 );
+    check( harden_chain_test_handoff_gap( t ) == 0 );
 
     c.library_refused_before_received = 4;
     check( !harden_chain_judge( c, 0 ).ok );
     c.library_refused_before_received = 3;
     check( !harden_chain_judge( c, 0 ).ok );
-
-    // gso counts its size drops inside PACKETS_RECEIVED: the same 7 are the
-    // difference alone, with no outside part
-
-    check( harden_refused_before_received( 7, 0, 0 ) == 7 );
-}
-
-static void test_harden_chain_refused_negative_difference_is_red()
-{
-    // the library counting more received than the transport is a counter
-    // defect: the term is not clamped, and the chain fails
-
-    harden_chain_t c;
-    c.library_sent = 100;
-    c.kernel_out = 100;
-    c.arrived_in = 100;
-    c.library_received = 100;
-    c.library_refused_before_received = harden_refused_before_received( 95, 100, 0 );
-    check( c.library_refused_before_received == -5 );
-    check( !harden_chain_judge( c, 0 ).ok );
 }
 
 static void test_harden_chain_refused_from_terms_reads_the_counters()
 {
-    // the reconcile's term from the printed terms: each key is the server's
-    // c2s_transport_ prefix and the library's own counter name, so a misspelled
-    // or renamed counter reads 0 and fails here
+    // every key the term reads: the workers' count and each outside size drop
+    // counter by the library's own name. The prefilter's own size counters mix
+    // both parts and are never read, and PACKETS_RECEIVED is never read into
+    // the term (the received count is not subtracted from anything)
 
     const int outside[] = { ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE,
                             ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE };
     for ( int i = 0; i < (int) ( sizeof( outside ) / sizeof( outside[0] ) ); i++ )
     {
-        std::map<std::string, int64_t> terms;
-        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1010;
-        terms["server.c2s_packets_received"] = 1000;
-        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( outside[i] )] = 3;
-        // the prefilter's own size counters mix both parts: never read
-        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT )] = 100;
-        terms[std::string( "server.c2s_transport_" ) + rocketnet_counter_name( ROCKETNET_COUNTER_PREFILTER_TOO_LARGE )] = 100;
-        const int64_t refused = harden_refused_from_terms( [&terms]( const char * key ) -> int64_t
-                                                           {
-                                                               std::map<std::string, int64_t>::const_iterator it = terms.find( key );
-                                                               return it == terms.end() ? 0 : it->second; } );
-        check( refused == 13 );
+        harden_terms_t t;
+        t["server.c2s_worker_refused"] = 10;
+        t["server.c2s_packets_received"] = 1000;
+        t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 5000;
+        t[harden_transport_key( outside[i] )] = 3;
+        t[harden_transport_key( ROCKETNET_COUNTER_PREFILTER_TOO_SHORT )] = 100;
+        t[harden_transport_key( ROCKETNET_COUNTER_PREFILTER_TOO_LARGE )] = 100;
+        check( harden_chain_test_up( t ).library_refused_before_received == 13 );
     }
 }
 
 REGISTER_UNIT_TEST( test_harden_chain_refused_from_terms_reads_the_counters );
 REGISTER_UNIT_TEST( test_harden_chain_refused_hostile_worker_prefilter );
 REGISTER_UNIT_TEST( test_harden_chain_refused_both_parts_io_uring );
-REGISTER_UNIT_TEST( test_harden_chain_refused_negative_difference_is_red );
+REGISTER_UNIT_TEST( test_harden_chain_refused_received_count_short_is_red );
 REGISTER_UNIT_TEST( test_harden_chain_strays_named_pass );
 REGISTER_UNIT_TEST( test_harden_chain_unnamed_strays_fail );
 REGISTER_UNIT_TEST( test_harden_chain_planted_loss_fails );
