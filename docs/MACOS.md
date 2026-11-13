@@ -276,15 +276,16 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 
 The workloads are the performance report's: 1000 players at 60 Hz, about
 480,000 packets a second on average and about 900,000 at peak
-([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). A `msgx`
-server holds the average load for 1000 players. At peak, macOS tops out
-lower, and more transmit workers do not close the gap. The limit is in the
-operating system: every packet a Mac sends on an interface passes through
-that interface's one output queue, behind one lock, and one kernel transmit
-thread hands the packets to the driver. All the transmit workers' sends meet
-in that queue, so past a point more workers wait on its lock rather than send
-more. The performance report has no macOS record yet, so it gives no figure
-for the peak a Mac reaches.
+([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). In the
+project's own tests a `msgx` server holds the average load for 1000 players.
+At peak, macOS tops out lower, and more transmit workers do not close the
+gap. In those tests the limit was in the operating system: every packet the
+Mac sent on its interface passed through that interface's one output queue,
+behind one lock, and one kernel transmit thread handed the packets to the
+driver (an interface whose driver works another way may differ). All the
+transmit workers' sends meet in that queue, so past a point more workers wait
+on its lock rather than send more. The performance report has no macOS record
+yet, so it gives no figure for the peak a Mac reaches.
 
 Test with many client addresses. When every test client sends from one
 address (all the clients on one load machine with one address), every packet
@@ -352,11 +353,16 @@ scheduling policy.
 A `msgx` server has `num_msgx_transmit_workers` transmit workers (default 3)
 and one receive worker; a `portable` server has two, one for receive and one
 for transmit. All of them start with default `pthread_create` attributes. The
-`msgx` workers then get the same `SCHED_RR` request as the client I/O thread
+`msgx` transmit workers and its receive worker then get the same request as
+the client I/O thread, `SCHED_RR` at priority 32
 (`rocketnet_platform_server_thread_priority`, called from
-`sdk/rocketnet_server_msgx_apple.cpp`), and `rocketnet_thread_priority( false )`
-turns it off for them too. The `portable` server's workers get no priority
-request.
+`sdk/rocketnet_server_msgx_apple.cpp` right after it creates each worker), and
+`rocketnet_thread_priority( false )` turns it off for them too. If macOS
+refuses the request, the worker runs on at its default priority and the server
+keeps going: the refusal is counted, and the first refused `SCHED_RR`
+request in the process (client or server) logs a warning (`thread priority: pthread_setschedparam SCHED_RR 32 refused
+(<reason>); the thread runs at its default priority`). The `portable`
+server's workers get no priority request.
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging
