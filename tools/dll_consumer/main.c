@@ -183,29 +183,26 @@ int main( void )
     // every declared status is named; -9 and -22 are values the header leaves
     // unassigned, and they and the values past either end read UNKNOWN
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; i-- )
+    for ( int i = ROCKETNET_STATUS_OK + 1; i >= ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE - 1; i-- )
     {
-        CHECK( name_known( rocketnet_status_name( (enum rocketnet_status_t) i ) ) == ( i != -9 && i != -22 ) );
+        const int assigned = i <= ROCKETNET_STATUS_OK && i >= ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE && i != -9 && i != -22;
+        CHECK( name_known( rocketnet_status_name( (enum rocketnet_status_t) i ) ) == assigned );
     }
-    CHECK( !name_known( rocketnet_status_name( (enum rocketnet_status_t) ( ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE - 1 ) ) ) );
-    CHECK( !name_known( rocketnet_status_name( (enum rocketnet_status_t) 1 ) ) );
 
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     CHECK( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
 
-    for ( int i = ROCKETNET_LOG_LEVEL_NONE; i <= ROCKETNET_LOG_LEVEL_SPAM; i++ )
+    for ( int i = ROCKETNET_LOG_LEVEL_NONE; i <= ROCKETNET_LOG_LEVEL_SPAM + 1; i++ )
     {
-        CHECK( name_known( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) ) );
+        CHECK( name_known( rocketnet_log_level_name( (enum rocketnet_log_level_t) i ) ) == ( i <= ROCKETNET_LOG_LEVEL_SPAM ) );
     }
-    CHECK( !name_known( rocketnet_log_level_name( (enum rocketnet_log_level_t) ( ROCKETNET_LOG_LEVEL_SPAM + 1 ) ) ) );
 
     CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
-    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED + 1; i++ )
     {
-        CHECK( name_known( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) ) );
+        CHECK( name_known( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) ) == ( i <= ROCKETNET_CLIENT_STATE_CONNECTED ) );
     }
-    CHECK( !name_known( rocketnet_client_state_name( (enum rocketnet_client_state_t) ( ROCKETNET_CLIENT_STATE_CONNECTED + 1 ) ) ) );
 
     for ( int i = ROCKETNET_DISCONNECT_REASON_NONE; i >= ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED; i-- )
     {
