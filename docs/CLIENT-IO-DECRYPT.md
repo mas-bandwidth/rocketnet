@@ -12,12 +12,17 @@ them through bounded queues. Each accepted packet follows this order:
 6. retire the receive buffer exactly once.
 
 A session datagram below its type's wire floor, or with sequence zero, is
-refused before authentication. The I/O thread opens a payload as soon as it
-has the live session keys, while the client may still be sending its
-connection response; update then refuses that payload on the state check,
-which accepts a payload only once connected. The I/O thread's replay window
-has therefore consumed a record update's window never will, so the model keeps
-containment of the two windows, not equality.
+refused before authentication. The I/O thread opens a keep-alive as soon as
+it has the live session keys, but a payload only once the client is
+connected: until update stores the payloads word on entering connected, a
+payload passes the I/O thread unopened and unmarked, and update counts it
+wrong state before any open (TRANSPORT.md t11.3). The I/O thread's replay
+window marks only sequences update accepts or has accepted. The store is relaxed, so
+the I/O thread may still read 0 for a while after it: a payload it passes raw
+then is opened and accepted by update alone, in a window after each connect
+that the code bounds by no count of payloads, only by the store becoming
+visible; a later copy of it opens on the I/O
+thread and update refuses it as already received.
 
 A packet that fails any check produces no application message. Queue pressure
 cannot expose a partially opened packet or reuse storage that another stage

@@ -10473,7 +10473,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // the request left and after the server answered; the answer then lands in
     // the same pass, reply_seen equals request_opened, and the strictly-later
     // check at the bottom goes red. The transport-side rule this pins is the
-    // client buffer swap (sdk/rocketnet_client_transport.cpp (rocketnet_client_legacy_publish),
+    // client receive handoff (sdk/rocketnet_client_transport.cpp (rocketnet_client_legacy_commit),
     // and rocketnet_client_update_expose_legacy_receive).
 
     const int rounds = 200;
@@ -14299,7 +14299,15 @@ extern bool rocketnet_test_server_receive_low_tick_measurement_requested();
 extern void rocketnet_test_receive_latency_server_gso();
 extern void rocketnet_test_receive_latency_server_io_uring();
 extern void rocketnet_test_receive_latency_server_xdp();
+extern void rocketnet_test_receive_latency_client_gso();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_receive_latency_client_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_receive_latency_client_iocp();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_receive_latency_client_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // receive latency (tests/functional/receive_latency.cpp) on the Windows
@@ -16493,6 +16501,7 @@ extern void test_fuzz_prefilter_seed_names_match_outcomes();
 static bool rocketnet_test_server_pin_allows_portable() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "portable" ); }
 static bool rocketnet_test_server_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", NULL ); }
 static bool rocketnet_test_client_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", NULL ); }
+static bool rocketnet_test_client_pin_allows_portable() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "portable" ); }
 static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_server_pin_allows_auto() || !rocketnet_test_client_pin_allows_auto(); }
 
 // the loopback hub case pins loopback in its configs: a whole-suite pin
@@ -16516,10 +16525,12 @@ static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketn
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
+static bool rocketnet_test_client_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "iocp" ); }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 static bool rocketnet_test_server_pin_allows_gso() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "gso" ); }
 static bool rocketnet_test_server_pin_allows_xdp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "xdp" ); }
+static bool rocketnet_test_client_pin_allows_gso() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "gso" ); }
 // a build without liburing still runs the case (the pin falls to portable);
 // a kernel that refuses the ring takes it out
 static bool rocketnet_test_server_pin_allows_io_uring()
@@ -16530,6 +16541,7 @@ static bool rocketnet_test_server_pin_allows_io_uring()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 static bool rocketnet_test_server_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "msgx" ); }
+static bool rocketnet_test_client_pin_allows_msgx() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "msgx" ); }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 extern void rocketnet_test_server_stats_creates_no_thread();
@@ -16894,7 +16906,15 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_XDP
     { "test_receive_latency_server_xdp", rocketnet_test_receive_latency_server_xdp, rocketnet_test_xdp_veth_runs_here },
 #endif // #if ROCKETNET_XDP
+    { "test_receive_latency_client_gso", rocketnet_test_receive_latency_client_gso, rocketnet_test_client_pin_allows_gso },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_receive_latency_client_portable", rocketnet_test_receive_latency_client_portable, rocketnet_test_client_pin_allows_portable },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_receive_latency_client_iocp", rocketnet_test_receive_latency_client_iocp, rocketnet_test_client_pin_allows_iocp },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_receive_latency_client_msgx", rocketnet_test_receive_latency_client_msgx, rocketnet_test_client_pin_allows_msgx },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
     { "test_client_receive_thread_quit_wake_ends_a_long_wait", rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait, NULL },
@@ -17502,6 +17522,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_gso";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_gso )
+    {
+        return "rocketnet_test_client_pin_allows_gso";
+    }
     if ( predicate == rocketnet_test_server_pin_allows_xdp )
     {
         return "rocketnet_test_server_pin_allows_xdp";
@@ -17529,6 +17553,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_client_pin_allows_auto";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_portable )
+    {
+        return "rocketnet_test_client_pin_allows_portable";
+    }
     if ( predicate == rocketnet_test_a_transport_pin_is_set )
     {
         return "rocketnet_test_a_transport_pin_is_set";
@@ -17554,11 +17582,19 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_rio";
     }
+    if ( predicate == rocketnet_test_client_pin_allows_iocp )
+    {
+        return "rocketnet_test_client_pin_allows_iocp";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     if ( predicate == rocketnet_test_server_pin_allows_msgx )
     {
         return "rocketnet_test_server_pin_allows_msgx";
+    }
+    if ( predicate == rocketnet_test_client_pin_allows_msgx )
+    {
+        return "rocketnet_test_client_pin_allows_msgx";
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     return "runs_here";
