@@ -549,6 +549,37 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_wake_is_close_on_exec );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
+// EMSGSIZE on a POSIX receive is weather: a connected client socket gets it
+// from an ICMP fragmentation-needed or packet-too-big naming its 4-tuple,
+// returned before any datagram is dequeued, never from a long datagram (the
+// receive reports the true size). The drain skips it and reads on, spending
+// its whole budget of ROCKETNET_PLATFORM_RECEIVE_READS (64) on a repeat; the
+// socket has no descriptor and nothing is opened.
+
+static void test_platform_receive_emsgsize_is_weather()
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.handle = -1;
+
+    struct rocketnet_address_t from;
+    uint8_t packet_data[64];
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( EMSGSIZE, 1000 );
+
+    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof( packet_data ) );
+    const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
+    rocketnet_platform_inject_receive_errno_for_testing( 0 );
+
+    rocketnet_unit_check( received == 0 );
+    rocketnet_unit_check( remaining == 1000 - 64 );
+}
+
+REGISTER_UNIT_TEST( test_platform_receive_emsgsize_is_weather );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {

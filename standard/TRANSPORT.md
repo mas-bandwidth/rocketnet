@@ -2735,6 +2735,7 @@ The server turns a connection request into an encryption mapping, and a connecti
     3. Ignore, unanswered, a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
     4. Ignore, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`.
     5. Ignore, unanswered, a request whose token identifier finds no free or expired slot in the request-claim table, counting `CONNECTION_REQUEST_CLAIM_TABLE_FULL`.
+    6. Ignore, unanswered, a request whose token identifier a request earlier in the same update had verified and that rule 10 then refused because its client id already held a slot, or that rule 11 denied because no slot was free, counting that earlier refusal's counter (`CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED` or `CONNECTION_REQUEST_NO_SLOTS`). A server MUST remember those token identifiers in memory sized at creation for the largest handshake work budget (one for each verification an update can make), and MUST forget them at the start of each update, so that one token costs at most one verification an update and its next update's request is verified again. With a work budget of one, such a token's first request in each update can still take that update's only verification; a budget of two or more leaves the rest to other requests.
 The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
@@ -2816,6 +2817,7 @@ list is ignored in that state.
 | no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | request-claim table full | ignore, count | no mapping |
+| no mapping | request | token refused this update for a client id connected or no free slot | ignore, count that reason | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | signature, seal, private zero pad or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
@@ -3579,7 +3581,10 @@ an input ([t1.4 Conventions](#t1.4)).
     of a connection request and immediately before its signature verification,
     and MUST charge it only for a request that reaches that point. A request
     past the budget MUST be refused with no reply and counted as a refusal.
-    The budget MUST be reset at the start of each update.
+    The budget MUST be reset at the start of each update. The cheap refusals
+    include the repeat of a token refused earlier in the update past the
+    verification ([t12 Handshake: server](#t12) rule 9 item 6), which
+    spends none of it.
 12. A server MUST apply the failed-signature budget before the signature
     verification. This budget MUST identify a source by its host address,
     excluding its port. Once the failed-signature budget is spent, a request
@@ -3596,7 +3601,10 @@ an input ([t1.4 Conventions](#t1.4)).
     signed fields, or its client ephemeral key is a small-order point MUST be
     recorded against its source as a failure, exactly as a failed
     verification is. A request refused because its client id already holds a
-    slot, or denied because the server is full, MUST NOT be recorded.
+    slot, or denied because the server is full, MUST NOT be recorded; its
+    token is instead refused before verification for the rest of that update
+    ([t12 Handshake: server](#t12) rule 9 item 6), so it costs at most one verification an
+    update.
  13. A server MUST refuse a request whose token identifier is claimed by a
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
@@ -4335,9 +4343,9 @@ protocol one. See [t2.4 Transport selection](#t2.4).
 ### Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
-one UDP segmented send. A route that cannot carry one (an IPsec policy, or an
-interface MTU below the segment) makes the kernel refuse it for that destination
-alone. The transport resends that run unsegmented and remembers the
+one UDP segmented send. A route that cannot carry one (an IPsec policy, say)
+makes the kernel refuse it for that destination alone. The transport resends
+that run unsegmented and remembers the
 destination, so its later runs go unsegmented without a refusal, while every
 other destination keeps segmenting. It stops segmenting for all destinations
 only when a threshold of destinations refused and no segmented send was ever

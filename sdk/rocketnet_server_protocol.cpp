@@ -186,6 +186,26 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
     }
 }
 
+// the repeat rung's write: a token refused past the verify, for a reason the
+// sender does not choose, is remembered for the rest of the update. Each
+// entry follows one verify, so the table never holds more than the work
+// budget; an entry past it would be a bug, and is not written.
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_REPEAT_TOKENS_MAX == ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE,
+                         "the repeat table holds one entry for each verify of the largest work budget" );
+
+static void rocketnet_server_record_repeat( struct rocketnet_server_protocol_t * server, const uint8_t * token_identifier, int reason )
+{
+    if ( server->num_repeat_tokens >= ROCKETNET_SERVER_REPEAT_TOKENS_MAX )
+    {
+        rocketnet_assert( 0 );
+        return;
+    }
+    memcpy( server->repeat_tokens[server->num_repeat_tokens], token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
+    server->repeat_reasons[server->num_repeat_tokens] = (uint8_t) reason;
+    server->num_repeat_tokens++;
+}
+
 // the cookie mac generations the request check sequence has paid on this thread.
 // the gate-cost test reads the delta across one request: first contact --
 // a zero return cookie, the flood's shape -- must pay one mac, the fresh
@@ -749,7 +769,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // a sealed block that does not open, sealed fields that disagree, a
     // small-order key (proofs/tla/RNSecurityTables.tla ChargedRefusal). a
     // refusal the sender does not choose (a client id already connected, a
-    // full server) charges nothing; the handshake work budget bounds those.
+    // full server) charges nothing; the repeat rung below holds its token to
+    // one verify an update, and the handshake work budget bounds the rest.
 
     if ( !rocketnet_signature_verify_budget_allow( &server->signature_verify_budget, from, current_timestamp ) )
     {
@@ -761,8 +782,8 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // the token-to-address claim, the map capacity and the claim capacity are
     // the remaining cheap rungs, all above the signature and all read-only.
     // the claim rung runs before the capacity rung, as proofs/tla/ReceiveOrder.tla's
-    // Pos orders them: used, verifybudget, claim, capacity, claimfull, then the
-    // handshake work budget just before the verify
+    // Pos orders them: used, verifybudget, claim, capacity, claimfull, repeat,
+    // then the handshake work budget just before the verify
     // (standard/TRANSPORT.md t12 rules 8 and 9).
     // the first address to present a request whose signature verifies owns
     // the token until the handshake deadline or until its response binds the
@@ -799,6 +820,44 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
+    }
+
+    // the repeat rung, read-only: a token this update already refused past
+    // the verify because its client id held a slot or the server had no free
+    // slot is refused again here, unanswered and counted by that reason,
+    // before it can spend the work budget. Both refusals charge nothing to
+    // the source (t17 item 12) and release the claim, so without this one
+    // valid token could take every verify of every update and starve honest
+    // requests (standard/TRANSPORT.md t12 rule 9 item 6;
+    // proofs/tla/ReceiveOrder.tla, the repeat rung, RepeatSpendsNoVerify).
+    // The table empties at the next update, so an honest client's retry is
+    // verified again then.
+
+    // the scan compares the first 8 bytes as one word, which takes the same
+    // time whatever they hold, and only a word match pays the full
+    // constant-time compare, so a table at the largest budget costs about a
+    // nanosecond an entry
+
+    uint64_t token_word;
+    memcpy( &token_word, token_identifier, sizeof( token_word ) );
+    for ( int i = 0; i < server->num_repeat_tokens; i++ )
+    {
+        uint64_t entry_word;
+        memcpy( &entry_word, server->repeat_tokens[i], sizeof( entry_word ) );
+        if ( entry_word == token_word && sodium_memcmp( server->repeat_tokens[i], token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 )
+        {
+            if ( server->repeat_reasons[i] == ROCKETNET_SERVER_REPEAT_NO_SLOTS )
+            {
+                rocketnet_debug( "server ignored connection request. no client slots available, refused this update" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
+            }
+            else
+            {
+                rocketnet_debug( "server ignored connection request. a client with this id is already connected, refused this update" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED]++;
+            }
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
     }
 
     // the handshake work budget: count and cap the signature verifies of one
@@ -909,6 +968,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
     if ( rocketnet_client_slots_find( server->client_slots, private_data->client_id ) != -1 )
     {
+        rocketnet_server_record_repeat( server, token_identifier, ROCKETNET_SERVER_REPEAT_CLIENT_ID_CONNECTED );
         rocketnet_debug( "server ignored connection request. a client with this id is already connected" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -965,6 +1025,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             }
 
             *response_bytes = denied_bytes;
+            rocketnet_server_record_repeat( server, token_identifier, ROCKETNET_SERVER_REPEAT_NO_SLOTS );
             rocketnet_debug( "server denied connection request. no client slots available" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
             return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
@@ -1839,12 +1900,14 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
     rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
-    // reset this server's per-update handshake budget and cookie reply
-    // bitmap, its whole allocated length, for the next update; a bitmap no
-    // request read since the last clear is already clear, so an idle update
-    // writes none of it (proofs/tla/RNCookieReplyLimits.tla Update)
+    // reset this server's per-update handshake budget, repeat table and
+    // cookie reply bitmap, its whole allocated length, for the next update;
+    // a bitmap no request read since the last clear is already clear, so an
+    // idle update writes none of it (proofs/tla/RNCookieReplyLimits.tla
+    // Update; proofs/tla/MCReceiveOrder.tla UpdateStart)
 
     server->counters->handshakes_processed_this_update = 0;
+    server->num_repeat_tokens = 0;
     if ( server->cookie_reply_sources && server->cookie_reply_sources_dirty )
     {
         memset( server->cookie_reply_sources, 0, (size_t) server->cookie_reply_source_words * sizeof( uint64_t ) );
