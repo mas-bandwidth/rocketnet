@@ -2001,15 +2001,16 @@ randombytes(unsigned char * const buf, const unsigned long long buf_len)
 #include <time.h>
 #ifdef _WIN32
 # include <windows.h>
-#elif defined(HAVE_PTHREAD)
+#else
 # include <pthread.h>
+# ifndef HAVE_PTHREAD
+#  define HAVE_PTHREAD 1
+# endif
 #endif
 
 
 static volatile int initialized;
-#ifdef _WIN32
 static volatile int locked;
-#endif // #ifdef _WIN32
 
 int
 sodium_init(void)

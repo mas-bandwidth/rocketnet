@@ -1308,6 +1308,37 @@ static void check_allocator_install_race()
     check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
 
+// rocketnet_random_uint64 and rocketnet_random_bytes need no init: two threads
+// draw at once before anything opened the random source. Each holds the
+// source (proofs/tla/RNCryptoSource.tla), so one opens it and the other waits;
+// a draw that did not would open it unlocked beside the other, the race the
+// tsan leg of this binary reports (sodium's randombytes_init_if_needed). It must
+// run first in the process: once open, the source stays open on Linux.
+static void check_random_draws_before_init()
+{
+    std::atomic<int> ready{ 0 };
+    uint64_t values[2] = {};
+    uint8_t bytes[2][16] = {};
+    std::vector<std::thread> threads;
+    for ( int i = 0; i < 2; i++ )
+    {
+        threads.emplace_back( [&, i]()
+                              {
+                                  ready.fetch_add( 1 );
+                                  while ( ready.load() < 2 )
+                                  {
+                                  }
+                                  values[i] = rocketnet_random_uint64();
+                                  rocketnet_random_bytes( bytes[i], sizeof( bytes[i] ) );
+                              } );
+    }
+    for ( std::thread & thread : threads )
+    {
+        thread.join();
+    }
+    check( values[0] != values[1] || memcmp( bytes[0], bytes[1], sizeof( bytes[0] ) ) != 0 );
+}
+
 int main( int argc, char ** argv )
 {
     // every case runs, always: an argument (a case name, a flag) is refused,
@@ -1325,6 +1356,9 @@ int main( int argc, char ** argv )
     // (Windows) or an uptime from another origin (Linux)
 
     check( rocketnet_time() == 0.0 );
+
+    // before anything in the process has opened the random source
+    check_random_draws_before_init();
 
     allocator_state state;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );

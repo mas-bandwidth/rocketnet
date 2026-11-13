@@ -100,6 +100,18 @@ LIFECYCLE_ADAPTATIONS = {
          '    AcquireSRWLockExclusive(&_sodium_lock);\n'),
         ('    LeaveCriticalSection(&_sodium_lock);\n',
          '    ReleaseSRWLockExclusive(&_sodium_lock);\n'),
+        # POSIX lock (sodium/README.md, "POSIX lock"). The vendor has no
+        # configure step to define HAVE_PTHREAD, so off Windows the lock fell
+        # to the no-op branch and sodium_init, the misuse handler and their
+        # flags were unlocked. Every POSIX platform the SDK supports has
+        # pthreads (the SDK's own threads are pthreads), so the source selects
+        # upstream's pthread branch itself, for every build path (CMake, a
+        # game's own build), and declares the flag that branch asserts on
+        # (the baseline declared it for Windows only).
+        ('#ifdef _WIN32\n# include <windows.h>\n#elif defined(HAVE_PTHREAD)\n# include <pthread.h>\n#endif\n\n\n'
+         'static volatile int initialized;\n#ifdef _WIN32\nstatic volatile int locked;\n#endif // #ifdef _WIN32\n',
+         '#ifdef _WIN32\n# include <windows.h>\n#else\n# include <pthread.h>\n# ifndef HAVE_PTHREAD\n#  define HAVE_PTHREAD 1\n# endif\n#endif\n\n\n'
+         'static volatile int initialized;\nstatic volatile int locked;\n'),
     ],
 }
 UPSTREAM_ADAPTATIONS = {
