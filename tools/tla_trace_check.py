@@ -97,6 +97,7 @@ LAYERS = {
         "untraced": {
             "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
         },
+        "reach": ["StagedNewMac"],
     },
     "xdp-reply-macs": {
         "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
