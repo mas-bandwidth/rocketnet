@@ -10,14 +10,21 @@
 #               (-fsanitize=address,undefined -fno-sanitize-recover=all
 #               -fno-omit-frame-pointer). Apple silicon ASan has no
 #               detect_leaks, so ASAN_OPTIONS=detect_leaks=0 and the leaks leg
-#               is the leak check here.
+#               is the leak check here. Its functional steps set
+#               ROCKETNET_TEST_CASE_TIME_SCALE=2, as nightly-leaks.yml does for
+#               the same suite under ASan on Linux.
 #   tsan        Debug, -fsanitize=thread -O1 (as ci.yml's tsan leg: at -O0 tsan
 #               does not report a struct copy's memcpy write after an
-#               unordered read). The full functional suite runs here
-#               without a nightly case execution cap. The existing scale stays
-#               configured for bounded callers; the nightly opt-out takes
-#               precedence. Historical live matrix timing was 106 to 116 s
-#               against the 120 s limit that per-PR CI keeps.
+#               unordered read). The full functional suite runs here with
+#               ROCKETNET_TEST_CASE_TIME_SCALE=30. Historical live matrix
+#               timing was 106 to 116 s against the 120 s limit that per-PR CI
+#               keeps.
+#
+# ROCKETNET_NIGHTLY_NO_TIMEOUT lifts only the suite runner's case limit
+# (tests/suite_runner.h). A case's own completion bound still reads the
+# scale (tests/time_scale.h): the live message matrix fails past 120 s times
+# the scale (tests/functional/live_matrix.cpp), so 3600 s on the tsan leg and
+# 240 s on the asan+ubsan leg.
 #   leaks       an unsanitized Debug build. The suites run each case in a child
 #               process, and `leaks --atExit` inspects only the process it
 #               launched and does not pass its exit status through, so the
@@ -139,17 +146,26 @@ jobs:
           # does not lift it): a case past the limit is killed with its process group
           # and named red, since an unfinished leak check is never a passing result.
           # The slowest case under leaks takes 28 s on a fleet member
-          # (test_posix_server_create_destroy_1000); 300 s is ten times that.
+          # (test_posix_server_create_destroy_1000); 300 s is ten times that. The
+          # exec binaries below run under the same bound: each is one functional
+          # case per commit, inside its 120 s case limit.
           limit=300
-          one() {
-            out="$logs/case.$1.log"
-            MallocStackLogging=1 perl -e 'setpgrp(0, 0); exec @ARGV' leaks --atExit -- "$bin" $run "$1" > "$out" 2>&1 &
+          # inspect <log> <command...>: the command under leaks --atExit in its own
+          # process group; 1 when it ran past the limit and its group was killed
+          inspect() {
+            log=$1; shift
+            MallocStackLogging=1 perl -e 'setpgrp(0, 0); exec @ARGV' leaks --atExit -- "$@" > "$log" 2>&1 &
             pid=$!; waited=0
             while kill -0 "$pid" 2>/dev/null; do
               sleep 1; waited=$((waited + 1))
-              if [ "$waited" -ge "$limit" ]; then kill -KILL -- "-$pid" 2>/dev/null; echo "TIMEOUT $1 after ${limit}s"; wait "$pid"; return 1; fi
+              if [ "$waited" -ge "$limit" ]; then kill -KILL -- "-$pid" 2>/dev/null; wait "$pid"; return 1; fi
             done
             wait "$pid"
+            return 0
+          }
+          one() {
+            out="$logs/case.$1.log"
+            inspect "$out" "$bin" $run "$1" || { echo "TIMEOUT $1 after ${limit}s"; return 1; }
             # an exec binary's own lines name no registered case: the suite answers "unknown ... test".
             # Only those names (inspected whole below) may answer so; any other unknown is red.
             if grep -q "^unknown .* test $1\$" "$out"; then
@@ -160,11 +176,11 @@ jobs:
             echo "LEAKS $1"; grep -E 'Process [0-9]+: [0-9]+ leaks? for' "$out"; return 1
           }
           exec_names="test_transport_control test_msgx"
-          export -f one; export bin logs run limit exec_names
+          export -f inspect one; export bin logs run limit exec_names
           xargs -P "$jobs" -I{} bash -c 'one "$@"' _ {} < "$logs/names.txt"; bad=$?
           if [ "$(basename "$bin")" = functional ]; then
             for x in $exec_names; do
-              MallocStackLogging=1 leaks --atExit -- "$(dirname "$bin")/$x" > "$logs/exec.$x.log" 2>&1
+              inspect "$logs/exec.$x.log" "$(dirname "$bin")/$x" || { echo "TIMEOUT $x after ${limit}s"; bad=1; continue; }
               grep -qE 'Process [0-9]+: 0 leaks for 0 total leaked bytes' "$logs/exec.$x.log" || { echo "LEAKS $x"; bad=1; }
             done
           fi
@@ -189,8 +205,9 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: msgx
         run: |
           set -o pipefail
-          # the scale remains for bounded callers; nightly explicitly disables the elapsed cap
+          # the scale feeds the cases' own completion bounds (header); the runner's case limit is lifted by ROCKETNET_NIGHTLY_NO_TIMEOUT
           if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
+          if [ "${{ matrix.leg }}" = asan+ubsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=2; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-msgx 2>&1 | tee functional-msgx.log
           else bash tools/run_functional.sh dev-sanitized-msgx --log functional-msgx.log ./bin/functional; fi
 
@@ -201,8 +218,9 @@ jobs:
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: |
           set -o pipefail
-          # the scale remains for bounded callers; nightly explicitly disables the elapsed cap
+          # the scale feeds the cases' own completion bounds (header); the runner's case limit is lifted by ROCKETNET_NIGHTLY_NO_TIMEOUT
           if [ "${{ matrix.leg }}" = tsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=30; fi
+          if [ "${{ matrix.leg }}" = asan+ubsan ]; then export ROCKETNET_TEST_CASE_TIME_SCALE=2; fi
           if [ "${{ matrix.leg }}" = leaks ]; then bash "$RUNNER_TEMP/leaks_cases.sh" ./bin/functional logs/functional-portable 2>&1 | tee functional-portable.log
           else bash tools/run_functional.sh dev-sanitized-portable --log functional-portable.log ./bin/functional; fi
 
