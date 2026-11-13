@@ -30,11 +30,11 @@
 (* check binds it (README-TraceCheck.md): start's pointer and id (Start,   *)
 (* or StartFull when it returns NULL, with the id it still writes),        *)
 (* finish's and abort's result (Finish when true, FinishRefused when       *)
-(* false), and the queues a turn turned (Flush(n)).  lw is the slot the    *)
-(* last call wrote and whether its packet_bytes is then non-zero (a finish *)
-(* sets it, an abort clears it; None after a call that wrote nothing), so  *)
-(* a finish that wrote nothing is not a step; stg is what staged() returns *)
-(* for each queue, always min(counter, S) of its producer bank.            *)
+(* false), and the queues a turn turned (Flush(n)).  lw is what the last  *)
+(* call left in the slot it wrote: 0 when it wrote nothing, 1 packet_bytes *)
+(* zero (an abort), 2 non-zero (a finish); so a finish that wrote nothing  *)
+(* is not a step.  stg is what staged() returns for each queue, always     *)
+(* min(counter, S) of its producer bank.                                   *)
 (*                                                                         *)
 (* Flush is send_packets with the fill threads joined (the phase           *)
 (* contract): each queue that staged anything moves its producer to its    *)
@@ -127,7 +127,7 @@ VARIABLES prod,       \* each queue's producer bank (the flow index)
           gid,        \* the server's packet id counter
           held,       \* each thread's claim: its queue, bank, slot, pointer and id, or None
           owner,      \* the thread a slot of a producer bank was handed to in this fill, or -1
-          lw,         \* the slot the last call wrote and whether its packet_bytes is non-zero, or None
+          lw,         \* what the last call left in the slot it wrote: 0 nothing written, 1 packet_bytes zero, 2 non-zero
           stg,        \* what rocketnet_uring_send_queues_staged returns for each queue
           demand,     \* start_packet calls each thread made in this fill
           flushes,    \* flushes so far
@@ -143,7 +143,7 @@ Init ==
     /\ gid = 0
     /\ held = [t \in Threads |-> None]
     /\ owner = [k \in SlotKeys |-> -1]
-    /\ lw = None
+    /\ lw = 0
     /\ stg = [q \in Qs |-> 0]
     /\ demand = [t \in Threads |-> 0]
     /\ flushes = 0
@@ -170,7 +170,7 @@ Start(t, d, ptr, pid) ==
           /\ demand' = [demand EXCEPT ![t] = @ + 1]
           /\ held' = [held EXCEPT ![t] = [q |-> q, b |-> b, slot |-> i, ptr |-> ptr, pid |-> pid]]
           /\ owner' = [owner EXCEPT ![<<q, b, i>>] = t]
-          /\ lw' = None
+          /\ lw' = 0
           /\ stg' = StagedOf(cnt', prod)
           /\ oob' = (oob \/ i >= S)
           /\ shared' = (shared \/ owner[<<q, b, i>>] # -1)
@@ -190,7 +190,7 @@ StartFull(t, d, pid) ==
           /\ cnt' = [cnt EXCEPT ![q][b] = Bump(i)]
           /\ demand' = [demand EXCEPT ![t] = @ + 1]
           /\ stg' = StagedOf(cnt', prod)
-    /\ lw' = None
+    /\ lw' = 0
     /\ UNCHANGED <<prod, held, owner, flushes, oob, shared, foreign, routeBad>>
 
 \* the slot finish or abort on thread t finds for the pointer k bytes off the
@@ -213,7 +213,7 @@ Finish(t, k, w) ==
           /\ held' = [held EXCEPT ![t] = None]
           /\ routeBad' = (routeBad \/ qd # h.q)
           /\ foreign' = (foreign \/ owner[<<qd, b, s>>] # t \/ s # h.slot)
-          /\ lw' = [slot |-> <<qd, b, s>>, nz |-> w]
+          /\ lw' = IF w THEN 2 ELSE 1
     /\ UNCHANGED <<prod, cnt, gid, owner, stg, demand, flushes, oob, shared>>
 
 \* finish_packet or abort_packet on thread t with the pointer k bytes off,
@@ -223,7 +223,7 @@ FinishRefused(t, k) ==
     /\ FinishSlot(t, k) = -1
     /\ held' = [held EXCEPT ![t] = None]
     /\ routeBad' = (routeBad \/ held[t].pid % Q # held[t].q)
-    /\ lw' = None
+    /\ lw' = 0
     /\ UNCHANGED <<prod, cnt, gid, owner, stg, demand, flushes, oob, shared, foreign>>
 
 \* send_packets, the fill joined: every queue that staged turns its producer
@@ -238,7 +238,7 @@ Flush(n) ==
           /\ prod' = next
           /\ cnt' = [q \in Qs |-> [b \in Bs |-> IF q \in moved /\ b = next[q] THEN 0 ELSE cnt[q][b]]]
     /\ owner' = [k \in SlotKeys |-> -1]
-    /\ lw' = None
+    /\ lw' = 0
     /\ stg' = StagedOf(cnt', prod')
     /\ demand' = [t \in Threads |-> 0]
     /\ flushes' = flushes + 1
@@ -269,7 +269,7 @@ TypeOK ==
     /\ gid \in Nat
     /\ \A t \in Threads : held[t] = None \/ held[t].slot \in 0..S
     /\ owner \in [SlotKeys -> Threads \cup {-1}]
-    /\ lw = None \/ (lw.slot \in SlotKeys /\ lw.nz \in BOOLEAN)
+    /\ lw \in 0..2
     /\ stg \in [Qs -> 0..S]
     /\ demand \in [Threads -> 0..Demand]
     /\ flushes \in 0..MaxFlush

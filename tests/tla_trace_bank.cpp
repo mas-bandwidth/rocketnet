@@ -156,9 +156,7 @@ static tla_record_t bank_record( const bank_walk_t & walk )
     record.add( "gid", tla_int( (int64_t) queues->packet_id.load() ) );
     record.add( "held", tla_function( thread_keys, held ) );
     record.add( "owner", tla_function( slot_keys, owner ) );
-    record.add( "lw", walk.lw_q < 0 ? std::string( "[none |-> TRUE]" )
-                                    : "[slot |-> <<" + tla_int( walk.lw_q ) + ", " + tla_int( walk.lw_b ) + ", " + tla_int( walk.lw_s ) +
-                                          ">>, nz |-> " + tla_bool( walk.lw_nonzero ) + "]" );
+    record.add( "lw", tla_int( walk.lw_q < 0 ? 0 : ( walk.lw_nonzero ? 2 : 1 ) ) );
     record.add( "stg", tla_function( queue_keys, staged ) );
     record.add( "demand", tla_function( thread_keys, demand ) );
     record.add( "flushes", tla_int( walk.flushes ) );
