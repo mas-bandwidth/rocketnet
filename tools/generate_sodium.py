@@ -119,18 +119,29 @@ LIFECYCLE_ADAPTATIONS = {
         # leave decides from the process-wide flag, which says some thread
         # holds the lock, not this one: a fatal misuse on a thread outside the
         # section while another holds it would clear that thread's flag and
-        # unlock its mutex. A thread-local flag records that this thread
-        # holds the lock; leave refuses (EPERM, as for an unlocked lock)
-        # unless it does, and reads the shared flag only when it does.
+        # unlock its mutex. Enter records the holder (pthread_self) and an
+        # owned flag; leave refuses (EPERM, as for an unlocked lock) unless
+        # the lock is owned by this thread, and reads the shared flag only
+        # when it is. No thread-local storage: a production build carries none
+        # (tools/check_no_thread_local.py). A thread outside the section reads
+        # the owner while the holder writes it, so both are atomics: the owned
+        # flag is released after the owner is stored and acquired before the
+        # owner is read, so a thread that sees the flag set reads that
+        # holder's id, and only the holder passes the test.
         ('static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;\n',
-         'static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;\nstatic __thread int    _sodium_lock_held;\n'),
+         'static pthread_mutex_t _sodium_lock = PTHREAD_MUTEX_INITIALIZER;\n'
+         'static pthread_t       _sodium_lock_owner;\nstatic int             _sodium_lock_owned;\n'),
         ('    if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {\n        assert(locked == 0);\n        locked = 1;\n    }\n',
          '    if ((ret = pthread_mutex_lock(&_sodium_lock)) == 0) {\n        assert(locked == 0);\n        locked = 1;\n'
-         '        _sodium_lock_held = 1;\n    }\n'),
+         '        __atomic_store_n(&_sodium_lock_owner, pthread_self(), __ATOMIC_RELAXED);\n'
+         '        __atomic_store_n(&_sodium_lock_owned, 1, __ATOMIC_RELEASE);\n    }\n'),
         ('    if (locked == 0) {\n# ifdef EPERM\n        errno = EPERM;\n# endif\n        return -1;\n    }\n'
          '    locked = 0;\n\n    return pthread_mutex_unlock(&_sodium_lock);\n',
-         '    if (_sodium_lock_held == 0 || locked == 0) {\n# ifdef EPERM\n        errno = EPERM;\n# endif\n        return -1;\n    }\n'
-         '    _sodium_lock_held = 0;\n    locked = 0;\n\n    return pthread_mutex_unlock(&_sodium_lock);\n'),
+         '    if (__atomic_load_n(&_sodium_lock_owned, __ATOMIC_ACQUIRE) == 0 ||\n'
+         '        !pthread_equal(__atomic_load_n(&_sodium_lock_owner, __ATOMIC_RELAXED), pthread_self()) ||\n'
+         '        locked == 0) {\n# ifdef EPERM\n        errno = EPERM;\n# endif\n        return -1;\n    }\n'
+         '    __atomic_store_n(&_sodium_lock_owned, 0, __ATOMIC_RELAXED);\n    locked = 0;\n\n'
+         '    return pthread_mutex_unlock(&_sodium_lock);\n'),
     ],
 }
 UPSTREAM_ADAPTATIONS = {
