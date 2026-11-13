@@ -137,7 +137,13 @@ static void token_clock_server_refuses( uint64_t server_epoch, double server_tim
     }
 
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counter_block( t.server );
-    check( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] > 0 );
+    // every request is well formed, for this server's protocol and version,
+    // and no mapping is ever made, so the expiry check refuses each one the
+    // server receives, exactly once. How many arrive in twelve steps follows
+    // the client's send rate and the float steps, so the count is pinned to
+    // the requests received, not to a number.
+    check( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] > 0 );
+    check( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] );
     check( rn_server_stats_of( t.server ).connections_accepted == 0 );
     check( rocketnet_client_state( t.client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
 
