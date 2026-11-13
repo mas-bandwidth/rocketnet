@@ -443,6 +443,11 @@ struct rocketnet_server_gso_test_send_lane_t
     size_t bank_bytes;                                  // the bytes of each bank's slots
 };
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_queues, int send_slots );
+
+// The bytes rocketnet_server_gso_test_open holds for num_queues queues (the
+// transport and each queue's send banks and receive buffers), for the
+// resident-set bound of a case that opens several (tests/suite_runner.h).
+uint64_t rocketnet_server_gso_test_open_bytes( int num_queues );
 bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane );
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot );
 int rocketnet_server_gso_test_take_send( struct rocketnet_server_gso_t * gso, int queue_index, bool * final );

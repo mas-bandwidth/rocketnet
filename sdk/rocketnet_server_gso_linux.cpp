@@ -2748,6 +2748,11 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_qu
     return gso;
 }
 
+uint64_t rocketnet_server_gso_test_open_bytes( int num_queues )
+{
+    return (uint64_t) sizeof( struct rocketnet_server_gso_t ) + (uint64_t) num_queues * (uint64_t) sizeof( struct rocketnet_server_gso_queue_t );
+}
+
 // one queue's send staging as the lane holds it, read on the thread that
 // drives the fixture (no worker runs on it)
 bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, int queue_index, struct rocketnet_server_gso_test_send_lane_t * lane )

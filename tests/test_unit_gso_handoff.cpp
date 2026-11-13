@@ -79,6 +79,15 @@ static void test_server_gso_send_queues()
     check( rocketnet_server_gso_test_send_queues() );
 }
 
+// the case opens four queues, each holding its send banks and receive buffers
+// at the transport's own sizes: the bound is the plan of those plus a margin
+static long gso_send_queues_rss_bound_mb()
+{
+    return suite_rss_bound_mb( rocketnet_server_gso_test_open_bytes( 4 ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_server_gso_send_queues, gso_send_queues_rss_bound_mb );
+
 REGISTER_UNIT_TEST( test_server_gso_send_queues );
 
 #if ROCKETNET_XDP
