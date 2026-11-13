@@ -135,7 +135,6 @@ jobs:
       # before the red zones has no script and says so.
       - name: Red zones self-test (a planted one-past write is reported)
         if: ${{ !cancelled() }}
-        shell: bash
         run: |
           if [ ! -f scripts/red-zones-selftest ]; then
             echo "this ref predates the red zones (no scripts/red-zones-selftest)"

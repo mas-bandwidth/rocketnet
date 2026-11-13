@@ -63,6 +63,17 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_fuzz_quiet.h"
 #include "../portable_crt.h"
+#include "../red_zones.h"
+
+// A saved image and its restore copy a whole block, and in an AddressSanitizer
+// build a block holds the poisoned red zones the library leaves between its
+// carved arrays (sdk/rocketnet_memory.h): those copies go around ASan's checks
+// (tests/red_zones.h). Every other build copies with memcpy.
+#if ROCKETNET_RED_ZONES
+#define ROCKETNET_FUZZ_BLOCK_COPY( dst, src, bytes ) rocketnet_test_raw_copy( ( dst ), ( src ), ( bytes ) )
+#else
+#define ROCKETNET_FUZZ_BLOCK_COPY( dst, src, bytes ) memcpy( ( dst ), ( src ), ( bytes ) )
+#endif // #if ROCKETNET_RED_ZONES
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
@@ -860,7 +871,7 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
         struct rocketnet_fuzz_block_t * b = &rocketnet_fuzz_blocks[i];
         void * copy = malloc( b->bytes > 0 ? b->bytes : 1 );
         rocketnet_fuzz_pair_require( copy != NULL, "the saved copy allocates" );
-        memcpy( copy, b->p, b->bytes );
+        ROCKETNET_FUZZ_BLOCK_COPY( copy, b->p, b->bytes );
         rocketnet_fuzz_block_copies[which][i] = copy;
     }
 
@@ -898,6 +909,12 @@ __attribute__( ( no_sanitize( "memory" ) ) ) static inline bool rocketnet_fuzz_b
     }
     return true;
 }
+#elif ROCKETNET_RED_ZONES
+// a live block holds red zones (ROCKETNET_FUZZ_BLOCK_COPY)
+static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
+{
+    return rocketnet_test_raw_compare( a, b, bytes ) == 0;
+}
 #else
 static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
 {
@@ -924,7 +941,7 @@ static inline void rocketnet_fuzz_restore_full( int which )
 {
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
-        memcpy( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
+        ROCKETNET_FUZZ_BLOCK_COPY( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
     }
 }
 
@@ -1100,7 +1117,7 @@ static inline void rocketnet_fuzz_copy_page( struct rocketnet_fuzz_page_t page, 
     }
 
     const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
-    memcpy( (uint8_t *) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t *) rocketnet_fuzz_block_copies[which][page.block] + from, n );
+    ROCKETNET_FUZZ_BLOCK_COPY( (uint8_t *) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t *) rocketnet_fuzz_block_copies[which][page.block] + from, n );
 }
 
 static inline void rocketnet_fuzz_restore_pages( int which )
