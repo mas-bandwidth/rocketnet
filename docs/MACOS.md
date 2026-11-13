@@ -166,9 +166,9 @@ one transmit worker and one receive worker, and has no count to set. macOS
 gives no thread a core: neither transport pins its threads, and the scheduler
 places them. More transmit workers are not always more throughput: under a
 heavy send load a worker can spend most of its time in the kernel's send
-path, and then more workers may not send more. The performance report has no
-macOS measurement record yet ([PERFORMANCE.md](PERFORMANCE.md)); measure
-your workload.
+path, and then more workers may not send more (see "How much a msgx server
+sends" below). The performance report has no macOS measurement record yet
+([PERFORMANCE.md](PERFORMANCE.md)); measure your workload.
 
 In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
@@ -271,6 +271,28 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 `test_transport_dual_stack_ipv4_client` and `test_transport_env_pin_is_honoured`
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
+
+### How much a msgx server sends
+
+The workloads are the performance report's: 1000 players at 60 Hz, about
+480,000 packets a second on average and about 900,000 at peak
+([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). A `msgx`
+server holds the average load for 1000 players. At peak, macOS tops out
+lower, and more transmit workers do not close the gap. The limit is in the
+operating system: every packet a Mac sends on an interface passes through
+that interface's one output queue, behind one lock, and one kernel transmit
+thread hands the packets to the driver. All the transmit workers' sends meet
+in that queue, so past a point more workers wait on its lock rather than send
+more. The performance report has no macOS record yet, so it gives no figure
+for the peak a Mac reaches.
+
+Test with many client addresses. When every test client sends from one
+address (all the clients on one load machine with one address), every packet
+the server sends takes the same route and the same ARP entry, and the
+transmit workers also wait on the locks that guard those. One client address
+therefore understates the server, more so with more transmit workers. Give
+the load machine many addresses and spread the clients across them; in a
+real deployment the players come from many addresses.
 
 ### A msgx server under load
 
