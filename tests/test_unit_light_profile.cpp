@@ -141,10 +141,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (8 bytes a counter block across a 64-byte rounding): computed from the
 // macOS reading, not measured on Windows.
 // The update in three calls adds 34160412 to the server (the macOS and
-// Linux readings agree): computed, not measured on Windows; the client is
-// left as it was, as on Linux.
+// Linux readings agree): computed, not measured on Windows. The client gains
+// one 64-byte rounding, as on macOS: actual=15394156 (the Windows unit job,
+// MSVC, Release, DEV=ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862683 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345516 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
