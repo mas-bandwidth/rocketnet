@@ -1272,6 +1272,33 @@ static void rocketnet_server_gso_clear_wake( struct rocketnet_server_gso_queue_t
     (void) read_bytes;
 }
 
+// A refused pin leaves the worker on the mask it inherited, which may include
+// cpu 0, so it is confined to the online cpus from num_os_cpus up
+// (rocketnet_gso_pin_fallback); on a machine with none left it is unchanged.
+static void rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t * gso )
+{
+    unsigned char allowed[CPU_SETSIZE];
+    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+    if ( rocketnet_gso_pin_fallback( allowed, CPU_SETSIZE, online, gso->num_os_cpus ) == 0 )
+    {
+        return;
+    }
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+    {
+        if ( allowed[cpu] )
+        {
+            CPU_SET( (size_t) cpu, &cpuset );
+        }
+    }
+    const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
+    if ( result != 0 )
+    {
+        rocketnet_warn( "gso worker not confined away from the OS's cpus after its pin was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
+    }
+}
+
 // the worker pins itself the way the XDP transport's thread does
 // (rocketnet_server_socket_xdp_thread_function): affinity to cpu num_os_cpus +
 // queue. A refusal is a warning naming the queue and the cpu, counted in
@@ -1297,12 +1324,13 @@ static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it runs on any cpu", queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it runs on the cpus from num_os_cpus up", queue->index, cpu, CPU_SETSIZE - 1 );
         }
         else
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it runs on any cpu", queue->index, cpu, online - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it runs on the cpus from num_os_cpus up", queue->index, cpu, online - 1 );
         }
+        rocketnet_server_gso_confine_refused( gso );
         queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
         return;
     }
@@ -1314,7 +1342,8 @@ static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on the cpus from num_os_cpus up", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+        rocketnet_server_gso_confine_refused( gso );
         queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
         return;
     }
@@ -2064,6 +2093,12 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
     return bank->data[slot];
 }
 
+// the queue a packet id names: its low part (the id is ( turn * slots + slot ) * queues + queue)
+static int rocketnet_server_gso_id_queue( const struct rocketnet_server_gso_t * gso, uint64_t packet_id )
+{
+    return (int) ( packet_id % (uint64_t) gso->num_queues );
+}
+
 // the producer slot packet_data is the root of, on the queue packet_id names,
 // or -1. The slot comes from pointer arithmetic against the staging, the xdp
 // pattern, with the range checked before the divide: a pointer that is not a
@@ -2077,7 +2112,7 @@ static int rocketnet_server_gso_send_slot( struct rocketnet_server_gso_t * gso, 
         return -1;
     }
 
-    const int q = (int) ( packet_id % (uint64_t) gso->num_queues );
+    const int q = rocketnet_server_gso_id_queue( gso, packet_id );
     struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[q].send;
     if ( lane->producer < 0 )
     {
@@ -2776,6 +2811,18 @@ bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, i
     }
     lane->bank_bytes = sizeof( send->banks[0].data );
     return true;
+}
+
+// what the code decides for a packet id and the pointer start returned: the
+// slot (rocketnet_server_gso_send_slot, -1 refused) and the queue the id names
+// (the id's low part), so the trace check reads both from the library
+int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, uint64_t packet_id, const uint8_t * packet_data, int * queue_out )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_out );
+    *queue_out = rocketnet_server_gso_id_queue( gso, packet_id );
+    rocketnet_server_gso_send_buffer_t * bank = NULL;
+    return rocketnet_server_gso_send_slot( gso, packet_id, packet_data, &bank );
 }
 
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot )

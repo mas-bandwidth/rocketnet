@@ -50,4 +50,22 @@ static inline int rocketnet_gso_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_GSO_PIN_OK;
 }
 
+// the cpus a worker whose pin was refused is confined to: every online cpu
+// from num_os_cpus up (cpu 0 is the OS's on Linux), so a refused pin never
+// leaves the worker on a mask it inherited that includes the OS's cpus.
+// allowed[0 .. set_size - 1] is written 1 or 0; returns how many are 1. Zero
+// means no cpu is left (a one cpu machine): the caller changes nothing.
+
+static inline int rocketnet_gso_pin_fallback( unsigned char * allowed, int set_size, int online, int num_os_cpus )
+{
+    int count = 0;
+    for ( int cpu = 0; cpu < set_size; cpu++ )
+    {
+        const bool ok = cpu >= ( num_os_cpus > 1 ? num_os_cpus : 1 ) && cpu < online;
+        allowed[cpu] = ok ? 1 : 0;
+        count += ok ? 1 : 0;
+    }
+    return count;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_GSO_PIN_H

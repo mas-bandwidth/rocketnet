@@ -50,6 +50,26 @@ static void test_gso_pin_never_cpu_zero()
     }
 }
 
+// a worker whose pin was refused is confined to the online cpus from
+// num_os_cpus up, never cpu 0
+static void test_gso_pin_refused_worker_never_cpu_zero()
+{
+    unsigned char allowed[16];
+    check( rocketnet_gso_pin_fallback( allowed, 16, 8, 1 ) == 7 );
+    check( allowed[0] == 0 && allowed[1] == 1 && allowed[7] == 1 && allowed[8] == 0 );
+    // two cpus left to the OS
+    check( rocketnet_gso_pin_fallback( allowed, 16, 8, 2 ) == 6 );
+    check( allowed[0] == 0 && allowed[1] == 0 && allowed[2] == 1 );
+    // num_os_cpus below 1 still leaves cpu 0 out
+    check( rocketnet_gso_pin_fallback( allowed, 16, 8, 0 ) == 7 );
+    check( allowed[0] == 0 );
+    // a one cpu machine has nothing but cpu 0: no cpu is allowed, the caller changes nothing
+    check( rocketnet_gso_pin_fallback( allowed, 16, 1, 1 ) == 0 );
+    // an online count past the set is cut at the set
+    check( rocketnet_gso_pin_fallback( allowed, 4, 100, 1 ) == 3 );
+}
+
 REGISTER_UNIT_TEST( test_gso_pin_cpu_placement );
+REGISTER_UNIT_TEST( test_gso_pin_refused_worker_never_cpu_zero );
 REGISTER_UNIT_TEST( test_gso_pin_never_cpu_zero );
 REGISTER_UNIT_TEST( test_gso_pin_check_refusals );
