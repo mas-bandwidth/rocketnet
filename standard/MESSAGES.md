@@ -3278,7 +3278,10 @@ message dropped.
 ## m10. Channels and priorities
 
 Channels are per-connection streams. Their scheduling does not affect the
-wire representation.
+wire representation. This revision defines no priority between channels: how
+a sender orders the records of its channels, within the send orders RN-2 does
+fix such as the class order of a send pass in [m9.4 Send budget](#m9.4), is
+its own choice.
 
 1. An implementation MUST set its build-specific maximum channel count to a
    value from 1 through 65,536, inclusive. The default build-specific maximum

@@ -1864,7 +1864,11 @@ connection request and connection cookie are not sealed.
    integrity limit below, the endpoint MUST end the connection and MUST
    increment the `INTEGRITY_LIMIT_REACHED` counter; the client enters the
    disconnected state, and the server removes the mapping and releases the
-   slot it holds for it, if any.
+   slot it holds for it, if any. No packet carries the reason. The reference
+   implementation reports this end as protocol violation: on the client as
+   the state protocol violation (-10) of
+   [t11 Handshake: client](#t11), and on the server as the disconnect reason
+   `PROTOCOL_VIOLATION` of the slot.
 
 The key that seals a sealed type:
 
@@ -2745,7 +2749,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
-12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
+12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical. A request whose client ephemeral public key the derivation reports as a small-order point ([t7 Key schedule](#t7) rule 5) MUST be ignored, unanswered, counting `CONNECTION_REQUEST_SMALL_ORDER_KEY`, and recorded against its source as a failure ([t17 Timing and defaults](#t17) item 12).
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose free slots are all still held under [t13.4 Slot reset](#t13.4), counting `CONNECTION_RESPONSE_NO_SLOTS`, the counter a denial uses, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. A held slot counts as free for rule 11 and for the denial of this rule.
 14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart: the handshake deadline as `MAPPING_HANDSHAKE_DEADLINE_EXPIRED`, the half-open idle deadline as `MAPPING_IDLE_TIMEOUT`, and the connected idle timeout as both `MAPPING_IDLE_TIMEOUT` and `CLIENT_TIMED_OUT`, so the half-open removals are the difference of the last two. That shared `MAPPING_IDLE_TIMEOUT` is an exception of this revision to [t18 Error handling and counters](#t18) rule 2. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
@@ -2827,6 +2831,7 @@ list is ignored in that state.
 | no mapping | request | signature, seal, private zero pad or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
+| no mapping | request | client ephemeral public key is a small-order point | ignore, count, record a failure against the source | no mapping |
 | no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
 | mapping | request | salt matches the mapping's | resend the stored challenge, refresh idle | mapping |
 | mapping | request | salt differs, token matches the mapping's | resend the stored challenge | mapping |
@@ -3227,7 +3232,8 @@ as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
 connection on reaching the `AEAD integrity limit` of
-[t9 Packet protection](#t9).
+[t9 Packet protection](#t9), as its rule 8 states, with the end reason that
+rule names.
 
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
@@ -3416,8 +3422,10 @@ does not add debt, so acknowledgements do not elicit acknowledgements.
 When a valid block newly acknowledges a sent sequence, the sender MUST take
 one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
-elapsed value produces no sample. The sample measures local elapsed time and
-does not subtract the receiver's processing or acknowledgement aggregation delay.
+elapsed value produces no sample, and neither does an elapsed value of
+1000000 seconds (10^9 milliseconds) or more. The sample measures local
+elapsed time and does not subtract the receiver's processing or
+acknowledgement aggregation delay.
 The reported RTT MUST be the minimum strictly positive retained first-ack
 sample, in milliseconds. If no strictly positive first-ack sample is retained,
 the reported RTT MUST be zero.
@@ -3994,14 +4002,24 @@ frames. These rows alias, one event moving each named row once:
 
 | Shared row | Transport rows counting the same events |
 |---|---|
-| `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_DROPPED` (its size drops) and `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
-| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW`; `URING_RECEIVE_DROPPED_OVERFLOW` |
+| `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
+| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` |
 | `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE` and `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
 
-To count distinct events, sum the shared rows and leave the aliasing transport
-rows out; the transport rows not named here alias no shared row.
+`IOCP_RECEIVE_DROPPED` counts every datagram the iocp transport drops before
+the protocol, whatever the reason, and each of those drops also moves the
+shared row of its reason: the size and prefilter rows, `RECEIVE_DROPPED_FULL`,
+`RECEIVE_FAILED` or `RECEIVE_DROPPED_STOPPED`. A shared row can count events
+its transport rows do not: on gso, `SEND_FAILED` also counts a frame whose
+send was refused before it was staged. `URING_RECEIVE_DROPPED_OVERFLOW` counts
+the datagrams of one coalesced receive past the most one receive takes, which
+no shared row counts, so it aliases no shared row.
+
+To count distinct events, sum the shared rows and leave out the aliasing
+transport rows and `IOCP_RECEIVE_DROPPED`; every other transport row aliases
+no shared row.
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4435,19 +4453,23 @@ happened. See [t18 Error handling and counters](#t18).
 <a id="tc.7"></a>
 ### tc.7. Create-time maximum-resend delay message reserve
 
-Each connection adds a local payload reserve to its configured message-region
-headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
+This note is about the message layer of
+[RN-2 m9.4 Send budget](MESSAGES.md#m9.4); it sits here because RN-2 has no
+informative appendix. Each connection adds a local payload reserve to its
+configured message-region headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
-uses the larger configured budget. An unlimited budget (`ROCKETNET_SEND_KBPS_UNLIMITED`) has no finite reserve.
+uses the larger configured budget. The value that means no send budget
+([RN-2 m9.4 Send budget](MESSAGES.md#m9.4)) has no finite reserve.
 
 The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
 fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
 respectively, including each chunk's four-byte link and alignment. The send-span
 arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
-Receive-ring and reliable-window wire parameters do not change. This extends the
-base headroom formula and default sizes above; runtime sizing reports
-the resulting total. All parts remain in the single allocator-hook allocation.
+Receive-ring and reliable-window wire parameters do not change. The reserve
+adds to the message region the implementation sizes from the message layer's
+configuration fields; runtime sizing reports the resulting total. All parts
+remain in the single allocator-hook allocation.
 
 The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
 the corresponding fixed pools, or larger messages in the span arena. Arbitrarily
