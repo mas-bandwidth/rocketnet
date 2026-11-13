@@ -31,28 +31,28 @@ or `RNIocpReceiveAdmit`. Suggested row for the inventory table:
 | Windows send lanes and admission | `RNIocpSendLanes`, `RNRioLaneLayout`, `RNIocpReceiveAdmit` | every IOCP send operation in one place, aborted (zero-byte) slots released unposted, each destination's packets posted in start order; the RIO lane of a hash in range, a finish reaching only its own reserved slot, a lane's frames posted in slot order; the prefilter before the capacity check, every drop counted |
 ```
 
-The `RNIocpRetryStop` line (TLA-INVENTORY.md:61 and :89) still holds.
+The `RNIocpRetryStop` line (the two "IOCP server queues and send leases" rows of docs/TLA-INVENTORY.md) still holds.
 
 ## Comment re-citations for package C (sdk/, comment only)
 
-- `sdk/rocketnet_server_iocp_windows.cpp:294`
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the comment above it, line 294 at 85e18fcb8
   now: `// proofs/tla/RNIocpReceiveAdmit.tla Arrive: Refuse, then Bank or Full.`
   new: `// proofs/tla/RNIocpReceiveAdmit.tla Refuse, then Bank or Full: the verdict.`
   (the module has no action Arrive)
-- `sdk/rocketnet_server_iocp_windows.cpp:300`
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the plant comment inside it, line 300 at 85e18fcb8
   now: `// first, the order the blast row measured. Its trace must fail.`
   new: `// first, the order this code replaced. Its trace must fail.`
-- `sdk/rocketnet_server_iocp_windows.cpp:1405`
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_bank_datagram), the comment above it, line 1405 at 85e18fcb8
   now: `... proofs/tla/RNIocpReceiveAdmit.tla Arrive: Bank, or the`
   new: `... proofs/tla/RNIocpReceiveAdmit.tla Bank, or the`
   (line 1406 keeps `count of Refuse and Full (EveryDropCounted).`)
-- `sdk/rocketnet_server_rio_windows.cpp:1863`
+- `sdk/rocketnet_server_rio_windows.cpp` (rocketnet_rio_post_phase), the last line of the comment above it, line 1863 at 85e18fcb8
   now: `// proofs/tla/RNRioLaneLayout.tla Send: a lane's worker posts the frames staged in its own lane, oldest first.`
   new: `// proofs/tla/RNRioLaneLayout.tla Send: a lane's worker posts the finished frames of its own lane in slot order (InOrder).`
 
 ## Records in other modules' files
 
 `proofs/tla/RNIocpReceiveAdmit.tla` (lines 27, 36, 50, 162) and
-`MCRNIocpReceiveAdmitBrokenBankFirst.cfg:1` still say "the blast row"; that
+the first line of `MCRNIocpReceiveAdmitBrokenBankFirst.cfg` still say "the blast row"; that
 module is not in this package's files. Suggested text: "the order the code
 replaced (capacity check first)".
