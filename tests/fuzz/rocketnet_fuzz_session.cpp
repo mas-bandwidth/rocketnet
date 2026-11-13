@@ -592,6 +592,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( &pair->transport->counters, report, sizeof( report ) ) != 0, "the server transport's counters are conserved" );
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_server_counters( pair->server ), report, sizeof( report ) ) != 0, "the message server's counters are conserved" );
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_client_counters( pair->client ), report, sizeof( report ) ) != 0, "the message client's counters are conserved" );
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_fuzz_pair_client_counters( pair ), report, sizeof( report ) ) != 0, "the client transport's counters are conserved" );
     rocketnet_fuzz_pair_check_no_allocation( pair );
     return rocketnet_fuzz_pair_fingerprint( pair );
 }
