@@ -395,12 +395,151 @@ to obtain elapsed frame time.
 
 ## Profiles
 
-The measured Linux profiling procedure is pending: the exact build flags,
-`perf record` event/frequency/duration and steady-window start, and the
-per-thread report commands will be published with the XDP profile. The
-launcher and row script are also awaiting their repository commit.
+### Record and inspect a Linux profile
 
-Each profile will rank functions by measured milliseconds per frame for its
-thread and include a worked reading of the captured result. No profile command
-is presented as having been run, and no function cost is estimated, until that
-evidence arrives.
+The XDP profiles below used the same machines and thread layout as its rows
+without game work. The server was sampled for eight seconds, from t=40 to
+t=48 of the 60-second run. The exact profiled commit, perf version, selected
+event, and any profiling-only build flags are awaiting confirmation. The
+command did not specify `-e`, so retain the event reported in the capture
+when repeating it. The launcher and row script still await their repository
+commit.
+
+Start the chosen server and client row. On the server machine, the recorded
+process-selection command was:
+
+```sh
+pid=$(pgrep -x harden_load | tail -1)
+```
+
+Use the server process ID if several load processes are running. The main
+thread's ID equals this process ID. The run identified the remaining threads
+by their names and last CPU from `/proc/$pid/task/*`. This helper performs
+that inspection and prints the thread ID, name, and last CPU:
+
+```sh
+python3 - "$pid" <<'PY'
+from pathlib import Path
+import sys
+
+pid = int(sys.argv[1])
+print("TID\tNAME\tLAST_CPU")
+for task in sorted(Path(f"/proc/{pid}/task").iterdir(), key=lambda p: int(p.name)):
+    try:
+        stat = (task / "stat").read_text()
+        # Fields after the final ')' start at field 3; processor is field 39.
+        fields = stat.rsplit(")", 1)[1].split()
+        name = (task / "comm").read_text().strip()
+        print(f"{task.name}\t{name}\t{fields[36]}")
+    except FileNotFoundError:
+        continue  # The thread exited during inspection.
+PY
+```
+
+For this XDP layout, identify the main thread on CPU 3, two XDP threads on
+CPUs 1–2, and 20 game threads on CPUs 4–23. Field 39 is the last CPU used,
+so this snapshot complements the startup affinity logs; it does not prove
+an affinity mask. See the [Linux stat-field reference](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html).
+
+When `harden_tick` reaches t=40, record the following eight seconds. Use a
+fresh output directory for each row so the capture and report stay together.
+These are the supplied recording and reporting commands:
+
+```sh
+sudo perf record -F 999 -g -p "$pid" -o perf.data -- sleep 8
+sudo perf report -f -i perf.data --no-children --sort pid,symbol -n --stdio -g none > perf.rep
+```
+
+The recording requests 999 samples/s (`-F`), call graphs (`-g`), attachment
+to the server (`-p`), and the named output file (`-o`); `sleep 8` bounds the
+capture. See [perf record](https://man7.org/linux/man-pages/man1/perf-record.1.html).
+
+The report reads that file (`-i`), allows it despite an ownership mismatch
+(`-f`), shows self samples (`--no-children`) and sample counts (`-n`), and
+writes text (`--stdio`) without call graphs (`-g none`). In this report,
+the `pid` sort key identifies a task's thread ID; `symbol` identifies the
+function. There is no separate `tid` sort key in the measured perf version.
+See [perf report](https://man7.org/linux/man-pages/man1/perf-report.1.html).
+
+Match report thread IDs to the saved thread listing. Sum a function's sample
+counts over the threads in the desired class, then estimate its milliseconds
+per frame using the run owner's conversion:
+
+```text
+class ms/frame ≈ samples / 999 × 1000 / (frames_per_second × 8)
+mean game-thread ms/frame ≈ class ms/frame / 20
+mean XDP-thread ms/frame ≈ class ms/frame / 2
+```
+
+Use the frame rate from the capture interval. Sort functions by the resulting
+self-time estimate within each class. These are sampling estimates assuming
+the requested frequency, not exact timers; they need not match elapsed-call
+measurements, which include waits. Keep kernel entries, marked `[k]`, and
+the unlisted tail when considering a thread's total.
+
+### XDP profile results
+
+At peak, the profiled server sent about 895,000 packets/s; at average load,
+about 480,000 packets/s. Estimated totals are per thread, per frame:
+
+| Thread class | Peak (ms) | Average load (ms) |
+| --- | ---: | ---: |
+| Main thread | 0.33 | 0.33 |
+| Mean game thread, 20 threads | 3.32 | 1.96 |
+| Mean XDP thread, two threads | 16.5 | 16.5 |
+
+The two XDP threads busy-poll: each occupies a full core at both measured
+loads, and this polling design keeps them busy even when traffic is low.
+Their cost is additional to the main and game threads' work.
+
+The leading game-thread self times are below. Average-load symbol names are
+the run owner's abbreviated labels where supplied; their full-name mapping
+is awaiting confirmation.
+
+| Peak function | Peak ms/frame per game thread | Average-load label | Average ms/frame per game thread |
+| --- | ---: | --- | ---: |
+| `harden_write_message` (load test) | 0.746 | `harden_write_message` | 0.404 |
+| `chacha20_encrypt_bytes` (AVX2) | 0.650 | `chacha20` | 0.353 |
+| `rocketnet_server_transport_start_packet` | 0.310 | `start_packet` | 0.177 |
+| `poly1305_blocks` | 0.292 | `poly1305` | 0.161 |
+| `rocketnet_ack_block_build` | 0.205 | `ack_block_build` | 0.113 |
+| `rocketnet_next_packet_lease_id` | 0.153 | `next_packet_lease_id` | 0.085 |
+| `rocketnet_server_transport_queue_budget_now` | 0.112 | `queue_budget_now` | 0.073 |
+| `rocketnet_server_socket_send_room` | 0.063 | `send_room` | 0.034 |
+| `rocketnet_fill_phase_fill_end` | 0.055 | `fill_end` | 0.033 |
+| `send_room_queue` | 0.045 | Not supplied | — |
+| `rn_bitmap_walk_bits_desc` | 0.042 | `rn_bitmap_walk_bits_desc` | 0.030 |
+| `rocketnet_server_transport_finish_packet` | 0.031 | Not supplied | — |
+
+The main-thread leaders are:
+
+| Peak function | Peak ms/frame | Average-load label | Average ms/frame |
+| --- | ---: | --- | ---: |
+| `harden_read_message` (load test) | 0.194 | `harden_read_message` | 0.213 |
+| `rn_message_object_receive_messages` | 0.058 | `receive_messages` | 0.050 |
+| `harden_server_main` (load test) | 0.025 | `harden_server_main` | 0.021 |
+
+The remaining peak main-thread functions each contribute less than 0.01 ms.
+The peak XDP-thread leaders, averaged over its two threads, are:
+
+| Function | Peak ms/frame per XDP thread |
+| --- | ---: |
+| `entry_SYSRETQ_unsafe_stack` [k] | 2.4 |
+| `do_sys_poll` [k] | 1.9 |
+| `rocketnet_server_socket_xdp_thread_function` | 1.54 |
+| `native_sched_clock` [k] | 1.3 |
+| `do_syscall_64` [k] | 1.3 |
+| `__ct_user_exit` [k] | 0.52 |
+| `__sys_sendto` [k] | 0.35 |
+| `i40e_xsk_wakeup` [k] | 0.32 |
+| `xsk_poll` [k] | 0.27 |
+
+These lists omit smaller entries; their sums are not the thread totals.
+As a worked reading, peak ChaCha20 and Poly1305 self time is
+0.650 + 0.292 = 0.942 ms per game thread per frame, about 28% of its
+3.32 ms total. That is the largest listed library cost when those encryption
+and authentication functions are grouped. The load test's own message-body
+write costs another 0.746 ms; it is application workload, not library time.
+The main thread similarly spends 0.194 ms in the test's input-copying code.
+
+Profiles for the other transports and rows with game work remain pending.
