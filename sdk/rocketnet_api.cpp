@@ -3680,7 +3680,11 @@ uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * ser
     }
 
     rn_server_arm_one_thread_a_client( server );
-    return rocketnet_message_server_finish( rn_server( server ), client_index, bytes_written );
+
+    // the writer's finish: an unreliable message written in place leaves in
+    // its frame from this call, on this thread; one with no capacity is
+    // refused here rather than queued
+    return rocketnet_message_server_finish_client( rn_server( server ), client_index, bytes_written );
 }
 
 void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index )
