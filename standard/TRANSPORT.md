@@ -4178,21 +4178,14 @@ protocol one. See [t2.4 Transport selection](#t2.4).
 ### Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
-one UDP segmented send. A route that cannot carry one (an IPsec policy, or an
-interface MTU below the segment) makes the kernel refuse it for that destination
+one UDP segmented send. A route that cannot carry one (an IPsec policy, or a
+path MTU below the segment) makes the kernel refuse it for that destination
 alone. The transport resends that run unsegmented and remembers the
 destination, so its later runs go unsegmented without a refusal, while every
 other destination keeps segmenting. It stops segmenting for all destinations
 only when a threshold of destinations refused and no segmented send was ever
 accepted, which is a kernel that cannot segment. See
 [t2.4 Transport selection](#t2.4), rule 7.
-
-Every Linux socket, server or client, never fragments a datagram (IPv4 sets
-DF) and sizes it by the interface MTU, never by a path MTU the kernel learned
-from ICMP (`IP_PMTUDISC_PROBE`, `IPV6_PMTUDISC_PROBE`): one forged fragmentation-needed
-or packet-too-big message naming the server's address would otherwise make
-the kernel refuse every larger datagram to that client until the route
-exception expires.
 
 ### Kernel prefilter and XDP
 

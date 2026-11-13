@@ -320,11 +320,6 @@ uint64_t rocketnet_platform_receive_resets( void );
 // on macOS, the IPv4 one, so v4-mapped traffic carries DF too. macOS refuses
 // IP_DONTFRAG on an IPv6 socket and applies IPV6_DONTFRAG to its v4-mapped
 // datagrams, so it gets the IPv6 option alone. A refusal is tolerated.
-// Linux sets DF through IP_PMTUDISC_PROBE and IPV6_PMTUDISC_PROBE, not _DO:
-// DF on every datagram, sized by the interface MTU and never by the route's
-// learned path MTU, so a forged ICMP fragmentation-needed or packet-too-big
-// cannot make the kernel refuse a client's datagrams (EMSGSIZE) for the
-// life of the route exception.
 void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_option )( void * user, int level, int option_name, int value ), void * user );
 
 // the process-wide counts of datagrams a receive read and skipped: a

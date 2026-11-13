@@ -1677,14 +1677,14 @@ void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_optio
     if ( ipv6 )
     {
 #if defined( __linux__ )
-        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_PROBE );
+        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_DO );
 #elif defined( IPV6_DONTFRAG )
         set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
 #endif // #if defined( __linux__ )
     }
 
 #if defined( __linux__ )
-    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_PROBE );
+    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
 #elif defined( __APPLE__ )
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG already keeps its v4-mapped datagrams whole
