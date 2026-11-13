@@ -520,4 +520,24 @@
    :title "A gso row of its own for the kernel's drops at a queue socket"
    :text "Since 2026-11-13 the gso drain counts the kernel's drops at a full queue socket (SO_RXQ_OVFL) in GSO_RECEIVE_DROPPED_OVERFLOW, so that row no longer aliases RECEIVE_DROPPED_FULL exactly (standard/TRANSPORT.md says so). io_uring keeps the same drops in its own URING_RECEIVE_DROPPED_SOCKET. A GSO_RECEIVE_DROPPED_SOCKET row would restore the alias and match io_uring; counter rows are ABI, so it waits for a release that may append rows."
    :date "2026-11-13" :origin "gso flood drops counted by no counter (W2-121); the existing row was chosen for the point release")
+
+  (item "portable-server-receive-latency" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's receive handoff holds datagrams an extra update"
+   :text "Measured 2026-11-13 on amd-2 over loopback at 60 Hz: the portable server returns a datagram a mean 1.481 updates (24.7 ms) after its send, against 0.51 to 0.52 updates (8.5 to 8.7 ms) for io_uring, and for gso and xdp once their handoffs were fixed: the worker publishes a filled bank and main takes it only at a later call (portable_rx_publish and the rx_bank FIFO in sdk/rocketnet_driver_builtin.cpp). The shared receive handoff (sdk/rocketnet_receive_handoff.h) and the delivery check (sdk/rocketnet_receive_delivery_check.h) would fix and test it. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "Receive handoff latency review, 2026-11-13; moved off the fix round by the owner")
+
+  (item "portable-server-receive-prefilter" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's worker does not run the shared receive prefilter"
+   :text "Reported in the 2026-11-13 review round: the gso and io_uring workers screen each datagram with the server's stateless prefilter (sdk/rocketnet_receive_prefilter.h) before it takes a bank slot, and the portable worker does not, so garbage can take its slots. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
+  (item "portable-server-receive-stop-count" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server counts no RECEIVE_DROPPED_STOPPED"
+   :text "Reported in the 2026-11-13 review round: datagrams the portable worker banked that main never took when the server stops are counted by no row, where gso counts them in RECEIVE_DROPPED_STOPPED; its operations table has no receive_drop_totals. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
+
+  (item "portable-server-recvmmsg-error-spin" :group "after-v1-1-landing" :area "sdk"
+   :title "The portable server's receive retries a failing recvmmsg at once"
+   :text "Reported in the 2026-11-13 review round as an error spin: the platform receive loop (sdk/rocketnet_platform.cpp, the recvmmsg call and its receive-weather retry) retries an error it reads as weather in the same pass, with no back-off. Not reproduced on this branch. The portable server transport is not a production transport (owner, 2026-11-13: no time is spent on it in v1.1.x)."
+   :date "2026-11-13" :origin "2026-11-13 review round; moved off the fix round by the owner")
  ))
