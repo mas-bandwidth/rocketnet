@@ -41,8 +41,11 @@ static void gaps_ack_acked( rocketnet_ack_endpoint_t * endpoint, uint64_t sequen
 }
 
 // mutation gap: delta sdk/rocketnet_ack.cpp:1703:28:relational:> (sample_ms > 0.0)
-// A packet acknowledged at the time it was sent is a 0 ms sample: it lands,
-// and the minimum round trip is 0, not the later 20 ms sample.
+// A packet acknowledged at the time it was sent is a 0 ms sample: it lands
+// in its sequence's history slot and the endpoint has a sample. (The
+// minimum and the jitter sum count only samples above 0.) Landing, it
+// replaces the slot's older sample: a 50 ms sample a history's length
+// earlier no longer counts, so the rtt is the 20 ms one.
 
 static void test_gaps_delta_core_ack_zero_ms_ack_is_an_rtt_sample()
 {
@@ -50,13 +53,21 @@ static void test_gaps_delta_core_ack_zero_ms_ack_is_an_rtt_sample()
 
     gaps_ack_sent( endpoint, 1, 1000.0 );
     gaps_ack_acked( endpoint, 1, 1000.0 );
-    const bool zero_ms_ack_landed_as_a_sample = endpoint->has_rtt_sample == 1;
+    const bool zero_ms_ack_landed_as_a_sample = endpoint->has_rtt_sample == 1 && endpoint->rtt_history[1 % ROCKETNET_RTT_HISTORY_SIZE] == 0.0f;
     rocketnet_unit_check( zero_ms_ack_landed_as_a_sample );
+    rocketnet_free( NULL, endpoint );
 
-    gaps_ack_sent( endpoint, 2, 1000.0 );
-    gaps_ack_acked( endpoint, 2, 1000.020 );
-    const bool rtt_minimum_is_the_zero_ms_sample = endpoint->rtt == 0.0f;
-    rocketnet_unit_check( rtt_minimum_is_the_zero_ms_sample );
+    endpoint = gaps_ack_endpoint();
+    const uint64_t later = 1 + ROCKETNET_RTT_HISTORY_SIZE;
+    gaps_ack_sent( endpoint, 1, 1000.0 );
+    gaps_ack_acked( endpoint, 1, 1000.050 );
+    gaps_ack_sent( endpoint, 2, 1000.050 );
+    gaps_ack_acked( endpoint, 2, 1000.070 );
+    rocketnet_unit_check( endpoint->rtt > 19.99f && endpoint->rtt < 20.01f );
+    gaps_ack_sent( endpoint, later, 1000.100 );
+    gaps_ack_acked( endpoint, later, 1000.100 );
+    const bool zero_ms_sample_replaced_the_slots_50_ms_sample = endpoint->rtt_history[later % ROCKETNET_RTT_HISTORY_SIZE] == 0.0f && endpoint->jitter == 0.0f;
+    rocketnet_unit_check( zero_ms_sample_replaced_the_slots_50_ms_sample );
 
     rocketnet_free( NULL, endpoint );
 }
