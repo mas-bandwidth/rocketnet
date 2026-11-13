@@ -1283,7 +1283,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # protocol test filter) and test_public_client_server_queries,
     # test_public_client_reads_server_disconnected,
     # test_two_address_token_connects_over_ipv4 and
-    # test_unroutable_ipv6_falls_back_to_ipv4 (published development keys),
+    # test_unroutable_ipv6_falls_back_to_ipv4 and
+    # test_server_msgx_dual_stack_both_families_connect (published development keys),
     # and the Linux send-error cases
     # test_gso_client_transport_wire_ipv4, test_gso_client_transport_wire_ipv6,
     # test_gso_client_transport_wire_plain, test_gso_client_transport_wire_gro,

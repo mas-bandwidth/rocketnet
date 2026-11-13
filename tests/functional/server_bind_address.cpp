@@ -408,8 +408,22 @@ static enum rocketnet_status_t bind_dual_stack_start( const char * transport, un
 {
     struct rocketnet_server_config_t config;
     bind_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+#if ROCKETNET_DEV
+    // the both-families case connects with development tokens
     config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, sizeof( config.backend_public_key ) );
+#else // #if ROCKETNET_DEV
+    // a production library refuses the published development keys
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    bind_check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    memcpy( config.backend_public_key, backend_public, sizeof( config.backend_public_key ) );
+    config.protocol_id = 0x6475616c73746b31ULL;
+    config.packet_filter[0] = 0x64;
+    config.packet_filter[1] = 0x75;
+    config.packet_filter[2] = 0x61;
+    config.packet_filter[3] = 0x6c;
+#endif // #if ROCKETNET_DEV
     config.max_clients = 2;
     config.transport = transport;
 
@@ -564,7 +578,9 @@ void rocketnet_test_server_bind_dual_stack_port_zero()
 
 // the control: an IPv4 client and an IPv6 client both connect to one msgx
 // server that serves both families (bound [::] under its reservation), so the
-// reservation leaves the port to the server and its client sockets join it
+// reservation leaves the port to the server and its client sockets join it.
+// Development tokens: not in functional_production.
+#if ROCKETNET_DEV
 void rocketnet_test_server_msgx_dual_stack_both_families_connect()
 {
     if ( !bind_host_has_ipv6() )
@@ -634,6 +650,7 @@ void rocketnet_test_server_msgx_dual_stack_both_families_connect()
     rn_cli_server_stop_and_destroy( server );
     bind_pins_restore( &pins );
 }
+#endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
