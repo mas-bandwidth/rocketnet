@@ -13,8 +13,8 @@
 #include <string.h>
 
 // proofs/tla/RNUringQueueSend.tla models one queue of this code: Publish,
-// WorkerClaim, WorkerSubmit, WorkerReap and WorkerRetire are cited at the
-// functions that are them, and KernelComplete is the kernel's (the trace
+// WorkerClaim, WorkerSubmit, WorkerReap and WorkerRetire (WorkerStep is any
+// one of them) are cited at the functions that are them, and KernelComplete is the kernel's (the trace
 // walk's fake one, tests/tla_trace_queue_send.cpp). The model's run is a set
 // of staged slots of one destination, the earliest of them first; here the
 // gather cuts the runs (proofs/tla/RNSendGatherLayout.tla) and next hands
@@ -23,7 +23,14 @@
 // ROCKETNET_URING_QUEUE_SEND_PLANT is the trace check's plant (the reversed
 // witness RetireAtSubmit: retire once every slot is submitted, runs still in
 // the kernel): only tests/tla_trace_queue_send.cpp in the plant build
-// defines it, and its traces must fail TraceConsistent.
+// defines it, and its traces must fail TraceConsistent. The plant binary
+// walks other layers over this code too (the worker's), so the plant acts
+// only while rocketnet_uring_queue_send_plant is set: the queue-send walk
+// sets it for its own walk and clears it after.
+
+#if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
+bool rocketnet_uring_queue_send_plant = false;
+#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
 
 #if defined( __linux__ )
 #include "rocketnet_uring_codec.h"
@@ -588,12 +595,14 @@ bool rocketnet_uring_queue_send_retire( struct rocketnet_uring_queue_send_t * se
         return false;
     }
 
-#if !defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
+#if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
+    if ( queue->pending[b] != 0 && !rocketnet_uring_queue_send_plant )
+#else  // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
     if ( queue->pending[b] != 0 )
+#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
     {
         return false;
     }
-#endif // #if !defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
 
     const int slots = send->slots;
     uint8_t * state = queue->state + (size_t) b * (size_t) slots;

@@ -466,6 +466,9 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         rocketnet_uring_send_queues_destroy( walk.banks );
         return 1;
     }
+#if defined( ROCKETNET_TLA_PLANT )
+    rocketnet_uring_queue_send_plant = true;        // this walk's plant only
+#endif // #if defined( ROCKETNET_TLA_PLANT )
     memset( walk.pkt, 0, sizeof( walk.pkt ) );
     for ( int i = 0; i <= QSEND_IDS; i++ )
     {
@@ -590,6 +593,9 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
 
     rocketnet_uring_queue_send_destroy( walk.send );
     rocketnet_uring_send_queues_destroy( walk.banks );
+#if defined( ROCKETNET_TLA_PLANT )
+    rocketnet_uring_queue_send_plant = false;
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
     printf( "PLANT-FIRED %d\n", walk.plant_fired );
 

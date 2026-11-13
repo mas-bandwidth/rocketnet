@@ -20,15 +20,29 @@
 // eventfd's count and completes the next read at once, so a wake is never
 // lost and the worker never spins.
 //
-// A run answered -EAGAIN (the socket full) goes back to be submitted again,
-// and no run is submitted until a POLLOUT poll on the socket fires. Stop sets
-// quit and wakes the worker: it cancels its receive and its wake read, keeps
-// sending what is published, and once -EAGAIN has answered
-// ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT times since it saw the stop it
-// abandons what still waits (counted) and cancels its poll. It exits only
-// when nothing of its is in the kernel: no run, no receive, no wake read, no
-// poll (a cancel itself holds nothing: its completion may come after).
+// A run answered -EAGAIN (the socket full) goes back to be submitted again.
+// Before the stop, no run is submitted until a POLLOUT poll on the socket
+// fires: no spinning. Stop sets quit and wakes the worker: it cancels its
+// receive, its wake read and any poll, keeps sending what is published, and
+// retries a run answered -EAGAIN at once, with no poll, so a socket that
+// stays full cannot hold the stop. Once -EAGAIN has answered
+// ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT times since it saw the stop (each
+// answer counts, a burst of them too) it abandons what still waits
+// (counted). It exits only when nothing of its is in the kernel: no run, no
+// receive, no wake read, no poll (a cancel itself holds nothing: its
+// completion may come after, and the ring is torn down after the join).
 // Main joins it after.
+//
+// SENDMSG goes with MSG_DONTWAIT: without it io_uring waits inside the
+// kernel for room and never answers -EAGAIN. The wake eventfd must be
+// blocking (no EFD_NONBLOCK: a READ on a non-blocking eventfd with a zero
+// count completes at once with -EAGAIN, and the worker would spin) and not
+// EFD_SEMAPHORE (a read takes the whole count).
+//
+// A step that needs a submission entry and finds the submission queue full
+// marks the pass starved: the pass then says continue, so the submit that
+// follows does not wait and frees the room (RNUringQueueWorker Sleep is never
+// taken with a worker action still to do).
 //
 // proofs/tla/RNUringQueueWorker.tla models the loop: each part of pass names
 // the action it implements. The kernel is behind a small interface
@@ -165,7 +179,8 @@ struct rocketnet_uring_queue_worker_t
     // the worker's (RNUringQueueWorker's variables)
 
     alignas( 64 ) bool seen;                        // seen
-    bool blocked;                                   // blocked: a run came back -EAGAIN, no submit until the poll fires
+    bool blocked;                                   // blocked: a run came back -EAGAIN before the stop, no submit until the poll fires
+    bool starved;                                   // this pass found the submission queue full (not a model variable)
     bool poll_armed;                                // poll # "none"
     bool wake_armed;                                // wakeRead # "none"
     bool cancelled_recv;

@@ -14,10 +14,20 @@
 // submission entry the worker prepares is in it at once, and each of its
 // answers is a step of its own, in any order: a run sent, failed, -EAGAIN
 // or refused; the poll firing or cancelled; the eventfd READ taking a wake
-// or cancelled; the receive's cancelled end. A cancel's own completion
-// comes with its target's and changes no model variable. The receive is a
-// fake that is armed from the start, as the transport arms it. Every record
-// carries the kernel's posted completions by kind.
+// or cancelled; the receive ending on its own or cancelled. A cancel's own
+// completion comes with its target's and changes no model variable. The
+// receive is a fake that is armed from the start, as the transport arms it,
+// and armed again by the worker after it ends on its own. Every record is
+// read off the fake kernel (what it holds and what it has posted) and the
+// handoff, never off the worker's own flags, so a worker that miscounts
+// what it put in the kernel shows as a step the model does not take.
+//
+// After the recorded steps the walk stops main and drives the worker and the
+// kernel, unrecorded, until the worker exits; a worker that can do nothing
+// with nothing of the kernel's left to come, or that does not exit within
+// the bound, fails the walk (a hang is no trace prefix's failure). pass()
+// and its batch limit (step with reap false) are the unit suite's
+// (tests/test_unit_uring_queue_worker.cpp).
 //
 // It writes MCTraceQueueWorkerSeed<seed>, or MCTraceQueueWorkerPlantSeed<seed>
 // from tla_trace_plant, whose code is the worker with
@@ -58,8 +68,8 @@
 // the instance: one queue, two banks published, each of three slots (so at
 // most three runs), runs of at most two packets, two runs in the kernel at
 // once, two -EAGAIN answers before the stop and two after it before the
-// worker abandons, one segment refusal; two destinations the socket names
-// and one it cannot
+// worker abandons, one segment refusal, one receive that ends on its own;
+// two destinations the socket names and one it cannot
 
 #define QWORK_U 2
 #define QWORK_SLOTS 3
@@ -67,8 +77,10 @@
 #define QWORK_MAX_RETRY 2
 #define QWORK_MAX_AGAIN 2
 #define QWORK_MAX_REFUSE 1
+#define QWORK_MAX_RECV_END 1
 #define QWORK_DESTS 3
 #define QWORK_MAX_STEPS 200
+#define QWORK_FINISH_STEPS 100000
 #define QWORK_SQ 64
 
 // a run in the fake kernel
@@ -106,6 +118,8 @@ struct qwork_walk_t
 
     // the fake receive's
     bool recv_armed;
+    bool recv_stopping;
+    int recv_ends;
 
     bool wake_count;
     const char * st;
@@ -156,17 +170,27 @@ static void qwork_advance( void * context, int count )
     walk->cq_count.erase( walk->cq_count.begin(), walk->cq_count.begin() + count );
 }
 
+// the receive module's contract (rocketnet_uring_receive_queue.h): it needs
+// an arm once its multishot ended, until the stop; arm refuses only a NULL
+// entry
+
 static bool qwork_receive_needs_arm( void * context )
 {
-    (void) context;
-    return false;       // the model's receive is armed until the stop and never ends before it
+    qwork_walk_t * walk = (qwork_walk_t *) context;
+    return !walk->recv_armed && !walk->recv_stopping;
 }
 
 static bool qwork_receive_arm( void * context, struct io_uring_sqe * sqe )
 {
-    (void) context;
-    (void) sqe;
-    return false;
+    qwork_walk_t * walk = (qwork_walk_t *) context;
+    if ( !sqe )
+    {
+        return false;
+    }
+    sqe->opcode = IORING_OP_RECVMSG;
+    sqe->user_data = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+    walk->recv_armed = true;
+    return true;
 }
 
 static void qwork_receive_cqe( void * context, int32_t res, uint32_t flags )
@@ -181,7 +205,8 @@ static void qwork_receive_cqe( void * context, int32_t res, uint32_t flags )
 
 static void qwork_receive_stop( void * context )
 {
-    (void) context;
+    qwork_walk_t * walk = (qwork_walk_t *) context;
+    walk->recv_stopping = true;
 }
 
 static bool qwork_receive_armed( void * context )
@@ -225,6 +250,10 @@ static void qwork_take_sqes( qwork_walk_t & walk )
             case IORING_OP_POLL_ADD:
                 walk.poll_in = true;
                 walk.poll_cancel = false;
+                break;
+            case IORING_OP_RECVMSG:
+                walk.recv_in = true;
+                walk.recv_cancel = false;
                 break;
             case IORING_OP_READ:
                 walk.wake_in = true;
@@ -362,18 +391,18 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
         c_ref += strcmp( c, "ref" ) == 0 ? 1 : 0;
     }
 
-    // a run's completion leaves k when the kernel posts it; the worker's
-    // count leaves when it reaps it
-    const int k = worker->in_kernel - ( c_ok + c_again + c_ref );
+    // the kernel's: the runs it holds, unanswered, and what it holds or has
+    // posted of the poll, the receive and the wake read
+    const int k = (int) walk.sends.size();
 
     const char * poll = "none";
     if ( qwork_cq_has( walk, ROCKETNET_URING_TAG_POLL ) )
     {
         poll = "posted";
     }
-    else if ( worker->poll_armed )
+    else if ( walk.poll_in )
     {
-        poll = worker->cancelled_poll ? "cancelling" : "armed";
+        poll = walk.poll_cancel ? "cancelling" : "armed";
     }
 
     const char * recv = "ended";
@@ -381,9 +410,9 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     {
         recv = "posted";
     }
-    else if ( walk.recv_armed )
+    else if ( walk.recv_in )
     {
-        recv = worker->cancelled_recv ? "cancelling" : "armed";
+        recv = walk.recv_cancel ? "cancelling" : "armed";
     }
 
     const char * wake = "none";
@@ -391,9 +420,9 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     {
         wake = "posted";
     }
-    else if ( worker->wake_armed )
+    else if ( walk.wake_in )
     {
-        wake = worker->cancelled_wake ? "cancelling" : "armed";
+        wake = walk.wake_cancel ? "cancelling" : "armed";
     }
 
     tla_record_t record;
@@ -416,6 +445,7 @@ static tla_record_t qwork_record( const qwork_walk_t & walk )
     record.add( "agains", tla_int( worker->agains ) );
     record.add( "againsBefore", tla_int( walk.agains_before ) );
     record.add( "refusals", tla_int( walk.refusals ) );
+    record.add( "recvEnds", tla_int( walk.recv_ends ) );
     return record;
 }
 
@@ -459,8 +489,168 @@ static void qwork_answer( qwork_walk_t & walk, tla_random_t & random )
 static bool qwork_undrained( const qwork_walk_t & walk )
 {
     const struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];
-    return walk.worker.in_kernel > 0 || walk.poll_in || walk.wake_in || walk.recv_in || queue->held >= 0 || queue->handoff.ready_count > 0 ||
+    return !walk.sends.empty() || walk.poll_in || walk.wake_in || walk.recv_in || queue->held >= 0 || queue->handoff.ready_count > 0 ||
            qwork_cq_visible( walk );
+}
+
+enum
+{
+    QWORK_STAGE,
+    QWORK_PUBLISH,
+    QWORK_STOP,
+    QWORK_WORKER,
+    QWORK_WAKES_WORKER,
+    QWORK_ANSWER,
+    QWORK_POLL_FIRES,
+    QWORK_RECV_ENDS,
+    QWORK_RECV_ENDS_ITSELF,
+    QWORK_WAKE_READS,
+    QWORK_WAKE_ENDS
+};
+
+// what main, the worker and the kernel may do now; main stages and
+// publishes only while recording
+static void qwork_choices( const qwork_walk_t & walk, tla_random_t & random, bool main_works, std::vector<int> & can )
+{
+    can.clear();
+    const bool quit = walk.worker.quit.load();
+    if ( main_works && !quit && walk.handed < QWORK_U && walk.staged < QWORK_SLOTS )
+    {
+        can.push_back( QWORK_STAGE );
+    }
+    if ( main_works && !quit && walk.handed < QWORK_U && walk.staged > 0 )
+    {
+        can.push_back( QWORK_PUBLISH );
+    }
+    if ( !quit && ( !main_works || walk.handed == QWORK_U || random.below( 8 ) == 0 ) )
+    {
+        can.push_back( QWORK_STOP );
+    }
+    if ( strcmp( walk.st, "awake" ) == 0 )
+    {
+        can.push_back( QWORK_WORKER );
+        can.push_back( QWORK_WORKER );
+        can.push_back( QWORK_WORKER );
+    }
+    if ( strcmp( walk.st, "asleep" ) == 0 && qwork_cq_visible( walk ) )
+    {
+        can.push_back( QWORK_WAKES_WORKER );
+    }
+    if ( !walk.sends.empty() )
+    {
+        can.push_back( QWORK_ANSWER );
+    }
+    if ( walk.poll_in )
+    {
+        can.push_back( QWORK_POLL_FIRES );
+    }
+    if ( walk.recv_in && walk.recv_cancel )
+    {
+        can.push_back( QWORK_RECV_ENDS );
+    }
+    if ( walk.recv_in && !walk.recv_cancel && walk.recv_ends < QWORK_MAX_RECV_END )
+    {
+        can.push_back( QWORK_RECV_ENDS_ITSELF );
+    }
+    if ( walk.wake_in && walk.wake_count )
+    {
+        can.push_back( QWORK_WAKE_READS );
+    }
+    if ( walk.wake_in && walk.wake_cancel )
+    {
+        can.push_back( QWORK_WAKE_ENDS );
+    }
+}
+
+static void qwork_act( qwork_walk_t & walk, tla_random_t & random, int action )
+{
+    switch ( action )
+    {
+        case QWORK_STAGE:
+        {
+            const struct rocketnet_address_t * to = &walk.dest[random.below( QWORK_DESTS )];
+            uint64_t id = 0;
+            uint8_t * frame = rocketnet_uring_send_queues_start( walk.banks, to, &id );
+            if ( frame )
+            {
+                if ( random.below( 5 ) == 0 )
+                {
+                    (void) rocketnet_uring_send_queues_abort( walk.banks, id, frame );
+                }
+                else
+                {
+                    (void) rocketnet_uring_send_queues_finish( walk.banks, id, frame, 100 );
+                }
+                walk.staged++;
+            }
+            break;
+        }
+        case QWORK_PUBLISH:
+            if ( rocketnet_uring_queue_send_publish( walk.send, 0 ) )
+            {
+                walk.handed++;
+                walk.staged = 0;
+                qwork_signal( walk );
+            }
+            break;
+        case QWORK_STOP:
+            rocketnet_uring_queue_worker_stop( &walk.worker );
+            qwork_signal( walk );
+            break;
+        case QWORK_WORKER:
+        {
+            const int did = rocketnet_uring_queue_worker_step( &walk.worker, true );
+            qwork_take_sqes( walk );
+            if ( did == ROCKETNET_URING_WORKER_STEP_NONE )
+            {
+                walk.st = "asleep";
+            }
+            else if ( did == ROCKETNET_URING_WORKER_STEP_EXIT )
+            {
+                walk.plant_fired += qwork_undrained( walk ) ? 1 : 0;
+                walk.st = "exited";
+            }
+            break;
+        }
+        case QWORK_WAKES_WORKER:
+            walk.st = "awake";
+            break;
+        case QWORK_ANSWER:
+            qwork_answer( walk, random );
+            break;
+        case QWORK_POLL_FIRES:
+            walk.poll_in = false;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, 0, 0 ), walk.poll_cancel ? -ECANCELED : POLLOUT, 0, 0 );
+            if ( walk.poll_cancel )
+            {
+                qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_POLL, 0 );
+            }
+            break;
+        case QWORK_RECV_ENDS:
+            walk.recv_in = false;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ECANCELED, 0, 0 );
+            qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_RECV, 0 );
+            break;
+        case QWORK_RECV_ENDS_ITSELF:
+            walk.recv_in = false;
+            walk.recv_ends++;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ENOBUFS, 0, 0 );
+            break;
+        case QWORK_WAKE_READS:
+            walk.wake_in = false;
+            walk.wake_count = false;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0, 0 );
+            if ( walk.wake_cancel )
+            {
+                qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_WAKE, -EALREADY );
+            }
+            break;
+        default:
+            walk.wake_in = false;
+            qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), -ECANCELED, 0, 0 );
+            qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_WAKE, 0 );
+            break;
+    }
 }
 
 static int trace_queue_worker( uint64_t seed, int steps, const char * out )
@@ -528,6 +718,7 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
 
     int failed = 0;
     const int limit = steps < QWORK_MAX_STEPS ? steps : QWORK_MAX_STEPS;
+    std::vector<int> can;
     for ( int step = 0; (int) records.size() <= limit && step < 20 * limit; step++ )
     {
         if ( strcmp( walk.st, "exited" ) == 0 )
@@ -535,150 +726,18 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
             break;
         }
 
-        enum
+        qwork_choices( walk, random, true, can );
+        if ( can.empty() && !walk.worker.quit.load() )
         {
-            STAGE,
-            PUBLISH,
-            STOP,
-            WORKER,
-            WAKES_WORKER,
-            ANSWER,
-            POLL_FIRES,
-            RECV_ENDS,
-            WAKE_READS,
-            WAKE_ENDS
-        };
-        const bool quit = walk.worker.quit.load();
-        std::vector<int> can;
-        if ( !quit && walk.handed < QWORK_U && walk.staged < QWORK_SLOTS )
-        {
-            can.push_back( STAGE );
-        }
-        if ( !quit && walk.handed < QWORK_U && walk.staged > 0 )
-        {
-            can.push_back( PUBLISH );
-        }
-        if ( !quit && ( walk.handed == QWORK_U || random.below( 8 ) == 0 ) )
-        {
-            can.push_back( STOP );
-        }
-        if ( strcmp( walk.st, "awake" ) == 0 )
-        {
-            can.push_back( WORKER );
-            can.push_back( WORKER );
-            can.push_back( WORKER );
-        }
-        if ( strcmp( walk.st, "asleep" ) == 0 && qwork_cq_visible( walk ) )
-        {
-            can.push_back( WAKES_WORKER );
-        }
-        if ( !walk.sends.empty() )
-        {
-            can.push_back( ANSWER );
-        }
-        if ( walk.poll_in )
-        {
-            can.push_back( POLL_FIRES );
-        }
-        if ( walk.recv_in && walk.recv_cancel )
-        {
-            can.push_back( RECV_ENDS );
-        }
-        if ( walk.wake_in && walk.wake_count )
-        {
-            can.push_back( WAKE_READS );
-        }
-        if ( walk.wake_in && walk.wake_cancel )
-        {
-            can.push_back( WAKE_ENDS );
+            can.push_back( QWORK_STOP );
         }
         if ( can.empty() )
         {
+            fprintf( stderr, "tla_trace queue-worker: the worker hangs: stopped, not exited, and nothing of the kernel's to come\n" );
+            failed = 1;
             break;
         }
-
-        switch ( can[(size_t) random.below( (int) can.size() )] )
-        {
-            case STAGE:
-            {
-                const struct rocketnet_address_t * to = &walk.dest[random.below( QWORK_DESTS )];
-                uint64_t id = 0;
-                uint8_t * frame = rocketnet_uring_send_queues_start( walk.banks, to, &id );
-                if ( frame )
-                {
-                    if ( random.below( 5 ) == 0 )
-                    {
-                        (void) rocketnet_uring_send_queues_abort( walk.banks, id, frame );
-                    }
-                    else
-                    {
-                        (void) rocketnet_uring_send_queues_finish( walk.banks, id, frame, 100 );
-                    }
-                    walk.staged++;
-                }
-                break;
-            }
-            case PUBLISH:
-                if ( rocketnet_uring_queue_send_publish( walk.send, 0 ) )
-                {
-                    walk.handed++;
-                    walk.staged = 0;
-                    qwork_signal( walk );
-                }
-                break;
-            case STOP:
-                rocketnet_uring_queue_worker_stop( &walk.worker );
-                qwork_signal( walk );
-                break;
-            case WORKER:
-            {
-                const int did = rocketnet_uring_queue_worker_step( &walk.worker, true );
-                qwork_take_sqes( walk );
-                if ( did == ROCKETNET_URING_WORKER_STEP_NONE )
-                {
-                    walk.st = "asleep";
-                }
-                else if ( did == ROCKETNET_URING_WORKER_STEP_EXIT )
-                {
-                    walk.plant_fired += qwork_undrained( walk ) ? 1 : 0;
-                    walk.st = "exited";
-                }
-                break;
-            }
-            case WAKES_WORKER:
-                walk.st = "awake";
-                break;
-            case ANSWER:
-                qwork_answer( walk, random );
-                break;
-            case POLL_FIRES:
-                walk.poll_in = false;
-                qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_POLL, 0, 0 ), walk.poll_cancel ? -ECANCELED : POLLOUT, 0, 0 );
-                if ( walk.poll_cancel )
-                {
-                    qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_POLL, 0 );
-                }
-                break;
-            case RECV_ENDS:
-                walk.recv_in = false;
-                qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 ), -ECANCELED, 0, 0 );
-                qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_RECV, 0 );
-                break;
-            case WAKE_READS:
-                walk.wake_in = false;
-                walk.wake_count = false;
-                qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0, 0 );
-                if ( walk.wake_cancel )
-                {
-                    qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_WAKE, -EALREADY );
-                }
-                break;
-            default:
-                walk.wake_in = false;
-                qwork_post( walk, rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), -ECANCELED, 0, 0 );
-                qwork_post_cancel( walk, ROCKETNET_URING_CANCEL_WAKE, 0 );
-                break;
-        }
+        qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )] );
 
         // a step that changed no model variable (a stage, a cancel's own
         // completion reaped) is no model step: it is not recorded
@@ -688,16 +747,33 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
             records.push_back( record );
         }
 
-#if !defined( ROCKETNET_TLA_PLANT )
         // every completion the walk posts names something of the worker's
-        // (the plant build's handoff is planted too, and strays there)
         if ( rocketnet_uring_queue_worker_counter( &walk.worker, ROCKETNET_URING_WORKER_COUNTER_STRAY ) != 0 )
         {
             fprintf( stderr, "tla_trace queue-worker: a completion the walk posted was stray\n" );
             failed = 1;
             break;
         }
-#endif // #if !defined( ROCKETNET_TLA_PLANT )
+    }
+
+    // StopFinishes, past the records: main stops, and the worker and the
+    // kernel go on until the worker exits
+    for ( int step = 0; !failed && strcmp( walk.st, "exited" ) != 0; step++ )
+    {
+        qwork_choices( walk, random, false, can );
+        if ( can.empty() || step == QWORK_FINISH_STEPS )
+        {
+            fprintf( stderr, "tla_trace queue-worker: the worker did not exit after the stop (%s)\n",
+                     can.empty() ? "nothing of the kernel's to come" : "step bound" );
+            failed = 1;
+            break;
+        }
+        qwork_act( walk, random, can[(size_t) random.below( (int) can.size() )] );
+        if ( rocketnet_uring_queue_worker_counter( &walk.worker, ROCKETNET_URING_WORKER_COUNTER_STRAY ) != 0 )
+        {
+            fprintf( stderr, "tla_trace queue-worker: a completion the walk posted was stray\n" );
+            failed = 1;
+        }
     }
 
     rocketnet_uring_queue_send_destroy( walk.send );
@@ -707,9 +783,9 @@ static int trace_queue_worker( uint64_t seed, int steps, const char * out )
 
     char constants[512];
     snprintf( constants, sizeof( constants ),
-              "    U = %d\n    R = %d\n    K = %d\n    MaxRetry = %d\n    MaxAgain = %d\n    MaxRefuse = %d\n"
+              "    U = %d\n    R = %d\n    K = %d\n    MaxRetry = %d\n    MaxAgain = %d\n    MaxRefuse = %d\n    MaxRecvEnd = %d\n"
               "    ExitRule = \"drained\"\n    RetryRule = \"bounded\"\n    WakeRule = \"armed\"\n",
-              QWORK_U, QWORK_SLOTS, QWORK_K, QWORK_MAX_RETRY, QWORK_MAX_AGAIN, QWORK_MAX_REFUSE );
+              QWORK_U, QWORK_SLOTS, QWORK_K, QWORK_MAX_RETRY, QWORK_MAX_AGAIN, QWORK_MAX_REFUSE, QWORK_MAX_RECV_END );
 
 #if defined( ROCKETNET_TLA_PLANT )
     const std::string name = "MCTraceQueueWorkerPlantSeed" + tla_int( (int64_t) seed );

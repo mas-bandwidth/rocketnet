@@ -28,7 +28,7 @@ VarsRec ==
      held |-> held, u |-> u, k |-> k, cOk |-> cOk, cAgain |-> cAgain, cRef |-> cRef,
      blocked |-> blocked, poll |-> poll, recv |-> recv, wakeRead |-> wakeRead,
      wakeCount |-> wakeCount, agains |-> agains, againsBefore |-> againsBefore,
-     refusals |-> refusals]
+     refusals |-> refusals, recvEnds |-> recvEnds]
 
 \* a record is the model's variables exactly: record equality is equal fields
 \* and equal values, so a record with a field more or less never matches
