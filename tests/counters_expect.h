@@ -175,8 +175,15 @@ do                                                                              
 // (standard/TRANSPORT.md t18, the aliasing table): the shared row is the
 // transport-blind total, so a walk over every refusal row reads the shared
 // row and leaves these out, or it counts one event twice. IOCP_RECEIVE_DROPPED
-// is not one of them: it also counts full-bank and failed receives, which
-// iocp does not yet feed to a shared row.
+// is one of them: every iocp receive it counts is also counted by a shared
+// row, a size drop by PREFILTER_TOO_SHORT or PREFILTER_TOO_LARGE (through
+// IOCP_RECEIVE_TOO_SHORT and IOCP_RECEIVE_TOO_LARGE), and every other drop by
+// the worker drop tally (sdk/rocketnet_server_iocp_windows.cpp,
+// rocketnet_receive_drop_tally_count), which reaches PREFILTER_*,
+// RECEIVE_DROPPED_FULL, RECEIVE_FAILED and RECEIVE_DROPPED_STOPPED through
+// iocp_receive_drop_totals. Left in the walk it counted each of those twice,
+// and a stop under traffic moved it, a refusal, for drops RECEIVE_DROPPED_STOPPED
+// classes as expected.
 
 inline bool rocketnet_counter_aliases_shared_row( int counter )
 {
@@ -184,6 +191,7 @@ inline bool rocketnet_counter_aliases_shared_row( int counter )
     {
         case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE:
         case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE:
+        case ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED:
         case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT:
         case ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE:
         case ROCKETNET_COUNTER_RIO_RECEIVE_DROPPED_SIZE:
