@@ -10,6 +10,10 @@
 (* only through its trace: TraceRNTraceExample.tla, run by                 *)
 (* tools/tla_trace_check.py --layer example, whose plant (a claim granted  *)
 (* one place past the limit) must fail TraceConsistent at that record.     *)
+(* Claim and Refuse take k only from 1..MaxClaim and Drain n only from     *)
+(* 0..Limit, by Next's binders: the checker ties a record's arguments to   *)
+(* them, since Claim(0) at count 0 makes Drain(0)'s change and Refuse(3)   *)
+(* at count = Limit makes Refuse(1)'s.                                     *)
 (***************************************************************************)
 EXTENDS Naturals
 

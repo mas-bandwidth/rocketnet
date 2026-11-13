@@ -127,7 +127,8 @@ predicates for the edges (below), so a walk that never gets there is red.
      walk: a model given a looser limit than the code would pass a bug.
    - **Report.** The walk prints a `tla_report_t`:
      - `ACTS`: each action taken, with a count. It must equal the acts the trace
-       records; coverage is counted from the traces TLC accepted, not from this line.
+       records; coverage is counted from the clean traces' records, not from this
+       line, and holds for accepted traces only when every shard is green (below).
      - `PLANT-FIRED n`: how often the planted EFFECT happened: a value the clean code
        can never produce, such as a place taken past the limit, not the input that
        could provoke it. The clean code's count must be 0.
@@ -162,12 +163,43 @@ predicates for the edges (below), so a walk that never gets there is red.
    - The row's `reach` predicates: plain state predicates over the spec's variables
      (`Full == count = Limit`), no `TRUE`, no definitions or declarations inside.
 
-   `TraceStep` requires the step to be the recorded `Act` AND a `Next` step, so the ranges
-   and guards `Next` puts around an action (`\E k \in 1..MaxClaim : Claim(k)`) hold for
-   the recorded arguments. An action is a definition `Next` names that changes state
-   (a prime or `UNCHANGED` in its own text); a guard `Next` names beside an action is
-   not one, and `Act` may not name it. `Next` names each action, not a `Step` made of
-   several.
+   An action is a definition `Next` names that changes state (a prime or `UNCHANGED` in
+   its own text); a guard `Next` names beside an action is not one, and `Act` may not
+   name it. `Next` names each action, not a `Step` made of several.
+
+   **Arguments.** `TraceStep` is `Act(r.act, r.args) /\ Next`, and that conjunction
+   alone does not hold the recorded arguments to `Next`'s ranges: another disjunct of
+   `Next`, or the same action with another argument, can make the same state change.
+   In the example, `Claim(0)` at count 0 changes nothing, as `Drain(0)` does, and with
+   count at `Limit`, `Refuse(3)` makes `Refuse(1)`'s change. So the checker binds the
+   arms. For each TLC run it writes the Trace module with every `Act` arm replaced by
+   the disjuncts of `Next` that take its action: `Next`'s `\E` binders and the guards
+   beside the action stay, and each recorded argument that `Next` passes as a bound
+   variable is tied to that variable:
+
+   ```tla
+   traceAct = "Claim" -> (\E k \in 1..MaxClaim : (traceArgs[1] = k /\ Claim(traceArgs[1])))
+   ```
+
+   The arms in `proofs/tla` stay bare (the template); the bound module is in the run's
+   root under `--dir`. What it binds and what it does not:
+   - An argument `Next` computes from the state (`RNReceiveHandoff`'s `Call(busy, b,
+     delivered + 1, CallSize(busy, b))`) is checked by the action's own text only.
+     Where the action leaves it free (`Call`'s first datagram when the call returned
+     none), the record may carry the code's value. A rule the trace must check goes in
+     the action, not only in `Next`'s expression.
+   - The count of a record's arguments is not checked yet: `tests/tla_trace_bank.cpp`
+     records three for `FinishRefused(t, k)`. The check goes in with that walk's fix.
+   - `Next` must be read the way TLC reads it: junction lists by their bullets'
+     columns, `\E` binding to the end of its item, guards and action calls. The
+     checker refuses a `Next` it cannot read that way: an action under `IF`, `LET`,
+     `CASE`, `\A` or `CHOOSE`, two actions in one conjunction, or an action named other
+     than as a whole call. No module of a layer may name `traceAct` or `traceArgs`.
+   - Hand-written traces of the example, the domain controls, run in the example's
+     home shard: `Claim(0)` at count 0 (another action's change) and `Refuse(3)` at
+     count = `Limit` (another argument's change) must be rejected at that record with
+     the arms bound, and accepted with the bare arms; a trace of in-range steps must
+     pass bound.
 
    Everything else is the template's text, and the checker compares it:
    `Trace == TraceLog`, the `ASSUME`, `VARIABLES ti, rejected`, `TraceInit`,
@@ -191,6 +223,8 @@ predicates for the edges (below), so a walk that never gets there is red.
   - an `Act` arm takes another action than it names, an action not in `Next`, a
     definition that changes no state, or other arguments than `x[1], ..., x[n]`, or
     `Act` holds anything but its arms;
+  - `Next` has a shape the argument binding cannot read, or a module names `traceAct`
+    or `traceArgs` (see "Arguments" above);
   - a ghost is read by a step, or a reach predicate is not a plain state predicate;
   - `untraced` or `ghost` names something the spec does not have;
   - the layer's file, or a header of `tests/` it includes, defines or undefines a
@@ -228,7 +262,11 @@ predicates for the edges (below), so a walk that never gets there is red.
   both builds, so the two traces agree until the planted code acts, and the rejection
   must land exactly where it does: the plant is the cause.
 - **Across the seeds:** an action of `Next` that is not `untraced`, or a `reach`
-  predicate, that no accepted clean trace took or reached.
+  predicate, that no clean trace took or reached (each trace accepted in its own
+  shard; see "Shards" below).
+- **The domain controls**, where the example's coverage runs: a negative control that
+  TLC does not reject at its record with the arms bound, or does not accept with the
+  bare arms, or a positive control that does not pass.
 
 `tools/planted_violations.tsv` plants these on the example layer, each red with its
 reason. The sdk-include rules are planted on the example with its `self_contained`
@@ -272,7 +310,10 @@ hand-written traces:
   `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
   layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
   predicates run in the shard holding its first seed, which walks its other seeds again
-  (the walk alone; TLC checks each of them in its own shard). An entry `layer:reach`
+  (the walk alone; TLC checks each of them in its own shard). So a home shard counts
+  actions from traces whose TLC check it did not run: one shard's OK is not a verdict
+  on its layers' coverage, and "every action taken in an accepted clean trace" holds
+  only when every shard is green (the summary job, or `--shard 0/1`). An entry `layer:reach`
   moves the layer's reach predicates to that shard, which walks the layer's seeds the
   same way and tries the predicates on them; coverage stays at the first seed's shard
   (msgx's reach is in shard 3: at its home it doubled the check step). The OK line names

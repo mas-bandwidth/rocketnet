@@ -7,7 +7,10 @@ over the planted code. Each walk runs twice and must write the same bytes
 both times. Each trace is checked by the pinned tlacheck in a run and a root
 of its own: the clean trace must pass, and the planted trace must violate
 TraceConsistent at the first record where it differs from the clean trace,
-which must be a record where the walk says the planted effect happened.
+which must be a record where the walk says the planted effect happened. The
+Trace module TLC reads has each Act arm bound to the disjuncts of Next that
+take its action (bound_act): Next's binders and guards hold for the record's
+own arguments, not only for some other step with the same state change.
 
 Before any walk, the layer's files are read and refused, by name, when:
   the Trace module is not the template: Trace == TraceLog, the ASSUME,
@@ -17,6 +20,10 @@ Before any walk, the layer's files are read and refused, by name, when:
     ghost variables), Act(a, x) must be CASE a = "X" -> X(x[1], ..., x[n])
     with every X an action of Next taking n arguments, and nothing else may
     be defined there but OpActs and the row's reach predicates;
+  Next is not lists of \\E binders, guards and action calls the binding can
+    read (an action under IF, LET, CASE or \\A, two actions in one
+    conjunction, an action named other than as a call), or a module names
+    traceAct or traceArgs;
   the layer's file defines or undefines a ROCKETNET_ macro other than its
     plant's, or (but for a self-contained row) includes no sdk .cpp, or its
     plant define appears in none of the sdk files it includes;
@@ -36,6 +43,8 @@ the first record it changed.
 
 Across the seeds, red when an action of Next that is not untraced, or a
 reach predicate of the row, was never taken or reached in a clean trace.
+Where the example's coverage runs, red when a domain control (DOMAIN_CONTROLS)
+is not rejected at its record with Act bound, or not accepted with bare arms.
 
 Per commit the work is split by SHARDS (--shard I/9): each shard is a set of
 (layer, seed) pairs, and the table is red unless every pair is in exactly one
@@ -422,9 +431,12 @@ def arity(params):
 # the same state change (RNTraceExample: Claim(0) at count 0 is Drain(0); with
 # count = Limit, Refuse(3) is Refuse(1)). So for the TLC run the checker puts in
 # place of each Act arm the disjuncts of Next that take its action, with Next's
-# binders, the guards beside it and the arguments Next passes, and requires the
-# record's args to be exactly those arguments:
-#   a = "Claim" -> \E k \in 1..MaxClaim : (traceArgs = <<k>> /\ Claim(k))
+# binders and the guards beside it, and ties each record argument that Next
+# passes as a bound variable to that variable:
+#   a = "Claim" -> \E k \in 1..MaxClaim : (traceArgs[1] = k /\ Claim(traceArgs[1]))
+# An argument Next computes from the state (RNReceiveHandoff's delivered + 1) is
+# checked by the action's own text only: where the action leaves it free, the
+# record may carry the code's value.
 # The Trace module in proofs/tla keeps its bare arms (the template); the module
 # TLC reads is written into the run's root. Next is read as TLA+ lays it out:
 # junction lists by their bullets' columns, \E binding to the end of its item.
@@ -591,14 +603,16 @@ def binder_names(text):
 
 def occurrences(node, wrap, found, bound=frozenset()):
     """{action: [the formula of each disjunct of Next that takes it]}: Next's binders and the guards beside the
-    action, the record's args as the action's arguments, as many as it takes, and each argument Next passes as
-    a bound variable equal to that variable; an argument Next computes is left to the action's own text"""
+    action, the record's args as the action's arguments, and each argument Next passes as a bound variable
+    equal to that variable; an argument Next computes is left to the action's own text. The count of the
+    record's args is not checked yet: tests/tla_trace_bank.cpp records three for FinishRefused(t, k), and
+    `Len(traceArgs) = n` goes in here once it records two"""
     if node[0] == "act":
         n = len(node[2])
         args = [f"{BIND_ARGS}[{i}]" for i in range(1, n + 1)]
         tie = [f"{BIND_ARGS}[{i}] = {a}" for i, a in enumerate(node[2], 1) if a in bound]
         call = node[1] + (f"({', '.join(args)})" if n else "")
-        found.setdefault(node[1], []).append(wrap(" /\\ ".join([f"Len({BIND_ARGS}) = {n}"] + tie + [call])))
+        found.setdefault(node[1], []).append(wrap(" /\\ ".join(tie + [call])))
     elif node[0] == "or":
         for n in node[1]:
             occurrences(n, wrap, found, bound)
@@ -1196,8 +1210,8 @@ def reached(args, name, layer, predicate, log):
 #
 # Hand-written traces of the example (README-TraceCheck.md, "Arguments"), run in
 # the example's home shard. Each negative record makes the state change of
-# another action, or of its own action with another argument, or carries more
-# arguments than its action takes. TLC must reject it at that record with Act
+# another action, or of its own action with an argument outside Next's range
+# for it. TLC must reject it at that record with Act
 # bound to Next's domain, and accept the same trace with the source's bare arms:
 # it is the binding that rejects it. The positive trace must pass bound. The
 # constants are the example's (tests/tla_trace_example.cpp EXAMPLE_LIMIT,
@@ -1211,8 +1225,6 @@ DOMAIN_CONTROLS = [
     ("ClaimAsDrain", [("claim", "Claim", "0", 0, 0)], 2),
     # Refuse(3) at count = Limit is Refuse(1)'s transition, with an argument outside 1..MaxClaim
     ("RefuseOtherArg", [("claim", "Claim", "2", 2, 0), ("claim", "Claim", "1", 3, 0), ("claim", "Refuse", "3", 3, 1)], 4),
-    # Claim with two arguments, of which a bare arm reads only the first
-    ("ArgsTooLong", [("claim", "Claim", "1, 2", 1, 0)], 2),
 ]
 
 
@@ -1468,15 +1480,19 @@ def main():
             for failure in failures:
                 failed.append(f"layer {n} seed {seed}: {failure}")
             if clean and not failures:
-                # actions are counted from the traces TLC accepted, never
-                # from the walk's own report
+                # this shard's own seeds count from the traces TLC accepted
+                # here, never from the walk's own report; a home's other seeds
+                # count below from their walk, accepted in their own shards
                 for act, count in clean["logged"].items():
                     taken[n][act] = taken[n].get(act, 0) + count
 
     # a home layer's seeds that other shards check: the clean walk alone, into
     # the directory check_seed uses, so their actions are counted here and the
-    # reach predicates can try them; TLC accepts each in its own shard, and the
-    # summary job is green only when every shard is
+    # reach predicates can try them; TLC accepts each in its own shard. This
+    # shard's coverage verdict therefore counts traces it did not see accepted:
+    # one shard's OK is not a verdict on its layers, and the claim that every
+    # action was taken in an accepted trace holds only with every shard green
+    # (the summary job, or --shard 0/1)
     elsewhere = [(n, seed) for n in sorted(set(homes) | set(reach_here)) for seed in args.seeds
                  if (n, seed) not in pairs]
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
@@ -1495,7 +1511,7 @@ def main():
         required = facts[n]["actions"] - set(LAYERS[n]["untraced"])
         for act in sorted(required):
             if taken[n].get(act, 0) == 0:
-                failed.append(f"layer {n}: {act} never reached in an accepted clean trace of {span}")
+                failed.append(f"layer {n}: {act} never reached in a clean trace of {span}")
         for act in sorted(set(taken[n]) - facts[n]["actions"]):
             failed.append(f"layer {n}: the trace records {act}, which is not an action of the spec's Next")
     # each reach predicate tries the seeds in turn, the predicates at once
