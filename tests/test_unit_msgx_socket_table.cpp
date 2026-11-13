@@ -437,7 +437,7 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     // every open call is opened or counted refused
     rocketnet_unit_check( (uint64_t) ( test.kernel->opens + test.kernel->refused ) ==
                           msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) +
-                          msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) );
+                              msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) );
 
     // the quarantine ends: a's socket is closed and its slot free again
     rocketnet_msgx_socket_table_holder_end( test.table, 0 );

@@ -118,7 +118,7 @@ struct rocketnet_server_msgx_t;
 // is a refusal (sendmsg_x/recvmsg_x missing, or the descriptor limit cannot
 // hold a socket per client): the server falls to its next transport.
 struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, struct rocketnet_address_t * bind_address, int num_workers,
-                                                             int max_clients, const uint8_t * packet_filter, int * status = NULL );
+                                                               int max_clients, const uint8_t * packet_filter, int * status = NULL );
 
 void rocketnet_server_msgx_stop( struct rocketnet_server_msgx_t * msgx );
 bool rocketnet_server_msgx_stopped( struct rocketnet_server_msgx_t * msgx );
