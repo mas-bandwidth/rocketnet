@@ -114,6 +114,7 @@ skip test_posix_send_to_closed_port_xdp_ipv4_client_portable rocketnet_test_xdp_
 skip test_posix_send_to_closed_port_xdp_ipv6_client_portable rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized
 skip test_receive_latency_server_gso rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_receive_latency_server_io_uring rocketnet_test_server_pin_allows_io_uring linux-dev-portable,linux-prod-portable,linux-s390x-portable
+skip test_receive_latency_server_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_rio_transport_server_io_pin rocketnet_test_server_pin_allows_rio windows-dev-iocp,windows-dev-sanitized-iocp,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp
 skip test_server_gso_receive_buffer_request rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_server_port_zero_transport rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio

@@ -540,6 +540,9 @@ MCRNGsoRecvFill.cfg	MCRNGsoRecvFill.tla	pass	-	check	rngsorecvfill	required	-
 MCRNGsoRecvFillBrokenFullBatch.cfg	MCRNGsoRecvFill.tla	invariant	NoOverflow	check	rngsorecvfill	required	-
 MCRNGsoRecvWalk.cfg	MCRNGsoRecvWalk.tla	pass	-	check	rngsorecvwalk	required	-
 MCRNGsoRecvWalkBrokenStartAtZero.cfg	MCRNGsoRecvWalk.tla	invariant	NoQueueStarves	check	rngsorecvwalk	required	-
+MCRNGsoRecvWalkXdp.cfg	MCRNGsoRecvWalk.tla	pass	-	check	rngsorecvwalk	required	-
+MCRNGsoRecvWalkXdpTwo.cfg	MCRNGsoRecvWalk.tla	pass	-	check	rngsorecvwalk	required	-
+MCRNGsoRecvWalkBrokenFillAtNextQueue.cfg	MCRNGsoRecvWalk.tla	invariant	NoQueueStarves	check	rngsorecvwalk	required	-
 MCRNClientRace.cfg	MCRNClientRace.tla	pass	-	check	clientrace	required	-
 MCRNClientRaceBrokenReaderFrees.cfg	MCRNClientRace.tla	invariant	FreedOnlyByCaller	check	clientrace	required	-
 MCRNClientRaceBrokenCallerUsesLoser.cfg	MCRNClientRace.tla	invariant	NoUseAfterClose	check	clientrace	required	-
