@@ -5,7 +5,10 @@
 # the first in-tree frame below it, for example
 #   bcmp (bin/test) | some_check(int) tests/test_unit_x.cpp:12:5
 # A binary-only frame is written `(bin/test)` and a C++ library frame under
-# `include/c++/`; neither is in-tree. An entry that names no in-tree frame
+# `include/c++/` (libstdc++'s headers as include/c++/<file>, the instrumented
+# libc++'s, from any install prefix, as include/c++/v1/<file>); neither is
+# in-tree, for example
+#   std::__1::basic_string<char>::size() include/c++/v1/string:1180:5 | some_check(int) tests/test_unit_x.cpp:12:5 An entry that names no in-tree frame
 # (function and file:line under this tree) fails the gate on every run: a
 # top frame alone would pass every later warning with that top frame. A
 # warning whose key is absent here fails `bash tools/run_msan.sh`. The gate

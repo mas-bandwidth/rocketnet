@@ -166,6 +166,9 @@ def shorten(line):
     line = re.sub(r" \(BuildId: [0-9a-f]+\)", "", line)
     line = re.sub(r"\((?:[^()]*?)bin/test\+0x[0-9a-f]+\)", "(bin/test)", line)
     line = re.sub(r"/usr/(?:bin/\.\./)?lib/gcc/[^/]+/[0-9]+/(?:\.\./)+include/c\+\+/[0-9]+/", "include/c++/", line)
+    # the instrumented libc++'s headers, at whatever prefix it is installed
+    # (/opt/msan-libcxx-<version>, a cache under the checkout)
+    line = re.sub(r"(?:(?<=\s)|^)\S*/include/c\+\+/v1/", "include/c++/v1/", line)
     line = re.sub(r"\s+$", "", line)
     return line
 

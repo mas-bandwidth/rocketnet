@@ -255,6 +255,18 @@ class RunMsanGateTest(unittest.TestCase):
             self.assertIn("name no in-tree frame", output)
 
 
+    def test_libcxx_header_frame_matches_its_documented_form(self):
+        # the instrumented libc++'s header frames carry its install prefix;
+        # the known list writes them include/c++/v1/<file>
+        caller = "check_refused(int) tools/fixture.cpp:5:3"
+        for prefix in ("/opt/msan-libcxx-21.1.8", "/home/runner/work/rocketnet/.msan-libcxx"):
+            top = "std::__1::basic_string<char>::size() %s/include/c++/v1/string:1180:5" % prefix
+            entry = "std::__1::basic_string<char>::size() include/c++/v1/string:1180:5 | " + caller
+            stdout = "test_random_bytes\n*** ALL TESTS PASSED ***\n"
+            code, output = self.run_gate(stdout, 0, [top, caller], known_entries=(entry,))
+            self.assertEqual(code, 0, prefix + "\n" + output)
+            self.assertIn("(all known)", output)
+
     # a finding names the cases that reported it, and a failing run keeps
     # the per-process logs, whose whole stacks the verdict prints in part
 
