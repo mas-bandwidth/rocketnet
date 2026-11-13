@@ -12,9 +12,9 @@ Review E3 (found in review by Emma): the worker read a whole `recvmsg_x` batch
 whatever the room in its bank, and a full bank that main had not yet taken
 dropped what it read, counted as a full bank. The kernel's socket buffers
 were never used as the queue, against the rule `RNGsoHandoff.tla` states for
-gso (`RxFill`, `RxPublish`) and HoldOnFull. The bank was also 8192 against
-an update's receive budget of 16000 at 1000 clients, so 64 sockets of 150
-datagrams in one update dropped 1408.
+gso (`RxFill`, `RxPublish`, at 5a2dbf403) and HoldOnFull. The bank was also
+8192 against an update's receive budget of 16000 at 1000 clients, so 64
+sockets of 150 datagrams in one update dropped 1408.
 
 The receive latency fix: main read only a bank the worker had published
 (the ready-slot rule), so a datagram the worker read after its last publish
