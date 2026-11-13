@@ -222,11 +222,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 128 to the server (two of its
 // counter blocks cross a 64-byte rounding) and 64 to the client: actual=
 // 1503911803 and 15041738 (the macOS unit job, Debug, DEV ON).
-// The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
-// send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
-// frames, plus the receive banks; with the counters through RECEIVE_DROPPED_RETIRED (288) the
-// probe's actual= lines are 1625576931 and 15041802 (studio, Apple clang, Release, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528355 )
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 to the client: actual=15041802 (the
+// macOS unit job, Debug, DEV ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993226 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -348,9 +347,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
 // rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
 // 64, computed.
-// The appended counter RECEIVE_DROPPED_RETIRED adds 64 to the server:
-// actual=5644858631 (the Linux Debug unit job, run 43448217775); arm64 the
-// same 64, computed.
+// The io_uring transport's rows URING_PIN_REFUSALS and
+// URING_RECEIVE_DROPPED_SOCKET add 64 more to the server: actual=5644858631
+// (amd-3, gcc, Debug, DEV ON); arm64 the same 64, computed.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810111ULL )
 #else // #if defined( __aarch64__ )
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810055ULL )

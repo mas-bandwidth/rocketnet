@@ -53,6 +53,43 @@ static void test_receive_drop_counters_bank_full_is_its_own()
     check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_ACCEPT, counters ) == 0 );
 }
 
+#if ROCKETNET_DEV
+// the DEV-only sample of refused datagrams (sdk/rocketnet_receive_prefilter.h):
+// the report names source, length and the first 16 bytes, and keeps only the
+// first ROCKETNET_RECEIVE_DROP_SAMPLES
+
+static void test_receive_drop_samples_name_the_first_refused_datagrams()
+{
+    rocketnet_address_t from;
+    check( rocketnet_address_parse( &from, "127.0.0.1:4242" ) );
+    uint8_t data[40];
+    for ( int i = 0; i < 40; i++ )
+    {
+        data[i] = (uint8_t) ( 0xA0 + i );
+    }
+
+    rocketnet_receive_drop_sample_record( ROCKETNET_RECEIVE_DROP_WRONG_VALUE, &from, data, 40 );
+    const std::string one = rocketnet_receive_drop_samples_text();
+    check( one.find( "127.0.0.1:4242" ) != std::string::npos );
+    check( one.find( "length 40" ) != std::string::npos );
+    check( one.find( "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf" ) != std::string::npos );
+
+    for ( int i = 0; i < 2 * ROCKETNET_RECEIVE_DROP_SAMPLES; i++ )
+    {
+        rocketnet_receive_drop_sample_record( ROCKETNET_RECEIVE_DROP_WRONG_VALUE, &from, data, 40 );
+    }
+    size_t lines = 0;
+    const std::string all = rocketnet_receive_drop_samples_text();
+    for ( size_t at = all.find( "refused datagram" ); at != std::string::npos; at = all.find( "refused datagram", at + 1 ) )
+    {
+        lines++;
+    }
+    check( lines == ROCKETNET_RECEIVE_DROP_SAMPLES );
+}
+
+REGISTER_UNIT_TEST( test_receive_drop_samples_name_the_first_refused_datagrams );
+#endif // #if ROCKETNET_DEV
+
 static void test_receive_drop_tally_counts_and_sums()
 {
     static struct rocketnet_receive_drop_tally_t tallies[3];

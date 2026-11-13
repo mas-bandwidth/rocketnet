@@ -10,10 +10,16 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_address.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_wire.h"
 
 #include <atomic>
+#if ROCKETNET_DEV
+#include <string>
+#include <stdio.h>
+#include <string.h>
+#endif // #if ROCKETNET_DEV
 
 // The worker-side prefilter: the stateless first rungs of the server's
 // receive ladder, run by a transport's own receive worker before a datagram
@@ -261,5 +267,80 @@ static inline void rocketnet_receive_drop_tally_sum( const struct rocketnet_rece
         }
     }
 }
+
+#if ROCKETNET_DEV
+// Development library only, nothing in the production library: the first few
+// datagrams the prefilter refused (the server's own ladder and a transport's
+// worker prefilter alike), kept so a functional "clean run" case that finds a
+// refusal counter moved can name the datagrams (source, length and first 16
+// bytes) in its report (tests/counters_expect.h). Written from any thread,
+// read by the report; the first ROCKETNET_RECEIVE_DROP_SAMPLES only.
+
+#define ROCKETNET_RECEIVE_DROP_SAMPLES 4
+
+struct rocketnet_receive_drop_sample_t
+{
+    int reason;
+    char from[64];
+    int bytes;
+    uint8_t first[16];
+    std::atomic<bool> ready;
+};
+
+inline rocketnet_receive_drop_sample_t * rocketnet_receive_drop_samples()
+{
+    static rocketnet_receive_drop_sample_t samples[ROCKETNET_RECEIVE_DROP_SAMPLES];
+    return samples;
+}
+
+inline void rocketnet_receive_drop_sample_record( int reason, const struct rocketnet_address_t * from, const uint8_t * data, int bytes )
+{
+    static std::atomic<int> next{ 0 };
+    const int at = next.fetch_add( 1 );
+    if ( at >= ROCKETNET_RECEIVE_DROP_SAMPLES )
+    {
+        return;
+    }
+
+    rocketnet_receive_drop_sample_t * sample = &rocketnet_receive_drop_samples()[at];
+    sample->reason = reason;
+    sample->from[0] = '\0';
+    if ( from )
+    {
+        rocketnet_address_to_string( from, sample->from );
+    }
+    sample->bytes = bytes;
+    memset( sample->first, 0, sizeof( sample->first ) );
+    if ( data && bytes > 0 )
+    {
+        memcpy( sample->first, data, (size_t) ( bytes < 16 ? bytes : 16 ) );
+    }
+    sample->ready.store( true, std::memory_order_release );
+}
+
+// the samples as text lines for a report, empty when none was taken
+
+inline std::string rocketnet_receive_drop_samples_text()
+{
+    std::string text;
+    for ( int i = 0; i < ROCKETNET_RECEIVE_DROP_SAMPLES; i++ )
+    {
+        const rocketnet_receive_drop_sample_t * sample = &rocketnet_receive_drop_samples()[i];
+        if ( !sample->ready.load( std::memory_order_acquire ) )
+        {
+            continue;
+        }
+        char line[160];
+        int at = snprintf( line, sizeof( line ), "  refused datagram %d: reason %d from %s length %d first16 ", i, sample->reason, sample->from, sample->bytes );
+        for ( int b = 0; b < 16 && at > 0 && at + 3 < (int) sizeof( line ); b++ )
+        {
+            at += snprintf( line + at, sizeof( line ) - (size_t) at, "%02x", sample->first[b] );
+        }
+        text += line;
+        text += "\n";
+    }
+    return text;
+}
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_RECEIVE_PREFILTER_H

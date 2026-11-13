@@ -257,6 +257,48 @@ static inline bool rocketnet_uring_sockaddr_to_address(
     return false;
 }
 
+// a destination to the sockaddr a send names, the gso transport's rule (the
+// other direction of rocketnet_uring_sockaddr_to_address): ports and address
+// words go to network order, and an ipv4 destination on a dual stack socket
+// is sent v4-mapped. out holds either family (a sockaddr_in fits in a
+// sockaddr_in6). Returns the name's length, 0 when the socket's family cannot
+// carry the destination (an ipv6 destination on an ipv4 socket, or no
+// address).
+static inline socklen_t rocketnet_uring_address_to_sockaddr( const struct rocketnet_address_t * input, bool socket_ipv6, struct sockaddr_in6 * out )
+{
+    struct rocketnet_address_t to = *input;
+
+    if ( socket_ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+        {
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        }
+        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+        {
+            return 0;
+        }
+
+        memset( out, 0, sizeof( struct sockaddr_in6 ) );
+        out->sin6_family = AF_INET6;
+        for ( int i = 0; i < 8; i++ )
+        {
+            ( (uint16_t *) &out->sin6_addr )[i] = htons( to.data.ipv6[i] );
+        }
+        out->sin6_port = htons( to.port );
+        return sizeof( struct sockaddr_in6 );
+    }
+
+    if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        return 0;
+    }
+
+    memset( out, 0, sizeof( struct sockaddr_in6 ) );
+    rocketnet_platform_address_to_sockaddr_in( &to, reinterpret_cast<struct sockaddr_in *>( out ) );
+    return sizeof( struct sockaddr_in );
+}
+
 // one SENDMSG's msghdr for the send run at the front of a queue of count
 // packets: wire[i] and packet_bytes[i] are packet i's wire bytes, to[i] its
 // destination. The run is rocketnet_coalesce_send_run's, bounded by
