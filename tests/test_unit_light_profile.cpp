@@ -144,7 +144,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Linux readings agree): computed, not measured on Windows. The client gains
 // one 64-byte rounding, as on macOS: actual=15394156 (the Windows unit job,
 // MSVC, Release, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862683 )
+// The msgx branch's two appended counters (STOPPED, RETIRED) add 64 to the
+// server: actual=1503911323 (the Windows unit job, run 43439700060).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862747 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
