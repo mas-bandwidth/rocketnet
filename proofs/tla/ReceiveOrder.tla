@@ -1,13 +1,17 @@
 -------------------------- MODULE ReceiveOrder --------------------------
 (***************************************************************************)
 (* A receive path as ordered rungs, each cheap or crypto.  The request     *)
-(* path runs in the ruled order: version byte, signed timestamps, address  *)
-(* and key compares, cookie gate, used token lookup, the failed-signature  *)
-(* budget, the token-to-address claim, the mapping capacity, the           *)
-(* claim-table capacity, restart rule, the handshake work budget,          *)
-(* signature, seal open, slots, keypair.  Keyed hashes (the cookie MAC,    *)
-(* the token identifier, key derivation) are the cheap tier and spend no   *)
-(* counted cryptography.                                                   *)
+(* path runs in the ruled order: the size check and address lookup         *)
+(* (restart), version byte, signed timestamps, address and key compares,   *)
+(* cookie gate, used token lookup, the failed-signature budget, the        *)
+(* token-to-address claim, the mapping capacity, the claim-table capacity, *)
+(* the repeat rung, the handshake work budget, signature, seal open, the   *)
+(* sealed-field consistency check, client id, slots, keypair, and the key  *)
+(* derivation that refuses a small-order client key.  Every rung that     *)
+(* refuses in the code refuses here, on a fault the sender chose or on     *)
+(* the state it reads.  Keyed hashes (the cookie MAC, the token            *)
+(* identifier, the handshake key derivation) are the cheap tier and spend  *)
+(* no counted cryptography.                                                *)
 (*                                                                         *)
 (* WorkBudgetOnlyForVerify: the per-update handshake work budget is        *)
 (* charged only by a request that reaches the signature, so a refusal at   *)
@@ -66,18 +70,29 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
           "verifybudget", "claim", "capacity", "claimfull", "repeat",
-          "restart", "workbudget", "signature", "seal", "clientid", "slots",
-          "keypair"}
+          "restart", "workbudget", "signature", "seal", "consistent",
+          "clientid", "slots", "keypair", "derive"}
 
-CryptoRungs == {"signature", "seal", "keypair"}
+\* derive is the scalar multiplication in rocketnet_derive_connection_keys,
+\* run after the keypair; it refuses a small-order client key
+CryptoRungs == {"signature", "seal", "keypair", "derive"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
                 "verifybudget", "claim", "capacity", "claimfull", "repeat",
                 "restart", "workbudget"}
 
-Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "budget", "claimfull", "workspent", "signature", "seal",
-           "clientid"}
+\* each fault is a request the code refuses at one rung for what the
+\* sender sent; the structural refusals (a bound token at the used rung, a
+\* claim held elsewhere, a full table, a token the update already refused,
+\* a request for the token its address's half-open mapping holds) are read
+\* off the state in Refuses.  restart is a wrong size or an address already
+\* connected; compares the address flags, the advertised address or the
+\* server key; cookie a missing, forged or expired cookie (answered with a
+\* fresh cookie, or withheld); mismatch sealed fields that disagree with the
+\* signed ones; smallorder a small-order client ephemeral key
+Faults == {"none", "restart", "version", "expired", "compares", "cookie",
+           "full", "mapfull", "claimed", "budget", "claimfull", "workspent",
+           "signature", "seal", "mismatch", "clientid", "smallorder"}
 
 \* the refusals past the verify that the sender does not choose: each
 \* records its token for the repeat rung (sdk/rocketnet_server_protocol.cpp,
@@ -114,9 +129,11 @@ Pos(r) ==
                                                    ELSE 10 * PosCookie + 1
       [] r = "signature" -> 10 * PosSignature
       [] r = "seal"      -> 10 * PosSeal
+      [] r = "consistent" -> 10 * PosSeal + 1
       [] r = "clientid"  -> 10 * PosSlots - 1
       [] r = "slots"     -> 10 * PosSlots
       [] r = "keypair"   -> 10 * PosKeypair
+      [] r = "derive"    -> 10 * PosKeypair + 1
 
 RungPositions == { Pos(r) : r \in Rungs }
 MinPos == CHOOSE p \in RungPositions : \A q \in RungPositions : p <= q
@@ -125,6 +142,7 @@ RungAt(p) == CHOOSE r \in Rungs : Pos(r) = p
 NextPos(p) == CHOOSE q \in RungPositions : q > p /\ \A s \in RungPositions : s > p => q <= s
 
 RequestRungOrder ==
+    /\ Pos("restart") < Pos("version")
     /\ Pos("used") < Pos("verifybudget")
     /\ Pos("verifybudget") < Pos("claim")
     /\ Pos("claim") < Pos("capacity")
@@ -132,8 +150,10 @@ RequestRungOrder ==
     /\ Pos("claimfull") < Pos("repeat")
     /\ Pos("repeat") < Pos("workbudget")
     /\ Pos("workbudget") < Pos("signature")
-    /\ Pos("seal") < Pos("clientid")
+    /\ Pos("seal") < Pos("consistent")
+    /\ Pos("consistent") < Pos("clientid")
     /\ Pos("clientid") < Pos("slots")
+    /\ Pos("keypair") < Pos("derive")
 
 \* The token claim and the mapping table are the same small instance as the
 \* code: two addresses, two tokens, room for two half-open mappings.
@@ -155,23 +175,50 @@ ClaimWriteRung == "signature"
 \* before the replaced mapping's removal); the witness overrides it with <-
 ReplaceReleasesClaim == TRUE
 
+\* a request that would replace its address's half-open mapping is refused
+\* at the used rung when its token is bound to any address, its own
+\* included (sdk/rocketnet_server_protocol.cpp, the second
+\* rocketnet_used_token_history_check, against the zero address); the
+\* witness overrides it with <-
+ReplaceNeedsUnboundToken == TRUE
+
 \* repeated: the tokens refused this update at a RepeatRung; wasRepeat: the
-\* current request's token was among them as the request began
+\* current request's token was among them as the request began.  bound: the
+\* used-token history's bindings, written only by MCReceiveOrder's
+\* ResponseBind; this module's steps read it at the used rung
 VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
-          claimWritten, verified, repeated, wasRepeat
+          claimWritten, verified, repeated, wasRepeat, bound
 
 vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
-          claimWritten, verified, repeated, wasRepeat>>
+          claimWritten, verified, repeated, wasRepeat, bound>>
 
 MapCount == Cardinality({ a \in Addrs : maps[a] /= None })
 MapFull == MapCount >= MapCap
 ClaimOther == claims[reqToken] /= None /\ claims[reqToken] /= reqAddr
 
+\* the used rung: a token bound to another address (the first
+\* rocketnet_used_token_history_check, against the request's address), or
+\* any bound token on a request that would replace a half-open mapping
+UsedRefuses ==
+    /\ bound[reqToken] /= None
+    /\ \/ bound[reqToken] /= reqAddr
+       \/ (ReplaceNeedsUnboundToken /\ maps[reqAddr] /= None)
+
 Refuses(r, f) ==
+    \* the size check and the address lookup: a wrong size or a connected
+    \* address is ignored, and a request for the token its address's
+    \* half-open mapping holds is answered with the stored challenge; none
+    \* of them reaches a later rung
+    \/ (r = "restart" /\ (f = "restart" \/ maps[reqAddr] = reqToken))
     \/ (r = "version" /\ f = "version")
     \/ (r = "timestamps" /\ f = "expired")
+    \/ (r = "compares" /\ f = "compares")
+    \/ (r = "cookie" /\ f = "cookie")
+    \/ (r = "used" /\ UsedRefuses)
+    \/ (r = "consistent" /\ f = "mismatch")
+    \/ (r = "derive" /\ f = "smallorder")
     \/ (r = "verifybudget" /\ f = "budget")
     \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
     \/ (r = "capacity" /\ (f = "mapfull" \/ (MapFull /\ maps[reqAddr] = None)))
@@ -200,6 +247,7 @@ TypeOK ==
     /\ verified \in BOOLEAN
     /\ repeated \subseteq Tokens
     /\ wasRepeat \in BOOLEAN
+    /\ bound \in [Tokens -> Addrs \cup {None}]
 
 Init ==
     /\ pos = MinPos
@@ -218,6 +266,7 @@ Init ==
     /\ verified = FALSE
     /\ repeated = {}
     /\ wasRepeat = FALSE
+    /\ bound = [t \in Tokens |-> None]
 
 RefuseStep ==
     /\ outcome = "pending"
@@ -238,7 +287,7 @@ RefuseStep ==
     /\ repeated' = IF RungAt(pos) \in RepeatRungs
                     THEN repeated \cup {reqToken} ELSE repeated
     /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, maps,
-                   claimWritten, verified, wasRepeat>>
+                   claimWritten, verified, wasRepeat, bound>>
 
 AdvanceStep ==
     /\ outcome = "pending"
@@ -255,13 +304,15 @@ AdvanceStep ==
     /\ verified' = (verified \/ RungAt(pos) = "signature")
     /\ UNCHANGED <<fault, outcome, refusedRung, spentAtRefusal,
                    spentKpAtRefusal, reqAddr, reqToken, maps, repeated,
-                   wasRepeat>>
+                   wasRepeat, bound>>
 
 \* past the last rung the address gets its mapping; a half-open mapping it
-\* held for another token is replaced, and that token's claim is released
+\* held for another token is replaced, and that token's claim is released.
+\* The last rung must pass first, as every other rung must to advance.
 AcceptStep ==
     /\ outcome = "pending"
     /\ pos = MaxPos
+    /\ ~Refuses(RungAt(pos), fault)
     /\ outcome' = "accepted"
     /\ maps' = [a \in Addrs |-> IF a = reqAddr THEN reqToken ELSE maps[a]]
     /\ claims' = IF /\ ReplaceReleasesClaim
@@ -270,7 +321,7 @@ AcceptStep ==
                   THEN [claims EXCEPT ![maps[reqAddr]] = None] ELSE claims
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
                    spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                   claimWritten, verified, repeated, wasRepeat>>
+                   claimWritten, verified, repeated, wasRepeat, bound>>
 
 Next == RefuseStep \/ AdvanceStep \/ AcceptStep
 

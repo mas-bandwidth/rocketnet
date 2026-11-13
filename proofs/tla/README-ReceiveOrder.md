@@ -19,25 +19,38 @@ reaches the signature. `WorkBudgetOnlyForVerify` says a request refused at any r
 the signature has not been charged that budget. Each rung maps to its code and
 STANDARD step in _Processing Connection Requests_:
 
-| Rung | Kind | Code | STANDARD step |
-|---|---|---|---|
-| restart | cheap | already-connected and mapping lookups; the address lookup runs right after the size check (t12 rule 3), and the client-id check after the seal open | t12 rule 3: already connected; resend stored challenge |
-| version | cheap | sdk/rocketnet_server_protocol.cpp version, then protocol id compare | TRANSPORT.md t12 rule 4: version, then protocol id |
-| timestamps | cheap | expire and creation skew compares, then the timeout compare | t12 rule 5: expiry, creation skew; t12 rule 6: timeout seconds |
-| compares | cheap | address flags, advertised address, server key compares, in that order | t12 rule 6: address flags; advertised address; server public key |
-| cookie | cheap | cookie MAC | recompute the cookie MAC |
-| used | cheap | used-token history lookup | token identifier in used-token history (t12 rule 9 step 1) |
-| verifybudget | cheap | rocketnet_signature_verify_budget_allow in sdk/rocketnet_server_protocol.cpp | the failed-signature budget refuses a source with a recorded failure in the spent window (t12 rule 9 step 2) |
-| claim | cheap | ClaimCheck: rocketnet_used_token_history_claim_check in sdk/rocketnet_token_tables.cpp; ClaimWrite: rocketnet_used_token_history_claim_record, run only after the signature verifies | the first request whose signature verifies claims its token for its source address until the handshake deadline; a second address is refused (t12 rule 9 step 3) |
-| capacity | cheap | rocketnet_encryption_map_full in sdk/rocketnet_server_protocol.cpp | a full encryption mapping table refuses before any signature, seal or keypair work (t12 rule 9 step 4) |
-| claimfull | cheap | the read-only rocketnet_used_token_history_claim_can_record in sdk/rocketnet_token_tables.cpp, run after the mapping-capacity rung | a request-claim table with no free or expired slot refuses with its own counter, CONNECTION_REQUEST_CLAIM_TABLE_FULL, and not as a mapping failure (t12 rule 9 step 5) |
-| repeat | cheap | the repeat table scan in rocketnet_server_protocol_process_connection_request (sdk/rocketnet_server_protocol.cpp), written by rocketnet_server_record_repeat and emptied in rocketnet_server_protocol_update | a token verified earlier in the update and refused by the clientid or slots rung is refused again, unanswered, counted by that reason (t12 rule 9 step 6) |
-| workbudget | cheap | the handshakes_processed_this_update check and charge in sdk/rocketnet_server_protocol.cpp, immediately before the verify | refuse, unanswered, when the per-update handshake work budget is spent; only a request that reaches it spends budget (t12 rule 8) |
-| signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
-| seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block |
-| clientid | cheap | rocketnet_client_slots_find in rocketnet_server_process_opened_request | ignore a request whose client id already holds a slot (t12 rule 10) |
-| slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available |
-| keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair |
+Every rung that refuses in the code refuses in the model, either on a fault
+the request chose (`Faults`) or on the state it reads (a bound token, a claim
+held elsewhere, a full table, a token already refused this update, a request
+for the token its address's half-open mapping holds). `AcceptStep` runs only
+once the last rung passes.
+
+| Rung | Kind | Code | STANDARD step | Refuses on |
+|---|---|---|---|---|
+| restart | cheap | the size check, then the address lookup in rocketnet_server_protocol_process_connection_request_known: a connected address is ignored, and a request carrying its half-open mapping's salt or token gets the stored challenge | t12 rule 3: already connected; resend stored challenge | fault `restart` (wrong size, connected address); `maps[reqAddr] = reqToken` |
+| version | cheap | sdk/rocketnet_server_protocol.cpp version, then protocol id compare | TRANSPORT.md t12 rule 4: version, then protocol id | fault `version` |
+| timestamps | cheap | expire and creation skew compares, then the timeout compare | t12 rule 5: expiry, creation skew; t12 rule 6: timeout seconds | fault `expired` |
+| compares | cheap | address flags, signed zero pad, advertised address, server key compares, in that order | t12 rule 6: address flags; advertised address; server public key | fault `compares` |
+| cookie | cheap | cookie MAC (a missing, forged or expired cookie is answered with a fresh cookie, or withheld by the reply limit) | recompute the cookie MAC | fault `cookie` |
+| used | cheap | used-token history lookup: rocketnet_used_token_history_check against the request's address, then, for a request that would replace a half-open mapping, against the zero address | token identifier in used-token history (t12 rule 9 step 1) | `UsedRefuses`: a token bound to another address, or any bound token on a replacing request |
+| verifybudget | cheap | rocketnet_signature_verify_budget_allow in sdk/rocketnet_server_protocol.cpp | the failed-signature budget refuses a source with a recorded failure in the spent window (t12 rule 9 step 2) | fault `budget` |
+| claim | cheap | ClaimCheck: rocketnet_used_token_history_claim_check in sdk/rocketnet_token_tables.cpp; ClaimWrite: rocketnet_used_token_history_claim_record, run only after the signature verifies | the first request whose signature verifies claims its token for its source address until the handshake deadline; a second address is refused (t12 rule 9 step 3) | fault `claimed`; `ClaimOther` |
+| capacity | cheap | rocketnet_encryption_map_full in sdk/rocketnet_server_protocol.cpp | a full encryption mapping table refuses before any signature, seal or keypair work (t12 rule 9 step 4) | fault `mapfull`; a full table for a request that replaces nothing |
+| claimfull | cheap | the read-only rocketnet_used_token_history_claim_can_record in sdk/rocketnet_token_tables.cpp, run after the mapping-capacity rung | a request-claim table with no free or expired slot refuses with its own counter, CONNECTION_REQUEST_CLAIM_TABLE_FULL, and not as a mapping failure (t12 rule 9 step 5) | fault `claimfull` |
+| repeat | cheap | the repeat table scan in rocketnet_server_protocol_process_connection_request (sdk/rocketnet_server_protocol.cpp), written by rocketnet_server_record_repeat and emptied in rocketnet_server_protocol_update | a token verified earlier in the update and refused by the clientid or slots rung is refused again, unanswered, counted by that reason (t12 rule 9 step 6) | `reqToken \in repeated` |
+| workbudget | cheap | the handshakes_processed_this_update check and charge in sdk/rocketnet_server_protocol.cpp, immediately before the verify | refuse, unanswered, when the per-update handshake work budget is spent; only a request that reaches it spends budget (t12 rule 8) | fault `workspent` |
+| signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature | fault `signature` |
+| seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block | fault `seal` |
+| consistent | cheap | rocketnet_connect_token_private_consistent in rocketnet_server_process_opened_request, charged to the source | ignore a request whose sealed fields disagree with its signed fields (t12 rule 10) | fault `mismatch` |
+| clientid | cheap | rocketnet_client_slots_find in rocketnet_server_process_opened_request | ignore a request whose client id already holds a slot (t12 rule 10) | fault `clientid` |
+| slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available | fault `full` |
+| keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair | nothing (a failed keypair is an internal error, not modelled) |
+| derive | crypto | the scalar multiplication in rocketnet_derive_connection_keys, charged to the source | ignore a small-order client ephemeral key (t17 item 12) | fault `smallorder` |
+
+Not modelled: the internal-error refusals past the keypair (a failed
+`crypto_box_keypair`, a mapping add that fails after the capacity rung passed,
+a challenge or denial writer that returns the wrong size), each asserted or an
+operating-system failure; none of them leaves a mapping or a claim behind.
 
 ## Witnesses
 
@@ -104,9 +117,13 @@ packet is refused with the tally at zero.
 mapped token: it records the address binding and releases that address's
 request claim. `BoundHasNoOwnClaim` requires a bound token to keep no claim of
 the address it is bound to once a request is done; the stricter
-`BoundHasNoClaim` fails across the deadline window (below). The instance explores fresh unbound-token requests
-between bindings; token expiry, binding eviction and reconnect are outside
-this instance. Existing mapping-removal and request-order witnesses remain.
+`BoundHasNoClaim` fails across the deadline window (below). Requests may
+carry bound tokens, which the used rung refuses as the code does. Left out:
+the reconnect (a free address presenting a token bound to itself after its
+connection closed), which the code serves by writing a new claim beside the
+binding, so `BoundHasNoOwnClaim` is stated for this instance without it;
+token expiry and binding eviction are outside this instance too. Existing
+mapping-removal and request-order witnesses remain.
 
 `MCReceiveOrderBrokenClaimOutlivesBinding.cfg` overrides
 `ResponseBindReleasesClaim` with FALSE. Its accepted request leaves a claim;
@@ -132,20 +149,24 @@ it installs the new token and releases the replaced token's claim
 salt and another token is not answered with the stored challenge, and the
 replacement runs just before `rocketnet_encryption_map_add`, after
 `rocketnet_server_release_mapping_claim` and
-`rocketnet_encryption_map_remove_current` on the replaced mapping. The
-instance explores only unbound tokens; the code also refuses a replacing
-request whose token is bound to any address.
+`rocketnet_encryption_map_remove_current` on the replaced mapping. A
+replacing request whose own token is bound to any address, its own
+included, is refused at the used rung (the second
+`rocketnet_used_token_history_check`, against the zero address):
+`ReplaceOnlyUnboundToken` says an accepted request that found a half-open
+mapping at its address carried an unbound token.
 
 `RefusalKeepsHalfOpen` holds the address's half-open mapping fixed across a
 refused request, through the ghost `held` (the mapping the address held as
-the request began). Two reversed witnesses:
+the request began). Three reversed witnesses:
 
 | Witness | Change | Code replay |
 |---|---|---|
+| ReplaceIgnoresBinding | `ReplaceNeedsUnboundToken <- FALSE` | the used rung without its zero-address check (the rule ServerConnection's replace branch stated until 2026-11-13): A's response binds t1 and is denied, so A's mapping stays half-open; A replaces it with t2; A's next request, for t1, is checked only against A's own binding, passes, and replaces A's mapping for t2. ReplaceOnlyUnboundToken fails (61 states in the trace; replayed by hand) |
 | ReplaceKeepsClaim | `ReplaceReleasesClaim <- FALSE` | the replacement without `rocketnet_server_release_mapping_claim`: address A replaces its mapping for t1 with t2, and t1's claim stays with no mapping holding t1. ClaimHasMapping fails |
 | ReplaceBeforeVerify | `ReplaceAtRequest <- TRUE` | the replacement at the top of the request path, before any check: a request for t2 with a wrong version evicts A's mapping for t1 and is then refused, leaving A with no mapping. RefusalKeepsHalfOpen fails |
 
-Both counterexamples were replayed against the code by hand as above.
+All three counterexamples were replayed against the code by hand as above.
 test_new_token_replaces_stale_half_open_mapping pins the code: a forged
 request and a bound token leave the stale mapping in place, and a new token
 under a new salt gets a cookie, then a fresh challenge from the replacing

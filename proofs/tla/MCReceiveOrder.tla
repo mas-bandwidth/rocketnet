@@ -14,13 +14,15 @@
 (* claim at its check rung before the signature, charging the work budget  *)
 (* at the cookie gate, leaving a claim behind on mapping removal, response *)
 (* binding or replacement, replacing a half-open mapping before any       *)
-(* check has run, or turning the repeat rung off; TLC must                *)
-(* reject them.  UpdateStart empties the repeat rung's table.              *)
+(* check has run, letting a token bound to the requesting address replace  *)
+(* its half-open mapping, or turning the repeat rung off; TLC must         *)
+(* reject them.  UpdateStart empties the repeat rung's table.  Requests    *)
+(* may carry bound tokens, which the used rung refuses as the code does.   *)
 (***************************************************************************)
 EXTENDS ReceiveOrder
 
-VARIABLES bound, held, stale
-MCVars == <<vars, bound, held, stale>>
+VARIABLES held, stale
+MCVars == <<vars, held, stale>>
 
 \* a replacement only past every rung: the witness evicts the address's
 \* half-open mapping as the request starts, before any check has run
@@ -52,6 +54,12 @@ MCClaimWriteAtCheck == "claim"
 \* code before 2026-11-13
 MCRepeatRungOff == FALSE
 
+\* a replacing request checked only against its own address's binding, as
+\* ServerConnection's replace branch stated until 2026-11-13 (the code never
+\* did): a token bound to the requesting address replaces that address's
+\* half-open mapping
+MCReplaceIgnoresBinding == FALSE
+
 Done == outcome /= "pending"
 
 Terminating == Done /\ UNCHANGED vars
@@ -64,22 +72,21 @@ NewRequest ==
     /\ fault' \in Faults
     /\ reqAddr' \in Addrs
     /\ reqToken' \in Tokens
-    \* the code answers a request from a connected address with nothing,
-    \* and one for the token its half-open mapping holds with the stored
-    \* challenge, and neither reaches the claim or accept rungs; a new
-    \* check sequence run starts for a free address, or for an address whose
-    \* half-open mapping holds another token, which it replaces once
-    \* accepted (sdk/rocketnet_server_protocol.cpp, replace_index).  The
-    \* replaced mapping's token may be bound: a response that bound it and
-    \* was then denied (no slot, or its client id already connected)
-    \* leaves the mapping half-open, and the code replaces it all the same.
-    /\ \/ maps[reqAddr'] = None
-       \/ maps[reqAddr'] /= None /\ maps[reqAddr'] /= reqToken'
-    \* Explore fresh unbound-token requests between response bindings: the
-    \* code refuses a bound token at the used rung, and one that would
-    \* replace a half-open mapping when it is bound to any address.
-    \* Binding expiry, eviction and reconnect are outside this instance.
-    /\ bound[reqToken'] = None
+    \* any address, any token: a connected address (fault "restart") and a
+    \* request for the token its half-open mapping holds are refused at the
+    \* restart rung; a request for another token from an address with a
+    \* half-open mapping replaces it once accepted
+    \* (sdk/rocketnet_server_protocol.cpp, replace_index).  The replaced
+    \* mapping's token may be bound: a response that bound it and was then
+    \* denied (no slot, or its client id already connected) leaves the
+    \* mapping half-open, and the code replaces it all the same.  The
+    \* request's own token may be bound too, and the used rung refuses it
+    \* when it is bound to another address, or to any address on a request
+    \* that would replace.  Left out: a request from a free address for a
+    \* token bound to that address, the reconnect after its connection
+    \* closed, which the code serves; binding expiry and eviction are outside
+    \* this instance as well.
+    /\ ~(bound[reqToken'] = reqAddr' /\ maps[reqAddr'] = None)
     /\ held' = maps[reqAddr']
     /\ spent' = FALSE
     /\ spentKp' = FALSE
@@ -138,13 +145,15 @@ Sweep ==
 \* a half-open mapping leaves alone before its handshake deadline -- the
 \* idle timeout or the integrity limit in the code -- and its token's claim
 \* leaves with it, when its own address holds it, unless the witness has
-\* turned the release off
+\* turned the release off.  Any mapping may leave, each on its own deadline
+\* (the update's idle sweep and rocketnet_server_integrity_failure each
+\* remove the one mapping that reached its limit).
 IdleRemove ==
     /\ Done
-    /\ \E a \in Addrs : maps[a] /= None
-    /\ LET a == CHOOSE a \in Addrs : maps[a] /= None IN
+    /\ \E a \in Addrs :
        LET t == maps[a] IN
-       /\ maps' = [b \in Addrs |-> IF b = a THEN None ELSE maps[b]]
+       /\ maps[a] /= None
+       /\ maps' =[b \in Addrs |-> IF b = a THEN None ELSE maps[b]]
        /\ claims' = IF IdleRemoveReleasesClaim /\ claims[t] = a
                       THEN [u \in Tokens |-> IF u = t THEN None ELSE claims[u]]
                       ELSE claims
@@ -191,7 +200,7 @@ MCNext == ((Next \/ Terminating) /\ UNCHANGED <<bound, held>>
           \/ (ResponseBind /\ held' = None /\ UNCHANGED stale)
           \/ (UpdateStart /\ UNCHANGED <<bound, held, stale>>)
 
-MCInit == Init /\ bound = [t \in Tokens |-> None] /\ held = None /\ stale = {}
+MCInit == Init /\ held = None /\ stale = {}
 MCSpec == MCInit /\ [][MCNext]_MCVars
 
 BoundTypeOK == /\ bound \in [Tokens -> Addrs \cup {None}]
@@ -208,6 +217,13 @@ OneUnexpiredMappingPerToken ==
 \* a refused request leaves its address's half-open mapping as it was: only
 \* a request that passed every check, its signature included, replaces one
 RefusalKeepsHalfOpen == (outcome = "refused" /\ held /= None) => maps[reqAddr] = held
+
+\* a request that replaced its address's half-open mapping carried a token
+\* bound to no address, its own included: a replay of a token that has
+\* already connected never displaces a handshake in flight (the used rung's
+\* check against the zero address)
+ReplaceOnlyUnboundToken == (outcome = "accepted" /\ held /= None) => bound[reqToken] = None
+
 BoundHasNoClaim == Done => \A t \in Tokens : bound[t] /= None => claims[t] = None
 
 \* BoundHasNoClaim with the window: a response binds its token and releases

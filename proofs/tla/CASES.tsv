@@ -524,6 +524,7 @@ MCReceiveOrderBrokenWorkBudgetAtCookie.cfg	MCReceiveOrder.tla	invariant	WorkBudg
 MCReceiveOrderBrokenReplaceKeepsClaim.cfg	MCReceiveOrder.tla	invariant	ClaimHasMapping	check	receiveorder	required	-
 MCReceiveOrderBrokenReplaceBeforeVerify.cfg	MCReceiveOrder.tla	invariant	RefusalKeepsHalfOpen	check	receiveorder	required	-
 MCReceiveOrderBrokenRepeatRungOff.cfg	MCReceiveOrder.tla	invariant	RepeatSpendsNoVerify	check	receiveorder	required	-
+MCReceiveOrderBrokenReplaceIgnoresBinding.cfg	MCReceiveOrder.tla	invariant	ReplaceOnlyUnboundToken	check	receiveorder	required	-
 MCRNMsgxPause.cfg	MCRNMsgxPause.tla	pass	-	check	rnmsgxpause	required	-
 MCRNMsgxPauseBrokenExpiryClearsFresh.cfg	MCRNMsgxPause.tla	invariant	FreshPauseSurvives	check	rnmsgxpause	required	-
 MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueues	required	-
