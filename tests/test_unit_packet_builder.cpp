@@ -21,6 +21,8 @@
 #include "../sdk/rocketnet_packet_builder.h"
 #include "../sdk/rocketnet_send_budget.h"
 #include "../sdk/rocketnet_test_seams.h"
+#include "../sdk/rocketnet_window_ack.h"
+#include "../sdk/rocketnet_window_send.h"
 
 static rocketnet_counters_t builder_counters;
 
@@ -82,6 +84,10 @@ static void test_small_records_packed_several_per_packet()
 
     static uint8_t data[4][16];
     memset( data, 0x33, sizeof( data ) );
+    for ( int i = 0; i < 4; i++ )
+    {
+        data[i][0] = (uint8_t) ( 0x40 + i );    // each channel's byte, so the write order can be seen
+    }
 
     struct rn_packet_item_t items[4];
     for ( int i = 0; i < 4; i++ )
@@ -121,7 +127,7 @@ static void test_small_records_packed_several_per_packet()
     {
         rocketnet_unit_check( record.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
         rocketnet_unit_check( record.bytes == 16 );
-        rocketnet_unit_check( record.data[0] == 0x33 );
+        rocketnet_unit_check( record.data[0] == (uint8_t) ( 0x40 + records ) );
         records++;
     }
 
@@ -233,6 +239,23 @@ static void test_builder_obeys_budget_and_class_order()
     rocketnet_unit_check( reliable.taken == 0 );
     rocketnet_unit_check( poor.bytes_spent == 0 );                       // nothing was spent: the item waits
 
+    // the same pair offered together: the waiting reliable is filled first, so
+    // the packet is admitted at its class and refused whole; the unreliable
+    // item behind it is neither taken nor counted dropped, and the bucket is
+    // still unspent (nothing after a waiting reliable spends it)
+
+    struct rn_packet_item_t pair[2];
+    builder_item( &pair[0], 0, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ROCKETNET_SEND_CLASS_NEW_RELIABLE, data[1], 32 );
+    pair[0].number = 0;
+    builder_item( &pair[1], 0, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[0], 32 );
+
+    const uint64_t dropped_before = starved.unreliable_dropped;
+    rocketnet_unit_check( rn_packet_builder_write( &starved, pair, 2, frames, 4 ) == 0 );
+    rocketnet_unit_check( pair[0].taken == 0 );
+    rocketnet_unit_check( pair[1].taken == 0 );
+    rocketnet_unit_check( starved.unreliable_dropped == dropped_before );
+    rocketnet_unit_check( poor.bytes_spent == 0 );
+
     rn_unit_arena_destroy( arena );
 }
 
@@ -255,8 +278,21 @@ static void test_packet_builder_no_allocation_after_create()
 
     rn_region_t * region = rn_arena_region( arena, 0 );
 
+    // the reliable path runs too (TM078): a real budget, and an ack map fed by
+    // numbers a send window on the same region assigns, so numbering, commit,
+    // the sent map and the budget refusal all run under the counting allocator
+
+    struct rocketnet_send_budget_t budget;
+    rocketnet_unit_check( rocketnet_send_budget_init( &budget, 100000, 50.0 ) );
+
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
+
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, NULL );
+
     rn_packet_builder_t builder;
-    rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, 4, 1191 ) );
+    rocketnet_unit_check( rn_packet_builder_init( &builder, region, &ack, &budget, 4, 1191 ) );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -273,12 +309,32 @@ static void test_packet_builder_no_allocation_after_create()
 
     for ( int update = 0; update < 8; update++ )
     {
-        for ( int i = 0; i < 2; i++ )
-        {
-            builder_item( &items[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[i], 16 );
-        }
+        const double now = 50.0 + update;
 
+        // one reliable number from the send window, one unreliable item
+
+        uint64_t number = 0, ring_start = 0;
+        rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16,
+                                                          RN_DESCRIPTOR_NONE, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+
+        builder_item( &items[0], 0, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ROCKETNET_SEND_CLASS_NEW_RELIABLE, data[0], 16 );
+        items[0].number = number;
+        builder_item( &items[1], 1, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[1], 16 );
+
+        const size_t allocs_before_write = builder_allocs;
         rocketnet_unit_check( rn_packet_builder_write( &builder, items, 2, frames, 4 ) == 1 );
+        rocketnet_unit_check( items[0].taken == 1 );
+        rocketnet_unit_check( builder_allocs == allocs_before_write );    // the builder itself allocates nothing
+
+        // commit keys the packet's number in the ack map; the transport's ack
+        // then marks exactly it, still without an allocator call
+
+        const uint64_t packet_id = 5000 + (uint64_t) update;
+        rn_packet_builder_commit( &builder, 0, packet_id, now );
+        rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 1 );
+        rocketnet_unit_check( rn_channels_feed_acks( &ack, &packet_id, 1, now + 0.01 ) == 1 );
+        rocketnet_unit_check( rn_window_ack_entries_in_flight( &ack ) == 0 );
+        rocketnet_unit_check( builder_allocs == allocs_before_write );
 
         struct rocketnet_message_record_t record;
         memset( &record, 0, sizeof( record ) );
@@ -290,11 +346,23 @@ static void test_packet_builder_no_allocation_after_create()
         struct rn_delivery_t delivery;
         rn_channels_dispatch( &channels, &record, &delivery );
 
-        const uint64_t acked[1] = { (uint64_t) update };
-        rn_channels_feed_acks( NULL, acked, 1, 1.0 + update );
-
         rn_channels_end_update( &channels );
     }
+
+    // the budget refusal under the counting allocator: an empty bucket refuses
+    // the reliable packet whole, the item waits, and nothing is allocated
+
+    uint64_t number = 0, ring_start = 0;
+    rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16,
+                                                      RN_DESCRIPTOR_NONE, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+    builder_item( &items[0], 0, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ROCKETNET_SEND_CLASS_NEW_RELIABLE, data[0], 16 );
+    items[0].number = number;
+
+    budget.tokens = 0.0;
+    const size_t allocs_before_refusal = builder_allocs;
+    rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 4 ) == 0 );
+    rocketnet_unit_check( items[0].taken == 0 );
+    rocketnet_unit_check( builder_allocs == allocs_before_refusal );
 
     // zero allocator calls after create
 
