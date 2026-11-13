@@ -673,13 +673,21 @@ static void test_gaps_budget_server_exhausted_ladder_names_exactly()
     struct rocketnet_server_transport_config_t config;
     gb_server_config( &config, list, 4 );
 
+    // twice: first on a dirtied stack, then on the stack the first create
+    // left, so a list or flag array read before it is set meets two kinds of
+    // stale bytes
+
     const int live_before = gb_heap.live;
+    for ( int attempt = 1; attempt <= 2; attempt++ )
     {
         gb_log_scope_t log;
         int status = ROCKETNET_STATUS_OK;
-        gb_dirty_stack();
+        if ( attempt == 1 )
+        {
+            gb_dirty_stack();
+        }
         struct rocketnet_server_transport_t * second = rocketnet_server_transport_create_resolved( &gb_heap, "127.0.0.1:0", &config, portable_refusable ? plan : 0, &status );
-        gb_expect( second == NULL, "a second server on the hub was granted %s", second ? rocketnet_server_transport_io_name( second ) : "-" );
+        gb_expect( second == NULL, "create %d: a second server on the hub was granted %s", attempt, second ? rocketnet_server_transport_io_name( second ) : "-" );
         rn_test_server_transport_stop_and_destroy( second );
 
         const char * line = gb_line_starting( GB_EXHAUSTED_PREFIX );
@@ -687,11 +695,11 @@ static void test_gaps_budget_server_exhausted_ladder_names_exactly()
         {
             gb_print_lines();
         }
-        gb_expect( line != NULL && strcmp( line, expected ) == 0, "the exhausted ladder logged \"%s\", not \"%s\"", line ? line : "(nothing)", expected );
-        gb_expect( gb_line_starting( GB_PORT_ZERO_PREFIX ) == NULL, "no rung refused for port zero, yet the port-zero error was logged" );
-        gb_expect( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED, "the exhausted ladder's status is %s, not TRANSPORT_LADDER_EXHAUSTED",
+        gb_expect( line != NULL && strcmp( line, expected ) == 0, "create %d: the exhausted ladder logged \"%s\", not \"%s\"", attempt, line ? line : "(nothing)", expected );
+        gb_expect( gb_line_starting( GB_PORT_ZERO_PREFIX ) == NULL, "create %d: no rung refused for port zero, yet the port-zero error was logged", attempt );
+        gb_expect( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED, "create %d: the exhausted ladder's status is %s, not TRANSPORT_LADDER_EXHAUSTED", attempt,
                    rocketnet_status_name( (enum rocketnet_status_t) status ) );
-        gb_expect( gb_heap.live == live_before, "the refused create leaked %d blocks", gb_heap.live - live_before );
+        gb_expect( gb_heap.live == live_before, "create %d: the refused create leaked %d blocks", attempt, gb_heap.live - live_before );
     }
 
     // nothing skipped, nothing budget-refused: "(none)" for the skipped list
@@ -728,7 +736,11 @@ REGISTER_UNIT_TEST( test_gaps_budget_server_exhausted_ladder_names_exactly );
 
 // mutation gap: hunt 2/5038 (the port-zero flags read before set): xdp binds
 // the port it is given and discovers none, so a port-zero pin on it is
-// refused before it opens: the status says so, and the error names it
+// refused before it opens: the status says so, and the error names it. The
+// create runs twice, first on a dirtied stack and then on the stack the first
+// left, so a name list or flag array read before it is set meets two kinds
+// of stale bytes (which bytes survive the resolve below it depends on the
+// build's frame layout; MSan is the full guard).
 
 static void test_gaps_budget_server_port_zero_pin_names_the_rung()
 {
@@ -740,26 +752,34 @@ static void test_gaps_budget_server_port_zero_pin_names_the_rung()
     gb_server_config( &config, "xdp", 4 );
 
     const int live_before = gb_heap.live;
-    gb_log_scope_t log;
-    int status = ROCKETNET_STATUS_OK;
-    gb_dirty_stack();
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( &gb_heap, "127.0.0.1:0", &config, 1000.0, &status );
-    gb_expect( server == NULL, "a port-zero xdp pin was granted" );
-    rn_test_server_transport_stop_and_destroy( server );
-    gb_expect( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED, "a port-zero xdp pin's status is %s, not TRANSPORT_PORT_ZERO_UNSUPPORTED",
-               rocketnet_status_name( (enum rocketnet_status_t) status ) );
-
-    const char * exhausted = gb_line_starting( GB_EXHAUSTED_PREFIX );
-    const char * want = GB_EXHAUSTED_PREFIX "refused: xdp. skipped for platform: (none)";
-    const char * port_zero = gb_line_starting( GB_PORT_ZERO_PREFIX );
-    const char * names = GB_PORT_ZERO_PREFIX ", which asks the kernel for an ephemeral port: xdp cannot discover";
-    if ( !exhausted || strcmp( exhausted, want ) != 0 || !port_zero || strncmp( port_zero, names, strlen( names ) ) != 0 )
+    for ( int attempt = 1; attempt <= 2; attempt++ )
     {
-        gb_print_lines();
+        gb_log_scope_t log;
+        int status = ROCKETNET_STATUS_OK;
+        if ( attempt == 1 )
+        {
+            gb_dirty_stack();
+        }
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( &gb_heap, "127.0.0.1:0", &config, 1000.0, &status );
+        gb_expect( server == NULL, "create %d: a port-zero xdp pin was granted", attempt );
+        rn_test_server_transport_stop_and_destroy( server );
+        gb_expect( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED, "create %d: a port-zero xdp pin's status is %s, not TRANSPORT_PORT_ZERO_UNSUPPORTED", attempt,
+                   rocketnet_status_name( (enum rocketnet_status_t) status ) );
+
+        const char * exhausted = gb_line_starting( GB_EXHAUSTED_PREFIX );
+        const char * want = GB_EXHAUSTED_PREFIX "refused: xdp. skipped for platform: (none)";
+        const char * port_zero = gb_line_starting( GB_PORT_ZERO_PREFIX );
+        const char * names = GB_PORT_ZERO_PREFIX ", which asks the kernel for an ephemeral port: xdp cannot discover";
+        if ( !exhausted || strcmp( exhausted, want ) != 0 || !port_zero || strncmp( port_zero, names, strlen( names ) ) != 0 )
+        {
+            gb_print_lines();
+        }
+        gb_expect( exhausted != NULL && strcmp( exhausted, want ) == 0, "create %d: the port-zero pin logged \"%s\", not \"%s\"", attempt, exhausted ? exhausted : "(nothing)",
+                   want );
+        gb_expect( port_zero != NULL && strncmp( port_zero, names, strlen( names ) ) == 0, "create %d: the port-zero error does not name xdp: \"%s\"", attempt,
+                   port_zero ? port_zero : "(nothing)" );
+        gb_expect( gb_heap.live == live_before, "create %d: the refused create leaked %d blocks", attempt, gb_heap.live - live_before );
     }
-    gb_expect( exhausted != NULL && strcmp( exhausted, want ) == 0, "the port-zero pin logged \"%s\", not \"%s\"", exhausted ? exhausted : "(nothing)", want );
-    gb_expect( port_zero != NULL && strncmp( port_zero, names, strlen( names ) ) == 0, "the port-zero error does not name xdp: \"%s\"", port_zero ? port_zero : "(nothing)" );
-    gb_expect( gb_heap.live == live_before, "the refused create leaked %d blocks", gb_heap.live - live_before );
 
     gb_end();
     gb_env_put_back( saved );
