@@ -336,9 +336,33 @@ Fairness == /\ WF_vars(LocalProgress)
  /\ (([]<> <<SendAckThrough>>_vars) => ([]<> <<ReceiveUsefulAck>>_vars))
 Spec == Init /\ [][Next]_vars /\ Fairness
 
-\* Safety-only view: arbitrary loss ignores pattern counters; pulse serves
-\* temporal action fairness only. All protocol and wire state is retained.
+\* Safety-only view. TLC keeps one state per view value, so the view must be
+\* a true abstraction: states with one view have the same enabled steps, the
+\* same invariant values and successors with the same views, or which states
+\* get explored depends on the worker schedule. It drops only what nothing
+\* else reads. A Link's pulse feeds only its own next value (it serves
+\* temporal action fairness). A Link's send counter is read by its loss
+\* pattern (Link.tla NextCount, LostAtSend) and is kept as far as the pattern
+\* reads it: not at all under "none" and "arbitrary", its parity under
+\* "alternate" (NextCount keeps parity through the Horizon wrap), whole under
+\* the others. trace and rxQueue stay separate: Take and EndUpdate read the
+\* queue's order across channels, which the per-channel Trace(c) loses.
+\* MCRNChannelViewSound.cfg checks this view; its reversed witness
+\* MCRNChannelViewSoundBrokenLossy.cfg shows LossySafetyView is not one.
+LinkCount(sent, pattern) == CASE pattern \in {"none", "arbitrary"} -> 0
+                              [] pattern = "alternate" -> sent % 2
+                              [] OTHER -> sent
 SafetyView == <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
+      forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
+      trace, rxQueue, chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
+      uSent, uCount, seen, probeWrite, probeRead, resetOK, appVars, fwdWire, revWire,
+      LinkCount(fwdSent, FwdPattern), LinkCount(revSent, RevPattern)>>
+
+\* The view MCRNChannelSafety.cfg and MCRNChannelNotReceived.cfg used before
+\* v1.1.9: it drops both send counters whatever the pattern and merges trace
+\* and rxQueue into Trace(c). Kept only for the reversed witness
+\* MCRNChannelViewSoundBrokenLossy.cfg; no case explores under it.
+LossySafetyView == <<written, waitedForRoom, roomReturned, refused, uDropped, queued, admitted, acked, smap,
       forgotten, reserved, ordered_write, sequenced_write, ordered_read, sequenced_watermark, sentTrace,
       [c \in Channels |-> Trace(c)], chunks, received, live, batch, phase, pending, duplicateReady, whole, placed, collision,
       uSent, uCount, seen, probeWrite, probeRead, resetOK, appVars, fwdWire, revWire>>
