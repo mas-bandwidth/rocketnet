@@ -37,6 +37,14 @@
 // calls write it, the filter reads it. The walk's kernel refuses deletes and
 // updates at random, by batch or one call an entry.
 //
+// The filter is built for the trace at a replay window of
+// ROCKETNET_TLA_XDP_REPLAY_WINDOW sequences (sdk/rocketnet_xdp_limits.h), not
+// the shipped ROCKETNET_HISTORY_PACKETS, so stale copies and forgeries are
+// dropped within the walk's few hundred steps; the cfg's W is that window. The
+// model's UserOpen reads no window, so the userspace replay window
+// (ROCKETNET_REPLAY_WINDOW_BITS, a size of the library's structures) stays
+// as the library builds it and is not bound here.
+//
 // The model's ghosts are the walk's: the session ids, the packets in flight,
 // the drops, the failure counts and the replies held and sent. The kernel
 // entry's and the pending mark's session are the session whose mark the
@@ -91,6 +99,12 @@
 #endif // #if defined( ROCKETNET_XDP_FILTER_HOST )
 
 #if defined( ROCKETNET_XDP_FILTER_HOST )
+
+// the filter and the cfg's W at the trace's narrow window (CMakeLists.txt,
+// rocketnet_xdp_filter_host_trace), so the walk reaches the drop rule
+#if !defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
+#error "the xdp-replay walk needs ROCKETNET_TLA_XDP_REPLAY_WINDOW, the window of the host filter"
+#endif // #if !defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
 
 namespace
 {
@@ -217,7 +231,8 @@ namespace
         return 0;
     }
 
-    // the walk's slot record for an address: the slot seen at it, -1 for none
+    // the walk's slot record for an address: the slot seen at it (seen false
+    // when no slot is)
 
     struct rp_record_t
     {
@@ -237,7 +252,11 @@ namespace
             bool seen = false;
             rocketnet_address_t seen_address;
             bool mark_owed = false;
-            rocketnet_server_replay_marks_slot_for_test( walk.replay, i, &has_mark, &marked_value, &seen, &seen_address, &mark_owed );
+            if ( !rocketnet_server_replay_marks_slot_for_test( walk.replay, i, &has_mark, &marked_value, &seen, &seen_address, &mark_owed ) )
+            {
+                fprintf( stderr, "tla_trace: xdp-replay: the walk's slot record refused slot %d\n", i );
+                tla_value_errors()++;
+            }
             if ( seen && rocketnet_address_equal( &seen_address, &walk.address[a] ) )
             {
                 record.seen = true;
@@ -265,7 +284,11 @@ namespace
             bool seen = false;
             rocketnet_address_t seen_address;
             bool mark_owed = false;
-            rocketnet_server_replay_marks_slot_for_test( walk.replay, i, &has_mark, &marked_value, &seen, &seen_address, &mark_owed );
+            if ( !rocketnet_server_replay_marks_slot_for_test( walk.replay, i, &has_mark, &marked_value, &seen, &seen_address, &mark_owed ) )
+            {
+                fprintf( stderr, "tla_trace: xdp-replay: the walk's slot record refused slot %d\n", i );
+                tla_value_errors()++;
+            }
             if ( seen && !rocketnet_client_slots_connected( walk.slots, i ) )
             {
                 return true;
@@ -720,6 +743,13 @@ namespace
 
 static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
 {
+    if ( rocketnet_xdp_host_replay_window() != (uint32_t) ROCKETNET_XDP_REPLAY_WINDOW )
+    {
+        fprintf( stderr, "tla_trace: xdp-replay: the host filter's replay window is %u, the walk's %u\n", (unsigned) rocketnet_xdp_host_replay_window(),
+                 (unsigned) ROCKETNET_XDP_REPLAY_WINDOW );
+        return 1;
+    }
+
     rp_reset();
 
     tla_random_t random = { seed };

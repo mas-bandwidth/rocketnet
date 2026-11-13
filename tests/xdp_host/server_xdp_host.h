@@ -70,6 +70,10 @@ int rocketnet_xdp_host_run( const uint8_t * frame, int frame_bytes, uint32_t rx_
 
 uint64_t rocketnet_xdp_host_counter( int counter );
 
+// the replay window the filter was compiled with (ROCKETNET_XDP_REPLAY_WINDOW)
+
+uint32_t rocketnet_xdp_host_replay_window( void );
+
 // how many times the filter called bpf_redirect_map since the reset, and the
 // key of the last call
 
