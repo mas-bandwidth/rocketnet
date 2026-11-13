@@ -9,8 +9,13 @@
 // refusal. Unset binds the served family's wildcard on the served port; set,
 // that address on the served port; every refusal is INVALID_ADDRESS.
 //
-// No sockets, no real time: the resolve is pure, and the create cases are
-// refused before any transport opens.
+// The environment forms are ambient: they apply to a served family and are
+// ignored, with a log line, for a family the server does not serve, while
+// the config fields keep refusing that mismatch. Both paths that read the
+// environment are covered: the public create, and a bare transport create.
+//
+// No sockets, no real time: the resolve is pure, and the servers run on the
+// loopback transport in memory.
 
 #include "test_unit_registry.h"
 
@@ -19,6 +24,9 @@
 #include "rocketnet_layers.h"
 #include "unit_shutdown.h"
 #include "loopback_hub.h"
+#if ROCKETNET_DEV
+#include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 
 #include <stdint.h>
 #include <stdio.h>
@@ -190,6 +198,109 @@ static void test_server_bind_address_public_start()
     check( bind_public_start( NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// the rule itself: a field the environment changed for a family not served
+// goes back to its value before the environment; a served family keeps the
+// environment's value, and a field the environment did not change is left
+// for the resolve to judge
+static void test_server_bind_address_ambient_rule()
+{
+    rocketnet_quiet( 1 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_default_config( &config );
+
+    snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", "fd00::5" );
+    rocketnet_server_transport_ignore_ambient_bind( &config, "", "", 1, 0 );
+    check( config.bind_ipv6_address[0] == '\0' );
+
+    snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", "fd00::5" );
+    rocketnet_server_transport_ignore_ambient_bind( &config, "", "", 1, 1 );
+    check( strcmp( config.bind_ipv6_address, "fd00::5" ) == 0 );
+
+    // set in the struct, the environment silent: kept, and the resolve refuses it
+    rocketnet_server_transport_ignore_ambient_bind( &config, "", "fd00::5", 1, 0 );
+    check( strcmp( config.bind_ipv6_address, "fd00::5" ) == 0 );
+
+    // the environment overrode the struct's value: back to the struct's
+    snprintf( config.bind_ipv4_address, sizeof( config.bind_ipv4_address ), "%s", "10.0.0.9" );
+    rocketnet_server_transport_ignore_ambient_bind( &config, "10.0.0.1", "fd00::5", 0, 1 );
+    check( strcmp( config.bind_ipv4_address, "10.0.0.1" ) == 0 );
+}
+
+static void bind_env( const char * ipv4, const char * ipv6 )
+{
+    if ( ipv4 )
+    {
+        check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_BIND_IPV4_ADDRESS", ipv4, 1 ) == 0 );
+    }
+    else
+    {
+        check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) == 0 );
+    }
+    if ( ipv6 )
+    {
+        check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_BIND_IPV6_ADDRESS", ipv6, 1 ) == 0 );
+    }
+    else
+    {
+        check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) == 0 );
+    }
+}
+
+// the public create: the environment's IPv6 bind address on an IPv4 server
+// is ignored and the server starts; its IPv4 one applies, so a multicast
+// one refuses the start; the config field of the other family still refuses
+static void test_server_bind_address_environment_public()
+{
+    rocketnet_quiet( 1 );
+
+    bind_env( NULL, "fd00::5" );
+    check( bind_public_start( NULL ) == ROCKETNET_STATUS_OK );
+
+    bind_env( "224.0.0.1", NULL );
+    check( bind_public_start( NULL ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    bind_env( "127.0.0.1", "fd00::5" );
+    check( bind_public_start( NULL ) == ROCKETNET_STATUS_OK );
+
+    bind_env( NULL, NULL );
+    check( bind_public_start( "fd00::5" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+}
+
+// a bare transport create reads the environment itself: the same rule
+static enum rocketnet_status_t bind_transport_create( const char * bind_ipv6 )
+{
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 1;
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", bind_ipv6 );
+
+    int status = -1;
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, "127.0.0.1:40611", &config, 1000.0, &status );
+    if ( server )
+    {
+        rn_test_server_transport_stop_and_destroy( server );
+    }
+    return server ? ROCKETNET_STATUS_OK : (enum rocketnet_status_t) status;
+}
+
+static void test_server_bind_address_environment_transport()
+{
+    rocketnet_quiet( 1 );
+
+    bind_env( NULL, "fd00::5" );
+    check( bind_transport_create( "" ) == ROCKETNET_STATUS_OK );
+
+    bind_env( "224.0.0.1", NULL );
+    check( bind_transport_create( "" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+
+    bind_env( NULL, NULL );
+    check( bind_transport_create( "fd00::5" ) == ROCKETNET_STATUS_INVALID_ADDRESS );
+    check( bind_transport_create( "" ) == ROCKETNET_STATUS_OK );
+}
+
 #endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_server_bind_address_unset_is_wildcard );
@@ -197,4 +308,7 @@ REGISTER_UNIT_TEST( test_server_bind_address_set_binds_it_on_the_served_port );
 REGISTER_UNIT_TEST( test_server_bind_address_refusals );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_server_bind_address_public_start );
+REGISTER_UNIT_TEST( test_server_bind_address_ambient_rule );
+REGISTER_UNIT_TEST( test_server_bind_address_environment_public );
+REGISTER_UNIT_TEST( test_server_bind_address_environment_transport );
 #endif // #if ROCKETNET_DEV
