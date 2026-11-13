@@ -415,8 +415,12 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
                     buffer[i] = rocketnet_fuzz_u8( &cursor );
                 }
 
+                // a zero length injects one zero byte, never a byte a previous
+                // input left in the static buffer: an input replays the same
+                // whatever ran before it
                 if ( length < 1 )
                 {
+                    buffer[0] = 0;
                     length = 1;
                 }
 
