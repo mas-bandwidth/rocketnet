@@ -21,7 +21,7 @@ Two modules:
 - `RNSendReserve.tla` is the design, one queue, several game threads at
   once. Every load, store, add, max and compare-and-swap of a shared word is
   a step of its own, at the code's layout (the fill lines below), but for the
-  five steps "Steps and the code" lists, which each join two of the code's
+  six steps "Steps and the code" lists, which each join two of the code's
   atomic operations.
 - `RNSendReserveCalls.tla` is the same rules one whole call at a time, as one
   thread sees them, on `NQ` queues. It is what the trace check records, so it
@@ -103,13 +103,14 @@ Two modules:
 ## Steps and the code
 
 Every other step is one atomic operation of the code, or a load with the
-filler's own arithmetic on it. Five steps join two of the code's operations:
+filler's own arithmetic on it. Six steps join two of the code's operations:
 
 | Step | The code's two operations | Why the join keeps what the model checks |
 |---|---|---|
 | `OwnClaim` | the add on `fill_own_frame[client]`, then the add on `fill_own_frames_left` | the frames left are read only by the capacity calls, which this module has none of; the model has no clients, so a start that finds the flag taken and puts its one back is not a step here (the calls module and the unit tests cover the flag) |
+| `Size` (from `idle`) | the last load of the line's word in `fill_claim`'s tail loop (its low half 0), then the guard's load of the budget | a grant to another filler on the same line between them would leave the code claiming while the line holds a tail, which the model's `Size` never does; with each filler on its own line no other filler writes the word, and on one shared line (`MCRNSendReserveSharedLine.cfg`) that window is not checked |
 | `Size` (from `sizing`) | the guard's load of the claims, then the add of the chunk claim to the line's high half | only `tails_held` reads the high half, on the refusal path; the join lets another filler's counter read see the chunk claim one step early, which can only name its refusal `SEND_RESERVE_REFUSED_TAILS_HELD`, so a `TailsNamed` that passes does not cover a refusal counted in that one-step window |
-| `Check`, `Decide` granting a chunk (`Grant`) | the test's load, then the add that moves the chunk's rest from the high half to the tail | the line's sum read by `tails_held` is the same before and after the add; a filler on the same line may take a tail frame one step early here, where the code would send it to the guard |
+| `Check`, `Decide` granting a chunk (`Grant`) | the test's load, then the add that moves the chunk's rest from the high half to the tail | the line's word reads `Chunk` more in the high half before the add and `Chunk - 1` more in the low half after it, so `tails_held` reads one less after it, and not zero on either side (`Chunk >= 2`): the counter it picks is the same; a filler on the same line may take a tail frame one step early here, where the code would send it to the guard |
 | `Decide` (the test) | the budget loaded after the max, then the claims loaded | the budget only rises within a phase, so the budget the code loaded is one of the values from the max's result (`ld`) to the budget now: the step grants when the claims now fit the budget now and refuses when they do not fit `ld`, every outcome the two loads allow |
 | `TakeBack` of a chunk | the claims' add of `-size` in `claim_frames`, then the add that drops the high half in `fill_claim` | between them the claims no longer hold the chunk while the line still shows it: a counter read there names `SEND_RESERVE_REFUSED_TAILS_HELD`, as with `Size`, and nothing else reads the high half |
 
@@ -153,24 +154,33 @@ RNSendReserve's assumption `MaxOwn <= Reserve` made a property of the open.
   The next update's protocol frames are never refused for the game packets'
   sake.
 - **`NeverStarved`**: no single claim is refused while the room its
-  recompute read had a frame for it past the reserve, past every other
-  filler in flight (at least one frame each, its chunk claim and the frames
-  it is giving back when more), past every line's tail, and past the frames
-  the other fillers claimed after that read; nor refused for good while the
-  claims its retest loaded leave a frame under the budget. Room that comes
-  back after the read is not starvation.
+  recompute read had a frame for it past the reserve, past what the other
+  fillers held at that read (`Held`: a claim added and not taken back, a
+  frame granted and not yet staged, a frame staged and not yet counted, the
+  claims being given back, an own frame not yet staged or counted), past
+  every line's tail, and past the frames the other fillers claimed after
+  that read; nor refused for good while the claims its retest loaded leave
+  a frame under the budget. Room that comes back after the read is not
+  starvation. A filler with no claim holds nothing in `Held`, so a frame is
+  never excused twice; the retest half can fail only on the witness
+  NoRetry, as the code's retest compares the claims it loaded with the
+  budget it loads next.
 - **`TailsNamed`**: a refusal the code counts as `SEND_RESERVE_REFUSED` (its
   read of the lines found no tail and no chunk claim) had no room, at the
   decision that refused it, for its frame past the reserve and every filler
   in flight. That is the counter's documented meaning
   (`sdk/rocketnet_counters.h`): the plain counter is a true full, and the
   refusals that frames other threads held caused are counted apart. The
-  code keeps it while every frame held is on a line word (`MCRNSendReserve`,
-  `MCRNSendReserveChunk`), and breaks it when the held frames are on no line
-  word: a tail a refused frame took and has not given back, or a tail frame
-  taken and not yet staged (`MCRNSendReserveCodeTailsNamed`, a code defect
-  handed up under MM076). It has no reversed witness of its own until the
-  code keeps it on an instance where one could fire.
+  code breaks it (`MCRNSendReserveCodeTailsNamed`, a code defect handed up
+  under MM076): it reads the lines after the decision, when the frames held
+  may be on no line word (a tail a refused frame took and has not given
+  back, a tail frame taken and not yet staged) or already staged.
+  `MCRNSendReserve` and `MCRNSendReserveChunk` list it and pass, but neither
+  reaches a refusal while a tail or chunk claim is held (no tails with
+  single claims; the guard at two lines lets a chunk through only where no
+  claim of that phase is refused), so they check it only on refusals with
+  nothing held. It has no reversed witness: the instances where tails meet
+  refusals fail it on the code.
 - **`OwnWithinReserve`** (RNSendReserveCalls): the own frames left and used
   on a queue are never more than the smallest queue's reserve.
 - **`NoHiddenRoom`** (RNSendReserveCalls): a client's capacity is never
@@ -201,9 +211,9 @@ Each filler is on its own line unless the row says one line.
 | `MCRNSendReserveBrokenNoReread.cfg` | `NeverStarved` | the counts are read once, so a frame counted between them and the room read is lost |
 | `MCRNSendReserveBrokenIndexTest.cfg` | `NeverStarved` | the recompute tests the claim's index, which a refused claim ahead of it has raised |
 | `MCRNSendReserveBrokenNoRetry.cfg` | `NeverStarved` | a claim taken back is refused with no retest, so two threads refused by each other's claims are both refused with a frame left |
-| `MCRNSendReserveBrokenNoFallback.cfg` | `NeverStarved` | chunks of two, no guard: a refused chunk is not claimed again as one frame |
-| `MCRNSendReserveBrokenBatchCount.cfg` | `NeverStarved` | chunks of two, no guard: staged frames are counted at the filler's next start, so the recompute reads too few |
-| `MCRNSendReserveBrokenNoTailReturn.cfg` | `NeverStarved` | chunks of two, no guard: a refused frame takes its line's tail and gives back its own claim only |
+| `MCRNSendReserveBrokenNoFallback.cfg` | `NeverStarved` | at the ChunkNoGuard sizes: a refused chunk is not claimed again as one frame |
+| `MCRNSendReserveBrokenBatchCount.cfg` | `NeverStarved` | at the ChunkNoGuard sizes: staged frames are counted at the filler's next start, so the recompute reads too few |
+| `MCRNSendReserveBrokenNoTailReturn.cfg` | `NeverStarved` | at the ChunkNoGuard sizes: a refused frame takes its line's tail and gives back its own claim only |
 
 RNSendReserveCalls: two clients, a reserve of 3 in a queue of 5, one frame a
 claim, bounded at three refusals and seven frames staged per opening; and

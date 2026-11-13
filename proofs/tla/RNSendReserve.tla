@@ -18,7 +18,7 @@
 (* line is shared by every filler whose thread hashes to it (SharedLine:   *)
 (* all on one line; else each on its own) and holds its tail between       *)
 (* calls, while its fillers are idle.  Every load, store, add, max and     *)
-(* compare-and-swap of a shared word is a step of its own, but for five    *)
+(* compare-and-swap of a shared word is a step of its own, but for six     *)
 (* steps that each join two of the code's atomic operations (the           *)
 (* README's "Steps and the code" says which, and what each join costs).    *)
 (*                                                                         *)

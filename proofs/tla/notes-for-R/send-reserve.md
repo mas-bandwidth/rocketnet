@@ -66,45 +66,45 @@ the trace check). R may list that README as the calls module's.
 
 ## Package C: comment re-citations
 
-Each is a comment only; the line numbers are at this branch's head.
+Each is a comment only; the line numbers are at this branch's head and are given here only to find the comment.
 
-- `sdk/rocketnet_server_transport.cpp:239-240`: "tail + held, summed over
+- `sdk/rocketnet_server_transport.cpp lines 239-240`: "tail + held, summed over
   the lines, is the code's tail_held (proofs/tla/RNSendReserve.tla
   TailHeld)." becomes "tail + held, summed over the lines, is what
   rocketnet_server_transport_tails_held reads to pick a refusal's counter
   (proofs/tla/RNSendReserve.tla TailsOn, read in Retest)."
-- `sdk/rocketnet_server_transport.cpp:241-242`: "or by the filler when the
+- `sdk/rocketnet_server_transport.cpp lines 241-242`: "or by the filler when the
   transport refuses a frame (RNSendReserve End)." becomes "or by the filler
   when the transport refuses a frame (RNSendReserve Stage refused, then
   End)."
-- `sdk/rocketnet_server_transport.cpp:1277-1278`: "Refused (Refuse): taken
+- `sdk/rocketnet_server_transport.cpp lines 1277-1278`: "Refused (Refuse): taken
   back whole (TakeBack) and false." becomes "Refused (Decide's test): taken
   back whole (TakeBack) and false." (there is no action Refuse.)
-- `sdk/rocketnet_server_transport.cpp:1295-1296`: "The tails and chunk
+- `sdk/rocketnet_server_transport.cpp lines 1295-1296`: "The tails and chunk
   claims every line holds on the queue (TailHeld): read on the refusal path
   only." becomes "The tails and chunk claims every line holds on the queue
   (RNSendReserve TailsOn, one line a step in Retest): read on the refusal
   path only."
-- `sdk/rocketnet_server_transport.cpp:1308-1309`: "OwnClaim, Continue, Size,
+- `sdk/rocketnet_server_transport.cpp lines 1308-1309`: "OwnClaim, Continue, Size,
   Claim, Check, Read1-3, Decide, Refuse, TakeBack, Retest" becomes "OwnClaim,
   Continue, Size, Claim, Check, Read1-3, Decide, TakeBack, Retest".
-- `sdk/rocketnet_server_transport.cpp:1317-1319`: "A single claim refused is
+- `sdk/rocketnet_server_transport.cpp lines 1317-1319`: "A single claim refused is
   counted SEND_RESERVE_REFUSED_TAILS_HELD while any line holds a tail or a
   chunk claim (TailsNamed), else SEND_RESERVE_REFUSED." becomes "A single
   claim refused is counted SEND_RESERVE_REFUSED_TAILS_HELD when any line's
-  word shows a tail or a chunk claim, else SEND_RESERVE_REFUSED. Frames a
-  thread has taken off its line and not yet staged or given back show on no
-  line, so such a refusal is counted plain (RNSendReserve TailsNamed fails:
-  MCRNSendReserveCodeTailsNamed.cfg)." Unless the code owner's fix for MM076
-  lands first; then the fix's own text.
-- `sdk/rocketnet_server_transport.cpp:1424-1428`: "proofs/tla/RNSendReserve.tla
+  word shows a tail or a chunk claim when it reads them, after the retest,
+  else SEND_RESERVE_REFUSED. Frames held at the decision may by then be on
+  no line word or staged, and that refusal is counted plain (RNSendReserve
+  TailsNamed fails: MCRNSendReserveCodeTailsNamed.cfg)." Unless the code
+  owner's fix for MM076 lands first; then the fix's own text.
+- `sdk/rocketnet_server_transport.cpp lines 1424-1428`: "proofs/tla/RNSendReserve.tla
   Stage, a queue with no room, and End: the transport refused the granted
   frame, so the run ends: the frame's claim and the line's tail go back in
   one add" becomes "proofs/tla/RNSendReserve.tla Stage refused (room or not)
   and End: the transport refused the granted frame, so the run ends: the
   line's tail is taken off its word with one compare-and-swap, then it and
   the frame's claim go back to the claims in one add".
-- `sdk/rocketnet_server_transport.cpp:1458`: "(RNSendReserve End at the
+- `sdk/rocketnet_server_transport.cpp lines 1458`: "(RNSendReserve End at the
   phase's end)" becomes "(RNSendReserve OpenFill)".
-- `tests/test_unit_server_send_reserve.cpp:384`: "RNSendReserve Stage, a
+- `tests/test_unit_server_send_reserve.cpp lines 384`: "RNSendReserve Stage, a
   queue that refuses:" becomes "RNSendReserve Stage refused, then End:".
