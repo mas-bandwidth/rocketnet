@@ -201,6 +201,7 @@ passing case, 1 for a counterexample), linux-amd64 bench; the records are in
 | Config | Result | Distinct | Generated | Seconds |
 |---|---|---|---|---|
 | `MCRNMsgxSocketTable.cfg` | pass | 615,957 | 3,556,507 | 19.4 |
+| `MCRNMsgxSocketTableUpdate.cfg` | pass | 1,319,424 | 6,599,348 | 40.6 |
 | `MCRNMsgxSocketTableLayout.cfg` | pass | 742,825 | 3,797,376 | 24.1 |
 | `MCRNMsgxSocketTableQuarantine.cfg` | pass | 567,505 | 2,794,642 | 17.3 |
 | `MCRNMsgxSocketTableDead.cfg` | pass | 629,277 | 3,226,529 | 18.6 |
