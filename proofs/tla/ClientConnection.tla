@@ -140,6 +140,23 @@ CommitBeforeAnswer == FALSE
 Forgery == FALSE
 
 (***************************************************************************)
+(* The early send (TRANSPORT.md t11 rule 7).  The advance from requesting  *)
+(* cookie (1) to sending connection request (2), and the one from 2 to     *)
+(* sending connection response (3), arm one send of the new state packet   *)
+(* at the next update without waiting for the send interval                *)
+(* (handshake_early_send, set in rocketnet_client_process_cookie and       *)
+(* rocketnet_client_process_challenge, taken in                            *)
+(* rocketnet_client_protocol_update); ClientEarlySend takes it, and any    *)
+(* send clears it.  The ghost cEarlySends counts the early sends of the    *)
+(* attempt; EarlySendPerAdvance bounds them by the advances.               *)
+(* EarlyArmsOnAnyCookie is the reversed witness: every accepted cookie     *)
+(* arms it, so cookies a forger or a duplicating path delivers bring       *)
+(* requests forward without bound.  A definition, replaced with <- in its  *)
+(* cfg, so every other run keeps its cfg.                                  *)
+(***************************************************************************)
+EarlyArmsOnAnyCookie == FALSE
+
+(***************************************************************************)
 (* The connect clock (TRANSPORT.md t11 rule 6, revision 1.1).  The total   *)
 (* deadline (the token lifetime) bounds requesting cookie (1) and sending  *)
 (* connection request (2) only: once the client sends its connection       *)
@@ -196,6 +213,8 @@ VARIABLES
     cLostKinds,    \* KindLoss bookkeeping: types whose first send was lost
     cFam,          \* the family the race committed to; "none" before the first cookie
     cReqFams,      \* ghost: the families a request carrying a cookie went to, this attempt
+    cEarly,        \* handshake_early_send: an advance armed one send at the next update
+    cEarlySends,   \* ghost: the early sends of this attempt
     \* the server, as far as the client can see it
     sMap,          \* the encryption mapping for the client's address
     sOthers,       \* slots held by other clients
@@ -208,7 +227,8 @@ VARIABLES
 
 raceVars   == <<cFam, cReqFams>>
 cookieVars == <<cKept, cLatest, cAltLatest>>
-clientVars == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
+earlyVars  == <<cEarly, cEarlySends>>
+clientVars == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars,
                 cSinceRecv, cAge, cSeen, cPayloadDelivered, cDiscPending,
                 cDiscKeys, cLostKinds, raceVars>>
 serverVars == <<sMap, sOthers, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
@@ -276,6 +296,7 @@ Init ==
     /\ cDiscPending = 0 /\ cDiscKeys = NoKeys /\ cLostKinds = {}
     /\ cPayloadDelivered = FALSE
     /\ cFam = "none" /\ cReqFams = {}
+    /\ cEarly = FALSE /\ cEarlySends = 0
     /\ sMap = NoMap /\ sOthers = Others
     /\ sDiscPending = 0 /\ sDiscKeys = NoKeys /\ sDiscId = 0 /\ sLostKinds = {}
     /\ C2S!Init /\ S2C!Init
@@ -296,6 +317,7 @@ AppConnect ==
     /\ cSinceSend' = SendInterval        \* "the first update sends immediately"
     /\ cSinceRecv' = 0 /\ cAge' = 0 /\ cSeen' = {}
     /\ cFam' = "none" /\ cReqFams' = {}  \* every family in flight again
+    /\ cEarly' = FALSE /\ cEarlySends' = 0
     /\ UNCHANGED <<cDiscPending, cDiscKeys, cLostKinds, serverVars, c2sVars, s2cVars>>
 
 \* the pre-fix retry, only in SpecRetryKeepsAttempt: a connect from a failure
@@ -308,6 +330,7 @@ AppConnectKeepsAttempt ==
     /\ cSinceSend' = SendInterval
     /\ cSinceRecv' = 0 /\ cAge' = 0
     /\ cFam' = "none" /\ cReqFams' = {}
+    /\ cEarly' = FALSE /\ cEarlySends' = 0
     /\ UNCHANGED <<cookieVars, cSeen, cDiscPending, cDiscKeys, cLostKinds,
                    cPayloadDelivered, serverVars, c2sVars, s2cVars>>
 
@@ -321,12 +344,13 @@ AppDisconnect ==
          THEN cDiscPending' = DisconnectCopies /\ cDiscKeys' = cKeys
          ELSE UNCHANGED <<cDiscPending, cDiscKeys>>
     /\ cstate' = 0 /\ cKeys' = NoKeys /\ cEph' = FALSE
-    /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSinceSend, cSinceRecv, cAge, cSeen,
+    /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSinceSend, earlyVars, cSinceRecv, cAge, cSeen,
                    cPayloadDelivered, cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
 (***************************************************************************)
 (* The client's scheduled send: rocketnet_client_protocol_update, the one   *)
-(* sending rule.  Nothing is sent because a packet arrived.                *)
+(* sending rule.  Nothing is sent from a receive step; an advance only     *)
+(* arms the one early send of ClientEarlySend (t11 rule 7).                *)
 (***************************************************************************)
 \* the families the request goes to: every family in flight until the
 \* first cookie commits the attempt, then the committed family alone
@@ -342,22 +366,37 @@ ClientPacket ==
       [] cstate = 3        -> [type |-> "response", att |-> cKeys.att, nonce |-> cKeys.nonce]
       [] cstate = 4        -> [type |-> "keepalive", att |-> cKeys.att, nonce |-> cKeys.nonce]
 
-ClientSend ==
-    /\ cstate \in 1..4 /\ cSinceSend = SendInterval
+\* the send itself, scheduled or early: the packet of the state, the
+\* interval restarted from it, and the early send cleared (the update clears
+\* handshake_early_send whether or not it sends)
+ClientSendNow ==
     /\ ClientSendPacket(ClientPacket)
-    /\ cSinceSend' = 0
+    /\ cSinceSend' = 0 /\ cEarly' = FALSE
     /\ cReqFams' = IF cstate \in {1, 2} /\ SentCookie # "none" THEN cReqFams \cup InFlight ELSE cReqFams
     /\ cAltLatest' = IF cstate \in {1, 2} /\ cLatest # "none" THEN ~cAltLatest ELSE cAltLatest
     /\ UNCHANGED <<cstate, cAttempt, cKept, cLatest, cKeys, cEph, cIndex, cSinceRecv, cAge,
                    cSeen, cPayloadDelivered, cDiscPending, cDiscKeys, cFam,
                    serverVars, s2cVars>>
 
+ClientSend ==
+    /\ cstate \in 1..4 /\ cSinceSend = SendInterval
+    /\ ClientSendNow
+    /\ UNCHANGED cEarlySends
+
+\* the early send (t11 rule 7): an advance armed it, the client is in the
+\* state the advance entered, and the update sends without waiting for the
+\* interval (rocketnet_client_protocol_update, early_send)
+ClientEarlySend ==
+    /\ cEarly /\ cstate \in {2, 3}
+    /\ ClientSendNow
+    /\ cEarlySends' = cEarlySends + 1
+
 \* the reversed witness only (CommitBeforeAnswer): the client commits to a
 \* family of its own choosing in requesting cookie, before any answer
 ClientCommitEarly ==
     /\ CommitBeforeAnswer /\ cstate = 1 /\ cFam = "none" /\ Cardinality(RaceFamilies) > 1
     /\ \E f \in RaceFamilies : cFam' = f
-    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars, cSinceRecv,
                    cAge, cSeen, cPayloadDelivered, cDiscPending, cDiscKeys, cLostKinds,
                    cReqFams, serverVars, c2sVars, s2cVars>>
 
@@ -366,7 +405,7 @@ ClientDiscCopy ==
     /\ cDiscPending > 0
     /\ ClientSendPacket([type |-> "disconnect", att |-> cDiscKeys.att, nonce |-> cDiscKeys.nonce])
     /\ cDiscPending' = cDiscPending - 1
-    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars, cSinceRecv,
                    cAge, cSeen, cPayloadDelivered, cDiscKeys, raceVars, serverVars,
                    s2cVars>>
 
@@ -375,8 +414,15 @@ ClientDiscCopy ==
 (* state; what the code's state gate or key check refuses is delivered and *)
 (* discarded.  No receive sends.                                           *)
 (***************************************************************************)
-clientRecvUnchanged == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cLostKinds,
+\* the cookie and the challenge may arm the early send; every other receive
+\* leaves it as it was
+clientRecvBase      == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cLostKinds,
                          cPayloadDelivered, cReqFams, serverVars, c2sVars>>
+clientRecvUnchanged == <<clientRecvBase, earlyVars>>
+
+\* the early send an accepted cookie arms: the advance from 1 to 2 only, or
+\* every accepted cookie under the reversed witness
+CookieArms == cstate = 1 \/ EarlyArmsOnAnyCookie
 
 \* the cookie gate on family: before the commit a cookie from any family in
 \* flight is the first answer; after it only the committed family's cookie
@@ -403,15 +449,17 @@ StoreCookie(p) ==
 \* first cookie is kept, a later one replaces only the latest; 1 -> 2. The
 \* client trusts only the server: the salt is in the clear, so the cookie
 \* never restarts the receive clock and never displaces the kept cookie
-\* (TRANSPORT.md t11.1)
+\* (TRANSPORT.md t11.1). The advance from 1 to 2 arms the early send of the
+\* request (t11 rule 7); a cookie in 2 moves nothing and arms nothing.
 ClientRecvCookie(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
     /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
-         THEN StoreCookie(p) /\ cstate' = 2 /\ cFam' = p.fam
-         ELSE UNCHANGED <<cKept, cLatest, cstate, cFam>>
-    /\ UNCHANGED <<cAltLatest, cKeys, cEph, cIndex, cSinceRecv, cSeen>>
-    /\ UNCHANGED clientRecvUnchanged
+         THEN /\ StoreCookie(p) /\ cstate' = 2 /\ cFam' = p.fam
+              /\ cEarly' = (CookieArms \/ cEarly)
+         ELSE UNCHANGED <<cKept, cLatest, cstate, cFam, cEarly>>
+    /\ UNCHANGED <<cAltLatest, cKeys, cEph, cIndex, cSinceRecv, cSeen, cEarlySends>>
+    /\ UNCHANGED clientRecvBase
 
 \* the pre-fix cookie, only in SpecCookieRefreshes: an accepted cookie also
 \* restarts the receive clock. Not a disjunct of Next.
@@ -438,16 +486,17 @@ ClientRecvCookieReplaces(p) ==
 
 \* rocketnet_client_process_challenge: state 2 only; opens under temporary
 \* keys from the carried nonce and this attempt's salt; commit keys and
-\* nonce, erase the ephemeral, response built once, 2 -> 3
+\* nonce, erase the ephemeral, response built once, 2 -> 3; the advance
+\* arms the early send of the response (t11 rule 7)
 ClientRecvChallenge(p) ==
     /\ p.type = "challenge"
     /\ S2C!Deliver(p)
     /\ IF cstate = 2 /\ p.att = cAttempt
          THEN /\ cKeys' = KeysOf(p) /\ cEph' = FALSE /\ cSinceRecv' = 0
-              /\ cstate' = 3 /\ cSeen' = {}
-         ELSE UNCHANGED <<cKeys, cEph, cSinceRecv, cstate, cSeen>>
-    /\ UNCHANGED <<cookieVars, cIndex>>
-    /\ UNCHANGED <<cFam, clientRecvUnchanged>>
+              /\ cstate' = 3 /\ cSeen' = {} /\ cEarly' = TRUE
+         ELSE UNCHANGED <<cKeys, cEph, cSinceRecv, cstate, cSeen, cEarly>>
+    /\ UNCHANGED <<cookieVars, cIndex, cEarlySends>>
+    /\ UNCHANGED <<cFam, clientRecvBase>>
 
 \* rocketnet_client_process_denied: state 2 (temporary keys from the carried
 \* nonce) or 3 (the held handshake keys). A denial is
@@ -522,7 +571,7 @@ ClientRecvPayloadWitness(p) ==
     /\ cstate = 4 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
     /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
     /\ cPayloadDelivered' = TRUE
-    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cAge,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars, cAge,
                    cDiscPending, cDiscKeys, cLostKinds, cFam, cReqFams,
                    serverVars, c2sVars>>
 
@@ -545,7 +594,7 @@ ClientRecv(p) ==
 (* The server receives.  rocketnet_server_protocol_process_connection_      *)
 (* request and the sealed-packet check sequence, as far as they answer the client. *)
 (***************************************************************************)
-serverRecvUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
+serverRecvUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars,
                          cSinceRecv, cAge, cPayloadDelivered, cDiscPending, cDiscKeys,
                          cLostKinds, raceVars, sOthers, sDiscPending, sDiscKeys, sDiscId>>
 
@@ -618,7 +667,7 @@ ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSess
 (***************************************************************************)
 (* The server's own sends.                                                 *)
 (***************************************************************************)
-serverSendUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
+serverSendUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, earlyVars,
                          cSinceRecv, cAge, cPayloadDelivered, cDiscPending, cDiscKeys,
                          cLostKinds, raceVars, c2sVars>>
 
@@ -729,8 +778,8 @@ TickRule(Erase) ==
                                            !.sinceSend = ssend1]
          ELSE UNCHANGED sMap
     /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSeen, cPayloadDelivered,
-                   cDiscPending, cDiscKeys, cLostKinds, raceVars, sOthers, sDiscPending,
-                   sDiscKeys, sDiscId, sLostKinds>>
+                   cDiscPending, cDiscKeys, cLostKinds, raceVars, earlyVars, sOthers,
+                   sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
 
 Tick == TickRule(TRUE)
 
@@ -750,7 +799,7 @@ S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars
 
 Next ==
     \/ AppConnect \/ AppDisconnect
-    \/ ClientSend \/ ClientDiscCopy
+    \/ ClientSend \/ ClientEarlySend \/ ClientDiscCopy
     \/ ClientCommitEarly
     \/ \E p \in ServerPackets : ClientRecv(p)
     \/ \E p \in ClientPackets : ServerRecv(p)
@@ -889,6 +938,7 @@ TypeOK ==
     /\ sDiscPending \in 0..DisconnectCopies /\ sDiscKeys \in Keys \cup {NoKeys}
     /\ sDiscId \in Id \cup {0}
     /\ cFam \in Families \cup {"none"} /\ cReqFams \subseteq Families
+    /\ cEarly \in BOOLEAN /\ cEarlySends \in Nat
     /\ C2S!TypeOK /\ S2C!TypeOK
 
 \* never connected without a completed handshake: connected holds a cookie,
@@ -993,6 +1043,14 @@ PayloadOnlyWhenConnected ==
 \* no receive sends (S:2178-2182)
 NoSendOnArrival ==
     [][(\E p \in ServerPackets : S2C!Deliver(p)) => c2sSent' = c2sSent]_vars
+
+\* the early send is bounded by the advances, not by the arrivals (t11
+\* rule 7): none in requesting cookie, at most one while sending the
+\* request, at most two in an attempt, whatever arrives
+EarlySendPerAdvance ==
+    /\ cstate = 1 => cEarlySends = 0
+    /\ cstate = 2 => cEarlySends <= 1
+    /\ cEarlySends <= 2
 
 \* the ephemeral secret is erased outside states 1 and 2. A denial and a
 \* deadline or timeout zero it, as rocketnet_client_set_state does.

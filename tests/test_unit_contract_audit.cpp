@@ -1255,8 +1255,9 @@ static void test_witness_server_ephemeral_keypair_per_mapping()
 REGISTER_UNIT_TEST( test_witness_server_ephemeral_keypair_per_mapping );
 
 // 5. t11.1: A client that accepts a cookie MUST store its last 24 bytes and
-// MUST send nothing in response.
-static void test_witness_cookie_stores_last_24_bytes_and_sends_nothing()
+// MUST NOT send a packet from its processing; only the first accepted cookie
+// of an attempt advances the client and brings its next request forward, once.
+static void test_witness_cookie_stores_last_24_bytes_and_brings_one_request_forward()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -1292,13 +1293,25 @@ static void test_witness_cookie_stores_last_24_bytes_and_sends_nothing()
     check( memcmp( client.return_cookie, cookie_packet + ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES - 24, 24 ) == 0 );
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
-    // Accepting the cookie does not trigger an immediate send: an update before
-    // the 0.1s send interval elapses produces 0 bytes.
+    // The advance brings the request forward to the next update, once
+    // (t11 rule 7), and the send interval runs from that send.
     rocketnet_client_protocol_update( &client, 100.01, out_packet, &out_bytes );
+    check( out_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_client_protocol_update( &client, 100.02, out_packet, &out_bytes );
     check( out_bytes == 0 );
+
+    // A later cookie in sending connection request (2) moves nothing and
+    // brings nothing forward: an update before the interval sends 0 bytes.
+    check( rocketnet_client_protocol_process_packet( &client, cookie_packet, sizeof( cookie_packet ), 100.03,
+                                                     payload, sizeof( payload ), &payload_bytes ) == 1 );
+    check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+    rocketnet_client_protocol_update( &client, 100.03, out_packet, &out_bytes );
+    check( out_bytes == 0 );
+    rocketnet_client_protocol_update( &client, 100.11, out_packet, &out_bytes );
+    check( out_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 }
 
-REGISTER_UNIT_TEST( test_witness_cookie_stores_last_24_bytes_and_sends_nothing );
+REGISTER_UNIT_TEST( test_witness_cookie_stores_last_24_bytes_and_brings_one_request_forward );
 
 // 6. t11.2: a denial in sending connection response (3) MUST open under the
 // handshake server-to-client key the client already holds.
@@ -1794,7 +1807,12 @@ static void test_witness_client_send_rate_constant_across_attempt()
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
     check( client.send_rate == initial_rate );
 
-    // State 2 pacing: silent at +0.05, sends at +0.10.
+    // State 2 pacing: the advance brings the request forward to the next
+    // update, once (t11 rule 7); from that send it is silent at +0.05 and
+    // sends at +0.10.
+    rocketnet_client_protocol_update( &client, time + 0.5 * interval, pkt, &pkt_bytes );
+    check( pkt_bytes > 0 && client.send_rate == initial_rate );
+    time += 0.5 * interval;
     rocketnet_client_protocol_update( &client, time + 0.5 * interval, pkt, &pkt_bytes );
     check( pkt_bytes == 0 );
     time += interval;
@@ -1809,7 +1827,12 @@ static void test_witness_client_send_rate_constant_across_attempt()
     check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     check( client.send_rate == initial_rate );
 
-    // State 3 pacing: silent at +0.05, sends at +0.10.
+    // State 3 pacing: the advance brings the response forward to the next
+    // update, once (t11 rule 7); from that send it is silent at +0.05 and
+    // sends at +0.10.
+    rocketnet_client_protocol_update( &client, time + 0.5 * interval, pkt, &pkt_bytes );
+    check( pkt_bytes > 0 && client.send_rate == initial_rate );
+    time += 0.5 * interval;
     rocketnet_client_protocol_update( &client, time + 0.5 * interval, pkt, &pkt_bytes );
     check( pkt_bytes == 0 );
     time += interval;

@@ -207,7 +207,7 @@ static void test_connection_reset_inventory_covers_every_field()
         }
     }
 
-    check( reset_fields == 35 );
+    check( reset_fields == 36 );
     check( keep_fields == 8 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
@@ -1019,22 +1019,26 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
     int handshake_ticks = 0;
 
-    while ( rocketnet_client_transport_state( replacement_transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+    // the replacement runs until the server has answered its request with a
+    // challenge, and stops there with the challenge unread: the update that
+    // reads it sends the response at once (TRANSPORT.md t11 rule 7), so it
+    // must not run while a slot is free
+
+    const uint64_t * server_counters = rocketnet_server_transport_counters( transport )->values;
+    const uint64_t challenges_before = server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
+
+    while ( server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == challenges_before )
     {
         now += 0.01;
         rocketnet_message_client_update( replacement, now );
         rocketnet_message_client_send_packets( replacement );
-        if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
-        {
-            break;
-        }
         rocketnet_message_server_update( server, now );
         rocketnet_message_server_send_packets( server );
         handshake_ticks++;
         check( handshake_ticks < 200 );
     }
 
-    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     // a filler client takes the last never-used slot, so the only free slots
     // after the disconnects below are the ones they free
@@ -1229,15 +1233,19 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
     int handshake_ticks = 0;
 
-    while ( rocketnet_client_transport_state( replacement_transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+    // the replacement runs until the server has answered its request with a
+    // challenge, and stops there with the challenge unread: the update that
+    // reads it sends the response at once (TRANSPORT.md t11 rule 7), so it
+    // must not run while a slot is free
+
+    const uint64_t * server_counters = rocketnet_server_transport_counters( transport )->values;
+    const uint64_t challenges_before = server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
+
+    while ( server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == challenges_before )
     {
         f.now += 0.01;
         check( rocketnet_message_client_update( replacement, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( replacement );
-        if ( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
-        {
-            break;
-        }
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
@@ -1249,7 +1257,7 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
         check( handshake_ticks < 200 );
     }
 
-    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     // a filler client takes the other slot, so A's slot is the only one B
     // can be given

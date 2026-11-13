@@ -22,12 +22,12 @@ MCClientConnectionWAnysend.cfg	MCClientConnection.tla	temporal	Connects	ignore-t
 MCClientConnectionLSilent.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionLCrash.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	crash-timeout-liveness-over-budget
 MCClientConnectionSNone.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSNone.cfg-is-a-reachability-witness-only
-MCClientConnectionSFirst.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionSFirst.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	first-loss-early-send-reaches-connected-full-environment-safety-over-budget-reduced-safety-check-is-MCClientConnectionSFirstSmall.cfg
 MCClientConnectionSAlternate.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	alternate-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSAlternate.cfg-is-a-reachability-witness-only
 MCClientConnectionSBurst.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	burst-loss-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSBurst.cfg-is-a-reachability-witness-only
 MCClientConnectionSArbitrary.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	arbitrary-loss-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSArbitrary.cfg-is-a-reachability-witness-only
-MCClientConnectionSFirstkind.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
-MCClientConnectionSDelay.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionSFirstkind.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	firstkind-loss-early-send-reaches-connected-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSFirstkind.cfg-is-a-reachability-witness-only
+MCClientConnectionSDelay.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	bench	delay-early-send-reaches-connected-full-environment-safety-over-budget-no-reduced-safety-check-MCClientConnectionReachSDelay.cfg-is-a-reachability-witness-only
 MCClientConnectionReachSNone.cfg	MCClientConnection.tla	invariant	NotReached	ignore-terminal	clientconnection	required	-
 MCClientConnectionReachSFirst.cfg	MCClientConnection.tla	invariant	NotReached	ignore-terminal	clientconnection	required	-
 MCClientConnectionReachSAlternate.cfg	MCClientConnection.tla	invariant	NotReached	ignore-terminal	clientconnection	required	-
@@ -116,6 +116,9 @@ MCClientConnectionRetryFromFailure.cfg	MCClientConnection.tla	pass	-	ignore-term
 MCClientConnectionBrokenRetryKeepsAttempt.cfg	MCClientConnection.tla	action	FreshAttemptFromFailure	ignore-terminal	clientconnection	required	-
 MCClientConnectionRace.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	CommitsOnAnswer	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenEarlyAnyCookie.cfg	MCClientConnection.tla	invariant	EarlySendPerAdvance	ignore-terminal	clientconnection	required	-
+MCClientConnectionSFirstSmall.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionReachSFirstSmall.cfg	MCClientConnectionEarly.tla	invariant	NotEarlyConnected	ignore-terminal	clientconnection	required	-
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
