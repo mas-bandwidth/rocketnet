@@ -1310,6 +1310,21 @@ static void harden_print_resources( const char * tag, double t, const process_re
     printf( " library_bytes=%" PRId64, harden_library_bytes() );
 }
 
+// the server main thread's phase of the frame, for the profile to tag each
+// sample with: one relaxed store at each boundary the tick already times
+enum harden_main_phase_t
+{
+    HARDEN_MAIN_OTHER = 0,
+    HARDEN_MAIN_UPDATE,
+    HARDEN_MAIN_RECEIVE,
+    HARDEN_MAIN_WRITE,
+    HARDEN_MAIN_SEND,
+    HARDEN_MAIN_SLEEP,
+    HARDEN_MAIN_PHASES
+};
+
+static std::atomic<int> harden_main_phase{ HARDEN_MAIN_OTHER };
+
 // THE WINDOWS PROFILE (--profile-after A --profile-seconds S, Windows only):
 // the images the Windows rows run on carry no sampling profiler, so the
 // server samples itself. A seconds into the run a profiler thread lists the
@@ -1319,7 +1334,11 @@ static void harden_print_resources( const char * tag, double t, const process_re
 // (loaded at run time, so nothing links it) and writes --profile-out: every
 // thread's share of a core over the window with its start routine, and the
 // main thread's flat profile (the function each sample stopped in, as perf
-// report --no-children). Each stop costs the main thread a few microseconds.
+// report --no-children), whole and per phase of the frame (update, receive,
+// write, send, sleep, other), each sample tagged with the phase main was in.
+// Threads are listed with their creation time from the process's, so threads
+// that share a start routine (the transport's lane workers, made in lane
+// order) can be told apart. Each stop costs the main thread a few microseconds.
 #if defined( _WIN32 )
 #include <tlhelp32.h>
 #include <dbghelp.h>
@@ -1343,7 +1362,27 @@ struct harden_profile_thread_t
     uint64_t start_address = 0;
     uint64_t cpu_start = 0;
     uint64_t cpu_end = 0;
+    uint64_t created = 0; // 100 ns units since the process was created
 };
+
+static uint64_t harden_profile_filetime( const FILETIME & t )
+{
+    return ( (uint64_t) t.dwHighDateTime << 32 ) | t.dwLowDateTime;
+}
+
+static uint64_t harden_profile_created( HANDLE thread )
+{
+    FILETIME created, exited, kernel, user;
+    FILETIME process_created, process_exited, process_kernel, process_user;
+    if ( !GetThreadTimes( thread, &created, &exited, &kernel, &user ) ||
+         !GetProcessTimes( GetCurrentProcess(), &process_created, &process_exited, &process_kernel, &process_user ) )
+    {
+        return 0;
+    }
+    const uint64_t t = harden_profile_filetime( created );
+    const uint64_t p = harden_profile_filetime( process_created );
+    return t > p ? t - p : 0;
+}
 
 static uint64_t harden_profile_cpu( HANDLE thread )
 {
@@ -1434,6 +1473,7 @@ static void harden_profile_run( harden_profile_t * p )
                 }
             }
             t.cpu_start = harden_profile_cpu( t.handle );
+            t.created = harden_profile_created( t.handle );
             if ( t.id == p->main_id )
             {
                 main_thread = t.handle;
@@ -1443,8 +1483,9 @@ static void harden_profile_run( harden_profile_t * p )
         CloseHandle( snapshot );
     }
 
-    // the main thread's program counter, about once a millisecond
-    std::vector<uint64_t> samples;
+    // the main thread's program counter, about once a millisecond, with the
+    // phase of the frame it was in
+    std::vector<std::pair<int, uint64_t>> samples;
     const double window_start = harden_profile_clock();
     double next = window_start;
     while ( main_thread && harden_profile_clock() - window_start < p->seconds && !p->stop.load() )
@@ -1461,12 +1502,13 @@ static void harden_profile_run( harden_profile_t * p )
         CONTEXT context;
         memset( &context, 0, sizeof( context ) );
         context.ContextFlags = CONTEXT_CONTROL;
+        const int phase = harden_main_phase.load( std::memory_order_relaxed );
         if ( GetThreadContext( main_thread, &context ) )
         {
 #if defined( _M_ARM64 )
-            samples.push_back( (uint64_t) context.Pc );
+            samples.push_back( std::make_pair( phase, (uint64_t) context.Pc ) );
 #else
-            samples.push_back( (uint64_t) context.Rip );
+            samples.push_back( std::make_pair( phase, (uint64_t) context.Rip ) );
 #endif // #if defined( _M_ARM64 )
         }
         ResumeThread( main_thread );
@@ -1523,15 +1565,22 @@ static void harden_profile_run( harden_profile_t * p )
     for ( const harden_profile_thread_t & t : threads )
     {
         const double share = window > 0.0 ? (double) ( t.cpu_end - t.cpu_start ) / ( window * 1.0e7 ) * 100.0 : 0.0;
-        fprintf( f, "harden_profile_thread: id=%lu cpu=%.1f%% main=%d start=%s\n", (unsigned long) t.id, share, t.id == p->main_id ? 1 : 0, name_of( t.start_address ).c_str() );
+        fprintf( f, "harden_profile_thread: id=%lu cpu=%.1f%% main=%d created_ms=%.1f start=%s\n", (unsigned long) t.id, share, t.id == p->main_id ? 1 : 0, (double) t.created / 1.0e4,
+                 name_of( t.start_address ).c_str() );
     }
-    std::vector<std::pair<std::string, int>> counts;
+
+    // the flat profile of the samples in one phase (or every phase, -1)
+    const char * phase_names[HARDEN_MAIN_PHASES] = { "other", "update", "receive", "write", "send", "sleep" };
+    auto flat = [&]( int phase, std::vector<std::pair<std::string, int>> * counts ) -> int
     {
         std::vector<std::string> names;
         names.reserve( samples.size() );
-        for ( uint64_t address : samples )
+        for ( const std::pair<int, uint64_t> & sample : samples )
         {
-            names.push_back( name_of( address ) );
+            if ( phase < 0 || sample.first == phase )
+            {
+                names.push_back( name_of( sample.second ) );
+            }
         }
         std::sort( names.begin(), names.end() );
         for ( size_t i = 0; i < names.size(); )
@@ -1541,15 +1590,38 @@ static void harden_profile_run( harden_profile_t * p )
             {
                 j++;
             }
-            counts.push_back( std::make_pair( names[i], (int) ( j - i ) ) );
+            counts->push_back( std::make_pair( names[i], (int) ( j - i ) ) );
             i = j;
         }
-    }
-    std::sort( counts.begin(), counts.end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
-               { return a.second > b.second; } );
-    for ( size_t i = 0; i < counts.size() && i < 60; i++ )
+        std::sort( counts->begin(), counts->end(), []( const std::pair<std::string, int> & a, const std::pair<std::string, int> & b )
+                   { return a.second > b.second; } );
+        return (int) names.size();
+    };
+    for ( int phase = 0; phase < HARDEN_MAIN_PHASES; phase++ )
     {
-        fprintf( f, "harden_profile_main: %6.2f%% %s\n", samples.empty() ? 0.0 : 100.0 * counts[i].second / (double) samples.size(), counts[i].first.c_str() );
+        int n = 0;
+        for ( const std::pair<int, uint64_t> & sample : samples )
+        {
+            n += sample.first == phase ? 1 : 0;
+        }
+        fprintf( f, "harden_profile_phase: %s %.2f%% samples=%d\n", phase_names[phase], samples.empty() ? 0.0 : 100.0 * n / (double) samples.size(), n );
+    }
+    {
+        std::vector<std::pair<std::string, int>> counts;
+        const int n = flat( -1, &counts );
+        for ( size_t i = 0; i < counts.size() && i < 60; i++ )
+        {
+            fprintf( f, "harden_profile_main: %6.2f%% %s\n", n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
+    }
+    for ( int phase = HARDEN_MAIN_UPDATE; phase <= HARDEN_MAIN_SEND; phase++ )
+    {
+        std::vector<std::pair<std::string, int>> counts;
+        const int n = flat( phase, &counts );
+        for ( size_t i = 0; i < counts.size() && i < 30; i++ )
+        {
+            fprintf( f, "harden_profile_in: phase=%s %6.2f%% %s\n", phase_names[phase], n ? 100.0 * counts[i].second / (double) n : 0.0, counts[i].first.c_str() );
+        }
     }
     fclose( f );
     for ( harden_profile_thread_t & t : threads )
@@ -1775,8 +1847,10 @@ static int harden_server_main( const harden_options_t & o )
             break;
         }
 
+        harden_main_phase.store( HARDEN_MAIN_UPDATE, std::memory_order_relaxed );
         rocketnet_server_update( server, frame_start );
         const double t_update = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_RECEIVE, std::memory_order_relaxed );
 
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
@@ -1801,6 +1875,7 @@ static int harden_server_main( const harden_options_t & o )
             }
         }
         const double t_receive = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_WRITE, std::memory_order_relaxed );
 
         if ( !draining )
         {
@@ -1875,9 +1950,11 @@ static int harden_server_main( const harden_options_t & o )
             }
         }
         const double t_write = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_SEND, std::memory_order_relaxed );
 
         rocketnet_server_send_packets( server );
         const double t_send = harden_now();
+        harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
 
         const double work = t_send - frame_start;
         w.work.push_back( work );
@@ -1966,7 +2043,9 @@ static int harden_server_main( const harden_options_t & o )
         const double wait = next - harden_now();
         if ( wait > 0.0 )
         {
+            harden_main_phase.store( HARDEN_MAIN_SLEEP, std::memory_order_relaxed );
             rocketnet_sleep( wait );
+            harden_main_phase.store( HARDEN_MAIN_OTHER, std::memory_order_relaxed );
         }
         else
         {
