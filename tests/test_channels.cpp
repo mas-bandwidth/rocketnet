@@ -928,16 +928,25 @@ static void channels_test_round_trip_and_never_overreads()
 #define RN_TEST_TRAP_LIBC 0
 #endif // #if defined( __GLIBC__ ) && !defined( RN_TEST_SANITIZED ) && !defined( __clang_analyzer__ )
 
-// clang links a sanitizer's runtime statically off Apple and Windows, and that
-// runtime defines the global operator new and delete itself (the clang tsan
-// bin/test did not link beside these). There the sanitizer owns them and the
-// trap keeps its other nets; gcc's runtime is a shared library, which these
-// definitions interpose as they do glibc's.
-#if defined( RN_TEST_SANITIZED ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
+// clang's thread sanitizer links its runtime statically off Apple and Windows,
+// and that runtime's tsan_new_delete defines the global operator new and
+// delete itself: bin/test did not link beside these (multiple definition). There
+// the sanitizer owns them and the trap keeps its other nets. gcc's runtime is a
+// shared library, which these definitions interpose as they do glibc's; the
+// other clang sanitizers keep these (MSan links its runtime without the C++ part)
+#if defined( __SANITIZE_THREAD__ )
+#define RN_TEST_TSAN 1
+#elif defined( __has_feature )
+#if __has_feature( thread_sanitizer )
+#define RN_TEST_TSAN 1
+#endif // #if __has_feature( thread_sanitizer )
+#endif // #if defined( __SANITIZE_THREAD__ )
+
+#if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
 #define RN_TEST_TRAP_NEW 0
 #else
 #define RN_TEST_TRAP_NEW 1
-#endif // #if defined( RN_TEST_SANITIZED ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
+#endif // #if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
 
 static volatile int rn_trap_armed = 0;
 static const char * volatile rn_trap_phase = "idle";

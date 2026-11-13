@@ -193,8 +193,9 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 
 bool rn_message_object_conditions( const struct rn_message_object_t * object, int index, struct rocketnet_conditions_t * conditions )
 {
-    // a NULL out pointer is the caller's error (the public calls refuse it
-    // before they get here): asserted, and nothing is written
+    // a NULL out pointer is the caller's error (the public server and client
+    // conditions calls pass it straight here): asserted, and in a build without
+    // asserts refused with nothing written
     rocketnet_assert( conditions );
     if ( !conditions || !object || index < 0 || index >= object->num_connections || object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
     {
