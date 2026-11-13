@@ -50,4 +50,21 @@ static inline int rocketnet_uring_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_URING_PIN_OK;
 }
 
+// where a worker whose pin was refused may run: the cpus the OS leaves to
+// the server, num_os_cpus .. online - 1, never cpu 0 (the OS's core). The
+// refused worker would otherwise keep the mask it inherited, which includes
+// cpu 0. A machine with no cpu past the OS's (online <= num_os_cpus) has
+// nothing to confine to: the mask stays as it was. num_os_cpus 0 pins
+// nothing and confines nothing.
+
+static inline bool rocketnet_uring_pin_fallback_allows( int cpu, int num_os_cpus, int online )
+{
+    return num_os_cpus > 0 && cpu >= num_os_cpus && cpu < online;
+}
+
+static inline bool rocketnet_uring_pin_fallback_possible( int num_os_cpus, int online )
+{
+    return num_os_cpus > 0 && online > num_os_cpus;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_URING_PIN_H

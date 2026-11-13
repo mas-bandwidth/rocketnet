@@ -60,6 +60,38 @@ static void test_uring_pin_check_refusals()
     check( rocketnet_uring_pin_check( 1, 1024, 1 ) == ROCKETNET_URING_PIN_OFFLINE );
 }
 
+// a refused worker is confined to the cpus past the OS's, never cpu 0
+
+static void test_uring_pin_fallback_never_allows_core_zero()
+{
+    for ( int num_os_cpus = 1; num_os_cpus <= 4; num_os_cpus++ )
+    {
+        for ( int online = 1; online <= 16; online++ )
+        {
+            check( !rocketnet_uring_pin_fallback_allows( 0, num_os_cpus, online ) );
+            check( rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) == ( online > num_os_cpus ) );
+
+            int allowed = 0;
+            for ( int cpu = 0; cpu < online; cpu++ )
+            {
+                if ( rocketnet_uring_pin_fallback_allows( cpu, num_os_cpus, online ) )
+                {
+                    check( cpu >= num_os_cpus );
+                    allowed++;
+                }
+            }
+            check( allowed == ( online > num_os_cpus ? online - num_os_cpus : 0 ) );
+        }
+    }
+
+    // num_os_cpus 0 pins nothing and confines nothing
+    check( !rocketnet_uring_pin_fallback_possible( 0, 16 ) );
+    check( !rocketnet_uring_pin_fallback_allows( 3, 0, 16 ) );
+    // a cpu past the online ones is never allowed
+    check( !rocketnet_uring_pin_fallback_allows( 16, 1, 16 ) );
+}
+
 REGISTER_UNIT_TEST( test_uring_pin_cpu_placement );
+REGISTER_UNIT_TEST( test_uring_pin_fallback_never_allows_core_zero );
 REGISTER_UNIT_TEST( test_uring_pin_never_chooses_core_zero );
 REGISTER_UNIT_TEST( test_uring_pin_check_refusals );

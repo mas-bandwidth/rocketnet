@@ -554,6 +554,36 @@ static bool rocketnet_server_uring_receive_armed( void * context )
 // only when pthread_setaffinity_np said so. num_os_cpus 0 pins nothing (the
 // transport driven directly).
 
+// a refused pin leaves the worker on the mask it inherited, which may include
+// cpu 0, the OS's core: confine it to the cpus past the OS's
+// (rocketnet_uring_pin_fallback_allows), where that is itself allowed; the
+// pin state stays NONE either way
+
+static void rocketnet_server_uring_confine_worker( const struct rocketnet_server_uring_t * uring, int queue_index, int online )
+{
+    if ( !rocketnet_uring_pin_fallback_possible( uring->num_os_cpus, online ) )
+    {
+        return;
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
+    {
+        if ( rocketnet_uring_pin_fallback_allows( cpu, uring->num_os_cpus, online ) )
+        {
+            CPU_SET( (size_t) cpu, &cpuset );
+        }
+    }
+
+    const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
+    if ( result != 0 )
+    {
+        rocketnet_warn( "io_uring worker %d: confining it to cpus %d .. %d refused (%s); it keeps its inherited cpus", queue_index, uring->num_os_cpus, online - 1,
+                        rocketnet_platform_socket_error_text( result ).text );
+    }
+}
+
 static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_queue_t * queue )
 {
     struct rocketnet_server_uring_t * uring = queue->uring;
@@ -571,12 +601,13 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_URING_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is outside 0 .. %d; it runs on any cpu", queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is outside 0 .. %d; it runs on the cpus past the OS's", queue->index, cpu, CPU_SETSIZE - 1 );
         }
         else
         {
-            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it runs on any cpu", queue->index, cpu, online - 1 );
+            rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it runs on the cpus past the OS's", queue->index, cpu, online - 1 );
         }
+        rocketnet_server_uring_confine_worker( uring, queue->index, online );
         queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
     }
     else
@@ -588,7 +619,8 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
         if ( result != 0 )
         {
             uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+            rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on the cpus past the OS's", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
+            rocketnet_server_uring_confine_worker( uring, queue->index, online );
             queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
         }
         else
