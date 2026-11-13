@@ -84,6 +84,7 @@ case "$sub" in
             [ -z "${FAKE_SERVER_GONE:-}" ] || exit 1
             exit 0
         fi
+        [ -n "${FAKE_CLIENT_HUNG:-}" ] && exit 0
         exit 1 ;;
     collect)
         label=$( basename "$3" .tsv )
@@ -118,7 +119,20 @@ cat > "$tmp/bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$tmp/bin/ssh" "$tmp/bin/scp" "$tmp/bin/sleep"
+
+# `date +%s` is the watch loop's wall clock: with FAKE_CLOCK_FILE each call
+# reads 100 s later than the last, so a deadline arrives without waiting
+cat > "$tmp/bin/date" <<'EOF'
+#!/usr/bin/env bash
+if [ "$*" = "+%s" ] && [ -n "${FAKE_CLOCK_FILE:-}" ]; then
+    ticks=$( cat "$FAKE_CLOCK_FILE" 2>/dev/null || echo 0 )
+    echo $(( ticks + 1 )) > "$FAKE_CLOCK_FILE"
+    echo $(( 1000 + ticks * 100 ))
+    exit 0
+fi
+exec /bin/date "$@"
+EOF
+chmod +x "$tmp/bin/ssh" "$tmp/bin/scp" "$tmp/bin/sleep" "$tmp/bin/date"
 
 cat > "$tmp/inventory" <<'EOF'
 # label ssh role shape site path cap-kbps nic address queues
@@ -134,7 +148,7 @@ run_fleet()
     local name=$1
     shift
     : > "$tmp/$name.log"
-    env "$@" PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/$name.log" FAKE_COMMIT="$commit" TMPDIR="$tmp" \
+    timeout 120 env "$@" PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/$name.log" FAKE_COMMIT="$commit" TMPDIR="$tmp" \
         bash "$fleet" --inventory "$tmp/inventory" --commit "$commit" --run-dir "$tmp/$name.run" \
         > "$tmp/$name.out" 2>&1 < /dev/null
     echo $? > "$tmp/$name.rc"
@@ -210,6 +224,13 @@ run_fleet servergone FAKE_SERVER_GONE=1
 if [ "$( cat "$tmp/servergone.rc" )" = 0 ] || ! grep -q "the server is gone" "$tmp/servergone.out"; then
     fail_case "a run whose server is gone did not fail"
     show servergone
+fi
+
+# ... and when a client outlives the worst-case run, not never.
+run_fleet hung FAKE_CLIENT_HUNG=1 FAKE_CLOCK_FILE="$tmp/hung.clock"
+if [ "$( cat "$tmp/hung.rc" )" = 0 ] || ! grep -q "outlived the worst-case run" "$tmp/hung.out"; then
+    fail_case "a client that never finished was watched without a deadline"
+    show hung
 fi
 
 # 6. the merge alone: a client file without its verdict line is not a PASS

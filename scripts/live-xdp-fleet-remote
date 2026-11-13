@@ -13,6 +13,7 @@
 #   start server <commit> <label> <address> <seed> <kbps> <max-clients> <update-hz> <counters-every> <queues> <results> <status>
 #   start client <commit> <label> <address> <duration> <cycles> <stagger> <seed> <kbps> <update-hz> <counters-every> <results>
 #   alive client <label>
+#   alive server
 #   stop server <label>
 #   stop client <label>
 #   collect <results>
@@ -49,6 +50,7 @@ usage: live-xdp-fleet-remote <subcommand> ...
   arm <nic>
   start server|client ...
   alive client <label>
+  alive server
   stop server|client <label>
   collect <results>
   restore <commit> <nic>
@@ -418,7 +420,13 @@ case "$command" in
         esac
         ;;
     alive)
-        [ $# -eq 2 ] && [ "$1" = "client" ] || usage; cmd_alive_client "$2" ;;
+        [ $# -ge 1 ] || usage
+        case "$1" in
+            client) [ $# -eq 2 ] || usage; cmd_alive_client "$2" ;;
+            server) [ $# -eq 1 ] || usage; systemctl is-active --quiet rn-live-server ;;
+            *) usage ;;
+        esac
+        ;;
     stop)
         [ $# -eq 2 ] || usage
         case "$1" in

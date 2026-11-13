@@ -311,6 +311,7 @@ echo "  command: $server_command"
 echo "  XDP SAFETY 3: within 10 s of the load, a fresh ssh connection (no control master) proves ssh still works: ssh -o ControlMaster=no -o BatchMode=yes $server_ssh true"
 echo "  listen:  ssh $server_ssh grep -q '^listening' $server_status"
 echo "  heartbeat: ssh $server_ssh touch ~/rocketnet-live/heartbeat   (every 5 s until teardown)"
+echo "  watch:   ssh $server_ssh $remote_path alive server   (every 30 s; the run fails when the server is gone or the clients outlive $run_worst s plus $teardown_seconds s)"
 echo "  stop:    ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path stop server $server_label"
 echo "  XDP SAFETY 5: teardown detaches and records the link: ssh $server_ssh sudo -n $remote_path restore $commit $server_nic"
 echo "  command: ip link set dev $server_nic xdp off; ip link set dev $server_nic xdpgeneric off; ip -d link show dev $server_nic; xdp-loader status; rocketnet-provision sweep"
@@ -487,9 +488,18 @@ done < "$tmp/sorted.tsv"
   done ) &
 heartbeat_pid=$!
 
-# 6. watch every 30 s until every client is done; a fail line ends the run.
+# 6. watch every 30 s until every client is done; a fail line, the server
+# gone, or the clients outliving the worst-case run (plus one teardown's
+# grace) ends the run by wall clock.
+watch_deadline=$(( $( date +%s ) + run_worst + teardown_seconds ))
 while :; do
     sleep 30
+    if ! ssh_run "$server_ssh" "$remote_path" alive server >/dev/null 2>&1; then
+        fail "the server is gone (rn-live-server is not active)"
+    fi
+    if [ "$( date +%s )" -gt "$watch_deadline" ]; then
+        fail "the clients outlived the worst-case run of $run_worst s"
+    fi
     running=0
     while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
         results="~/rocketnet-live/results/$run_id/$label.tsv"
