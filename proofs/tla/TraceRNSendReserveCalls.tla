@@ -45,10 +45,10 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [free |-> free, budget |-> budget, claims |-> claims, tail |-> tail, started |-> started, ownUsed |-> ownUsed, own |-> own, ownLeft |-> ownLeft, refused |-> refused]
+VarsRec == [free |-> free, budget |-> budget, claims |-> claims, tail |-> tail, started |-> started, ownUsed |-> ownUsed, own |-> own, ownLeft |-> ownLeft, reserve |-> reserve, seen |-> seen, refused |-> refused]
 
 \* the actions each operation of the code can be
-OpActs == [open |-> {"Open"}, start |-> {"StartStaged", "StartIoRefused", "StartRefused"}, finish |-> {"Finish"}, abort |-> {"Abort"}, capacity |-> {"Capacity"}, retire |-> {"Retire"}]
+OpActs == [open |-> {"Open"}, start |-> {"StartStaged", "StartIoRefused", "StartRefused"}, finish |-> {"Finish"}, abort |-> {"Abort"}, capacity |-> {"Capacity"}, capacityto |-> {"CapacityTo"}, capacityall |-> {"CapacityAll"}, retire |-> {"Retire"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
@@ -59,7 +59,9 @@ Act(a, x) == CASE a = "Open" -> Open(x[1], x[2])
                [] a = "Finish" -> Finish
                [] a = "Abort" -> Abort
                [] a = "Capacity" -> Capacity(x[1])
-               [] a = "Retire" -> Retire(x[1])
+               [] a = "CapacityTo" -> CapacityTo(x[1], x[2])
+               [] a = "CapacityAll" -> CapacityAll(x[1])
+               [] a = "Retire" -> Retire(x[1], x[2])
 
 TraceInit ==
     /\ Init
@@ -97,14 +99,16 @@ TraceConsistent == ~rejected
 
 \* the row's reach predicates: some clean trace must stand exactly on the
 \* reserve after a grant (the edge where a start turns to a refusal), count
-\* a refusal, run the room out, and use every own frame handed out; and in
-\* a queue big enough for chunks, hold a tail, and hold a single claim with
-\* no tail (the guard missed, or the tail spent)
-AtReserve == started > 0 /\ free + ownUsed = Reserve
+\* a refusal, run the room out, and use every own frame handed out; in a
+\* queue big enough for chunks, hold a tail, and hold a single claim with no
+\* tail (the guard missed, or the tail spent); and with two queues, stand
+\* with one queue's room run out while the other has room
+AtReserve == \E q \in Queues : started[q] > 0 /\ free[q] + ownUsed[q] = reserve[q]
 Counted == refused > 0
-RoomOut == free = 0
-OwnAllUsed == ownLeft = 0 /\ ownUsed = Cardinality(Clients)
-ChunkTail == tail > 0
-SingleInBigRoom == tail = 0 /\ claims > 0 /\ MaxFree >= Reserve + Guard
+RoomOut == \E q \in Queues : free[q] = 0
+OwnAllUsed == ownLeft = 0 /\ SumOf(ownUsed, Queues) = Cardinality(Clients)
+ChunkTail == \E q \in Queues : tail[q] > 0
+SingleInBigRoom == \E q \in Queues : tail[q] = 0 /\ claims[q] > 0 /\ MaxFree >= reserve[q] + Guard
+QueueStall == \E q, p \in Queues : free[q] = 0 /\ free[p] > 0
 
 =============================================================================
