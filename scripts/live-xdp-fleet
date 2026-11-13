@@ -196,6 +196,8 @@ while IFS= read -r line || [ -n "$line" ]; do
         server_address=$address
         server_queues=$queues
     else
+        # the server's result and build files are named server.*
+        [ "$label" != "server" ] || refuse "inventory row $label: a client may not be labelled server"
         # RULINGS (d): the cap is a total, both directions combined.
         if [ "$cap" -gt "$max_cap" ]; then
             refuse "inventory row $label: $site-site cap $cap kbps is above the $max_cap kbps total of RULINGS (d)"
@@ -395,24 +397,26 @@ teardown()
 trap 'teardown; cleanup; exit 1' EXIT INT TERM HUP
 
 # 2. build on every machine in parallel; compare the commit each reports.
-mkdir -p "$run_dir" || fail "cannot create run directory $run_dir"
+# the build and copy logs are kept in the run directory, beside the results
+mkdir -p "$run_dir/build" || fail "cannot create run directory $run_dir"
+: > "$run_dir/build/copy.log"
 build_failed=0
-server_built=$tmp/server.build
+server_built=$run_dir/build/server.build
 scp_run "$server_ssh" || fail "cannot copy the step script to $server_ssh"
 ssh_run "$server_ssh" "$remote_path" build "$commit" > "$server_built" 2>&1 &
 build_pids=($!)
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
-    scp_run "$ssh_name" >> "$tmp/copy.log" 2>&1 || { echo "live-xdp-fleet: cannot copy the step script to $ssh_name" >&2; build_failed=1; }
-    ssh_run "$ssh_name" "$remote_path" build "$commit" > "$tmp/$label.build" 2>&1 &
+    scp_run "$ssh_name" >> "$run_dir/build/copy.log" 2>&1 || { echo "live-xdp-fleet: cannot copy the step script to $ssh_name" >&2; build_failed=1; }
+    ssh_run "$ssh_name" "$remote_path" build "$commit" > "$run_dir/build/$label.build" 2>&1 &
     build_pids+=($!)
 done < "$tmp/sorted.tsv"
 for pid in "${build_pids[@]}"; do wait "$pid" || build_failed=1; done
-[ "$build_failed" -eq 0 ] || fail "a build failed; see the run directory"
+[ "$build_failed" -eq 0 ] || fail "a build failed; see $run_dir/build"
 
 head=$( tail -n 1 "$server_built" 2>/dev/null )
 [ "$head" = "$commit" ] || fail "server $server_ssh reported HEAD '$head', not $commit"
 while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
-    head=$( tail -n 1 "$tmp/$label.build" 2>/dev/null )
+    head=$( tail -n 1 "$run_dir/build/$label.build" 2>/dev/null )
     [ "$head" = "$commit" ] || fail "client $label on $ssh_name reported HEAD '$head', not $commit"
 done < "$tmp/sorted.tsv"
 
