@@ -1868,6 +1868,15 @@ uint8_t * rocketnet_message_server_start( struct rocketnet_message_server_t * se
 // NULL server is a counted no-op that returns 0
 uint32_t rocketnet_message_server_finish( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
 
+// the writer's finish, behind rocketnet_server_finish_client_message: as
+// rocketnet_message_server_finish, but the packet of an unreliable message
+// written in place is finished in this call on this thread (sealed with its
+// ack block and packet id, encrypted, handed to the network threads), and an
+// unreliable start that found no capacity returns 0 and counts
+// MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY instead of queueing for send_packets.
+// a NULL server is a counted no-op that returns 0
+uint32_t rocketnet_message_server_finish_client( struct rocketnet_message_server_t * server, int client_index, int bytes_written );
+
 // a NULL server is a counted no-op
 void rocketnet_message_server_abort( struct rocketnet_message_server_t * server, int client_index );
 

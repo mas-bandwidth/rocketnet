@@ -947,3 +947,5 @@ MCRNSendReserveCallsBrokenNoRefresh.cfg	MCRNSendReserveCalls.tla	invariant	Never
 MCRNSendReserveCallsBrokenAbortReturns.cfg	MCRNSendReserveCalls.tla	invariant	ReserveKept	check	rnsendreserve	required	-
 MCRNSendReserveCallsChunk.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-
 MCRNSendReserveCallsBrokenTailLeak.cfg	MCRNSendReserveCalls.tla	invariant	NeverStarved	check	rnsendreserve	required	-
+MCRNWriterFinish.cfg	MCRNWriterFinish.tla	pass	-	check	rnwriterfinish	required	-
+MCRNWriterFinishBrokenNoOwner.cfg	MCRNWriterFinish.tla	invariant	OneWriter	check	rnwriterfinish	required	-
