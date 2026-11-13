@@ -1253,22 +1253,31 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
 #endif // #if ROCKETNET_DEV
     if ( cpu )
     {
-        // before bind: the lane joins the port by its processor
+        // before bind: the lane joins the port by its processor. The worker
+        // runs on the other logical processors of that processor's core: the
+        // RSS processor itself takes the receive DPCs, and a worker pinned
+        // there sent 790k of 1.04M msgs/s with 250k start refusals a second
+        // (r05-rioaff-f24-pinrss) where its sibling sent 1.03M with 5-7k
+        // (r06-rioaff-f24-pinsibling). A core of one logical processor pins
+        // the worker to that processor.
         rio->processor = cpu->index;
         rio->pin = cpu->affinity;
+        if ( ( cpu->core.Mask & ~cpu->affinity.Mask ) != 0 )
+        {
+            rio->pin = cpu->core;
+            rio->pin.Mask &= ~cpu->affinity.Mask;
+        }
 #if ROCKETNET_DEV
         // development library only: ROCKETNET_TEST_RIO_PIN places the lane
-        // worker for a measurement: "sibling" on its core's other logical
-        // processors (the RSS processor keeps the receive DPCs), "core" on
-        // the whole core, "none" unpinned; unset is the RSS processor
+        // worker for a measurement: "rss" on the RSS processor, "core" on the
+        // whole core, "none" unpinned; unset is the sibling placement above
         {
             char pin[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
             if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_PIN", pin, sizeof( pin ) ) > 0 )
             {
-                if ( strcmp( pin, "sibling" ) == 0 && ( cpu->core.Mask & ~cpu->affinity.Mask ) != 0 )
+                if ( strcmp( pin, "rss" ) == 0 )
                 {
-                    rio->pin = cpu->core;
-                    rio->pin.Mask &= ~cpu->affinity.Mask;
+                    rio->pin = cpu->affinity;
                 }
                 else if ( strcmp( pin, "core" ) == 0 )
                 {
@@ -2011,8 +2020,9 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
 {
     rocketnet_rio_lane_t * rio = (rocketnet_rio_lane_t *) argument;
 
-    // a lane's worker runs on its socket's processor, where RSS completes the
-    // lane's receives; a refused pin leaves it where Windows schedules it
+    // a lane's worker runs beside its socket's processor, on that core's other
+    // logical processors (rocketnet_rio_lane_create); a refused pin leaves it
+    // where Windows schedules it
     if ( rio->processor >= 0 && rio->pin.Mask != 0 && !SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
     {
         rocketnet_warn( "rio transport: lane worker not pinned to processor %d (Win32 %lu)", rio->processor, GetLastError() );
