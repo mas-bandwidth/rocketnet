@@ -23,6 +23,7 @@ bool rocketnet_server_rio_test_stop_drains_sends();
 bool rocketnet_server_rio_test_send_accounting();
 bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse_close, bool * stopped_out, int * closes_out,
                                                      int * waits_out, int * longest_wait_milliseconds_out );
+bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int * closes_out, uint64_t * abandoned_out );
 
 static void test_rio_transport_overflow_seam()
 {
@@ -160,5 +161,22 @@ static void test_rio_transport_create_failure_drain_counts_only_stalled_passes()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_only_stalled_passes );
+
+// A create that fails before any receive is posted, with closesocket refused
+// on every pass: nothing is kernel owned, so the drain stops after its eleven
+// bounded passes and abandons only the socket handle (counted by name); the
+// transport is freed, not leaked whole.
+static void test_rio_transport_create_failure_unposted_frees_the_transport()
+{
+    bool stopped = false;
+    int closes = 0;
+    uint64_t abandoned = 0;
+    check( rocketnet_server_rio_test_create_failure_unposted( &stopped, &closes, &abandoned ) );
+    check( stopped );
+    check( closes == 11 );
+    check( abandoned == 1 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_transport );
 
 #endif // #if defined( _WIN32 )
