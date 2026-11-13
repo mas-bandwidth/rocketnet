@@ -2199,7 +2199,7 @@ fi
 
 CMDLINE="$(cat "$FS/proc/cmdline" 2>/dev/null)"
 
-B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (range $WANT_RANGE is the 10 Gbps default; higher bandwidth NICs need more cores)"
+B1_GUIDANCE="set irqaffinity=0 isolcpus=$WANT_RANGE nohz_full=$WANT_RANGE nosmt in /etc/default/grub, update-grub, reboot (the default range is 1-15, the isolated-range argument; higher bandwidth NICs need more cores)"
 
 for TOKEN in isolcpus nohz_full; do
     # left-bounded like irqaffinity: "xisolcpus=" is not the parameter.

@@ -377,9 +377,8 @@ allocator bytes, host resources, and transport geometry before startup.
 <summary>SDK configuration variable names checked by the source audit</summary>
 
 These are the configuration and deployment environment variables read by the
-SDK. The development test seams (`ROCKETNET_TEST_*`) are not in this list:
-[Environment](ENVIRONMENT.md) lists the SDK's, and
-[Test scaffolding](TEST-SCAFFOLDING.md) the test suites'. Each setting has one name;
+SDK. The SDK's development test seams (`ROCKETNET_TEST_*`) are not in this
+list; [Environment](ENVIRONMENT.md) lists them. Each setting has one name;
 the client and server forms are separate settings. Entries marked development
 only are absent from a production library. The unit inventory checks this list
 in both directions against the SDK reads and the public header.

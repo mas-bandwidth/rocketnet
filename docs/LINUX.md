@@ -7,7 +7,7 @@ memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Each claim names the file that backs it; find the code by the symbol or message
 the text quotes.
 
-Names in capitals such as `GSO_PIN_REFUSALS`, `SEND_FAILED` or
+Counter names such as `GSO_PIN_REFUSALS`, `SEND_FAILED` or
 `ROCKETNET_COUNTER_GSO_SEND_DROPPED` are the SDK's internal counter rows
 (`sdk/rocketnet_counters.h`). No public call reads them; they say where the
 library counts an event. What a game reads is `rocketnet_server_stats` and
@@ -936,11 +936,12 @@ succeeds.
 **Memory.** `./bin/transport_memory <clients> <payload> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`benchmarks/transport_memory.cpp`, `BUILDING.md`). The plan figures for each
-transport are in [Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans);
-plan with the section 10 commands run on the exact build you ship. The plan excludes OS stacks,
+(`benchmarks/transport_memory.cpp`, `MEMORY.md`).
+[Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans) explains
+the plan; take its byte figures from the section 10 commands run on the exact
+build you ship. The plan excludes OS stacks,
 kernel queues, loader and application memory
-(`sdk/rocketnet_server_transport.cpp`, `BUILDING.md`).
+(`sdk/rocketnet_server_transport.cpp`, `MEMORY.md`).
 
 ## 9. Containers
 
@@ -959,7 +960,7 @@ What each transport needs, from the requirements above:
   namespace, and bpffs at `/sys/fs/bpf` for the instance's pin root
   (`DEPLOYING.md`). The boot tier belongs to the host. Where bpffs is
   shared across pid namespaces, run `sweep` from the namespace that owns the
-  servers (`DEPLOYING.md`, `scripts/rocketnet-provision:60-79`).
+  servers (`DEPLOYING.md`, `scripts/rocketnet-provision:341-343`).
 
 No CI leg runs a transport inside a container; these needs are read from the
 code and not measured.

@@ -52,8 +52,8 @@ tried in that order with nothing appended.
 | Every listed transport refused to start (no privilege, no RIO, memory budget) | `rocketnet_server_start` or `rocketnet_client_connect` fails with `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`; the log names each refusal |
 | A public address with port 0 and only transports that cannot report the port they were given (`xdp`) | `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED` |
 | Every listed transport unable to serve both requested address families | `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` |
-| The platform refused the bind (another socket holds the address and port, or the bind address is not this machine's) on every socket transport listed, any `xdp` refusal aside | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` |
-| A bind address start cannot use (does not parse, carries a port, names a family the server does not serve, multicast, or any bind address on a server of both families), or every listed transport refusing a Windows lane or worker count above 1 on the wildcard | `rocketnet_server_start` fails with `ROCKETNET_STATUS_INVALID_ADDRESS` |
+| The platform refused the bind (another socket holds the address and port, the bind address is not this machine's, or permission was denied) on every socket transport listed, any `xdp` refusal aside | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` |
+| A bind address start cannot use (for example one that does not parse, carries a port, names a family the server does not serve, is multicast or broadcast, or a `bind_*` field set on a server of both families), or every listed transport refusing a Windows lane or worker count above 1 on the wildcard | `rocketnet_server_start` fails with `ROCKETNET_STATUS_INVALID_ADDRESS` |
 
 A pin never falls back silently: a list with at least one name this endpoint
 has is tried exactly as written, or the call fails. The per-platform guides
@@ -104,7 +104,8 @@ that has a count to choose has its own config field and environment variable
 ([ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport)); the default,
 with nothing set, is a count that held the measured peak workload: 1000
 players at 60 Hz, about 900,000 packets a second from the server (an estimated
-9.39 Gb/s), on the machine in [PERFORMANCE.md](PERFORMANCE.md).
+9.39 Gb/s), on the machine in [PERFORMANCE.md](PERFORMANCE.md) (which has
+no `msgx` rows yet).
 
 | Transport | Network threads (default) | Where they run | Machine setting that must match |
 | --- | --- | --- | --- |

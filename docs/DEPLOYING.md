@@ -94,7 +94,7 @@ line-rate performance; that requires measurements on suitable Windows hardware.
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The Windows defaults that held the measured peak workload, 1000 players at 60
+The Windows default counts that held the measured peak workload, 1000 players at 60
 Hz and about 900,000 packets a second from the server (an estimated 9.39 Gb/s;
 [PERFORMANCE.md](PERFORMANCE.md)), with 5 RIO lanes, or 2 IOCP completion
 workers and 2 send threads, on AWS m7i.16xlarge, share the
