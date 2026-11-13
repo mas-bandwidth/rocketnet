@@ -169,11 +169,11 @@ static void delta_io_stop_and_discard( const rocketnet_client_transport_io_opera
 // The single receive's answer is a byte count: every positive count is one
 // datagram discarded, a 1-byte datagram as much as any; 0 is a drained socket,
 // which ends the discard and is no fault.
-// mutation gap: delta sdk/rocketnet_client_io.h:816 relational <= (bytes <= 0 ? -1)
-// mutation gap: delta sdk/rocketnet_client_io.h:816 off_by_one 1 (bytes < 1 ? -1)
-// mutation gap: delta sdk/rocketnet_client_io.h:816 off_by_one 1 (bytes > 1 ? 1 : 0)
-// mutation gap: delta sdk/rocketnet_client_io.h:821 relational <= (got <= 0)
-// mutation gap: delta sdk/rocketnet_client_io.h:821 off_by_one 1 (got < 1)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) relational <= (bytes <= 0 ? -1)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) off_by_one 1 (bytes < 1 ? -1)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) off_by_one 1 (bytes > 1 ? 1 : 0)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) relational <= (got <= 0)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) off_by_one 1 (got < 1)
 
 static void test_delta_client_io_discard_counts_small_datagrams_and_a_drained_socket_is_no_fault()
 {
@@ -194,8 +194,8 @@ REGISTER_UNIT_TEST( test_delta_client_io_discard_counts_small_datagrams_and_a_dr
 
 // A refused single receive (a negative answer) ends the discard and is one
 // transport fault; the datagram behind it is not read.
-// mutation gap: delta sdk/rocketnet_client_io.h:816 off_by_one 0 (bytes < 0 ? -0)
-// mutation gap: delta sdk/rocketnet_client_io.h:823 arithmetic -- (transport_faults--)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) off_by_one 0 (bytes < 0 ? -0)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) arithmetic -- (transport_faults--)
 
 static void test_delta_client_io_discard_counts_a_refused_read_as_one_fault()
 {
@@ -217,8 +217,8 @@ REGISTER_UNIT_TEST( test_delta_client_io_discard_counts_a_refused_read_as_one_fa
 // A sender that keeps the socket full cannot hold the exit: the batch discard
 // reads exactly ROCKETNET_CLIENT_IO_DISCARD_MAX datagrams, a full batch at a
 // time, and a full batch (got == ROCKETNET_CLIENT_IO_DISCARD_BATCH) is no fault.
-// mutation gap: delta sdk/rocketnet_client_io.h:797 relational <= (discarded <= ROCKETNET_CLIENT_IO_DISCARD_MAX)
-// mutation gap: delta sdk/rocketnet_client_io.h:806 relational >= (got >= ROCKETNET_CLIENT_IO_DISCARD_BATCH)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) relational <= (discarded <= ROCKETNET_CLIENT_IO_DISCARD_MAX)
+// mutation gap: delta sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop) relational >= (got >= ROCKETNET_CLIENT_IO_DISCARD_BATCH)
 
 static void test_delta_client_io_discard_of_a_full_socket_stops_at_the_bound()
 {

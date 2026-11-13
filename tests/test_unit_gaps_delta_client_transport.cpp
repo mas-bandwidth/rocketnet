@@ -57,8 +57,8 @@ static void delta_tr_connect( public_step_pair_t * pair, public_step_identity_t 
 // ---------------------------------------------------------------------------
 // the secret-span seam: at most max spans, never more than the four there are
 
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:2977 boolean || (count < 4 || count < max)
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:2977 relational <= (count < 4 && count <= max)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_secret_spans_for_test) boolean || (count < 4 || count < max)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_secret_spans_for_test) relational <= (count < 4 && count <= max)
 
 static void test_delta_client_secret_spans_respect_max_and_the_four()
 {
@@ -91,9 +91,9 @@ REGISTER_UNIT_TEST( test_delta_client_secret_spans_respect_max_and_the_four );
 // a lease reset by send_packets: packet_payload refuses it and leaves capacity
 // 0; finish and abort refuse it, count it and log it, in every build
 
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:3779 off_by_one 1 (*capacity = 1)
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:3814 negate_condition (abort: !retired)
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:3895 negate_condition (finish: !retired)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_packet_payload) off_by_one 1 (*capacity = 1)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_abort_packet) negate_condition (abort: !retired)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_finish_packet) negate_condition (finish: !retired)
 
 static int delta_tr_abort_logs = 0;
 static int delta_tr_finish_logs = 0;
@@ -182,9 +182,9 @@ REGISTER_UNIT_TEST( test_delta_client_retired_lease_is_refused_with_capacity_zer
 // wire_bytes, is one datagram of wire_bytes plus the IPv4 header in the
 // cumulative totals, and an empty final ring counts nothing
 
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:4724 off_by_one 1 (uint64_t bytes = 1)
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:4730 arithmetic -= (bytes -= ...)
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:4730 arithmetic - (wire_bytes - rocketnet_wire_header_bytes)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_count_final) off_by_one 1 (uint64_t bytes = 1)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_count_final) arithmetic -= (bytes -= ...)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_count_final) arithmetic - (wire_bytes - rocketnet_wire_header_bytes)
 
 static void delta_tr_stop_counts( bool commit, uint64_t * packets, uint64_t * bytes, int * wire_bytes )
 {
@@ -248,7 +248,7 @@ REGISTER_UNIT_TEST( test_delta_client_stop_counts_the_final_ring_exactly );
 // a window that begins after a second of quiet is at least the hand-off's
 // wire bytes and at most everything sent since the quiet
 
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:3131 arithmetic -= (stats_frames[stats_index].bytes_sent -= bytes)
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_count_sent) arithmetic -= (stats_frames[stats_index].bytes_sent -= bytes)
 
 static void test_delta_client_hand_off_bytes_reach_the_bandwidth_window()
 {
@@ -317,7 +317,7 @@ REGISTER_UNIT_TEST( test_delta_client_hand_off_bytes_reach_the_bandwidth_window 
 // the memory plan seam allocates what the plan counts: the wake stand-in asks
 // for the platform wake's bytes, no more
 
-// mutation gap: delta sdk/rocketnet_client_transport.cpp:2310 arithmetic + (wake_allocation_bytes() + rocketnet_allocation_overhead())
+// mutation gap: delta sdk/rocketnet_client_transport.cpp (rocketnet_client_transport_create_impl, memory plan seam) arithmetic + (wake_allocation_bytes() + rocketnet_allocation_overhead())
 
 struct delta_plan_allocator_t
 {

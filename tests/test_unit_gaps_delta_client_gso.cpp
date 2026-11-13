@@ -223,7 +223,7 @@ static bool delta_gso_slot_is( int i, int bytes, int value )
 // A weather errno (here ECONNREFUSED, a refused send's ICMP echo) spends one
 // read and the call goes on to the datagram behind it, in the same call; an
 // empty socket (EAGAIN) ends the call at its first read.
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:418 negate_condition (!rocketnet_client_gso_receive_weather( error ))
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive_batch) negate_condition (!rocketnet_client_gso_receive_weather( error ))
 
 static void test_delta_client_gso_receive_reads_past_weather_and_stops_on_empty()
 {
@@ -246,8 +246,8 @@ REGISTER_UNIT_TEST( test_delta_client_gso_receive_reads_past_weather_and_stops_o
 
 // A UDP_GRO cmsg holding a stride of 0 names no segments: the message is one
 // datagram, delivered whole (it never divides by the stride).
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:467 relational < (segment_bytes < 0)
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:467 boolean && (segment_bytes <= 0 && segment_bytes > message_bytes)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive_batch) relational < (segment_bytes < 0)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive_batch) boolean && (segment_bytes <= 0 && segment_bytes > message_bytes)
 
 static void test_delta_client_gso_receive_gro_stride_zero_is_one_datagram()
 {
@@ -262,7 +262,7 @@ REGISTER_UNIT_TEST( test_delta_client_gso_receive_gro_stride_zero_is_one_datagra
 
 // A stride of 1 is a real stride: a 3-byte message cut at 1 is three 1-byte
 // datagrams, in order.
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:467 off_by_one 1 (segment_bytes <= 1)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive_batch) off_by_one 1 (segment_bytes <= 1)
 
 static void test_delta_client_gso_receive_gro_stride_one_splits_every_byte()
 {
@@ -283,11 +283,11 @@ REGISTER_UNIT_TEST( test_delta_client_gso_receive_gro_stride_one_splits_every_by
 // allocation: context, socket, wake, then the gso state); this test's mirror
 // is checked against the record's byte helper before it is used, and the
 // receive path reads only the gso state, so no socket or wake is opened.
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:617 off_by_one 0 (receive_batch( ..., 0 ))
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:617 off_by_one 2 (receive_batch( ..., 2 ))
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:618 relational < (got < 0 ? packet_bytes : 0)
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:618 off_by_one 1 (got > 1 ? packet_bytes : 0)
-// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp:618 off_by_one 1 (got > 0 ? packet_bytes : 1)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive) off_by_one 0 (receive_batch( ..., 0 ))
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive) off_by_one 2 (receive_batch( ..., 2 ))
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive) relational < (got < 0 ? packet_bytes : 0)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive) off_by_one 1 (got > 1 ? packet_bytes : 0)
+// mutation gap: delta sdk/rocketnet_client_gso_linux.cpp (rocketnet_client_gso_receive) off_by_one 1 (got > 0 ? packet_bytes : 1)
 
 struct delta_gso_io_mirror_t
 {
