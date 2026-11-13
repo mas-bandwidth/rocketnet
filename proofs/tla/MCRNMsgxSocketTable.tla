@@ -10,4 +10,14 @@ EXTENDS RNMsgxSocketTable
 \* the liveness configuration: no refused marks (RNMsgxSocketTable RefusedMarks)
 MCNoRefusedMarks == FALSE
 
+\* the broken configuration MCRNMsgxSocketTableBrokenStaleReport.cfg: the
+\* close loop leaves a dead report in the slot it frees (RNMsgxSocketTable
+\* ClearReportAtFree)
+MCKeepStaleReport == FALSE
+
+\* the layout configuration: every registration succeeds (RNMsgxSocketTable
+\* RegisterMayFail); the refused registration doubles its marks past the
+\* 110 s budget, and the other passing configurations check it
+MCRegisterAlways == FALSE
+
 =============================================================================

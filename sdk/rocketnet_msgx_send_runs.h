@@ -31,24 +31,32 @@
 //   in one connected send.
 // - What the connected send answers moves *cursor:
 //   all taken: past the run;
-//   some taken: past exactly that many live packets, the rest kept, false;
+//   some taken: past exactly that many live packets, and on at once with the
+//   rest (the socket took data);
 //   none taken, or the socket full: kept, false;
-//   refused (a pending ICMP error answered the call and is now cleared): the
-//   run goes again once, and a second refusal is an error;
+//   refused (a pending ICMP error, or the client's route gone, answered the
+//   call and is now cleared): the run goes again once, and a second refusal
+//   is an error;
 //   dead (the socket was disconnected): reported, and the run leaves through
 //   the shared socket one packet at a time (a full shared socket keeps the
 //   rest, false);
 //   any other error: the run is dropped, counted.
-// - false means a socket was full: *cursor is the first packet not yet
-//   taken, and the caller calls again later with the same cursor.
+// - false means a socket was full (an answer that took nothing): *cursor is
+//   the first packet not yet taken, and the caller calls again later with
+//   the same cursor.
 
 #include <stdint.h>
 
 // the connected send's answer when nothing was taken (a count taken is >= 0)
-#define ROCKETNET_MSGX_SEND_FULL                            ( -1 )  // EAGAIN, EWOULDBLOCK, ENOBUFS: try again later
-#define ROCKETNET_MSGX_SEND_REFUSED                         ( -2 )  // ECONNREFUSED
+// (rocketnet_msgx_send_error_kind maps an errno to one)
+#define ROCKETNET_MSGX_SEND_FULL                            ( -1 )  // EAGAIN, EWOULDBLOCK, ENOBUFS, EINTR: try again later
+#define ROCKETNET_MSGX_SEND_REFUSED                         ( -2 )  // ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN
 #define ROCKETNET_MSGX_SEND_DEAD                            ( -3 )  // ENOTCONN, EPIPE, EDESTADDRREQ
 #define ROCKETNET_MSGX_SEND_ERROR                           ( -4 )  // anything else
+
+// a connected send's errno as one of the answers above
+// (sdk/rocketnet_msgx_send_runs.cpp says what each means)
+int rocketnet_msgx_send_error_kind( int error );
 
 // the shared send's answer for one packet
 #define ROCKETNET_MSGX_SHARED_SENT                           0
@@ -74,6 +82,7 @@
 //  7 a refusal never retried
 //  8 a full socket drops the run
 //  9 an aborted packet inside a run is sent
+// 10 a partial send keeps the call (the worker waits after progress, R124)
 // ROCKETNET_MSGX_SEND_RUNS_PLANT is the trace check's plant
 // (proofs/tla/README-TraceCheck.md), the same change as mutation 3, in
 // rocketnet_msgx_send_runs_same_generation
@@ -308,8 +317,10 @@ inline void rocketnet_msgx_send_runs_step( const Info * info, const int * order,
         }
         if ( result > 0 )
         {
-            // a prefix went: past exactly that many live packets, the rest
-            // kept for the next call
+            // a prefix went: past exactly that many live packets, and the
+            // call goes on with the rest at once. The socket took data, so
+            // this is no reason to wait; only an answer that took nothing
+            // keeps the call
             counters->sent_connected += (uint64_t) result;
             int taken = 0;
             while ( taken < result )
@@ -324,7 +335,11 @@ inline void rocketnet_msgx_send_runs_step( const Info * info, const int * order,
 #endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 1
                 state->cursor++;
             }
+#if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 10
             state->pc = ROCKETNET_MSGX_SEND_RUNS_KEPT;
+#else  // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 10
+            state->pc = ROCKETNET_MSGX_SEND_RUNS_HEAD;
+#endif // #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 10
             return;
         }
 #if defined( ROCKETNET_MSGX_SEND_RUNS_MUTATION ) && ROCKETNET_MSGX_SEND_RUNS_MUTATION == 5

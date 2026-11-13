@@ -1,9 +1,10 @@
 # RNPortableRx: the portable server's receive worker
 
 `RNPortableRx.tla` models the receive half of the portable server transport
-in `sdk/rocketnet_driver_builtin.cpp`. The same code serves the macOS msgx
-server, which selects only its socket pump at create. The modelled functions
-are:
+in `sdk/rocketnet_driver_builtin.cpp`. The msgx transport name runs this
+code only off macOS; on macOS the msgx server is its own
+(`sdk/rocketnet_server_msgx_apple.cpp`), and its receive worker is
+`RNMsgxReceiveFill.tla`'s. The modelled functions are:
 
 - `portable_rx_step`, the worker's pass, run by `portable_rx_worker`;
 - `portable_rx_publish`, `portable_rx_acquire` and `portable_receive`;

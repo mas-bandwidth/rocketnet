@@ -472,6 +472,23 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
     return ready;
 }
 
+int rocketnet_server_gso_test_receive_committed( struct rocketnet_server_gso_t * gso, int queue_index )
+{
+    rocketnet_assert( gso );
+    rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
+    {
+        return -1;
+    }
+    const struct rocketnet_receive_handoff_t * handoff = &queue->receive_handoff;
+    const int committed = (int) handoff->committed[handoff->worker];
+    rocketnet_platform_mutex_release( &queue->receive_mutex );
+
+    return committed;
+}
+
 #endif // #if ROCKETNET_DEV
 
 // the queue a destination's packets leave through: the XDP transport's hash of
@@ -2069,10 +2086,11 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     rocketnet_assert( gso );
     rocketnet_assert( counters );
 
-    // The tallies a worker left in its buffers are folded once, at stop
-    // (rocketnet_server_gso_count_stopped, run by the first rocketnet_server_gso_stopped
-    // that finds every worker exited), so a datagram dropped after main's last
-    // claim is still counted.
+    // A buffer's tallies are folded once: when main makes it the tail after
+    // the worker has left it (rocketnet_server_gso_receive_from_queue), or at
+    // stop for the buffers still held (rocketnet_server_gso_count_stopped, run
+    // by the first rocketnet_server_gso_stopped that finds every worker
+    // exited), so a datagram dropped after main's last read is still counted.
 
     // every row of the gso range (GSO_PACKETS_SENT .. GSO_GRO_CMSG_FAULTS) is
     // written below, and GSO_PIN_REFUSALS, which sits after the other
@@ -3704,11 +3722,13 @@ static int rocketnet_server_gso_test_overflow_receive( struct rocketnet_server_g
         struct msghdr * header = &queue->messages[i].msg_hdr;
         header->msg_flags = 0;
         header->msg_controllen = 0;
+        struct sockaddr_in in4;
+        memset( &in4, 0, sizeof( in4 ) );
+        in4.sin_family = AF_INET;
+        in4.sin_port = htons( 40000 );
+        in4.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         memset( &queue->names[i], 0, sizeof( queue->names[i] ) );
-        struct sockaddr_in * in4 = (struct sockaddr_in *) &queue->names[i];
-        in4->sin_family = AF_INET;
-        in4->sin_port = htons( 40000 );
-        in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+        memcpy( &queue->names[i], &in4, sizeof( in4 ) );
 
         const uint32_t drops = source->counts[source->next++];
         if ( drops != 0 )
@@ -4075,7 +4095,6 @@ bool rocketnet_server_gso_test_receive_backoff()
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
-    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     gso->test_receive = rocketnet_server_gso_test_source_receive;
 
     bool valid = true;
@@ -4089,7 +4108,7 @@ bool rocketnet_server_gso_test_receive_backoff()
 
     queue->receive_handoff.worker = 1;
     queue->receive_handoff.free = -1;
-    buffer = rocketnet_server_gso_worker_buffer( queue );
+    struct rocketnet_server_gso_recv_buffer_t * buffer = rocketnet_server_gso_worker_buffer( queue );
     buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE;
     buffer->dropped_size = 0;
     buffer->dropped_overflow = 0;

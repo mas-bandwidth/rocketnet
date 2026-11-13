@@ -201,8 +201,17 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FILTER_VALUE_BYTES == ROCKETNET_PACKET_FILTER
 
 static bool rn_dev_env_int( const char * name, int found, const char * text, int min_value, int max_value, int * value )
 {
-    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+    if ( found == 0 )
     {
+        return true;
+    }
+
+    // logged as every other override is (rocketnet.h, Config): an empty
+    // variable is ignored and said so, an applied one names what it displaced
+
+    if ( found == 1 && text[0] == '\0' )
+    {
+        rocketnet_info( "config ignores empty %s (set a value, or unset the variable)", name );
         return true;
     }
 
@@ -225,6 +234,7 @@ static bool rn_dev_env_int( const char * name, int found, const char * text, int
         return false;
     }
 
+    rocketnet_info( "config override %s=%s (displaces %d)", name, text, *value );
     *value = (int) parsed;
 
     return true;
@@ -960,6 +970,14 @@ static bool rn_connect_token_address( const char * address, int family )
         return false;
     }
 
+    // an IPv4-mapped address (::ffff:a.b.c.d) is no server's IPv6 address:
+    // the server serves IPv4 there, so it goes in the IPv4 field
+    if ( rocketnet_address_is_ipv4_in_ipv6( &parsed ) )
+    {
+        rocketnet_error( "connect token refused: %s is IPv4-mapped; pass the IPv4 address instead", address );
+        return false;
+    }
+
     return true;
 }
 
@@ -1341,7 +1359,9 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     }
     else
     {
-        base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
+        // a plan past what size_t holds (a 32-bit build) is refused as a
+        // failed allocation, never cast down to a smaller block
+        base = total > (uint64_t) SIZE_MAX ? NULL : (uint8_t *) rocketnet_malloc( context, (size_t) total );
         if ( !base )
         {
             rocketnet_error( "client create refused: %llu bytes", (unsigned long long) total );
@@ -2269,8 +2289,8 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
         stats->packet_loss_percent = (double) transport_stats.packet_loss;
         stats->packets_sent_per_second = transport_stats.packets_sent_per_second;
         stats->packets_received_per_second = transport_stats.packets_received_per_second;
-        stats->bandwidth_sent_kbps = transport_stats.bandwidth_sent_kbps;
-        stats->bandwidth_received_kbps = transport_stats.bandwidth_received_kbps;
+        stats->bandwidth_sent_kbps = (double) transport_stats.bandwidth_sent_kbps;
+        stats->bandwidth_received_kbps = (double) transport_stats.bandwidth_received_kbps;
     }
 
     stats->packets_sent = counts[RN_CLIENT_PACKETS_SENT];
@@ -2642,11 +2662,16 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     // retires it and the next start frees it before it creates the next, so
     // a restart takes the same bytes again; then the slack
 
-    const uint64_t transport_bytes = rocketnet_server_transport_order_allocator_bytes( &transport );
+    bool unplannable = false;
+    const uint64_t transport_bytes = rocketnet_server_transport_order_allocator_bytes( &transport, &unplannable );
 
     sodium_memzero( &transport, sizeof( transport ) );
 
-    if ( running_bytes == 0 )
+    // no candidate in the list plans (a count below 1, iocp send threads
+    // past the send lanes): start would refuse every one, so
+    // the config has no size to give and this call answers 0, never the
+    // size without the transport
+    if ( running_bytes == 0 || unplannable )
     {
         return 0;
     }
@@ -2743,6 +2768,15 @@ static enum rocketnet_status_t rn_server_addresses( const char * ipv4_address, c
         if ( memchr( addresses[i], '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL || !rocketnet_address_parse( &parsed[i], addresses[i] ) || parsed[i].type != families[i] )
         {
             rocketnet_error( "server create refused: the %s address does not parse as one", i == 0 ? "IPv4" : "IPv6" );
+            return ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+
+        // an IPv4-mapped address (::ffff:a.b.c.d) is an IPv4 client's address
+        // as a dual-stack socket reports it, never a served IPv6 address: no
+        // handshake could reach it (the bind-address rule, rocketnet.h)
+        if ( i == 1 && rocketnet_address_is_ipv4_in_ipv6( &parsed[i] ) )
+        {
+            rocketnet_error( "server create refused: the IPv6 address %s is IPv4-mapped; pass the IPv4 address instead", addresses[i] );
             return ROCKETNET_STATUS_INVALID_ADDRESS;
         }
     }
@@ -2889,7 +2923,9 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     }
     else
     {
-        base = (uint8_t *) rocketnet_malloc( context, (size_t) total );
+        // a plan past what size_t holds (a 32-bit build) is refused as a
+        // failed allocation, never cast down to a smaller block
+        base = total > (uint64_t) SIZE_MAX ? NULL : (uint8_t *) rocketnet_malloc( context, (size_t) total );
         if ( !base )
         {
             sodium_memzero( &transport, sizeof( transport ) );
@@ -3239,18 +3275,27 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 
         rocketnet_error( "rocketnet_server_destroy: the server is not stopped; call rocketnet_server_stop and poll rocketnet_server_stopped before destroy" );
 
-        // an update in three calls left open is finished first: the stop
-        // below is refused inside it, and its acks would stay open
-        if ( server->running && server->running->object.update_stage != RN_MESSAGE_UPDATE_CLOSED )
-        {
-            rocketnet_server_update_finish( server );
-        }
-
-        rocketnet_server_stop( server );
-
-        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        // the stop is refused while a fill call or another main-thread
+        // operation runs (sdk/rocketnet_fill_phase.h), so it is asked again
+        // every tenth of a second until it takes, inside the same bounded
+        // wait (each refusal logs and counts, so not on every poll). An
+        // update in three calls left open is finished first: the stop is
+        // refused inside it, and its acks would stay open
+        const double start = rocketnet_platform_time();
+        const double deadline = start + rn_destroy_stop_seconds;
+        double next_retry = start;
         for ( ;; )
         {
+            const double now = rocketnet_platform_time();
+            if ( server->running && now >= next_retry )
+            {
+                next_retry = now + 0.1;
+                if ( server->running->object.update_stage != RN_MESSAGE_UPDATE_CLOSED )
+                {
+                    rocketnet_server_update_finish( server );
+                }
+                rocketnet_server_stop( server );
+            }
             struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
             if ( transport )
             {
@@ -3261,6 +3306,12 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
                 break;
             }
             rocketnet_platform_sleep( 0.001 );
+        }
+
+        if ( server->running )
+        {
+            rocketnet_error( "rocketnet_server_destroy: the stop was refused for the whole wait (a fill call or another main-thread operation is running); the server is kept, not freed" );
+            return;
         }
 
         if ( !rocketnet_server_stopped( server ) )
@@ -3925,6 +3976,16 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     if ( !live )
     {
         return ROCKETNET_STATUS_OK;
+    }
+
+    // one main-thread operation, checked before the slot's state is read
+    // (sdk/rocketnet_fill_phase.h): made while a fill call runs it is refused
+    // and counted on a connected slot and an empty one alike
+
+    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( rn_server_transport( server ) ) );
+    if ( !phase.entered )
+    {
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 
     // a slot with no CONNECTED client has no budget to set, a plain no-op:

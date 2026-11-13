@@ -1169,6 +1169,57 @@ static void test_server_transport_misuse_refused_without_asserts()
 }
 REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );
 
+// A stopped poll is a stop step, and a stop step is a main-thread operation:
+// made while a fill call is inside the check, it is refused and counted
+// (MAIN_THREAD_CALL_OVERLAP), seals and flushes nothing, and reports not
+// stopped; once the fill call ends the next poll is the step.
+static void test_server_transport_stopped_poll_refused_during_fill()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS;
+    const int clients = 3;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+
+    stop_spread_stop_server( server, clients );
+    rocketnet_unit_check( stop_spread_flushed( f ) == 10 );
+
+    rocketnet_fill_phase_arm( &server->fill_phase, true );
+    rocketnet_unit_check( server->fill_phase.overlap_counter != NULL );
+    const uint64_t overlap = *server->fill_phase.overlap_counter;
+
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    g_stop_spread_asserts = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_assert_function( stop_spread_assert_capture );
+
+    rocketnet_unit_check( rocketnet_fill_phase_fill_begin( &server->fill_phase, 0 ) );
+    const bool stopped_in_fill = rocketnet_server_transport_stopped( server );
+    const int flushed_in_fill = stop_spread_flushed( f );
+    rocketnet_fill_phase_fill_end( &server->fill_phase, 0 );
+
+    rocketnet_assert_function( saved_assert );
+    rocketnet_log_level( saved_level );
+
+    rocketnet_unit_check( !stopped_in_fill );
+    rocketnet_unit_check( flushed_in_fill == 10 );
+    rocketnet_unit_check( *server->fill_phase.overlap_counter == overlap + 1 );
+    rocketnet_unit_check( g_stop_spread_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+
+    // the fill call ended: each poll is the next step again
+    rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( stop_spread_flushed( f ) == 20 );
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( stop_spread_flushed( f ) == 30 && f->stops == 1 );
+    rocketnet_unit_check( *server->fill_phase.overlap_counter == overlap + 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_stopped_poll_refused_during_fill );
+
 // the xdp replay writer's counts are assigned only when the transport's io
 // table answers them: on every other table, on every platform, a read leaves
 // both rows as they were
