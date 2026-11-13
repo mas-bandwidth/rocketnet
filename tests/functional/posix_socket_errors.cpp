@@ -2062,10 +2062,10 @@ static void posix_msgx_stage_tagged( struct posix_pair_t * pair )
     for ( int i = 0; i < 8; i++ )
     {
         struct rocketnet_packet_context_t context;
-        uint8_t * frame = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
-        posix_check( frame != NULL );
-        memset( frame + context.payload_index, 0xdd, 16 );
-        frame[context.payload_index + 1] = (uint8_t) i;
+        uint8_t * payload = rocketnet_server_transport_start_packet( pair->server, pair->client_index, 16, &context );
+        posix_check( payload != NULL );
+        memset( payload, 0xdd, 16 );
+        payload[1] = (uint8_t) i;
         posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, 16 ) > 0 );
     }
 }
