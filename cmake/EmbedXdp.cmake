@@ -10,9 +10,10 @@
 # asm/types.h), and optionally HISTORY_PACKETS: the library's
 # ROCKETNET_HISTORY_PACKETS, which sets the kernel replay window, and
 # MAX_CLIENTS: the library's ROCKETNET_MAX_CLIENTS, which sizes the kernel
-# replay map (sdk/rocketnet_xdp_limits.h). Without either, the SDK headers'
-# default applies (sdk/rocketnet_history.h, sdk/rocketnet.h): the default the
-# library compiles with, so a build at the defaults passes neither. The values
+# replay map (sdk/rocketnet_xdp_limits.h). The build (CMakeLists.txt) always
+# passes both, from its cache values; the SDK headers' defaults
+# (sdk/rocketnet_history.h, sdk/rocketnet.h) apply only to a hand-run
+# `cmake -P` that passes neither. The values
 # the program was compiled with are read back from the preprocessor and written
 # into the generated header, which refuses to compile into a library built with
 # different ones, so the kernel program and the library cannot disagree. The

@@ -21,7 +21,7 @@ if(ROCKETNET_USE_SYSTEM_SODIUM AND NOT TARGET RocketNet::Sodium)
         set_target_properties(RocketNet::Sodium PROPERTIES
             INTERFACE_LINK_LIBRARIES PkgConfig::ROCKETNET_SODIUM)
     endif()
-    # The external libsodium floor; the vendored copy is 1.0.22 (sodium/sodium.h:1972).
+    # The external libsodium floor; the vendored copy is 1.0.22 (SODIUM_VERSION_STRING in sodium/sodium.h).
     if(NOT ROCKETNET_SODIUM_VERSION OR ROCKETNET_SODIUM_VERSION VERSION_LESS 1.0.20)
         if(NOT ROCKETNET_SODIUM_VERSION)
             set(ROCKETNET_SODIUM_VERSION "of unknown version")
@@ -72,7 +72,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_XDP)
     endif()
 endif()
 # liburing for the io_uring server transport: optional when building (absent,
-# the transport compiles to a create that refuses), required when the installed
+# the io_uring row leaves the transport registry: a pin of it is skipped by the
+# ladder, as without multishot below), required when the installed
 # package was built with it (ROCKETNET_IO_URING_REQUIRED, set by the config).
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET RocketNet::Uring)
     if(ROCKETNET_IO_URING_REQUIRED)
@@ -103,6 +104,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET Rock
             IMPORTED_LOCATION "${ROCKETNET_Uring_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Uring_INCLUDE_DIR}")
     elseif(NOT DEFINED ROCKETNET_URING_HAS_RECV_MULTISHOT)
-        message(STATUS "liburing not found: the io_uring server transport is built to refuse")
+        message(STATUS "liburing not found: the io_uring server transport is not built")
     endif()
 endif()
