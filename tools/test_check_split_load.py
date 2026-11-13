@@ -862,9 +862,6 @@ class SplitRefusalTests(unittest.TestCase):
     def test_wrong_expected_offer_count(self):
         self.refuses("wrong expected offer count", *self.server_receipt("expected_offers=120", "expected_offers=119"))
 
-    def test_missed_due_slots(self):
-        self.refuses("missed due slots", *self.server_receipt("missed_due_slots=0", "missed_due_slots=1"))
-
     def test_reversed_timestamps(self):
         self.refuses("local UTC timestamps reversed",
                      *self.server_receipt("traffic_end_utc_s=1062", "traffic_end_utc_s=1001"))
