@@ -2057,7 +2057,7 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // stop's one window flush, which must not leave packets outside the slots.
 //
 // The stop's drain (shutdown) judges room by each packet's own send queue,
-// as the stop step judges a burst's (proofs/tla/RNServerLinkStop.tla): it
+// as the stop step judges a burst's (proofs/tla/RNServerLinkStop.tla DrainOne): it
 // goes on while any queue has room, a packet whose queue has room leaves, and
 // a packet whose queue has none is held back and ends this step's drain while
 // a send staged or in flight could still free room; with nothing in flight
@@ -3925,7 +3925,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
 static void rocketnet_server_transport_flush( struct rocketnet_server_transport_t * server_transport, bool shutdown );
 
 // proofs/tla/ServerStopSpread.tla SealOne, Flush and RequestIoStop: one stop
-// step. The waiting bursts are sealed within the transport's send room,
+// step (with the link simulator, proofs/tla/RNServerLinkStop.tla Flush, its
+// drain DrainOne, and RequestIoStop once the simulator is empty). The waiting bursts are sealed within the transport's send room,
 // what was sealed is flushed, and once nothing waits and the transport
 // reports every send it was handed finished, the I/O is told to stop, so no
 // flushed send is cut off. Bounded work and no wait: a burst the room
@@ -4047,7 +4048,8 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
     rocketnet_server_transport_stop_step( server_transport );
 }
 
-// proofs/tla/ServerStopSpread.tla IoStopped: stopped only once the last burst
+// proofs/tla/ServerStopSpread.tla IoStopped (and proofs/tla/RNServerLinkStop.tla
+// IoStopped): stopped only once the last burst
 // was handed over and the workers have exited. While bursts wait, the poll
 // is the next stop step, as the I/O's own stopped may service ready
 // completions; the transport is never a const object, only this view of it.
