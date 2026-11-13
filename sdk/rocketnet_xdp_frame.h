@@ -889,6 +889,27 @@ static inline int rocketnet_xdp_thread_cpu( int num_os_cpus, int queue )
     return ( num_os_cpus < 1 ? 1 : num_os_cpus ) + queue;
 }
 
+// The mask an XDP thread falls back to when its own pin is refused (a cpu
+// outside the set or offline, or the affinity call failing): the cpus it is
+// allowed on less core 0, which the operating system keeps on Linux. allowed
+// and out are bit arrays of bytes bytes, cpu n at bit n % 8 of byte n / 8 (a
+// Linux cpu_set_t's layout). Returns how many cpus out holds; with 0 the
+// thread has nowhere but core 0 and the caller leaves its mask alone.
+
+static inline int rocketnet_xdp_mask_without_core_zero( const uint8_t * allowed, uint8_t * out, int bytes )
+{
+    int count = 0;
+    for ( int i = 0; i < bytes; i++ )
+    {
+        out[i] = i == 0 ? (uint8_t) ( allowed[i] & 0xFE ) : allowed[i];
+        for ( int bit = 0; bit < 8; bit++ )
+        {
+            count += ( out[i] >> bit ) & 1;
+        }
+    }
+    return count;
+}
+
 // PIN TARGETS: every cpu this transport will pin to, num_os_cpus ..
 // num_os_cpus + num_queues - 1, is in the kernel's isolated cpu-list
 // ("1-7", "1,3,5-6", a trailing newline). A malformed or empty list never

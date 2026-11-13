@@ -79,6 +79,12 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 // the trace check's plants (tests/tla_trace_xdp_*.cpp) change the XDP code they
 // name, and only the trace check's plant binaries (ROCKETNET_TLA_PLANT) may
 // build them: a library build refuses every one
+// the xdp-replay trace check's replay window of 2 is the trace targets' alone
+// (CMakeLists.txt rocketnet_tla_trace_target): the library build refuses it
+#if defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW ) && !defined( ROCKETNET_TLA_PLANT )
+#error "ROCKETNET_TLA_XDP_REPLAY_WINDOW is defined outside the trace check's targets"
+#endif
+
 #if !defined( ROCKETNET_TLA_PLANT ) && ( defined( ROCKETNET_XDP_RECEIVE_RING_PLANT ) || defined( ROCKETNET_XDP_REPLAY_PLANT ) || defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT ) || defined( ROCKETNET_XDP_REPLY_MACS_PLANT ) || defined( ROCKETNET_XDP_GATEWAY_REFRESH_PLANT ) )
 #error "an XDP trace plant is defined outside the trace check's plant binaries"
 #endif
@@ -290,13 +296,9 @@ struct rocketnet_server_xdp_socket_t
     // main needs to publish (rocketnet_xdp_handoff_lock)
     std::atomic<int> send_ready{ 0 };
 
-    // publishes main put off because send_mutex stayed held through every
-    // try (rocketnet_xdp_handoff_lock): the producer stays staged and the
-    // next send_packets publishes it; main only, read by the counters
-    std::atomic<uint64_t> send_publish_deferred{ 0 };
-
-    // receive drains main put off the same way; main only
-    std::atomic<uint64_t> receive_drain_deferred{ 0 };
+    // a publish or drain main puts off because the lock stayed held through
+    // every try (rocketnet_xdp_handoff_lock) leaves the producer staged for
+    // the next call; nothing counts it
     int receive_held_index = -1; // game view; returned at the next receive call
     uint32_t receive_read_index = 0;
 
@@ -3201,7 +3203,7 @@ static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_sock
         {
             continue;
         }
-        if ( hold_all || rocketnet_xdp_replay_marks_holds_greeting( server_socket->replay_marks, &info->to ) )
+        if ( rocketnet_xdp_replay_sink_holds_greeting( server_socket->replay_marks, hold_all, &info->to ) )
         {
             info->packet_bytes = 0;
             server_socket->replay_greetings_held++;
@@ -3230,7 +3232,6 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         if ( !rocketnet_xdp_handoff_lock( [socket]()
                                           { return rocketnet_platform_mutex_try_acquire( &socket->send_mutex ); }, ROCKETNET_XDP_HANDOFF_TRIES ) )
         {
-            socket->send_publish_deferred.fetch_add( 1, std::memory_order_relaxed );
             continue;
         }
         // proofs/tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
@@ -4034,6 +4035,36 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     memcpy( server_socket->process_eth[index], eth, ETH_ALEN );
 }
 
+// a refused pin leaves the thread on the mask it inherited, which may hold
+// core 0: take that mask less core 0 (rocketnet_xdp_mask_without_core_zero),
+// so a busy-polling XDP thread never runs on the operating system's core
+
+static void xdp_thread_leave_core_zero()
+{
+    cpu_set_t allowed;
+    CPU_ZERO( &allowed );
+    if ( pthread_getaffinity_np( pthread_self(), sizeof( cpu_set_t ), &allowed ) != 0 )
+    {
+        rocketnet_error( "xdp thread: its affinity cannot be read, so it cannot be kept off core 0" );
+        return;
+    }
+
+    cpu_set_t fallback;
+    CPU_ZERO( &fallback );
+    const int left = rocketnet_xdp_mask_without_core_zero( (const uint8_t *) &allowed, (uint8_t *) &fallback, (int) sizeof( cpu_set_t ) );
+    if ( left == 0 )
+    {
+        rocketnet_error( "xdp thread: core 0 is the only cpu it may run on" );
+        return;
+    }
+
+    const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &fallback );
+    if ( result != 0 )
+    {
+        rocketnet_error( "xdp thread: could not leave core 0: %s", strerror( result ) );
+    }
+}
+
 static void pin_thread_to_cpu( int cpu )
 {
     // CPU_SET writes bit cpu of a CPU_SETSIZE-bit set: a cpu outside it is
@@ -4042,6 +4073,7 @@ static void pin_thread_to_cpu( int cpu )
     if ( !rocketnet_xdp_cpu_in_set( cpu, CPU_SETSIZE ) )
     {
         rocketnet_error( "xdp thread not pinned: cpu %d is outside 0 .. %d", cpu, CPU_SETSIZE - 1 );
+        xdp_thread_leave_core_zero();
         return;
     }
 
@@ -4052,6 +4084,7 @@ static void pin_thread_to_cpu( int cpu )
     if ( cpu >= num_cpus )
     {
         rocketnet_error( "xdp thread not pinned: cpu %d is not online (0 .. %d)", cpu, num_cpus - 1 );
+        xdp_thread_leave_core_zero();
         return;
     }
 
@@ -4066,7 +4099,8 @@ static void pin_thread_to_cpu( int cpu )
     {
         char call[64];
         snprintf( call, sizeof( call ), "pthread_setaffinity_np cpu %d", cpu );
-        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call, strerror( result ), "the thread runs on any cpu" );
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call, strerror( result ), "the thread runs on any cpu but core 0" );
+        xdp_thread_leave_core_zero();
     }
 }
 
@@ -4362,7 +4396,6 @@ static bool rocketnet_server_socket_receive_lock( rocketnet_server_xdp_socket_t 
     {
         return true;
     }
-    socket->receive_drain_deferred.fetch_add( 1, std::memory_order_relaxed );
     return false;
 }
 

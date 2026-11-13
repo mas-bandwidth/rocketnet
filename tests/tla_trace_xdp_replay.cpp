@@ -1006,7 +1006,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
                                              rp_update_single, &walk, &walk.zero_mark_refused, &walk.hold_all_greetings );
 
                 // the publish after the commit holds a keep-alive as
-                // rocketnet_server_socket_hold_greetings does: every one when
+                // rocketnet_server_socket_hold_greetings does (rocketnet_xdp_replay_sink_holds_greeting): every one when
                 // a zero mark was not queued, else one whose kept mark is 0
                 for ( int b = 0; b < RP_ADDRESSES; b++ )
                 {
@@ -1015,7 +1015,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
                         walk.greeted[b] = false;
                         continue;
                     }
-                    const bool held = walk.hold_all_greetings || rocketnet_xdp_replay_marks_holds_greeting( &walk.marks, &walk.address[b] );
+                    const bool held = rocketnet_xdp_replay_sink_holds_greeting( &walk.marks, walk.hold_all_greetings, &walk.address[b] );
                     walk.greeted[b] = walk.greeted[b] || !held;
                 }
                 for ( int b = 0; b < RP_ADDRESSES; b++ )

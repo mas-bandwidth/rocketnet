@@ -118,4 +118,16 @@ static inline uint64_t rocketnet_xdp_replay_commit( struct rocketnet_xdp_replay_
     return refused;
 }
 
+// The publish's decision for one keep-alive (a session's greeting): held, so
+// not sent, when the last commit left a zero mark unqueued (hold_all) or the
+// destination's kept mark is 0 (proofs/tla/RNXdpReplay.tla Commit, the greeting
+// held until its mark is applied). rocketnet_server_socket_hold_greetings calls
+// it for every keep-alive of a publish and the xdp-replay trace check for every
+// session after a commit.
+
+static inline bool rocketnet_xdp_replay_sink_holds_greeting( const struct rocketnet_xdp_replay_marks_t * marks, bool hold_all, const struct rocketnet_address_t * to )
+{
+    return hold_all || rocketnet_xdp_replay_marks_holds_greeting( marks, to );
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_SINK_H
