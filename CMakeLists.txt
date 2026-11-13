@@ -1172,6 +1172,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         endif()
     endif()
     file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/channel_*.cpp" )
+    # The corpus-consistency cases read tests/pcapng and tests/fuzz/corpus
+    # through the source directory (functional and functional_production).
+    set_property( SOURCE tests/functional/corpus_consistency.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     add_executable(functional
         tests/functional/main.cpp
         tests/functional/unit_case_memory.cpp

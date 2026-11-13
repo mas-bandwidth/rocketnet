@@ -508,9 +508,9 @@ def assert_name_set(printed, registered, always, label, exec_names=None):
                  % (label, len(printed), len(registered), "; ".join(parts)))
 
 
-def run_binary(binary, env, timeout):
+def run_binary(binary, env, timeout, extra=()):
     try:
-        result = subprocess.run([str(binary)], env=env, text=True,
+        result = subprocess.run([str(binary)] + list(extra), env=env, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=execution_timeout(timeout))
     except subprocess.TimeoutExpired:
@@ -538,12 +538,25 @@ def main():
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),
     # which compiles no in-memory environment table and so no restoration test
     production = "--production" in sys.argv[1:]
+    # --shard I/N (the unit suite only): run the suite's shard I of N under the
+    # ambient overrides and hold its output to the registered names of that
+    # shard (suite_shard_of); shards 0 to N-1 together are the whole check
+    unit_shard = None
+    if "--shard" in args:
+        at = args.index("--shard")
+        m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args[at + 1]) if at + 1 < len(args) else None
+        if not m or int(m.group(1)) >= int(m.group(2)):
+            sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N")
+        unit_shard = (int(m.group(1)), int(m.group(2)))
+        args = args[:at] + args[at + 2:]
     binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
 
     env = os.environ.copy()
     env.pop("ROCKETNET_TEST_VERBOSE", None)
 
+    if functional and unit_shard is not None:
+        sys.exit("check_test_environment.py: --shard here is for the unit suite; a functional log takes --functional-log LOG --shard I/N")
     if functional:
         # the functional suite opens loopback sockets and walks the transport
         # transport order; its CI job invokes it with the ambient environment (and any
@@ -576,15 +589,29 @@ def main():
         "ROCKETNET_PUMP": "portable",
     })
 
-    result = run_binary(binary, env, timeout=180)
+    extra = ()
+    label = "SDK suite"
+    if unit_shard is not None:
+        extra = ("--shard", "%d/%d" % unit_shard)
+        label = "SDK suite shard %d/%d" % unit_shard
+    result = run_binary(binary, env, timeout=180, extra=extra)
     if result.returncode:
-        sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
-    names = check_shape(result.stdout.splitlines(), "SDK suite", once=True)
-    if not production and "test_suite_environment" not in names:
-        sys.exit("SDK suite did not execute its environment restoration test")
+        sys.exit("%s failed with ambient config overrides: %s" % (label, result.returncode))
+    lines = result.stdout.splitlines()
+    if unit_shard is not None:
+        # a shard run prints one "shard I/N: k of m cases" line first (suite_keep_shard)
+        shard_lines = [line for line in lines if SHARD_LINE_RE.fullmatch(line)]
+        found = [(int(SHARD_LINE_RE.fullmatch(line).group(1)), int(SHARD_LINE_RE.fullmatch(line).group(2))) for line in shard_lines]
+        if found != [unit_shard]:
+            sys.exit("%s: expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (label, unit_shard[0], unit_shard[1], found))
+        lines = [line for line in lines if not SHARD_LINE_RE.fullmatch(line)]
+    names = check_shape(lines, label, once=True)
+    in_shard = (lambda name: True) if unit_shard is None else (lambda name: shard_of(name, unit_shard[1]) == unit_shard[0])
+    if not production and in_shard("test_suite_environment") and "test_suite_environment" not in names:
+        sys.exit("%s did not execute its environment restoration test" % label)
 
     reg_all, reg_always = registered_unit_names(production)
-    assert_name_set(set(names), reg_all, reg_always, "SDK suite")
+    assert_name_set(set(names), {n for n in reg_all if in_shard(n)}, {n for n in reg_always if in_shard(n)}, label)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+// The tree is found through ROCKETNET_SOURCE_DIR (CMakeLists.txt), never
+// through __FILE__: CI's compiler cache hands the compiler paths relative to
+// the build directory (.github/actions/ccache), so __FILE__ is relative there.
+#ifndef ROCKETNET_SOURCE_DIR
+#error "corpus_consistency.cpp needs ROCKETNET_SOURCE_DIR (CMakeLists.txt sets it)"
+#endif
+
 static void corpus_consistency_check_handler( const char * condition, const char * function, const char * file, int line )
 {
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
@@ -126,10 +133,7 @@ static void pcapng_allocator_restore()
 
 static std::string pcapng_directory()
 {
-    std::string source = __FILE__;
-    size_t slash = source.find_last_of( "/\\" );
-    std::string root = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
-    return root + "/../pcapng";
+    return std::string( ROCKETNET_SOURCE_DIR ) + "/tests/pcapng";
 }
 
 static const char * pcapng_type_name( int packet_type )
@@ -898,10 +902,7 @@ static const prefilter_seed_t prefilter_seeds[] = {
 
 static std::string prefilter_seed_path( const char * name )
 {
-    std::string source = __FILE__;
-    size_t slash = source.find_last_of( "/\\" );
-    std::string root = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
-    return root + "/../fuzz/corpus/" + name;
+    return std::string( ROCKETNET_SOURCE_DIR ) + "/tests/fuzz/corpus/" + name;
 }
 
 void test_fuzz_prefilter_seed_names_match_outcomes()

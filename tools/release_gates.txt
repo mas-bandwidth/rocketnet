@@ -65,16 +65,22 @@ ci.yml | ubuntu ${{ matrix.release }} / container build and unit suite | skip | 
 ci.yml | platform selftests / ${{ matrix.os }} | skip | v1.1.8 | push,pull_request | if: inputs.full (nightly tier)
 ci.yml | unit-case coverage | skip | v1.1.8 | push,pull_request | if: inputs.full && !cancelled() (nightly tier)
 ci.yml | asan + ubsan (functional suite) | full | v1.1.10 | push,pull_request | sanitizer leg
-ci.yml | asan + ubsan (unit suite 0/2) | full | v1.1.10 | push,pull_request | sanitizer leg
-ci.yml | asan + ubsan (unit suite 1/2) | full | v1.1.10 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 0/4) | full | v1.1.51 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 1/4) | full | v1.1.51 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 2/4) | full | v1.1.51 | push,pull_request | sanitizer leg
+ci.yml | asan + ubsan (unit suite 3/4) | full | v1.1.51 | push,pull_request | sanitizer leg
 ci.yml | tsan (loopback soak) | full | v1.1.10 | push,pull_request | sanitizer leg, real sockets
+ci.yml | tsan (wide fill) | full | v1.1.51 | push,pull_request | sanitizer leg, job threads
 ci.yml | fuzz smoke (corpus replay) | full | v1.1.10 | push,pull_request | sanitizer fuzz build
+ci.yml | fuzz smoke (corpus mutants 0/2) | full | v1.1.51 | push,pull_request | sanitizer fuzz build, mutants
+ci.yml | fuzz smoke (corpus mutants 1/2) | full | v1.1.51 | push,pull_request | sanitizer fuzz build, mutants
 ci.yml | happy path / linux | full | v1.1.10 | push,pull_request | real sockets end to end
 ci.yml | happy path / windows | full | v1.1.10 | push,pull_request | real sockets end to end
 ci.yml | linux / Debug / functional | full | v1.1.10 | push,pull_request | functional suite
-ci.yml | linux / Debug / functional (0/3) | full | v1.1.31 | push,pull_request | functional suite shard
-ci.yml | linux / Debug / functional (1/3) | full | v1.1.31 | push,pull_request | functional suite shard
-ci.yml | linux / Debug / functional (2/3) | full | v1.1.31 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (0/4) | full | v1.1.51 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (1/4) | full | v1.1.51 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (2/4) | full | v1.1.51 | push,pull_request | functional suite shard
+ci.yml | linux / Debug / functional (3/4) | full | v1.1.51 | push,pull_request | functional suite shard
 ci.yml | linux / Release / functional | full | v1.1.10 | push,pull_request | functional suite
 ci.yml | linux / Release / functional (0/3) | full | v1.1.31 | push,pull_request | functional suite shard
 ci.yml | linux / Release / functional (1/3) | full | v1.1.31 | push,pull_request | functional suite shard
@@ -82,7 +88,11 @@ ci.yml | linux / Release / functional (2/3) | full | v1.1.31 | push,pull_request
 ci.yml | macos / Release / functional | full | v1.1.10 | push,pull_request | functional suite
 ci.yml | macos / Release / functional_production | full | v1.1.10 | push,pull_request | functional suite
 ci.yml | linux / Debug / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
+ci.yml | linux / Debug / transport_matrix (0/2) | full | v1.1.51 | push,pull_request | functional, every transport, shard
+ci.yml | linux / Debug / transport_matrix (1/2) | full | v1.1.51 | push,pull_request | functional, every transport, shard
 ci.yml | linux / Release / transport_matrix | full | v1.1.10 | push,pull_request | functional, every transport
+ci.yml | linux / Release / transport_matrix (0/2) | full | v1.1.51 | push,pull_request | functional, every transport, shard
+ci.yml | linux / Release / transport_matrix (1/2) | full | v1.1.51 | push,pull_request | functional, every transport, shard
 static.yml | - | jobs | v1.1.8 | push,pull_request | every static analysis job success
 docs.yml | - | jobs | v1.1.8 | push,pull_request | every docs job success
 release-check.yml | - | jobs | v1.1.8 | push,pull_request | every Release Check job success

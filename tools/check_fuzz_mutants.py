@@ -19,7 +19,7 @@
 # made); an EQUIVALENT mutant that some replay kills is stale and fails too.
 # A mutant whose source text is gone fails: review the table.
 #
-#   python3 tools/check_fuzz_mutants.py [--build build-fuzz] [--only ID[,ID]] [--jobs N]
+#   python3 tools/check_fuzz_mutants.py [--build build-fuzz] [--only ID[,ID] | --shard I/N] [--jobs N]
 #   python3 tools/check_fuzz_mutants.py --list
 #   python3 tools/check_fuzz_mutants.py --find-inputs ID --seconds S --out DIR
 #       (by hand: fuzz the mutant's session harness from its corpus for S
@@ -367,6 +367,9 @@ def main():
     parser.add_argument("--find-inputs", default="")
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--out", default="")
+    # --shard I/N: judge the mutants at positions I, I+N, I+2N, ... of the table
+    # (ci.yml's fuzz smoke mutants legs); shards 0 to N-1 together are the table
+    parser.add_argument("--shard", default="")
     args = parser.parse_args()
     if args.list:
         for m in MUTANTS:
@@ -378,6 +381,15 @@ def main():
             fail("--find-inputs needs --out DIR")
         return find_inputs(build, args.find_inputs, args.seconds, args.out)
     only = [x for x in args.only.split(",") if x]
+    if args.shard:
+        parts = args.shard.split("/")
+        if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit() or int(parts[0]) >= int(parts[1]):
+            fail("--shard is I/N with 0 <= I < N: %s" % args.shard)
+        if only:
+            fail("--shard and --only do not combine")
+        index, shards = int(parts[0]), int(parts[1])
+        only = [m["id"] for position, m in enumerate(MUTANTS) if position % shards == index]
+        print("shard %d/%d: %d of %d mutants" % (index, shards, len(only), len(MUTANTS)))
     return run_all(build, only, args.jobs)
 
 
