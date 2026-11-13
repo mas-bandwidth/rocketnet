@@ -5,7 +5,7 @@ field, export, status value, packet layout or protocol version changes, and
 v1.0.0, v1.1.0, v1.1.1, v1.1.2, v1.1.3, v1.1.4 and v1.1.5 endpoints
 interoperate in both directions.
 
-- Correction: `v1.1.5` was never tagged or released. These changes shipped in
+- Correction: `v1.1.5` was not published as a release. These changes shipped in
   [v1.1.6](RELEASE-NOTES-v1.1.6.md), which compares with the `v1.1.4` tag.
 
 ## Fixes since v1.1.4

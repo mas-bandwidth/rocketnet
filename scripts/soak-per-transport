@@ -59,16 +59,18 @@
 # verify failure, a conservation failure, a resource that did not stay flat,
 # the link impairment not observed, the wrong transport) is FAIL whatever the
 # host did. The bound is the bank
-# arithmetic of the smallest server send ring: the gso transport holds
-# ROCKETNET_GSO_SEND_QUEUE_SIZE (16384, read from sdk/rocketnet_server_gso.h
-# at start) packets per producer bank, and the soak sends about one packet per
-# iteration, so a refusal needs the send worker held for 16384 iterations,
-# 16384 / (iterations per second) seconds (about 18.9 s at the nightly's ~868
-# iterations/s). The main loop is a different thread from the worker, so its
-# gap is only a sample of how starved the host was: the bound is a tenth of
-# that refusal gap (about 1888 ms at ~868/s). The tenth is
-# a margin chosen, not measured; a clean bench host's largest gap over 1800 s
-# was 106 ms (HARDEN-SERVER-TRANSPORTS.md F1).
+# arithmetic of one reference bank, gso's, used for every cell: the gso
+# transport holds ROCKETNET_GSO_SEND_QUEUE_SIZE (16384, read from
+# sdk/rocketnet_server_gso.h at start) packets per producer bank, and the soak
+# sends about one packet per iteration, so a gso refusal needs the send worker
+# held for 16384 iterations, 16384 / (iterations per second) seconds (about
+# 18.9 s at the nightly's ~868 iterations/s). It is not the smallest bank:
+# io_uring's producer bank is 4096 slots at the soak's 16 clients
+# (rocketnet_server_uring_send_slots, sdk/rocketnet_server_uring.h), so an
+# io_uring refusal needs a quarter of that hold. The main loop is a different
+# thread from the worker, so its gap is only a sample of how starved the host
+# was: the bound is a tenth of the gso refusal gap (about 1888 ms at ~868/s).
+# The gso reference and the tenth are a choice, not a measurement.
 # When at least one cell was UNMEASURED and every other cell passed, the run
 # prints `::warning title=UNMEASURED::<the stalls>` (the nightly watch's
 # convention, tools/check_nightly_dispositions.py) and still exits 1; when any
@@ -110,8 +112,9 @@ VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
 JUDGE_LOGS=()
 JUDGE_STATUSES=()
 # ROCKETNET_GSO_SEND_QUEUE_SIZE (sdk/rocketnet_server_gso.h): the packets one
-# producer bank holds; the stall bound's arithmetic (the header above). Read
-# from the header so the bound follows the transport.
+# gso producer bank holds, the reference bank of the stall bound's arithmetic
+# for every cell (the header above). Read from the header so the bound follows
+# gso's bank size.
 GSO_HEADER="$SCRIPT_DIR/../sdk/rocketnet_server_gso.h"
 SEND_BANK_PACKETS=$(sed -nE 's/^#define ROCKETNET_GSO_SEND_QUEUE_SIZE[[:space:]]+([0-9]+)[[:space:]]*$/\1/p' "$GSO_HEADER" 2>/dev/null)
 if [ -z "$SEND_BANK_PACKETS" ]; then

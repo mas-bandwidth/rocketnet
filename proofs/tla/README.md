@@ -128,8 +128,13 @@ uses the pinned JAR from `/opt/tla/tla2tools.jar`. It has two parts.
   debt each night (N = 3, so the whole inventory every three nights;
   `TLC re-run full` on a dispatch with `full` re-runs every such case). The
   timeout debt listed in `NIGHTLY-DEBT.tsv` runs in every slice, under its
-  own budget. Each fresh result is held to its `RUNS.tsv` record
-  (`tools/compare_tlc_rerun.py`); any difference fails by case name.
+  own budget. `tools/compare_tlc_rerun.py` holds each fresh result to an
+  expected record and fails by case name on any difference. For a case that
+  is not timeout debt, that is its `RUNS.tsv` record. For a
+  `NIGHTLY-DEBT.tsv` case, whose `RUNS.tsv` record stays the bounded
+  `FAIL`/124, it is that record with the result set to `PASS`, the exit code
+  to the declared one for its expected result, and the state counts to the
+  completed counts in its `NIGHTLY-DEBT.tsv` row.
 
 Neither part runs any other timeout-debt case; those run in
 [tlc-debt.yml](../../.github/workflows/tlc-debt.yml), a weekly watch that is

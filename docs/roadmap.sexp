@@ -10,16 +10,16 @@
 ; leave the blank lines around it.
 (roadmap "v1"
  :title "RocketNet roadmap"
- :text "Planned work for RocketNet that is not on main. Work lands on main before new work starts. Audit item numbers refer to the review of 2026-10-31. Branch names are plain branches holding started work to resume from. Landed work is in git. Pull requests edit only docs/roadmap.sexp; this page is regenerated on main."
+ :text "Planned work for RocketNet that is not on main. Work lands on main before new work starts. Branch names are plain branches holding started work to resume from. Landed work is in git. Pull requests edit only docs/roadmap.sexp; this page is regenerated on main."
 
  :groups
  (
-  (group "audit-remaining" :title "Audit items not yet fixed"
-   :text "Suspects from the review of 2026-10-31 that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.")
+  (group "audit-remaining" :title "Suspected defects not yet fixed"
+   :text "Suspected defects found by review that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.")
   (group "quiet-host" :title "Investigations that need a quiet host"
    :text "Findings that only a quiet fleet host can measure or reproduce.")
   (group "proof-debt" :title "Existing nightly proof debt"
-   :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the completed audit correspondence repairs.")
+   :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the model and code correspondence repairs already on main.")
 
   (group "after-v1-0-1" :title "Found while preparing v1.0.1"
    :text "Defects, gaps and measurements found by the v1.0.1 review and test campaign that a point release does not carry. Each is checked at the cited code first.")
@@ -30,7 +30,7 @@
   (group "after-v1-1-landing" :title "Found while landing and re-measuring the v1.1.x transport work"
    :text "Known and not done after the transport work landed on main as v1.1.x point releases and was measured again from main (2026-11-13). Each says where it is and how it was found.")
   (group "review-v1-2" :title "Found by the review before v1.2.0, not fixed for it"
-   :text "Findings of the review that started on 2026-11-13 (main 5488a5443) that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.")
+   :text "Findings of the review that started on 2026-11-13 that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.")
  )
 
  :items
@@ -67,8 +67,8 @@
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"
-   :text "Audit 88 and 124: measure on a Windows host, then add re-flush counters if the measurement supports it."
-   :date "2026-10-31" :origin "Audit items 88, 124")
+   :text "The iocp and rio transports do not declare ROCKETNET_TRANSPORT_REFLUSHES (iocp_operations and rio_operations in sdk/rocketnet_driver_builtin.cpp), so send_packets flushes them only after a new commit (the REFLUSHES test in sdk/rocketnet_server_transport.cpp); gso, io_uring, msgx and XDP declare it. Measure on a Windows host whether sends left unfinished at one flush wait for the next commit; add re-flush, with counters, if the measurement supports it."
+   :date "2026-10-31" :origin "sdk/rocketnet_driver_builtin.cpp; sdk/rocketnet_server_transport.cpp")
 
 
   (item "load-md-generated" :group "audit-remaining" :area "docs"
@@ -77,22 +77,22 @@
    :date "2026-10-31" :origin "#721 follow-on")
 
   (item "audit-follow-on-proposals" :group "decisions" :area "tools"
-   :title "Optional audit follow-on proposals"
-   :text "The concrete low-severity docs, standard, test and tooling mismatches are repaired. Four audit suggestions introduce new requirements: 148 extends the make-jobs policy to cmake --build --parallel; 185 cross-checks each t8 field-table sum against its summary row; 223 adds in-loop protocol assertions to the structured receive fuzzer; 226 changes the socket-error loopback burst/deadline. Evaluate these separately; they are not unresolved violations of the existing gates."
-   :date "2026-11-01" :origin "Audit items 148, 185, 223, 226; #835, #837, #838, #839")
+   :title "Optional follow-on proposals"
+   :text "The concrete low-severity docs, standard, test and tooling mismatches are repaired. Four suggestions introduce new requirements: extend the make-jobs policy to cmake --build --parallel; cross-check each t8 field-table sum against its summary row; add in-loop protocol assertions to the structured receive fuzzer; change the socket-error loopback burst/deadline. Evaluate these separately; they are not unresolved violations of the existing gates."
+   :date "2026-11-01" :origin "#835, #837, #838, #839")
 
   (item "xdp-receive-loss" :group "quiet-host" :area "rocketnet"
    :title "Loaded-host XDP receive loss report: not reproduced"
    :text "The requested quiet reproduction is complete. At SDK source 3e8e4d17 on 2026-11-01, the existing 1000-client, 60-second XDP cell passed with host and guest both on 7.0.0-38-generic: 600000 sent/received, zero drops, and descriptor/thread baselines restored. The earlier 7.0.0-34 guest pass is separate evidence. The reported loss under host load 170 did not reproduce; its cause remains unknown. This controlled native observation establishes neither an SDK fix, a per-frame-budget result, nor a green GitHub workflow run."
-   :date "2026-10-31" :origin "Audit item 41; quiet/current-kernel observation 2026-11-01")
+   :date "2026-10-31" :origin "A report of XDP receive loss under host load; quiet/current-kernel observation 2026-11-01")
 
 
 
 
   (item "decision-resend-cap" :group "decisions" :area "rocketnet"
    :title "Cap the single-packet resend delay at timeout/4"
-   :text "Audit 16: with message_resend_delay_max_ms above reliable_message_timeout_ms/4, a single-packet record gets fewer than four sends before timeout. Recommended: cap it as chunks are. Then both resend classes share one delay, and the two resend queues could collapse to one; that removes machinery."
-   :date "2026-10-31" :origin "Audit item 16")
+   :text "With message_resend_delay_max_ms above reliable_message_timeout_ms/4, a single-packet record gets fewer than four sends before timeout. Recommended: cap it as chunks are. Then both resend classes share one delay, and the two resend queues could collapse to one; that removes machinery."
+   :date "2026-10-31" :origin "Review of the reliable message resend timing")
 
 
 
@@ -103,8 +103,8 @@
 
   (item "apply-main-ruleset" :group "decisions" :area "github"
    :title "Apply the main ruleset before the first outside pull request"
-   :text "Main has no ruleset on GitHub that requires a check (audit 44), on purpose for now. Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now."
-   :date "2026-11-12" :origin "Audit item 44")
+   :text "Main has no ruleset on GitHub that requires a check, on purpose for now. Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now."
+   :date "2026-11-12" :origin ".github/rulesets/main.json")
 
   (item "frame-budget-runner-label" :group "decisions" :area "fleet"
    :title "A runner label for the nightly frame budget held only by two fleet runners"
@@ -409,7 +409,7 @@
   (item "uring-prefilter-wrong-value-once" :group "after-v1-1-landing" :area "sdk"
    :title "PREFILTER_WRONG_VALUE seen once on io_uring under heavy bench load"
    :text "A Debug functional row of the io_uring work reported PREFILTER_WRONG_VALUE 1274 once, under heavy load on a Linux bench; 12 reruns did not reproduce it and the cause was not found. A DEV-only sampler now records the first refused datagrams (source, length, first 16 bytes) in sdk/rocketnet_receive_prefilter.h and prints them in the clean-run report. When it recurs, read the samples; the open question is whether a datagram can reach the io_uring prefilter with wrong bytes or length (provided-buffer index, completion length, GRO split, a buffer returned while still referenced)."
-   :date "2026-11-13" :origin "Review of the io_uring transport work, gate at ad93b2ad6")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "server-update-task-callbacks" :group "after-v1-1-landing" :area "sdk"
    :title "Distribute the server update with task callbacks in the config, only on measured need"
