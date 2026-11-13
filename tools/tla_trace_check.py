@@ -120,9 +120,8 @@ LAYERS = {
     "ackapply": {
         "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
         "untraced": {},
-        "ghost": {"arrived": "history for Whole and Published: the arrival order since the receive began; the code's queue "
-                             "forgets it at the gather"},
-        "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled"],
+        "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
+                  "GatheredRangesFull"],
     },
 }
 

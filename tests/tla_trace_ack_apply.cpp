@@ -10,7 +10,10 @@
 // The code under test is the server's acks with the deferral on
 // (sdk/rocketnet_ack.cpp, rocketnet_server_acks_t), the state behind the
 // update in three calls: a server acks of AA_CLIENTS clients, created and
-// deferred as the server transport does it. The main thread is the walk's
+// deferred as the server transport does it, then its queue lowered to
+// AA_PENDING entries and its range store to one block's ranges
+// (rocketnet_server_acks_lower_capacity_for_test), so the walk fills both
+// and the early gather runs in the code. The main thread is the walk's
 // thread. The game threads are AA_GAME_THREADS real threads, because the take
 // is the one call the code gives to any thread; the walk hands one call at a
 // time to one of them and waits for it, so a seed is one order of whole
@@ -21,8 +24,12 @@
 //   receive_block  rocketnet_server_acks_receive_block for one client, while
 //                  receiving: Receive(c, b, r). The block acknowledges the
 //                  client's next sent sequence b, which no block has
-//                  acknowledged, and r ranges below it that earlier blocks
-//                  have, so its apply gives exactly one id, b
+//                  acknowledged, and r ranges below it over sequences
+//                  acknowledged already, so its apply gives exactly one id,
+//                  b. Most blocks carry up to 2 ranges and some
+//                  AA_BIG_RANGES, three of which do not fit the range store.
+//                  A block that finds the queue or the range store full is
+//                  the same call and the same action: the code gathers first
 //   settle         rocketnet_server_acks_settle for a client the code says
 //                  has blocks queued, while receiving: Settle(c)
 //   open           rocketnet_server_acks_open: Open
@@ -50,16 +57,18 @@
 //   batch      acks->acked_client_index and acks->acked_packet_ids, the
 //              first num_acked
 //
-// One variable the code holds no word for is kept by the walk from the
-// calls' results, as the writer's finish layer keeps its touched:
+// Two variables the code holds no word for are kept by the walk from its
+// calls, as the writer's finish layer keeps its touched:
 //
 //   took       per client, the threads whose take returned blocks applied
 //              since the last open: the history OneTaker reads. The code
 //              keeps only the claim, which says a client is taken, not by
 //              whom
+//   arrived    the blocks the walk handed to receive_block since the last
+//              begin_receive, in order: the history Whole and Published
+//              read. The code's queue forgets it at the gather
 //
-// The row's ghost is arrived, the arrival order since the receive began: the
-// code's queue forgets it at the gather, and no step of the model reads it.
+// The row has no ghost.
 //
 // The walk fails if a block counts an unknown sequence or a full batch: its
 // blocks are made so that none does.
@@ -90,11 +99,15 @@
 #include "tla_trace_record.h"
 
 void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t * acks, int client_index, int * head, int * tail, int * claim, int * ids );
+bool rocketnet_server_acks_lower_capacity_for_test( struct rocketnet_server_acks_t * acks, int pending, int ranges );
 
 #define AA_CLIENTS       3
 #define AA_GAME_THREADS  2
 #define AA_THREADS       ( 1 + AA_GAME_THREADS ) // the main thread is thread 0
-#define AA_MAX_RANGES    2                       // the ranges a block of the walk carries at most
+#define AA_PENDING       6                       // the queue's entries, lowered from the code's own
+#define AA_SMALL_RANGES  2                       // most blocks carry 0 .. AA_SMALL_RANGES ranges
+#define AA_BIG_RANGES    100                     // some carry this many: the third does not fit a store of one block's ranges
+#define AA_FIRST_BLOCK   600                     // each client's first block: every sequence below it is acknowledged before the walk
 #define AA_SEND_TIME     1000.0                  // the walk's two times: no step of the model is time's
 #define AA_RECEIVE_TIME  1000.5
 
@@ -181,9 +194,9 @@ static aa_client_t aa_client( const aa_walk_t * walk, int c )
     return client;
 }
 
-// every variable of RNAckApplyPhase but the ghost: read from the code, but
-// for took, which the walk keeps from the takes' results
-static tla_record_t aa_state( const aa_walk_t * walk )
+// every variable of RNAckApplyPhase: read from the code, but for took and
+// arrived, which the walk keeps from its calls
+static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::string> & arrived )
 {
     static const char * const phase_names[] = { "\"closed\"", "\"receiving\"", "\"open\"" };
     const struct rocketnet_server_acks_t * acks = walk->acks;
@@ -250,6 +263,7 @@ static tla_record_t aa_state( const aa_walk_t * walk )
     state.add( "segment", tla_function( clients, segment ) );
     state.add( "batch", tla_sequence( batch ) );
     state.add( "took", tla_function( clients, took ) );
+    state.add( "arrived", tla_sequence( arrived ) );
     return state;
 }
 
@@ -274,17 +288,28 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     }
     struct rocketnet_server_acks_t * acks = walk.acks;
 
-    // before the first record: each client has sent every sequence a block of
-    // the walk can acknowledge, each with its sequence as its packet id. The
-    // sends are the endpoint's, not a step of this model
+    // before the first record: the queue and the range store are lowered so
+    // the walk fills them; each client has sent every sequence a block of the
+    // walk can acknowledge, each with its sequence as its packet id, and has
+    // had every sequence below AA_FIRST_BLOCK acknowledged, so a block's
+    // ranges find nothing new. The sends and that first acknowledgment are
+    // the endpoint's, not steps of this model
 
-    const int blocks = steps + 1;
+    const int blocks = AA_FIRST_BLOCK + steps;
     bool fault = false;
-    if ( blocks >= ROCKETNET_SENT_PACKET_BUFFER_SIZE )
+    if ( !rocketnet_server_acks_lower_capacity_for_test( acks, AA_PENDING, ROCKETNET_ACK_BLOCK_MAX_RANGES ) )
     {
-        fprintf( stderr, "tla_trace ackapply: %d steps pass the sent window of %d\n", steps, ROCKETNET_SENT_PACKET_BUFFER_SIZE );
+        fprintf( stderr, "tla_trace ackapply: the queue was not lowered to %d entries and %d ranges\n", AA_PENDING, ROCKETNET_ACK_BLOCK_MAX_RANGES );
         fault = true;
     }
+    if ( blocks >= ROCKETNET_SENT_PACKET_BUFFER_SIZE || 2 * AA_BIG_RANGES >= AA_FIRST_BLOCK || 3 * AA_BIG_RANGES <= ROCKETNET_ACK_BLOCK_MAX_RANGES ||
+         2 * AA_BIG_RANGES + ( AA_PENDING - 2 ) * AA_SMALL_RANGES > ROCKETNET_ACK_BLOCK_MAX_RANGES )
+    {
+        fprintf( stderr, "tla_trace ackapply: %d steps and blocks of %d ranges do not fit the sent window of %d and a store of %d ranges\n", steps,
+                 AA_BIG_RANGES, ROCKETNET_SENT_PACKET_BUFFER_SIZE, ROCKETNET_ACK_BLOCK_MAX_RANGES );
+        fault = true;
+    }
+    std::vector<uint64_t> first_ids( (size_t) AA_FIRST_BLOCK );
     for ( int c = 0; c < AA_CLIENTS && !fault; c++ )
     {
         for ( int sequence = 1; sequence <= blocks; sequence++ )
@@ -295,6 +320,19 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
                 fault = true;
             }
         }
+        struct rocketnet_ack_block_t first;
+        memset( &first, 0, sizeof( first ) );
+        first.largest = AA_FIRST_BLOCK - 1;
+        first.first_range_length = AA_FIRST_BLOCK - 1;
+        int first_count = 0;
+        uint64_t first_unknown = 0;
+        uint64_t first_full = 0;
+        rocketnet_ack_endpoint_process_block( &acks->endpoints[c], &first, AA_RECEIVE_TIME, first_ids.data(), AA_FIRST_BLOCK, &first_count, &first_unknown, &first_full );
+        if ( first_count != AA_FIRST_BLOCK - 1 || first_unknown != 0 || first_full != 0 )
+        {
+            fprintf( stderr, "tla_trace ackapply: client %d's first acknowledgment gave %d ids\n", c, first_count );
+            fault = true;
+        }
     }
 
     std::vector<uint64_t> connection_ids( (size_t) acks->acked_capacity );
@@ -303,8 +341,9 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     int next_block[AA_CLIENTS];
     for ( int c = 0; c < AA_CLIENTS; c++ )
     {
-        next_block[c] = 1;
+        next_block[c] = AA_FIRST_BLOCK;
     }
+    std::vector<std::string> arrived;
 
     aa_takers_t * takers = new aa_takers_t();
     takers->acks = acks;
@@ -331,7 +370,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     std::vector<tla_record_t> records;
     tla_report_t report;
 
-    records.push_back( tla_step( "init", "init", "<<>>", aa_state( &walk ) ) );
+    records.push_back( tla_step( "init", "init", "<<>>", aa_state( &walk, arrived ) ) );
 
     for ( int step = 0; step < steps && !fault; step++ )
     {
@@ -351,7 +390,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         }
         else if ( phase == ROCKETNET_SERVER_ACKS_RECEIVING )
         {
-            call = pick < 58 ? AA_RECEIVE : ( pick < 70 ? AA_SETTLE : ( pick < 78 ? AA_TAKE : ( pick < 96 ? AA_OPEN : AA_CLOSE ) ) );
+            call = pick < 66 ? AA_RECEIVE : ( pick < 74 ? AA_SETTLE : ( pick < 80 ? AA_TAKE : ( pick < 96 ? AA_OPEN : AA_CLOSE ) ) );
             if ( call == AA_SETTLE )
             {
                 // a client with blocks queued, the first from the seed's pick; with none, a block arrives instead
@@ -376,18 +415,16 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         if ( call == AA_BEGIN )
         {
             rocketnet_server_acks_begin_receive( acks, AA_RECEIVE_TIME );
+            arrived.clear();
             op = "begin_receive";
             act = "BeginReceive";
         }
         else if ( call == AA_RECEIVE )
         {
-            // the client's next sequence, with ranges over sequences its earlier blocks acknowledged
+            // the client's next sequence, with ranges over sequences acknowledged already
             const int b = next_block[client]++;
-            int ranges = random.below( AA_MAX_RANGES + 1 );
-            if ( ranges > ( b - 1 ) / 2 )
-            {
-                ranges = ( b - 1 ) / 2;
-            }
+            const int small = random.below( AA_SMALL_RANGES + 1 );
+            const int ranges = random.below( 10 ) < 3 ? AA_BIG_RANGES : small;
             struct rocketnet_ack_block_t block;
             memset( &block, 0, sizeof( block ) );
             block.largest = (uint64_t) b;
@@ -405,6 +442,10 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
             call_args.push_back( tla_int( b ) );
             call_args.push_back( tla_int( ranges ) );
             args = tla_sequence( call_args );
+            std::vector<std::string> pair;
+            pair.push_back( tla_int( client ) );
+            pair.push_back( tla_int( b ) );
+            arrived.push_back( tla_sequence( pair ) );
             op = "receive_block";
             act = "Receive";
         }
@@ -469,7 +510,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         }
 
         report.act( act );
-        records.push_back( tla_step( op, act, args, aa_state( &walk ) ) );
+        records.push_back( tla_step( op, act, args, aa_state( &walk, arrived ) ) );
 
         // the planted effect, where it shows: a client taken and its claim still standing
         if ( planted )
@@ -481,7 +522,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     report.print();
 
     // the model's bound on a block's number: the highest the walk used
-    int max_block = 1;
+    int max_block = AA_FIRST_BLOCK;
     for ( int c = 0; c < AA_CLIENTS; c++ )
     {
         if ( next_block[c] - 1 > max_block )
@@ -490,13 +531,27 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         }
     }
 
-    char constants[512];
+    char range_counts[64];
+    snprintf( range_counts, sizeof( range_counts ), "{0" );
+    for ( int r = 1; r <= AA_SMALL_RANGES; r++ )
+    {
+        const size_t used = strlen( range_counts );
+        snprintf( range_counts + used, sizeof( range_counts ) - used, ", %d", r );
+    }
+    {
+        const size_t used = strlen( range_counts );
+        snprintf( range_counts + used, sizeof( range_counts ) - used, ", %d}", AA_BIG_RANGES );
+    }
+
+    char constants[640];
     snprintf( constants, sizeof( constants ),
               "    Clients = {0, 1, 2}\n"
               "    Threads = {\"main\", \"g1\", \"g2\"}\n"
               "    Main = \"main\"\n"
+              "    MinBlock = %d\n"
               "    MaxBlock = %d\n"
               "    MaxRanges = %d\n"
+              "    RangeCounts = %s\n"
               "    PendingCap = %d\n"
               "    RangesCap = %d\n"
               "    ExchangeTake = TRUE\n"
@@ -505,7 +560,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
               "    SettleOnlyReceiving = TRUE\n"
               "    GatherWhenFull = TRUE\n"
               "    AdvanceTail = TRUE\n",
-              max_block, AA_MAX_RANGES, acks->pending_capacity, acks->ranges_capacity );
+              AA_FIRST_BLOCK, max_block, ROCKETNET_ACK_BLOCK_MAX_RANGES, range_counts, acks->pending_capacity, acks->ranges_capacity );
     const bool written = !fault && tla_write_trace( out, "MCTraceAckApply", seed, "TraceRNAckApplyPhase", "", constants, records );
 
     for ( int g = 0; g < AA_GAME_THREADS; g++ )
