@@ -49,6 +49,9 @@ measured records in `proofs/tla/RUNS.tsv`.
     stays `built`.
   - `StopServer`: SIGINT. The server's destroy detaches.
   - `DetachXdp`: `ip link set dev <nic> xdp off`, whatever the server left.
+  - `TeardownLosesSsh`: the next teardown step finds ssh down. "stop server"
+    fails, restore is skipped, and the script fails the run and exits; the
+    watchdog and the dead-man timer act.
   - `Finish`: confirm no program is attached, collect, and only then stop
     the watchdog and cancel the dead-man timer. The script reaches it only
     when both "stop server" and "restore" exited 0 (MM206).
@@ -77,10 +80,13 @@ measured records in `proofs/tla/RUNS.tsv`.
   - `ClientCrash(c)`
   - `Interrupted`: the orchestrator exits, and its trap runs teardown.
   - `OrchestratorDies`: the orchestrator is killed without its trap; no
-    teardown runs and the heartbeat stops.
+    teardown runs and the heartbeat stops (the heartbeat loop checks that
+    its parent is alive).
   - `TeardownStepFails`: "stop server" or "restore" exits non-zero over a
     working ssh. The script fails the run and exits with its heartbeat
-    stopped.
+    stopped. After a failed stop it skips restore, so the timers stay
+    armed. A restore that fails only on its sweep has already stood the
+    timers down; the model keeps them armed, an over-approximation.
 - **Time** is a discrete `Tick`. The server's slot timeout, the dead-man
   timer and the watchdog are urgent: `Tick` is disabled while one of them is
   due, and in `armed`.
@@ -98,7 +104,7 @@ once, where the script waits for a client to fail or finish.
 |---|---|---|
 | `XdpNeverOrphaned` | invariant | XDP is never attached while the server is gone, or the orchestrator's heartbeat is stopped, for more than `WatchdogBound` ticks. |
 | `TeardownDetaches` | invariant | A finished run has no server running and no program attached. |
-| `WatchdogKillsOnlyOnFault` | invariant | With no outside event, the watchdog never stops a live server before teardown. |
+| `WatchdogKillsOnlyOnFault` | invariant | In a run with no outside event so far (`faults = 0`), the watchdog never stops a live server between the arm and teardown. It says nothing about runs with a fault, where the watchdog firing is the design. |
 | `XdpOnlyUnderDeadman` | invariant | XDP is attached only while the dead-man timer is armed. |
 | `NoClientBeforeListen` | invariant, structural | No client starts before the server has listened. Held by StartClient's guard. |
 | `NoBenchServer` | invariant, structural | The server never runs on a bench. Held by LoadServer's guard. |

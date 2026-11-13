@@ -290,6 +290,18 @@ DetachXdp ==
                     deadmanAge, listened, crashed, faults, phase, cycle, wait,
                     lastWait, live, old, oldAge, denied, collected, wdKill >>
 
+\* teardown's next step finds ssh down: "stop server" fails without reaching
+\* the server, restore is skipped, and the script fails the run and exits
+\* (with the witness switch, it reports the run complete); the timers act
+TeardownLosesSsh ==
+    /\ orch = "teardown" /\ ssh = "down"
+    /\ IF TeardownChecksStatus
+       THEN /\ orch' = "dead" /\ UNCHANGED collected
+       ELSE /\ orch' = "done" /\ collected' = TRUE
+    /\ UNCHANGED << server, host, xdp, ssh, hbAge, orphan, watchdog, deadman,
+                    deadmanAge, listened, crashed, faults, phase, cycle, wait,
+                    lastWait, live, old, oldAge, denied, wdKill >>
+
 \* confirm no program is attached, collect, cancel the timers, done
 Finish ==
     /\ orch = "teardown" /\ ssh = "up" /\ ~ServerUp
@@ -495,7 +507,11 @@ ServerCrash ==
 \* that will not stop, a program that will not detach): the step changes
 \* nothing.  The script then fails the run and exits, its heartbeat already
 \* stopped, so the watchdog and the dead-man timer are left to act; with the
-\* witness switch it reports the run complete instead.
+\* witness switch it reports the run complete instead.  After a failed stop
+\* the script skips restore, which would stand the timers down.  A restore
+\* that fails only on its sweep has already detached and stood the timers
+\* down; keeping them armed here over-approximates that ending (a watchdog
+\* that fires then finds nothing to kill).
 TeardownStepFails ==
     /\ faults < MaxFaults
     /\ orch = "teardown" /\ ssh = "up"
@@ -548,7 +564,7 @@ Orchestrate ==
     \/ \E h \in Hosts : LoadServer(h)
     \/ StartFails
     \/ SshCheckPasses \/ SshCheckFails \/ ListenSeen \/ BeginTeardown
-    \/ StopClients \/ StopServer \/ DetachXdp \/ Finish
+    \/ StopClients \/ StopServer \/ DetachXdp \/ TeardownLosesSsh \/ Finish
 
 ServerSide ==
     \/ Listen \/ WatchdogFires \/ DeadmanFires
