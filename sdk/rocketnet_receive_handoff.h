@@ -22,8 +22,11 @@
 //
 // Main reads the buffer the worker is filling, up to the count the worker last
 // committed, so a datagram the worker banked and committed before main's call
-// began is returned by that call (DeliveredByNextCall): a receive adds no
-// update of latency. The worker appends to its buffer outside the mutex and
+// began is returned by that call, unless the try-acquire found the mutex
+// busy, the call's budget cut it, or the call began with datagrams left from
+// a cut call: main then finishes the tail and its own buffer and moves on to
+// the worker's at a later call (DeliveredByNextCall, which exempts exactly
+// these). Outside them a receive adds no update of latency. The worker appends to its buffer outside the mutex and
 // commits its count at the end of each pass; main reads below the committed
 // count outside the mutex. Neither ever touches the other's slots: the worker
 // writes only at or past the committed count, main reads only below it, and
@@ -50,7 +53,7 @@
 // A datagram the worker banked but had not yet committed when main's call
 // took the mutex is returned by main's next call: the window is one worker
 // pass. A busy mutex leaves main reading what it already holds, up to its
-// earlier limit; the next call catches up.
+// earlier limit; the next call that takes the mutex with no backlog catches up.
 
 #define ROCKETNET_RECEIVE_HANDOFF_BUFFERS 3
 

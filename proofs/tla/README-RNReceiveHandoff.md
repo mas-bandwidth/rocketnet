@@ -26,8 +26,11 @@ buffer is its first datagram and its count.
   took the mutex is returned by that call, unless the mutex was busy, the
   budget cut the call, or the call began with datagrams left from a cut call.
   This is the property the handoff exists for: before 2026-11-13 the GSO
-  worker published a filled buffer and main claimed it at its next call, so
-  every datagram waited one more server update.
+  worker published a filled buffer into one ready slot and main claimed it
+  only once it had finished the buffer it held, so datagrams committed into
+  a newer buffer behind it waited for a later call. With two worker passes
+  a frame, as in the measured traffic, nearly every datagram waited one more
+  server update (2960 of 3000).
 - `FreeIffShared`, `NoSharedSlot`, `FreeIsEmpty`: the roles are distinct, a
   free buffer exists exactly while main and the worker share one, main reads
   below the committed count and the worker writes at or past it, a buffer
@@ -64,6 +67,11 @@ in `RUNS.tsv`); `Cap = 2`, `MaxRx = 5`, `Budgets = {1, 6}`.
 `TraceRNReceiveHandoff.tla` checks the seeded walk of
 `tests/tla_trace_receive_handoff.cpp` (layer `receive-handoff` of
 `tools/tla_trace_check.py`, seeds 1-4) against this module with the code's
-buffer size, `ROCKETNET_GSO_RECV_QUEUE_SIZE`. Every model variable but the
-ghost `late` is read off the queue as the library holds it
-(`rocketnet_server_gso_test_receive_state`).
+buffer size, `ROCKETNET_GSO_RECV_QUEUE_SIZE`. The roles, counts, committed
+counts, cursors and first datagrams are read off the queue as the library
+holds it (`rocketnet_server_gso_test_receive_state`); `arrived`,
+`delivered` and `committedTop` are the walk's own history of what it
+staged, what the calls returned and the newest commit; `late` is a ghost
+the model computes. The walk is sequential on one thread: race freedom
+rests on the mutex and the slot ownership the header describes, not on
+this check.

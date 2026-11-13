@@ -508,7 +508,7 @@
 
   (item "load-delivery-delay-column" :group "after-v1-1-landing" :area "tools"
    :title "A delivery-delay column in the load report, per transport"
-   :text "The receive handoffs of gso, xdp and portable held every datagram for one more server update than io_uring (measured 2026-11-13 at a steady mean of 1.49 updates against 0.52), and no load run showed it: bin/load reports update times, drops and counters, never how many server updates a message waited. Add a column to the load report: for each message, the updates between its send and the receive_messages call that returned it, as mean, p99 and max per transport, so a handoff that adds an update shows in every load run as well as in tests/functional/receive_latency.cpp."
+   :text "The receive handoffs of gso, xdp and portable held nearly every datagram one more server update than io_uring (measured 2026-11-13 at a steady mean of 1.49 updates against 0.52), and no load run showed it: bin/load reports update times, drops and counters, never how many server updates a message waited. Add a column to the load report: for each message, the updates between its send and the receive_messages call that returned it, as mean, p99 and max per transport, so a handoff that adds an update shows in every load run as well as in tests/functional/receive_latency.cpp."
    :date "2026-11-13" :origin "Receive handoff latency fix, the owner's ask for input checks that do not regress")
 
   (item "receive-handoff-advance-after-tail" :group "after-v1-1-landing" :area "sdk"
