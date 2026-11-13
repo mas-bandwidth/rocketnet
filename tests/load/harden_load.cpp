@@ -4189,6 +4189,11 @@ struct harden_chain_t
     // the receiving device's discard delta includes the stop window (a Windows adapter's counter): up to that many
     // more packets than the library lost are named, so the library gap may be that far below zero
     int64_t device_overlap = 0;
+    // whether each end's OS exposes the kernel, qdisc and device counters the step lines read (Linux does; Windows and
+    // macOS read none): a step line that needs a counter its OS does not expose is printed "not available on this OS"
+    // and is not part of the verdict. The verdict is the library gap against the drops that were named
+    bool sender_counters = true;
+    bool receiver_counters = true;
 };
 
 static bool harden_chain_print( const char * direction, const harden_chain_t & c, int duplicates_expected )
@@ -4223,19 +4228,51 @@ static bool harden_chain_print( const char * direction, const harden_chain_t & c
         printf( ", at most gso_slack=%" PRId64 ": later segments of dropped GSO skbs", gso_slack );
     }
     printf( ")\n" );
-    printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
-            c.kernel_sndbuf, send_gap );
-    printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
-            " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
-            direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
-            duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
-    printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " + library_refused_before_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction,
-            c.arrived_in, c.library_received, c.library_refused_before_received, receive_gap );
+    if ( c.sender_counters )
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out=%" PRId64 " + kernel_sndbuf_errors=%" PRId64 " (send_gap=%" PRId64 ")\n", direction, c.library_sent, c.kernel_out,
+                c.kernel_sndbuf, send_gap );
+    }
+    else
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = kernel_out + kernel_sndbuf_errors: not available on this OS (the sender's side reads no kernel counters)\n", direction, c.library_sent );
+    }
+    if ( c.sender_counters && c.receiver_counters )
+    {
+        printf( "harden_chain: %s kernel_out=%" PRId64 " = arrived_udp_in=%" PRId64 " + arrived_udp_inerrors=%" PRId64 " + arrived_udp_noports=%" PRId64 " + arrived_ip_indiscards=%" PRId64
+                " + qdisc_dropped=%" PRId64 " + device_tx_dropped=%" PRId64 " + device_rx_dropped=%" PRId64 " (path_gap=%" PRId64 "%s)\n",
+                direction, c.kernel_out, c.arrived_in, c.arrived_inerrors, c.arrived_noports, c.arrived_ipdiscards, c.qdisc_dropped, c.device_dropped, c.arrived_device_dropped, path_gap,
+                duplicates_expected && path_gap < 0 ? ", netem duplicates" : "" );
+    }
+    else
+    {
+        printf( "harden_chain: %s kernel_out = arrived_udp_in + drops on the path: not available on this OS (one end reads no kernel counters)\n", direction );
+    }
+    if ( c.receiver_counters )
+    {
+        printf( "harden_chain: %s arrived_udp_in=%" PRId64 " = library_received=%" PRId64 " + library_refused_before_received=%" PRId64 " (receive_gap=%" PRId64 ")\n", direction,
+                c.arrived_in, c.library_received, c.library_refused_before_received, receive_gap );
+    }
+    else
+    {
+        printf( "harden_chain: %s arrived_udp_in = library_received + library_refused_before_received: not available on this OS (the receiver's side reads no kernel counters)\n", direction );
+    }
     // the qdisc counts each GSO segment it sends and each skb it drops: with
     // nothing dropped it is the datagrams that left this end, so a library
     // gap is the sender's (wire_gap > 0) or the receiver's (wire_gap 0)
-    printf( "harden_chain: %s library_sent=%" PRId64 " = qdisc_sent_segments=%" PRId64 " + qdisc_dropped=%" PRId64 " (wire_gap=%" PRId64 ")\n", direction, c.library_sent, c.qdisc_sent,
-            c.qdisc_dropped, c.library_sent - c.qdisc_sent - c.qdisc_dropped );
+    if ( c.sender_counters )
+    {
+        printf( "harden_chain: %s library_sent=%" PRId64 " = qdisc_sent_segments=%" PRId64 " + qdisc_dropped=%" PRId64 " (wire_gap=%" PRId64 ")\n", direction, c.library_sent, c.qdisc_sent,
+                c.qdisc_dropped, c.library_sent - c.qdisc_sent - c.qdisc_dropped );
+    }
+    else
+    {
+        printf( "harden_chain: %s library_sent = qdisc_sent_segments + qdisc_dropped: not available on this OS (the sender's side reads no qdisc counters)\n", direction );
+    }
+    if ( !ok && library_gap > 0 && named_drops == 0 )
+    {
+        printf( "harden_chain: %s library gap with no named drop: the library sent packets that neither arrived nor were counted dropped anywhere\n", direction );
+    }
     printf( "harden_chain: %s verdict=%s\n", direction, ok ? "PASS" : "FAIL" );
     return ok;
 }
@@ -4272,6 +4309,8 @@ static int harden_reconcile_main( const harden_options_t & o )
     up.arrived_noports = t.get( "server.c2s_udp_noports" );
     up.arrived_ipdiscards = t.get( "server.c2s_ip_indiscards" );
     up.arrived_device_dropped = t.get( "server.c2s_dev_rx_dropped" );
+    up.sender_counters = t.get( "clients.c2s_kernel_read" ) != 0;
+    up.receiver_counters = t.get( "server.c2s_kernel_read" ) != 0;
     up.device_overlap = t.get( "server.c2s_dev_rx_inexact" ) != 0 ? std::max<int64_t>( up.arrived_device_dropped, 0 ) : 0;
     up.library_received = t.get( "server.c2s_packets_received" );
     // a transport that prefilters off the main thread (IOCP's completion
@@ -4302,6 +4341,8 @@ static int harden_reconcile_main( const harden_options_t & o )
     down.arrived_noports = t.get( "clients.s2c_udp_noports" );
     down.arrived_ipdiscards = t.get( "clients.s2c_ip_indiscards" );
     down.arrived_device_dropped = t.get( "clients.s2c_dev_rx_dropped" );
+    down.sender_counters = t.get( "server.s2c_kernel_read" ) != 0;
+    down.receiver_counters = t.get( "clients.s2c_kernel_read" ) != 0;
     down.device_overlap = t.get( "clients.s2c_dev_rx_inexact" ) != 0 ? std::max<int64_t>( down.arrived_device_dropped, 0 ) : 0;
     down.library_received = t.get( "clients.s2c_packets_received" ) + t.get( "hostile.received" );
 

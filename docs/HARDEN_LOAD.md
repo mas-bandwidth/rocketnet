@@ -96,6 +96,15 @@ datagram for several, and so does a GSO skb that arrives whole (veth, UDP_GRO) a
 While any of those drops, a gap of up to the send_gap passes, printed as `gso_slack`. A
 duplicate row passes a gap of zero or below.
 
+Only Linux exposes the kernel, qdisc and device counters those step lines read. On a server (or players) running
+Windows or macOS the step lines that need a counter the OS does not expose are printed `not available on this OS` and
+are not part of the verdict; the verdict is the library equation alone. A library gap with no drop named anywhere is a
+failure on every OS (the line `library gap with no named drop` says so), so a macOS server's chain can fail only on a
+real loss. A Windows server's adapter discards (ReceivedDiscardedPackets) are read over the cut's window, which includes
+the stop window, so the delta is named as `device_rx_dropped` and the chain does not require it to close exactly (the
+library gap may be that far below zero). A `--profile` row prints the process's handle count and does not judge it,
+since the profiler's symbol load opens handles inside the run.
+
 **The players.** Players must deliver unreliable messages at or above `--min-delivery`, with no errors and no
 unplanned ends among the stable clients.
 
