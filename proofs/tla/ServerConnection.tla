@@ -2,7 +2,7 @@
 (***************************************************************************)
 (* rocketnet: the server's slot lifecycle and encryption mapping.          *)
 (*                                                                         *)
-(* The server of sdk/rocketnet_server_protocol.cpp (the request ladder,    *)
+(* The server of sdk/rocketnet_server_protocol.cpp (the request check sequence,    *)
 (* the response, the sealed session types, the sweep, the keep-alive and   *)
 (* the application disconnect), with its two tables, the encryption map   *)
 (* keyed by source address (sdk/rocketnet_encryption_map.cpp) and the      *)
@@ -528,18 +528,18 @@ ClientRecv(p) ==
 
 (***************************************************************************)
 (* The server receives.  rocketnet_server_protocol_process_packet: a       *)
-(* request runs the ladder, a sealed type is looked up by source address,  *)
+(* request runs the check sequence, a sealed type is looked up by source address,  *)
 (* opened under the mapping's keys, and dispatched.  What the code refuses *)
 (* is delivered and discarded.                                             *)
 (***************************************************************************)
 serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 
-\* rocketnet_server_protocol_process_connection_request, the ladder in the
+\* rocketnet_server_protocol_process_connection_request, the check sequence in the
 \* standard's order as far as this model sees it: a connected address is
 \* silent; a half-open mapping resends its stored challenge when the request
 \* carries its salt or its token, and only the same salt refreshes the idle
 \* deadline; a half-open mapping whose salt and token both differ falls
-\* through and replaces that mapping if the ladder accepts it, reusing the
+\* through and replaces that mapping if the check sequence accepts it, reusing the
 \* map entry; no cookie (or a cookie issued to another address) -> a cookie;
 \* an expired token is refused before cookie/decrypt; a token bound
 \* elsewhere or a connected client id is silent; history binds only when a
@@ -892,7 +892,7 @@ PacketsReachOwnSlotOnly ==
                            /\ p.from = slot[i].addr
                            /\ KeysOf(p) = KeysOf(smap[slot[i].addr])]_vars
 
-\* no receive sends but the ladder's own answer: a session packet never
+\* no receive sends but the check sequence's own answer: a session packet never
 \* provokes a send (S:2852-2853; the keep-alive is timer driven)
 SessionNeverAnswered ==
     [][(\E p \in ClientPackets : p.type \in {"keepalive", "disconnect"} /\ C2S!Deliver(p))

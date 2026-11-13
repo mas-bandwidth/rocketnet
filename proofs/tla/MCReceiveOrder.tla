@@ -50,7 +50,7 @@ Done == outcome /= "pending"
 
 Terminating == Done /\ UNCHANGED vars
 
-\* the next request: a fresh ladder run, keeping the claims and mappings
+\* the next request: a fresh check sequence run, keeping the claims and mappings
 \* the model has built so far
 NewRequest ==
     /\ Done
@@ -61,7 +61,7 @@ NewRequest ==
     \* the code answers a request from a connected address with nothing,
     \* and one for the token its half-open mapping holds with the stored
     \* challenge, and neither reaches the claim or accept rungs; a new
-    \* ladder run starts for a free address, or for an address whose
+    \* check sequence run starts for a free address, or for an address whose
     \* half-open mapping holds another token, which it replaces once
     \* accepted (sdk/rocketnet_server_protocol.cpp, replace_index).  The
     \* replaced mapping's token may be bound: a response that bound it and

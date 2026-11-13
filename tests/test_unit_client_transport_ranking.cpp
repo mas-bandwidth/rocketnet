@@ -13,7 +13,7 @@
 //     this OS opens the native client and nothing else;
 //   * test_client_ranking_falls_back_to_portable: a native client whose
 //     create fails yields portable, the refusal logged once, and a refused
-//     portable exhausts the ladder;
+//     portable exhausts the transport order;
 //   * test_client_ranking_pin_is_honoured: each pin gives that client or a
 //     status, never a silent substitute.
 //
@@ -151,7 +151,7 @@ REGISTER_UNIT_TEST( test_client_ranking_portable_is_last_everywhere );
 #if ROCKETNET_DEV
 #define RANKING_MAX_CREATES 8
 
-// every create the ladder asked for, by name, and the names it refuses
+// every create the transport order asked for, by name, and the names it refuses
 static struct
 {
     int num_creates;
@@ -175,7 +175,7 @@ static void * ranking_create( void * context, const rocketnet_client_transport_i
     {
         if ( ranking_record.refuse[i] && strcmp( ranking_record.refuse[i], config->name ) == 0 )
         {
-            return NULL;    // a refusal: no allocation failed, so the ladder falls
+            return NULL;    // a refusal: no allocation failed, so the transport order falls
         }
     }
 
@@ -375,7 +375,7 @@ static void test_client_ranking_falls_back_to_portable()
         check( ranking_log_count( "refused" ) == 1 );
     }
 
-    // portable refusing too: the ladder is exhausted, never a pin-only rung
+    // portable refusing too: the transport order is exhausted, never a pin-only rung
     {
         const ranking_result_t result = ranking_create_client( "auto", native, "portable" );
         check( !result.created );
@@ -463,7 +463,7 @@ static void test_client_ranking_pin_is_honoured()
 // Linux only, and registered only there: elsewhere the body would be empty and
 // the case would pass having checked nothing
 
-static void test_client_ladder_parse_iocp_on_linux_takes_auto()
+static void test_client_order_parse_iocp_on_linux_takes_auto()
 {
     ranking_env_t env;
     ranking_env_set_aside( &env );
@@ -473,13 +473,13 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
     {
         int num_available = 0;
         const int * available = rocketnet_client_transport_io_availability( &num_available );
-        struct rocketnet_transport_order_t ladder;
-        check( rocketnet_transport_order_parse( "iocp", available, num_available, &ladder, false ) );
-        check( ladder.num_skipped == 1 );
-        check( ladder.skipped[0] == ROCKETNET_TRANSPORT_IOCP );
-        check( ladder.num_candidates == 2 );
-        check( ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
-        check( ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
+        struct rocketnet_transport_order_t transport_order;
+        check( rocketnet_transport_order_parse( "iocp", available, num_available, &transport_order, false ) );
+        check( transport_order.num_skipped == 1 );
+        check( transport_order.skipped[0] == ROCKETNET_TRANSPORT_IOCP );
+        check( transport_order.num_candidates == 2 );
+        check( transport_order.candidates[0] == ROCKETNET_TRANSPORT_GSO );
+        check( transport_order.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
     }
 
     {
@@ -498,7 +498,7 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// an operator memory budget below a pinned client's plan exhausts the ladder
+// an operator memory budget below a pinned client's plan exhausts the transport order
 // before any create: the list's first candidate is judged against the budget
 // like every other
 
@@ -526,6 +526,6 @@ REGISTER_UNIT_TEST( test_client_ranking_budget_judges_the_first_candidate );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-REGISTER_UNIT_TEST( test_client_ladder_parse_iocp_on_linux_takes_auto );
+REGISTER_UNIT_TEST( test_client_order_parse_iocp_on_linux_takes_auto );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #endif // #if ROCKETNET_DEV

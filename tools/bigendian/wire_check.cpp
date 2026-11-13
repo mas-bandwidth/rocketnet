@@ -344,8 +344,8 @@ static void check_base64_and_config()
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_order_t ladder;
-    CHECK( rocketnet_transport_order_parse( "auto", available, num_available, &ladder ) );
+    struct rocketnet_transport_order_t transport_order;
+    CHECK( rocketnet_transport_order_parse( "auto", available, num_available, &transport_order ) );
 
     int auto_available = 0;
 
@@ -357,10 +357,10 @@ static void check_base64_and_config()
         }
     }
 
-    CHECK( ladder.num_candidates == auto_available );
-    CHECK( rocketnet_transport_order_parse( "portable", available, num_available, &ladder ) );
-    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
-    CHECK( !rocketnet_transport_order_parse( "rocket", available, num_available, &ladder ) );
+    CHECK( transport_order.num_candidates == auto_available );
+    CHECK( rocketnet_transport_order_parse( "portable", available, num_available, &transport_order ) );
+    CHECK( transport_order.num_candidates == 1 && transport_order.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
+    CHECK( !rocketnet_transport_order_parse( "rocket", available, num_available, &transport_order ) );
 }
 
 int main()

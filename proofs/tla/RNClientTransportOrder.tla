@@ -1,12 +1,12 @@
----------------------------- MODULE RNClientLadder ----------------------------
-\* The client ladder at create with the family fallback
+---------------------------- MODULE RNClientTransportOrder ----------------------------
+\* The client transport order at create with the family fallback
 \* (rocketnet_client_transport_create_impl in
 \* sdk/rocketnet_client_transport.cpp). Candidates are tried left to right;
 \* a one-element list is a pin. On each candidate the client opens a socket
 \* for the server the token selected and connects it. A token naming both
 \* families on a host with IPv6 selects its IPv6 server; when that socket is
 \* refused, at open or at connect, the same candidate is opened again for
-\* the token's IPv4 server before the ladder falls to the next candidate. The
+\* the token's IPv4 server before the transport order falls to the next candidate. The
 \* first socket opened and connected is granted. A refusal for want of memory
 \* ends the create on either family. A list whose every socket is refused is
 \* exhausted.
@@ -122,11 +122,11 @@ TriedInToken == \A i \in 1..Len(tried) : tried[i][2] \in token
 
 \* sockets are tried in the code's order: candidate by candidate, the
 \* selected family first and its IPv4 fallback next, no candidate skipped
-LadderOrder ==
+TransportOrder ==
     /\ Len(tried) <= Len(Order(token))
     /\ \A i \in 1..Len(tried) : tried[i] = Order(token)[i]
 
-\* the ladder exhausts only when no socket the token names on any candidate
+\* the transport order exhausts only when no socket the token names on any candidate
 \* would have been granted
 NoExhaustWhileReachable ==
     result = "exhausted" =>

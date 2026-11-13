@@ -1143,12 +1143,12 @@ STUB
     OUT="$(run_r7 0 eth1.200 5)"
     expect_case "r7 provision vlan unmangled through -L" $? 0 "$OUT" "confirmed at 5"
 
-    # --- THE TOP OF THE LADDER: the WHOLE SCRIPT, door to fail. a verify
+    # --- THE TOP LEVEL: the WHOLE SCRIPT, door to fail. a verify
     # run of this very script under the stub environment must exit 1 and
     # carry the R3 and R7 UNMETs by name in its full-flow output -- this
     # pins the top-level call sites themselves (deleting an enforcement
     # invocation ships green nowhere: it goes red HERE), and there is no
-    # level above the whole script, so the pin ladder terminates by
+    # level above the whole script, so the pin chain terminates by
     # construction ---
 
     echo foreign > "$STUB_STATE_DIR/state.stubiface0"

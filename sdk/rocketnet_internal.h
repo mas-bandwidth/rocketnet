@@ -480,7 +480,7 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // the server transport config table -- the single declaration everything
 // derives from, per the config system comment above. num_xdp_queues' range
 // here is structural; the tighter bounds are per transport, enforced at the
-// ladder rung (ROCKETNET_GSO_MAX_QUEUES)
+// transport rung (ROCKETNET_GSO_MAX_QUEUES)
 
 // the default max_clients: 1000, the supported server size, or the build's
 // ROCKETNET_MAX_CLIENTS when that is smaller (512 .. 999). A build for more clients

@@ -23,7 +23,7 @@
 //   - have the connected client send a payload (drives ack blocks with
 //     valid bytes);
 //   - inject a fully-fuzzed datagram at the server (pre-decrypt garbage: the
-//     prefilter, size and type ladder, and the mapping lookup);
+//     prefilter, size and type check sequence, and the mapping lookup);
 //   - capture the last real client->server datagram, corrupt its sealed body
 //     in place, and inject that (a valid envelope with a broken body: the
 //     path past the filter and the mapping, into the AEAD open and replay).

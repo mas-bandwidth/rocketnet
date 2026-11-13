@@ -131,7 +131,7 @@ REGISTER_UNIT_TEST( test_xdp_compiled_out_list_skips_pin_only_loopback );
 
 static void test_xdp_compiled_out_has_no_memory_plan()
 {
-    // no XDP plan is reported, so the ladder's plan loop logs xdp as unavailable
+    // no XDP plan is reported, so the transport order's plan loop logs xdp as unavailable
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp" );

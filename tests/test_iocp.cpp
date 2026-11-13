@@ -3420,7 +3420,7 @@ static void test_rio_create_failure_drains_posted_receives()
         CHECK( rocketnet_server_rio_test_lanes_made() - made == 2 );
         CHECK( live_allocations.load() == baseline );
         // lane 0 was given a port; the failed create hands the caller (and
-        // the next transport of the ladder) the port 0 it asked for
+        // the next transport in the transport order) the port 0 it asked for
         CHECK( bind.port == 0 );
     }
 

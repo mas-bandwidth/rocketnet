@@ -4,7 +4,7 @@
 */
 
 // The worker-side prefilter (sdk/rocketnet_receive_prefilter.h) against the
-// server's own receive ladder, datagram by datagram. For every packet type,
+// server's own receive check sequence, datagram by datagram. For every packet type,
 // every size at and around each type's bounds, and each prefilter header
 // fault, the prefilter's verdict is computed, then the same datagram is
 // handed to a server protocol in memory, and the counters it moved are read:
@@ -117,7 +117,7 @@ static int rp_sizes( int * sizes )
     return count;
 }
 
-static void test_receive_prefilter_matches_the_server_ladder()
+static void test_receive_prefilter_matches_the_server_check_sequence()
 {
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
@@ -237,5 +237,5 @@ static void test_receive_prefilter_reads_only_its_arguments()
     check( rocketnet_receive_prefilter( packet, (int) sizeof( packet ), other ) == ROCKETNET_RECEIVE_DROP_WRONG_VALUE );
 }
 
-REGISTER_UNIT_TEST( test_receive_prefilter_matches_the_server_ladder );
+REGISTER_UNIT_TEST( test_receive_prefilter_matches_the_server_check_sequence );
 REGISTER_UNIT_TEST( test_receive_prefilter_reads_only_its_arguments );

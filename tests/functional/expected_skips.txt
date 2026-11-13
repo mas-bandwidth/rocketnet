@@ -56,7 +56,7 @@ leg windows-dev-appverif-iocp Windows iocp
 leg windows-dev-appverif-rio Windows rio
 
 reason rocketnet_test_a_transport_pin_is_set_and_not_xdp the case checks that an env pin is honoured, so it has nothing to check unpinned (the pinned step after each unpinned run runs it with --run); under an xdp server pin its port-zero server cannot start
-reason rocketnet_test_no_transport_pin_is_set the shared-object hub runs on the default ladder; under a pin it has no meaning, and the leg's unpinned twin runs it
+reason rocketnet_test_no_transport_pin_is_set the shared-object hub runs on the default transport order; under a pin it has no meaning, and the leg's unpinned twin runs it
 reason rocketnet_test_server_pin_allows_auto the row exercises the server's automatic transport order, which this leg's server pin replaces; the leg's unpinned twin runs it
 reason rocketnet_test_client_pin_allows_auto the row exercises the client's automatic transport order, which this leg's client pin replaces; the leg's unpinned twin runs it
 reason rocketnet_test_server_pin_allows_gso the row selects the gso rung, which this leg's server pin excludes; the unpinned Linux legs run it
@@ -115,7 +115,7 @@ skip test_rio_transport_server_io_pin rocketnet_test_server_pin_allows_rio windo
 skip test_server_gso_receive_buffer_request rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_server_port_zero_transport rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio
 skip test_server_receive_1000_clients_256kbps_10hz rocketnet_test_server_receive_low_tick_measurement_requested linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable,linux-s390x,linux-s390x-portable
-skip test_server_transport_io_ladder_fall rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
+skip test_server_transport_io_fall rocketnet_test_server_pin_allows_gso linux-dev-portable,linux-prod-portable,linux-s390x-portable
 skip test_session_reconnect_isolation_io_uring rocketnet_server_uring_available linux-s390x,linux-s390x-portable
 skip test_session_reconnect_isolation_xdp rocketnet_test_xdp_veth_runs_here linux-dev,linux-dev-portable,linux-dev-sanitized,linux-prod,linux-prod-portable
 skip test_transport_all_skipped_uses_auto rocketnet_test_server_pin_allows_auto linux-dev-portable,linux-prod-portable,linux-s390x-portable,macos-dev-portable,macos-dev-sanitized-msgx,macos-dev-sanitized-portable,macos-prod-portable,windows-dev-iocp,windows-dev-sanitized-iocp,windows-dev-sanitized-rio,windows-prod-portable,windows-dev-appverif-portable,windows-dev-appverif-iocp,windows-dev-appverif-rio

@@ -8,7 +8,7 @@
 // token, and every effective mutation of the signed data fails the Ed25519
 // verify and every mutation of the sealed block fails the box's MAC -- which
 // is the point of them, and which also means the readers behind them, and
-// every check the request ladder makes on a verified token, are unreachable
+// every check the request check sequence makes on a verified token, are unreachable
 // by mutation there. This target reaches them directly.
 //
 // THE SELECTOR BYTE: input[0] & 3 chooses the surface, the rest is its bytes.
@@ -19,10 +19,10 @@
 //       read
 //   2 = a token MINTED with the published development keys from fuzz-chosen
 //       signed and private fields, carried in a real connection request
-//       through the server's request ladder, cookie gate included: every
-//       check the ladder makes after the signature verifies and the block
+//       through the server's request check sequence, cookie gate included: every
+//       check the check sequence makes after the signature verifies and the block
 //       opens, on fuzz-chosen field values
-//   3 = the same ladder over fuzz-chosen signed-data BYTES, the sealed block
+//   3 = the same check sequence over fuzz-chosen signed-data BYTES, the sealed block
 //       replaced by a fuzz-chosen raw private block sealed to the dev server
 //       key, and the whole signed with the dev backend key: arbitrary layouts
 //       (nonzero padding included) behind a valid signature and a valid seal
@@ -34,10 +34,10 @@
 //     ignore padding, so padding is not compared
 //   - consistency holds exactly when the private protocol id and expire equal
 //     the signed ones (rocketnet_connect_token.h)
-//   - the ladder's acceptance implies the standard's plainest rules: the wire
+//   - the check sequence's acceptance implies the standard's plainest rules: the wire
 //     version, this server's protocol id, an expire after now, no address
 //     flag bit past the two defined, and this server's public key
-//   - the server's counters are conserved after every ladder run
+//   - the server's counters are conserved after every check sequence run
 //
 // No state survives an input: the server and its tables are built and
 // destroyed inside each one. The seal draws a random ephemeral key, but no
@@ -166,7 +166,7 @@ static void fuzz_signed_layout( const uint8_t * data, size_t size )
 }
 
 // -----------------------------------------------------------------------
-//  2 and 3: the request ladder past the signature
+//  2 and 3: the request check sequence past the signature
 // -----------------------------------------------------------------------
 
 struct fuzz_server_t
@@ -175,7 +175,7 @@ struct fuzz_server_t
     struct rocketnet_counters_t counters;
 };
 
-// a server as the unit suite's request-ladder cases build one,
+// a server as the unit suite's request-check sequence cases build one,
 // on the development keys, advertised at the vector address
 static void fuzz_server_create( struct fuzz_server_t * server )
 {
@@ -222,8 +222,8 @@ static void fuzz_server_destroy( struct fuzz_server_t * server )
 
 // the request, through the cookie gate as a client would: an empty-cookie
 // request, then the same request echoing the cookie the server returned.
-// returns the ladder's final outcome
-static int fuzz_ladder( struct fuzz_server_t * server, const uint8_t * signed_data, const uint8_t * signature )
+// returns the check sequence's final outcome
+static int fuzz_checks( struct fuzz_server_t * server, const uint8_t * signed_data, const uint8_t * signature )
 {
     static const uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     uint8_t ephemeral_public[ROCKETNET_KEY_BYTES];
@@ -261,7 +261,7 @@ static int fuzz_ladder( struct fuzz_server_t * server, const uint8_t * signed_da
 
     if ( fuzz_verbose )
     {
-        printf( "ladder outcome %d\n", result );
+        printf( "check sequence outcome %d\n", result );
     }
 
     char report[240];
@@ -284,7 +284,7 @@ static void fuzz_acceptance_implies( const uint8_t * signed_data, const struct f
 
 // selector 2: fields chosen by the input, the private block minted by the
 // real writer. The fields lean plausible -- each defaults to the value an
-// accepted token carries and the input XORs into it -- so the ladder is
+// accepted token carries and the input XORs into it -- so the check sequence is
 // reached past its first refusal
 static void fuzz_minted( const uint8_t * data, size_t size )
 {
@@ -358,7 +358,7 @@ static void fuzz_minted( const uint8_t * data, size_t size )
 
     struct fuzz_server_t server;
     fuzz_server_create( &server );
-    if ( fuzz_ladder( &server, ct.signed_connect_data, ct.signature ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+    if ( fuzz_checks( &server, ct.signed_connect_data, ct.signature ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
     {
         fuzz_acceptance_implies( ct.signed_connect_data, &server );
     }
@@ -392,7 +392,7 @@ static void fuzz_raw_signed( const uint8_t * data, size_t size )
 
     struct fuzz_server_t server;
     fuzz_server_create( &server );
-    if ( fuzz_ladder( &server, signed_data, signature ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+    if ( fuzz_checks( &server, signed_data, signature ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
     {
         fuzz_acceptance_implies( signed_data, &server );
 
@@ -411,7 +411,7 @@ static void fuzz_raw_signed( const uint8_t * data, size_t size )
 //  the seed generator: ROCKETNET_FUZZ_SEED_DIR=<dir> writes this target's
 //  seeds there from the real write paths -- a token minted with the
 //  development keys, its signed data and its private block -- and the
-//  replay continues as usual. ROCKETNET_FUZZ_VERBOSE=1 prints each ladder
+//  replay continues as usual. ROCKETNET_FUZZ_VERBOSE=1 prints each check sequence
 //  outcome, so a seed can be seen to reach the challenge.
 // -----------------------------------------------------------------------
 
