@@ -50,9 +50,10 @@
 // entry's and the pending mark's session are the session whose mark the
 // sink queued. Every other variable is read from the code after the call:
 // the replay windows' highest_opened, the walk's slot records, the pending
-// buffer, the kernel map and the reply MAC table. TraceRNXdpReplay.tla maps
-// the code's reply MAC table to the model's (the code drops a queued forget's
-// learned MAC in the walk, the model in the commit after it).
+// buffer, the kernel map and the reply MAC table (the sink drops a queued
+// forget's learned MAC in the walk, and so does the model's Walk). The cfg's
+// constants are plain values: MaxSeq is the steps and RP_SEQ_SLACK, and each
+// budget is the steps and one, more than the walk can spend.
 //
 // The model identifies a slot with its address. The walk keeps the code to
 // that: a client connects only when no slot is seen with no connection (so
@@ -67,11 +68,9 @@
 // is the reversed witness MCRNXdpReplayBrokenFailedForgetDropped.cfg: the
 // commit drops every forget the kernel refused. Its effect is a commit after
 // which a forget the kernel refused, with no applied mark of its key, is not
-// pending; the walk reports it at that record. No socket, no clock.
-
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_XDP_REPLAY_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
+// pending; the walk reports it at that record. The plant binary includes
+// sdk/rocketnet_server_socket_linux.cpp, whose sink header carries the
+// plant. No socket, no clock.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -79,6 +78,11 @@
 #include <string.h>
 #include <string>
 #include <vector>
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_XDP_REPLAY_PLANT 1
+#include "../sdk/rocketnet_server_socket_linux.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #include "tla_trace_record.h"
 
@@ -113,7 +117,7 @@ namespace
     const uint32_t RP_CAPACITY = 2;             // the pending buffer: ForgetCapacity, and the mark list's room
     const int RP_SESSIONS = 24;                 // Sessions: the connections over the run
     const int RP_MAX_IN_FLIGHT = 4;             // MaxInFlight
-    const int RP_MAX_SEQ = 100000;              // MaxSeq
+    const int RP_SEQ_SLACK = 3;                 // MaxSeq is the walk's steps and this: a forger names up to 3 past what was sent
     const int RP_REPLY_ENTRIES = 4 * ROCKETNET_XDP_REPLY_MAC_PROBES;
     const int RP_PACKET_BYTES = 100;            // a payload packet: the prefilter header, the sequence, a zero body
     const int RP_VERDICT_DROP = 1;              // XDP_DROP
@@ -731,14 +735,6 @@ namespace
         args.push_back( rp_packet_text( p ) );
         return tla_sequence( args );
     }
-
-    std::string rp_args_packet( const rp_packet_t & p, const std::string & second )
-    {
-        std::vector<std::string> args;
-        args.push_back( rp_packet_text( p ) );
-        args.push_back( second );
-        return tla_sequence( args );
-    }
 }
 
 static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
@@ -751,6 +747,9 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
     }
 
     rp_reset();
+
+    // the cfg's MaxSeq: a session sends at most one sequence a step
+    const int max_seq = steps + RP_SEQ_SLACK;
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
@@ -808,7 +807,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
         else if ( choice < 30 )
         {
             // a genuine packet of the live session, once greeted
-            if ( walk.session[a] == 0 || !walk.greeted[a] || walk.sent[a] >= RP_MAX_SEQ || (int) walk.net.size() >= RP_MAX_IN_FLIGHT )
+            if ( walk.session[a] == 0 || !walk.greeted[a] || walk.sent[a] >= max_seq || (int) walk.net.size() >= RP_MAX_IN_FLIGHT )
             {
                 continue;
             }
@@ -927,7 +926,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
                 fprintf( stderr, "tla_trace: xdp-replay: the filter answered %d, neither drop nor redirect\n", verdict );
                 return 1;
             }
-            records.push_back( tla_step( "kernel", "KernelFilter", rp_args_packet( p, tla_string( verdict == RP_VERDICT_DROP ? "drop" : "pass" ) ), rp_state() ) );
+            records.push_back( tla_step( "kernel", "KernelFilter", rp_args_packet( p ), rp_state() ) );
         }
         else if ( choice < 74 )
         {
@@ -1067,7 +1066,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
             walk.held[a] = true;
             walk.held_replies++;
             walk.heard[a] = true;
-            records.push_back( tla_step( "answer", "Answer", rp_args( a, tla_bool( mac != frame_mac ) ), rp_state() ) );
+            records.push_back( tla_step( "answer", "Answer", rp_args( a ), rp_state() ) );
         }
         else if ( choice < 94 )
         {
@@ -1099,7 +1098,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
             {
                 walk.refused_held[a][walk.heard[a] ? 1 : 0] = true;
             }
-            records.push_back( tla_step( "drain", "Drain", rp_args( a, tla_bool( mac != NULL ) ), rp_state() ) );
+            records.push_back( tla_step( "drain", "Drain", rp_args( a ), rp_state() ) );
         }
         idle = 0;
     }
@@ -1123,16 +1122,13 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
     }
     addresses += "}";
 
-    const std::string definitions = "TraceAddresses == " + addresses + "\n" + "TraceBudget == " + tla_int( steps + 1 ) + "\n";
-    const std::string constants = "    Addresses <- TraceAddresses\n"
-                                  "    MaxSeq = " +
-                                  tla_int( RP_MAX_SEQ ) + "\n" + "    W = " + tla_int( ROCKETNET_XDP_REPLAY_WINDOW ) + "\n" + "    Sessions = " +
-                                  tla_int( RP_SESSIONS ) + "\n" + "    MaxInFlight = " + tla_int( RP_MAX_IN_FLIGHT ) + "\n" + "    ForgetCapacity = " +
-                                  tla_int( RP_CAPACITY ) + "\n" +
-                                  "    ForgetFailureBudget <- TraceBudget\n"
-                                  "    MarkFailureBudget <- TraceBudget\n"
-                                  "    HeldReplyBudget <- TraceBudget\n";
-    return tla_write_trace( out, "MCTraceXdpReplay", seed, "TraceRNXdpReplay", definitions, constants, records ) ? 0 : 1;
+    // the budgets: no more refusals or held replies than the walk has steps
+    const std::string budget = tla_int( steps + 1 );
+    const std::string constants = "    Addresses = " + addresses + "\n" + "    MaxSeq = " + tla_int( max_seq ) + "\n" + "    W = " + tla_int( ROCKETNET_XDP_REPLAY_WINDOW ) +
+                                  "\n" + "    Sessions = " + tla_int( RP_SESSIONS ) + "\n" + "    MaxInFlight = " + tla_int( RP_MAX_IN_FLIGHT ) + "\n" +
+                                  "    ForgetCapacity = " + tla_int( RP_CAPACITY ) + "\n" + "    ForgetFailureBudget = " + budget + "\n" +
+                                  "    MarkFailureBudget = " + budget + "\n" + "    HeldReplyBudget = " + budget + "\n";
+    return tla_write_trace( out, "MCTraceXdpReplay", seed, "TraceRNXdpReplay", "", constants, records ) ? 0 : 1;
 }
 
 #else // #if defined( ROCKETNET_XDP_FILTER_HOST )

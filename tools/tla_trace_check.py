@@ -112,9 +112,7 @@ LAYERS = {
     },
     "xdp-replay": {
         "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
-        "untraced": {
-            "Seqs": "not an action: the set of sequences Next's Forge ranges over",
-        },
+        "untraced": {},
     },
 }
 
