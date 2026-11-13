@@ -24,7 +24,14 @@
 (* with it.  An entry already complete away from the head (one abandoned   *)
 (* for an unreachable destination) is passed over.  A start the transport  *)
 (* refuses for want of a link-layer destination abandons that burst: no    *)
-(* packet of it can ever leave.                                            *)
+(* packet of it can ever leave.  A sealed write that fails after its start *)
+(* (rocketnet_write_sealed_packet returning no bytes; the drain aborts the *)
+(* frame, abandons the burst and keeps draining) is the same abandon: in   *)
+(* the model it is LoseRoute(s) followed by SealOne's abandon branch,      *)
+(* which needs the same room, stages nothing and marks the burst complete. *)
+(* LoseRoute changes nothing but the environment set unreachable, which    *)
+(* names only that now complete burst, so the two steps are the code's    *)
+(* one.                                                                    *)
 (*                                                                         *)
 (* The transport stages into QueueCount send queues (send_queues), each    *)
 (* with its own bank of BankSize frames; a session's packets go to the     *)
@@ -53,6 +60,25 @@
 (* reads idle).  With one queue this is every waiting burst, once the      *)
 (* transport has no room.                                                  *)
 (*                                                                         *)
+(* Simulator = TRUE is a development build's active link simulator         *)
+(* (rocketnet_server_commit_staged): a sealed packet goes to the simulator *)
+(* and its staging slot back, and the simulator holds the copy (held).     *)
+(* The link drain (rocketnet_server_link_drain, called by the stop step    *)
+(* after its flush) moves held copies into the staging only while          *)
+(* rocketnet_server_transport_io_send_room is above 0, and that is the     *)
+(* FEWEST room over the send queues (FewestRoom).  The stop step tells the *)
+(* I/O to stop only when the ring is empty, the simulator holds nothing    *)
+(* (link_empty) and send_idle is true, so RequestIoStop needs held = 0.    *)
+(* OPEN CODE DEFECT (MM080, owned by the send-queue-capacity follow-up):   *)
+(* no step of the code discards what the simulator holds, so once any      *)
+(* queue jams (FewestRoom is 0 for good) while copies are held, the drain  *)
+(* never runs again, link_empty stays false and the stop never finishes;   *)
+(* only destroy's bound ends it.  The model states the code as it is:      *)
+(* MCServerStopSpreadSimulatorJam.cfg fails StopFinishesWithoutRoom for    *)
+(* that reason and is recorded as the open defect, not as a reversed       *)
+(* witness.  When the code gains a terminal discard of held copies, the    *)
+(* model gains it as an action and that case passes.                       *)
+(*                                                                         *)
 (* Reversed witnesses, one constant: Defect = "singleshot" is the stop     *)
 (* before this model: every burst staged in the stop call whatever the     *)
 (* room, a refused start dropping that packet, and the I/O told to stop    *)
@@ -70,7 +96,11 @@
 (* drain ends at a burst whose own queue is full, and the stop step        *)
 (* abandons only once the room summed over every queue is 0, so with one   *)
 (* queue jammed and another with room the stop never finishes              *)
-(* (StopFinishesWithoutRoom).  A ring of SteadyCap entries, the size       *)
+(* (StopFinishesWithoutRoom).  "stopwithheld" tells the I/O to stop while  *)
+(* the simulator still holds copies, the step without its link_empty test  *)
+(* (NoCopyHeldAtStop).  "nolinkdrain" is a stop step that never drains the *)
+(* simulator, so with no queue jammed the held copies still never leave    *)
+(* (StopFinishesWhileUnjammed).  A ring of SteadyCap entries, the size     *)
 (* before this model, is the configuration witness                         *)
 (* MCServerStopSpreadBrokenRingSmall (RingHolds).                          *)
 (***************************************************************************)
@@ -84,10 +114,12 @@ CONSTANTS
     QueueCount,     \* send queues (send_queues)
     RingSize,       \* ring entries (ROCKETNET_SERVER_DISCONNECT_BURSTS)
     SteadyCap,      \* bursts a running server keeps waiting (ROCKETNET_MAX_CLIENTS)
+    Simulator,      \* a development build's active link simulator takes every sealed packet
     Defect
 
 ASSUME Defect \in {"none", "singleshot", "steadycapoffbyone", "noskip", "unreachablestalls", "stopinflight",
-                   "noabandon", "noreread", "pooledroom"}
+                   "noabandon", "noreread", "pooledroom", "stopwithheld", "nolinkdrain"}
+ASSUME Simulator \in BOOLEAN
 ASSUME SlotCount \in Nat \ {0} /\ MaxSessions \in Nat \ {0} /\ Burst \in Nat \ {0}
 ASSUME BankSize \in Nat \ {0} /\ RingSize \in Nat \ {0} /\ SteadyCap \in Nat \ {0}
 ASSUME QueueCount \in Nat \ {0}
@@ -122,11 +154,12 @@ VARIABLES
     jammed,         \* environment: the queues that have lost their send room for good
     dropped,        \* ghost: bursts abandoned at a stop step for want of send room
     ringFull,       \* ghost: the SEND_RING_FULL counts those abandons added
-    early           \* ghost: a burst was abandoned while room could still return
+    early,          \* ghost: a burst was abandoned while room could still return
+    held            \* the sealed copies the link simulator holds (0 without one)
 
 vars == <<phase, slot, nextSess, ring, head, count, cursor, staged, inflight,
           sent, owed, unreachable, abandoned, refused, overflow, cut,
-          jammed, dropped, ringFull, early>>
+          jammed, dropped, ringFull, early, held>>
 
 \* send_room_queue (send_room with one queue). A jammed queue reports none,
 \* whatever it holds.
@@ -148,6 +181,13 @@ NoneStaged == \A q \in Queues : staged[q] = 0
 \* The variables only the jam and the abandon for want of room change.
 jamVars == <<jammed, dropped, ringFull, early>>
 
+\* rocketnet_server_transport_io_send_room: the fewest room over the send
+\* queues (with one queue, its room). The link drain reads it.
+RECURSIVE MinFrom(_, _)
+MinFrom(f, q) == IF q = QueueCount - 1 THEN f[q]
+                 ELSE LET rest == MinFrom(f, q + 1) IN IF f[q] < rest THEN f[q] ELSE rest
+FewestRoom == MinFrom([q \in Queues |-> Room(q)], 0)
+
 LiveIdx == {(head + k) % RingSize : k \in 0..count - 1}
 
 Init ==
@@ -161,6 +201,7 @@ Init ==
     /\ owed = {} /\ unreachable = {} /\ abandoned = {}
     /\ refused = FALSE /\ overflow = FALSE /\ cut = FALSE
     /\ jammed = {} /\ dropped = {} /\ ringFull = 0 /\ early = FALSE
+    /\ held = 0
 
 \* A client connects into a free slot.
 Connect(i) ==
@@ -170,7 +211,7 @@ Connect(i) ==
     /\ slot' = [slot EXCEPT ![i] = nextSess]
     /\ nextSess' = nextSess + 1
     /\ UNCHANGED <<phase, ring, head, count, cursor, staged, inflight, sent,
-                   owed, unreachable, abandoned, refused, overflow, cut>>
+                   owed, unreachable, abandoned, refused, overflow, cut, held>>
     /\ UNCHANGED jamVars
 
 \* rocketnet_server_transport_disconnect_client on a running server: the slot
@@ -191,7 +232,7 @@ Kick(i) ==
                /\ overflow' = (overflow \/ count + 1 > RingSize)
           ELSE UNCHANGED <<ring, count, owed, overflow>>
     /\ UNCHANGED <<phase, nextSess, head, cursor, staged, inflight, sent,
-                   unreachable, abandoned, refused, cut>>
+                   unreachable, abandoned, refused, cut, held>>
     /\ UNCHANGED jamVars
 
 \* rocketnet_server_stop: every connected slot, in slot order, ends and its
@@ -214,7 +255,7 @@ Stop ==
     /\ slot' = [i \in Slots |-> 0]
     /\ phase' = "STOPPING"
     /\ UNCHANGED <<nextSess, head, cursor, staged, inflight, sent, unreachable,
-                   abandoned, refused, cut>>
+                   abandoned, refused, cut, held>>
     /\ UNCHANGED jamVars
 
 \* The head leaves while its burst is complete; the cursor is an offset from
@@ -234,9 +275,12 @@ PopAfter(r, cur) ==
 \* count). An entry already complete is passed over. A burst whose own queue
 \* has no room while another queue has some is passed over (PassFull);
 \* "pooledroom" has no such step, so the drain ends there. An unreachable
-\* start abandons the burst. Otherwise a packet is sealed only while its
-\* queue reports room; with no room anywhere the drain ends this step and
-\* the burst waits.
+\* start abandons the burst (and so does a sealed write that fails: see the
+\* module comment). Otherwise a packet is sealed only while its queue
+\* reports room; with no room anywhere the drain ends this step and the
+\* burst waits. With the link simulator the sealed packet goes to it and
+\* its staging slot back (rocketnet_server_commit_staged): held grows and
+\* the staging is unchanged.
 DrainAt == IF cursor >= count THEN 0 ELSE cursor
 SealOne ==
     /\ phase \in {"RUNNING", "STOPPING"}
@@ -247,37 +291,56 @@ SealOne ==
            q == QueueOf(e.s)
        IN \/ /\ e.sealed = Burst /\ Defect # "noskip"
              /\ cursor' = c + 1
-             /\ UNCHANGED <<ring, head, count, staged, sent, abandoned, refused>>
+             /\ UNCHANGED <<ring, head, count, staged, sent, abandoned, refused, held>>
           \/ /\ e.sealed < Burst
              /\ Defect # "pooledroom"
              /\ Room(q) = 0 /\ RoomTotal > 0
              /\ cursor' = c + 1
-             /\ UNCHANGED <<ring, head, count, staged, sent, abandoned, refused>>
+             /\ UNCHANGED <<ring, head, count, staged, sent, abandoned, refused, held>>
           \/ /\ e.sealed < Burst \/ Defect = "noskip"
              /\ e.s \in unreachable /\ Defect # "unreachablestalls"
              /\ (Room(q) > 0 \/ Defect = "singleshot")
              /\ PopAfter([ring EXCEPT ![idx].sealed = Burst], c + 1)
              /\ abandoned' = abandoned \cup {e.s}
-             /\ UNCHANGED <<staged, sent, refused>>
+             /\ UNCHANGED <<staged, sent, refused, held>>
           \/ /\ e.sealed < Burst \/ Defect = "noskip"
              /\ e.s \notin unreachable
              /\ \/ /\ Room(q) > 0
-                   /\ staged' = [staged EXCEPT ![q] = @ + 1]
+                   /\ IF Simulator
+                         THEN /\ held' = held + 1
+                              /\ UNCHANGED staged
+                         ELSE /\ staged' = [staged EXCEPT ![q] = @ + 1]
+                              /\ UNCHANGED held
                    /\ sent' = [sent EXCEPT ![e.s] = @ + 1]
                    /\ UNCHANGED refused
                 \/ /\ Room(q) = 0 /\ Defect = "singleshot"
                    /\ refused' = TRUE
-                   /\ UNCHANGED <<staged, sent>>
+                   /\ UNCHANGED <<staged, sent, held>>
              /\ PopAfter([ring EXCEPT ![idx].sealed = @ + 1], c + 1)
              /\ UNCHANGED abandoned
     /\ UNCHANGED <<phase, slot, nextSess, inflight, owed, unreachable, overflow, cut>>
     /\ UNCHANGED jamVars
 
-\* The step's flush hands every queue's staged frames to the transport.
+\* The step's flush hands every queue's staged frames to the transport. The
+\* stop step and the update follow it with the link drain
+\* (rocketnet_server_link_drain): while the fewest room over the queues is
+\* above 0, a held copy is started on its destination's queue (any queue
+\* here: the guard does not depend on the destination, and with the fewest
+\* room above 0 every queue has room). With any queue at no room the drain
+\* moves nothing, whatever room the copy's own queue has. "nolinkdrain"
+\* leaves the drain out.
 Flush ==
-    /\ ~NoneStaged
-    /\ inflight' = [q \in Queues |-> inflight[q] + staged[q]]
-    /\ staged' = [q \in Queues |-> 0]
+    /\ \/ /\ ~NoneStaged
+          /\ inflight' = [q \in Queues |-> inflight[q] + staged[q]]
+          /\ staged' = [q \in Queues |-> 0]
+          /\ UNCHANGED held
+       \/ /\ phase \in {"RUNNING", "STOPPING"}
+          /\ Defect # "nolinkdrain"
+          /\ held > 0
+          /\ FewestRoom > 0
+          /\ \E q \in Queues : staged' = [staged EXCEPT ![q] = @ + 1]
+          /\ held' = held - 1
+          /\ UNCHANGED inflight
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, sent, owed,
                    unreachable, abandoned, refused, overflow, cut>>
     /\ UNCHANGED jamVars
@@ -290,7 +353,7 @@ Complete(q) ==
     /\ q \notin jammed
     /\ inflight' = [inflight EXCEPT ![q] = @ - 1]
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged, sent,
-                   owed, unreachable, abandoned, refused, overflow, cut>>
+                   owed, unreachable, abandoned, refused, overflow, cut, held>>
     /\ UNCHANGED jamVars
 
 \* Environment: a queue loses its send room for good (an XDP queue whose TX
@@ -304,14 +367,14 @@ Jam(q) ==
     /\ jammed' = jammed \cup {q}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged, inflight,
                    sent, owed, unreachable, abandoned, refused, overflow, cut,
-                   dropped, ringFull, early>>
+                   dropped, ringFull, early, held>>
 
 \* Environment: a waiting burst's destination has no link-layer address.
 LoseRoute(s) ==
     /\ s \in owed /\ s \notin unreachable
     /\ unreachable' = unreachable \cup {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
-                   inflight, sent, owed, abandoned, refused, overflow, cut>>
+                   inflight, sent, owed, abandoned, refused, overflow, cut, held>>
     /\ UNCHANGED jamVars
 
 \* Environment: the destination is learned again (a reply MAC refreshed).
@@ -321,7 +384,7 @@ FindRoute(s) ==
     /\ s \in unreachable
     /\ unreachable' = unreachable \ {s}
     /\ UNCHANGED <<phase, slot, nextSess, ring, head, count, cursor, staged,
-                   inflight, sent, owed, abandoned, refused, overflow, cut>>
+                   inflight, sent, owed, abandoned, refused, overflow, cut, held>>
     /\ UNCHANGED jamVars
 
 \* The stop step after its flush that finds a waiting burst whose own queue
@@ -362,7 +425,7 @@ AbandonNoRoom ==
           /\ ringFull' = ringFull + Cardinality(waiting)
           /\ early' = (early \/ \E i \in waiting : roomAfter(QueueOf(ring[i].s)) > 0)
     /\ UNCHANGED <<phase, slot, nextSess, staged, sent, owed, unreachable, abandoned,
-                   refused, overflow, cut, jammed>>
+                   refused, overflow, cut, jammed, held>>
 
 \* The stop step that finds the ring empty, its seals flushed and every
 \* flushed send finished (the transport's send_idle) tells the I/O to stop
@@ -370,16 +433,20 @@ AbandonNoRoom ==
 \* once; "stopinflight" tells it with a flushed send unfinished, which the
 \* stopping I/O cuts off (the IOCP and RIO send workers retire a bank they
 \* find stopping). What a jammed queue holds can never leave, so the stop
-\* cuts none of it off.
+\* cuts none of it off. The step also needs the link simulator empty
+\* (link_empty): send_idle gives up on a jammed queue, link_empty gives up
+\* on nothing, so a held copy keeps the I/O running ("stopwithheld" leaves
+\* that test out).
 RequestIoStop ==
     /\ phase = "STOPPING"
     /\ NoneStaged
     /\ count = 0 \/ Defect = "singleshot"
+    /\ held = 0 \/ Defect \in {"singleshot", "stopwithheld"}
     /\ Idle \/ Defect \in {"singleshot", "stopinflight"}
     /\ phase' = "IOSTOP"
     /\ cut' = (cut \/ \E q \in Queues : inflight[q] > 0 /\ q \notin jammed)
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
-                   sent, owed, unreachable, abandoned, refused, overflow>>
+                   sent, owed, unreachable, abandoned, refused, overflow, held>>
     /\ UNCHANGED jamVars
 
 \* The workers have exited: rocketnet_server_stopped reports true.
@@ -387,7 +454,7 @@ IoStopped ==
     /\ phase = "IOSTOP"
     /\ phase' = "STOPPED"
     /\ UNCHANGED <<slot, nextSess, ring, head, count, cursor, staged, inflight,
-                   sent, owed, unreachable, abandoned, refused, overflow, cut>>
+                   sent, owed, unreachable, abandoned, refused, overflow, cut, held>>
     /\ UNCHANGED jamVars
 
 \* STOPPED is the end of the run, a stutter here (a later start builds a new
@@ -430,6 +497,8 @@ TypeOK ==
     /\ refused \in BOOLEAN /\ overflow \in BOOLEAN /\ cut \in BOOLEAN
     /\ jammed \subseteq Queues /\ dropped \subseteq Sessions /\ ringFull \in 0..MaxSessions
     /\ early \in BOOLEAN
+    /\ held \in 0..MaxSessions * Burst
+    /\ ~Simulator => held = 0
 
 \* The ring never holds more than its entries: an append always finds a free one.
 RingHolds == ~overflow /\ count <= RingSize
@@ -493,9 +562,20 @@ EachBurstSettledOnce ==
 \* its destination), whatever another queue does.
 OnlyJammedQueuesDrop == \A s \in dropped : QueueOf(s) \in jammed
 
+\* The I/O is told to stop only once the link simulator holds no copy: the
+\* stop step's link_empty test.
+NoCopyHeldAtStop == phase \in {"IOSTOP", "STOPPED"} => held = 0
+
 \* A stop finishes.
 StopFinishes == phase = "STOPPING" ~> phase = "STOPPED"
 
-\* A stop finishes when a queue's room never returns.
+\* A stop finishes when a queue's room never returns. With Simulator = TRUE
+\* the code does not have this (the open defect in the module comment).
 StopFinishesWithoutRoom == (phase = "STOPPING" /\ jammed # {}) ~> phase = "STOPPED"
+
+\* A stop with no queue jammed finishes, or a queue jams first: what the
+\* stop keeps with the link simulator, whose held copies drain only while
+\* every queue has room.
+StopFinishesWhileUnjammed ==
+    (phase = "STOPPING" /\ jammed = {}) ~> (phase = "STOPPED" \/ jammed # {})
 =============================================================================
