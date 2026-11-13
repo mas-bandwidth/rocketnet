@@ -3744,7 +3744,7 @@ static void rocketnet_server_transport_update_body( struct rocketnet_server_tran
     // endpoint has queued, up to this update's packet budget, and each packet
     // is processed in turn; what is left past the budget stays in the
     // transport's queue for the next update. The budget is
-    // rocketnet_server_receive_packets_per_update (16 * 1000 = 16000 at 1000
+    // rocketnet_server_receive_packets_per_update (64 * 1000 = 64000 at 1000
     // clients), which equals the payload-batch capacity, so all packets read
     // in one update fit the payload batch that feeds the application.
 
