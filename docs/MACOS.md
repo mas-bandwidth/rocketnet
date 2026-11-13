@@ -244,8 +244,9 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 
 ## Running a server on macOS
 
-A Mac server's send rate is set by the Mac's network interface driver, not by
-rocketnet. Two Macs were measured on 2026-11-13 with the `msgx` server at
+A Mac server's top send rate is set by the Mac's kernel send path and its
+network interface driver, not by rocketnet: a program with no rocketnet in it
+tops out at the same rate (below). Two Macs were measured on 2026-11-13 with the `msgx` server at
 rocketnet main 5366e4f13, 1000 players on a Linux box across a direct 10 GbE
 LAN, and the space game's peak load: 15 unreliable 1200-byte packets per client
 per tick at 60 Hz, 900,000 packets a second offered (9.4 Gb/s on the wire). The
