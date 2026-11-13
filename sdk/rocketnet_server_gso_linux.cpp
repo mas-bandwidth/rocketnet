@@ -1289,20 +1289,20 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     rocketnet_assert( gso );
     rocketnet_assert( counters );
 
-    memset( counters, 0, ROCKETNET_SERVER_GSO_NUM_COUNTERS * sizeof( uint64_t ) );
+    // every row of the gso range is written below, and nothing outside it
 
-    counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] = gso->counter_packets_sent;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] = gso->counter_send_syscalls;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] = gso->counter_send_dropped;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS] = gso->counter_gso_sends;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] = gso->counter_packets_received;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS] = gso->counter_receive_syscalls;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE] = gso->counter_receive_dropped_size;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] = gso->counter_gro_batches;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
-    counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
+    counters[ROCKETNET_COUNTER_GSO_PACKETS_SENT] = gso->counter_packets_sent;
+    counters[ROCKETNET_COUNTER_GSO_SEND_SYSCALLS] = gso->counter_send_syscalls;
+    counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] = gso->counter_send_dropped;
+    counters[ROCKETNET_COUNTER_GSO_GSO_SENDS] = gso->counter_gso_sends;
+    counters[ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED] = gso->counter_packets_received;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_SYSCALLS] = gso->counter_receive_syscalls;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE] = gso->counter_receive_dropped_size;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW] = gso->counter_receive_dropped_overflow;
+    counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] = gso->counter_gro_batches;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE] = gso->counter_receive_dropped_source;
+    counters[ROCKETNET_COUNTER_GSO_RECEIVE_ERRORS] = gso->counter_receive_errors;
+    counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] = gso->counter_gro_cmsg_faults;
 }
 
 // the builtin transport's receive_drops hook: the size pass's drops
@@ -2479,11 +2479,11 @@ bool rocketnet_server_gso_test_gro_cmsg_faults()
 
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED] == 3;
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES] == 0;
-    valid = valid && counters[ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS] == 3;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED] == 3;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] == 0;
+    valid = valid && counters[ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS] == 3;
 
     // no worker ran, so stop is complete once both stopped flags are set
 

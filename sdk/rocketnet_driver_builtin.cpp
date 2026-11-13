@@ -2313,9 +2313,9 @@ static uint64_t gso_send_failures( void * transport )
 {
     // SEND_DROPPED: the datagrams a refused sendmmsg dropped
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
-    return counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED];
+    return counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED];
 }
 
 static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
@@ -2363,9 +2363,9 @@ static uint64_t io_uring_send_failures( void * transport )
     // SEND_DROPPED: send CQEs with a negative result, and destinations the
     // socket family cannot carry
 
-    uint64_t counters[ROCKETNET_SERVER_URING_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, counters );
-    return counters[ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED];
+    return counters[ROCKETNET_COUNTER_URING_SEND_DROPPED];
 }
 
 static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
@@ -2536,19 +2536,19 @@ ROCKETNET_STAGED_ADAPTER( iocp, rocketnet_server_iocp_t, rocketnet_server_iocp )
 static uint64_t iocp_send_failures( void * transport )
 {
     // SEND_FAILED: the transport's own count of datagrams a refused post or a failed
-    // send completion dropped (ROCKETNET_IOCP_SEND_FAILED)
+    // send completion dropped (ROCKETNET_COUNTER_IOCP_SEND_FAILED)
 
-    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, counters );
-    return counters[ROCKETNET_IOCP_SEND_FAILED];
+    return counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED];
 }
 
 static void iocp_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
-    uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, counters );
-    *too_short = counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT];
-    *too_large = counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
+    *too_short = counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE];
 }
 
 static const rocketnet_server_transport_io_operations_t iocp_operations = {
@@ -2590,19 +2590,19 @@ ROCKETNET_STAGED_ADAPTER( rio, rocketnet_server_rio_t, rocketnet_server_rio )
 static uint64_t rio_send_failures( void * transport )
 {
     // SEND_FAILED: the transport's own count of datagrams a refused post or a failed
-    // send completion dropped (ROCKETNET_RIO_COUNTER_SEND_FAILED)
+    // send completion dropped (ROCKETNET_COUNTER_RIO_SEND_FAILED)
 
-    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
-    return counters[ROCKETNET_RIO_COUNTER_SEND_FAILED];
+    return counters[ROCKETNET_COUNTER_RIO_SEND_FAILED];
 }
 
 static void rio_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
 {
-    uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, counters );
-    *too_short = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT];
-    *too_large = counters[ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE];
+    *too_short = counters[ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT];
+    *too_large = counters[ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE];
 }
 
 static const rocketnet_server_transport_io_operations_t rio_operations = {
@@ -2801,6 +2801,43 @@ bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_serve
     (void) operations;
     (void) transport;
     (void) dropped;
+
+    return false;
+}
+
+bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * values )
+{
+    // builtin-only, matched on the operations table as receive_drops is: the
+    // transport's own counts are rows of the public table (the GSO_, URING_,
+    // IOCP_ and RIO_ rows of sdk/rocketnet_counters.h); the transport writes
+    // its rows of values, an array of ROCKETNET_NUM_COUNTERS, and nothing else
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( operations == &gso_operations )
+    {
+        rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, values );
+        return true;
+    }
+    if ( operations == &io_uring_operations )
+    {
+        rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, values );
+        return true;
+    }
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( operations == &iocp_operations )
+    {
+        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) transport, values );
+        return true;
+    }
+    if ( operations == &rio_operations )
+    {
+        rocketnet_server_rio_counters( (rocketnet_server_rio_t *) transport, values );
+        return true;
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    (void) operations;
+    (void) transport;
+    (void) values;
 
     return false;
 }

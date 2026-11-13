@@ -3777,6 +3777,58 @@ The registry of counters, in index order, is:
 | `RECEIVE_DROPPED_STOPPED` | `expected` | `none` |
 | `SEND_RESERVE_REFUSED_TAILS_HELD` | `refusal` | `none` |
 | `RECEIVE_DROPPED_UNKNOWN_SHARE` | `refusal` | `none` |
+| `GSO_PACKETS_SENT` | `expected` | `none` |
+| `GSO_PACKETS_RECEIVED` | `expected` | `none` |
+| `GSO_SEND_SYSCALLS` | `expected` | `none` |
+| `GSO_RECEIVE_SYSCALLS` | `expected` | `none` |
+| `GSO_SEND_DROPPED` | `refusal` | `none` |
+| `GSO_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `GSO_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `GSO_GSO_SENDS` | `expected` | `none` |
+| `GSO_GRO_BATCHES` | `expected` | `none` |
+| `GSO_RECEIVE_DROPPED_SOURCE` | `refusal` | `none` |
+| `GSO_RECEIVE_ERRORS` | `refusal` | `none` |
+| `GSO_GRO_CMSG_FAULTS` | `refusal` | `none` |
+| `URING_PACKETS_SENT` | `expected` | `none` |
+| `URING_PACKETS_RECEIVED` | `expected` | `none` |
+| `URING_SUBMIT_SYSCALLS` | `expected` | `none` |
+| `URING_SEND_DROPPED` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `URING_RECEIVE_DROPPED_SOURCE` | `refusal` | `none` |
+| `URING_RECEIVE_NO_BUFFERS` | `refusal` | `none` |
+| `URING_RECEIVE_REARMS` | `expected` | `none` |
+| `URING_REAP_DEFERRED` | `expected` | `none` |
+| `URING_SEND_DEFERRED` | `expected` | `none` |
+| `URING_RECEIVE_DROPPED_NO_BUFFER` | `refusal` | `none` |
+| `URING_RECEIVE_REARM_FAILED` | `refusal` | `none` |
+| `URING_GSO_SENDS` | `expected` | `none` |
+| `URING_GSO_FALLBACKS` | `refusal` | `none` |
+| `URING_GRO_BATCHES` | `expected` | `none` |
+| `URING_GRO_CMSG_FAULTS` | `refusal` | `none` |
+| `IOCP_SEND_COMPLETED` | `expected` | `none` |
+| `IOCP_SEND_FAILED` | `refusal` | `none` |
+| `IOCP_RECEIVE_COMPLETED` | `expected` | `none` |
+| `IOCP_RECEIVE_DROPPED` | `refusal` | `none` |
+| `IOCP_RECEIVE_TOO_SHORT` | `refusal` | `none` |
+| `IOCP_RECEIVE_TOO_LARGE` | `refusal` | `none` |
+| `IOCP_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
+| `IOCP_COMPLETION_BATCHES` | `expected` | `none` |
+| `IOCP_USO_SENDS` | `expected` | `none` |
+| `IOCP_URO_BATCHES` | `expected` | `none` |
+| `IOCP_USO_FALLBACKS` | `refusal` | `none` |
+| `RIO_PACKETS_SENT` | `expected` | `none` |
+| `RIO_PACKETS_RECEIVED` | `expected` | `none` |
+| `RIO_SEND_FULL` | `refusal` | `none` |
+| `RIO_SEND_FAILED` | `refusal` | `none` |
+| `RIO_SEND_WAITS` | `expected` | `none` |
+| `RIO_RECEIVE_FAILED` | `refusal` | `none` |
+| `RIO_RECEIVE_DROPPED_SIZE` | `refusal` | `none` |
+| `RIO_RECEIVE_TOO_SHORT` | `refusal` | `none` |
+| `RIO_RECEIVE_TOO_LARGE` | `refusal` | `none` |
+| `RIO_RECEIVE_DROPPED_OVERFLOW` | `refusal` | `none` |
+| `RIO_RECEIVE_REPOST_FAILED` | `refusal` | `none` |
+| `RIO_COMMITS` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3891,10 +3943,33 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
 a1 00 00 00 2d 17 2e 45 00 00 00 b9 92 87 1d 00
 00 00 e3 12 7a fb 00 00 00 43 67 11 59 01 00 00
-a1 00 00 00 51 8b 57 c4 00 00 00 83 0e ee 6b 00
-00 00 b2 57 b6 3d 00 00 00 b8 28 ec 42 00 00 00
-d5 28 0b 6d 00 00 00 ad 33 2a 98 01 00 00 9f ba
-38 0a 00 00 00 da d9 59 af 00 00 00
+51 8b 57 c4 00 00 00 83 0e ee 6b 00 00 00 b2 57
+b6 3d 00 00 00 b8 28 ec 42 00 00 00 d5 28 0b 6d
+00 00 00 ad 33 2a 98 01 00 00 9f ba 38 0a 00 00
+00 da d9 59 af 00 00 00 65 49 cc 1d 01 00 00 3c
+c1 dc 99 01 00 00 a2 dc 5f 4e 01 00 00 2d 51 77
+64 01 00 00 2e 8d cf ce 00 00 00 4d 0f e9 bf 00
+00 00 72 01 67 0e 00 00 00 a4 dc a2 4d 01 00 00
+ce f0 27 50 01 00 00 31 98 e4 c3 00 00 00 e4 9c
+37 6b 00 00 00 68 09 2e e5 00 00 00 0f c9 48 b4
+01 00 00 82 1f 85 6d 01 00 00 d2 cb e0 04 01 00
+00 8c 73 05 28 00 00 00 0b 08 c6 d9 00 00 00 18
+62 20 fd 00 00 00 3f 54 16 85 00 00 00 d6 b3 6f
+47 00 00 00 a7 b8 3d 12 01 00 00 9b d6 0d f4 01
+00 00 11 ae 54 4d 01 00 00 34 c7 86 56 00 00 00
+de bd d7 13 00 00 00 de 1b fe 8a 01 00 00 0a 8a
+1e 7f 00 00 00 78 1a 4f 7d 01 00 00 46 6a 51 94
+00 00 00 af a7 9e 56 01 00 00 8b 78 7a f1 00 00
+00 f6 62 a5 c4 01 00 00 b1 a1 85 38 00 00 00 98
+9f b0 ca 00 00 00 d9 6d c2 32 00 00 00 d6 08 07
+de 00 00 00 96 08 d9 fc 01 00 00 9c ce fc 4d 01
+00 00 c6 51 bf 7f 01 00 00 00 b0 c8 9c 00 00 00
+da 8a 2b 51 01 00 00 37 df 03 d7 01 00 00 1c 31
+f2 57 00 00 00 d4 1f 4d 66 00 00 00 69 7d ae d0
+01 00 00 05 4c ed e0 00 00 00 2a 63 c3 16 00 00
+00 6f 54 6f 12 00 00 00 62 5c 63 05 00 00 00 f9
+e3 01 87 00 00 00 a1 e9 0d d3 00 00 00 2c 79 8c
+cf 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

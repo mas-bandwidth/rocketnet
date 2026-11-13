@@ -10,6 +10,7 @@
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
@@ -203,23 +204,6 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 #define ROCKETNET_SERVER_GSO_DISABLE_SEGMENT                    (1<<0)
 #define ROCKETNET_SERVER_GSO_DISABLE_GRO                        (1<<1)
 
-// counters, readable any time from the main thread; indexes into the array
-// rocketnet_server_gso_counters fills
-
-#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT                    0
-#define ROCKETNET_SERVER_GSO_COUNTER_PACKETS_RECEIVED               1
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS                  2
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_SYSCALLS               3
-#define ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED                   4       // packets not sent: refused for their destination (never resent), or a full socket's tail left after shutdown's bounded retries
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SIZE           5       // segment outside [server min, receive ceiling]
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_OVERFLOW       6       // segments of one GRO receive past the staging's room: more than ROCKETNET_GSO_RECV_MAX_SEGMENTS
-#define ROCKETNET_SERVER_GSO_COUNTER_GSO_SENDS                      7       // sendmmsg messages that carried a UDP_SEGMENT cmsg
-#define ROCKETNET_SERVER_GSO_COUNTER_GRO_BATCHES                    8       // receive buffers that arrived GRO-coalesced (more than one segment)
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_DROPPED_SOURCE         9       // source address family the boundary could not convert
-#define ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS                10       // recvmmsg answered -1 with an errno other than EAGAIN; the worker goes back to poll
-#define ROCKETNET_SERVER_GSO_COUNTER_GRO_CMSG_FAULTS               11       // a receive whose UDP_GRO control was truncated (MSG_CTRUNC) or malformed: taken as one datagram, as io_uring's GRO_CMSG_FAULTS
-#define ROCKETNET_SERVER_GSO_NUM_COUNTERS                          12
-
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
 // bind is dual stack: ipv4 senders arrive as native ipv4 addresses,
@@ -242,6 +226,14 @@ int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
 
 int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso );
 
+// The gso transport's counters are rows of the public table: the
+// ROCKETNET_COUNTER_GSO_* rows of sdk/rocketnet_counters.h, contiguous from
+// ROCKETNET_COUNTER_GSO_PACKETS_SENT. Main thread, any time: writes those rows
+// of counters, an array of ROCKETNET_NUM_COUNTERS values indexed by public
+// counter, cumulative for the transport's life; every other value is left as
+// it was.
+#define ROCKETNET_SERVER_GSO_FIRST_COUNTER ROCKETNET_COUNTER_GSO_PACKETS_SENT
+#define ROCKETNET_SERVER_GSO_COUNTER_ROWS  ( ROCKETNET_COUNTER_GSO_GRO_CMSG_FAULTS - ROCKETNET_COUNTER_GSO_PACKETS_SENT + 1 )
 void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_t * counters );
 
 // send packets. the phase contract is the transport's: start, finish and

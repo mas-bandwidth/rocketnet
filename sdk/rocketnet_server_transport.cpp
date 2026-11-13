@@ -5046,6 +5046,11 @@ static void rocketnet_server_transport_fold_receive_drops( struct rocketnet_serv
 bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                   uint64_t * commit_failed, uint64_t * greetings_held );
 
+// the builtin transports' own counter rows (sdk/rocketnet_driver_builtin.cpp),
+// declared here beside their one reader
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
+
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -5110,6 +5115,20 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     {
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] = replay_commit_failed;
         server_transport->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] = replay_greetings_held;
+    }
+
+    // the gso, io_uring, iocp and rio transports' own counts are the public
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, cumulative, assigned on read; a
+    // transport writes its own rows and the rest of the range reads 0, so
+    // every platform has every row
+
+    uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
+    if ( rocketnet_server_transport_io_transport_counters( server_transport->io.operations, server_transport->io.instance, transport_rows ) )
+    {
+        for ( int i = ROCKETNET_COUNTER_GSO_PACKETS_SENT; i <= ROCKETNET_COUNTER_RIO_COMMITS; ++i )
+        {
+            server_transport->counters.values[i] = transport_rows[i];
+        }
     }
 
     return &server_transport->counters;
