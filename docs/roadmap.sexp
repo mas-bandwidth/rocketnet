@@ -585,4 +585,24 @@
    :title "A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap"
    :text "Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded."
    :date "2026-11-13" :origin "v1.1.54 replays: trace shard 3 at 106 s alone")
+
+  (item "loopback-hub-destroy-check-and-free" :group "review-v1-2" :area "sdk"
+   :title "Loopback hub destroy checks for endpoints, then frees the hub outside the lock"
+   :text "rocketnet_loopback_hub_destroy (sdk/rocketnet_driver_loopback.cpp about 521-559) reads registered under the hub mutex, releases it, then destroys the mutex and frees the block. A create on another thread in that window registers into memory about to be freed. Creating while destroying is misuse, but the in-use guard reads as if it catches it. Make the check and the retirement one step under the mutex (a create after it refused with the hub's in-use or mismatch status), show it red with two threads through a deterministic seam, and make LoopbackHub.tla's Destroy (atomic today) two steps with a reversed witness. A create that is already waiting on the mutex when the hub is freed stays misuse that no flag can catch: say so in rocketnet.h."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-11 (read, not run)")
+
+  (item "loopback-port-zero-bind-walk" :group "review-v1-2" :area "sdk"
+   :title "A loopback port-0 bind walks every endpoint for each candidate port under the hub mutex"
+   :text "loopback_create (sdk/rocketnet_driver_loopback.cpp about 588-668) checks each candidate port of the ephemeral range against every live endpoint record, O(range x endpoints) with the hub mutex held, although hub->bound[family][port] already answers each port in one lookup (RNLoopbackBindLayout.tla LookupIsWalk). Use the table for both the explicit-port conflict check and the search; show it with a counted bound on a nearly full hub."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-12 (read, not run)")
+
+  (item "loopback-server-drain-budget" :group "review-v1-2" :area "sdk"
+   :title "The server's loopback queue is sized by the hub's clients, its receive budget by the server's"
+   :text "rocketnet_loopback_server_queue_packets sizes the server endpoint's queue from the hub's max_clients, and the server transport's loopback receive drains up to a budget from the server's own max_clients (server_transport loopback receive about 4340-4430). With a hub larger than the server, a full queue holds more than one update drains: an update of added latency. Size the drain so one update empties the queue, or say why not."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-20 (read, not run)")
+
+  (item "loopback-queue-model-full-drop" :group "review-v1-2" :area "proofs"
+   :title "LoopbackQueue cannot reach its full drop, and its Drop does not count"
+   :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
  ))
