@@ -187,6 +187,23 @@ static void receive_latency_pump( struct rocketnet_client_t * client )
     rocketnet_client_send_packets( client );
 }
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
+// the veth row's teardown, on every path out of the case: the pair down and
+// the two environment variables back as they were
+
+static void receive_latency_veth_down( const char * name, bool restore_xdp_threads, const char * saved_xdp_threads, bool restore_os_cpus, const char * saved_os_cpus )
+{
+    rocketnet_xdp_veth_pair_down( NULL );
+    receive_latency_check( restore_xdp_threads ? setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", saved_xdp_threads, 1 ) == 0
+                                               : unsetenv( "ROCKETNET_SERVER_NUM_XDP_THREADS" ) == 0,
+                           name, "xdp threads restored" );
+    receive_latency_check( restore_os_cpus ? setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", saved_os_cpus, 1 ) == 0 : unsetenv( "ROCKETNET_SERVER_NUM_OS_CPUS" ) == 0,
+                           name, "os cpus restored" );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
 static void receive_latency_run( const struct receive_latency_row_t * row )
 {
     const char * name = row->name;
@@ -270,6 +287,12 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         printf( "receive latency %s: granted %s, not %s: nothing to measure\n", name, rocketnet_server_transport_name( server ), row->server_transport );
         fflush( stdout );
         rn_cli_server_stop_and_destroy( server );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+        if ( row->veth )
+        {
+            receive_latency_veth_down( name, restore_xdp_threads, saved_xdp_threads, restore_os_cpus, saved_os_cpus );
+        }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
         return;
     }
 
@@ -449,12 +472,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     if ( row->veth )
     {
-        rocketnet_xdp_veth_pair_down( NULL );
-        receive_latency_check( restore_xdp_threads ? setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", saved_xdp_threads, 1 ) == 0
-                                                   : unsetenv( "ROCKETNET_SERVER_NUM_XDP_THREADS" ) == 0,
-                               name, "xdp threads restored" );
-        receive_latency_check( restore_os_cpus ? setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", saved_os_cpus, 1 ) == 0 : unsetenv( "ROCKETNET_SERVER_NUM_OS_CPUS" ) == 0,
-                               name, "os cpus restored" );
+        receive_latency_veth_down( name, restore_xdp_threads, saved_xdp_threads, restore_os_cpus, saved_os_cpus );
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 

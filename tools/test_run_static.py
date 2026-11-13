@@ -51,10 +51,13 @@ class RunStaticGateTest(unittest.TestCase):
             "BUILD": run_static.BUILD,
             "COMPILE_DB": run_static.COMPILE_DB,
             "parser_files": run_static.parser_files,
+            "build_generated_headers": run_static.build_generated_headers,
         }
         run_static.BUILD = str(tmp)
         run_static.COMPILE_DB = str(self.compile_db)
         run_static.parser_files = lambda: [TU]
+        self.headers_built = []
+        run_static.build_generated_headers = lambda: self.headers_built.append(True) or True
         self.saved_env = dict(os.environ)
         os.environ["PATH"] = str(bindir) + os.pathsep + os.environ.get("PATH", "")
         self.write_db([TU])
@@ -90,6 +93,38 @@ class RunStaticGateTest(unittest.TestCase):
         code, out = self.gate("", 0)
         self.assertEqual(code, 0, out)
         self.assertIn("static gate passed", out)
+        self.assertEqual(self.headers_built, [True], out)
+
+    def test_generated_headers_build_their_target(self):
+        # the real function, over a stubbed subprocess.run: it builds the
+        # rocketnet_xdp_header target in BUILD, and a nonzero exit is False
+        build = self.saved["build_generated_headers"]
+        calls = []
+
+        class Result:
+            def __init__(self, code):
+                self.returncode = code
+                self.stdout = "ninja: error\n"
+
+        saved_run = run_static.subprocess.run
+        try:
+            for code, want in ((0, True), (1, False)):
+                run_static.subprocess.run = lambda argv, code=code, **kw: calls.append(argv) or Result(code)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(build(), want)
+        finally:
+            run_static.subprocess.run = saved_run
+        self.assertEqual(calls[0], ["cmake", "--build", run_static.BUILD, "--target", "rocketnet_xdp_header"])
+
+    def test_generated_headers_failing_to_build_fails(self):
+        # the xdp transport's generated header is built before any unit is
+        # analyzed; a build that cannot write it is an incomplete run
+        run_static.build_generated_headers = lambda: False
+        code, out = self.gate("", 0, "--report", str(self.report))
+        self.assertEqual(code, 1, out)
+        self.assertIn("incomplete", out)
+        self.assertIn("rocketnet_xdp_header", out)
+        self.assertFalse(self.report.exists(), out)
 
     def test_warning_finding_fails(self):
         code, out = self.gate(diagnostic("warning", "-Wanalyzer-malloc-leak"), 0)
