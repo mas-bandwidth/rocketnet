@@ -31,6 +31,11 @@
 #   --port P                          the server's UDP port (default 40000)
 #   --client-remote DIR               the client machine's checkout (default --remote)
 #   --server-env K=V                  an environment setting for the server (repeatable)
+#   --server-args "WORDS"             more options for the server role, appended to its command
+#                                     line (the frame shape and load: --frame-shape space
+#                                     --game-threads 21 --load peak ...; split on spaces)
+#   --client-args "WORDS"             the same for the clients role (--input-bytes 256)
+#   --server-sudo                     run the server role as root (the XDP transport needs it)
 #   --profile-seconds S [--profile-after A]  a Windows server samples its own main thread
 #                                     for S seconds from A (default 20) seconds in, and names
 #                                     every thread's CPU share; the cell keeps profile.txt
@@ -55,6 +60,9 @@ server_ip=""
 remote=""
 client_remote=""
 server_env=""
+server_extra=""
+client_extra=""
+server_sudo=0
 server_os=linux
 profile_after=20
 profile_seconds=""
@@ -90,6 +98,9 @@ while [ $# -gt 0 ]; do
         --remote) remote="$2"; shift 2 ;;
         --client-remote) client_remote="$2"; shift 2 ;;
         --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
+        --server-args) server_extra="$2"; shift 2 ;;
+        --client-args) client_extra="$2"; shift 2 ;;
+        --server-sudo) server_sudo=1; shift ;;
         --server-os) server_os="$2"; shift 2 ;;
         --profile-after) profile_after="$2"; shift 2 ;;
         --profile-seconds) profile_seconds="$2"; shift 2 ;;
@@ -235,6 +246,11 @@ xdp_args=""
 if [ "$xdp_queues" -gt 0 ]; then
     xdp_args="--num-xdp-queues $xdp_queues"
 fi
+xdp_args="$xdp_args $server_extra"
+server_runner="env"
+if [ "$server_sudo" = 1 ]; then
+    server_runner="sudo -n env"
+fi
 # the end is a wall time every role shares, on both machines' clocks: joins
 # take clients/100 seconds, then the measured run; 5 s more for the ssh
 # round trips that start the roles
@@ -249,9 +265,9 @@ if [ -n "$profile_seconds" ]; then
 fi
 if [ "$server_os" = windows ]; then
     # in the foreground of a session this machine holds open in the background
-    on_shell "$server_host" "cd $(printf '%q' "$run_dir") && env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null" > "$out/ssh-server.txt" 2>&1 &
+    on_shell "$server_host" "cd $(printf '%q' "$run_dir") && $server_runner $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null" > "$out/ssh-server.txt" 2>&1 &
 else
-    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
+    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup $server_runner $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
 fi
 key=""
 # one remote wait (10 s) for the ready line, not one ssh round trip per look
@@ -263,7 +279,7 @@ if [ -z "$key" ]; then
 fi
 
 on_shell "$client_host" "ulimit -n 65536; cd $(printf '%q' "$client_run_dir") && nohup $(printf '%q ' "$client_tool" clients --address "$address" --key "$key" \
-    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
+    --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$client_dev" "${client_shape[@]}") $client_extra > clients.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-clients.txt" 2>&1 &
 
 if [ "$hostile" = "1" ]; then
     # after the players are on: the replay kind needs their packets on the wire

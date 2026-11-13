@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# space-frame-row: one row of the XDP load test at space game's load, in the
+# layout the game runs: the OS on cpu 0, two XDP threads, one main thread, the
+# rest game threads (docs/HARDEN_LOAD.md). A functional/bench tool: real
+# sockets, real time. It runs on a control machine that reaches the server
+# machine and the players' machine by ssh, and calls scripts/harden-pair.
+#
+#   scripts/space-frame-row --server-host DEST --client-host DEST --server-ip ADDR --remote DIR \
+#       --out DIR --server-dev DEV --client-dev DEV --load peak|average [options]
+#
+# The server machine must be provisioned for the XDP transport and carry
+# nothing else (scripts/rocketnet-provision DEV 2 verify); the XDP threads are
+# pinned to the first isolated cpus (cpus 1 and 2 with isolcpus=1-2), the main
+# thread to --first-cpu (3) and the game threads to the cpus after it. DIR is a
+# built checkout on both machines (cmake -DCMAKE_BUILD_TYPE=Release
+# -DROCKETNET_DEV=ON, target harden_load: DIR/bin/harden_load); the server role
+# runs as root (sudo -n). The control machine needs a harden_load of its own for
+# the reconcile (--local-bin).
+#
+# The load: --load peak is 15 unreliable 1200-byte messages per player per tick
+# (about 895k packets a second at 1000 players, 60 Hz), average is 8; a small
+# reliable trickle; each player sends an input of --input-bytes every tick.
+#
+# Options:
+#   --game-threads N   the thread pool, the main thread included (default 21: the
+#                      main thread and 20 game threads on a 24-core machine)
+#   --first-cpu C      the main thread's cpu; game thread i on C + i (default 3)
+#   --queues Q         XDP queues, one thread each (default 2)
+#   --game-load F --world-ms MS   the stand-in game: the main thread's own world
+#                      work of MS milliseconds, and game jobs that keep each game
+#                      thread F of the frame busy (default 0 and 0: no game load)
+#   --split top|bottom top: the network work is split off at the top of the frame
+#                      and runs beside the world update; bottom: after it (default top)
+#   --input-bytes B    each player's input message (default 256)
+#   --seconds S --clients N --threads T   as scripts/harden-pair (60, 1000, 32)
+#   --client-remote DIR  the players' checkout (default --remote)
+#   --local-bin DIR    this machine's harden_load (default ./bin)
+#   --ssh "CMD"        the ssh command (default "ssh -o BatchMode=yes")
+#   --profile          sample the server with perf during the row and write the
+#                      per-thread-class ranked lists to OUT/profile.txt (needs
+#                      perf and sudo on the server machine)
+#
+# The row's server.log (harden_tick, harden_frame and harden_threads lines each
+# second) and reconcile.txt are in OUT. Exit 0 only on PASS.
+
+set -euo pipefail
+
+server_host=""; client_host=""; server_ip=""; remote=""; out=""
+server_dev=""; client_dev=""; load=""
+game_threads=21; first_cpu=3; queues=2; game_load=0; world_ms=0; split=top
+input_bytes=256; seconds=60; clients=1000; threads=32
+client_remote=""; local_bin=./bin; ssh_command="ssh -o BatchMode=yes"; profile=0
+
+usage()
+{
+    sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --server-host) server_host="$2"; shift 2 ;;
+        --client-host) client_host="$2"; shift 2 ;;
+        --server-ip) server_ip="$2"; shift 2 ;;
+        --remote) remote="$2"; shift 2 ;;
+        --client-remote) client_remote="$2"; shift 2 ;;
+        --out) out="$2"; shift 2 ;;
+        --server-dev) server_dev="$2"; shift 2 ;;
+        --client-dev) client_dev="$2"; shift 2 ;;
+        --load) load="$2"; shift 2 ;;
+        --game-threads) game_threads="$2"; shift 2 ;;
+        --first-cpu) first_cpu="$2"; shift 2 ;;
+        --queues) queues="$2"; shift 2 ;;
+        --game-load) game_load="$2"; shift 2 ;;
+        --world-ms) world_ms="$2"; shift 2 ;;
+        --split) split="$2"; shift 2 ;;
+        --input-bytes) input_bytes="$2"; shift 2 ;;
+        --seconds) seconds="$2"; shift 2 ;;
+        --clients) clients="$2"; shift 2 ;;
+        --threads) threads="$2"; shift 2 ;;
+        --local-bin) local_bin="$2"; shift 2 ;;
+        --ssh) ssh_command="$2"; shift 2 ;;
+        --profile) profile=1; shift ;;
+        *) usage ;;
+    esac
+done
+[ -n "$server_host" ] && [ -n "$client_host" ] && [ -n "$server_ip" ] && [ -n "$remote" ] && [ -n "$out" ] && [ -n "$server_dev" ] && [ -n "$client_dev" ] || usage
+[ "$load" = peak ] || [ "$load" = average ] || usage
+[ "$split" = top ] || [ "$split" = bottom ] || usage
+mkdir -p "$out"
+
+server_args="--frame-shape space --game-threads $game_threads --pin-first-cpu $first_cpu --space-send wide --space-update split --space-net task"
+server_args="$server_args --space-split $split --game-load $game_load --world-ms $world_ms --load $load"
+
+# the profile (--profile): on the server machine, find the harden_load process (the
+# server role is the only one there), wait for the row to be 40 s in (warm-up is
+# 20 s), list its threads with the cpu each last ran on (the first is the main
+# thread), then record 8 s of every thread's cpu samples at 999 Hz with call
+# graphs, and print each sample count by thread and function. Run beside the row.
+profile_remote()
+{
+    # shellcheck disable=SC2016
+    $ssh_command "$server_host" 'bash -s' <<'EOF'
+pid=""
+for i in $(seq 1 180); do
+    pid=$(pgrep -x harden_load | tail -n 1)
+    [ -n "$pid" ] && break
+    sleep 1
+done
+[ -n "$pid" ] || exit 1
+sleep 40
+for t in /proc/$pid/task/*; do echo "$(basename "$t") $(awk '{print $39}' "$t/stat")"; done > /tmp/space-frame-row.tids
+sudo -n perf record -F 999 -g -p "$pid" -o /tmp/space-frame-row.data -- sleep 8 > /dev/null 2>&1
+sudo -n perf report -f -i /tmp/space-frame-row.data --no-children --sort pid,symbol -n --stdio -g none 2> /dev/null | grep -v '^#' | grep -v '^$' > /tmp/space-frame-row.rep
+EOF
+}
+
+if [ "$profile" = 1 ]; then
+    profile_remote > "$out/profile.log" 2>&1 &
+    profile_pid=$!
+fi
+
+status=0
+"$(dirname "${BASH_SOURCE[0]}")/harden-pair" --ssh "$ssh_command" --server-host "$server_host" --client-host "$client_host" \
+    --server-ip "$server_ip" --remote "$remote" --client-remote "${client_remote:-$remote}" --transport xdp --row space \
+    --xdp-queues "$queues" --server-dev "$server_dev" --client-dev "$client_dev" --seconds "$seconds" --clients "$clients" \
+    --threads "$threads" --server-sudo --server-args "$server_args" --client-args "--input-bytes $input_bytes" \
+    --local-bin "$local_bin" --out "$out" || status=$?
+
+if [ "$profile" = 1 ]; then
+    wait "$profile_pid" || true
+    $ssh_command "$server_host" 'cat /tmp/space-frame-row.tids' > "$out/profile.tids"
+    $ssh_command "$server_host" 'cat /tmp/space-frame-row.rep' > "$out/profile.rep"
+    # milliseconds a frame: samples / 999 Hz, divided by the frames in the 8 s window (the
+    # row's steady frame rate x 8). Classes: the main thread (the first thread listed), the
+    # XDP threads (a cpu below the main thread's), the game threads (the rest, averaged per
+    # thread); the twelve largest functions of each
+    fps=$(awk '$1 == "harden_tick:" { t = substr($2, 3) + 0; if (t >= 25 && t <= 55) { for (i = 1; i <= NF; i++) if ($i ~ /^frames=/) { s += substr($i, 8); n++ } } } END { if (n) printf "%.2f", s / n }' "$out/server.log")
+    awk -v fps="${fps:-60}" -v first="$first_cpu" '
+        FILENAME == ARGV[1] { if (!main) { main = $1; cls[$1] = "main" } else { cls[$1] = ($2 < first && $2 > 0) ? "xdp" : "game" } cnt[cls[$1]]++; next }
+        { split($3, a, ":"); c = cls[a[1]]; if (c == "") next; sym = $0; sub(/^[^\[]*\[[.k]\] /, "", sym); sub(/ +- +- *$/, "", sym)
+          v = $2 / 999 * 1000 / (fps * 8) / cnt[c]; ms[c "\t" sym] += v; tot[c] += v }
+        END { for (k in ms) { split(k, p, "\t"); printf "%s\t%.3f\t%s\n", p[1], ms[k], p[2] } for (c in tot) printf "%s\t%.3f\tTOTAL\n", c, tot[c] }' \
+        "$out/profile.tids" "$out/profile.rep" | sort -t "$(printf '\t')" -k1,1 -k2,2nr | awk -F '\t' '
+        { if ($3 == "TOTAL") { total[$1] = $2; next } if (shown[$1]++ < 12) line[$1] = line[$1] sprintf("  %7.3f ms  %s\n", $2, $3) }
+        END { for (c in total) printf "== %s: %.2f ms per frame (per thread)\n%s", c, total[c], line[c] }' > "$out/profile.txt"
+    echo "space-frame-row: profile in $out/profile.txt (frames a second $fps)"
+fi
+exit "$status"
