@@ -29,7 +29,7 @@ bool rocketnet_socket_buffer_note( char * line, int line_bytes, const char * tra
         if ( force_tried )
         {
             (void) snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", transport, direction, requested_bytes,
-                      granted_bytes, limit, force_name );
+                             granted_bytes, limit, force_name );
         }
         else
         {
@@ -59,7 +59,7 @@ bool rocketnet_socket_buffer_note( char * line, int line_bytes, const char * tra
     const char * consequence = receive ? "the kernel drops datagrams that arrive past the grant between updates" : "sends wait on a full socket";
 
     (void) snprintf( line, (size_t) line_bytes, "%s transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", transport, direction, requested_bytes,
-              granted_bytes, force_text, consequence, limit, requested_bytes );
+                     granted_bytes, force_text, consequence, limit, requested_bytes );
     return true;
 }
 
