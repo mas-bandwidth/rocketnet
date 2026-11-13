@@ -189,7 +189,7 @@ fi
 # argument that differs from a set variable is refused: the server would run
 # the variable's count on a NIC provisioned for the argument's.
 
-ROCKETNET_XDP_DEFAULT_THREADS=1   # sdk/rocketnet_network_threads.h; tools/check_network_threads.py keeps the two equal
+ROCKETNET_XDP_DEFAULT_THREADS=1   # sdk/rocketnet_network_threads.h; tools/check_public_header.py keeps the two equal
 
 if [ "$MODE" = "provision" ] || [ "$MODE" = "verify" ] || [ "$MODE" = "repin" ]; then
     THREADS_ENV="${ROCKETNET_SERVER_NUM_XDP_THREADS:-}"
