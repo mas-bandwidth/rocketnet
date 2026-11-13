@@ -516,15 +516,6 @@
    :text "tools/wire_paths.txt lists 17 files as classification pending since 2026-11-12. Classify them, then make a change to a wire path that leaves ROCKETNET_WIRE_VERSION unchanged need a reviewed reason."
    :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R103)")
 
-  (item "release-version-collision-refusal" :group "review-v1-2" :area "ci"
-   :title "Release gates refuse a minor or patch of 100 or more"
-   :text "ROCKETNET_VERSION is major * 10000 + minor * 100 + patch (sdk/rocketnet.h), so v1.0.100 and v1.1.0 would both be 10100. No release is near 100; tools/release_gates.py judge_release can refuse such a version by name when one is."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R104)")
-
-  (item "release-gates-name-every-refusal" :group "review-v1-2" :area "ci"
-   :title "Release gates and land.py name every refusal"
-   :text "tools/release_gates.py judge_release skips the required-names judgement without a line when .github/rulesets/main.json is absent at the commit (it is present on main today), and tools/land.py refuses with nothing printed when the head moves during its one re-run (the refusal itself is right). Both can say why by name."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R106, R110)")
 
   (item "message-open-model" :group "review-v1-2" :area "proofs"
    :title "A model of the open message per connection and the object's count of open starts"
