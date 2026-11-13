@@ -85,6 +85,13 @@ LAYERS = {
                              "under MaxFlush, so it never gets there"},
         "reach": ["LastSlot"],
     },
+    "gather": {
+        "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
+        "untraced": {},
+        "reach": ["SegCapEdge", "ByteCapEdge"],
+        # seven steps a bank (six stages and the call): 100 calls a seed
+        "steps": 700,
+    },
 }
 
 STEPS = 400
