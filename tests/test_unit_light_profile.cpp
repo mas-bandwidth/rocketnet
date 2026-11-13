@@ -185,7 +185,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // block below has the account): measured on the studio (Apple clang, Release,
 // DEV ON, ROCKETNET_TEST_VERBOSE=1), actual=1469513311 and 15037450, 11136
 // and 128 above the counter union.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468465247 )
+// The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
+// send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
+// frames, plus the receive banks, add 121665576 bytes to the server over the figure above
+// (measured on the studio, Apple clang, Release, DEV=ON; the probe's actual= line is 1591178887).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1590130311 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
