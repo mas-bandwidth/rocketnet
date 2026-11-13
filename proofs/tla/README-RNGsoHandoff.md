@@ -1,9 +1,13 @@
 # RNGsoHandoff: the GSO server transport's bank handoff
 
 `RNGsoHandoff.tla` models the cross-thread bank handoff of the Linux GSO
-server transport, `sdk/rocketnet_server_gso_linux.cpp`: one receive queue
-of three buffers, the three transmit banks, the send worker's flush with a
-full socket and the shutdown retry bound, and stop, join and free. The
+server transport, `sdk/rocketnet_server_gso_linux.cpp`, for one queue:
+its three receive buffers, its three transmit banks, its worker's send step
+(`rocketnet_server_gso_send_step`, each pass of `rocketnet_server_gso_worker`
+sends, then drains) with a full socket and the shutdown retry bound, and
+stop, join and free. Every queue has its own banks, lane mutex and worker,
+so the model holds for each; the worker's poll and main's eventfd wake are
+folded. The per-queue staging layout is `RNGsoQueueBankLayout.tla`. The
 module header gives the actions and the code each one stands for;
 `proofs/tla/COVERAGE.tsv` (row `server-gso-handoff`) maps them to the
 functions.
@@ -23,7 +27,20 @@ functions.
   the model had no hard-error drop.
 - `TxInOrder`, `RxInOrder`: packets are sent and consumed in order; a gap
   below a sent packet is a counted drop.
-- `MainNeverWaits`: main only try-acquires the TX mutex.
+- `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
+- `RxAccounted`: every datagram the receive worker staged was consumed by
+  main or is still banked (main's unread tail, the ready buffer, the
+  worker's buffer), and after `Join` every one not consumed is in
+  `rxStopped`, the `RECEIVE_DROP_STOPPED` count. `StopCount` is that count,
+  made in the code by the first `rocketnet_server_gso_stopped` call that
+  finds the worker exited (`rocketnet_server_gso_count_stopped`); destroy
+  calls stopped before it joins, and nothing moves a receive buffer once
+  both workers exited and main stopped, so the model makes it in `Join`:
+  the same value, without the interleavings of a separate step against
+  `SocketFills` and `SocketDrains` (a separate step took the main case past
+  the 110-second budget). Main claims and consumes nothing once stop is
+  asked (`RxClaim`, `RxConsume`; `rocketnet_server_gso_receive_packets`
+  returns at `stopping`), so nothing is counted twice.
 - `RefusalsBounded`, `StopJoinsBeforeFree`, and the liveness properties
   `StopCompletes` and `ShutdownCompletes`.
 
@@ -56,29 +73,30 @@ every place a hard error can land.
 
 ## Cases
 
-The 2026-11-11 run on amd-2 (native Linux), the pinned `tlacheck` and TLC
-jar, one shard per case, two workers, four cases at a time.
+The 2026-11-13 run on amd-1 (native Linux, shared with other work), the
+pinned `tlacheck` and TLC jar, one shard per case, two workers.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 4762152 | 48.8 | Every invariant, five datagrams, four staged packets. |
-| `MCRNGsoHandoffLive.cfg` | pass | 12430 | 15.2 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
+| `MCRNGsoHandoff.cfg` | pass | 4762152 | 77.7 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoffLive.cfg` | pass | 12430 | 17.2 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
 | `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 3 | 0.8 | `PublishWhileHeld = TRUE`. |
 | `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 2502 | 1.9 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
 | `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 45970 | 7.8 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
 | `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 413 | 1.2 | `NoBackoff <- TRUE`. |
 | `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 5302 | 1.1 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
 | `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 12600 | 4.1 | `BoundOnQuitOnly <- TRUE`. |
-| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the TX mutex. |
+| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the lane mutex. |
 | `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 571 | 0.8 | Reachability: a counted hard-error drop before shutdown. |
-| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 0.9 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 1.3 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 1572 | 1.4 | `CountTail <- FALSE`: the stop count forgets the unread tail of main's buffer. |
 
 ## Counterexamples checked against the code (2026-11-11)
 
 - **ReachErrorDropRunning.** One packet is staged, main publishes it, the
   worker takes the bank and sends it; the kernel refuses the one message
   with a hard error, so `txErrDropped = <<1>>` with `shut.on` FALSE. In the
-  code, `rocketnet_server_gso_send_worker` calls
+  code, `rocketnet_server_gso_send_step` calls
   `rocketnet_server_gso_send_bank`, whose `rocketnet_server_gso_flush`
   gets `sendmmsg` -1 with, say, EPERM: not EINTR, not EAGAIN, EWOULDBLOCK,
   ENOBUFS or ENOMEM, so it adds the message's packets to
@@ -88,12 +106,13 @@ jar, one shard per case, two workers, four cases at a time.
   refused packet leaves the bank and reaches neither list, so one staged
   packet is unaccounted for. The code's counted drop above is the line
   this reverses.
-- **MainBlocks.** The send worker takes the TX mutex (`TxWorkerLock`); main
+- **MainBlocks.** The queue's worker takes the lane mutex (`TxWorkerLock`); main
   then reaches its publish and, with `MainBlocks`, waits for the mutex
   (`pc["main"] = "waitlock"`). In the code,
   `rocketnet_server_gso_publish_send` uses
-  `rocketnet_platform_mutex_try_acquire( &gso->send_mutex )` and returns
-  false on contention (line 346), and `rocketnet_server_gso_send_idle` does
-  the same (line 1554). In the trace the producer is empty, which the code
+  `rocketnet_platform_mutex_try_acquire( &lane->mutex )` on the queue's send
+  lane and returns -1 (the producer retained) on contention, and
+  `rocketnet_server_gso_send_idle` does the same for each lane. In the trace
+  the producer is empty, which the code
   returns on before its try; the model's `TxMainLock` does not test that,
   an over-approximation that does not change the defect.

@@ -287,6 +287,21 @@
    :text "rocketnet_server_rio_destroy returns before destroying any lane when one lane never reports stopped (a completion queue reported corrupt, or a send the kernel never completes). The lanes that did stop stay allocated until process exit. Measured as intended for this piece: the leak is bounded and named. Fix: destroy every lane that reports stopped and leak only the stuck one, as the create rollback already does (rocketnet_server_rio_create_leaks), with a unit case that holds one lane's sends."
    :date "2026-11-13" :origin "Piece N (rio rebuilt), cold read")
 
+  (item "gso-layout-model-send-step" :group "audit-remaining" :area "proofs"
+   :title "Layout model coverage of the gso send step's order, held slot and plain resend"
+   :text "proofs/tla/RNGsoQueueBankLayout.tla models the claim, the id and the slot rule. lane->order (the gather's positions), send_step's held_slot and the position it resumes from, and resend_plain's first_slot arithmetic index the banks too and have no layout model or trace layer; they are covered by unit cases only."
+   :date "2026-11-13" :origin "Piece K, cold reader")
+
+  (item "gso-packet-id-zero-queue-zero" :group "audit-remaining" :area "sdk"
+   :title "Packet id 0 names queue 0 slot 0 of turn 0"
+   :text "The gso packet id is ( turn * slots + slot ) * queues + queue, so the first packet of the first turn on queue 0 has id 0. Nothing treats 0 as no packet today (finish and abort check the pointer against the slot), but a caller that keeps 0 as its own empty value would lose that packet. Decide whether the id should start at 1."
+   :date "2026-11-13" :origin "Piece K, cold reader")
+
+  (item "pin-network-threads-at-creation" :group "audit-remaining" :area "sdk"
+   :title "Network threads placed at creation, not by their own first call"
+   :text "The gso, XDP and the other transports' network threads pin themselves as their first act, so between pthread_create and that call a thread runs on its creator's mask, which may include cpu 0 (the OS's on Linux); the gso creator also raises the priority in that window. Starting the thread with its affinity already set (pthread_attr_setaffinity_np in the platform thread start, one place for every transport) closes the window. Also: _SC_NPROCESSORS_ONLN is a count, used as the highest cpu id; a machine with an offline cpu in the middle is misjudged (read the online set instead)."
+   :date "2026-11-13" :origin "Piece K, cold reader")
+
   (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."

@@ -1202,6 +1202,37 @@ static void test_server_transport_replay_counts_left_on_other_tables()
 }
 REGISTER_UNIT_TEST( test_server_transport_replay_counts_left_on_other_tables );
 
+// XDP_PIN_REFUSALS is assigned only when the transport's io table answers the
+// transport rows (the xdp table, on Linux with XDP built): on every other
+// table, on every platform, a read leaves the row as it was
+
+// sdk/rocketnet_driver_builtin.cpp, declared by its one reader
+// (sdk/rocketnet_server_transport.cpp) and here
+bool rocketnet_server_transport_io_transport_counters( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                       uint64_t * values );
+
+static void test_server_transport_xdp_pin_refusals_left_on_other_tables()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+
+    server->counters.values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = 6;
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 6 );
+
+    uint64_t values[ROCKETNET_NUM_COUNTERS] = {};
+    values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = 1;
+    rocketnet_unit_check( !rocketnet_server_transport_io_transport_counters( server->io.operations, server->io.instance, values ) );
+    rocketnet_unit_check( values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_xdp_pin_refusals_left_on_other_tables );
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 // The transport's own read of XDP_RECEIVE_FRAME_DROPPED
@@ -1335,5 +1366,70 @@ static void test_server_transport_counts_xdp_frames_dropped()
     delete f;
 }
 REGISTER_UNIT_TEST( test_server_transport_counts_xdp_frames_dropped );
+
+// The transport's own read of XDP_PIN_REFUSALS: the development case
+// rocketnet_server_socket_test_pin_refusals pins two synthetic xdp queues
+// through fake affinity calls (granted, the affinity call refused, the cpu not
+// online, the cpu outside the set) and asks its dispatch for the public row
+// after each step (0, 1, 2, 3). Here the dispatch is a server transport whose
+// I/O is the xdp table over those queues: the answer is what
+// rocketnet_server_transport_counters leaves in XDP_PIN_REFUSALS, by value, so
+// the case passes only when the row holds each count exactly; a second read
+// leaves it unchanged (assigned, never added).
+
+typedef bool rocketnet_server_socket_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                                uint64_t * values );
+bool rocketnet_server_socket_test_pin_refusals( rocketnet_server_socket_test_transport_counters_t * dispatch,
+                                                const struct rocketnet_server_transport_io_operations_t * xdp );
+
+static int g_pin_refusals_reads;
+
+static bool stop_spread_pin_refusals_read( const struct rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * values )
+{
+    rocketnet_server_transport_t * server = g_frames_dropped_server;
+    const rocketnet_server_transport_io_operations_t * saved_operations = server->io.operations;
+    void * saved_instance = server->io.instance;
+    server->io.operations = operations;
+    server->io.instance = transport;
+
+    const uint64_t refusals = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS];
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == refusals );
+
+    server->io.operations = saved_operations;
+    server->io.instance = saved_instance;
+    g_pin_refusals_reads++;
+    values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = refusals;
+    return true;
+}
+
+SUITE_CASE_RSS_BOUND( test_server_transport_counts_xdp_pin_refusals, stop_spread_xdp_two_queue_rss_bound_mb );
+
+static void test_server_transport_counts_xdp_pin_refusals()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );    // each refused pin logs, and the synthetic queues have no stats map
+
+    const rocketnet_transport_definition_t * xdp = rocketnet_transport_definition( ROCKETNET_TRANSPORT_XDP );
+    rocketnet_unit_check( xdp && xdp->backend && xdp->backend->server );
+    g_frames_dropped_server = server;
+    g_pin_refusals_reads = 0;
+    rocketnet_unit_check( rocketnet_server_socket_test_pin_refusals( stop_spread_pin_refusals_read, xdp->backend->server ) );
+    rocketnet_unit_check( g_pin_refusals_reads == 4 );
+    g_frames_dropped_server = NULL;
+
+    // the last count stays until the next xdp read: a read through the fake
+    // table assigns nothing
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] == 3 );
+
+    rocketnet_log_level( saved_level );
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_counts_xdp_pin_refusals );
 
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP

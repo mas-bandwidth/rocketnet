@@ -66,12 +66,15 @@ send buffers are recycled only after completion, and stop cancels and drains
 outstanding operations. IPv6 binds accept both address families. Windows clients independently select `iocp` or `portable`; a server pin does
 not change the client selection.
 
-The public IOCP adapter ignores `num_xdp_queues` and always starts one
-completion worker and one transmit worker. The completion worker owns the
-single socket's receive completions. At the default `max_clients` of 1000
-there are 128 posted receives, 4096 receive staging slots per worker buffer,
-and 2048 shared send frames. Its three command banks hold references to that
-frame pool; they do not multiply it. Staging and send capacities scale with
+The public IOCP adapter runs `num_xdp_queues` completion workers (1 to 32;
+zero or 1 is one), each with its own socket and completion port, and two send
+threads. More than one worker needs a specific local address in
+`bind_ipv4_address` or `bind_ipv6_address`: start refuses the wildcard. Each
+completion worker owns its socket's receive completions. At the default
+`max_clients` of 1000 there are 128 posted receives a worker, 16000 receive
+staging slots across the workers, and 8 send lanes of 4096 frames. Each lane's
+three command banks hold references to that lane's frame pool; they do not
+multiply it. Staging and send capacities scale with
 the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
