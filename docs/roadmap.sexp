@@ -491,10 +491,10 @@
    :text "In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are."
    :date "2026-11-13" :origin "Review before v1.2.0, threading reader, finding R3")
 
-  (item "counter-observed-loose-paths" :group "review-v1-2" :area "tools"
-   :title "check_counter_observed.py accepts tests that assert nothing about a counter's value"
-   :text "This gate enforces that a counter row lands only with a test that reads it by value, and it accepts empty assertions. tools/check_counter_observed.py (about 426-434) excludes only a clause ending == 0, so check( v[X] >= 0 ), check( v[X] == 0u ), check( !v[X] ) and check( v[X] == v[X] ) count as observed; it accepts T name = v[X]; when any check anywhere in the file reads an identifier of that name (about 465-475); and the return path matches a function of the same name in any file (about 510-513). Run on a scratch tree, it reported 5 of 5 counters observed with five empty assertions; its 26 self-test cases have none of these forms. On the real tree 238 of 301 rows are observed by a value check and 53 more only through the loose paths. Close the three paths, add the forms as self-test cases, and give the 53 rows real value checks."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C4 (run)")
+  (item "client-acked-batch-full-test" :group "review-v1-2" :area "tests"
+   :title "A test that fills the client's delivery batch and reads CLIENT_ACKED_BATCH_FULL by value"
+   :text "Every test reads ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL only as == 0 (tests/test_unit_sequence_burn.cpp, sdk/rocketnet_tests.cpp, tests/functional/server_receive_low_tick.cpp). check_counter_observed.py counted it observed through a name a check read only as == 0; with that path closed it is listed in OWED. The server's twin, ACKED_BATCH_FULL, has a unit case (tests/test_unit_client_receive_counters.cpp, the batch that holds two). The client's batch is fixed at ROCKETNET_SENT_PACKET_BUFFER_SIZE (rocketnet_client_protocol.cpp, the ack block's process call), so the case needs a seam that shrinks it, or more acks in one update than the batch holds; then drop the OWED row."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-G5 (R108)")
 
   (item "message-open-model" :group "review-v1-2" :area "proofs"
    :title "A model of the open message per connection and the object's count of open starts"
