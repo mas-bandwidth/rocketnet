@@ -372,8 +372,10 @@ FinishQueued ==
     /\ queue' = Append(queue, pending)
     /\ finished' = Append(finished, pending)
     /\ outcome' = [outcome EXCEPT ![pending] = "queued"]
+    \* the oldest reliable message queued: one a cut pass left queued, or
+    \* this one
     /\ promised' = IF promised = None /\ Kind[pending] = "R" /\ Spent < MaxPackets
-                   THEN pending ELSE promised
+                   THEN (IF ReliableQueued THEN FirstReliable ELSE pending) ELSE promised
     /\ pending' = None
     /\ UNCHANGED << next, handed, fellback, open, offset, resAt, wrote, frameRecs, bytes, regionData,
                     frameFree, staged, wire, acksDue, acksMade, faults, packetsThisUpdate, flushing,

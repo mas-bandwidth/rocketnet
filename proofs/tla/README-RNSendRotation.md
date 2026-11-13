@@ -3,10 +3,13 @@
 The server's send loop over the endpoints' write passes, against the portable
 transport's per-flush send capacity, with the loop's own arithmetic.
 [RNOutgoingBuild](README-RNOutgoingBuild.md) models one connection's build and
-`RNServerSendFair.tla` the rotation abstractly (`K` clients served per update,
-the cursor moved by `K`); this model carries the rounds and the writer list,
-the capacity test, the frame starts, and the cursor arithmetic of the code,
-across several connections whose windows stall and whose budgets refuse.
+`RNServerSendFair.tla` the same rounds at the loop's index arithmetic against
+the transport's capacity (`send_writers`, `count`, `kept`, `previous`, the
+stored cursors, the send queues), each visit taken whole; this model carries
+the rounds and the writer list, the capacity test, the frame starts, and the
+cursor arithmetic of the code with each connection's write pass, across
+several connections whose windows stall, whose budgets refuse and whose
+ordered paths may be vain.
 
 ## What it guards
 
@@ -31,6 +34,18 @@ writing the packet into a stack payload first while the bucket holds less
 than one maximum packet (`rn_endpoint_write_may_be_refused`), starting a frame
 only when bytes came out ([m9.4](../../standard/MESSAGES.md#m9.4)).
 
+One abort the due test cannot rule out stays. `rn_endpoint_ordered_due`
+answers yes for a resend FIFO whose first 64 entries are acknowledged
+(`rn_endpoint_fifo_due`: "a long acked prefix: let the write walk it"), and
+an ended connection (exhausted, a channel error, a reliable message past its
+timeout) also plans an ordered packet; in both the walk may find nothing, so
+`rn_ordered_write` returns 0 into a started frame, `rn_message_connection_write`
+aborts it, and `rn_endpoint_write_packet` ends the reliable path
+(`rn_endpoint_end_reliable`). The model calls such a path vain. The reliable
+path does not reopen within the flush, so a vain write costs at most one slot
+per connection per flush (`AbortsBounded`), and no refusal the code decides
+before a frame ever costs one (`NoRefusalAbort`).
+
 The loop runs rounds of one frame per connection while any connection wrote.
 A connection that writes nothing in a round has ended its pass until the next
 flush, so after the first round only the connections that wrote in the round
@@ -51,11 +66,13 @@ rotation is the one the full walk gave.
 | `conn[c].fits` | `rn_window_send_would_number` for the ready message |
 | `conn[c].pays` | the send budget pays this flush's packets |
 | `conn[c].waiting` | `budget.reliable_waiting` |
+| `conn[c].vain` | the ordered path is due by `rn_endpoint_fifo_due`'s 64 acked steps, or the connection has ended, and the walk would find nothing to write |
 | `used` | `payload_ring.num_packets`, frames started this flush |
 | `start`, `off` | the loop's `start` and `offset` |
 | `later`, `listed`, `wrote` | a round after the first; the writer list (`send_writers`, `count`); this round's writers (`kept`) |
 | `cursor` | `object->send_next_connection` |
 | `visits`, `aborts` | the development seam's `slot_visits` and `frames_aborted` (`rn_send_pass_cost_read`) |
+| `badAborts` | ghost: the aborts not for a vain ordered write |
 | `fullCursor`, `skipOk` | ghosts: the cursor a walk over every connection sets, and whether every slot the list skipped would have written nothing |
 
 Work, the window and the budget change only between flushes (`Env`): nothing
@@ -91,15 +108,18 @@ are written and nothing the model observes.
   `rn_endpoint_write_may_be_refused` (`MayBeRefused`): the packet is written
   first and a refusal takes no frame, or the frame is started (a NULL start is
   `rn_endpoint_packet_failed` with nothing written) and the packet written in
-  place, then the finish.
+  place, then the finish; a vain ordered write returns 0 into the frame, which
+  is aborted, and the reliable path ends.
 - **`BeginUpdate`**: `rn_endpoint_begin_update` (endpoint.cpp): the pass
   reopens.
 - **`Env(c)`**: the environment between flushes.
 
 ## Invariants
 
-- **`NoAbort`**: no frame of the capacity is started and aborted in the send
-  pass.
+- **`NoRefusalAbort`**: no frame of the capacity is started and aborted in
+  the send pass for a refusal the code decides before a frame (the window's,
+  the budget's): the only abort is a vain ordered write's.
+- **`AbortsBounded`**: at most one frame per connection per flush is aborted.
 - **`UnlistedPassEnded`**: in a later round every connection off the writer
   list has ended its pass (the list's premise).
 - **`SkippedWritesNothing`**: every slot a later round skips is one a walk
@@ -149,13 +169,13 @@ counterexample was checked against the C by hand.
    a connection whose budget pays has a ready message and a stalled window;
    it plans `ORDERED`, a frame is started, `rn_ordered_write` numbers nothing
    (`rn_window_send_first_write` refuses while stalled), the frame is aborted
-   (`NoAbort`).
+   (`NoRefusalAbort`).
 3. **`MCRNSendRotationBrokenShortAck.cfg`** (`FitsGate = FALSE`: the due test
    does not ask `rn_window_send_would_number`, as on v1.1.1). TLC, two
    connections: connection 0 has a ready message the window cannot number
    and no stall (an ack moved `U'` by less than the message needs); it plans
    `ORDERED`, a frame is started, the first write refuses and marks the stall,
-   the frame is aborted (`NoAbort`). Against the C at v1.1.1: the partial
+   the frame is aborted (`NoRefusalAbort`). Against the C at v1.1.1: the partial
    ack clears `stalled` in `rn_window_send_mark_acked`, `rn_endpoint_ordered_due`
    answers yes on `ready_head`, and `rn_window_send_first_write_block` refuses
    (`test_endpoint_partial_ack_stall_requests_no_frame`).
@@ -163,7 +183,7 @@ counterexample was checked against the C by hand.
    is started before the budget decides, as on v1.1.1). TLC, two connections:
    connection 0 has one unreliable record and a budget that refuses it; a
    frame is started, `rn_endpoint_write_packet` drops the record and writes
-   nothing, the frame is aborted (`NoAbort`). Against the C at v1.1.1:
+   nothing, the frame is aborted (`NoRefusalAbort`). Against the C at v1.1.1:
    `rn_message_connection_write` starts the frame, the unreliable write is
    refused by `rocketnet_send_budget_admit` and returns 0, and
    `abort_packet` keeps the slot
