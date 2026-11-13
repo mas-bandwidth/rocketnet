@@ -610,6 +610,36 @@ static void test_uring_queue_worker_refused_receive_waits_for_the_timer()
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_refused_receive_waits_for_the_timer );
 
+// a multishot that ends with a result of 0 (no IORING_CQE_F_MORE) carried no
+// datagram (a multishot RECVMSG result holds at least its header): it is an
+// end like any refused one, so a kernel that keeps ending the receive that
+// way is armed once a retry period too, never at completion speed
+
+static void test_uring_queue_worker_empty_receive_end_waits_for_the_timer()
+{
+    worker_test_t t( 4, 8, 2 );
+    check( t.ok );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 1 );
+    const uint64_t recv = rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, 0, 0 );
+
+    t.post( recv, 0, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 2 );
+
+    t.post( recv, 0, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 2 );
+    check( t.of( IORING_OP_TIMEOUT ).size() == 1 );
+
+    t.post( worker_test_receive_timer(), -ETIME, 0 );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.receive.arms == 3 );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_STRAY ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_empty_receive_end_waits_for_the_timer );
+
 // RNUringQueueWorker Submit: what main publishes goes out one SENDMSG a run,
 // grouped by destination in the worker, and the bank retires once each run
 // has its completion

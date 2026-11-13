@@ -47,9 +47,13 @@ is one action of the model, named in a comment beside it.
     waits, at the start of the last wait (not after its timer), so the queue turns idle
     however full the socket stays.
   - It re-arms a receive that ended on its own and arms the wake read until it sees the
-    stop; then it cancels both. The cancels have weak fairness of their own: a pass reaps
-    at most `ROCKETNET_URING_WORKER_CQE_BATCH` completions and then goes on to the rest of
-    the step, so datagrams that keep coming never hold the stop off.
+    stop; then it cancels both.
+  - Fairness beyond the step as a whole, each from the code: seeing the stop (`Observe`,
+    the first branch of every step); the step's branches past the reaps (`PastReaps`)
+    and the cancels (a pass reaps at most `ROCKETNET_URING_WORKER_CQE_BATCH` completions
+    and then goes on to the rest of the step); each reap (the completion queue is a
+    FIFO, reaped oldest first). So datagrams that keep coming never hold off the stop, a
+    claim, a submit or another completion.
   - A refused receive (RecvRule "backoff") is re-armed at once the first time. From the
     second refused end in a row, with no datagram between, the arm waits for the
     receive's own retry timer (`ArmRecvTimer`, `ReapRecvTimer`), so a kernel that refuses
@@ -126,9 +130,10 @@ has the receive waiting on its timer asleep (`RecvWaits`) fails the check.
 - 1 full answer before the server is stopping (`MaxAgain`).
 - 2 waits begun after shutdown, with no run done, and the worker abandons (`MaxRetry`).
 - 1 segment refusal (`MaxRefuse`).
-- 2 receives that end on their own (`MaxRecvEnd`; 1 in the liveness control, 3 in
+- 2 receives that end on their own (`MaxRecvEnd`; none in the liveness control and the
+  three temporal witnesses, whose datagrams still come, so that they fit the budget; 3 in
   `MCRNUringQueueWorkerLiveRecv.cfg`, which has 1 bank and no full answers or refusals so
-  that 3 fits the budget).
+  that 3 fits too).
 
 The trace instance (`tests/tla_trace_queue_worker.cpp`) has 3 slots (`R` = 3), 2
 full answers before the server is stopping and 3 destinations, one of which the socket

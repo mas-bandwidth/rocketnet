@@ -543,7 +543,7 @@ Fairness ==
     \* FIFO and the step reaps the oldest, so datagrams posted after it never
     \* hold it off
     /\ WF_vars(ReapOk) /\ WF_vars(ReapAgain) /\ WF_vars(ReapRefused) /\ WF_vars(ReapTimer)
-    /\ WF_vars(ReapRecvEnd) /\ WF_vars(ReapRecvTimer) /\ WF_vars(ReapWake) /\ WF_vars(ReapCancel)
+    /\ WF_vars(ReapRecvEnd) /\ WF_vars(ReapRecvTimer) /\ WF_vars(ReapWake)
     /\ WF_vars(KernelOk \/ KernelAgain \/ KernelRefuse)
     /\ WF_vars(KernelTimer) /\ WF_vars(KernelRecvEnd) /\ WF_vars(KernelWakeRead) /\ WF_vars(KernelWakeEnd)
     /\ WF_vars(KernelRecvTimer)

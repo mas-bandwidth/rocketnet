@@ -195,11 +195,13 @@ static std::atomic<int> rocketnet_server_uring_test_multishot_res{ 0 };
 // a multishot RECVMSG over buffer group bgid on an unbound UDP socket, armed
 // as rocketnet_uring_receive_queue_arm arms it, then cancelled: a kernel that
 // takes it ends it with -ENOBUFS (the probe's buffer ring holds no buffer;
-// Linux 7.0 answers so) or -ECANCELED (the cancel first); one without
+// Linux 7.0 answers so) or -ECANCELED (the cancel first). One without
 // multishot receive (Linux 5.19 has provided buffer rings, multishot receive
-// came in 6.0) refuses it at prep, -EINVAL. Nothing can arrive on the unbound
-// socket, and the cancel ends the receive either way, so the wait is for two
-// completions; a wait past a second is a refusal too
+// came in 6.0) refuses it at prep: submission stops at that entry, so the
+// submit does not take both, and were it to, the receive would end -EINVAL;
+// either is a no. Nothing can arrive on the unbound socket, and the cancel
+// ends the receive either way, so the wait is for two completions; a wait
+// past a second is a refusal too
 static bool rocketnet_server_uring_probe_multishot( struct io_uring * ring, int bgid )
 {
     const int fd = socket( AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0 );
