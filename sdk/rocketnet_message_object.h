@@ -237,8 +237,8 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // transport frame, the round kept for the main thread's send, the update's
 // send limit spent, or a budget that cannot pay it) and took the queued path:
 // the serial finish queues it for the main thread's send as before; the
-// writer's finish (rn_message_object_finish_client) refuses it, so nothing a
-// writer finishes is left for that send (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY).
+// writer's finish (rn_message_object_finish_client) refuses it, so no such
+// start a writer finishes is left for that send (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY).
 // On a buffered transport (rn_message_link_t send_buffered) a start the ring
 // had no slot for is not marked: it queues from either finish
 #define RN_MESSAGE_OPEN_PENDING 1
