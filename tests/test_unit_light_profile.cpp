@@ -140,8 +140,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
 // (8 bytes a counter block across a 64-byte rounding): computed from the
 // macOS reading, not measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702271 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345516 )
+// The IOCP rebuild (IOCP_PIN_REFUSALS and the lanes of 4096 operations, the
+// receive banks sized by the rate) reads actual=1494454211 and 15394156
+// (aws-win-iocp-1, MSVC 19.52, Release, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1493405635 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server

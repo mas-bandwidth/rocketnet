@@ -949,9 +949,10 @@ void rocketnet_test_transport_ring_exhaustion()
     rocketnet_check( capacity >= 256 );
     rocketnet_check( capacity < 20000 );
 
-    // the one client's own frame comes on top once its keep-alive is acknowledged
+    // the fill takes exactly the lane's pool less the reserve, in every build
+    // (read by value on Windows: development and production both)
 
-    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity || capacity == completion_capacity + 1 );
+    rocketnet_check( completion_capacity == 0 || capacity == completion_capacity );
 
     // refusal holds until the flush -- 44 more starts all refuse, and the
     // counters attribute every refusal exactly (the game's packets already incurred
