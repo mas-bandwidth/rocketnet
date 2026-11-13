@@ -373,4 +373,87 @@ static void test_gaps_r2_ct_api_receive_refuses_a_payload_larger_than_the_buffer
 }
 
 REGISTER_UNIT_TEST( test_gaps_r2_ct_api_receive_refuses_a_payload_larger_than_the_buffer );
+
+// ---------------------------------------------------------------------------
+// mutation gap: hunt 2/7725 (after stop the caller's flush leaves the worker's ring alone)
+//
+// On the BASE path stop gives ring 0 to the receive worker, which sends what
+// it holds as it finishes the stop. A payload sealed before the stop is in
+// that ring: a send_packets between the stop and its completion must not
+// send it from the caller's thread (the worker owns the ring), and the
+// payload leaves once in all.
+
+static void test_gaps_r2_ct_api_base_flush_after_stop_leaves_the_ring_to_the_worker()
+{
+    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
+
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    signed_fields.create_timestamp = 1;
+    signed_fields.expire_timestamp = 1ULL << 40;
+    signed_fields.timeout_seconds = 300;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    signed_fields.ipv4_address[0] = 127;
+    signed_fields.ipv4_address[3] = 1;
+    signed_fields.ipv4_address[4] = 0x40;
+    signed_fields.ipv4_address[5] = 0x9c;
+    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    memset( token, 0, sizeof( token ) );
+    rocketnet_write_signed_connect_data( &signed_fields, token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = r2_api_time;
+    r2_api_now = 1000.0;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &rocketnet_fake_client_operations_base, fake );
+    check( transport != NULL );
+    rocketnet_client_transport_seed_refusal_state_for_test( transport, ROCKETNET_DEV_PROTOCOL_ID, rocketnet_test_filter_value, rocketnet_test_salt,
+                                                            rocketnet_test_session_s2c_key );
+    check( rocketnet_client_transport_client_io( transport ) == NULL );
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_client_transport_start_packet( transport, R2_API_PAYLOAD_BYTES, &context );
+    check( frame != NULL );
+    if ( frame )
+    {
+        memset( frame + context.payload_index, 0x55, R2_API_PAYLOAD_BYTES );
+        check( rocketnet_client_transport_finish_packet( transport, &context, R2_API_PAYLOAD_BYTES ) > 0 );
+    }
+
+    const int sent_before = fake->num_sent;
+    rocketnet_client_transport_stop( transport );
+    const int sent_at_stop = fake->num_sent;
+
+    rocketnet_client_transport_send_packets( transport );
+    if ( fake->num_sent != sent_at_stop )
+    {
+        printf( "mutation gap hunt 2/7725: a send_packets after stop sent %d datagram(s) from the caller's thread out of the ring the worker now owns\n",
+                fake->num_sent - sent_at_stop );
+    }
+    check( fake->num_sent == sent_at_stop );
+
+    rn_test_client_transport_wait_stopped( transport );
+
+    int payloads = 0;
+    for ( int i = sent_before; i < fake->num_sent; i++ )
+    {
+        if ( fake->sent[i].bytes > R2_API_PAYLOAD_BYTES )
+        {
+            payloads++;
+        }
+    }
+    if ( payloads > 1 )
+    {
+        printf( "mutation gap hunt 2/7725: the payload sealed before stop left %d times\n", payloads );
+    }
+    check( payloads <= 1 );
+
+    rocketnet_client_transport_destroy( transport );
+    delete fake;
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_ct_api_base_flush_after_stop_leaves_the_ring_to_the_worker );
 #endif // #if ROCKETNET_DEV
