@@ -652,6 +652,8 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
 
     static double small_send_time[BLOCK_COST_SMALL_MAX];
     static double small_latency_ms[BLOCK_COST_SMALL_MAX];
+    static bool small_seen[BLOCK_COST_SMALL_MAX];
+    memset( small_seen, 0, sizeof( small_seen ) );
     uint8_t small[RESEND_TIMING_BYTES];
     uint8_t state[32];
     memset( state, 0x5A, sizeof( state ) );
@@ -708,6 +710,17 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
                 int index = -1;
                 memcpy( &index, delivery.data, sizeof( index ) );
                 resend_timing_check( index >= 0 && index < small_sent );
+
+                // each small message is delivered once and whole: a second
+                // copy would count toward small_delivered == small_sent and
+                // hide a message that never arrived
+                resend_timing_check( !small_seen[index] );
+                small_seen[index] = true;
+                for ( int i = (int) sizeof( index ); i < RESEND_TIMING_BYTES; i++ )
+                {
+                    resend_timing_check( delivery.data[i] == (uint8_t) ( index * 13 + i ) );
+                }
+
                 small_latency_ms[small_delivered++] = ( h.now - small_send_time[index] ) * 1000.0;
                 continue;
             }
