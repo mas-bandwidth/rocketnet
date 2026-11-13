@@ -153,9 +153,9 @@ party the table names as its holder, except as the table states.
 | backend signing secret key | backend | Ed25519 | Ed25519 secret key | long term | never |
 | backend public key | backend, every server, every client | Ed25519 | Ed25519 public key | long term | as configuration |
 | server secret key | one server | X25519 | X25519 secret key | long term | never |
-| server public key | that server, the backend | X25519 | X25519 public key | long term | to the backend, over the provisioning channel |
+| server public key | that server, the backend, every client holding a token for that server | X25519 | X25519 public key | long term | to the backend, over the provisioning channel; in clear inside the signed connect data of every token for that server ([t6.2 Signed connect data](#t6.2)) |
 | cookie key | one server | BLAKE2b key | BLAKE2b key | one rotation period | never; never stored |
-| lookup key | one server | SipHash-2-4 key | SipHash key | one server run | never |
+| lookup keys, one for each keyed lookup table the server holds | one server | SipHash-2-4 key | SipHash key | one server run | never |
 | token keys (client to server, server to client) | the backend, then one client and one server | ChaCha20-Poly1305 key input | token key | one connect token | inside the connect token: in clear to the client, sealed to the server |
 | ephemeral keypair | one client attempt, one server mapping | X25519 | X25519 secret key | one attempt | the public half, in handshake packets |
 | derived keys (four per connection) | one client, one server | ChaCha20-Poly1305 key | AEAD key | one connection | never |
@@ -169,7 +169,7 @@ Rules:
 2. The channel that registers a server's public key with the backend MUST be
    integrity-protected and authenticated to the backend. Its form is outside
    RN-1.
-3. A server MUST generate its cookie key and its lookup key from a
+3. A server MUST generate its cookie key and its lookup keys from a
    cryptographically secure random source at start, and MUST NOT write either
    to storage.
 4. The prefilter magic is the one secret shared between parties. No key,
@@ -229,14 +229,14 @@ field's default.
 | server protocol_id | `0` | u64 | `ROCKETNET_SERVER_PROTOCOL_ID` | nonzero; equal to the connect token's protocol id |
 | server max_clients | `1000` | integer | `ROCKETNET_SERVER_MAX_CLIENTS` | 1 to the server max_clients limit |
 | server max_clients limit | `1000` | integer | none: fixed when the implementation is built | at most 32768; the Value is the limit of a default build |
-| server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
+| server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the embedded test title's unkeyed filter value of [t5 Prefilter header](#t5), which a build without the development flag refuses at create |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
 | server server_secret_key | `none` | bytes[32] | none: exempt secret configuration | all zero selects a generated keypair; otherwise an application-supplied X25519 secret key |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
 | server max_timeout_seconds | `60` | integer | `ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS` | 1 to 3600 |
 | server handshake_deadline_seconds | `5` | integer | `ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS` | 1 to 60 |
-| client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
+| client packet_filter | `none` | bytes[4] | `ROCKETNET_CLIENT_PACKET_FILTER` | 4 bytes; unset, the embedded test title's unkeyed filter value of [t5 Prefilter header](#t5), which a build without the development flag refuses at create |
 | client transport | `"auto"` | string | `ROCKETNET_CLIENT_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 
 The server max_clients limit is not a protocol value. An implementation fixes
@@ -244,6 +244,13 @@ it when it is built, at most 32768, and refuses at create a max_clients above
 it (rule 5). The server max_clients default is `1000`, or the limit when the
 limit is smaller. The reference implementation's default build fixes `1000`,
 and it accepts a built limit from 512 to 32768.
+
+Create checks every field against its range but two. A server checks that it
+holds a backend public key and that its protocol_id is nonzero when it starts,
+not at create, and refuses that start naming the field; until then a server
+created with either unset is valid. An endpoint opens its transport later
+too, when a client connects or a server starts
+([t2.4 Transport selection](#t2.4)).
 
 The server's X25519 keypair is fixed at create. When `server_secret_key` is
 all zero, the server MUST generate a fresh keypair. Otherwise it MUST copy
@@ -265,6 +272,10 @@ that the implementation documents as pin-only (for example an in-process
 loopback for tests) is never part of an `auto` order and is applicable only
 as the sole name of a list. An implementation with exactly one transport MAY
 ignore rules 1 to 5 and keeps rules 6 and 7.
+
+Create parses the value: rules 1 and 2 fail the create. The transport is
+tried and opened when a client connects or a server starts, so in rules 3 to 6
+and 8 the create is that connect or start, and a failure they name fails it.
 
 1. The value is `auto`, or empty, or an ordered, comma-separated list of
    transport names. `auto` and the empty value MUST expand to the
@@ -303,6 +314,10 @@ ignore rules 1 to 5 and keeps rules 6 and 7.
    every destination only when segmented sends to several destinations were
    refused and none was ever accepted, so that the operating system itself
    cannot segment.
+8. A transport that fails to open for want of memory does not refuse. The
+   endpoint MUST end the opening with that failure, and MUST NOT fall to a
+   later transport of the list, to its `auto` order, or to the other address
+   family.
 
 <a id="t3"></a>
 ## t3. Constants and registries
@@ -793,8 +808,8 @@ Everything the server checks is gathered into one fixed buffer of the `signed co
 | expire timestamp | 20 | 8 | u64 | unix time the token expires | any |
 | timeout seconds | 28 | 4 | i32 | the connection timeout in seconds | `1..2147483647`; zero and negative values are refused at both ends |
 | address flags | 32 | 1 | u8 | bit 0 set means an IPv4 address is present, bit 1 an IPv6 address; bits 2 to 7 MUST be zero; at least one address MUST be present | `0x01`, `0x02`, `0x03` |
-| ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any |
-| ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any |
+| ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any; a client refuses a token whose flagged address has port 0 ([t11 Handshake: client](#t11) rule 2) |
+| ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any; a client refuses a token whose flagged address has port 0 ([t11 Handshake: client](#t11) rule 2) |
 | server public key | 57 | 32 | bytes[32] | the X25519 key the private block is sealed to | any |
 | sealed private block | 89 | 432 | bytes[432] | the sealed block of [t6.1 Private connect token data](#t6.1) | any |
 | zero pad | 521 | 55 | zero[55] | zero | zero |
@@ -1385,7 +1400,7 @@ The connection denied packet is sealed and carries no type data.
 | packet type | 0 | 1 | u8 | selects this layout | `1` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
 | AEAD tag | 18 | 16 | bytes[16] | the tag over an empty plaintext | any |
 
@@ -1417,7 +1432,7 @@ The connection challenge is sealed. Its cleartext session nonce lets a client th
 | packet type | 0 | 1 | u8 | selects this layout | `2` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | session nonce | 10 | 8 | bytes[8] | the server's session nonce for this mapping, in the clear | any |
 | server ephemeral public key | 18 | 32 | bytes[32] | the server's X25519 ephemeral public key, sealed | any |
 | AEAD tag | 50 | 16 | bytes[16] | the tag over the server ephemeral public key | any |
@@ -1448,7 +1463,7 @@ The connection response is sealed and carries 24 zero bytes of padding.
 | packet type | 0 | 1 | u8 | selects this layout | `3` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's handshake sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's handshake sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | padding | 10 | 24 | zero[24] | zero bytes, sealed | all zero |
 | AEAD tag | 34 | 16 | bytes[16] | the tag over the padding | any |
 
@@ -1482,7 +1497,7 @@ The keep-alive is a session packet. Its sealed plaintext is the ack block follow
 | packet type | 0 | 1 | u8 | selects this layout | `4` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | client index | 10 plus the ack block size | 4 | u32 | the slot that holds this connection | below max clients |
 | max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | any |
@@ -1517,7 +1532,7 @@ The payload packet is a session packet. Its sealed plaintext is the ack block fo
 | packet type | 0 | 1 | u8 | selects this layout | `5` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the maximum packet size less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
 | AEAD tag | 10 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
@@ -1548,7 +1563,7 @@ The disconnect packet is a session packet with no type data.
 | packet type | 0 | 1 | u8 | selects this layout | `6` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
 
@@ -1607,7 +1622,7 @@ The standalone ack packet is a session packet whose ack block is its whole type 
 | packet type | 0 | 1 | u8 | selects this layout | `8` |
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
-| sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
+| sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | AEAD tag | 10 plus the ack block size | 16 | bytes[16] | the tag over the ack block | any |
 
@@ -2252,7 +2267,7 @@ counter: WRONG_DIRECTION
 ```
 
 ```vector t10.client-session-wrong-size
-input: a connection keep-alive packet one byte below its minimum wire size
+input: a connection keep-alive packet that is its prefilter header alone, six bytes, below its minimum wire size
 counter: CLIENT_KEEP_ALIVE_WRONG_SIZE
 04 00 b7 59 01 00
 ```
@@ -2445,7 +2460,7 @@ d3 30 e5 ec f7 45 2e 8e 62
 The client is in exactly one of the states of the table below. A state number is signed: a negative state is how the last attempt or connection ended, and a non-negative state is a state the client acts in.
 
 1. A client MUST be created in disconnected (0) and MUST hold no connect token at creation. A connect token MUST be accepted only in disconnected (0) or in a negative state once any retiring transport from the ended attempt has finished stopping. In every positive state, or while a retiring transport has not finished stopping, a connect token MUST be ignored and the state MUST NOT change.
-2. An accepted connect token MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3), or when the token's zero pad or the signed connect data's zero pad is not all zero. An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet.
+2. An accepted connect token MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST be checked before any packet is sent. The token is invalid when its address flags name no family or set any bit above the two family flags, when its create timestamp is later than its expire timestamp, when its timeout seconds is zero or negative, or when its version is not the version of [t3 Constants and registries](#t3), or when the token's zero pad or the signed connect data's zero pad is not all zero. An invalid token MUST put the client in invalid connect token (-6). A token whose expire timestamp is not later than the current time MUST put the client in connect token expired (-7). Neither check sends a packet. A token that passes both checks and names a flagged address, IPv4 or IPv6, whose port is 0 can reach no server: the client MUST refuse it at connect, before any packet, and stays in disconnected (0); the reference implementation's connect returns `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` when no earlier refusal at connect applies. In a build without the development flag, a token sealed to the development server key is refused first ([t19.2 Development keys](#t19.2) rule 2), with the same silence and the same state.
 3. An accepted token MUST select one server address for the whole attempt: the IPv6 address when its flag is set and the client's host can open an IPv6 socket; otherwise the IPv4 address when its flag is set; otherwise the IPv6 address. A host that cannot open a socket of the selected family MUST NOT send to it. When the token names both families and the client's socket for the selected IPv6 address is refused, at open or at connect, for any reason but a want of memory, the client MUST open a socket for the IPv4 address on the same transport and connect it before it treats that transport as refused; when that socket is granted, the IPv4 address is the server address for the attempt and nothing races. A refusal for want of memory on either family ends the attempt. When the token names both families and the host can use both, the selected address is the IPv6 address and the client MUST also dial the IPv4 address, from a socket of its own opened with the connect, and send each requesting cookie (1) packet to both addresses until the first valid connection cookie arrives. Only this stateless stage races: that first cookie commits the attempt to the family it arrived on, the committed family's address is the server address for the rest of the attempt, the client MUST send its connection request only to that family, and it MUST close the other family's socket. A packet from the other family's address after the commit, a late cookie included, MUST be dropped and counted as from a foreign source. The token's lifetime and timeout bound the attempt as for one address. With one family named, or one family usable, the choice is the single address exactly as above.
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
@@ -2505,7 +2520,7 @@ The response of step 4 MUST be retransmitted byte for byte; a later challenge MU
 <a id="t11.3"></a>
 ### t11.3. Session processing before connected
 
-A session packet opens under the session keys from sending connection response (3) on. Every opened session packet MUST refresh the last-received time and MUST have its ack block applied. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be ignored and counted as the type's `WRONG_STATE`, before it is opened: the application is handed payloads only once connected (4), so its reply can be sent. The keep-alive that connects the client can arrive after the server's first payloads; the server's resend carries a reliable message again after it. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
+A session packet opens under the session keys from sending connection response (3) on. Every session packet that opens and passes the session checks of [t10 Receive processing](#t10), steps 15 to 17, MUST refresh the last-received time and MUST have its ack block applied, as step 18 states; one that opens and then fails one of those session checks refreshes nothing, and a type-specific refusal after them does not undo the refresh. A keep-alive received in sending connection response (3) MUST store the client index and the slot count it carries and MUST move the client to connected (4). A payload received in sending connection response (3) MUST be ignored and counted as the type's `WRONG_STATE`, before it is opened: the application is handed payloads only once connected (4), so its reply can be sent. The keep-alive that connects the client can arrive after the server's first payloads; the server's resend carries a reliable message again after it. A disconnect received in sending connection response (3) MUST release the connection state and MUST move the client to disconnected (0). An application message the client sends before connected (4) is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -2710,7 +2725,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot, and whose connection salt or token identifier matches the mapping's, MUST be answered with that mapping's stored connection challenge packet, byte-identical, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4). A request from that address whose connection salt and token identifier both differ from the mapping's is a new attempt: it MUST go through every later rule, and it MUST be refused, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`, when its token identifier is bound to any source address, its own included. Only once it has passed every check, its signature verified, does it replace the half-open mapping: the server releases that mapping's request claim, removes it, and creates the new mapping in its place, which needs no free mapping slot. A refused request leaves the half-open mapping as it was. A mapping with a connected slot is never replaced.
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime.
-6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose signed connect data has a zero pad that is not all zero, counting `CONNECTION_REQUEST_WRONG_VERSION` ([t6.4 Verification and refusal order](#t6.4)), then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server advertises, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse. A server advertises exactly the addresses it was created with, one for each family it serves, and a token address matches only when it equals one of them, port included: a server created at a family's wildcard advertises that wildcard, and accepts a token naming the loopback only when the loopback is an address it was created with.
+6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose signed connect data has a zero pad that is not all zero, counting `CONNECTION_REQUEST_WRONG_VERSION` ([t6.4 Verification and refusal order](#t6.4)), then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server advertises, the token's other-family address unread with one exception: a request arriving on IPv4 whose token sets no IPv4 flag is checked against the token's IPv6 address when that address is IPv4-mapped, taken as the IPv4 address it maps; and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse. A server advertises exactly the addresses it was created with, one for each family it serves, and a token address matches only when it equals one of them, port included: a server created at a family's wildcard advertises that wildcard, and accepts a token naming the loopback only when the loopback is an address it was created with.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet, at most one to each source address and port per update, checked before the cookie is computed. A request owed a cookie past that limit MUST be ignored, unanswered; it is counted once, by the counter of its cookie (`CONNECTION_REQUEST_NO_COOKIE`, `CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY` or `CONNECTION_REQUEST_COOKIE_EXPIRED`), and the refusal itself MUST be counted as `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, which is outside the request family. The client sends again at its send rate. The limit does not spend the handshake work budget of rule 8, does not refuse a request with a valid cookie, and MUST be reset at the start of each update. A server MUST NOT limit the cookie packets of one update in all below the connection requests that update processes. A server MUST hold the per-source limit in memory sized at creation that no source can grow: it MAY keep one bit per index of a keyed hash of the source address and port, the key drawn at server creation and kept secret, so that a collision refuses another source for that update only and cannot be aimed; such a bitmap SHOULD hold at least the cookie reply source bitmap policy value of bits for each connection request one update can process, so that a collision refuses an honest source with probability at most the reciprocal of that value. The value is a chosen bound, not a measured optimum.
 8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
@@ -2724,7 +2739,7 @@ The claim is checked, without being recorded, before the signature; the first re
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose free slots are all still held under [t13.4 Slot reset](#t13.4), counting `CONNECTION_RESPONSE_NO_SLOTS`, the counter a denial uses, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. A held slot counts as free for rule 11 and for the denial of this rule.
-14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart: the handshake deadline as `MAPPING_HANDSHAKE_DEADLINE_EXPIRED`, the half-open idle deadline as `MAPPING_IDLE_TIMEOUT`, and the connected idle timeout as both `MAPPING_IDLE_TIMEOUT` and `CLIENT_TIMED_OUT`, so the half-open removals are the difference of the last two. That shared `MAPPING_IDLE_TIMEOUT` is an exception of this revision to [t18 Error handling and counters](#t18) rule 2. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -2737,7 +2752,15 @@ The policy values of this section are below.
 | cookie reply source bitmap | `16` | bits per connection request one update can process |
 
 The cookie lifetime, the cookie key rotation period and the used-token history
-capacity per slot are rows of [t3 Constants and registries](#t3). The handshake
+capacity per slot are rows of [t3 Constants and registries](#t3). The
+response-binding table and the request-claim table each hold that capacity
+times max_clients entries. A new binding takes a free or expired entry, and
+when the table holds only live bindings it replaces the oldest one: a token
+whose binding was replaced that way is no longer refused for reuse from
+another address. A new claim takes a free or expired entry and never
+displaces a live claim; with none, the request is refused as rule 9 states.
+The reference implementation sizes its mapping table at 2 x max_clients
+entries. The handshake
 deadline is the server configuration field of
 [t2.3 Configuration surface](#t2.3). The handshake work budget, the
 failed-signature budget and window, and the half-open idle deadline are rows of
@@ -3146,8 +3169,9 @@ keys, its token keys and its ephemeral secret key. It ends in `disconnected`.
 
 A slot reset MUST keep the used-token history
 ([t12 Handshake: server](#t12)). It MUST keep the disconnect reason until
-the slot's next connection is established, so an application can read why
-the previous connection ended.
+the slot's next connection is established or the server stops, so an
+application can read why the previous connection ended. A stopped server, and
+one started again, reports no reason for any slot.
 
 When a server stops it MUST disconnect every connected client with the
 redundant burst of [t13.3 Disconnect](#t13.3), within the send limits that
@@ -3194,7 +3218,8 @@ as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
-connection on reaching the `integrity limit`.
+connection on reaching the `AEAD integrity limit` of
+[t9 Packet protection](#t9).
 
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
@@ -3204,10 +3229,6 @@ mark, and it MAY drop any packet at or beyond that distance. The mark is never
 ahead of the window's high-water mark, so the prefilter drops only packets the
 window would refuse; a reordered packet the window accepts is never dropped
 in the kernel. The prefilter never advances the mark.
-
-| Name | Value | Unit | Kind | Meaning |
-|---|---|---|---|---|
-| integrity limit | `68719476736` | sealed packets | protocol value | failed opens that end a connection |
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -3631,8 +3652,8 @@ input: the timing defaults above, in the order stated, each as a little-endian u
    A reason for one packet type and the same reason for another packet type are
    distinct counters, not one shared counter. The reasons that
    [t6.4 Verification and refusal order](#t6.4) and
-   [t12 Handshake: server](#t12) rule 13 name as sharing a counter are the
-   exceptions of this revision.
+   [t12 Handshake: server](#t12) rules 13 and 14 name as sharing a counter
+   are the exceptions of this revision.
 3. An endpoint MUST increment the outcome counter the observed condition
    names, and no other outcome counter for that packet. Storage MAY be per
    execution context and summed at readout; a counter MUST be monotonic and
@@ -3952,6 +3973,11 @@ the send queue or the send store counts `MESSAGE_SEND_QUEUE_FULL` or
 `MESSAGE_SEND_STORE_FULL`, and the connection goes on
 ([RN-2 m1.7 Send refusal](MESSAGES.md#m1.7)).
 
+`CLIENT_DENIED_WRONG_STATE` and `CLIENT_DENIED_ACCEPTED` are of class
+`refusal`, where the client's other `WRONG_STATE` and `ACCEPTED` counters are
+`expected`. The class is part of the registry and its vector, so this
+revision keeps the two classes as registered.
+
 The shared rows and a transport's own rows (`GSO_`, `URING_`, `IOCP_`, `RIO_`)
 count some of the same events, by design: the shared row is the transport-blind
 total, the transport row says where it happened. A sum over every refusal row of
@@ -4122,7 +4148,7 @@ the property its row names.
 | No slot for a client that is not there | challenge answered from the claimed address before any slot |
 | Packet type and salt unmodifiable | AEAD associated data |
 | Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
-| Token reuse from another address refused | used-token history keyed on a hash of the signed data |
+| Token reuse from another address refused while its binding is held | used-token history keyed on a hash of the signed data; a full history replaces its oldest live binding ([t12 Handshake: server](#t12)) |
 | An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
 | Working keys are scoped to one connection | keys derived per connection from a fresh salt and a fresh session nonce; teardown erases the keys |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
@@ -4155,7 +4181,7 @@ answered traffic, never an amplifier.
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | connection request wire size | `710` | bytes | the whole connection request packet |
-| connection cookie wire size | `38` | bytes | the only answer to a rejected request |
+| connection cookie wire size | `38` | bytes | the answer to a request without a valid cookie |
 | connection challenge wire size | `66` | bytes | a fresh or resent connection challenge |
 | connection response wire size | `50` | bytes | the whole connection response packet |
 | connection keep-alive minimum wire size | `41` | bytes | a first keep-alive with a fresh block |
@@ -4163,8 +4189,9 @@ answered traffic, never an amplifier.
 
 Two rules keep the table true rather than merely accurate. Padding used to
 satisfy a row MUST be checked on read, for length and content. A server MUST NOT
-answer a request it has rejected; the connection cookie is the single exception
-and is smaller than the request. A source that has not returned a valid cookie
+answer a request it has rejected; the connection cookie and the connection
+denied packet of a full server ([t12 Handshake: server](#t12) rule 11) are the
+two exceptions, and each is smaller than the request. A source that has not returned a valid cookie
 is sent at most that cookie, only for a datagram of the request wire size, at
 most once per update ([t12 Handshake: server](#t12) rules 2 and 7). The
 connection challenge and the connection denied packet go only to a source
@@ -4208,9 +4235,12 @@ key.
 1. A development key MUST NOT be used unless a deployment configured it
    explicitly. An endpoint whose configuration supplies no key MUST NOT inherit
    a development credential.
-2. An implementation MUST refuse to create an endpoint that would use a
-   development key when it is compiled without the development flag, and MUST
-   NOT allow configuration alone to override that refusal.
+2. An implementation MUST refuse an endpoint that would use a development key
+   when it is compiled without the development flag, and MUST NOT allow
+   configuration alone to override that refusal. A server refuses when it
+   starts, and a client refuses a token sealed to the development server key
+   at connect, before any packet. The published test filter is refused at
+   create ([t2.3 Configuration surface](#t2.3)).
 3. Every start that uses a development key MUST log a warning, at warn level or
    louder, saying the keys are public and not for production. A server logs it
    from its own keys; a client logs it when its token's server key is a

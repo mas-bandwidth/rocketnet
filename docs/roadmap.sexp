@@ -596,6 +596,16 @@
    :text "A connection response that finds only slots freed in the same update is ignored, not denied, and counts CONNECTION_RESPONSE_NO_SLOTS, the counter of a real denial (sdk/rocketnet_server_protocol.cpp about 1176-1186); connections_denied_full sums both. TRANSPORT.md t12 rule 13 and t13.4 now state the ignore. Give it its own reason in a release that may add counters, and update t12, t18 and the stats doc with it."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-105")
 
+  (item "half-open-idle-own-counter" :group "review-v1-2" :area "rocketnet"
+   :title "Count a half-open idle removal apart from a connected timeout"
+   :text "A half-open mapping removed at its idle deadline and a connected slot removed at its idle timeout both count MAPPING_IDLE_TIMEOUT; the connected one also counts CLIENT_TIMED_OUT, so the half-open count is the difference. TRANSPORT.md t12 rule 14 and t18 rule 2 now state this as an exception. Give the half-open removal its own counter in a release that may add counters, and update t12, t18 and the stats doc with it."
+   :date "2026-11-13" :origin "Standard review, merged table row SM052")
+
+  (item "client-denied-counter-class" :group "review-v1-2" :area "rocketnet"
+   :title "Decide the class of the client's denied WRONG_STATE and ACCEPTED counters"
+   :text "CLIENT_DENIED_WRONG_STATE and CLIENT_DENIED_ACCEPTED are of class refusal, where every other client WRONG_STATE and ACCEPTED counter is expected. The class is part of the counter registry and its vector, so TRANSPORT.md t18 keeps them as registered and says so. A release that may change counter classes decides whether they become expected."
+   :date "2026-11-13" :origin "Standard review, merged table row SM040")
+
   (item "promotion-enabled-mask" :group "review-v1-2" :area "rocketnet"
    :title "Decide what admits a promoted send, and count its refusal once"
    :text "A sender promotes an UNRELIABLE or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to RELIABLE, and an UNRELIABLE_SEQUENCED one to RELIABLE_SEQUENCED, then checks that exact reliability against the enabled mask; RELIABLE_WITH_ACK_RECEIPT does not admit it, although it sends under the same wire code. The refusal counts both MESSAGE_SEND_TYPE_NOT_ENABLED and MESSAGE_SEND_REFUSED, where an unpromoted unreliable send outside the mask counts only the first. The public interface enables all eight reliabilities and has no mask setting, so only a restricted internal mask or another implementation reaches this. MESSAGES.md m2.1 states this behaviour. A later release decides whether the receipt twin admits a promoted UNRELIABLE_WITH_ACK_RECEIPT send, whether config validation warns when an enabled unreliable reliability lacks its promoted one, and whether the refusal counts one counter."
