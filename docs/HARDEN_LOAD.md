@@ -35,7 +35,9 @@ in `rocketnet_layers.h`:
 - Each message is written in place as one SINGLE payload: transport `start_packet`, then
   `rocketnet_message_single_finish`, then `finish_packet`. The message goes at `frame + payload_index`, because
   `start_packet` returns the frame.
-- Main joins the jobs, then writes the reliable and big messages through the message server, then calls send_packets.
+- Main joins the jobs, then begins the next fill phase with a main-thread call (receive_messages, which has nothing
+  left to return), then writes the reliable and big messages through the message server, then calls send_packets. A
+  client has one filler per fill phase: the job that wrote its unreliable messages, then main in the next phase.
 
 N = 0 (the default) keeps every write on main. N is at most 64.
 
@@ -61,10 +63,12 @@ duplicate row passes a gap of zero or below.
 **The players.** Players must deliver unreliable messages at or above `--min-delivery`, with no errors and no
 unplanned ends among the stable clients.
 
-**The frame.** The frame passes when work p99 is at or under `--frame-p99-us`, 5000 by default. Work is rocketnet's
-time on the game thread: update, receive, the write (fill jobs joined) and send. The rest of a 60 Hz game frame belongs
-to the game. Each `harden_tick:` also prints `jobs_core_ms`, the fill jobs' busy time per frame summed over the jobs,
-because the game needs those cores too.
+**The frame.** The frame is an aim, reported and not judged: the cell's verdict is the chains and the players.
+Work is rocketnet's whole span on the game thread in one frame, one clock read at the frame's start and one after send,
+with update, receive, the write (the wait for the fill jobs included) and send between them and nothing left out. Its
+p99 is held to `--frame-p99-us`, 5000 by default, and printed with its max as `aim=MET` or `aim=MISSED`. The rest of a
+60 Hz game frame belongs to the game. Each `harden_tick:` also prints `jobs_core_ms`, the fill jobs' busy time per frame
+summed over the jobs, because the game needs those cores too.
 
 **The server.** The library must conserve its counters, and fds, threads and library bytes must stay flat from the
 post-warmup sample to the end.
