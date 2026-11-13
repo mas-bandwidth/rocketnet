@@ -1077,6 +1077,18 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
+    # The wide fill's cases (tests/wide_fill_cases.cpp, run by
+    # tests/test_wide_fill_main.cpp): the game's job threads filling clients
+    # at once, so a functional-tier binary of its own, outside the unit suite
+    # (which starts no thread). No socket (the development loopback driver),
+    # no real time. CI runs it in the functional legs and under tsan.
+    if(ROCKETNET_DEV)
+        add_executable(test_wide_fill tests/test_wide_fill_main.cpp tests/wide_fill_cases.cpp)
+        target_include_directories(test_wide_fill PRIVATE tests)
+        target_link_libraries(test_wide_fill PRIVATE rocketnet_dev Threads::Threads)
+        rocketnet_use_sodium(test_wide_fill)
+        rocketnet_warning_floor(test_wide_fill)
+    endif()
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
