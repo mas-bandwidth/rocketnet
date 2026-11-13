@@ -922,6 +922,7 @@ MCRNXdpSendDrainBrokenNoRelease.cfg	MCRNXdpSendDrain.tla	temporal	StopFinishes	c
 MCRNXdpSendDrainBrokenNoReset.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenNoRing.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNXdpSendDrainBrokenShortBound.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
+MCRNXdpSendDrainBrokenNoClaim.cfg	MCRNXdpSendDrain.tla	invariant	NeverAbandonDraining	check	rnxdpsenddrain	required	-
 MCRNRttFilter.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
 MCRNRttFilterLive.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
 MCRNRttFilterFirstAck.cfg	MCRNRttFilter.tla	pass	-	check	rnrttfilter	required	-
