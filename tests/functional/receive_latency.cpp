@@ -38,6 +38,11 @@
     every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads). To add a
     transport, add a row to receive_latency_rows and register its case in
     rocketnet_functional_tests.cpp.
+
+    The xdp row runs only where the veth cases run (root in the xdp guest,
+    rocketnet_test_xdp_veth_runs_here): the server binds the near end of the
+    case's veth pair, and the clients connect from the far end's network
+    namespace, where their sockets stay for the case.
 */
 
 #include "../../examples/shutdown.h"
@@ -45,6 +50,21 @@
 #include "../token_string.h"
 #include "rocketnet.h"
 #include "rocketnet_crypto_tally.h"
+#include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+#include "../native_shutdown.h"
+#include "rocketnet_server_socket.h"
+#include <fcntl.h>
+#include <sched.h>
+#include <unistd.h>
+struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const char * case_name, char * server_address, size_t server_address_bytes );
+void rocketnet_xdp_veth_note_server( struct rocketnet_server_transport_t * server );
+void rocketnet_xdp_veth_pair_down( struct rocketnet_server_transport_t * destroyed );
+const char * rocketnet_xdp_veth_netns_path();
+const char * rocketnet_xdp_veth_host( bool ipv6, bool far );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 #include <atomic>
 #include <stdint.h>
@@ -84,16 +104,18 @@ struct receive_latency_row_t
     const char * server_transport;
     const char * client_transport;
     enum receive_latency_direction_t direction;
+    bool veth; // the server on the near end of the case's veth pair, the clients on the far end
 };
 
 // the rows: one case each (rocketnet_functional_tests.cpp registers them)
 static const struct receive_latency_row_t receive_latency_rows[] = {
-    { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER },
-    { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER },
-    { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT },
-    { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT },
-    { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT },
-    { "client_iocp", "iocp", "iocp", RECEIVE_LATENCY_CLIENT },
+    { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_xdp", "xdp", "portable", RECEIVE_LATENCY_SERVER, true },
+    { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT, false },
+    { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT, false },
+    { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT, false },
+    { "client_iocp", "iocp", "iocp", RECEIVE_LATENCY_CLIENT, false },
 };
 
 // the phase of each send in the frame
@@ -218,8 +240,50 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     server_config.transport = row->server_transport;
     server_config.max_clients = RECEIVE_LATENCY_CLIENTS;
 
+    char bind_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES] = "127.0.0.1:0";
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    // the pair comes up with a transport of its own, which is then
+    // destroyed; the server takes the near end with one xdp thread
+    char saved_xdp_threads[64] = { 0 };
+    char saved_os_cpus[64] = { 0 };
+    const char * had_xdp_threads = getenv( "ROCKETNET_SERVER_NUM_XDP_THREADS" );
+    const char * had_os_cpus = getenv( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+    if ( had_xdp_threads )
+    {
+        snprintf( saved_xdp_threads, sizeof( saved_xdp_threads ), "%s", had_xdp_threads );
+    }
+    if ( had_os_cpus )
+    {
+        snprintf( saved_os_cpus, sizeof( saved_os_cpus ), "%s", had_os_cpus );
+    }
+    const bool restore_xdp_threads = had_xdp_threads != NULL;
+    const bool restore_os_cpus = had_os_cpus != NULL;
+    if ( row->veth )
+    {
+        char veth_address[128];
+        struct rocketnet_server_transport_t * pair = rocketnet_xdp_veth_start( false, "test_receive_latency_server_xdp", veth_address, sizeof( veth_address ) );
+        receive_latency_check( pair != NULL, name, "veth pair" );
+        rocketnet_xdp_veth_note_server( NULL );
+        rocketnet_server_transport_stop( pair );
+        for ( int i = 0; i < 100 && rocketnet_server_transport_state( pair ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; ++i )
+        {
+            rocketnet_server_transport_update( pair, rocketnet_platform_time() );
+            rocketnet_platform_sleep( 0.001 );
+        }
+        rn_native_server_transport_stop_and_destroy( pair );
+#if ROCKETNET_DEV
+        rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+        receive_latency_check( setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "1", 1 ) == 0, name, "xdp threads" );
+        receive_latency_check( setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 ) == 0, name, "os cpus" );
+        snprintf( bind_address, sizeof( bind_address ), "%s", veth_address ); // the pair's port, which its capture records
+    }
+#else  // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    receive_latency_check( !row->veth, name, "a veth row in a build without xdp" );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, bind_address, NULL, &server_config, &status );
     receive_latency_check( server && status == ROCKETNET_STATUS_OK, name, "server create" );
     receive_latency_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK, name, "server start" );
 
@@ -254,6 +318,21 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                                name, "connect token" );
         clients[c] = rocketnet_client_create( NULL, &client_config, &status );
         receive_latency_check( clients[c] && status == ROCKETNET_STATUS_OK, name, "client create" );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+        if ( row->veth )
+        {
+            // the client's socket opens in the far namespace and stays there
+            const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
+            const int far_ns = open( rocketnet_xdp_veth_netns_path(), O_RDONLY );
+            receive_latency_check( self_ns >= 0 && far_ns >= 0 && setns( far_ns, CLONE_NEWNET ) == 0, name, "enter the far namespace" );
+            status = rocketnet_client_connect( clients[c], token );
+            receive_latency_check( setns( self_ns, CLONE_NEWNET ) == 0, name, "leave the far namespace" );
+            close( self_ns );
+            close( far_ns );
+            receive_latency_check( status == ROCKETNET_STATUS_OK, name, "client connect" );
+            continue;
+        }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
         receive_latency_check( rocketnet_client_connect( clients[c], token ) == ROCKETNET_STATUS_OK, name, "client connect" );
     }
 
@@ -484,6 +563,18 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     }
     rn_cli_server_stop_and_destroy( server );
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    if ( row->veth )
+    {
+        rocketnet_xdp_veth_pair_down( NULL );
+        receive_latency_check( restore_xdp_threads ? setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", saved_xdp_threads, 1 ) == 0
+                                                   : unsetenv( "ROCKETNET_SERVER_NUM_XDP_THREADS" ) == 0,
+                               name, "xdp threads restored" );
+        receive_latency_check( restore_os_cpus ? setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", saved_os_cpus, 1 ) == 0 : unsetenv( "ROCKETNET_SERVER_NUM_OS_CPUS" ) == 0,
+                               name, "os cpus restored" );
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+
     receive_latency_check( lost == 0, name, "a message never arrived" );
     char too_late[128];
     snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
@@ -506,6 +597,7 @@ static void receive_latency_run_named( const char * row_name )
 
 void rocketnet_test_receive_latency_server_gso();
 void rocketnet_test_receive_latency_server_io_uring();
+void rocketnet_test_receive_latency_server_xdp();
 void rocketnet_test_receive_latency_client_portable();
 void rocketnet_test_receive_latency_client_gso();
 void rocketnet_test_receive_latency_client_msgx();
@@ -519,6 +611,11 @@ void rocketnet_test_receive_latency_server_gso()
 void rocketnet_test_receive_latency_server_io_uring()
 {
     receive_latency_run_named( "server_io_uring" );
+}
+
+void rocketnet_test_receive_latency_server_xdp()
+{
+    receive_latency_run_named( "server_xdp" );
 }
 
 void rocketnet_test_receive_latency_client_portable()

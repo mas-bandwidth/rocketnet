@@ -14,10 +14,11 @@
 
 // The receive handoff between a transport's worker thread, which banks
 // datagrams, and the main thread, which reads them in its receive call: the
-// gso server's queues and the client's I/O thread and legacy receive worker
-// (proofs/tla/RNReceiveHandoff.tla, bound to the gso server's code by the
-// trace check tests/tla_trace_receive_handoff.cpp and to the client I/O
-// core's by tests/tla_trace_client_receive_handoff.cpp). Three preallocated buffers; only indices
+// gso and xdp servers' queues and the client's I/O thread and legacy receive
+// worker (proofs/tla/RNReceiveHandoff.tla, bound to the gso server's code by
+// the trace check tests/tla_trace_receive_handoff.cpp, to the xdp server's by
+// tests/tla_trace_receive_handoff_xdp.cpp and to the client I/O core's by
+// tests/tla_trace_client_receive_handoff.cpp). Three preallocated buffers; only indices
 // and counts move, and only through the functions below, which the caller
 // runs with its handoff mutex held. The worker acquires the mutex; main only
 // ever tries it.
@@ -93,6 +94,14 @@ inline void rocketnet_receive_handoff_init( struct rocketnet_receive_handoff_t *
     handoff->main_limit = 0;
     handoff->tail_cursor = 0;
     handoff->tail_end = 0;
+}
+
+// the initial handoff, for a member initializer
+inline struct rocketnet_receive_handoff_t rocketnet_receive_handoff_initial()
+{
+    struct rocketnet_receive_handoff_t handoff;
+    rocketnet_receive_handoff_init( &handoff );
+    return handoff;
 }
 
 // proofs/tla/RNReceiveHandoff.tla Commit: the worker, at the end of a pass,

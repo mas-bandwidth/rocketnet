@@ -18,6 +18,21 @@
 (* at queue 0.  MCRNGsoRecvWalkBrokenStartAtZero.cfg sets it TRUE and      *)
 (* violates NoQueueStarves: with two full queues filling the budget, the   *)
 (* later queues never deliver.                                             *)
+(*                                                                         *)
+(* The XDP server's walk (rocketnet_server_socket_receive_packets in       *)
+(* sdk/rocketnet_server_socket_linux.cpp) is the same walk: each queue     *)
+(* returns its staged datagrams from main's cursor within the budget's    *)
+(* room, and the queue on which the budget ended, its own last datagram   *)
+(* included, is filled (rocketnet_server_socket_take_range).              *)
+(* MCRNGsoRecvWalkXdp.cfg runs it at three queues and                     *)
+(* MCRNGsoRecvWalkXdpTwo.cfg at the witness's two, budget two.            *)
+(* Rule switch FillAtNextQueue, FALSE in the passing runs: the XDP walk   *)
+(* before 2026-11-13, whose range said the budget ended only when it met  *)
+(* a datagram it could not take, so a queue whose last datagram ended the *)
+(* budget exactly was not filled and the next queue holding datagrams     *)
+(* was.  MCRNGsoRecvWalkBrokenFillAtNextQueue.cfg sets it TRUE and        *)
+(* violates NoQueueStarves: with two queues, queue 0 filling the budget    *)
+(* exactly on every call starts every call at queue 0 again.              *)
 (***************************************************************************)
 EXTENDS Integers
 
@@ -28,6 +43,8 @@ CONSTANTS NumQueues,   \* receive queues
 ASSUME NumQueues >= 1 /\ QueueSize >= 1 /\ Budget >= 1
 
 StartAtZero == FALSE
+
+FillAtNextQueue == FALSE
 
 Queues == 0 .. NumQueues - 1
 
@@ -46,7 +63,10 @@ Init ==
     /\ waits = [ q \in Queues |-> 0 ]
 
 (* the walk from step i with room packets of budget left: what each queue *)
-(* takes, and the first queue on which the room ran out (-1 if none)      *)
+(* takes, and the first queue on which the room ran out (-1 if none); an  *)
+(* earlier queue's filled replaces a later one's, so the first stands.    *)
+(* Under FillAtNextQueue the filled queue is instead the first that keeps *)
+(* packets it could not take.                                             *)
 RECURSIVE Walk(_, _, _, _, _)
 Walk(s, i, room, l, taken) ==
     IF i = NumQueues THEN [ left |-> l, taken |-> taken, filled |-> -1 ]
@@ -55,7 +75,9 @@ Walk(s, i, room, l, taken) ==
              rest == Walk( s, i + 1, room - take,
                            [ l EXCEPT ![q] = @ - take ],
                            [ taken EXCEPT ![q] = take ] )
-         IN  IF room > 0 /\ room - take = 0
+             ends == IF FillAtNextQueue THEN l[q] > take
+                                        ELSE room > 0 /\ room - take = 0
+         IN  IF ends
              THEN [ rest EXCEPT !.filled = q ]
              ELSE rest
 

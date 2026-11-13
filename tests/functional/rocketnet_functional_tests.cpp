@@ -13921,6 +13921,7 @@ extern bool rocketnet_test_server_receive_low_tick_measurement_requested();
 // transport row
 extern void rocketnet_test_receive_latency_server_gso();
 extern void rocketnet_test_receive_latency_server_io_uring();
+extern void rocketnet_test_receive_latency_server_xdp();
 extern void rocketnet_test_receive_latency_client_gso();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_receive_latency_client_portable();
@@ -16376,6 +16377,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
     { "test_receive_latency_server_gso", rocketnet_test_receive_latency_server_gso, rocketnet_test_server_pin_allows_gso },
     { "test_receive_latency_server_io_uring", rocketnet_test_receive_latency_server_io_uring, rocketnet_test_server_pin_allows_io_uring },
+#if ROCKETNET_XDP
+    { "test_receive_latency_server_xdp", rocketnet_test_receive_latency_server_xdp, rocketnet_test_xdp_veth_runs_here },
+#endif // #if ROCKETNET_XDP
     { "test_receive_latency_client_gso", rocketnet_test_receive_latency_client_gso, rocketnet_test_client_pin_allows_gso },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_receive_latency_client_portable", rocketnet_test_receive_latency_client_portable, rocketnet_test_client_pin_allows_portable },
