@@ -1,8 +1,13 @@
-# CBMC proofs of the arithmetic leaves that finish, each night and on
-# demand. NIGHTLY TIER (2026-10-31): 614-705s on the fleet, over the
-# per-commit tier's two minutes. This workflow runs the default target only.
-# It does not run slow-unproved; replay-near-4096 runs nightly too, one job
-# per partition (nightly-proofs.yml).
+# The CBMC proofs that finish (proofs/cbmc/Makefile `all`), each night and
+# on demand: the arithmetic leaves replay-delta-1-3, replay-far and
+# reconstruct, then read-write, message-read, xdp-free-list and
+# proofs-packet_open, with the paired `-reachability` control of each of the
+# first six. NIGHTLY TIER (2026-10-31): 614-705s on the fleet, over the
+# per-commit tier's two minutes. This workflow runs the default target only;
+# replay-near-4096 runs nightly too, one job per partition (nightly-proofs.yml).
+# Every target here runs on cbmc alone, so cbmc is the one tool checked: cadical
+# (replay-near-4096) and ESBMC (the ack-run targets and the NIGHTLY readers) are
+# checked by the workflows that run them.
 #
 # Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
 # fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in
@@ -38,19 +43,13 @@ defaults:
 
 jobs:
   cbmc:
-    name: cbmc (arithmetic leaf proofs)
+    name: cbmc (nightly proof set)
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 7200
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      # The fleet installs ESBMC only in ~/sdk/bin, which is not on the runner
-      # service's PATH. Append it (never prepend) for this job's later steps,
-      # so a system tool always wins over a copy there.
-      - name: Append the fleet sdk tools to the end of PATH
-        run: echo "PATH=$PATH:$HOME/sdk/bin" >> "$GITHUB_ENV"
-
-      - name: Check the pinned tools are present
+      - name: Check the pinned tool is present
         run: |
           set -euo pipefail
           pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
@@ -64,8 +63,6 @@ jobs:
             case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
           }
           check cbmc "$(pin CBMC)"
-          check cadical "$(pin CADICAL)"
-          check esbmc "$(pin ESBMC)"
 
       # every bound the inventory, results and harness comments state for an
       # SDK constant equals the SDK's value (tools/check_cbmc_bounds.py); the
