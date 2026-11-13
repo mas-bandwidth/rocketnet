@@ -609,9 +609,13 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
     // still missing at the deadline is sent again, through the same client
     // transport, only when the kernel counted that many receive drops. A loss
     // the kernel did not count is the library's and fails here; a tag that
-    // arrives twice fails at !seen[tag].
+    // arrives twice fails at !seen[tag]. The resend goes out a frame of
+    // PACKETS_PER_FRAME at a time with the server pumped between frames, as
+    // the first send did: a resend of more tags than the send history holds
+    // in one burst would overwrite records before the server could ack them.
 
     double wait = 5.0;
+    int resend_next = TOTAL;
     start = rocketnet_platform_time();
     for ( ;; )
     {
@@ -620,17 +624,24 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             break;
         }
 
-        if ( rocketnet_platform_time() - start >= wait )
+        if ( resend_next == TOTAL && rocketnet_platform_time() - start >= wait )
         {
             printf( "%s received %d of %d payloads\n", name, received, TOTAL );
             rocketnet_check( rocketnet_loss_gate_resend( &gate, TOTAL - received ) );
+            resend_next = 0;
+        }
 
-            for ( int tag = 0; tag < TOTAL; tag++ )
+        if ( resend_next < TOTAL )
+        {
+            int resent = 0;
+            while ( resend_next < TOTAL && resent < PACKETS_PER_FRAME )
             {
+                const int tag = resend_next++;
                 if ( seen[tag] )
                 {
                     continue;
                 }
+                resent++;
 
                 struct rocketnet_packet_context_t context = {};
                 uint8_t * payload = NULL;
@@ -657,8 +668,11 @@ static void rocketnet_test_client_io_handoff_round_trip( const char * transport,
             }
 
             rocketnet_client_transport_send_packets( client );
-            wait = ROCKETNET_LOSS_GATE_WAIT;
-            start = rocketnet_platform_time();
+            if ( resend_next == TOTAL )
+            {
+                wait = ROCKETNET_LOSS_GATE_WAIT;
+                start = rocketnet_platform_time();
+            }
         }
 
         rocketnet_client_transport_update( client, rocketnet_platform_time() );

@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "native_shutdown.h"
+#include "kernel_drops.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_config.h"
 #include "rocketnet_xdp_limits.h"
@@ -291,6 +292,13 @@ static void test_buffered_transport()
     CHECK( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
     CHECK( server_address.port && client_address.port );
 
+    // loopback can lose a datagram under machine load (tests/kernel_drops.h):
+    // one still missing after the wait is sent again only when the kernel
+    // counted it lost; a loss the kernel did not count fails here
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "test_buffered_transport" );
+
     const uint8_t data[] = { 10, 20, 30, 40 };
     client.operations->send( client.instance, &server_address, data, sizeof( data ) );
 
@@ -298,11 +306,17 @@ static void test_buffered_transport()
     uint8_t packets[4][64];
     int bytes[4];
     int received = 0;
-    double deadline = rocketnet_platform_time() + 5.0;
-    while ( !received && rocketnet_platform_time() < deadline )
+    double deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+    while ( !received )
     {
         received = server.operations->receive_batch( server.instance, from, &packets[0][0], 64, bytes, 4 );
-        if ( !received )
+        if ( !received && rocketnet_platform_time() >= deadline )
+        {
+            CHECK( rocketnet_loss_gate_resend( &gate, 1 ) );
+            client.operations->send( client.instance, &server_address, data, sizeof( data ) );
+            deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+        }
+        else if ( !received )
         {
             rocketnet_platform_sleep( 0.001 );
         }
@@ -313,12 +327,18 @@ static void test_buffered_transport()
 
     rocketnet_platform_send_t packet = { &client_address, data, sizeof( data ) };
     server.operations->send_batch( server.instance, &packet, 1 );
-    deadline = rocketnet_platform_time() + 5.0;
+    deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
     received = 0;
-    while ( !received && rocketnet_platform_time() < deadline )
+    while ( !received )
     {
         received = client.operations->receive( client.instance, from, packets[0], 64 );
-        if ( !received )
+        if ( !received && rocketnet_platform_time() >= deadline )
+        {
+            CHECK( rocketnet_loss_gate_resend( &gate, 1 ) );
+            server.operations->send_batch( server.instance, &packet, 1 );
+            deadline = rocketnet_platform_time() + ROCKETNET_LOSS_GATE_WAIT;
+        }
+        else if ( !received )
         {
             rocketnet_platform_sleep( 0.001 );
         }
