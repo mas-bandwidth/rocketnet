@@ -194,6 +194,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     rocketnet_check( rocketnet_server_transport_state( server ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
 
     rocketnet_counters_assert_conserved( rocketnet_server_transport_counters( server ) );
-    rocketnet_counters_assert_clean( rocketnet_server_transport_counters( server ) );
+    // a datagram a stopping server never reads is counted by name (the client's disconnect burst)
+    rocketnet_counters_assert_clean_except( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED );
     rn_native_server_transport_stop_and_destroy( server );
 }
