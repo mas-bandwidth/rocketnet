@@ -208,10 +208,10 @@ of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its default, 0 (off). On the Linux x86-64
 Release development build (`ROCKETNET_DEV=1`, io_uring and XDP built) described
 in the tables below, at `max_clients = 1000`
-the server's `rocketnet_server_required_memory` is 3,111,668,715 bytes and the
+the server's `rocketnet_server_required_memory` is 5,753,813,043 bytes and the
 client's `rocketnet_client_required_memory` is 15,186,082 bytes. Both include
 the planned lifecycle allocator peak plus the 1 MiB caller-allocator allowance.
-These v1.1.0 queries include type-9 removal, seeded RTT tracking, resend
+These v1.1.9 queries include type-9 removal, seeded RTT tracking, resend
 stamp removal, the public API allowance, and buffers sized from runtime
 configuration with the 512-client allocation floor. Earlier Linux and Windows
 receipts in this guide predated some of those changes and are not current sizing
@@ -331,8 +331,8 @@ universal preset suitable for every game:
   packets in flight, 256 packets and 1,024 unreliable messages per update,
   a 1,000-kbps client send budget, and a 10,000-kbps server per-client send
   budget. The server budget produces an `18,878,016`-byte (18.00 MiB) message
-  region per connection and a `21,028,276,715`-byte
-  (19.58 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
+  region per connection and a `23,670,421,043`-byte
+  (22.04 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
   `max_clients = 1000`. A game with small messages, fewer channels, or smaller
   match sizes pays for unused per-client arena space if it leaves every field
   at `0` (default).
@@ -365,9 +365,9 @@ requirements to each configuration group:
   server instance (for example `16` for a squad server, `64` for an arena
   match, or `100` for a survival match). Lowering `max_clients` from `1000` to
   `64` on the `default` profile reduces `rocketnet_server_required_memory` from
-  `21,028,276,715` bytes (19.58 GiB) to `3,055,772,955` bytes (2.85 GiB) with
-  unpinned `transport = NULL` (`"auto"`), or to `1,454,603,366` bytes
-  (1.35 GiB) with `transport = "gso"`.
+  `23,670,421,043` bytes (22.04 GiB) to `5,627,619,107` bytes (5.24 GiB) with
+  unpinned `transport = NULL` (`"auto"`), or to `1,528,169,334` bytes
+  (1.42 GiB) with `transport = "gso"`.
 - **Compile-time `ROCKETNET_MAX_CLIENTS`**: the most clients a config may ask
   for (default `1000`, supported build range `512 .. 32768`). Server buffers
   that scale with clients are sized from runtime `max_clients`, raised to the
@@ -506,9 +506,9 @@ requirements to each configuration group:
     `rocketnet_server_required_memory` and `rocketnet_server_create`. At
     `max_clients = 64` (`default` profile, `ROCKETNET_DEV=1`), pinning
     `transport = "gso"` reduces `rocketnet_server_required_memory` from
-    `3,055,772,955` bytes (2.85 GiB) to `1,454,603,366` bytes (1.35 GiB), and
-    pinning `transport = "portable"` reduces it to `1,280,303,711` bytes
-    (1.19 GiB).
+    `5,627,619,107` bytes (5.24 GiB) to `1,528,169,334` bytes (1.42 GiB), and
+    pinning `transport = "portable"` reduces it to `1,366,684,767` bytes
+    (1.27 GiB).
 - **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_queues`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
   - Preserve the pinned AF_XDP geometry: `ROCKETNET_XDP_FRAME_SIZE = 4096`,
     `ROCKETNET_XDP_SEND_QUEUE_SIZE = 16384`,
@@ -678,38 +678,38 @@ match:
 
 | Server profile | `max_clients` | `transport` setting | Per-client message region (`conn_bytes`) | `ROCKETNET_DEV=1` required bytes | `ROCKETNET_DEV=0` required bytes |
 | --- | ---: | --- | ---: | ---: | ---: |
-| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,847,786,813` (1.72 GiB) | `1,841,525,473` (1.72 GiB) |
-| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `1,866,961,183` (1.74 GiB) | `1,860,699,715` (1.73 GiB) |
-| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,055,772,955` (2.85 GiB) | `3,049,503,551` (2.84 GiB) |
-| `default` | `64` | `"io_uring"` | `18,878,016` (18.00 MiB) | `2,418,424,467` (2.25 GiB) | `2,411,888,639` (2.25 GiB) |
-| `default` | `64` | `"gso"` | `18,878,016` (18.00 MiB) | `1,454,603,366` (1.35 GiB) | `1,448,333,922` (1.35 GiB) |
-| `default` | `64` | `"portable"` | `18,878,016` (18.00 MiB) | `1,280,303,711` (1.19 GiB) | `1,274,034,275` (1.19 GiB) |
-| `default` | `64` | `"loopback"` | `18,878,016` (18.00 MiB) | `1,271,159,799` (1.18 GiB) | `1,264,890,403` (1.18 GiB) |
-| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `3,746,050,979` (3.49 GiB) | `3,739,776,967` (3.48 GiB) |
-| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,622,209,103` (6.17 GiB) | `6,615,915,891` (6.16 GiB) |
-| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `11,415,805,763` (10.63 GiB) | `11,409,480,551` (10.63 GiB) |
-| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `21,028,276,715` (19.58 GiB) | `21,021,887,503` (19.58 GiB) |
-| `default` | `1000` | `"io_uring"` | `18,878,016` (18.00 MiB) | `20,407,934,147` (19.01 GiB) | `20,401,278,511` (19.00 GiB) |
-| `default` | `1000` | `"gso"` | `18,878,016` (18.00 MiB) | `19,426,944,662` (18.09 GiB) | `19,420,555,410` (18.09 GiB) |
-| `default` | `1000` | `"portable"` | `18,878,016` (18.00 MiB) | `19,386,100,879` (18.05 GiB) | `19,379,711,635` (18.05 GiB) |
-| `default` | `1000` | `"loopback"` | `18,878,016` (18.00 MiB) | `19,243,251,239` (17.92 GiB) | `19,236,862,035` (17.92 GiB) |
-| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,829,870,205` (1.70 GiB) | `1,823,608,865` (1.70 GiB) |
-| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `1,909,110,043` (1.78 GiB) | `1,902,840,639` (1.77 GiB) |
-| `light` | `64` | `"io_uring"` | `963,136` (0.92 MiB) | `1,271,761,555` (1.18 GiB) | `1,265,225,727` (1.18 GiB) |
-| `light` | `64` | `"gso"` | `963,136` (0.92 MiB) | `307,940,454` (293.67 MiB) | `301,671,010` (287.70 MiB) |
-| `light` | `64` | `"portable"` | `963,136` (0.92 MiB) | `133,640,799` (127.45 MiB) | `127,371,363` (121.47 MiB) |
-| `light` | `64` | `"loopback"` | `963,136` (0.92 MiB) | `124,496,887` (118.73 MiB) | `118,227,491` (112.75 MiB) |
-| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `1,954,390,179` (1.82 GiB) | `1,948,116,167` (1.81 GiB) |
-| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,143,057,103` (2.00 GiB) | `2,136,763,891` (1.99 GiB) |
-| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `2,457,501,763` (2.29 GiB) | `2,451,176,551` (2.28 GiB) |
-| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `3,111,668,715` (2.90 GiB) | `3,105,279,503` (2.89 GiB) |
-| `light` | `1000` | `"io_uring"` | `963,136` (0.92 MiB) | `2,491,326,147` (2.32 GiB) | `2,484,670,511` (2.31 GiB) |
-| `light` | `1000` | `"gso"` | `963,136` (0.92 MiB) | `1,510,336,662` (1.41 GiB) | `1,503,947,410` (1.40 GiB) |
-| `light` | `1000` | `"portable"` | `963,136` (0.92 MiB) | `1,469,492,879` (1.37 GiB) | `1,463,103,635` (1.36 GiB) |
-| `light` | `1000` | `"loopback"` | `963,136` (0.92 MiB) | `1,326,643,239` (1.24 GiB) | `1,320,254,035` (1.23 GiB) |
-| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `1,942,144,283` (1.81 GiB) | `1,935,874,879` (1.80 GiB) |
-| `arena-64` | `64` | `"gso"` | `1,479,488` (1.41 MiB) | `340,974,694` (325.18 MiB) | `334,705,250` (319.20 MiB) |
-| `arena-64` | `64` | `"portable"` | `1,479,488` (1.41 MiB) | `166,675,039` (158.95 MiB) | `160,405,603` (152.97 MiB) |
+| `default` | `1` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `4,419,632,453` (4.12 GiB) | `4,413,371,113` (4.11 GiB) |
+| `default` | `2` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `4,438,806,887` (4.13 GiB) | `4,432,545,419` (4.13 GiB) |
+| `default` | `64` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `5,627,619,107` (5.24 GiB) | `5,621,349,703` (5.24 GiB) |
+| `default` | `64` | `"io_uring"` | `18,878,016` (18.00 MiB) | `2,558,804,691` (2.38 GiB) | `2,552,268,863` (2.38 GiB) |
+| `default` | `64` | `"gso"` | `18,878,016` (18.00 MiB) | `1,528,169,334` (1.42 GiB) | `1,521,899,890` (1.42 GiB) |
+| `default` | `64` | `"portable"` | `18,878,016` (18.00 MiB) | `1,366,684,767` (1.27 GiB) | `1,360,415,331` (1.27 GiB) |
+| `default` | `64` | `"loopback"` | `18,878,016` (18.00 MiB) | `1,343,938,039` (1.25 GiB) | `1,337,668,643` (1.25 GiB) |
+| `default` | `100` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `6,317,897,451` (5.88 GiB) | `6,311,623,439` (5.88 GiB) |
+| `default` | `250` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `9,194,056,791` (8.56 GiB) | `9,187,763,579` (8.56 GiB) |
+| `default` | `500` | `NULL` / `"auto"` (includes `xdp`) | `18,878,016` (18.00 MiB) | `13,987,655,435` (13.03 GiB) | `13,981,330,223` (13.02 GiB) |
+| `default` | `1000` | `NULL` / `"auto"` or `"xdp"` | `18,878,016` (18.00 MiB) | `23,670,421,043` (22.04 GiB) | `23,664,031,831` (22.04 GiB) |
+| `default` | `1000` | `"io_uring"` | `18,878,016` (18.00 MiB) | `20,694,749,763` (19.27 GiB) | `20,688,094,127` (19.27 GiB) |
+| `default` | `1000` | `"gso"` | `18,878,016` (18.00 MiB) | `19,570,668,262` (18.23 GiB) | `19,564,279,010` (18.22 GiB) |
+| `default` | `1000` | `"portable"` | `18,878,016` (18.00 MiB) | `19,740,831,183` (18.39 GiB) | `19,734,441,939` (18.38 GiB) |
+| `default` | `1000` | `"loopback"` | `18,878,016` (18.00 MiB) | `19,385,437,543` (18.05 GiB) | `19,379,048,339` (18.05 GiB) |
+| `light` | `1` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,401,715,845` (4.10 GiB) | `4,395,454,505` (4.09 GiB) |
+| `light` | `64` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `4,480,956,195` (4.17 GiB) | `4,474,686,791` (4.17 GiB) |
+| `light` | `64` | `"io_uring"` | `963,136` (0.92 MiB) | `1,412,141,779` (1.32 GiB) | `1,405,605,951` (1.31 GiB) |
+| `light` | `64` | `"gso"` | `963,136` (0.92 MiB) | `381,506,422` (363.83 MiB) | `375,236,978` (357.85 MiB) |
+| `light` | `64` | `"portable"` | `963,136` (0.92 MiB) | `220,021,855` (209.83 MiB) | `213,752,419` (203.85 MiB) |
+| `light` | `64` | `"loopback"` | `963,136` (0.92 MiB) | `197,275,127` (188.14 MiB) | `191,005,731` (182.16 MiB) |
+| `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,526,236,651` (4.22 GiB) | `4,519,962,639` (4.21 GiB) |
+| `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `4,714,904,791` (4.39 GiB) | `4,708,611,579` (4.39 GiB) |
+| `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `963,136` (0.92 MiB) | `5,029,351,435` (4.68 GiB) | `5,023,026,223` (4.68 GiB) |
+| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `963,136` (0.92 MiB) | `5,753,813,043` (5.36 GiB) | `5,747,423,831` (5.35 GiB) |
+| `light` | `1000` | `"io_uring"` | `963,136` (0.92 MiB) | `2,778,141,763` (2.59 GiB) | `2,771,486,127` (2.58 GiB) |
+| `light` | `1000` | `"gso"` | `963,136` (0.92 MiB) | `1,654,060,262` (1.54 GiB) | `1,647,671,010` (1.53 GiB) |
+| `light` | `1000` | `"portable"` | `963,136` (0.92 MiB) | `1,824,223,183` (1.70 GiB) | `1,817,833,939` (1.69 GiB) |
+| `light` | `1000` | `"loopback"` | `963,136` (0.92 MiB) | `1,468,829,543` (1.37 GiB) | `1,462,440,339` (1.36 GiB) |
+| `arena-64` | `64` | `NULL` / `"auto"` (includes `xdp`) | `1,479,488` (1.41 MiB) | `4,513,990,435` (4.20 GiB) | `4,507,721,031` (4.20 GiB) |
+| `arena-64` | `64` | `"gso"` | `1,479,488` (1.41 MiB) | `414,540,662` (395.34 MiB) | `408,271,218` (389.36 MiB) |
+| `arena-64` | `64` | `"portable"` | `1,479,488` (1.41 MiB) | `253,056,095` (241.33 MiB) | `246,786,659` (235.35 MiB) |
 
 For `loopback`, these are endpoint plans only: the separately allocated,
 caller-owned hub and all its datagram queues must be budgeted once in addition.
