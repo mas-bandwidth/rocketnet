@@ -891,13 +891,18 @@ struct rocketnet_server_iocp_t
     std::atomic<bool> test_hold_completions{ false };
     bool test_refuse_worker_pins = false; // ROCKETNET_IOCP_REFUSE_WORKER_PINS, set at create
     std::atomic<int> test_active_completion_batches{ 0 };
-    // unit seams only: a receive post runs this once admitted, before the
-    // kernel post, and a post is accepted without a socket
-    void ( *test_post_admitted )( rocketnet_server_iocp_t * iocp, void * context ) = NULL;
-    void * test_post_admitted_context = NULL;
-    bool test_accept_posts = false;
 #endif // #if ROCKETNET_DEV
 };
+
+#if ROCKETNET_DEV
+// Unit seams only, set by rocketnet_server_iocp_test_stop_post_race on the
+// test's own thread and cleared before it returns (file statics, so the
+// transport's footprint does not move): a receive post runs the hook once
+// admitted, before the kernel post, and a post is accepted without a socket.
+static void ( *rocketnet_iocp_test_post_admitted )( rocketnet_server_iocp_t * iocp, void * context ) = NULL;
+static void * rocketnet_iocp_test_post_admitted_context = NULL;
+static bool rocketnet_iocp_test_accept_posts = false;
+#endif // #if ROCKETNET_DEV
 
 static_assert( ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS ) <= UINT16_MAX + 1,
                "packet handles reserve sixteen bits for the operation index: every index of the largest send queue fits them" );
@@ -1220,11 +1225,11 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     int result;
     int error = 0;
 #if ROCKETNET_DEV
-    if ( iocp->test_post_admitted )
+    if ( rocketnet_iocp_test_post_admitted )
     {
-        iocp->test_post_admitted( iocp, iocp->test_post_admitted_context );
+        rocketnet_iocp_test_post_admitted( iocp, rocketnet_iocp_test_post_admitted_context );
     }
-    if ( iocp->test_accept_posts )
+    if ( rocketnet_iocp_test_accept_posts )
     {
         result = SOCKET_ERROR;
         error = WSA_IO_PENDING;
@@ -4165,7 +4170,7 @@ bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted
         op->owner_epoch = iocp->owner_epoch;
         op->state = ROCKETNET_IOCP_OPERATION_IDLE;
     }
-    iocp->test_accept_posts = true;
+    rocketnet_iocp_test_accept_posts = true;
 
     // worker B (endpoint 1) took endpoint 0's receive from the retry queue
     rocketnet_iocp_operation_t * op = &iocp->receives[0];
@@ -4173,8 +4178,8 @@ bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted
     rocketnet_iocp_stop_race_test_t test = { 0, 0 };
     if ( mode == 0 )
     {
-        iocp->test_post_admitted = rocketnet_iocp_stop_race_test_admitted;
-        iocp->test_post_admitted_context = &test;
+        rocketnet_iocp_test_post_admitted = rocketnet_iocp_stop_race_test_admitted;
+        rocketnet_iocp_test_post_admitted_context = &test;
     }
     else if ( mode == 1 )
     {
@@ -4186,7 +4191,9 @@ bool rocketnet_server_iocp_test_stop_post_race( int mode, int * exit_at_admitted
     }
 
     const bool posted = rocketnet_iocp_post_receive( iocp, op );
-    iocp->test_post_admitted = NULL;
+    rocketnet_iocp_test_post_admitted = NULL;
+    rocketnet_iocp_test_post_admitted_context = NULL;
+    rocketnet_iocp_test_accept_posts = false;
     *exit_at_admitted_out = test.exit_at_admitted;
     *posted_out = posted ? 1 : 0;
     *state_out = op->state;
