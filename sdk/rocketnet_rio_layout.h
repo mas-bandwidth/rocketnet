@@ -221,4 +221,66 @@ static inline int rocketnet_rio_context_index( uint64_t context )
     return (int) ( context & 0xFFFFFFFF );
 }
 
+// Lanes. A transport of lanes runs one socket, region, queue set and worker
+// per lane, every lane socket bound to the one server address and port. A
+// datagram to a destination is staged in the lane its destination hashes to,
+// so every frame to one client leaves through one lane in order. The packet
+// id start_packet returns carries the lane: lane * lane_slots + index, where
+// index < lane_slots (the lane's phases times its phase size).
+// proofs/tla/RNRioLaneLayout.tla models the arithmetic.
+#define ROCKETNET_RIO_MAX_LANES 32
+
+// FNV-1a over the family, the port and the address bytes the family uses
+// (the same function the xdp transport's reply table hashes with), so the
+// lane of a destination is fixed for the transport's life. family is the
+// address type, port the port in host order, bytes 4 or 16 address bytes.
+static inline uint32_t rocketnet_rio_lane_hash( uint8_t family, uint16_t port, const uint8_t * address, int bytes )
+{
+    uint32_t hash = 2166136261u;
+    hash = ( hash ^ family ) * 16777619u;
+    hash = ( hash ^ (uint8_t) ( port & 0xFF ) ) * 16777619u;
+    hash = ( hash ^ (uint8_t) ( port >> 8 ) ) * 16777619u;
+    for ( int i = 0; i < bytes; ++i )
+    {
+        hash = ( hash ^ address[i] ) * 16777619u;
+    }
+    return hash;
+}
+
+// proofs/tla/RNRioLaneLayout.tla LaneOf: the lane of a hash, 0 .. lanes - 1.
+// The high half is folded into the low first: FNV-1a's low bits depend only
+// on the low bits of its input bytes, and the modulo of a power-of-two lane
+// count reads only those.
+static inline int rocketnet_rio_lane_of( uint32_t hash, int lanes )
+{
+    return lanes <= 1 ? 0 : (int) ( ( hash ^ ( hash >> 16 ) ) % (uint32_t) lanes );
+}
+
+// proofs/tla/RNRioLaneLayout.tla Encode: the transport's packet id of a
+// lane's slot index
+static inline uint64_t rocketnet_rio_lane_packet_id( int lane, int index, int lane_slots )
+{
+    return (uint64_t) lane * (uint64_t) lane_slots + (uint64_t) index;
+}
+
+// proofs/tla/RNRioLaneLayout.tla Decode: the lane and slot index of a packet
+// id. Refuses (returns false, outputs untouched) an id past the last lane's
+// last slot, or lanes or lane_slots below 1.
+static inline bool rocketnet_rio_lane_packet_decode( uint64_t packet_id, int lanes, int lane_slots, int * lane, int * index )
+{
+    if ( lanes < 1 || lane_slots < 1 || packet_id >= (uint64_t) lanes * (uint64_t) lane_slots )
+    {
+        return false;
+    }
+#if !defined( ROCKETNET_RIO_LANE_PLANT )
+    *lane = (int) ( packet_id / (uint64_t) lane_slots );
+#else  // #if !defined( ROCKETNET_RIO_LANE_PLANT )
+    // the trace check's plant (tests/tla_trace_rio_lane.cpp): the lane read
+    // as the id modulo the lane count, which sends a finish to another lane
+    *lane = (int) ( packet_id % (uint64_t) lanes );
+#endif // #if !defined( ROCKETNET_RIO_LANE_PLANT )
+    *index = (int) ( packet_id % (uint64_t) lane_slots );
+    return true;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H

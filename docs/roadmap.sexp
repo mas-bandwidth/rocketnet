@@ -281,4 +281,9 @@
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
    :date "2026-11-13" :origin "Piece M follow-on, cold reader")
+
+  (item "rio-destroy-stuck-lane" :group "audit-remaining" :area "rocketnet"
+   :title "rio destroy: free the stopped lanes when one lane is stuck"
+   :text "rocketnet_server_rio_destroy returns before destroying any lane when one lane never reports stopped (a completion queue reported corrupt, or a send the kernel never completes). The lanes that did stop stay allocated until process exit. Measured as intended for this piece: the leak is bounded and named. Fix: destroy every lane that reports stopped and leak only the stuck one, as the create rollback already does (rocketnet_server_rio_create_leaks), with a unit case that holds one lane's sends."
+   :date "2026-11-13" :origin "Piece N (rio rebuilt), cold read")
  ))
