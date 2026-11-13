@@ -321,6 +321,11 @@ void rocketnet_test_server_async_delivery_with_max_clients()
                 }
 
                 server_receive_backlog_require( identity < (uint32_t) max_clients && sequence == (uint32_t) frame );
+
+                // the slot the payload names is the sending client: client i
+                // connected with client id i + 1 (its token), so a payload
+                // routed to another slot, even consistently, names the wrong id
+                server_receive_backlog_require( rocketnet_server_transport_client_id( server, client_index ) == (uint64_t) identity + 1 );
                 server_receive_backlog_require( !seen[identity] );
                 seen[identity] = true;
                 ++frame_received;
