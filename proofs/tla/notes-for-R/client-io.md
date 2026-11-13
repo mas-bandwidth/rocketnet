@@ -99,7 +99,12 @@ the request's one backend call (MM119); no record links them otherwise.
 
 ## For package C: comment-only re-citations in sdk/
 
-- sdk/rocketnet_client_io.h:872-878 (MM118). Now: "proofs/tla/RNClientIoShutdown.tla
+Cited by symbol (the coverage check refuses line numbers under proofs/tla);
+the line numbers at this branch's head are given in words.
+
+- sdk/rocketnet_client_io.h (rocketnet_client_io_discard_at_stop), the comment
+  block just above the function, lines eight hundred seventy-two to
+  eight hundred seventy-eight (MM118). Now: "proofs/tla/RNClientIoShutdown.tla
   WorkerExit; ... it reads every datagram still queued on the socket, counts each
   one in receive_discarded_at_stop ...". New text: "proofs/tla/RNClientIoShutdown.tla
   WorkerQuiesce and WorkerExit; I/O thread, at its exit, after its last send and
@@ -112,18 +117,24 @@ the request's one backend call (MM119); no record links them otherwise.
   (sdk/rocketnet_driver.h). A datagram that arrives after the last read, or past
   the cap, goes with the close unread and uncounted; one that arrives after the
   close meets a closed port, and none waits unread until destroy frees it."
-- sdk/rocketnet_client_transport.cpp:2830 (MM119). Now: "Requests never join, call
+- sdk/rocketnet_client_transport.cpp (the comment block above
+  rocketnet_client_transport_stop that begins "proofs/tla/RNClientIoShutdown.tla
+  abstracts this request/completion ownership", its third line, line two
+  thousand eight hundred thirty) (MM119). Now: "Requests never join, call
   a backend send, or wait for a ring." New text: "Requests never join or wait for
   a ring. On the I/O-core path the request makes one backend call: it sends the
   link simulator's staged copies itself (rocketnet_client_link_drain at DBL_MAX,
   proofs/tla/RNClientLinkStop.tla Stop), synchronously, waiting on no worker."
-- sdk/rocketnet_client_io.h:642 and :645 (MM127). Now: "(rocketnet_client_io_rebind_held,
-  RNBufferHandoff Rebind)" and "proofs/tla/RNBufferHandoff.tla Rebind: a held ring
-  bound to the losing server is bound to the kept one." New text for :645:
-  "proofs/tla/RNClientRace.tla CallerCommit; main thread. proofs/tla/RNBufferHandoff.tla
-  Rebind covers the rebind while the protocol still names the losing server (a
-  commit after a reset is RNClientRace's): a held ring bound to the losing server
-  is bound to the kept one." :642 can stay.
+- sdk/rocketnet_client_io.h (rocketnet_client_io_rebind_held), the first line
+  of the comment block above the function, line six hundred forty-five (MM127).
+  Now: "proofs/tla/RNClientRace.tla CallerCommit; main thread.
+  proofs/tla/RNBufferHandoff.tla Rebind: a held ring bound to the losing server
+  is bound to the kept one." New text: "proofs/tla/RNClientRace.tla
+  CallerCommit; main thread. proofs/tla/RNBufferHandoff.tla Rebind covers the
+  rebind while the protocol still names the losing server (a commit after a
+  reset is RNClientRace's): a held ring bound to the losing server is bound to
+  the kept one." The mention "(rocketnet_client_io_rebind_held, RNBufferHandoff
+  Rebind)" three lines above it, in the hand-off comment, can stay.
 - No new action names were added to any M8 model, so no new citations are needed:
   every new behaviour is a branch of an action the code already cites (WorkerQuiesce,
   ServerReceive, Read, Complete, Dequeue, Drain, Free, TryPrimary, CallerDestroy,
