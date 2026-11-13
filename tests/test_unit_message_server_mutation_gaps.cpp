@@ -854,6 +854,68 @@ static void test_server_calls_refuse_the_index_past_the_slots()
 
 REGISTER_UNIT_TEST( test_server_calls_refuse_the_index_past_the_slots );
 
+// ---- the ack drain takes a run at a time and counts each stale entry --------------------
+//
+// rn_message_object_update hands each run of acked ids with one slot and one
+// connection id to the window in one call. Runs interleave here (slot 0, 1,
+// 0, 1), stale runs sit between them (-1 and max_clients, two and three
+// entries long), and an entry tagged for a slot with no binding: every stale
+// entry is counted once, and every live id is acknowledged, as one admit per
+// id did.
+
+static void test_server_ack_drain_takes_runs_and_counts_each_stale_entry()
+{
+    const int bound[4] = { 1, 1, 1, 0 };
+    cr_world_t w;
+    cr_world_create( &w, 4, bound );
+    check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+
+    uint8_t message[CR_MESSAGE_BYTES];
+    memset( message, 0x3C, sizeof( message ) );
+    for ( int slot = 0; slot < 2; slot++ )
+    {
+        for ( int k = 0; k < 3; k++ )
+        {
+            check( rocketnet_message_server_send( w.server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE, message, (int) sizeof( message ) ) != 0 );
+        }
+    }
+    rocketnet_message_server_send_packets( w.server );
+
+    std::vector<uint64_t> ids[2];
+    for ( size_t k = 0; k < w.t->pending.size(); k++ )
+    {
+        const int slot = w.t->pending_slot[k];
+        check( slot == 0 || slot == 1 );
+        ids[slot].push_back( w.t->pending[k] );
+    }
+    check( ids[0].size() == 3 && ids[1].size() == 3 );
+
+    const uint64_t u0 = w.object->connections[0].ordered.send.U;
+    const uint64_t u1 = w.object->connections[1].ordered.send.U;
+    const uint64_t stale = w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY];
+
+    w.t->pending_slot.assign( { -1, -1, 0, 0, 4, 4, 4, 1, 0, 3, 1, 1 } );
+    w.t->pending.assign( { 1, 2, ids[0][0], ids[0][1], 3, 4, 5, ids[1][0], ids[0][2], 6, ids[1][1], ids[1][2] } );
+
+    w.time += CR_DT;
+    {
+        gaps_assert_scope_t asserts;
+        check( rocketnet_message_server_update( w.server, w.time ) == ROCKETNET_UPDATE_OK );
+    }
+
+    check( w.object->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY] == stale + 6 );
+    check( w.object->connections[0].ordered.send.U == u0 + 3 );
+    check( w.object->connections[1].ordered.send.U == u1 + 3 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        check( ( rocketnet_message_server_client_connected( w.server, i ) != 0 ) == ( bound[i] != 0 ) );
+    }
+
+    cr_world_destroy( &w );
+}
+
+REGISTER_UNIT_TEST( test_server_ack_drain_takes_runs_and_counts_each_stale_entry );
+
 // ---- create: the status written, and the default send budget ---------------------------
 //
 // rocketnet_message_server_create_internal over the loopback transport (no
