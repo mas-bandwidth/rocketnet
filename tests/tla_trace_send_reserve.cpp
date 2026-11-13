@@ -216,16 +216,24 @@ static tla_record_t sr_state( struct rocketnet_server_transport_t * server, int 
         own[c] = rocketnet_server_transport_fill_own_frame_for_test( server, c );
     }
     tla_record_t state;
-    state.add( "free", sr_per_queue( []( int q ) { return tla_int( sr_fake.room[q] ); } ) );
-    state.add( "budget", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_fill_budget_for_test( server, q ) ); } ) );
-    state.add( "claims", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_fill_claims_for_test( server, q ) ); } ) );
-    state.add( "tail", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) sr_tail( server, q ) ); } ) );
-    state.add( "started", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_fill_started_for_test( server, q ) ); } ) );
-    state.add( "ownUsed", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_fill_own_used_for_test( server, q ) ); } ) );
+    state.add( "free", sr_per_queue( []( int q )
+                                     { return tla_int( sr_fake.room[q] ); } ) );
+    state.add( "budget", sr_per_queue( [server]( int q )
+                                       { return tla_int( (int64_t) rocketnet_server_transport_fill_budget_for_test( server, q ) ); } ) );
+    state.add( "claims", sr_per_queue( [server]( int q )
+                                       { return tla_int( (int64_t) rocketnet_server_transport_fill_claims_for_test( server, q ) ); } ) );
+    state.add( "tail", sr_per_queue( [server]( int q )
+                                     { return tla_int( (int64_t) sr_tail( server, q ) ); } ) );
+    state.add( "started", sr_per_queue( [server]( int q )
+                                        { return tla_int( (int64_t) rocketnet_server_transport_fill_started_for_test( server, q ) ); } ) );
+    state.add( "ownUsed", sr_per_queue( [server]( int q )
+                                        { return tla_int( (int64_t) rocketnet_server_transport_fill_own_used_for_test( server, q ) ); } ) );
     state.add( "own", sr_client_set( own, clients ) );
     state.add( "ownLeft", tla_int( (int64_t) rocketnet_server_transport_fill_own_frames_for_test( server ) ) );
-    state.add( "reserve", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_send_reserve_for_test( server, q ) ); } ) );
-    state.add( "seen", sr_per_queue( [server]( int q ) { return tla_int( (int64_t) rocketnet_server_transport_send_room_seen_for_test( server, q ) ); } ) );
+    state.add( "reserve", sr_per_queue( [server]( int q )
+                                        { return tla_int( (int64_t) rocketnet_server_transport_send_reserve_for_test( server, q ) ); } ) );
+    state.add( "seen", sr_per_queue( [server]( int q )
+                                     { return tla_int( (int64_t) rocketnet_server_transport_send_room_seen_for_test( server, q ) ); } ) );
     state.add( "refused", tla_int( (int64_t) rocketnet_server_transport_counters( const_cast<struct rocketnet_server_transport_t *>( server ) )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] ) );
     return state;
 }

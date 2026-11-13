@@ -1511,7 +1511,7 @@ static const struct rocketnet_server_fill_line_t * rocketnet_server_fill_line_of
 // what the queue's budget, as it would be raised now, leaves; UINT64_MAX
 // before main first opens the budget.
 static uint64_t rocketnet_server_transport_queue_budget_left( const rocketnet_server_transport_t * server_transport,
-                                                             const struct rocketnet_server_fill_line_t * line, int queue )
+                                                              const struct rocketnet_server_fill_line_t * line, int queue )
 {
     const uint64_t opened = rocketnet_server_transport_load_u64( &server_transport->fill_budget[queue] );
     if ( opened == UINT64_MAX )
