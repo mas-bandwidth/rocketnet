@@ -55,6 +55,7 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_server_gso.h"
+#include "rocketnet_server_udp_linux.h"
 #include "rocketnet_send_queue.h"
 #include "rocketnet_socket_buffer.h"
 #include "rocketnet_uring_queue_send.h"
@@ -203,154 +204,6 @@ static socklen_t rocketnet_server_uring_address_to_sockaddr( const rocketnet_add
         return sizeof( struct sockaddr_in );
     }
 }
-
-// one reuseport socket, bound as the gso transport binds its group: family from
-// the bind address, dual stack when ipv6, the configured buffer sizes
-// requested and the grant reported, the first socket discovering an
-// ephemeral port the rest join, non-blocking, don't-fragment, close-on-exec.
-
-static void rocketnet_server_uring_set_socket_option( void * user, int level, int option_name, int value )
-{
-    const int fd = *static_cast<const int *>( user );
-    setsockopt( fd, level, option_name, &value, sizeof( value ) );
-}
-
-static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
-{
-    const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
-
-    int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_UDP );
-    if ( fd < 0 )
-    {
-        rocketnet_error( "io_uring transport: failed to create socket: %s", rocketnet_platform_socket_error_text( errno ).text );
-        return -1;
-    }
-
-    // the first queue binds before it joins a reuseport group, whether its
-    // port is explicit or discovered. bound with SO_REUSEPORT, an explicit
-    // port another reuseport socket of the same user already holds is joined,
-    // not refused, and the kernel then shares that port's datagrams between
-    // the two servers; an ephemeral bind may likewise be given a port another
-    // reuseport group already holds (measured on Linux x64 gcc: 4 shared
-    // ports in 50 x 64 reuseport ephemeral binds, none when the first socket
-    // binds without it). Bound first, it takes a port no socket holds or the
-    // bind fails with EADDRINUSE as the portable transport's does, and
-    // SO_REUSEPORT set after the bind lets this server's other queues join it.
-
-    const bool first_queue = queue_index == 0;
-
-    int one = 1;
-    if ( !first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
-    {
-        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    if ( ipv6 )
-    {
-        int zero = 0;
-        if ( setsockopt( fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof( zero ) ) != 0 )
-        {
-            rocketnet_error( "io_uring transport: failed to clear socket ipv6 only: %s", rocketnet_platform_socket_error_text( errno ).text );
-            close( fd );
-            return -1;
-        }
-    }
-
-    // request the buffer sizes, read back what was granted, and when the
-    // grant is short ask once more past the sysctl limit with the force
-    // option (rocketnet_socket_buffer_request, shared with the gso
-    // transport). a short grant is not an error -- it is a fact about the
-    // host's sysctls, named at start with the sysctl to set
-    // (rocketnet_socket_buffer_log) so nobody assumes.
-    //
-    // the receive request is one update's inbound packets at the configured
-    // client count (rocketnet_server_transport_receive_buffer_request; a
-    // request, and the kernel charges only what it holds): SO_REUSEPORT may
-    // hash any share of the clients to this one socket
-
-    const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
-
-    struct rocketnet_socket_buffer_grant_t send_grant;
-    if ( !rocketnet_socket_buffer_request( fd, false, send_buffer_size, &send_grant ) )
-    {
-        rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    struct rocketnet_socket_buffer_grant_t receive_grant;
-    if ( !rocketnet_socket_buffer_request( fd, true, receive_buffer_size, &receive_grant ) )
-    {
-        rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    if ( queue_index == 0 )
-    {
-        rocketnet_socket_buffer_log( "io_uring", false, send_buffer_size, &send_grant );
-        rocketnet_socket_buffer_log( "io_uring", true, receive_buffer_size, &receive_grant );
-        rocketnet_server_receive_buffer_granted( "io_uring", receive_buffer_size, receive_grant.granted_bytes );
-    }
-
-    rocketnet_address_t addr = *bind_address;
-    addr.port = *bound_port != 0 ? *bound_port : bind_address->port;
-
-    struct sockaddr_storage sockaddr;
-    socklen_t socklen = rocketnet_server_uring_address_to_sockaddr( &addr, ipv6, &sockaddr );
-
-    if ( socklen == 0 || bind( fd, reinterpret_cast<struct sockaddr *>( &sockaddr ), socklen ) < 0 )
-    {
-        rocketnet_error( "io_uring transport: failed to bind socket (%s): %s", ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    if ( first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof( one ) ) != 0 )
-    {
-        rocketnet_error( "io_uring transport: failed to set SO_REUSEPORT: %s", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    if ( *bound_port == 0 )
-    {
-        struct sockaddr_storage bound;
-        memset( &bound, 0, sizeof( bound ) );
-        socklen_t bound_length = sizeof( bound );
-        if ( getsockname( fd, reinterpret_cast<struct sockaddr *>( &bound ), &bound_length ) != 0 )
-        {
-            rocketnet_error( "io_uring transport: failed to get bound socket port: %s", rocketnet_platform_socket_error_text( errno ).text );
-            close( fd );
-            return -1;
-        }
-
-        rocketnet_address_t bound_address;
-        if ( !rocketnet_uring_sockaddr_to_address( &bound, (int) bound_length, ipv6, &bound_address ) )
-        {
-            rocketnet_error( "io_uring transport: could not read bound socket address" );
-            close( fd );
-            return -1;
-        }
-
-        *bound_port = bound_address.port;
-    }
-
-    if ( fcntl( fd, F_SETFL, fcntl( fd, F_GETFL, 0 ) | O_NONBLOCK ) == -1 )
-    {
-        rocketnet_error( "io_uring transport: failed to set socket non-blocking: %s", rocketnet_platform_socket_error_text( errno ).text );
-        close( fd );
-        return -1;
-    }
-
-    rocketnet_platform_socket_apply_dont_fragment( ipv6, rocketnet_server_uring_set_socket_option, &fd );
-
-    return fd;
-}
-
 
 // ---------------------------------------------------------------------------
 
@@ -933,7 +786,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        uring->queues[i].fd = rocketnet_server_uring_open_socket( bind_address, i, max_clients, &bound_port );
+        uring->queues[i].fd = rocketnet_server_udp_open( "io_uring", bind_address, i, max_clients, &bound_port, status );
         if ( uring->queues[i].fd < 0 )
         {
             rocketnet_server_uring_free( uring );
@@ -943,59 +796,29 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     bind_address->port = bound_port;
 
-    // the UDP_SEGMENT probe, the gso transport's: every socket must accept
-    // it, all or nothing. the probe writes segment size zero, the value every
-    // socket already holds, so a refusal leaves nothing to roll back. failure
+    // the UDP_SEGMENT and UDP_GRO probes, the gso transport's, each all or
+    // nothing over the group (rocketnet_server_udp_probe_offloads). with
+    // UDP_GRO the multishot reserves a control area for the UDP_GRO cmsg and
+    // one buffer may hold a coalesced receive of several datagrams. failure
     // is a tier, not an error
 
-    if ( ( flags & ROCKETNET_SERVER_URING_DISABLE_SEGMENT ) == 0 )
+    int fds[ROCKETNET_URING_MAX_QUEUES] = {};
+    for ( int i = 0; i < num_queues; i++ )
     {
-        int segment_sockets = 0;
-        for ( int i = 0; i < num_queues; i++ )
-        {
-            int zero = 0;
-            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof( zero ) ) == 0 )
-            {
-                segment_sockets++;
-            }
-        }
-
-        if ( segment_sockets == num_queues )
-        {
-            uring->features |= ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
-        }
+        fds[i] = uring->queues[i].fd;
     }
 
-    // the UDP_GRO probe, the gso transport's: every socket of the group must
-    // accept it, all or nothing, since a partial enable would leave socket
-    // state the reported tier denies, so the ones that accepted roll back.
-    // with it the multishot reserves a control area for the UDP_GRO cmsg and
-    // one buffer may hold a coalesced receive of several datagrams
-
-    if ( ( flags & ROCKETNET_SERVER_URING_DISABLE_GRO ) == 0 )
+    bool segment_tier = false;
+    bool gro_tier = false;
+    rocketnet_server_udp_probe_offloads( fds, num_queues, ( flags & ROCKETNET_SERVER_URING_DISABLE_SEGMENT ) == 0,
+                                         ( flags & ROCKETNET_SERVER_URING_DISABLE_GRO ) == 0, setsockopt, &segment_tier, &gro_tier );
+    if ( segment_tier )
     {
-        int gro_sockets = 0;
-        for ( int i = 0; i < num_queues; i++ )
-        {
-            int one = 1;
-            if ( setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &one, sizeof( one ) ) == 0 )
-            {
-                gro_sockets++;
-            }
-        }
-
-        if ( gro_sockets == num_queues )
-        {
-            uring->features |= ROCKETNET_SERVER_URING_FEATURE_GRO;
-        }
-        else
-        {
-            for ( int i = 0; i < num_queues; i++ )
-            {
-                int zero = 0;
-                setsockopt( uring->queues[i].fd, IPPROTO_UDP, UDP_GRO, &zero, sizeof( zero ) );
-            }
-        }
+        uring->features |= ROCKETNET_SERVER_URING_FEATURE_SEGMENT;
+    }
+    if ( gro_tier )
+    {
+        uring->features |= ROCKETNET_SERVER_URING_FEATURE_GRO;
     }
 
     const bool segment = ( uring->features & ROCKETNET_SERVER_URING_FEATURE_SEGMENT ) != 0;
