@@ -15,10 +15,17 @@ concluded success; a failure, a cancellation, a skipped, a missing or a
 duplicated shard is red. An empty or unreadable list is red too: no verdict is
 never green.
 
+When ci.yml runs as a called workflow (job full of nightly-ci.yml calls it), the
+API lists each of its jobs under the name of the caller job: "full / linux /
+Debug / unit (0/4)". The summary jobs pass that as --prefix "full / " (the
+job_name_prefix input of ci.yml, empty per commit), and every shard is looked
+up as the prefix and its name; a prefix that does not end in " / " is red.
+
 Prints DEBUG-UNIT-SHARDS=FAIL <why> and exits 1, or DEBUG-UNIT-SHARDS=PASS and
 exits 0.
 
-Usage: check_debug_unit_shards.py [--self-test] <job-list.json> [shard job name ...]
+Usage: check_debug_unit_shards.py [--prefix "<caller job> / "] <job-list.json> [shard job name ...]
+       check_debug_unit_shards.py --self-test
 """
 
 import json
@@ -30,8 +37,8 @@ SHARDS = ("linux / Debug / unit (0/4)", "linux / Debug / unit (1/4)", "linux / D
           "linux / Debug / unit (3/4)")
 
 
-def verdict(text, shards=SHARDS):
-    """(ok, reason) for the job list's JSON text."""
+def verdict(text, shards=SHARDS, prefix=""):
+    """(ok, reason) for the job list's JSON text; each shard is listed as prefix + its name."""
     try:
         data = json.loads(text)
     except ValueError as error:
@@ -39,20 +46,21 @@ def verdict(text, shards=SHARDS):
     jobs = data.get("jobs") if isinstance(data, dict) else data
     if not isinstance(jobs, list) or not jobs:
         return False, "the job list has no jobs"
-    for name in shards:
+    for shard in shards:
+        name = prefix + shard
         found = [j.get("conclusion") for j in jobs if isinstance(j, dict) and j.get("name") == name]
         if found != ["success"]:
             return False, f"{name}: {found or 'missing'}"
     return True, ""
 
 
-def run(path, shards=SHARDS):
+def run(path, shards=SHARDS, prefix=""):
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as error:
         print(f"DEBUG-UNIT-SHARDS=FAIL no verdict: {error}")
         return 1
-    ok, why = verdict(text, shards)
+    ok, why = verdict(text, shards, prefix)
     if not ok:
         print(f"DEBUG-UNIT-SHARDS=FAIL {why}")
         return 1
@@ -107,6 +115,39 @@ def self_test():
         if run(path, four) != 1:
             print("self-test four shards: a missing shard was not red")
             bad += 1
+        # ci.yml as a called workflow (nightly-ci.yml, job full): the API lists every job of the
+        # run as "full / <name>", and the summary jobs pass --prefix "full / " (the
+        # job_name_prefix input; per commit it is empty and the names are the job names).
+        made = []
+
+        def called(rows):
+            target = Path(tmp) / ("called%d.json" % len(made))
+            target.write_text(json.dumps({"jobs": [{"name": n, "conclusion": c} for n, c in rows]}))
+            made.append(target)
+            return str(target)
+
+        full = [("full / " + n, "success") for n in SHARDS + four]
+        plain = [(n, "success") for n in SHARDS + four]
+        for args, want in (
+                (["--prefix", "full / ", called(full)], 0),
+                (["--prefix", "full / ", called(full)] + list(four), 0),
+                ([called(full)], 1),                                    # no prefix: every shard is missing
+                (["--prefix", "", called(full)], 1),
+                (["--prefix", "nightly / ", called(full)], 1),          # another caller
+                (["--prefix", "full / ", called(plain)], 1),            # per-commit names under a prefix
+                (["--prefix", "", called(plain)], 0),                   # empty prefix: the per-commit lookup
+                ([called(plain)], 0),
+                (["--prefix", "full / ", called(full + [full[2]])], 1),  # a shard listed twice
+                (["--prefix", "full / ", called(full[:1] + [("full / " + SHARDS[1], "failure")] + full[2:])], 1),
+                (["--prefix", "full / ", called(full[:3] + full[4:])], 1),  # shard 3/4 missing
+                (["--prefix", "full / ", called(full + plain)], 0),     # the unprefixed names beside it: not read
+                (["--prefix", "full/", called([("full/" + n, "success") for n in SHARDS])], 1),  # no " / " at its end
+                (["--prefix", "full / "], 2),                           # no job list
+                (["--prefix"], 2),
+        ):
+            if main(["check_debug_unit_shards.py"] + args) != want:
+                print("self-test called workflow: %r expected exit %d" % (args, want))
+                bad += 1
     if bad:
         return 1
     print("check_debug_unit_shards: self-test ok")
@@ -114,12 +155,22 @@ def self_test():
 
 
 def main(argv):
-    if argv[1:] == ["--self-test"]:
+    args = argv[1:]
+    if args == ["--self-test"]:
         return self_test()
-    if len(argv) < 2:
+    prefix = ""
+    if args[:1] == ["--prefix"]:
+        if len(args) < 2:
+            print(__doc__)
+            return 2
+        prefix, args = args[1], args[2:]
+    if not args:
         print(__doc__)
         return 2
-    return run(argv[1], tuple(argv[2:]) or SHARDS)
+    if prefix and not prefix.endswith(" / "):
+        print(f"DEBUG-UNIT-SHARDS=FAIL no verdict: the prefix {prefix!r} is not a caller job name and \" / \"")
+        return 1
+    return run(args[0], tuple(args[1:]) or SHARDS, prefix)
 
 
 if __name__ == "__main__":
