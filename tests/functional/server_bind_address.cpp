@@ -146,3 +146,124 @@ void rocketnet_test_server_bind_address_not_reached_on_another_address()
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define bind_check( condition )                                                                       \
+    do                                                                                                \
+    {                                                                                                 \
+        if ( !( condition ) )                                                                         \
+        {                                                                                             \
+            printf( "check failed: ( %s ), file %s, line %d\n", #condition, __FILE__, __LINE__ );    \
+            fflush( stdout );                                                                         \
+            exit( 1 );                                                                                \
+        }                                                                                             \
+    } while ( 0 )
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+
+// A start whose bind the platform refuses returns
+// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED, per transport: the port is held by
+// another socket (EADDRINUSE), or the bind address is not an address of this
+// host (EADDRNOTAVAIL). A control start on a free port succeeds, so the
+// status is the bind's and not the transport's absence.
+// Real sockets: a functional test.
+
+static enum rocketnet_status_t bind_refused_start( const char * transport, const char * public_address, const char * bind_ipv4_address )
+{
+    struct rocketnet_server_config_t config;
+    bind_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    bind_check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    memcpy( config.backend_public_key, backend_public, sizeof( config.backend_public_key ) );
+    config.protocol_id = 0x62696e6472666564ULL;
+    config.max_clients = 1;
+    config.packet_filter[0] = 0x62;
+    config.packet_filter[1] = 0x69;
+    config.packet_filter[2] = 0x6e;
+    config.packet_filter[3] = 0x65;
+    config.transport = transport;
+    config.bind_ipv4_address = bind_ipv4_address;
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, public_address, NULL, &config, &status );
+    bind_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    const enum rocketnet_status_t start_status = rocketnet_server_start( server );
+    if ( start_status == ROCKETNET_STATUS_OK )
+    {
+        double time = 1000.0;
+        rocketnet_server_stop( server );
+        while ( !rocketnet_server_stopped( server ) )
+        {
+            time += 0.01;
+            rocketnet_server_update( server, time );
+            rocketnet_platform_sleep( 0.001 );
+        }
+    }
+    rocketnet_server_destroy( server );
+    return start_status;
+}
+
+static void bind_refused_for( const char * transport )
+{
+    // a plain socket holds a port, without SO_REUSEPORT
+    const int holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    bind_check( holder >= 0 );
+    struct sockaddr_in held;
+    memset( &held, 0, sizeof( held ) );
+    held.sin_family = AF_INET;
+    bind_check( inet_pton( AF_INET, "127.0.0.1", &held.sin_addr ) == 1 );
+    bind_check( bind( holder, (const struct sockaddr *) &held, sizeof( held ) ) == 0 );
+    socklen_t held_bytes = sizeof( held );
+    bind_check( getsockname( holder, (struct sockaddr *) &held, &held_bytes ) == 0 );
+    const unsigned port = ntohs( held.sin_port );
+    char held_address[64];
+    snprintf( held_address, sizeof( held_address ), "127.0.0.1:%u", port );
+
+    // the held port: refused
+    bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+
+    // an address that is not this host's: refused
+    char other_address[64];
+    snprintf( other_address, sizeof( other_address ), "192.0.2.1:%u", port );
+    bind_check( bind_refused_start( transport, other_address, NULL ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+    bind_check( bind_refused_start( transport, held_address, "192.0.2.1" ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+
+    // the control: the same port once the holder is gone starts
+    close( holder );
+    bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+void rocketnet_test_server_bind_refused_portable()
+{
+    bind_refused_for( "portable" );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+void rocketnet_test_server_bind_refused_gso()
+{
+    bind_refused_for( "gso" );
+}
+
+void rocketnet_test_server_bind_refused_io_uring()
+{
+    bind_refused_for( "io_uring" );
+}
+
+// the default, no transport named: every transport the server tries is
+// refused the same bind
+void rocketnet_test_server_bind_refused_default_transports()
+{
+    bind_refused_for( NULL );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

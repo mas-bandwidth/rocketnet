@@ -1659,7 +1659,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     for ( int i = 0; i < num_queues; i++ )
     {
-        uring->queues[i].fd = rocketnet_server_udp_open( "io_uring", bind_address, i, uring->max_clients, &bound_port );
+        uring->queues[i].fd = rocketnet_server_udp_open( "io_uring", bind_address, i, uring->max_clients, &bound_port, status );
         if ( uring->queues[i].fd < 0 )
         {
             rocketnet_server_uring_abort_create( uring );

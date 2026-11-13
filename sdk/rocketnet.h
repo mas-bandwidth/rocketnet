@@ -422,7 +422,14 @@ enum rocketnet_status_t
     /// endpoint is still registered with it. Destroy every server and client
     /// that uses the hub, then destroy the hub.
 
-    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34,
+
+    /// Start refused: the platform refused the transport's bind. Another
+    /// socket holds the address and port, or the address is not one this host
+    /// can bind. Free the port or choose another, or set a local address of
+    /// this host.
+
+    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35
 };
 
 /// The process-wide log levels, least to most verbose. A log callback may
@@ -2898,7 +2905,9 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can bind,
+/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when every transport tried was
+/// refused its bind, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// transport can bind for other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
