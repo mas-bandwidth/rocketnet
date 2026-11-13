@@ -84,7 +84,7 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT          ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT
 
 // the retry timer: how long a run answered full waits before it goes again,
-// unless main's wake comes first (before the stop): the gso worker's wait
+// unless main's wake comes first (before shutdown): the gso worker's wait
 #define ROCKETNET_URING_SEND_RETRY_SECONDS                     ROCKETNET_GSO_SEND_RETRY_SECONDS
 
 // completions taken per pass
@@ -196,7 +196,7 @@ struct rocketnet_uring_queue_worker_t
     // the worker's (RNUringQueueWorker's variables)
 
     alignas( 64 ) bool seen;                        // seen
-    bool blocked;                                   // blocked: a run came back full, no submit until the timer fires (or main's wake, before the stop)
+    bool blocked;                                   // blocked: a run came back full, no submit until the timer fires (or main's wake, before shutdown)
     bool starved;                                   // this pass found the submission queue full (not a model variable)
     bool timer_armed;                               // timer # "none"
     bool wake_armed;                                // wakeRead # "none"

@@ -32,7 +32,7 @@ is one action of the model, named in a comment beside it.
   - It submits runs, up to `K` in the kernel. It splits a run to a refused destination
     into plain singles, and drops a run the socket cannot name.
   - A full answer hands the run back and blocks submits until the retry timer fires
-    (`ArmTimer`, `ReapTimer`) or, before the stop is seen, main's wake comes. Never a
+    (`ArmTimer`, `ReapTimer`) or, before shutdown begins, main's wake comes. Never a
     POLLOUT poll: a socket reports room while the device queue behind it refuses
     (-ENOBUFS), and a poll for it would fire again and again. This is the gso worker's
     wait.

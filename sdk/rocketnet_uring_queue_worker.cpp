@@ -237,10 +237,12 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             rocketnet_assert( cqe->res != -EAGAIN );
             if ( worker->wake_armed )
             {
-                // main's wake ends a wait before the stop (it published, or
-                // began the shutdown); once quit is seen only the timer does
+                // main's wake ends a wait until shutdown begins (it published);
+                // from then only the timer does, so each wait counted toward
+                // the bound is a whole retry period, however often main wakes
+                // the worker with its last disconnect batches
                 worker->wake_armed = false;
-                if ( !worker->seen )
+                if ( !worker->shutdown.load( std::memory_order_acquire ) )
                 {
                     worker->blocked = false;
                 }
