@@ -878,9 +878,12 @@ static int rocketnet_gateway_netlink_dump_once( const rocketnet_gateway_netlink_
     memset( &kernel, 0, sizeof( kernel ) );
     kernel.nl_family = AF_NETLINK;
 
-    if ( system->sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr *) &kernel, sizeof( kernel ) ) != (ssize_t) header.nlmsg_len )
+    // a short send set no errno: as the short local address above, EPROTO
+
+    const ssize_t sent = system->sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr *) &kernel, sizeof( kernel ) );
+    if ( sent != (ssize_t) header.nlmsg_len )
     {
-        *error = errno;
+        *error = sent < 0 ? errno : EPROTO;
         system->close( fd );
         return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     }
