@@ -338,12 +338,6 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
 
     report.print();
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplyMacsPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplyMacsSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
     std::vector<std::string> addresses, macs;
     for ( int i = 0; i < REPLY_MACS_ADDRESSES; i++ )
     {
@@ -370,7 +364,7 @@ static int trace_xdp_reply_macs( uint64_t seed, int steps, const char * out )
               "    N = %d\n    P = %d\n    Addrs <- TraceAddrs\n    Macs <- TraceMacs\n    NOADDR = NOADDR\n"
               "    SkipOtherEntries = TRUE\n    EvictOldest = TRUE\n    InsertWindowExact = TRUE\n",
               REPLY_MACS_ENTRIES, ROCKETNET_XDP_REPLY_MAC_PROBES );
-    return tla_write_trace( out, name, "TraceRNXdpReplyMacsLayout", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceXdpReplyMacs", seed, "TraceRNXdpReplyMacsLayout", definitions, constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "xdp-reply-macs", trace_xdp_reply_macs );

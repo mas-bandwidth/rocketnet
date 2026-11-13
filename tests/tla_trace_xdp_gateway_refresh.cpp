@@ -328,17 +328,11 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
 
     report.print();
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpGatewayRefreshPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpGatewayRefreshSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
     char constants[256];
     snprintf( constants, sizeof( constants ),
               "    Period = %d\n    MaxTime = %d\n    MaxStep = %d\n    MaxChanges = %d\n    RefreshInFill = FALSE\n    RefreshNever = FALSE\n",
               GATEWAY_TRACE_PERIOD, GATEWAY_TRACE_MAX_TIME, GATEWAY_TRACE_MAX_STEP, GATEWAY_TRACE_MAX_CHANGES );
-    return tla_write_trace( out, name, "TraceRNXdpGatewayRefresh", "", constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceXdpGatewayRefresh", seed, "TraceRNXdpGatewayRefresh", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "xdp-gateway-refresh", trace_xdp_gateway_refresh );

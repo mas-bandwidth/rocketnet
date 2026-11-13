@@ -1116,12 +1116,6 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
     }
     report.print();
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplayPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplaySeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
     std::string addresses = "{";
     for ( int a = 0; a < RP_ADDRESSES; a++ )
     {
@@ -1138,7 +1132,7 @@ static int trace_xdp_replay( uint64_t seed, int steps, const char * out )
                                   "    ForgetFailureBudget <- TraceBudget\n"
                                   "    MarkFailureBudget <- TraceBudget\n"
                                   "    HeldReplyBudget <- TraceBudget\n";
-    return tla_write_trace( out, name, "TraceRNXdpReplay", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceXdpReplay", seed, "TraceRNXdpReplay", definitions, constants, records ) ? 0 : 1;
 }
 
 #else // #if defined( ROCKETNET_XDP_FILTER_HOST )

@@ -394,12 +394,6 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
     }
     report.print();
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplayMarksPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReplayMarksSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
     std::string keys = "{";
     for ( int i = 0; i < MARKS_KEYS; i++ )
     {
@@ -422,7 +416,7 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
                                   "    CompactFromZero = TRUE\n"
                                   "    KeptForgetsRecorded = TRUE\n"
                                   "    NONE = NONE\n";
-    return tla_write_trace( out, name, "TraceRNXdpReplayMarksLayout", "", constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceXdpReplayMarks", seed, "TraceRNXdpReplayMarksLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "xdp-replay-marks", trace_xdp_replay_marks );

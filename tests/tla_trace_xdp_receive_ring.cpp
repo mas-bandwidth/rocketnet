@@ -462,12 +462,6 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
 
     report.print();
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReceiveRingPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceXdpReceiveRingSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
     std::vector<std::string> frames;
     for ( uint32_t i = 0; i < RING_FRAMES; i++ )
     {
@@ -478,7 +472,7 @@ static int trace_xdp_receive_ring( uint64_t seed, int steps, const char * out )
     char constants[256];
     snprintf( constants, sizeof( constants ), "    Frames <- TraceFrames\n    RingSize = %d\n    StageCap = %d\n    PendCap = %d\n    FillSize = %d\n",
               (int) RING_RX_SIZE, (int) RING_STAGE_CAPACITY, (int) RING_FRAMES, (int) w.fill_size );
-    return tla_write_trace( out, name, "TraceRNXdpReceiveRing", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceXdpReceiveRing", seed, "TraceRNXdpReceiveRing", definitions, constants, records ) ? 0 : 1;
 }
 
 #else // #if defined( __linux__ ) && ROCKETNET_XDP
