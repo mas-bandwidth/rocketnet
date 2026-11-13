@@ -3782,7 +3782,7 @@ static void rocketnet_server_transport_update_body( struct rocketnet_server_tran
             // transport cannot carry) is this address's alone: its keep-alive
             // stays due, and the sweep serves the rest, as the drain does.
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) )
             {
                 break;
             }
