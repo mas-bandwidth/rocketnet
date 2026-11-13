@@ -255,7 +255,7 @@ hand-written traces:
 ## Where it runs, and what it costs
 
 - **Every commit:** the `tla-trace` job of `ci.yml` builds `tla_trace_all` (the harness
-  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/4` in four parallel shard jobs
+  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/9` in nine parallel shard jobs
   (a summary job carries the required name "TLA+ trace check (fixed seeds)").
 - **Nightly:** the `trace` job of `tlc.yml` runs 64 seeds that start where the day of
   the year puts them.
@@ -263,6 +263,13 @@ hand-written traces:
 - **On failure:** TLC prints the behaviour up to the rejection. The last `ti` is the
   last record that matched, so record `ti + 1` is the first code step that is not the
   model step it names.
+- **Summary line:** `TRACE-CHECK OK layers=... seeds=... reruns=N` (or `TRACE-CHECK
+  FAILED reruns=N` after the failures). `reruns` counts the plant TLC runs past each
+  seed's first over the whole run (a plant whose violation TLC reports without
+  printing a behaviour is run again, up to five times; each seed's log says
+  `PLANT-ATTEMPTS` when it was).
+- **A shard with no layer is an error:** `--shard I/N` with I at or past the layer
+  count exits 2 and checks nothing; it never prints `TRACE-CHECK OK`.
 
 ## Measured cost
 
