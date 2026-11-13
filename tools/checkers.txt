@@ -7,6 +7,7 @@
 .github/scripts/check-runs-on.sh	sh .github/scripts/check-runs-on.sh --self-test	cd {empty} && sh "$OLDPWD/.github/scripts/check-runs-on.sh"	ci.yml	lint	Every runs-on selects the fleet
 scripts/check-fleet-runners-selftest	bash scripts/check-fleet-runners-selftest	-	static.yml	static	Fleet-runner lint selftest
 scripts/lan-proof-selftest	bash scripts/lan-proof-selftest	-	ci.yml	lint	Self-tests of the registered checkers
+scripts/red-zones-selftest	bash scripts/red-zones-selftest build	-	nightly-leaks.yml	leaks	Red zones self-test (a planted one-past write is reported)
 scripts/soak-args-selftest	bash scripts/soak-args-selftest	-	ci.yml	platform-selftests	soak argument and summary selftest
 scripts/soak-per-transport-selftest	bash scripts/soak-per-transport-selftest	-	ci.yml	platform-selftests	soak per transport verdict selftest
 scripts/soak-sim-selftest	bash scripts/soak-sim-selftest	-	ci.yml	platform-selftests	soak_sim instrument selftest
