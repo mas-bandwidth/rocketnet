@@ -56,7 +56,6 @@ struct rocketnet_token_table_t
 #if ROCKETNET_DEV
     mutable uint64_t probe_steps;
     mutable uint64_t slot_steps;
-    uint64_t erase_steps;               // cells the backward-shift erase scanned (mutation gaps oob-wide)
 #endif // #if ROCKETNET_DEV
 };
 
@@ -271,6 +270,11 @@ static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int s
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
 // clears first, then the scan moves back each entry whose home is not
 // cyclically in (hole, scan]; EraseBound: it examines at most capacity cells
+#if ROCKETNET_DEV
+// mutation gaps oob-wide: the cells every erase in this process has scanned,
+// outside the table so its memory plan is unchanged; one unit case per process
+static uint64_t rn_token_dev_erase_steps;
+#endif // #if ROCKETNET_DEV
 static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
     const int position = rn_token_index_position( table, table->identifier[slot] );
@@ -287,7 +291,9 @@ static void rn_token_index_remove( struct rocketnet_token_table_t * table, int s
     for ( int step = 0; step < table->index_capacity; ++step )
     {
         scan = scan + 1 == table->index_capacity ? 0 : scan + 1;
-        RN_TOKEN_COUNT( table, erase_steps, 1 );
+#if ROCKETNET_DEV
+        rn_token_dev_erase_steps++;
+#endif // #if ROCKETNET_DEV
         const int entry = table->index[scan];
         if ( entry == RN_TOKEN_INDEX_EMPTY )
         {
@@ -730,11 +736,12 @@ extern "C" int rocketnet_dev_token_claim_index_start( const struct rocketnet_use
 
 // mutation gaps oob-wide begin
 #if ROCKETNET_DEV
-// the cells the claim table's backward-shift erase has scanned since create:
-// a release scans its cluster's tail and the empty cell that ends it, no more
-extern "C" uint64_t rocketnet_dev_token_claim_erase_steps( const struct rocketnet_used_token_history_t * history )
+// the cells every token table's backward-shift erase in this process has
+// scanned: a release scans its cluster's tail and the empty cell that ends it,
+// no more
+extern "C" uint64_t rocketnet_dev_token_erase_steps()
 {
-    return history->claims->erase_steps;
+    return rn_token_dev_erase_steps;
 }
 #endif // #if ROCKETNET_DEV
 // mutation gaps oob-wide end
