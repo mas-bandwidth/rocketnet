@@ -1,8 +1,9 @@
 # Packet prefilter and sealed-packet opener proofs. Included by
 # proofs/cbmc/Makefile through the reader scaffold. The four harnesses finish
-# in seconds, so the reader is in the per-commit `all` set (cbmc.yml) rather
-# than on the nightly list: a change that stops rocketnet_protocol.cpp from
-# parsing in the C front end goes red on the pull request that makes it.
+# in seconds, so the reader is in the default `all` set, which cbmc.yml runs
+# nightly, rather than on the NIGHTLY reader list: a change that stops
+# rocketnet_protocol.cpp from parsing in the C front end goes red the next
+# night.
 
 PACKET_OPEN_SOURCE = packet_open/proof_packet_open.c
 PACKET_OPEN_FLAGS = --object-bits 12 -DNDEBUG -I$(SDK) -I$(SDK)/../sodium

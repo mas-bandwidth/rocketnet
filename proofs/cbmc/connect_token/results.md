@@ -33,9 +33,9 @@ Each run used one CPU at nice 19; the target applied `timeout 1800s` and
 `prlimit --as=8589934592` separately to each ESBMC invocation. No reduced
 buffer bound was used.
 
-The existing per-commit `make -C proofs/cbmc` target also exited 0 on this
-tree. It ran its original CBMC leaves only; the new reader remains
-nightly-only.
+The default `make -C proofs/cbmc` target (`all`, run nightly by cbmc.yml) also exited 0 on this
+tree. It ran its original CBMC leaves only; the new reader is on the
+NIGHTLY reader list (nightly-proofs.yml), not in `all`.
 
 The first trial with unwind 1 failed only an unwinding assertion in ESBMC's
 byte-copy model (`/esbmc-vfs/libc/library/string.c:284`), not in RocketNet.

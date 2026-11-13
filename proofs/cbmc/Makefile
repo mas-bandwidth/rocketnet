@@ -1,6 +1,10 @@
-# CBMC proofs. `make -C proofs/cbmc` runs the proofs that finish:
-# the arithmetic leaves below, then the bounded readers, the message reader,
-# and the XDP free list.
+# CBMC proofs. `make -C proofs/cbmc` runs `all`, exactly: the arithmetic
+# leaves replay-delta-1-3, replay-far and reconstruct; the bounded readers
+# read-write and message-read; the XDP free list (xdp-free-list); the packet
+# prefilter and opener (proofs-packet_open, packet_open/proof.mk); and the six
+# reachability controls (`controls`, below). cbmc.yml runs it nightly.
+# replay-near-4096, the ESBMC readers and the ack-run-exhaustive-* checks are
+# not in `all`: they run from nightly-proofs.yml and nightly-ack-proof.yml.
 #
 # Every target prints the bound it proves beside the deployed constant the
 # bound is measured against, so a bounded proof cannot read as the whole
@@ -9,7 +13,8 @@
 # Arithmetic leaves:
 #   replay-delta-1-3   the quick nightly instance of harness_replay_near,
 #                      admitting deltas 1, 2, and 3.
-#   replay-near-4096   the full declared instance of the same source-bound
+#   replay-near-4096   (not in `all`: nightly-proofs.yml, one job per
+#                      partition) the full declared instance of the same source-bound
 #                      harness, admitting deltas 1..4095. It first proves that
 #                      the 13 clear-loop-shape and selected-word relation
 #                      partitions are pairwise disjoint and jointly exhaustive
@@ -52,11 +57,9 @@ CBMC_FLAGS = --bounds-check --pointer-check --signed-overflow-check \
 SDK = ../../sdk
 
 # The deployed constants each bound is printed beside, read from the sdk
-# headers. A macro written as an arithmetic expression carries its deployed
-# value in a trailing comment. Keep literal parentheses out of these shell
-# calls: GNU make parses them even inside the quoted sed expression.
+# headers, each a literal #define. Keep literal parentheses out of these
+# shell calls: GNU make parses them even inside the quoted sed expression.
 deployed_literal = $(shell grep -E '^\#define[[:space:]]+$(1)[[:space:]]+[0-9]+' $(SDK)/$(2) | awk '{print $$3}' | head -1)
-deployed_comment = $(shell grep -E '^\#define[[:space:]]+$(1)[[:space:]]+' $(SDK)/$(2) | awk '{print $$NF}' | head -1)
 
 REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketnet_history.h)
 # Unwind for the replay proofs, derived from ROCKETNET_HISTORY_PACKETS (via
@@ -150,7 +153,7 @@ define run_replay_near_path
 	failures=$$(grep -c ': FAILURE$$' "$$work/reachability.log" || true); \
 	if [ $$status -eq 10 ] && [ $$failures -eq 1 ] && \
 	   grep -q '^VERIFICATION FAILED' "$$work/reachability.log" && \
-	   grep -q 'replay path reachability negative control' "$$work/reachability.log"; then \
+	   grep -q 'replay path reachability negative control: FAILURE$$' "$$work/reachability.log"; then \
 	  echo "replay-near-4096-$(1)-reachability EXPECTED FAILURE"; \
 	else \
 	  echo "replay-near-4096-$(1)-reachability HOLD: expected assertion did not fail alone (exit=$$status failures=$$failures)"; exit 1; \
@@ -394,7 +397,7 @@ define run_reachability
 	failures=$$(grep -c ': FAILURE$$' "$$work/out.log" || true); \
 	if [ $$status -eq 10 ] && [ $$failures -eq 1 ] && \
 	   grep -q '^VERIFICATION FAILED' "$$work/out.log" && \
-	   grep -q '$(5)' "$$work/out.log"; then \
+	   grep -q '$(5): FAILURE$$' "$$work/out.log"; then \
 	  echo "$(1)-reachability EXPECTED FAILURE"; \
 	else \
 	  echo "$(1)-reachability HOLD: expected exactly one named failure (exit=$$status failures=$$failures)"; exit 1; \

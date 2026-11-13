@@ -2,7 +2,7 @@
 
 ## Root Cause
 
-All RocketNet ESBMC harnesses that include SDK `.cpp` translation units (`message_read_max`, `client_packets`, `server_packets`) run ESBMC 8.5.0 in C++17 mode (`--std c++17` via a `.cpp` wrapper).
+All RocketNet ESBMC harnesses that include SDK `.cpp` translation units (`message_read_max`, `connect_token`, and the ack proof `proof_ack_apply_run.c`) run ESBMC 8.5.0 in C++17 mode (`--std c++17`, through a `.cpp` wrapper or, for `connect_token`, a `.cpp` harness).
 
 In ESBMC 8.5.0 (`64-bit x86_64 linux`, Z3 v4.13.3):
 
