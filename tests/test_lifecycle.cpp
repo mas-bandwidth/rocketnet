@@ -532,7 +532,7 @@ static void check_memory_geometry( allocator_state & state )
     check( !rocketnet_server_socket_memory_required( 0, ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     check( rocketnet_server_socket_memory_required( 7, ROCKETNET_DEFAULT_MAX_CLIENTS ) > rocketnet_xdp_umem_bytes( 7 ) );
 
-    // Twenty-two queues exceed 4 GiB at the current UMEM geometry (192 MiB
+    // Twenty-two queues exceed 4 GiB at the current UMEM geometry (384 MiB
     // per queue). This plans the allocation size without allocating it.
 
     check( rocketnet_xdp_umem_bytes( 22 ) > UINT32_MAX );

@@ -284,7 +284,7 @@ a larger server does not make every transport buffer larger.
 | Limit | Rule | 1000 | 10000 |
 |---|---|---|---|
 | client slots, loopback endpoints | one per client (endpoints: plus the server) | 1000, 1001 | 10000, 10001 |
-| per-update receive budget, payload batch, io_uring receive bank | 16 packets per client | 16000 | 160000 |
+| per-update receive budget, payload batch, io_uring receive bank | 64 packets per client | 64000 | 640000 |
 | portable send batch | one per client | 1000 | 10000 |
 | server-wide send staging (IOCP send frames, RIO send phase) | two packets per client, rounded up to a power of two | 2048 | 32768 |
 | IOCP receive staging per worker, RIO posted receives | twice the send staging | 4096 | 65536 |
@@ -294,7 +294,7 @@ a larger server does not make every transport buffer larger.
 
 The server packet lease table is fixed at 131072 entries and 65536 leases per
 update, enough for two packets per client up to the 32768 build ceiling.
-XDP has 4096 send slots per queue and fixed UMEM geometry; increasing its
+XDP has 16384 send slots per queue and fixed UMEM geometry; increasing its
 queue count adds staging, subject to memory and host limits.
 
 GSO and io_uring differ: GSO has three shared send banks of 4096 slots, with
@@ -339,12 +339,12 @@ Separate build trees may select `CMAKE_RUNTIME_OUTPUT_DIRECTORY` and
 `CMAKE_LIBRARY_OUTPUT_DIRECTORY` to keep sanitizer/configuration outputs apart.
 
 The XDP allocation has its own CMake budget: `ROCKETNET_XDP_MEMORY_MIB`
-defaults to 4096 and accepts 1 through 1048576 MiB. It includes userspace queue
+defaults to 8192 and accepts 1 through 1048576 MiB. It includes userspace queue
 structs and UMEM. Oversized geometry is refused with required and permitted byte counts before
 allocation. These bounds are not an available-RAM check: reserve additional
 memory for ACK history, other transport objects, allocator overhead, stacks,
 kernel buffers and your application. Each default-geometry XDP queue has
-192 MiB of raw UMEM, in addition to
+384 MiB of raw UMEM, in addition to
 its allocator storage and other host resources. Query the exact build and
 queue count rather than using older total-memory figures.
 
@@ -403,7 +403,7 @@ set by `ulimit -s` on glibc, and on Windows the executable's 1 MiB default
 reserve). `total_bytes` is their sum and is never below `required_memory`.
 `exclusions` names what is not counted: kernel socket accounting beyond the
 requests (Linux doubles each buffer request), the AF_XDP fill and completion
-rings (the server asks for `ROCKETNET_XDP_FILL_RING_SIZE`, 32768 fill entries,
+rings (the server asks for `ROCKETNET_XDP_FILL_RING_SIZE`, 65536 fill entries,
 twice the receive frames it keeps on the ring, and for
 `XSK_RING_CONS__DEFAULT_NUM_DESCS`, 2048 completion entries, in
 `rocketnet_xdp_umem_config`, sdk/rocketnet_xdp_socket_config.h), libbpf/libxdp and the XDP program's maps, the io_uring

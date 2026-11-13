@@ -110,9 +110,9 @@ status code and the accompanying `ERROR` log line:
      `allocator_bytes + umem_bytes` per candidate, not the create-time block).
    - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
      candidate during `start` or `connect`. When troubleshooting `xdp` on
-     Linux, preserve the pinned geometry: 4,096-byte frames, a 4,096-entry send
-     queue, 16,384-entry receive queue and fill set, a 32,768-entry fill ring,
-     and 49,152 UMEM frames per queue. Use only the supported runtime controls
+     Linux, preserve the pinned geometry: 4,096-byte frames, a 16,384-entry send
+     queue, 32,768-entry receive queue and fill set, a 65,536-entry fill ring,
+     and 98,304 UMEM frames per queue. Use only the supported runtime controls
      (`num_xdp_queues`, `num_os_cpus`, and
      `ROCKETNET_GATEWAY_ETHERNET_ADDRESS`). The XDP data plane requires
      effective UID 0; Linux capabilities alone do not satisfy that preflight.
