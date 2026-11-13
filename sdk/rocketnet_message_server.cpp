@@ -1456,7 +1456,7 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
     return unreliable && object->link.max_payload_bytes ? object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
-// proofs/tla/RNWriterFinish.tla Start: in place when the update has capacity, otherwise marked as having none.
+// proofs/tla/RNWriterFinish.tla StartSmall, StartLarge and StartReliable: in place when the update has capacity, otherwise marked as having none.
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
     // proofs/tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
@@ -1665,7 +1665,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             // round kept for the main thread's send, or a refused frame) is
             // not a refusal: the ring holds one round and the main thread's
             // send carries the message, as it does for the serial finish
-            // (proofs/tla/RNWriterFinish.tla Start, Buffered)
+            // (proofs/tla/RNWriterFinish.tla StartSmall, Buffered)
             bool ring_only = ( ring_short || header >= 0 ) && object->link.send_buffered &&
                              object->link.send_buffered( object->link.transport );
 #if defined( ROCKETNET_WRITER_FINISH_PLANT )
@@ -1781,7 +1781,7 @@ uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, i
     return rn_message_object_finish_as( object, index, bytes, true );
 }
 
-// proofs/tla/RNWriterFinish.tla Finish: with writer set, the frame is sealed in the call or the start with no capacity refused.
+// proofs/tla/RNWriterFinish.tla Finish, FinishOver, FinishRestart, FinishBadBytes and FinishLost: with writer set, the frame is sealed in the call or the start with no capacity refused.
 static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object, int index, int bytes, bool writer )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
@@ -1820,6 +1820,18 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         return 0;
     }
 
+    // a bytes_written outside 1..reserved is the caller's error, refused as
+    // that whatever the start found, and the start aborted
+    // (proofs/tla/RNWriterFinish.tla FinishBadBytes)
+
+    rn_message_connection_t * connection = &object->connections[index];
+    if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
+    {
+        rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
+        rn_message_connection_cancel_pending( object, index );
+        return 0;
+    }
+
     // the writer's finish of a start that found no capacity: refused, so
     // nothing of it waits for send_packets (proofs/tla/RNWriterFinish.tla RefuseNoCapacity).
     // Its room goes back to the region; the game sees 0
@@ -1838,21 +1850,58 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
     }
 #endif // #if defined( ROCKETNET_WRITER_FINISH_PLANT )
 
+    // the writer's finish of an unreliable start reserved over one packet and
+    // finished with bytes one packet carries: the finish decides the form from
+    // the bytes written, so it is a small unreliable message, and the writer
+    // sends it from the call, refuses it, or queues it as the start makes that
+    // decision for its size (sdk/rocketnet.h,
+    // rocketnet_server_finish_client_message). Its bytes leave the region
+    // record, the reservation is released, and the start runs again at the
+    // size written (proofs/tla/RNWriterFinish.tla FinishRestart). The bytes
+    // go through a stack buffer, since the new start may reuse the released
+    // record: two copies, on this path only, in place of the send pass's one
+
+    if ( writer && !open->in_place )
+    {
+        int channel = 0;
+        const uint8_t * written = rn_endpoint_short_unreliable( connection, bytes, &channel );
+        if ( written )
+        {
+            uint8_t message[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+            rocketnet_assert( bytes <= (int) sizeof( message ) );
+            memcpy( message, written, (size_t) bytes );
+            const int reliability = connection->pending_type;
+            rn_message_connection_cancel_pending( object, index );
+
+            uint8_t * pointer = rn_message_object_start( object, index, channel, reliability, bytes );
+            if ( !pointer )
+            {
+                return 0;                               // refused and counted by the start
+            }
+
+            memcpy( pointer, message, (size_t) bytes );
+
+            // the start at a size one packet carries never takes the channel
+            // route, so the finish below never restarts again; were the two
+            // routing rules ever to disagree, the message is refused here
+            // rather than restarted without end
+            if ( rn_endpoint_short_unreliable( connection, bytes, &channel ) )
+            {
+                rocketnet_error( "message finish refused: a restart of %d bytes took the channel route again; the start is aborted", bytes );
+                rn_message_connection_cancel_pending( object, index );
+                return 0;
+            }
+            return rn_message_object_finish_as( object, index, bytes, true );
+        }
+    }
+
     // RNOutgoingBuild FinishInPlace: the record committed at its reservation
     // and the committed end advanced by the bytes written, so a short finish
     // returns the rest; no committed record moves (PriorRecordsUnmoved)
 
     if ( open->in_place == 2 )
     {
-        rn_message_connection_t * connection = &object->connections[index];
         rn_message_packet_build_t * build = &connection->unreliable_build;
-
-        if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
-        {
-            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
-            rn_message_connection_cancel_pending( object, index );
-            return 0;
-        }
 
         rocketnet_message_record_t record = {};
         const int type = connection->pending_type;
@@ -1912,18 +1961,11 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         // form byte written around the bytes, and the frame, full, sealed at
         // once (SealBuild) and staged by the transport, the acks due riding in it
 
-        rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
-        const uint32_t reserved = connection->pending_bytes;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, open->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
         {
-            if ( bytes < 1 || (uint32_t) bytes > reserved )
-            {
-                rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
-            }
-
             rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
             return 0;
         }
@@ -1952,15 +1994,9 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         return serial;
     }
 
-    const uint32_t reserved = object->connections[index].pending_bytes;
-    const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
+    const uint32_t serial = rn_endpoint_finish( connection, bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
     {
-        if ( bytes < 1 || (uint32_t) bytes > reserved )
-        {
-            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
-        }
-
         rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (proofs/tla/RNSlots.tla FinishPending)
         return 0;
     }
@@ -1970,6 +2006,7 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
     return serial;
 }
 
+// proofs/tla/RNWriterFinish.tla Abort: the start closed and nothing sent; the update's capacity stays charged.
 void rn_message_object_abort( struct rn_message_object_t * object, int index )
 {
     // a start that will not be finished: its room returns to the region
@@ -2166,7 +2203,7 @@ static int rn_message_send_admit( const struct rn_message_object_t * object, int
 
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
 // proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
-// proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds nothing a writer's finish left.
+// proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds no packet a writer left open, and takes what the writers queued or held as far as the capacity carries.
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );

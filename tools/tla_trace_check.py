@@ -194,10 +194,16 @@ LAYERS = {
     },
     "writerfinish": {
         "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
-        "untraced": {},
-        # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
-        # (the last three): a seed set must hold both kinds
-        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
+        "untraced": {
+            "FinishLost": "a framed start whose seal sends nothing: the start proved the bucket pays the declared maximum at "
+                          "the update's one time and nothing else touches the connection's bucket or build before its finish "
+                          "(the over-budget drop), the record add has the room the start reserved, and finish_packet fails "
+                          "only for a lease a main-thread call reset, which a fill phase excludes",
+        },
+        # the walk's odd seeds are a staged transport (the first seven predicates; WholeOpen on seed 3 modulo 4, the
+        # one with a send budget), its even seeds a buffered one (the last four): a seed set must hold 1-4
+        "reach": ["SealedAtFinish", "RefusedAtFinish", "LargeOpen", "ReliableOpen", "HeldForWalk", "WalkTookHeld",
+                  "WholeOpen", "RingOpen", "RingQueued", "BehindOpen", "WalkCarried"],
     },
     "rio-lane": {
         "modules": ["RNRioLaneLayout.tla", "TraceRNRioLaneLayout.tla"],
