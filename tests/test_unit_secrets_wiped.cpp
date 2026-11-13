@@ -76,6 +76,18 @@
 
 #define check rocketnet_unit_check
 
+// a check whose failure names the fault before the condition is printed
+#define secrets_wiped_check_fault( condition, fault )                                                             \
+do                                                                                                                \
+{                                                                                                                 \
+    if ( !( condition ) )                                                                                         \
+    {                                                                                                             \
+        printf( "mutation gap fault: %s\n", fault );                                                              \
+        fflush( stdout );                                                                                         \
+    }                                                                                                             \
+    check( condition );                                                                                           \
+} while ( 0 )
+
 static bool secrets_wiped_all_zero( const uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
@@ -261,6 +273,7 @@ struct secrets_wiped_watch_t
     size_t bytes[8];
     int spans;
     int freed;
+    int left[8];        // per span, the bytes left nonzero at the free
 };
 
 static std::map<void *, size_t> * secrets_wiped_sizes = NULL;
@@ -298,16 +311,16 @@ static void * secrets_wiped_malloc( void * context, size_t bytes )
     return p;
 }
 
-static bool secrets_wiped_in_span( const secrets_wiped_watch_t * watch, size_t offset )
+static int secrets_wiped_span_of( const secrets_wiped_watch_t * watch, size_t offset )
 {
     for ( int s = 0; watch && s < watch->spans; s++ )
     {
         if ( offset >= watch->offsets[s] && offset < watch->offsets[s] + watch->bytes[s] )
         {
-            return true;
+            return s;
         }
     }
-    return false;
+    return -1;
 }
 
 static void secrets_wiped_free( void * context, void * p )
@@ -355,9 +368,11 @@ static void secrets_wiped_free( void * context, void * p )
                     size_t written = 0;
                     for ( size_t i = 0; i < it->second; i++ )
                     {
-                        if ( secrets_wiped_in_span( watch, i ) )
+                        const int span = secrets_wiped_span_of( watch, i );
+                        if ( span >= 0 )
                         {
                             secrets_wiped_secret_left += begin[i] != 0;
+                            watch->left[span] += begin[i] != 0;
                         }
                         else
                         {
@@ -581,6 +596,29 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
     }
     return nonzero;
 }
+
+// how many bytes of one secret span of a live object are nonzero now
+static int secrets_wiped_span_bytes( const secrets_wiped_watch_t * watch, int span )
+{
+    int nonzero = 0;
+    for ( size_t i = 0; span < watch->spans && i < watch->bytes[span]; i++ )
+    {
+        nonzero += ( (const uint8_t *) watch->block )[watch->offsets[span] + i] != 0;
+    }
+    return nonzero;
+}
+
+// fill every secret span of a live object with a nonzero byte, so only the
+// destroy's own wipe can zero it; each span lies inside the object's block
+static void secrets_wiped_refill( const secrets_wiped_watch_t * watch )
+{
+    const size_t block_bytes = ( *secrets_wiped_sizes )[const_cast<void *>( watch->block )];
+    for ( int s = 0; s < watch->spans; s++ )
+    {
+        check( watch->offsets[s] + watch->bytes[s] <= block_bytes );
+        memset( static_cast<uint8_t *>( const_cast<void *>( watch->block ) ) + watch->offsets[s], 0xC3, watch->bytes[s] );
+    }
+}
 #endif // #if ROCKETNET_DEV
 
 // Owned memory, stopped and disconnected: the destroys wipe the server's
@@ -620,16 +658,14 @@ static void test_secrets_wiped_destroy_writes_only_keys()
 
     // the disconnect already wiped the client's keys, so only the destroy's
     // own wipe is left to look at: refill the client transport's secret spans
-    // (keys, token, ephemeral key, nonce, the I/O thread's open copy) and the
-    // destroy must zero them again
+    // (keys, token, ephemeral key, the I/O thread's open copy) and the
+    // destroy must zero them again. The same for the server transport's: a
+    // run this short never rotates the cookie key, and the stop leaves no
+    // disconnect burst key in the ring, so the previous cookie key and the
+    // ring are refilled too (mutation gap: hunt 2/5307 hunt 2/5308)
 
-    {
-        const secrets_wiped_watch_t * client_watch = &secrets_wiped_watches[2];
-        for ( int s = 0; s < client_watch->spans; s++ )
-        {
-            memset( static_cast<uint8_t *>( const_cast<void *>( client_watch->block ) ) + client_watch->offsets[s], 0xC3, client_watch->bytes[s] );
-        }
-    }
+    secrets_wiped_refill( &secrets_wiped_watches[1] );
+    secrets_wiped_refill( &secrets_wiped_watches[2] );
     const int client_secret_before = secrets_wiped_secret_bytes( &secrets_wiped_watches[2] );
 
     std::map<void *, std::vector<uint8_t>> copies;
@@ -672,11 +708,180 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     check( transport_secret_before > 0 );
     check( client_secret_before > 0 );
     check( watches_freed == 3 );
+    secrets_wiped_check_fault( secrets_wiped_watches[1].left[0] == 0, "the server transport destroy left its server secret key in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[1].left[1] == 0, "the server transport destroy left its cookie key in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[1].left[2] == 0, "the server transport destroy left its previous cookie key in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[1].left[3] == 0, "the server transport destroy left disconnect burst keys in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[2].left[0] == 0, "the client transport destroy left its session keys in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[2].left[1] == 0, "the client transport destroy left its connect token in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[2].left[2] == 0, "the client transport destroy left its ephemeral secret in the freed block" );
+    secrets_wiped_check_fault( secrets_wiped_watches[2].left[3] == 0, "the client transport destroy left the I/O open copy of its key in the freed block" );
     check( secret_left == 0 );
     check( written_most <= 256 );
     check( watched_frees == 2 );
     check( watched_pattern > 0 );
 }
+#endif // #if ROCKETNET_DEV
+
+// A client transport destroyed without a disconnect: a caller of the
+// transport layer may stop and destroy it with an attempt in flight or a
+// connection up, and rocketnet_client_transport_stop does not end the
+// protocol's connection, so the destroy's own wipe is all that zeroes the
+// keys, the connect token and the ephemeral secret before the block is freed
+// (sdk/rocketnet_client_transport.cpp, rocketnet_client_transport_destroy).
+// Two cases, each watching the client transport's secret spans in its block:
+// a handshake in flight (no server answers: the token and the ephemeral
+// secret are live) and a connection up over the loopback transport (the
+// session keys, the token and the I/O thread's open copy are live).
+// mutation gap: hunt 2/7352 hunt 2/7353 hunt 2/4135 hunt 2/4136 hunt 2/4137
+#if ROCKETNET_DEV
+static const uint64_t SECRETS_WIPED_TRANSPORT_PROTOCOL = 0x5EC2E75D1BEEULL;
+
+static struct rocketnet_client_transport_t * secrets_wiped_client_transport( const uint8_t * backend_secret, const uint8_t * server_public, int port )
+{
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", port );
+    const char * addresses[] = { address };
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    check( rocketnet_write_production_connect_token( backend_secret, server_public, SECRETS_WIPED_TRANSPORT_PROTOCOL, addresses, 1,
+                                                     0x5EED7, 1000, 1ULL << 40, 300, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    config.step_driven = 1;
+    config.time_callback = secrets_wiped_clock;
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, token, &config, sizeof( config ), secrets_wiped_now );
+    sodium_memzero( token, sizeof( token ) );
+    check( client != NULL );
+    return client;
+}
+
+// stop the client transport (no disconnect), snapshot the live blocks, watch
+// its secret spans, destroy it; the watch's per-span tallies say what the
+// destroy left in the freed block
+static void secrets_wiped_destroy_without_disconnect( struct rocketnet_client_transport_t * client, int * before )
+{
+    rocketnet_client_transport_stop( client );
+    rn_test_client_transport_wait_stopped( client );
+
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_watch( client, rocketnet_client_transport_secret_spans_for_test );
+    for ( int s = 0; s < 4; s++ )
+    {
+        before[s] = secrets_wiped_span_bytes( &secrets_wiped_watches[0], s );
+    }
+
+    std::map<void *, std::vector<uint8_t>> copies;
+    for ( std::map<void *, size_t>::iterator it = secrets_wiped_sizes->begin(); it != secrets_wiped_sizes->end(); ++it )
+    {
+        copies[it->first].assign( (const uint8_t *) it->first, (const uint8_t *) it->first + it->second );
+    }
+    secrets_wiped_copies = &copies;
+
+    rocketnet_client_transport_destroy( client );
+
+    secrets_wiped_copies = NULL;
+    check( secrets_wiped_watches[0].freed == 1 );
+}
+
+static void test_secrets_wiped_client_transport_destroy_without_disconnect()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_quiet( 1 );
+
+    std::map<void *, size_t> sizes;
+    secrets_wiped_sizes = &sizes;
+
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret[sizeof( rocketnet_dev_server_secret_key )];
+    check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
+    // a handshake in flight: nothing answers at the token's address
+
+    secrets_wiped_now = 1000.0;
+    struct rocketnet_client_transport_t * in_flight = secrets_wiped_client_transport( backend_secret, server_public, 40977 );
+    for ( int i = 0; i < 3; i++ )
+    {
+        secrets_wiped_now += 0.01;
+        rocketnet_client_transport_update( in_flight, secrets_wiped_now );
+        rocketnet_client_transport_send_packets( in_flight );
+    }
+    const int in_flight_state = rocketnet_client_transport_state( in_flight );
+
+    int in_flight_before[4];
+    secrets_wiped_destroy_without_disconnect( in_flight, in_flight_before );
+    secrets_wiped_watch_t in_flight_watch = secrets_wiped_watches[0];
+
+    // a connection up over the loopback transport
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config_current( &server_config );
+    server_config.protocol_id = SECRETS_WIPED_TRANSPORT_PROTOCOL;
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+    server_config.token_epoch_unix_seconds = 1000;
+
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+    sodium_memzero( &server_config, sizeof( server_config ) );
+    check( server != NULL );
+
+    struct rocketnet_client_transport_t * connected = secrets_wiped_client_transport( backend_secret, server_public, rocketnet_server_transport_port( server ) );
+    for ( int i = 0; i < 400 && !( rocketnet_client_transport_state( connected ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                   rocketnet_server_transport_is_client_connected( server, 0 ) ); i++ )
+    {
+        secrets_wiped_now += 0.01;
+        rocketnet_server_transport_update( server, secrets_wiped_now );
+        rocketnet_client_transport_update( connected, secrets_wiped_now );
+        rocketnet_server_transport_send_packets( server );
+        rocketnet_client_transport_send_packets( connected );
+    }
+    const int connected_state = rocketnet_client_transport_state( connected );
+
+    int connected_before[4];
+    secrets_wiped_destroy_without_disconnect( connected, connected_before );
+    secrets_wiped_watch_t connected_watch = secrets_wiped_watches[0];
+
+    rn_test_server_transport_stop_and_destroy( server );
+
+    sodium_memzero( backend_secret, sizeof( backend_secret ) );
+    sodium_memzero( server_secret, sizeof( server_secret ) );
+
+    secrets_wiped_num_watches = 0;
+    secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
+    // spans: 0 the session keys, 1 the connect token, 2 the ephemeral
+    // secret, 3 the I/O thread's open copy of the server-to-client key
+
+    check( in_flight_state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+    check( in_flight_before[1] > 0 && in_flight_before[2] > 0 );
+    secrets_wiped_check_fault( in_flight_watch.left[1] == 0, "a client transport destroyed mid-handshake without a disconnect freed its connect token unwiped" );
+    secrets_wiped_check_fault( in_flight_watch.left[2] == 0, "a client transport destroyed mid-handshake without a disconnect freed its ephemeral secret unwiped" );
+    secrets_wiped_check_fault( in_flight_watch.left[0] == 0 && in_flight_watch.left[3] == 0, "a client transport destroyed mid-handshake without a disconnect freed key bytes unwiped" );
+
+    check( connected_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( connected_before[0] > 0 && connected_before[1] > 0 );
+    secrets_wiped_check_fault( connected_watch.left[0] == 0, "a client transport destroyed while connected without a disconnect freed its session keys unwiped" );
+    secrets_wiped_check_fault( connected_watch.left[1] == 0, "a client transport destroyed while connected without a disconnect freed its connect token unwiped" );
+    secrets_wiped_check_fault( connected_watch.left[2] == 0, "a client transport destroyed while connected without a disconnect freed ephemeral secret bytes unwiped" );
+    secrets_wiped_check_fault( connected_watch.left[3] == 0, "a client transport destroyed while connected without a disconnect freed the I/O open copy of its key unwiped" );
+}
+
+REGISTER_UNIT_TEST( test_secrets_wiped_client_transport_destroy_without_disconnect );
 #endif // #if ROCKETNET_DEV
 
 // how many times the user data occurs in the live blocks now
@@ -1154,16 +1359,21 @@ extern void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes,
 
 static uint8_t secrets_wiped_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
 static int secrets_wiped_block_exits = 0;
+static int secrets_wiped_block_entries = 0;
 
 // on entry the staging gets the canary, so an exit that skips the wipe is
 // seen whatever the open wrote; on exit the staging is copied out
+// mutation gap: hunt 2/237 hunt 2/242
 static void secrets_wiped_block_seen( uint8_t * block, int bytes, int at_exit )
 {
     check( bytes == ROCKETNET_PRIVATE_BLOCK_BYTES );
+    secrets_wiped_check_fault( at_exit == 0 || at_exit == 1, "the token open reported its private block staging with an at_exit other than 0 (entry) or 1 (exit)" );
+    secrets_wiped_check_fault( at_exit == 1 || secrets_wiped_block_exits == 0, "the token open reported its staging on entry after an exit" );
 
     if ( !at_exit )
     {
         memset( block, 0xA5, (size_t) bytes );
+        secrets_wiped_block_entries++;
         return;
     }
 
@@ -1182,6 +1392,7 @@ static int secrets_wiped_open( const uint8_t * server_public, const uint8_t * se
     struct rocketnet_connect_token_private_t opened;
     memset( &opened, 0, sizeof( opened ) );
     secrets_wiped_block_exits = 0;
+    secrets_wiped_block_entries = 0;
     rocketnet_token_private_block_hook = secrets_wiped_block_seen;
 
     const int result = rocketnet_open_connect_token_private( &opened, token.signed_connect_data, server_public, server_secret );
@@ -1195,6 +1406,7 @@ static int secrets_wiped_open( const uint8_t * server_public, const uint8_t * se
 static void test_secrets_wiped_token_block_on_open()
 {
     check( secrets_wiped_open( rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) == 1 );
+    secrets_wiped_check_fault( secrets_wiped_block_entries == 1, "the token open did not hand its staging to the hook on entry, so no canary was planted" );
     check( secrets_wiped_block_exits == 1 );
     check( secrets_wiped_all_zero( secrets_wiped_block, ROCKETNET_PRIVATE_BLOCK_BYTES ) );
 }
@@ -1209,6 +1421,7 @@ static void test_secrets_wiped_token_block_on_refused_open()
 
     sodium_memzero( other_secret, sizeof( other_secret ) );
 
+    secrets_wiped_check_fault( secrets_wiped_block_entries == 1, "the refused token open did not hand its staging to the hook on entry, so no canary was planted" );
     check( secrets_wiped_block_exits == 1 );
     check( secrets_wiped_all_zero( secrets_wiped_block, ROCKETNET_PRIVATE_BLOCK_BYTES ) );
 }
