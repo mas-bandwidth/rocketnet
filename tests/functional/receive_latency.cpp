@@ -50,6 +50,7 @@
 #include "../token_string.h"
 #include "rocketnet.h"
 #include "rocketnet_crypto_tally.h"
+#include "rocketnet_driver.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
@@ -231,6 +232,14 @@ static void receive_latency_veth_down( const char * name, bool restore_xdp_threa
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
+// the io_uring row in a build without liburing: the transport has no
+// backend, and its documented fallback (rocketnet_test_server_pin_allows_io_uring)
+// runs the row on another transport, which the case does not measure
+static bool receive_latency_io_uring_unbuilt( const struct receive_latency_row_t * row )
+{
+    return strcmp( row->server_transport, "io_uring" ) == 0 && !rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING )->backend;
+}
+
 static void receive_latency_run( const struct receive_latency_row_t * row )
 {
     const char * name = row->name;
@@ -306,13 +315,22 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     receive_latency_check( server && status == ROCKETNET_STATUS_OK, name, "server create" );
     receive_latency_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK, name, "server start" );
 
-    // a build or kernel without the transport falls to another one through
-    // the pin's own fallback (rocketnet_test_server_pin_allows_io_uring): the
-    // row measures only the transport it names. A client row measures the
-    // client's transport, so its server may be any (a leg's server pin).
-    if ( row->direction == RECEIVE_LATENCY_SERVER && strcmp( rocketnet_server_transport_name( server ), row->server_transport ) != 0 )
+    // a server row measures the server transport it names. A leg whose server
+    // pin excludes it, or a host that cannot grant it, skips the row through
+    // its predicate before it runs (SKIPPED with that predicate's name,
+    // expected_skips.txt); a row that runs asked for a transport the leg
+    // allows, so being granted another fails the case. The one fallback that
+    // passes is the io_uring row's documented one
+    // (rocketnet_test_server_pin_allows_io_uring): a build without liburing
+    // still runs the row and the request falls to portable, which the case
+    // reports and does not measure. A client row measures the client's
+    // transport, so its server may be any (a leg's server pin).
+    const char * server_granted = rocketnet_server_transport_name( server );
+    if ( row->direction == RECEIVE_LATENCY_SERVER && ( !server_granted || strcmp( server_granted, row->server_transport ) != 0 ) )
     {
-        printf( "receive latency %s: granted %s, not %s: nothing to measure\n", name, rocketnet_server_transport_name( server ), row->server_transport );
+        const bool unbuilt_io_uring = receive_latency_io_uring_unbuilt( row );
+        printf( "receive latency %s: granted %s, not %s: %s\n", name, server_granted ? server_granted : "none", row->server_transport,
+                unbuilt_io_uring ? "io_uring is not built, so the pin falls to another transport: nothing to measure" : "the requested transport was not granted" );
         fflush( stdout );
         rn_cli_server_stop_and_destroy( server );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
@@ -321,6 +339,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             receive_latency_veth_down( name, restore_xdp_threads, saved_xdp_threads, restore_os_cpus, saved_os_cpus );
         }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+        receive_latency_check( unbuilt_io_uring, name, "the server was granted another transport than the row measures" );
         return;
     }
 
