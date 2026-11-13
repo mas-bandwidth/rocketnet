@@ -495,4 +495,9 @@
    :title "msgx may resend a batch whose first packets the kernel already sent"
    :text "sdk/rocketnet_msgx_send_runs.h (about 32-41, 330-374) takes a sendmsg_x that returns -1 as none taken: the run is kept and sent again whole from the same cursor (the worker retries every 1 ms, sdk/rocketnet_server_msgx_apple.cpp about 794-799, 879-903). The repo's own measured note says xnu can deliver part of a batch and still return -1 with no count (sdk/rocketnet_platform.cpp about 505-512, 2692-2701), and the client and portable pump handle that; msgx does not. If an ENOBUFS at peak does this, the delivered prefix goes out two or more times into a full queue: duplicates the client's replay window drops, sent counters under the wire, SEND_FAILED over on the error path. The model (RNMsgxSendRuns.tla) has the same assumption in its fake kernel. Open until measured: one peak row on the 10 GbE pair (received against packets_sent with send_dropped 0) decides; a loopback probe of 2000 batches of 64 never saw a refusal."
    :date "2026-11-13" :origin "Review before v1.2.0, macOS reader, finding P3")
+
+  (item "strict-keep-off-cpu-zero" :group "review-v1-2" :area "sdk"
+   :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
+   :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
+   :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
  ))
