@@ -51,6 +51,7 @@ with TLA_TRACE_LAYER, plus one row of LAYERS below.
 import argparse
 import ast
 import filecmp
+import hashlib
 import re
 import shutil
 import subprocess
@@ -752,6 +753,8 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         failures += [f"{kind}: {f}" for f in cfg_failures(base / kind / "walk" / (first["module"] + ".cfg"), facts["constants"])]
         failures += [f"{kind}: {f}" for f in mc_failures(base / kind / "walk" / (first["module"] + ".tla"), facts["trace_stem"])]
         reports[kind] = first
+        if kind == "clean":
+            log.append(f"TRACE-SHA256 {name} {seed} {trace_sha(base / kind / 'walk', first)}\n")
 
     if reports["clean"]["config"] != reports["plant"]["config"]:
         failures.append(f"the plant binary's CONFIG {reports['plant']['config']} is not the clean one's {reports['clean']['config']}")
@@ -827,13 +830,32 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
 
 
 def coverage_walk(args, name, layer, seed):
-    """(clean walk report or None, log) of one seed walked for its home shard's coverage and reach only"""
-    log = []
+    """(clean walk report or None, log, failures) of one seed walked for its home shard's coverage and reach
+    only: walked twice, and held to check_seed's checks before any TLC run (the same bytes twice, steps + 1
+    records, ACTS the acts the trace records), so what is counted here is the walk TLC checks in the seed's
+    own shard; the trace's sha256 is printed both there and here (TRACE-SHA256), for a reader to compare"""
+    log, failures = [], []
     base = args.dir / f"{name}-{seed}"
     if base.exists():
         shutil.rmtree(base)
-    report = walk(args, "tla_trace", name, seed, args.steps or layer.get("steps", STEPS), base / "clean" / "walk", log)
-    return report, log
+    steps = args.steps or layer.get("steps", STEPS)
+    first = walk(args, "tla_trace", name, seed, steps, base / "clean" / "walk", log)
+    second = walk(args, "tla_trace", name, seed, steps, base / "clean" / "again", log)
+    if first is None or second is None:
+        return None, log, ["the coverage walk failed, or wrote no trace"]
+    if not same_walk(first, second, base / "clean" / "walk", base / "clean" / "again"):
+        failures.append("the coverage walk is nondeterministic: two runs of one seed differ")
+    if first["records"] != steps + 1 or len(first["lines"]) != steps + 1:
+        failures.append(f"the coverage walk's trace has {first['records']} records, not steps + 1 = {steps + 1}")
+    if first["acts"] != first["logged"]:
+        failures.append(f"the coverage walk's ACTS {first['acts']} are not the acts its trace records {first['logged']}")
+    log.append(f"TRACE-SHA256 {name} {seed} {trace_sha(base / 'clean' / 'walk', first)} (coverage walk)\n")
+    return (None if failures else first), log, failures
+
+
+def trace_sha(walk_dir, report):
+    """sha256 of a walk's trace module"""
+    return hashlib.sha256((walk_dir / (report["module"] + ".tla")).read_bytes()).hexdigest()
 
 
 def reached(args, name, layer, predicate, log):
@@ -1064,10 +1086,11 @@ def main():
     elsewhere = [(n, seed) for n in homes for seed in args.seeds if (n, seed) not in pairs]
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         walked = list(pool.map(lambda p: coverage_walk(args, p[0], LAYERS[p[0]], p[1]), elsewhere))
-    for (n, seed), (report, log) in zip(elsewhere, walked):
+    for (n, seed), (report, log, failures) in zip(elsewhere, walked):
+        sys.stdout.write("".join(log))
+        for failure in failures:
+            failed.append(f"layer {n} seed {seed}: {failure}")
         if report is None:
-            sys.stdout.write("".join(log))
-            failed.append(f"layer {n} seed {seed}: the coverage walk failed, or wrote no trace")
             continue
         for act, count in report["logged"].items():
             taken[n][act] = taken[n].get(act, 0) + count
