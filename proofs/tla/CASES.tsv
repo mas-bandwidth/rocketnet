@@ -1006,6 +1006,7 @@ MCRNMsgxReceiveFillLive.cfg	MCRNMsgxReceiveFill.tla	pass	-	check	rnmsgxreceivefi
 MCRNMsgxReceiveFillBrokenReadPastRoom.cfg	MCRNMsgxReceiveFill.tla	invariant	NoFullDrop	check	rnmsgxreceivefill	required	-
 MCRNMsgxReceiveFillBrokenPublishOverReady.cfg	MCRNMsgxReceiveFill.tla	invariant	Conserved	check	rnmsgxreceivefill	required	-
 MCRNMsgxReceiveFillBrokenHoldWithoutPublish.cfg	MCRNMsgxReceiveFill.tla	action	HoldOnlyWhenNowhere	check	rnmsgxreceivefill	required	-
+MCRNMsgxReceiveFillBrokenClaimAfterStop.cfg	MCRNMsgxReceiveFill.tla	invariant	StopCounted	check	rnmsgxreceivefill	required	-
 MCTraceRNMsgxReceiveFillSelf.cfg	MCTraceRNMsgxReceiveFillSelf.tla	pass	-	check	rnmsgxreceivefill	required	-
 MCTraceRNMsgxReceiveFillSelfBrokenReadPastRoom.cfg	MCTraceRNMsgxReceiveFillSelf.tla	invariant	TraceConsistent	check	rnmsgxreceivefill	required	-
 MCRNSendReserveCallsChunk.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-

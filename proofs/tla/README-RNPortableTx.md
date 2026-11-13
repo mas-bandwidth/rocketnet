@@ -1,8 +1,10 @@
 # RNPortableTx: the portable server's transmit handoff
 
 `RNPortableTx.tla` is the layout model of the transmit half of the portable
-server transport in `sdk/rocketnet_driver_builtin.cpp`. The same code serves
-the macOS msgx server. [`README-RNPortableRx.md`](README-RNPortableRx.md)
+server transport in `sdk/rocketnet_driver_builtin.cpp`. The msgx transport
+name runs this code only off macOS; on macOS the msgx server is its own
+(`sdk/rocketnet_server_msgx_apple.cpp`: `RNBankFifoLayout.tla` for its bank
+handoff, `RNMsgxSendRuns.tla` for its sends). [`README-RNPortableRx.md`](README-RNPortableRx.md)
 covers the receive half. The modelled functions are:
 
 - `portable_send`, the copy of each packet into the producer bank;

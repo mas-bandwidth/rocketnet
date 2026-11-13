@@ -33,6 +33,8 @@ buffer (`KernelDrop`).
 | `RoundPublish`, `RoundKeep` | the round's publish through `rocketnet_msgx_receive_publish` |
 | `Sleep` | `ROCKETNET_MSGX_RECV_HOLD_SECONDS` after a held round |
 | `Consume`, `Claim` | main's consume of its bank, then `rocketnet_msgx_receive_claim` |
+| `MainStop`, `Exit` | `rocketnet_server_msgx_stop` (main's tail counted, then `rocketnet_msgx_receive_stop`), and the worker's exit at the top of its loop, which counts the bank it fills and a ready bank main has not claimed |
+| `Done` | the end once the worker has exited and the arrivals bound is spent, a stutter |
 | `Arrive`, `KernelDrop`, `Error` | environment: the kernel and the network |
 
 `ReadWeather` is an ICMP error the kernel queued for a connected client
@@ -54,6 +56,19 @@ held flag, the round's publish, the sleep) is about ten lines of
 `rocketnet_server_msgx_receive_worker` that the walk follows by hand, as are
 main's consume and claim around `rocketnet_msgx_receive_claim`.
 
+## The stop (R69)
+
+At `rocketnet_server_msgx_stop` main counts the tail of its own bank stopped,
+and the server goes on calling the transport's receive until the transport
+reports stopped, that is until the worker has exited. Before R69 one of
+those calls could claim a bank the worker published after the stop: main
+then read part of it in that update, the server saw the transport stopped
+and called no more, and the rest was neither processed nor counted (the
+worker's exit counts only the bank it fills and a ready bank). Now the stop
+sets the hand's `stopped` flag and `rocketnet_msgx_receive_claim` refuses
+once it is set, so a ready bank stays the worker's and is counted
+`RECEIVE_DROP_STOPPED` at its exit. `ClaimAfterStop` is the code before.
+
 ## Properties
 
 - `HandOK`: the banks are the worker's, main's, and one ready or free.
@@ -66,17 +81,21 @@ main's consume and claim around `rocketnet_msgx_receive_claim`.
   bank full and main not yet done with the last, so the worker never stalls
   with room or with a bank it could hand over.
 - `AllConsumed` (under `FairSpec`): every datagram that arrives is main's or
-  the kernel's drop in the end.
+  the kernel's drop in the end, unless main stops first.
+- `StopCounted`: once the worker has exited no bank holds a datagram, so
+  every datagram read was consumed by main or counted stopped (R69).
+- `StopEnds` (under `FairSpec`): a stop ends the worker.
 
 ## Configurations
 
 | Config | Instance | Expected |
 |---|---|---|
 | `MCRNMsgxReceiveFill.cfg` | 2 sockets, banks of 3, batch 2, budget 3, buffers of 3, 7 arrivals, 2 errors | pass |
-| `MCRNMsgxReceiveFillLive.cfg` | the same, 5 arrivals, 1 error, `FairSpec` | pass, `AllConsumed` |
+| `MCRNMsgxReceiveFillLive.cfg` | the same, 5 arrivals, 1 error, `FairSpec` | pass, `AllConsumed`, `StopEnds` |
 | `MCRNMsgxReceiveFillBrokenReadPastRoom.cfg` | `ReadPastRoom`: a whole batch whatever the room, the code before E3 | `NoFullDrop` fails |
 | `MCRNMsgxReceiveFillBrokenPublishOverReady.cfg` | `PublishOverReady`: a full bank handed over a ready one | `Conserved` fails |
 | `MCRNMsgxReceiveFillBrokenHoldWithoutPublish.cfg` | `HoldWithoutPublish`: held when it could hand over | `HoldOnlyWhenNowhere` fails |
+| `MCRNMsgxReceiveFillBrokenClaimAfterStop.cfg` | `ClaimAfterStop`: main claims a ready bank after its stop, the code before R69 | `StopCounted` fails |
 
 ## Trace check
 
@@ -85,7 +104,10 @@ main's consume and claim around `rocketnet_msgx_receive_claim`.
 `tests/tla_trace_msgx_receive_fill.cpp` drives the real
 `rocketnet_msgx_receive_drain_step`, `rocketnet_msgx_receive_publish` and
 `rocketnet_msgx_receive_claim` over a fake kernel of three sockets with banks
-of six and a batch of four, so reads meet a room below a batch. The plant
+of six and a batch of four, so reads meet a room below a batch. On even
+seeds main stops three quarters of the way through (`rocketnet_msgx_receive_stop`)
+and the worker exits at its next poll, so `MainStop` and `Exit` are traced and
+a claim after the stop would be rejected. The plant
 (`ROCKETNET_MSGX_RECEIVE_FILL_PLANT`, `rocketnet_msgx_receive_want` in
 `sdk/rocketnet_msgx_receive_fill.cpp` asking for a whole batch) must be
 rejected at the first read that takes past the room. The reach predicates

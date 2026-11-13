@@ -41,6 +41,15 @@
 (* PublishOverReady = TRUE hands a full bank over a ready one main has    *)
 (* not taken, discarding it (Conserved).  HoldWithoutPublish = TRUE holds *)
 (* a full bank even when main has taken the last (HoldOnlyWhenNowhere).   *)
+(*                                                                         *)
+(* The stop (R69): main stops (MainStop: its bank's tail counted stopped, *)
+(* and it claims nothing more), the worker leaves its loop at the next    *)
+(* top (Exit: the bank it fills and a ready bank counted stopped), and    *)
+(* main stops calling once the worker has exited.  StopCounted: after the *)
+(* exit no bank holds a datagram; StopEnds: a stop ends the worker.       *)
+(* ClaimAfterStop = TRUE, the code before R69, lets main claim a ready    *)
+(* bank after its stop: the bank's datagrams are then in main's hands at  *)
+(* the exit, read by no later update and counted by nobody (StopCounted).  *)
 (***************************************************************************)
 EXTENDS Integers, Sequences
 
@@ -54,11 +63,13 @@ CONSTANTS
     MaxErrors,          \* exploration bound: errors queued on sockets
     ReadPastRoom,       \* defect: a read asks for a whole batch whatever the room
     PublishOverReady,   \* defect: a full bank is handed over a ready one
-    HoldWithoutPublish  \* defect: a full bank is held when it could be handed over
+    HoldWithoutPublish, \* defect: a full bank is held when it could be handed over
+    ClaimAfterStop      \* defect: main claims a ready bank after it stopped (R69)
 
 ASSUME /\ Sockets >= 1 /\ Capacity >= 1 /\ Batch >= 1 /\ Budget >= 1 /\ Buffer >= 1
        /\ MaxArrivals \in Nat /\ MaxErrors \in Nat
        /\ ReadPastRoom \in BOOLEAN /\ PublishOverReady \in BOOLEAN /\ HoldWithoutPublish \in BOOLEAN
+       /\ ClaimAfterStop \in BOOLEAN
 
 NoBank == -1
 Banks == 0 .. 2
@@ -82,9 +93,12 @@ VARIABLES
     kdrops,     \* dropped by the kernel on arrival, its buffer full
     consumed,   \* datagrams main took
     fullDrops,  \* read and lost for want of room
-    errors      \* errors queued so far
+    errors,     \* errors queued so far
+    stopping,   \* main stopped (hand.stopped, rocketnet_msgx_receive_stop)
+    exited,     \* the worker left its loop and counted what it held
+    stopped     \* datagrams read and counted stopped (main_stopped and DROP_STOPPED)
 
-vars == << kq, errs, cnt, worker, ready, main, free, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+vars == << kq, errs, cnt, worker, ready, main, free, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 Init ==
     /\ kq = [ s \in SocketIds |-> 0 ]
@@ -102,6 +116,9 @@ Init ==
     /\ consumed = 0
     /\ fullDrops = 0
     /\ errors = 0
+    /\ stopping = FALSE
+    /\ exited = FALSE
+    /\ stopped = 0
 
 -----------------------------------------------------------------------------
 \* the environment: datagrams and errors arrive
@@ -111,21 +128,21 @@ Arrive(s) ==
     /\ kq[s] < Buffer
     /\ kq' = [ kq EXCEPT ![s] = @ + 1 ]
     /\ arrived' = arrived + 1
-    /\ UNCHANGED << errs, cnt, worker, ready, main, free, pc, cur, reads, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << errs, cnt, worker, ready, main, free, pc, cur, reads, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 KernelDrop(s) ==
     /\ arrived < MaxArrivals
     /\ kq[s] >= Buffer
     /\ arrived' = arrived + 1
     /\ kdrops' = kdrops + 1
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, pc, cur, reads, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, pc, cur, reads, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 Error(s, e) ==
     /\ errors < MaxErrors
     /\ e \in ErrorKinds
     /\ errs' = [ errs EXCEPT ![s] = Append( @, e ) ]
     /\ errors' = errors + 1
-    /\ UNCHANGED << kq, cnt, worker, ready, main, free, pc, cur, reads, arrived, kdrops, consumed, fullDrops >>
+    /\ UNCHANGED << kq, cnt, worker, ready, main, free, pc, cur, reads, arrived, kdrops, consumed, fullDrops, stopping, exited, stopped >>
 
 -----------------------------------------------------------------------------
 \* the worker
@@ -144,13 +161,15 @@ NextSocket ==
     /\ reads' = 0
     /\ pc' = IF cur = Sockets THEN "end" ELSE "read"
 
-\* kevent: a round over every socket
+\* kevent: a round over every socket, while main has not stopped (the loop
+\* reads quit at its top)
 Poll ==
     /\ pc = "poll"
+    /\ ~stopping
     /\ pc' = "read"
     /\ cur' = 1
     /\ reads' = 0
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_PUBLISH_FULL: the full bank goes to main and the worker fills
 \* the free one; under PublishOverReady a ready bank main has not taken is
@@ -169,7 +188,7 @@ PublishFull ==
             /\ worker' = ready
             /\ cnt' = [ cnt EXCEPT ![ready] = 0 ]
             /\ UNCHANGED free
-    /\ UNCHANGED << kq, errs, main, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, main, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_HOLD_FULL: the bank is full and main has not taken the last;
 \* the round stops and every socket keeps what it holds
@@ -178,7 +197,7 @@ HoldFull ==
     /\ Full
     /\ HoldWithoutPublish \/ ~( CanPublish \/ PublishOverReady )
     /\ pc' = "held"
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_BUDGET
 BudgetSpent ==
@@ -186,7 +205,7 @@ BudgetSpent ==
     /\ ~Full
     /\ reads >= Budget
     /\ NextSocket
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_READ: n datagrams read, each banked while there is room (with
 \* ReadPastRoom FALSE there always is); a short read drains the socket
@@ -205,7 +224,7 @@ Read(n) ==
        THEN NextSocket
        ELSE /\ reads' = reads + n
             /\ UNCHANGED << pc, cur >>
-    /\ UNCHANGED << errs, worker, ready, main, free, arrived, kdrops, consumed, errors >>
+    /\ UNCHANGED << errs, worker, ready, main, free, arrived, kdrops, consumed, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_EMPTY: EAGAIN
 ReadEmpty ==
@@ -215,7 +234,7 @@ ReadEmpty ==
     /\ errs[cur] = << >>
     /\ kq[cur] = 0
     /\ NextSocket
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_WEATHER: the error is cleared by the read that reports it
 ReadWeather ==
@@ -226,7 +245,7 @@ ReadWeather ==
     /\ Head( errs[cur] ) = "weather"
     /\ errs' = [ errs EXCEPT ![cur] = Tail( @ ) ]
     /\ reads' = reads + 1
-    /\ UNCHANGED << kq, cnt, worker, ready, main, free, pc, cur, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, cnt, worker, ready, main, free, pc, cur, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* DRAIN_STEP_FAILED: counted, the socket left for the round
 ReadFailed ==
@@ -237,7 +256,7 @@ ReadFailed ==
     /\ Head( errs[cur] ) = "failed"
     /\ errs' = [ errs EXCEPT ![cur] = Tail( @ ) ]
     /\ NextSocket
-    /\ UNCHANGED << kq, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* the round's end: its bank goes to main when main has taken the last and
 \* it holds datagrams, or only counts (the worker loop publishes a bank that
@@ -249,13 +268,13 @@ RoundPublish ==
     /\ worker' = free
     /\ free' = NoBank
     /\ pc' = "poll"
-    /\ UNCHANGED << kq, errs, cnt, main, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, main, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 RoundKeep ==
     /\ pc = "end"
     /\ ~( cnt[worker] > 0 /\ CanPublish )
     /\ pc' = "poll"
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 \* a held round: the worker sleeps, then polls again
 Sleep ==
@@ -263,25 +282,59 @@ Sleep ==
     /\ pc' = "poll"
     /\ cur' = 0
     /\ reads' = 0
-    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, ready, main, free, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
 
 -----------------------------------------------------------------------------
 \* main
 
 Consume ==
+    /\ ~exited
     /\ cnt[main] > 0
     /\ consumed' = consumed + cnt[main]
     /\ cnt' = [ cnt EXCEPT ![main] = 0 ]
-    /\ UNCHANGED << kq, errs, worker, ready, main, free, pc, cur, reads, arrived, kdrops, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, worker, ready, main, free, pc, cur, reads, arrived, kdrops, fullDrops, errors, stopping, exited, stopped >>
 
-\* rocketnet_msgx_receive_claim, once main has consumed its bank
+\* rocketnet_msgx_receive_claim, once main has consumed its bank, and never
+\* after main stopped (ClaimAfterStop: the code before R69). Main stops calling
+\* once the worker has exited (the server sees the transport stopped)
 Claim ==
+    /\ ~exited
+    /\ ~stopping \/ ClaimAfterStop
     /\ cnt[main] = 0
     /\ ready # NoBank
     /\ main' = ready
     /\ free' = main
     /\ ready' = NoBank
-    /\ UNCHANGED << kq, errs, cnt, worker, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors >>
+    /\ UNCHANGED << kq, errs, cnt, worker, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping, exited, stopped >>
+
+\* rocketnet_server_msgx_stop: what main has not consumed of its bank is
+\* counted stopped (main_stopped), and main claims nothing more
+\* (rocketnet_msgx_receive_stop)
+MainStop ==
+    /\ ~stopping
+    /\ stopping' = TRUE
+    /\ stopped' = stopped + cnt[main]
+    /\ cnt' = [ cnt EXCEPT ![main] = 0 ]
+    /\ UNCHANGED << kq, errs, worker, ready, main, free, pc, cur, reads, arrived, kdrops, consumed, fullDrops, errors, exited >>
+
+\* the worker's loop sees quit at its top: the bank it fills and a ready bank
+\* main has not claimed are counted stopped (RECEIVE_DROP_STOPPED)
+Exit ==
+    /\ pc = "poll"
+    /\ stopping
+    /\ ~exited
+    /\ exited' = TRUE
+    /\ stopped' = stopped + cnt[worker] + ( IF ready # NoBank THEN cnt[ready] ELSE 0 )
+    /\ cnt' = [ b \in Banks |-> IF b = worker \/ b = ready THEN 0 ELSE cnt[b] ]
+    /\ pc' = "exit"
+    /\ UNCHANGED << kq, errs, worker, ready, main, free, cur, reads, arrived, kdrops, consumed, fullDrops, errors, stopping >>
+
+\* the end: the worker has exited and nothing more arrives (the arrivals
+\* bound spent), a stutter
+Done ==
+    /\ exited
+    /\ arrived >= MaxArrivals
+    /\ UNCHANGED vars
 
 -----------------------------------------------------------------------------
 
@@ -296,6 +349,7 @@ Worker == \/ Poll
           \/ RoundPublish
           \/ RoundKeep
           \/ Sleep
+          \/ Exit
 
 MainStep == Consume \/ Claim
 
@@ -308,7 +362,7 @@ Next == \/ \E s \in SocketIds : Arrive(s)
         \/ \E n \in 1 .. Batch : Read(n)
         \/ ReadEmpty \/ ReadWeather \/ ReadFailed
         \/ RoundPublish \/ RoundKeep \/ Sleep
-        \/ Consume \/ Claim
+        \/ Consume \/ Claim \/ MainStop \/ Exit \/ Done
 
 Spec == Init /\ [][Next]_vars
 
@@ -323,10 +377,11 @@ TypeOK ==
     /\ { worker, main } \subseteq Banks
     /\ ready \in Banks \cup { NoBank }
     /\ free \in Banks \cup { NoBank }
-    /\ pc \in { "poll", "read", "end", "held" }
+    /\ pc \in { "poll", "read", "end", "held", "exit" }
     /\ cur \in 0 .. Sockets
     /\ reads \in Nat
-    /\ { arrived, kdrops, consumed, fullDrops, errors } \subseteq Nat
+    /\ { arrived, kdrops, consumed, fullDrops, errors, stopped } \subseteq Nat
+    /\ stopping \in BOOLEAN /\ exited \in BOOLEAN
 
 \* the three banks are the worker's, main's, and one ready or free
 HandOK ==
@@ -339,8 +394,13 @@ NoFullDrop == fullDrops = 0
 RECURSIVE SumOver(_, _)
 SumOver(f, S) == IF S = {} THEN 0 ELSE LET x == CHOOSE y \in S : TRUE IN f[x] + SumOver(f, S \ { x })
 
-\* every datagram that arrived is in a socket, a bank, main's hands or a drop
-Conserved == arrived = SumOver( kq, SocketIds ) + SumOver( cnt, Banks ) + consumed + kdrops + fullDrops
+\* every datagram that arrived is in a socket, a bank, main's hands, a drop,
+\* or counted stopped
+Conserved == arrived = SumOver( kq, SocketIds ) + SumOver( cnt, Banks ) + consumed + kdrops + fullDrops + stopped
+
+\* once the worker has exited no bank holds a datagram: every one read was
+\* consumed or counted stopped, none left in a bank nobody reads (R69)
+StopCounted == exited => SumOver( cnt, Banks ) = 0
 
 \* a held worker's bank is full (main may take the ready bank while the
 \* worker sleeps; the next round hands the full bank over)
@@ -351,7 +411,10 @@ HeldOnlyWhenFull == pc = "held" => Full
 HoldOnlyWhenNowhere == [][ ( pc' = "held" /\ pc # "held" ) => ( Full /\ ~CanPublish ) ]_vars
 
 \* with the worker and main fair, every datagram that arrives is main's or
-\* the kernel's drop in the end
-AllConsumed == <>[]( consumed + kdrops = arrived )
+\* the kernel's drop in the end, unless main stops first
+AllConsumed == <>[]( consumed + kdrops = arrived ) \/ <>stopping
+
+\* a stop ends the worker: it leaves its loop once main has stopped
+StopEnds == stopping ~> exited
 
 =============================================================================

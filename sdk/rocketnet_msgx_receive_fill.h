@@ -85,10 +85,11 @@ inline bool rocketnet_msgx_receive_publish( struct rocketnet_msgx_receive_banks_
 
 // RxClaim, under the receive mutex, once main has consumed its whole bank:
 // the ready bank becomes main's and main's old bank is free. False with
-// nothing ready
+// nothing ready, and always false once main has stopped (R69: a bank claimed
+// after the stop holds a tail no later update reads and nobody counts)
 inline bool rocketnet_msgx_receive_claim( struct rocketnet_msgx_receive_banks_t * banks )
 {
-    if ( banks->ready == ROCKETNET_MSGX_RECEIVE_NO_BANK )
+    if ( banks->stopped || banks->ready == ROCKETNET_MSGX_RECEIVE_NO_BANK )
     {
         return false;
     }

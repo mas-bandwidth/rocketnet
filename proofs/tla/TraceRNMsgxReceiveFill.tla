@@ -7,7 +7,9 @@
 (* step, with the operation the walk called (op: "step", one call of       *)
 (* rocketnet_msgx_receive_drain_step; "poll", "round" and "sleep", the     *)
 (* worker loop around it; "consume" and "claim", main, the claim through   *)
-(* rocketnet_msgx_receive_claim; "arrive" and "error", the kernel), its    *)
+(* rocketnet_msgx_receive_claim; "stop", main's stop through             *)
+(* rocketnet_msgx_receive_stop; "exit", the worker's exit; "arrive" and    *)
+(* "error", the kernel), its                                               *)
 (* arguments (the socket, the error's kind, the count a read took), the    *)
 (* action the code's result names (act) and every model variable after it *)
 (* (state).  Record 1 is "init".                                           *)
@@ -37,7 +39,8 @@ VARIABLES ti,        \* the index of the record the state matches
 VarsRec == [kq |-> kq, errs |-> errs, cnt |-> cnt, worker |-> worker, ready |-> ready,
             main |-> main, free |-> free, pc |-> pc, cur |-> cur, reads |-> reads,
             arrived |-> arrived, kdrops |-> kdrops, consumed |-> consumed,
-            fullDrops |-> fullDrops, errors |-> errors]
+            fullDrops |-> fullDrops, errors |-> errors, stopping |-> stopping,
+            exited |-> exited, stopped |-> stopped]
 
 \* the actions each operation of the code can be
 OpActs == [arrive |-> {"Arrive", "KernelDrop"},
@@ -47,7 +50,9 @@ OpActs == [arrive |-> {"Arrive", "KernelDrop"},
            round |-> {"RoundPublish", "RoundKeep"},
            sleep |-> {"Sleep"},
            consume |-> {"Consume"},
-           claim |-> {"Claim"}]
+           claim |-> {"Claim"},
+           stop |-> {"MainStop"},
+           exit |-> {"Exit"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
@@ -67,6 +72,8 @@ Act(a, x) == CASE a = "Arrive" -> Arrive(x[1])
                [] a = "Sleep" -> Sleep
                [] a = "Consume" -> Consume
                [] a = "Claim" -> Claim
+               [] a = "MainStop" -> MainStop
+               [] a = "Exit" -> Exit
 
 TraceInit ==
     /\ Init
