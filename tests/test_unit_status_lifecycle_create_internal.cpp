@@ -9,9 +9,14 @@
 // a failure of the allocation path is reached by a fault-injecting allocator
 // failing at each allocation in turn.
 //
+// rocketnet_init_internal CRYPTO_INIT_FAILED is reached in a development
+// build through the crypto source failure seam (sdk/rocketnet_test_seams.h),
+// which makes the open of sodium's random source fail
+// (test_lifecycle_init_crypto_failure_reports_and_unwinds).
+//
 // Not reachable in the unit tier:
-//   * rocketnet_init_internal PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
-//     the platform or sodium start to fail (no fault hook exists);
+//   * rocketnet_init_internal PLATFORM_INIT_FAILED, which needs the platform
+//     start to fail;
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
 
@@ -234,3 +239,72 @@ static void test_lifecycle_ex_reports_every_status()
 }
 
 REGISTER_UNIT_TEST( test_lifecycle_ex_reports_every_status );
+
+#if ROCKETNET_DEV
+
+#include "rocketnet_platform.h"
+#include "rocketnet_test_seams.h"
+
+// the platform's timer period calls, counted through to the table in effect:
+// a platform init that begins the period and a term that ends it pair up
+// (Windows; elsewhere neither call is made and both counts stay 0)
+
+static const struct rocketnet_platform_priority_calls_t * crypto_failure_previous_calls = NULL;
+static int crypto_failure_period_begins = 0;
+static int crypto_failure_period_ends = 0;
+
+static unsigned int crypto_failure_time_begin_period( unsigned int period )
+{
+    const unsigned int result = crypto_failure_previous_calls->time_begin_period( period );
+    if ( result == 0 )
+    {
+        crypto_failure_period_begins++;
+    }
+    return result;
+}
+
+static unsigned int crypto_failure_time_end_period( unsigned int period )
+{
+    crypto_failure_period_ends++;
+    return crypto_failure_previous_calls->time_end_period( period );
+}
+
+// init with the crypto source failing: false with CRYPTO_INIT_FAILED, the
+// platform it started is terminated again (its period ended), the library
+// is not initialized (term answers NOT_INITIALIZED), and once the seam is
+// cleared the same init succeeds
+
+static void test_lifecycle_init_crypto_failure_reports_and_unwinds()
+{
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+
+    crypto_failure_previous_calls = rocketnet_platform_priority_calls_current();
+    struct rocketnet_platform_priority_calls_t counting = *crypto_failure_previous_calls;
+    counting.time_begin_period = crypto_failure_time_begin_period;
+    counting.time_end_period = crypto_failure_time_end_period;
+    crypto_failure_period_begins = 0;
+    crypto_failure_period_ends = 0;
+    rocketnet_platform_set_priority_calls_for_testing( &counting );
+
+    rocketnet_dev_set_crypto_source_failure( true );
+    rocketnet_quiet( true );
+    int status = -1;
+    const bool initialized = rocketnet_init_internal( NULL, NULL, NULL, &status );
+    rocketnet_quiet( false );
+    rocketnet_dev_set_crypto_source_failure( false );
+
+    rocketnet_platform_set_priority_calls_for_testing( crypto_failure_previous_calls );
+
+    check( !initialized );
+    check( status == ROCKETNET_STATUS_CRYPTO_INIT_FAILED );
+    check( crypto_failure_period_ends == crypto_failure_period_begins );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_NOT_INITIALIZED );
+
+    status = -1;
+    check( rocketnet_init_internal( NULL, NULL, NULL, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_lifecycle_init_crypto_failure_reports_and_unwinds );
+
+#endif // #if ROCKETNET_DEV
