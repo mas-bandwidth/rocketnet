@@ -52,6 +52,7 @@ fake shard0 0 'shard 0/2: 1 of 2 cases' 'test_b' 'SKIPPED test_a: p_root' 'skipp
 fake shard1 0 'shard 1/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 fake shard0_lost 0 'shard 0/2: 1 of 2 cases' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 fake shard0_noline 0 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
+fake report 0 'jobs: 4 (cpus this run may use: 4)' 'test_b' 'SKIPPED test_a: p_root' 'skipped: 1' '' 'slowest cases:' '    1.200s  test_b' 'peak rss:' '     10 MiB (bound 20)  test_b' '' '*** ALL TESTS PASSED ***' ''
 fake stranger 0 'test_b' 'test_z' 'SKIPPED test_a: p_root' 'skipped: 1' '' '*** ALL TESTS PASSED ***' ''
 
 failures=0
@@ -73,6 +74,7 @@ expect() {
 }
 
 expect 0 "clean suite, exact skips" t "$work/good"
+expect 0 "the ROCKETNET_TEST_REPORT lines are reports, not cases" t "$work/report"
 expect 0 "carriage returns removed" t "$work/crlf"
 expect 1 "suite failed: the suite's exit" t "$work/red_suite"
 expect 1 "unlisted skip" t "$work/unlisted"

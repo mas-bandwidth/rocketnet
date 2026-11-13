@@ -298,6 +298,8 @@ COMMIT_LINE_RE = re.compile(r"commit available [0-9]+ MiB of a [0-9]+ MiB limit,
                             r"|commit lock: test_[a-z0-9_]+ waited [0-9.]+ s for another run's full-capacity case")
 
 
+# ROCKETNET_TEST_REPORT=1 also prints the job count before the cases (tests/suite_runner.h)
+JOBS_LINE_RE = re.compile(r"jobs: [0-9]+ \(cpus this run may use: [0-9]+\)")
 SHARD_LINE_RE = re.compile(r"shard ([0-9]+)/([0-9]+): [0-9]+ of [0-9]+ cases")
 
 
@@ -342,6 +344,8 @@ def check_functional_log(lines, rows, exec_names, other_names=frozenset(), shard
             continue
         if KEEP_GOING_PASS_RE.fullmatch(line):
             keep_going += 1
+            continue
+        if JOBS_LINE_RE.fullmatch(line):
             continue
         m = SHARD_LINE_RE.fullmatch(line)
         if m:
