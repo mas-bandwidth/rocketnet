@@ -15,9 +15,6 @@ set. Commands below run from the repository root unless stated otherwise.
 
 ## Vendored test dependencies
 
-- `serialize.h` — mas-bandwidth/serialize 1.15, vendored so the serialize
-  read of rocketnet.h (the C++ stream surface) is compiled and exercised by
-  `bin/test_serialize`. Refresh it when the serialize pin moves.
 - `wycheproof/` — C2SP/wycheproof known-answer vectors for the primitives
   rocketnet calls (ChaCha20-Poly1305, X25519, Ed25519), parsed by
   tests/wycheproof.h. See tests/wycheproof/README.md for the pin and hashes.
@@ -56,7 +53,7 @@ cases in `tests/functional/corpus_consistency.cpp`, rows of
 ## Running the suite
 
 `./bin/test` and `./bin/functional` print one line per test, its name, in
-suite order, then `*** ALL TESTS PASSED ***`, as netcode's tests do. Every
+suite order, then `*** ALL TESTS PASSED ***`. Every
 name is `test_` then lowercase snake_case, and the suite fails before it runs
 anything when a registered name is not (`suite_name_is_test_snake_case` in
 `tests/suite_runner.h`). A failing test prints everything it wrote, including
@@ -89,6 +86,11 @@ nightly tier (`ROCKETNET_TEST_NIGHTLY=1`).
 The unit suite has a nightly tier too (`rocketnet_unit_nightly_cases` in
 `tests/test.cpp`): a unit case over a second whose smaller size runs on every
 commit, such as the per-client isolation case at `ROCKETNET_MAX_CLIENTS`.
+On the nightly tier only, `ROCKETNET_TEST_KEEP_GOING=1` runs every case past
+a failure; the summary names each failed case and counts the cases run
+against the cases collected, and the suite still exits 1. `nightly.yml` sets
+it on every nightly-tier step; a per-commit run stops at the first failure
+(`tests/suite_runner.h`, `suite_keep_going`; `tools/test_suite_keep_going.py`).
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See

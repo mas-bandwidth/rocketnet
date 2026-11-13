@@ -516,7 +516,7 @@ static void test_server_payload_batch_holds_the_receive_budget()
             {
                 break;
             }
-            uint8_t * payload = frame + context.payload_index;
+            uint8_t * payload = frame;
             payload[0] = (uint8_t) ( sent & 0xFF );
             payload[1] = (uint8_t) ( ( sent >> 8 ) & 0xFF );
             payload[2] = (uint8_t) ( ( sent >> 16 ) & 0xFF );

@@ -2,10 +2,9 @@
   "upstream_version": "1.0.22",
   "upstream_commit": "77e1ce5d6dee871c49ef211222ba18ef0c486bda",
   "archive_sha256": "adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349",
-  "baseline_commit": "fc473eb628e080acaaebed2659e1f9ee85c6a7c2",
   "baseline_sha256": {
-    "sodium.c": "b2bf049faccbcf18725c6805cdafe409f332604477e17e4224df152ee3eb0dd5",
-    "sodium.h": "393663bfe1905a262c2828dd41a79136cf9024477433466c66586a48bd0e6876"
+    "sodium.c": "b00575588b15bb719a8153c0b891598cb8ffa5203d574e740b6b48e8a398641a",
+    "sodium.h": "7498d20114ac4930fc65710342709071cc99a00b4cdf3b715a732c0771fa16f1"
   },
   "local_sha256": {
     "local/dispatch.h.in": "9c31a13a4419d273a8f1862cde5a58168708e5500f4084469b46469909022ff3",

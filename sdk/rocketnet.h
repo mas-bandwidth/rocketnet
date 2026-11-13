@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.7"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.8"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        7
+    #define ROCKETNET_VERSION_PATCH                        8
 
 #else // !ROCKETNET_DEV
 
@@ -422,7 +422,14 @@ enum rocketnet_status_t
     /// endpoint is still registered with it. Destroy every server and client
     /// that uses the hub, then destroy the hub.
 
-    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34,
+
+    /// Start refused: the platform refused the transport's bind. Another
+    /// socket holds the address and port, or the address is not one this host
+    /// can bind. Free the port or choose another, or set a local address of
+    /// this host.
+
+    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35
 };
 
 /// The process-wide log levels, least to most verbose. A log callback may
@@ -1811,7 +1818,11 @@ struct rocketnet_server_config_t
     /// carries a port (":0" too), or is multicast or the broadcast address; a bind address for a family the
     /// server does not serve; and any bind address on a server that serves
     /// both families, whose one dual-stack socket binds the IPv6 wildcard:
-    /// to bind a specific address, serve one family. The rio transport with
+    /// to bind a specific address, serve one family. The environment form
+    /// is ambient, set once for a host or a test run, so it applies only to
+    /// a server that serves IPv4 alone: an IPv6-only server and a server of
+    /// both families ignore it, with one log line, where they refuse the
+    /// field. The rio transport with
     /// more than one lane requires it (num_xdp_queues). The xdp transport
     /// binds no socket and does not read it: it serves the interface that
     /// holds the served address.
@@ -1825,7 +1836,9 @@ struct rocketnet_server_config_t
     /// start refuses the same cases, with an IPv6 multicast address
     /// (ff00::/8), an IPv4-mapped address (::ffff:a.b.c.d: set
     /// bind_ipv4_address instead) and a link-local address (fe80::/10, whose
-    /// bind needs an interface scope the field cannot carry) among them.
+    /// bind needs an interface scope the field cannot carry) among them. Its
+    /// environment form applies only to a server that serves IPv6 alone, as
+    /// above.
 
     const char * bind_ipv6_address;
 };
@@ -2899,7 +2912,9 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can bind,
+/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when every transport tried was
+/// refused its bind, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// transport can bind for other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
@@ -3268,6 +3283,40 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// @param server The server. NULL counts as API misuse and does nothing.
 
 ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t * server );
+
+/// Finishes the message open on client_index.
+/// Uses the same size, return and abort rules as
+/// rocketnet_server_finish_message. Use it when fill threads each hold a
+/// message open on their own clients; rocketnet_server_finish_message,
+/// which names no client, finishes only while one message is open on the
+/// whole server.
+///
+/// Needs a message opened by rocketnet_server_start_message on client_index
+/// of a running server; otherwise it asserts in a debug build and returns 0
+/// in a release build. Thread: a fill call. Between a main-thread call and
+/// the next, any number of threads may make fill calls, each client index
+/// from one thread; see rocketnet_server_t.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot the message was opened on, 0 to
+/// max_clients - 1. Any other value counts as API misuse and returns 0.
+/// @param bytes_written The bytes written into the open message.
+/// @return The message's nonzero receipt serial, or 0 when nothing was
+/// queued.
+
+ROCKETNET_EXPORT uint32_t rocketnet_server_finish_client_message( struct rocketnet_server_t * server, int client_index, int bytes_written );
+
+/// Cancels the message open on client_index and releases its memory.
+/// Does nothing if no message is open there.
+///
+/// Callable running or stopped. Thread: a fill call, as
+/// rocketnet_server_finish_client_message.
+///
+/// @param server The server. NULL counts as API misuse and does nothing.
+/// @param client_index The slot, 0 to max_clients - 1. Any other value
+/// counts as API misuse and does nothing.
+
+ROCKETNET_EXPORT void rocketnet_server_abort_client_message( struct rocketnet_server_t * server, int client_index );
 
 /// Returns true if rocketnet_server_start_message to client_index with the
 /// same channel, reliability and max_bytes would be given room now.

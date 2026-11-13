@@ -3666,13 +3666,13 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     }
 
     struct rocketnet_packet_context_t context;
-    uint8_t * frame = rocketnet_client_transport_start_packet( client_transport, packet_bytes, &context );
-    if ( !frame )
+    uint8_t * payload = rocketnet_client_transport_start_packet( client_transport, packet_bytes, &context );
+    if ( !payload )
     {
         return;
     }
 
-    memcpy( frame + context.payload_index, packet_data, (size_t) packet_bytes );
+    memcpy( payload, packet_data, (size_t) packet_bytes );
 
     rocketnet_client_transport_finish_packet( client_transport, &context, packet_bytes );
 
@@ -3761,7 +3761,10 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         return NULL;
     }
 
-    return frame;
+    // the caller's view is the payload, not the frame: the wire header in
+    // front of it is the transport's own (layers.h, the send surface)
+
+    return frame + context->payload_index;
 }
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context )

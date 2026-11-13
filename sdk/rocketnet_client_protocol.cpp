@@ -883,7 +883,7 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
                                                          const uint8_t * type_data,
                                                          int type_data_bytes );
 
-// The state rung of every session type, as netcode.io's client: a keep-alive,
+// The state rung of every session type (TRANSPORT.md t11.3): a keep-alive,
 // disconnect or standalone ack is processed from sending connection response
 // on, where the session keys are born; a payload only once
 // connected. The keep-alive that connects the client can arrive after the
@@ -1198,7 +1198,7 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
         ROCKETNET_COUNTER_CLIENT_PAYLOAD_WRONG_OPENED_SIZE
     };
 
-    // payloads are processed only once connected, as netcode.io's client:
+    // payloads are processed only once connected (TRANSPORT.md t11.3):
     // see rocketnet_client_session_state_accepts
 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];

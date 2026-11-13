@@ -7,12 +7,14 @@ and a system sodium header in the same translation unit.
 
 ## Provenance
 
-The input baseline is the byte-for-byte netcode pair at
-`fc473eb628e080acaaebed2659e1f9ee85c6a7c2`, also shared by yojimbo. Its upstream
-provenance and 1.0.21/1.0.22 hardening patches are recorded in netcode's
-`sodium/NOTES.md`. It contains optimized ChaCha20/Poly1305, random, core,
-runtime and utilities. We verify its two SHA256 values before extending it;
-we do not claim to reconstruct its historical local patches from upstream.
+The input baseline is the pair in `baseline/` (`sodium.c.in`, `sodium.h.in`),
+committed here and SHA-256 pinned in `manifest.json`. It is an amalgamation
+of libsodium code with local 1.0.21/1.0.22 hardening patches, made before this
+repository took it in, and its build switches carry RocketNet's names
+(`ROCKETNET_X64`, `ROCKETNET_AVX`, `ROCKETNET_AVX2`, `ROCKETNET_CRYPTO_LOGS`).
+It contains optimized ChaCha20/Poly1305, random, core, runtime and utilities.
+The generator verifies its two SHA256 values before extending it; we do not
+claim to reconstruct its historical local patches from upstream.
 
 The extension comes from the official libsodium 1.0.22 release archive, whose
 SHA256 is `adbdd8f16149e81ac6078a03aca6fc03b592b89ef7b5ed83841c086191be3349`
@@ -76,7 +78,7 @@ language already performs at the site, so every value is unchanged:
 | `blake2b-compress-ssse3.c`; `blake2b-compress-avx2.c` | `-Wsign-conversion` (`uint64_t` message words and counters into `_mm_set_epi64x`'s `long long`) | the message words are `const int64_t m0 = (int64_t) ...` (used only as those arguments); the counters are passed `(int64_t) S->t[0]` |
 | `blake2b-compress-ref.c` | `-Wsign-conversion` (`int i` times `sizeof`) | `(size_t) i` |
 | `blake2b-compress-avx2.c` | `-Wshadow` (amalgamation: the macro local `d` hides ed25519's file-scope `d`) | `d` added to the file's `renames` |
-| `stream_salsa20.c` (`#if HAVE_AMD64_ASM`); baseline `sodium.c` (`HAVE_WEAK_SYMBOLS`, `HAVE_ALLOCA`, `NETCODE_CRYPTO_LOGS`); baseline `sodium.h` (`NETCODE_X64`, `NETCODE_AVX`, `NETCODE_AVX2`) | `-Wundef` | `defined(X) && X`, which `#if` already evaluates for an unset `X` |
+| `stream_salsa20.c` (`#if HAVE_AMD64_ASM`); baseline `sodium.c` (`HAVE_WEAK_SYMBOLS`, `HAVE_ALLOCA`, `ROCKETNET_CRYPTO_LOGS`); baseline `sodium.h` (`ROCKETNET_X64`, `ROCKETNET_AVX`, `ROCKETNET_AVX2`) | `-Wundef` | `defined(X) && X`, which `#if` already evaluates for an unset `X` |
 | baseline `sodium_compare`, `sodium_add`, `sodium_sub` | `-Wconversion` (0/1 flags in `unsigned char`; `uint_fast16_t` may be 16 bits wide) | compound assignments spelled `x = (T) (x op e)` |
 | baseline `crypto_verify_n` (SSE2) | `-Wcast-qual` (each load cast the `volatile` off the pointed-to data for `_mm_loadu_si128`) | the pointers stay `volatile` and point to non-`volatile` data, which every load already treated it as |
 | baseline ChaCha20 (SSSE3, AVX2) and Poly1305 (SSE2) | `-Wsign-conversion`, `-Wconversion` (`uint32_t`/`uint64_t` words into and out of the intrinsics' `int`/`long long`; `~mask` into the length's type) | `(int)`, `(int64_t)`, `(uint32_t)` and `(unsigned long long) ~mask` at each site |
@@ -172,8 +174,10 @@ From the repository root:
 python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 ```
 
-`--fetch` downloads only missing inputs and verifies their hashes before saving
-them. Omit it for a fully offline check with previously downloaded inputs.
+The baseline pair is read from `sodium/baseline/`. `--fetch` downloads the
+libsodium release archive when it is missing and verifies its hash before
+saving it. Omit it for a fully offline check with a previously downloaded
+archive.
 Omit `--check` to regenerate the committed pair. `--output` selects a scratch
 output directory. A missing input, hash mismatch, unresolved include or changed
 output fails the check.
@@ -199,7 +203,7 @@ rebuilds it from its pinned sources, and CI runs that check on these legs:
 
 | Input | Reproduced by | Runs on | Does not apply |
 |---|---|---|---|
-| `sodium/sodium.c`, `sodium/sodium.h`: the netcode baseline at `baseline_commit` plus the libsodium release archive, both SHA-256 pinned in `sodium/manifest.json` | `python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check` (`python` on Windows), step "Reproduce the committed sodium pair" | Linux Release (b), macOS Release, Windows Release (b) | none: every platform compiles the pair |
+| `sodium/sodium.c`, `sodium/sodium.h`: the committed baseline pair in `sodium/baseline/` plus the libsodium release archive, both SHA-256 pinned in `sodium/manifest.json` | `python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check` (`python` on Windows), step "Reproduce the committed sodium pair" | Linux Release (b), macOS Release, Windows Release (b) | none: every platform compiles the pair |
 | the embedded XDP object `server_xdp.o`, built from the sources `cmake/XdpSources.cmake` lists (`sdk/xdp/server_xdp.c`, `sdk/rocketnet_wire.h`, `sdk/rocketnet_xdp_limits.h`, `sdk/rocketnet_history.h`) | `python3 tools/check_xdp_archive.py`, step "Embedded XDP object is reproducible and current": a byte-identical object from two checkouts, equal to the build tree's embedded copy | Linux Release (a) and Debug | macOS and Windows embed no XDP object; there the same tool checks only that every listed source exists (Windows: `--committed-only`) |
 
 `tests/xdp_host/linux` and `tests/xdp_host/bpf` are test-only headers for the

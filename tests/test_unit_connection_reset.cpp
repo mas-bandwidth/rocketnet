@@ -1267,7 +1267,7 @@ static void test_connection_reset_drained_frame_charges_sealing_connection_only(
     rocketnet_packet_context_t context;
     uint8_t * frame = rocketnet_server_transport_start_packet( transport, slot, (int) sizeof( payload ), &context );
     check( frame );
-    memcpy( frame + context.payload_index, payload, sizeof( payload ) );
+    memcpy( frame, payload, sizeof( payload ) );
     const int sealed = rocketnet_server_transport_finish_packet( transport, &context, (int) sizeof( payload ) );
     check( sealed > 0 );
 

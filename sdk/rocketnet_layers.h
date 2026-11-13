@@ -508,8 +508,8 @@ int rocketnet_client_transport_payloads( struct rocketnet_client_transport_t * c
  *
  * @param client_transport Client transport; NULL is a counted no-op returning NULL.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when reservation fails.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when reservation fails.
  */
 uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
@@ -777,6 +777,19 @@ struct rocketnet_server_transport_config_t
  */
 bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const struct rocketnet_address_t * public_address,
                                                       int serves_both, struct rocketnet_address_t * bind_address, int * status );
+
+/**
+ * @brief Drops a bind address the environment set for a family the server cannot bind specifically.
+ *
+ * @param[in,out] config The config after the environment pass.
+ * @param[in] ipv4_before bind_ipv4_address before the environment pass.
+ * @param[in] ipv6_before bind_ipv6_address before the environment pass.
+ * @param[in] binds_ipv4 Nonzero when the server serves IPv4 alone, so an IPv4 bind address applies.
+ * @param[in] binds_ipv6 Nonzero when the server serves IPv6 alone, so an IPv6 bind address applies.
+ * @details The environment is ambient, set once for a whole host or test run, so ROCKETNET_SERVER_BIND_IPV4_ADDRESS and ROCKETNET_SERVER_BIND_IPV6_ADDRESS apply only to a server of that one family: for another family, and for either on a server of both families, the field goes back to its value before the environment pass, with one log line. The environment never makes a server fail to start that way. A config field set there is still refused by rocketnet_server_transport_resolve_bind_address.
+ */
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 );
 
 // a NULL config is a counted no-op
 /** @brief Fill a server transport config with its defaults.
@@ -1098,10 +1111,11 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
  */
 int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
-// the send surface is acquire, write, commit: start_packet hands back a
-// 16-aligned frame; the payload is written at frame + payload_index --
-// itself 16-aligned, capacity a multiple of eight, so any word-based
-// serializer roots there directly -- and finish_packet seals it in place
+// the send surface is acquire, write, commit: start_packet hands back the
+// payload pointer, 16-aligned, with context->payload_capacity bytes behind
+// it, a multiple of eight, so any word-based serializer roots there
+// directly. The wire header in front of the payload is the transport's own
+// and is never the caller's to write. finish_packet seals it in place
 // on the calling thread and stages it. Nothing is copied at any step; the
 // packet is encrypted where it was written. send_packets flushes
 // everything staged.
@@ -1158,9 +1172,9 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
  */
 struct rocketnet_packet_context_t
 {
-    /** @brief Reserved frame, borrowed for the active lease. */
+    /** @brief The transport's own: the whole wire frame of the lease. Write at the pointer start_packet returns, never here. */
     uint8_t * frame;
-    /** @brief Byte offset from frame to the payload start. */
+    /** @brief The transport's own: byte offset from frame to the payload start_packet returns. */
     int payload_index;
     /** @brief Writable payload capacity in bytes. */
     int payload_capacity;
@@ -1172,15 +1186,24 @@ struct rocketnet_packet_context_t
     int client_index;
 };
 
+struct rocketnet_fill_phase_t;
+/**
+ * @brief The transport's fill-phase check (sdk/rocketnet_fill_phase.h), which the message layer above it brackets its own main-thread operations and fill calls with.
+ *
+ * @param server_transport Server transport; NULL returns NULL.
+ * @return The transport's fill phase, valid for the transport's life.
+ */
+struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport or context is a counted no-op that returns NULL
 /**
- * @brief Reserves a send frame for one connected server client.
+ * @brief Reserves a send frame for one connected server client and returns its writable payload.
  *
  * @param server_transport Server transport; NULL is a counted no-op returning NULL.
  * @param client_index Connected client slot index.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
  */
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 

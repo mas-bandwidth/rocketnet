@@ -25,10 +25,13 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_standard_rules.h"
 
-// The region's room refusals so far: a start that moves this was refused for no room (m1.7)
+// The region's room refusals so far: a start that moves this was refused for
+// no room (m1.7). The region's own count, which only this connection's filler
+// writes: the owner's counters are shared by every connection, and another
+// filler's refusal between two reads of them would read as this one's.
 static uint64_t rn_endpoint_room_refusals( const rn_region_t * region )
 {
-    return region->counters ? region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] + region->counters->values[ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL] : 0;
+    return region->room_refusals;
 }
 
 static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t amount = 1 )

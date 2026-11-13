@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Second witnesses for admission rungs that one case each used to hold
-// (DIFFERENTIAL-JUDGEMENT.md, section 5): the address flags (t6.2, t6.4
+// Second witnesses for admission rungs that one case each used to hold:
+// the address flags (t6.2, t6.4
 // step 2, t12 rule 6), the signed zero pad (t1.4 rule 3, t6.2), the signed
 // server key (t6.4 step 3, t12 rule 6), the private zero pad (t1.4 rule 3,
 // t6.1) and the sealed expiry (t6.1, t6.4 step 6). The first witnesses edit

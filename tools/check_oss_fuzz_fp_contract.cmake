@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.15)
 # =on still fuses within an expression), so without an explicit flag the fuzzed
 # build contracts float arithmetic and diverges bit-wise from every CMake
 # build. This pins -ffp-contract=off onto every compile line in the script
-# (mirrors mas-bandwidth/reliable's tools/symbols/check_oss_fuzz_fp_contract.cmake).
+# so the OSS-Fuzz build computes what every CMake build computes.
 #
 # cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=<path> -P tools/check_oss_fuzz_fp_contract.cmake
 
