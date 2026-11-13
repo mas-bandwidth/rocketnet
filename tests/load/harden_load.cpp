@@ -2099,7 +2099,7 @@ static void harden_profile_run( harden_profile_t * p )
 }
 #endif // #if defined( _WIN32 )
 
-
+#if defined( __linux__ )
 // pins every thread of this process but the calling one to its own core, first_cpu upward,
 // in thread id order; prints each as harden_net_threads
 static void harden_pin_network_threads( int first_cpu )
