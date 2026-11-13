@@ -4358,7 +4358,15 @@ struct fault_case_t
     void ( *run )();
 };
 
+// every case, in the order the no-argument run takes them; each runs by its
+// name too, and a name not here fails the run
 static const fault_case_t fault_cases[] = {
+    { "test_iocp_transport_create_cleanup", test_create_cleanup },
+    { "test_iocp_transport_completion_owns_frames", test_completion_owns_frames },
+    { "test_iocp_transport_uso_run_owns_frames", test_uso_run_owns_frames },
+    { "test_iocp_transport_datagrams_and_producers", test_datagrams_and_producers },
+    { "test_iocp_transport_receive_publication_never_waits", test_receive_publication_never_waits },
+    { "test_iocp_transport_receive_ready_banks_fifo", test_receive_ready_banks_fifo },
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
     { "test_iocp_transport_receive_boundaries", test_receive_boundaries_both_paths },
     { "test_iocp_transport_completion_batches_counted", test_completion_batches_both_paths },
@@ -4402,7 +4410,8 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_lanes_port_zero_never_held", test_rio_lanes_port_zero_never_held },
 };
 
-// With no argument every case runs; with names, only those cases run.
+// With no argument every case runs; with names, only those cases run, and a
+// name no case has fails the run (CHECK( found )).
 
 int main( int argc, char ** argv )
 {
@@ -4413,12 +4422,6 @@ int main( int argc, char ** argv )
 
     if ( argc < 2 )
     {
-        test_create_cleanup();
-        test_completion_owns_frames();
-        test_uso_run_owns_frames();
-        test_datagrams_and_producers();
-        test_receive_publication_never_waits();
-        test_receive_ready_banks_fifo();
         for ( const fault_case_t & c : fault_cases )
         {
             c.run();
