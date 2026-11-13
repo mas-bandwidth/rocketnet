@@ -5,7 +5,7 @@
 # The same binaries run unbounded by hand for the multi-day soaks on real
 # hardware: ./bin/soak_sim and ./bin/soak, and belief comes after days.
 #
-# The second job, `sanitized-soak`, arrived here on 2026-09-13 from ci.yml
+# The `sanitized-soak` job arrived here on 2026-09-13 from ci.yml
 # because the per-commit tier finishes in one to two minutes:
 # at 297s it was the wall of the whole gate. It came across unchanged -- same
 # name, same flags, same seed, same count -- because a leg that is too slow
@@ -713,7 +713,10 @@ jobs:
   #
   # WHAT THE PER-COMMIT GATE STILL HAS after the move, so the loss is named
   # rather than assumed: the `sanitizers` job runs asan + ubsan over the whole
-  # suite on every commit, and `tsan` runs the threaded transport. What this
+  # unit suite (two shards) and, of the functional suite, three named cases
+  # (session reconnect isolation, transport ring exhaustion, loopback UDP)
+  # with test_lifecycle, test_transport and test_sodium, on every commit, and
+  # `tsan` runs the threaded transport. What this
   # leg alone carries is the pairing of the STATEFUL simulator's hostile-lite
   # wire with the sanitizers, and LSan -- the one leak check the estate runs
   # against a leak-clean-by-construction harness, so a report here is a new
@@ -809,59 +812,3 @@ jobs:
           name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
           if-no-files-found: ignore
-
-  # Nightly validation of the six validation-tool self-test suites
-  # (defense in depth: ci.yml runs them every commit; nightly re-runs them
-  # against the current ref so a runner drift that only shows up on the
-  # nightly host is caught there). Same shape as the per-commit job: each
-  # suite its own step, full output printed, nonzero exit fails the step,
-  # and a zero-discovered-tests pass fails the count line.
-  validation-tool-selftests:
-    name: validation tool selftests
-    runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 7200
-    steps:
-
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-
-      - name: Test the frame-budget checker's verdicts
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-      - name: Test the server-calls checker's verdicts
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-      - name: Test the split-load checker's receipts
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-      - name: Test the test-environment checker's inventory
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-      - name: Test the 1000-client load profiler's provenance
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
-
-      - name: Test the release-version block and workflow
-        run: |
-          set -euo pipefail
-          output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
-          printf '%s\n' "$output"
-          grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
