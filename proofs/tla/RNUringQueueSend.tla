@@ -27,7 +27,7 @@
 (* full is the stop's bounded retry, layer L3).                            *)
 (*                                                                         *)
 (* A segmented run its destination refuses is resent plain by the reap     *)
-(* (RNSegmentRefusal, RNUringSendPhases ReapRefused); here that is an      *)
+(* (RNSegmentRefusal, RNUringQueueWorker ReapRefused); here that is an     *)
 (* "eagain" that hands the slots back, the same ownership step.            *)
 (*                                                                         *)
 (* The checked claims:                                                     *)

@@ -593,14 +593,13 @@ it each queue's multishot msghdr reserves a control area for the `UDP_GRO`
 cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
 a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
 returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
-segment is size-checked and copied into the fill bank before the buffer goes
-back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A
-receive is copied only while the fill bank has room for a whole coalesced
-receive (64 datagrams; of a longer one, the first 64 are copied and each
-datagram past them is counted in `RECEIVE_DROPPED_OVERFLOW`); otherwise it is held with its buffer, in arrival order, until a swap
-brings room, and the completions behind it, sends among them, are reaped in
-the same call (`proofs/tla/RNUringReapLayout.tla`). Destroy's drain copies
-regardless and counts what the bank cannot take as `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
+segment is size-checked and copied into the queue's receive bank before the
+buffer goes back to the ring (`proofs/tla/RNUringQueueReceive.tla` and
+`proofs/tla/RNUringQueueReceiveLayout.tla`, `BuffersKept`). Of a coalesced
+receive longer than `ROCKETNET_URING_RECEIVE_MAX_SEGMENTS` (64) datagrams, the
+first 64 are taken and each datagram past them is counted in
+`RECEIVE_DROPPED_OVERFLOW`; a datagram the bank has no room for is counted
+`BANK_FULL`, and its buffer goes back to the ring all the same. `GRO_BATCHES` counts buffers that held more than
 one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
 taken as one datagram (the GSO transport's fault). Created with
 `ROCKETNET_SERVER_URING_DISABLE_GRO`, no control area is reserved and a
@@ -640,9 +639,10 @@ false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
 completion, not a timeout, authorizes reclamation.
-The send staging (a send run as one send whose completion frees every slot of
-the run), the two receive banks, the per-call completion budget and destroy are
-modelled in `proofs/tla/RNUringDriver.tla`.
+Each queue's send (`proofs/tla/RNUringQueueSend.tla`), its receive bank
+(`proofs/tla/RNUringQueueReceive.tla`, `proofs/tla/RNUringQueueReceiveLayout.tla`,
+`proofs/tla/RNUringQueueBankLayout.tla`) and its worker
+(`proofs/tla/RNUringQueueWorker.tla`) are modelled one per module.
 
 ## The XDP receive filter
 

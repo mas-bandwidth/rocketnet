@@ -85,8 +85,8 @@ reservation until its phase is handed off and retired; that is
 `RNRioSendSlotLayout.tla`'s `NoReissue`.
 
 The lanes' sockets, workers, receive banks and the prefilter: each lane is the
-single-lane transport `RNRioWorker.tla`, `RNRioDriver.tla` and
-`RNRioSendSlotLayout.tla` check, and the prefilter in the worker is
+single-lane transport `RNRioWorker.tla` and `RNRioSendSlotLayout.tla`
+check, and the prefilter in the worker is
 `RNRioWorker.tla`'s `NoGarbageBanked`. The port shared by the lanes (an
 exclusive probe bind first, then `SO_REUSEADDR`) is tested on real sockets in
 `tests/test_iocp.cpp`.

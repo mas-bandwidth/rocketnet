@@ -1,9 +1,8 @@
 # RNRioSendSlotLayout
 
 The RIO server transport's send slots at their layout, in
-`sdk/rocketnet_server_rio_windows.cpp`. `RNRioDriver.tla` checks the slots
-with a reservation that stops at the queue size; this model carries the
-reservation counter at its own width, the three phases and the `send_ready`
+`sdk/rocketnet_server_rio_windows.cpp`. It carries the reservation counter
+at its own width, the three phases and the `send_ready`
 FIFO of phases, so a counter that wraps is visible.
 
 ## State

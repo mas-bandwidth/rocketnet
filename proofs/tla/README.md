@@ -156,13 +156,11 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsendspans` | Send-span ring storage and ownership. |
 | `rnsentmap` | The sent-packet map against the window (README-RNSentMap.md). |
 | `rnwindow` | Abstract reliable sender/receiver window. |
-| `rnuringdriver` | io_uring transport (README-RNUringDriver.md). |
 | `rnclientio` | Client I/O ownership and progress in threaded and step-driven modes. |
 | `rnclientiodecrypt` | Decrypt on the client I/O thread. |
 | `sessionacks` | Session ACK window and retained sent-ring bitmaps. |
 | `rnxdpreplay` | Kernel replay high-water map, reconnects, refused operations and held replies (README-RNXdpReplay.md). |
 | `rnxdpgatewayrefresh` | The XDP server's gateway refresh on the platform monotonic clock, its netlink resolve of the known gateway's neighbour entry, and the handoff of the gateway MAC to the fill threads, a MAC in two halves (RNXdpGatewayRefresh.tla). |
-| `rnriodriver` | Historical caller-driven RIO transport design (README-RNRioDriver.md); current worker behavior is RNRioWorker. |
 | `rnlivefleetrun` | Live fleet run lifecycle (docs/LIVE-XDP.md). |
 | `rnoutgoingbuild` | The outgoing build (docs/OUTGOING-BUILD.md). |
 | `rnsimfaults` | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7). |
@@ -215,8 +213,6 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
 | `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
-| `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
-| `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
 | `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
 | `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6 (README-RNSequencingWrap.md). |
 

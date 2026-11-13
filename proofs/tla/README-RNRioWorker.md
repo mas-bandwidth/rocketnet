@@ -1,10 +1,8 @@
 # RNRioWorker: the RIO server transport's I/O worker
 
 `RNRioWorker.tla` models the Windows Registered I/O server transport in
-`sdk/rocketnet_server_rio_windows.cpp` with its background I/O worker. It
-supersedes `RNRioDriver.tla` for the threading and the handoffs. That module
-keeps its claims about slots and slices, and its README says which of its
-paths changed.
+`sdk/rocketnet_server_rio_windows.cpp` with its background I/O worker, its
+threading and its handoffs.
 
 RIO request and completion queues are unsynchronized. Sends and receives
 share the socket's request queue (the `RIOCreateRequestQueue` remarks). So

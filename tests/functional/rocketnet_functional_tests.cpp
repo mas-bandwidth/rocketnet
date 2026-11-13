@@ -5211,7 +5211,7 @@ void rocketnet_test_server_transport_io_pin_rio()
     rocketnet_test_transport_io_pin_exchange( "rio", "rio" );
 }
 
-// the rio transport (sdk/rocketnet_server_rio_windows.cpp, proofs/tla/RNRioDriver.tla)
+// the rio transport (sdk/rocketnet_server_rio_windows.cpp, proofs/tla/RNRioWorker.tla)
 // against a plain UDP client on loopback
 
 #include "rocketnet_server_rio.h"
