@@ -10,6 +10,7 @@
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
+#include "rocketnet_gso_pin.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
@@ -271,6 +272,27 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL,
                                                              const uint8_t * packet_filter = NULL );
+
+// the same, and each queue's worker pins itself to cpu num_os_cpus + queue
+// (rocketnet_gso_pin.h, the XDP transport's rule) and sets SCHED_RR at the
+// minimum unless the platform priority switch is off. num_os_cpus 0 pins
+// nothing, which is what rocketnet_server_gso_create does: the transport
+// driven directly. The server's num_os_cpus (default 1) reaches this through
+// the builtin driver. A refusal (cpu outside the set or not online, affinity
+// or priority refused) is a warning naming the queue and the cpu, is counted
+// in rocketnet_server_gso_pin_refusals, and the worker is never reported
+// pinned.
+
+struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
+                                                                    int * status = NULL, const uint8_t * packet_filter = NULL );
+
+// the cpu queue's worker pinned itself to, ROCKETNET_GSO_PIN_NONE if it is
+// not pinned (not asked for, or refused: counted), ROCKETNET_GSO_PIN_PENDING
+// until its thread has run the pin. Any thread.
+int rocketnet_server_gso_worker_cpu( struct rocketnet_server_gso_t * gso, int queue );
+
+// the pins and priorities the workers asked for and the system refused. Any thread.
+int rocketnet_server_gso_pin_refusals( struct rocketnet_server_gso_t * gso );
 
 // the datagrams the queue workers dropped before banking, by reason
 // (ROCKETNET_RECEIVE_NUM_DROPS values in rocketnet_receive_drop_t order),

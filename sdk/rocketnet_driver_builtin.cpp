@@ -2295,8 +2295,9 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
         return NULL;
     }
 
-    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, config->status,
-                                        config->transport->packet_filter );
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_gso_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+                                               config->transport->packet_filter );
 }
 
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t *) transport ); }
