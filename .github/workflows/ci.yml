@@ -1760,7 +1760,8 @@ jobs:
   # floor of any partition of whole layers. Their PR run (#1117): msgx with
   # xdp-receive-ring 85 s, xdp-reply-macs with two small layers 66 s. So a shard is now a
   # set of (layer, seed) pairs, the SHARDS table in tools/tla_trace_check.py: msgx's four
-  # seeds are in four shards (its first, with its coverage and reach, alone) and
+  # seeds are in four shards (its first, with its coverage, alone; its reach moved to
+  # shard 3 by a "msgx:reach" entry) and
   # xdp-reply-macs's in three; every other layer is whole. Every layer still runs every
   # seed: the table is red unless each pair is in exactly one shard, and a shard with no
   # pair is red. A shard is the build and tlacheck (about 30 s) plus its pairs. Adding a

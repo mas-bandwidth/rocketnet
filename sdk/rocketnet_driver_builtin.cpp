@@ -2442,6 +2442,11 @@ static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destro
 
 static void io_uring_stop( void * transport ) { rocketnet_server_uring_stop( (rocketnet_server_uring_t *) transport ); }
 
+// the begin_shutdown hook (sdk/rocketnet_driver.h): the server asks the stop
+// only once send_idle, and a worker holding a bank on a full socket learns of
+// the shutdown here, so its retries are bounded and send_idle turns true
+static void io_uring_begin_shutdown( void * transport ) { rocketnet_server_uring_begin_shutdown( (rocketnet_server_uring_t *) transport ); }
+
 static bool io_uring_stopped( void * transport ) { return rocketnet_server_uring_stopped( (rocketnet_server_uring_t *) transport ); }
 
 ROCKETNET_STAGED_ADAPTER( io_uring, rocketnet_server_uring_t, rocketnet_server_uring )
@@ -2485,7 +2490,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals,
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, io_uring_begin_shutdown, io_uring_receive_drop_totals,
     io_uring_send_queues, io_uring_send_queue_of, io_uring_send_room_queue
 };
 
@@ -2948,6 +2953,17 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         plan.transport_io_bytes = rocketnet_server_msgx_allocation_bytes( workers, config->max_clients );
         plan.worker_threads = workers + 1;
         plan.sockets = 1 + config->max_clients;
+
+        // the shared socket asks for the shared send buffer and the receive
+        // request at the client count; each client's connected socket asks for
+        // ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER each way (rocketnet_server_msgx_create
+        // and its table's open). What Darwin grants the shared socket may be
+        // less (its halving walk): the estimate is what is asked
+        plan.socket_buffers_planned = true;
+        plan.socket_send_buffer_bytes = (uint64_t) ROCKETNET_SOCKET_SEND_BUFFER_SIZE +
+                                        (uint64_t) config->max_clients * (uint64_t) ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER;
+        plan.socket_receive_buffer_bytes = (uint64_t) rocketnet_server_transport_receive_buffer_request( "msgx", config->max_clients ) +
+                                           (uint64_t) config->max_clients * (uint64_t) ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER;
     }
 #endif // #if defined( __APPLE__ ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     else if ( strcmp( transport, "portable" ) == 0 )

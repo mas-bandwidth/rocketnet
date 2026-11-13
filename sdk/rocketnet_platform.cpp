@@ -1398,7 +1398,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket );
 // refuse it. On refusal walk down by halves to what the kernel grants, and
 // fail only when nothing can be set. warn names a grant below the request.
 
-static bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction, bool warn )
+bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction, bool warn )
 {
     int size = requested_bytes;
     if ( setsockopt( handle, SOL_SOCKET, option, (char *) ( &size ), sizeof( int ) ) == 0 )

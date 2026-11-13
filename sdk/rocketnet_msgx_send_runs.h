@@ -33,8 +33,9 @@
 //   all taken: past the run;
 //   some taken: past exactly that many live packets, the rest kept, false;
 //   none taken, or the socket full: kept, false;
-//   refused (a pending ICMP error answered the call and is now cleared): the
-//   run goes again once, and a second refusal is an error;
+//   refused (a pending ICMP error, or the client's route gone, answered the
+//   call and is now cleared): the run goes again once, and a second refusal
+//   is an error;
 //   dead (the socket was disconnected): reported, and the run leaves through
 //   the shared socket one packet at a time (a full shared socket keeps the
 //   rest, false);
@@ -45,10 +46,15 @@
 #include <stdint.h>
 
 // the connected send's answer when nothing was taken (a count taken is >= 0)
-#define ROCKETNET_MSGX_SEND_FULL                            ( -1 )  // EAGAIN, EWOULDBLOCK, ENOBUFS: try again later
-#define ROCKETNET_MSGX_SEND_REFUSED                         ( -2 )  // ECONNREFUSED
+// (rocketnet_msgx_send_error_kind maps an errno to one)
+#define ROCKETNET_MSGX_SEND_FULL                            ( -1 )  // EAGAIN, EWOULDBLOCK, ENOBUFS, EINTR: try again later
+#define ROCKETNET_MSGX_SEND_REFUSED                         ( -2 )  // ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENETDOWN
 #define ROCKETNET_MSGX_SEND_DEAD                            ( -3 )  // ENOTCONN, EPIPE, EDESTADDRREQ
 #define ROCKETNET_MSGX_SEND_ERROR                           ( -4 )  // anything else
+
+// a connected send's errno as one of the answers above
+// (sdk/rocketnet_msgx_send_runs.cpp says what each means)
+int rocketnet_msgx_send_error_kind( int error );
 
 // the shared send's answer for one packet
 #define ROCKETNET_MSGX_SHARED_SENT                           0

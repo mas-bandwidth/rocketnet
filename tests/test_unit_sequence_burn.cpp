@@ -51,7 +51,8 @@
 #include <string.h>
 #include "loopback_hub.h"
 
-extern thread_local unsigned long long g_ack_visit_count;
+extern unsigned long long rocketnet_ack_visit_count();
+extern void rocketnet_ack_visit_count_reset();
 
 static void rec_sent( struct rocketnet_ack_endpoint_t * ep, uint64_t sequence )
 {
@@ -129,26 +130,26 @@ static void test_sequence_burn_sender_walk_is_harmless()
     int acked_count = 0;
     uint64_t unknown = 0, batch_full = 0;
 
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
 
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == 11 );
     rocketnet_unit_check( acked_count == 11 );
     rocketnet_unit_check( unknown == 0 );
     rocketnet_unit_check( batch_full == 0 );
-    rocketnet_unit_check( g_ack_visit_count == 11 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 11 );
 
     check_bits_match_ring( ep );
 
     // a second identical block visits nothing: nothing is resent or re-walked
 
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
     rocketnet_ack_endpoint_process_block( ep, &block, 3100.0, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 0 );
     rocketnet_unit_check( unknown == 0 );
-    rocketnet_unit_check( g_ack_visit_count == 0 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 0 );
 
     check_bits_match_ring( ep );
 

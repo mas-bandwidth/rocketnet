@@ -476,8 +476,8 @@ inline bool rocketnet_msgx_socket_table_quiescent( const struct rocketnet_msgx_s
 // First every slot a holder reported dead (at the generation it reported) is
 // retired and its address cooled down; retire_hook is called with each such
 // descriptor before its retire (the caller deregisters it from its poller).
-// Then every retired slot whose quarantine is over is closed and freed.
-// Returns the sockets closed.
+// Then every retired slot whose quarantine is over is closed and freed, with
+// any dead report still in it cleared. Returns the sockets closed.
 inline int rocketnet_msgx_socket_table_sweep( struct rocketnet_msgx_socket_table_t * table, void ( *retire_hook )( void *, int ), void * hook_user )
 {
     if ( table->dead_reports.exchange( 0, std::memory_order_acq_rel ) > 0 )
@@ -520,6 +520,12 @@ inline int rocketnet_msgx_socket_table_sweep( struct rocketnet_msgx_socket_table
         table->close( table->user, entry->fd );
         entry->fd = -1;
         entry->state = ROCKETNET_MSGX_SLOT_FREE;
+        // a holder may have reported the retired generation after this
+        // sweep's dead scan, before its pass ended; left here it would block
+        // the report of the slot's next socket (report_dead takes an empty
+        // slot only). Every holder is past that pass, and a later pass cannot
+        // resolve the retired generation, so no report of it is still coming
+        entry->dead_report.store( 0, std::memory_order_relaxed );
         table->free_slots[table->num_free++] = slot;
         table->counts.closed++;
         closed++;
