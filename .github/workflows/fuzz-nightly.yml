@@ -100,7 +100,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
         run: |
@@ -278,7 +278,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check the fleet's build dependencies are present
         run: |
@@ -368,7 +368,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Find the LLVM clang that carries libFuzzer
         run: |
@@ -545,7 +545,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Find the clang-cl that carries libFuzzer
         run: |
@@ -719,7 +719,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Read the clang version
         id: msan-clang

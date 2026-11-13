@@ -99,7 +99,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure
         run: |
@@ -166,7 +166,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check the compiler is present
         run: |
@@ -247,7 +247,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           persist-credentials: false
 
       - name: The minimum checked is the minimum CMakeLists.txt claims
