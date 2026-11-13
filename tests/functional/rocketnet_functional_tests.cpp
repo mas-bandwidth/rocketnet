@@ -1564,20 +1564,33 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_server_transport_abort_packet( server, &context );
 
     // commit: write at the payload pointer, finish, flush, and the client
-    // receives exactly those bytes
+    // receives exactly those bytes. Each way is one datagram over a real
+    // socket unless a pin names loopback, and loopback can drop it
+    // (tests/kernel_drops.h): one still missing at the deadline is committed
+    // and sent again, through the same calls, only when the kernel counted a
+    // receive drop; a datagram the library lost fails at the gate by name
 
-    frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
-    rocketnet_check( frame );
-    rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
-    memcpy( frame, "shape", 5 );
-    rocketnet_server_transport_finish_packet( server, &context, 5 );
-    rocketnet_server_transport_send_packets( server );
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
 
     int received = 0;
+    double wait = 5.0;
+    bool send = true;
 
-    start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && !received )
+    while ( !received )
     {
+        if ( send )
+        {
+            frame = rocketnet_server_transport_start_packet( server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &context );
+            rocketnet_check( frame );
+            rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
+            memcpy( frame, "shape", 5 );
+            rocketnet_server_transport_finish_packet( server, &context, 5 );
+            rocketnet_server_transport_send_packets( server );
+            start = rocketnet_platform_time();
+            send = false;
+        }
+
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
 
@@ -1590,24 +1603,37 @@ void rocketnet_test_transport_start_finish_shape()
             received = 1;
         }
 
+        if ( !received && rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: the client has not received the server's packet\n", __func__ );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, 1 ) );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            send = true;
+            continue;
+        }
+
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( received );
-
-    struct rocketnet_packet_context_t reply;
-    uint8_t * reply_frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &reply );
-    rocketnet_check( reply_frame );
-    rocketnet_check( reply.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
-    memcpy( reply_frame, "reply", 5 );
-    rocketnet_check( rocketnet_client_transport_finish_packet( client, &reply, 5 ) > 0 );
-    rocketnet_client_transport_send_packets( client );
-
     bool replied = false;
+    wait = 5.0;
+    send = true;
 
-    start = rocketnet_platform_time();
-    while ( !replied && rocketnet_platform_time() - start < 5.0 )
+    while ( !replied )
     {
+        if ( send )
+        {
+            struct rocketnet_packet_context_t reply;
+            uint8_t * reply_frame = rocketnet_client_transport_start_packet( client, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &reply );
+            rocketnet_check( reply_frame );
+            rocketnet_check( reply.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
+            memcpy( reply_frame, "reply", 5 );
+            rocketnet_check( rocketnet_client_transport_finish_packet( client, &reply, 5 ) > 0 );
+            rocketnet_client_transport_send_packets( client );
+            start = rocketnet_platform_time();
+            send = false;
+        }
+
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         if ( rocketnet_server_transport_num_payloads( server ) )
@@ -1617,6 +1643,15 @@ void rocketnet_test_transport_start_finish_shape()
             rocketnet_check( payload && index == 0 && bytes == 5 && memcmp( payload, "reply", 5 ) == 0 );
             rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 1 );
             replied = true;
+        }
+
+        if ( !replied && rocketnet_platform_time() - start >= wait )
+        {
+            printf( "%s: the server has not received the client's reply\n", __func__ );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, 1 ) );
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            send = true;
+            continue;
         }
 
         if ( !replied )
@@ -10089,8 +10124,39 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     int sent = 0;
     int observed = 0;
 
-    for ( int update = 1; update <= rounds * 60 && observed < rounds; update++ )
+    // Each request and each answer is one datagram over a real socket unless
+    // a pin names loopback, and loopback can drop one (tests/kernel_drops.h).
+    // The passes run until every request is answered; when the client has
+    // seen no new answer for the wait while some are missing, the missing
+    // requests are opened again, one per pass like the first sends, only when
+    // the kernel counted that many receive drops. A request opened again
+    // records its new update, so the strictly-later check holds the answer to
+    // the open it actually answers. A datagram the library lost fails at the
+    // gate by name.
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
+    std::vector<int> reopen;
+    double wait = 5.0;
+    double progress = rocketnet_platform_time();
+
+    for ( int update = 1; observed < rounds; update++ )
     {
+        if ( reopen.empty() && rocketnet_platform_time() - progress >= wait )
+        {
+            printf( "%s: %d of %d requests answered after %d updates\n", __func__, observed, sent, update - 1 );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, sent - observed ) );
+            for ( int request = 1; request <= sent; request++ )
+            {
+                if ( reply_seen_update.find( request ) == reply_seen_update.end() )
+                {
+                    reopen.push_back( request );
+                }
+            }
+            wait = ROCKETNET_LOSS_GATE_WAIT;
+            progress = rocketnet_platform_time();
+        }
+
         // the client's update for this pass: swap the receive buffers and take
         // the batch fixed at the start of the update, before this update opens
         // anything. the client records the update each reply is first opened
@@ -10111,6 +10177,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                 {
                     reply_seen_update[request] = update;
                     observed++;
+                    progress = rocketnet_platform_time();
                 }
             }
         }
@@ -10131,7 +10198,33 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                 {
                     request_opened_update[request] = update;
                     sent++;
+                    progress = rocketnet_platform_time();
                     rocketnet_client_transport_send_packets( client );
+                }
+            }
+        }
+        else
+        {
+            // a request answered since it was queued again is not opened again
+            while ( !reopen.empty() && reply_seen_update.find( reopen.back() ) != reply_seen_update.end() )
+            {
+                reopen.pop_back();
+            }
+
+            if ( !reopen.empty() )
+            {
+                struct rocketnet_packet_context_t ctx;
+                uint8_t * frame = rocketnet_client_transport_start_packet( client, 32, &ctx );
+                if ( frame )
+                {
+                    const int request = reopen.back();
+                    memcpy( frame, &request, sizeof( request ) );
+                    if ( rocketnet_client_transport_finish_packet( client, &ctx, sizeof( request ) ) > 0 )
+                    {
+                        request_opened_update[request] = update;
+                        reopen.pop_back();
+                        rocketnet_client_transport_send_packets( client );
+                    }
                 }
             }
         }
