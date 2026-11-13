@@ -227,8 +227,13 @@ func planH2(p *plan) {
 		cfg := p.add(&job{name: n + "-configure", after: []string{wt}, dir: n, cores: 1, reserve: true, argv: []string{
 			"cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx(cc),
 			"-DCMAKE_C_FLAGS=" + tsanFlags, "-DCMAKE_CXX_FLAGS=" + tsanFlags, "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"}})
-		b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 4, reserve: true, argv: []string{
-			"cmake", "--build", "build", "--target", "test", "functional", "soak", "test_lifecycle", "test_wide_fill", "--parallel", "6"}})
+		// clang's static tsan_cxx runtime and tests/test_channels.cpp both define the
+		// global operator new/delete, so bin/test does not link under clang TSan on Linux
+		targets := []string{"cmake", "--build", "build", "--target", "functional", "soak", "test_lifecycle", "test_wide_fill"}
+		if cc == "gcc" {
+			targets = append(targets, "test")
+		}
+		b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 4, reserve: true, argv: append(targets, "--parallel", "6")})
 		sa := []string{"setarch", "x86_64", "-R"}
 		last := ""
 		steps := []*job{
@@ -241,6 +246,9 @@ func planH2(p *plan) {
 			{name: n + "-functional-io_uring", env: with(tsanEnv, "ROCKETNET_SERVER_TRANSPORT=io_uring"), cores: 4, argv: with(sa, "./bin/functional")},
 		}
 		for _, s := range steps {
+			if cc != "gcc" && s.name == n+"-unit" {
+				continue
+			}
 			s.after = []string{b.name}
 			s.dir = n
 			s.reserve = true
@@ -275,6 +283,7 @@ func runMain(args []string) {
 	root := fs.String("root", "", "job root")
 	budget := fs.Int("budget", 12, "cores")
 	only := fs.String("only", "", "comma list of job name prefixes to run (default all)")
+	redo := fs.String("redo", "", "comma list of job name prefixes to run again whatever status.tsv says")
 	reserve := fs.Bool("reserve", true, "run jobs under nova-reserve (false on machines without it)")
 	fs.Parse(args)
 	useReserve = *reserve
@@ -305,6 +314,15 @@ func runMain(args []string) {
 			}
 		}
 		f.Close()
+	}
+	if *redo != "" {
+		for _, pr := range strings.Split(*redo, ",") {
+			for n := range done {
+				if strings.HasPrefix(n, pr) {
+					delete(done, n)
+				}
+			}
+		}
 	}
 	var prefixes []string
 	if *only != "" {
