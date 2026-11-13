@@ -103,4 +103,40 @@ void rocketnet_dev_fail_disconnect_sealed_writes( int count );
 
 #endif // #if ROCKETNET_DEV
 
+// mutation gaps secrets begin
+// The stack secret seam: each function that stages a secret on its own stack
+// (a token's private block, a request's opened private data, the handshake
+// and session keys, the server's ephemeral secret) hands that staging to the
+// hook right after it wipes it, on the exits named below, so a unit case
+// reads what the frame still holds as the function leaves
+// (tests/test_unit_gaps_secrets_stack.cpp). NULL by default; compiled out of
+// a production build. Defined in sdk/rocketnet_connect_token.cpp.
+
+#if ROCKETNET_DEV
+
+enum rocketnet_stack_secret_site_t
+{
+    ROCKETNET_STACK_SECRET_TOKEN_PRIVATE_BLOCK = 1,         // rocketnet_write_connect_token_sealed, every exit
+    ROCKETNET_STACK_SECRET_TOKEN_PRIVATE_DATA = 2,          // rocketnet_write_connect_token_sealed, every exit
+    ROCKETNET_STACK_SECRET_PRODUCTION_PRIVATE_FIELDS = 3,   // rocketnet_write_production_connect_token, after the write
+    ROCKETNET_STACK_SECRET_DEV_TOKEN_CONFIG = 4,            // rocketnet_create_dev_connect_token, after the write
+    ROCKETNET_STACK_SECRET_REQUEST_PRIVATE_DATA = 5,        // the connection request, after the opened request
+    ROCKETNET_STACK_SECRET_REQUEST_KEYS_DENIED = 6,         // the opened request, the full-server denial
+    ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL_SMALL_ORDER = 7, // the opened request, the small-order refusal
+    ROCKETNET_STACK_SECRET_REQUEST_KEYS_SMALL_ORDER = 8,    // the opened request, the small-order refusal
+    ROCKETNET_STACK_SECRET_REQUEST_EPHEMERAL = 9,           // the opened request, once the keys are derived
+    ROCKETNET_STACK_SECRET_REQUEST_KEYS = 10,               // the opened request, once the mapping holds the keys
+};
+
+extern void ( *rocketnet_stack_secret_hook )( int site, const void * staging, int bytes );
+
+#define ROCKETNET_STACK_SECRET_SEEN( site, staging, bytes ) do { if ( rocketnet_stack_secret_hook ) { rocketnet_stack_secret_hook( site, staging, bytes ); } } while ( 0 )
+
+#else // #if ROCKETNET_DEV
+
+#define ROCKETNET_STACK_SECRET_SEEN( site, staging, bytes ) do {} while ( 0 )
+
+#endif // #if ROCKETNET_DEV
+// mutation gaps secrets end
+
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
