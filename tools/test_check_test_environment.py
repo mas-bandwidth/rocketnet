@@ -104,6 +104,15 @@ class ShapeTests(unittest.TestCase):
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),
                          ["test_a", "test_b"])
 
+    def test_windows_commit_report_lines_pass(self):
+        lines = ["commit available 319373 MiB of a 325500 MiB limit, physical available 123275 MiB", "test_a",
+                 "commit lock: test_a waited 1.8 s for another run's full-capacity case", "", checker.PASSED_LINE, ""]
+        self.assertEqual(checker.check_shape(lines, "suite"), ["test_a"])
+
+    def test_commit_report_lookalike_fails(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["commit available lots", "test_a", "", checker.PASSED_LINE, ""], "suite")
+
     def test_skip_line_fails(self):
         with self.assertRaises(SystemExit):
             checker.check_shape(["test_a", "test_xdp_matcher [SKIPPED linux only]", "", checker.PASSED_LINE, ""], "suite")
