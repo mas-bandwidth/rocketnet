@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """A required check that is a summary of shard jobs is green only when every shard is.
 
-Two summary jobs use it: "linux / Debug / unit" (the two Debug unit shards, the
-default names) and the lint summary (lint (0/4) .. (3/4), the names given as
-arguments).
+The summary jobs use it: "linux / Debug / unit" (the three Debug unit shards,
+the default names) and the others (lint (0/4) .. (3/4), the functional, Release
+checks and trace check shards, the names given as arguments).
 
-The Linux Debug unit leg runs as two shard rows (ci.yml build-and-test, shard 0/2
-and 1/2) and the summary job debug-unit (named linux / Debug / unit, the name
-the ruleset, tools/land.py and tools/release_gates.py require) calls this with
-the run's job list as JSON (the GitHub API's actions/runs/<id>/attempts/<n>/jobs
-answer, or just its "jobs" array). Both shards must be listed once each and
+The Linux Debug unit leg runs as three shard rows (ci.yml build-and-test, shard
+0/3, 1/3 and 2/3) and the summary job debug-unit (named linux / Debug / unit, the
+name the ruleset, tools/land.py and tools/release_gates.py require) calls this
+with the run's job list as JSON (the GitHub API's actions/runs/<id>/attempts/<n>/jobs
+answer, or just its "jobs" array). Every shard must be listed once and
 concluded success; a failure, a cancellation, a skipped, a missing or a
 duplicated shard is red. An empty or unreadable list is red too: no verdict is
 never green.
@@ -25,7 +25,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SHARDS = ("linux / Debug / unit (0/2)", "linux / Debug / unit (1/2)")
+SHARDS = ("linux / Debug / unit (0/3)", "linux / Debug / unit (1/3)", "linux / Debug / unit (2/3)")
 
 
 def verdict(text, shards=SHARDS):
@@ -59,20 +59,23 @@ def run(path, shards=SHARDS):
 
 
 def self_test():
-    def jobs(a, b, extra=()):
-        rows = [{"name": SHARDS[0], "conclusion": a}, {"name": SHARDS[1], "conclusion": b}]
+    def jobs(a, b, c="success", extra=()):
+        rows = [{"name": SHARDS[0], "conclusion": a}, {"name": SHARDS[1], "conclusion": b},
+                {"name": SHARDS[2], "conclusion": c}]
         return json.dumps({"jobs": rows + list(extra)})
 
     cases = [
         (jobs("success", "success"), True),
-        (jobs("success", "success", [{"name": "macos / Debug / unit", "conclusion": "failure"}]), True),
-        (json.dumps([{"name": SHARDS[0], "conclusion": "success"}, {"name": SHARDS[1], "conclusion": "success"}]), True),
+        (jobs("success", "success", extra=[{"name": "macos / Debug / unit", "conclusion": "failure"}]), True),
+        (json.dumps([{"name": name, "conclusion": "success"} for name in SHARDS]), True),
         (jobs("failure", "success"), False),
         (jobs("success", "failure"), False),
         (jobs("success", "cancelled"), False),
+        (jobs("success", "success", "cancelled"), False),
         (jobs("success", None), False),
         (jobs("skipped", "success"), False),
-        (jobs("success", "success", [{"name": SHARDS[1], "conclusion": "success"}]), False),
+        (jobs("success", "success", extra=[{"name": SHARDS[1], "conclusion": "success"}]), False),
+        (json.dumps({"jobs": [{"name": SHARDS[0], "conclusion": "success"}, {"name": SHARDS[1], "conclusion": "success"}]}), False),
         (json.dumps({"jobs": [{"name": SHARDS[0], "conclusion": "success"}]}), False),
         (json.dumps({"jobs": []}), False),
         ("", False),
