@@ -121,7 +121,9 @@ per case, one shard per case:
 | `MCRNConnectionMemoryBrokenNoReset.cfg` | 1 | 167 | 123 | 0.632 | 12 | `ReusedSlotStartsClean` violated, as declared |
 | `MCRNConnectionMemoryBrokenCarryOn.cfg` | 1 | 1,275 | 500 | 0.740 | 13 | `ExhaustionOnlyLeadsToDisconnect` violated, as declared |
 
-The instance: three slots, four clients, a region of three records.
+The instance: three slots, three clients (four before the lazy reset was
+modelled, which keeps a free slot's region as state; with three a client
+still takes a slot another client freed), a region of three records.
 
 ## What the model leaves to the code
 
