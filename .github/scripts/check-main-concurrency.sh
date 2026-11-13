@@ -11,9 +11,12 @@
 # everywhere else, so pull requests and branches still cancel a superseded run.
 #
 # This refuses a per-commit workflow (one triggered by push or pull_request)
-# whose top-level concurrency group references github.ref but not github.sha,
-# i.e. one group per ref that would replace a main commit's pending run instead
-# of queuing it. That includes a ref-only group such as "records-${{ github.ref }}":
+# whose top-level concurrency group references github.ref but does not select
+# github.sha on main (the form `github.ref == 'refs/heads/main' && github.sha`, or
+# a sha in no condition), i.e. one group per ref that would replace a main commit's
+# pending run instead of queuing it. A sha token alone is not enough: the inverted
+# `github.ref != 'refs/heads/main' && github.sha || github.ref` gives main one group.
+# That includes a ref-only group such as "records-${{ github.ref }}":
 # a group serializes a shared write only when the workflow writes, and none of
 # these does.
 #
@@ -68,7 +71,12 @@ check() {
     incc && /^[ \t]*#/ { next }
     incc && /^  group:/ {
       v = $0; sub(/^  group:[ \t]*/, "", v)
-      if (v !~ /github[.]sha/ && v ~ /github[.]ref/) { badv = v; badline = FNR }
+      # main must select the sha: the literal `github.ref == refs/heads/main && github.sha` form, or a
+      # sha (or run id) in no condition at all; a github.sha token behind any other condition (the
+      # inverted `github.ref != refs/heads/main && github.sha || github.ref`) gives main one group
+      sel = (v ~ /github[.]ref[ \t]*==[ \t]*.refs\/heads\/main.[ \t]*&&[ \t]*github[.](sha|run_id)/)
+      uncond = (v ~ /github[.](sha|run_id)/ && v !~ /(&&|[|][|]|!=|==)/)
+      if (v ~ /github[.]ref/ && !sel && !uncond) { badv = v; badline = FNR }
       incc = 0
       next
     }
@@ -89,6 +97,12 @@ if [ "${1:-}" = "--self-test" ]; then
   # failing fixture: concurrency before on:, pull_request trigger
   printf 'name: x\nconcurrency:\n  group: pr-${{ github.ref }}\non:\n  pull_request:\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/bad-pr-first.yml"
   if check "$d/bad-pr-first.yml" >/dev/null; then echo "self-test: a ref-only group declared before on: was accepted"; exit 1; fi
+  # failing fixture: the inverted form names github.sha but gives main one group (github.ref)
+  printf 'name: x\non:\n  push:\n    branches: [main]\nconcurrency:\n  group: ci-${{ github.ref != '"'"'refs/heads/main'"'"' && github.sha || github.ref }}\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/bad-inverted.yml"
+  if check "$d/bad-inverted.yml" >/dev/null; then echo "self-test: an inverted group (sha off main, ref on main) was accepted"; exit 1; fi
+  # passing fixture: a sha in no condition separates every commit everywhere
+  printf 'name: x\non:\n  push:\n    branches: [main]\nconcurrency:\n  group: x-${{ github.ref }}-${{ github.sha }}\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/good-sha.yml"
+  check "$d/good-sha.yml" >/dev/null || { echo "self-test: an unconditional sha group was refused"; exit 1; }
   # passing fixtures: separated main group, a schedule-only ref group, and no concurrency
   printf 'name: x\non:\n  push:\n    branches: [main]\nconcurrency:\n  group: foo-${{ github.workflow }}-${{ github.ref == '"'"'refs/heads/main'"'"' && github.sha || github.ref }}\n  cancel-in-progress: ${{ github.ref != '"'"'refs/heads/main'"'"' }}\njobs:\n  a:\n    runs-on: [self-hosted]\n    steps:\n      - run: echo hi\n' > "$d/good-sep.yml"
   # failing fixtures (event-kind rule): a scheduled workflow whose top-level group, or a job-level group, is
