@@ -35,11 +35,6 @@ released id moved.
   behaviour change.
 - macOS msgx transport: a socket's reads in one round no longer go past its
   budget for the round (before, up to the budget plus one batch less one).
-- Linux sockets: the server sets `IP_PMTUDISC_PROBE` and `IPV6_PMTUDISC_PROBE`.
-  Before, one forged ICMP "fragmentation needed" or "packet too big" naming
-  the server's address could make every later datagram to that client above
-  a small path MTU fail for ten minutes, renewed by each forged message.
-  Datagrams still carry DF, sized by the interface MTU.
 - Windows IOCP transport: a receive post now counts itself pending before it
   tests whether the endpoint is stopping. Before, a post could land after its
   owner had drained and exited, and the stop never completed.
@@ -63,7 +58,7 @@ released id moved.
   RNMsgxReceiveFill's MainStop and Exit uncited in its header and Done not
   named as an environment action (cited and named).
 
-The branches merged, at these commits:
+Eight fix branches and the flaky-test repair, at these commits:
 
 - `fix/v1.1.x/receive-handoff-latency`: `84f80fc1e91d58f69998aee1e340596f83bb5aee`
 - `fix/v1.1.x/client-stop-and-race`: `4e5719ef7799572ef8e9af501aaba38d0dfdf884`
@@ -73,7 +68,6 @@ The branches merged, at these commits:
 - `fix/v1.1.x/ordered-duplicate-scan`, two follow-up commits cherry-picked:
   `fdf1541d6a0ec8a3a6ac52a4f29b5c974fedeb50` and
   `9b8d460d9085e66ec3733e80ccdf6a7b224c739d`
-- `fix/v1.1.x/hostile-input-cost`: `56a7a6d2a2cf71e76b7c798991aa39ee6dfb1540`
 - `fix/v1.1.x/iocp-stop-race`: `ae3af09f610706c8959613d691b36eeb63626f62`
 - `fix/v1.1.x/token-clock`: `a71da8e748e2efccf633422f88d1e9b36472c750`
 - `fix/v1.1.x/flaky-disconnect-delivery`: `0ceee9e847f783e71fc198f9e89adfadeef8402e` (tests only)
