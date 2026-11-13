@@ -91,10 +91,19 @@ id are one filler to the check.
 | `MCRNFillPhaseBrokenNoMainWindow.cfg` | `WindowShut` fails | `main_begin` does not read the window |
 | `MCRNFillPhaseBrokenTakeUncounted.cfg` | `TakeSound` fails | a take does not count itself on a `fills_in` line |
 | `MCRNFillPhaseBrokenOwnerAtDecide.cfg` | `NoFalseNest` fails | the decide stores the owner and the claim, and a refused look puts them back in three stores |
+| `MCRNFillPhaseBrokenKickAll.cfg` | `NoKickOnOpenUpdate` fails | an update call that finds the update open finishes it and begins the next in the same call |
+| `MCRNFillPhaseBrokenShutOnEarly.cfg` | `StageShut` fails | an `update_receive` that returns before the transport's receive leaves the update open and the window shut |
+| `MCRNFillPhaseBrokenScanFirst.cfg` | `PlainChecked` fails | the plain finish and abort scan for the open message before any check |
 
-Every run lets the main thread's update calls open and shut the window of
-the split update (`MainEpoch(w)`; `update_receive` opens it, `update_finish`
-and `update` shut it) and its other operations meet it (`MainIn`).
+Every run lets the main thread's update calls open and shut the split
+update (`MainEpoch(w, s)`; `update_receive` opens it, `update_finish` and
+`update` close it, `stage` is the message layer's stage and `window` the
+check's word, which follows it) and its other operations meet it (`MainIn`).
+
+The model's operations are the layer-3 API's (`sdk/rocketnet_api.cpp`). The
+layer-1 and layer-2 entry points in `sdk/rocketnet_layers.h` are internal
+and unarmed by contract: they take no fill-phase scope, and nothing here
+checks them.
 
 ## The window of the split update (found in review by Stella)
 
@@ -122,6 +131,41 @@ running. The three witnesses' traces, checked against the code by hand:
 - `BrokenNoMainWindow`: an update call opens the window, then an `other`
   operation's `MainAnnounce`, looks and `MainIn` pass. The code's `main_begin`
   reads `window` after the looks for any call not begun with `update_call`.
+
+## The update in three calls, pass 2 (found in review, 2026-11-13)
+
+Three rules of the message layer around the window, each with a reversed
+witness whose trace was checked against the old code by hand:
+
+- `BrokenKickAll` (12 states): an `update_receive` opens the update
+  (`MainEpoch(TRUE, TRUE)`, `MainDrop`), then another update call finds it
+  open and its work closes it with `kicked` set. In the old
+  `rn_message_object_update_begin`, an open update was finished and the
+  call went on to begin the next, whose not-received check ended every
+  connection the finish had just handed messages to: one refused
+  `update_finish` on a late join disconnected every active client. Now the
+  call counts one misuse, finishes the open update and begins none
+  (`KickedBy`, `NoKickOnOpenUpdate`); `test_wide_fill_split_update_open_update_call`.
+- `BrokenShutOnEarly` (11 states): an `update_receive` returns before the
+  transport's receive (`MainEpoch(FALSE, TRUE)`: the update open, the window
+  shut), then an `other` operation's looks and `MainIn` pass. In the old code
+  the window was stored only by the transport's receive, which an
+  `update_receive` with a time that is not finite never reached; a
+  `send_packets` then ran inside the open update. The message server now
+  stores the window from its stage as each update call's work ends
+  (`UpdateWork`, `StageShut`); `test_wide_fill_split_update_window_on_early_return`.
+- `BrokenScanFirst` (7 states): f1's fill call passes its look (`in`), then
+  the plain finish scans for the open message (`PlainScan`) beside it, with
+  no check. The old plain `finish_message` and `abort_message` scanned
+  every connection before any scope, and checked only when another thread
+  held the client. They now take a main scope first: a main operation of
+  kind `other`, refused in the window or beside a fill call
+  (`PlainChecked`); `test_wide_fill_plain_finish_checked`.
+
+The trace walk drives a bare check with no message server, so it records
+`stage` from its own update calls and never takes `PlainScan`; these three
+rules are bound to the code by the native tests named above, not by the
+trace (roadmap `fill-phase-trace-gaps`).
 
 ## The nested test (found in review, 2026-11-13)
 

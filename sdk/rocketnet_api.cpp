@@ -3770,7 +3770,10 @@ static int rn_server_pending_slot( const struct rocketnet_message_server_t * run
 // work (a fill call from the main operation's thread checks nothing), and
 // the scope's end begins a new fill phase, so the client's claim the
 // starting thread held is ended. Before the check begins the scope does
-// nothing, as every scope does.
+// nothing, as every scope does. RNFillPhase states the rule as PlainChecked,
+// with the old order, the scan before any check, as PlainScan
+// (MCRNFillPhaseBrokenScanFirst.cfg); test_wide_fill_plain_finish_checked
+// binds it to this code.
 static struct rocketnet_fill_phase_t * rn_server_fill_phase( struct rocketnet_message_server_t * running )
 {
     return running ? rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( running ) ) : NULL;

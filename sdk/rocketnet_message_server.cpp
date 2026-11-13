@@ -1013,7 +1013,10 @@ void rn_message_object_update_begin( struct rn_message_object_t * object, double
     // messages the game never had the chance to receive (the check below
     // runs at the next begin). Stage DONE carries the finish's result to
     // this call's end (update) or to update_finish (update_receive), and
-    // the update's time is not taken.
+    // the update's time is not taken. The rule is stated in
+    // proofs/tla/RNFillPhase.tla (KickedBy, NoKickOnOpenUpdate, the old
+    // order MCRNFillPhaseBrokenKickAll.cfg), which has no deliveries: it is
+    // bound to this code by test_wide_fill_split_update_open_update_call.
 
     if ( object->update_stage != RN_MESSAGE_UPDATE_CLOSED )
     {
@@ -2775,7 +2778,8 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 }
 
 // The window of the update in three calls follows the update's stage, set as
-// an update call's work ends (proofs/tla/RNFillPhase.tla MainEpoch): open
+// an update call's work ends (proofs/tla/RNFillPhase.tla MainEpoch,
+// UpdateWork, StageShut; MCRNFillPhaseBrokenShutOnEarly.cfg): open
 // while the update is open, whether or not the transport opened its own
 // (an update_receive whose first time is not finite, or whose transport is
 // not running, returns before the transport stores it), shut once it is

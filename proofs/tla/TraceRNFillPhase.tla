@@ -45,7 +45,7 @@ VARIABLES ti,        \* the index of the record the state matches
 
 \* every model variable by the field name the harness writes
 VarsRec == [mpc |-> mpc, mscan |-> mscan, mkind |-> mkind, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
-            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, fillsIn |-> fillsIn,
+            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, stage |-> stage, fillsIn |-> fillsIn,
             fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed,
             overlaps |-> overlaps, twoFillers |-> twoFillers, opted |-> opted,
             fbroke |-> fbroke,
@@ -69,9 +69,9 @@ OpActs == [main_begin |-> {"MainAnnounce", "MainLook", "MainIn"},
 Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce(x[1])
                [] a = "MainLook" -> MainLook(x[1], x[2])
                [] a = "MainIn" -> MainIn(x[1])
-               [] a = "MainEpoch" -> MainEpoch(x[1])
+               [] a = "MainEpoch" -> MainEpoch(x[1], x[2])
                [] a = "MainDrop" -> MainDrop
-               [] a = "MainSkip" -> MainSkip(x[1])
+               [] a = "MainSkip" -> MainSkip(x[1], x[2], x[3])
                [] a = "FillSkip" -> FillSkip(x[1])
                [] a = "TakeSkip" -> TakeSkip(x[1])
                [] a = "Arm" -> Arm
