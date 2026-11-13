@@ -54,8 +54,7 @@ jobs:
 
   static:
     name: static analysis (gcc -fanalyzer)
-    # the same fleet runners ci.yml uses; a self-hosted runner comes
-    # provisioned, so the apt step runs only for a hosted fallback
+    # the same fleet runners ci.yml uses, which come provisioned
     runs-on: [self-hosted, Linux, X64, fleet]
     # per-commit: bounded to two minutes (tools/check_ci_budget.py)
     timeout-minutes: 2
@@ -68,12 +67,6 @@ jobs:
 
       - name: Fleet-runner lint selftest
         run: bash scripts/check-fleet-runners-selftest
-
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential libbpf-dev libxdp-dev libsodium-dev xxd
 
       # compile_commands.json is what run_static.py reads to rebuild the
       # parser files for gcc -fanalyzer with the exact per-file flags.
@@ -105,12 +98,6 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-
-      - name: Install dependencies
-        if: runner.environment == 'github-hosted'
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y cmake build-essential clang clang-tidy-18 cppcheck libbpf-dev libxdp-dev libsodium-dev xxd
 
       # the same Release configure the gcc job uses; run_tidy.py builds the
       # generated xdp header itself and analyzes the first compile command
