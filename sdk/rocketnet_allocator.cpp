@@ -612,6 +612,22 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
 #endif // #if ROCKETNET_RED_ZONES
 }
 
+// The held index's home key (sdk/rocketnet_channel.cpp rn_held_home), drawn at
+// every carve, so each connection, and each reuse of a slot, has its own. The
+// sender chooses the (channel, ordering) keys: with a fixed home it could
+// choose keys that share one run of cells and make every hold and lookup scan
+// it. a is odd, so a x is one-to-one on the keys. Never logged or sent; the
+// stack copy is wiped.
+
+static void rn_region_draw_held_key( rn_region_t * region )
+{
+    uint64_t key[2];
+    randombytes_buf( key, sizeof( key ) );
+    region->held_key_a = key[0] | 1;
+    region->held_key_b = key[1];
+    sodium_memzero( key, sizeof( key ) );
+}
+
     // proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
     // proofs/tla/RNSendStoreLayout.tla Carve: both send pools empty, both watermarks at zero
 // proofs/tla/RNSequencedHoldPool.tla Carve: the hold free stack full, lowest index on top
@@ -653,6 +669,7 @@ void rn_region_carve( rn_region_t * region )
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof( rn_held_entry_t ) * region->held_entries );
     region->held_count = 0;
+    rn_region_draw_held_key( region );
 
     // the send descriptor pool: a LIFO free stack in the descriptors'
     // free_slot array, lazy (proofs/tla/RNLazyPool.tla Reset):
