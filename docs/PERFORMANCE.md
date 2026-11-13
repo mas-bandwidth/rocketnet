@@ -22,9 +22,10 @@ not equal the target message rate exactly.
 
 ## Machines and threads
 
-CPU 0 is reserved for the OS, CPUs 1–2 for the two network threads, and CPU 3
-for the main thread. The game threads follow on separate CPUs. They write each
-client's packets as jobs over contiguous ranges of clients. The test uses
+For the Linux server rows, CPU 0 is reserved for the OS, CPUs 1–2 for the two
+network threads, and CPU 3 for the main thread. The game threads follow on
+separate CPUs. They write each client's packets as jobs over contiguous
+ranges of clients. The test uses
 enkiTS for these jobs; RocketNet does not create the game threads.
 
 | Server transport | Server | Client machine and network | Thread layout |
@@ -32,7 +33,8 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 | XDP | Latitude m4.metal.large, AMD EPYC 9254, 24 cores | Second m4.metal.large, 48 logical CPUs; Intel X710 10 GbE | Two XDP threads on CPUs 1–2; main thread on CPU 3; 20 game threads on CPUs 4–23; all 21 pool threads at real-time priority |
 | io_uring | AWS c6in.8xlarge, 32 vCPUs, x86, Linux 7.0 | AWS c7gn.8xlarge, 32 vCPUs, arm64; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31, real-time priority |
 | GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
-| RIO / IOCP | AWS m7i.16xlarge, Windows Server 2025 | Pending | Pending |
+| IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | OS on CPUs 0–1; NIC receive steering on CPUs 2 and 4; two receive threads on CPUs 3 and 5; main thread on CPU 6; 57 game threads on CPUs 7–63; eight unpinned send threads |
+| RIO | AWS m7i.16xlarge, Windows Server 2025 | Pending | Pending |
 | macOS | Owned Macs; exact models pending | Pending | Pending |
 
 For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
@@ -41,6 +43,13 @@ XDP also pins its own network threads. In the GSO rows, the load test pins
 the network threads with `--net-first-cpu 1`; library-owned GSO pinning is
 pending a new measurement. XDP and io_uring clients run 32 unpinned threads;
 GSO uses 32 client threads, with affinity confirmation pending.
+
+IOCP uses ten network threads: two receive/completion threads, each with its
+own socket, and eight send threads. The Linux transports above use two network
+threads each. IOCP has no send-thread affinity setting in this build; the run
+owner reports Windows scheduling them among CPUs 6–63, shared with the main
+and game threads. IOCP clients use 16 threads. Measurements with fewer IOCP
+network threads, client affinity, and server scheduling priority are pending.
 
 ## Results
 
@@ -57,6 +66,12 @@ It is not the percentage of players that connected. The rows below report
 | io_uring | Average | 480,317 | 60.56 | 100% | 100% |
 | GSO | Peak | 900,000 | 60.7 | 100% | 100% |
 | GSO | Average | 480,000 | 60.5 | 100% | 100% |
+| IOCP | Peak | 900,300 | 60.63 | 100% | 99.999% |
+| IOCP | Average | 480,300 | 60.80 | 100% | 99.968% |
+
+IOCP's average row lost 1,487 of approximately 4.58 million client inputs;
+server-to-client delivery had no reported loss. Its peak row also had a small
+input loss, reflected in the 99.999% delivery figure above.
 
 Network work is reported in milliseconds per frame. The main-thread average
 is elapsed time in its network calls, including waits inside those calls.
@@ -73,6 +88,8 @@ dedicated network threads and do not describe the whole frame's duration.
 | io_uring | Average | 0.147 | 0.164 | 0.237 | 1.65 / 1.81 / 3.35 | ≈0.08 (derived) |
 | GSO | Peak | 0.26 | 0.27 | 0.29 | 2.52 / 2.72 / 3.16 | 0.095 |
 | GSO | Average | 0.24 | 0.25 | 0.27 | 1.29 / 1.48 / 1.89 | 0.16 |
+| IOCP | Peak | Pending | 0.178 | 0.274 | 2.97 / 3.11 / 6.35 | 0.05 |
+| IOCP | Average | 0.148 | 0.175 | 0.272 | 1.58 / 1.71 / 5.12 | 0.087 |
 
 The io_uring average-load ratio is calculated from the reported rounded means:
 0.147 / 1.81. The other ratios were supplied with their measurement rows.
@@ -84,6 +101,7 @@ window, not a p99 computed over all frames in that window.
 | XDP peak / average | [79888a398](https://github.com/mas-bandwidth/rocketnet/commit/79888a3980a42db26fa0d84c22b1df6f4e1ee3f9), measurement branch, server binary | t=25–55 s | `--world-ms 0 --game-load 0` |
 | io_uring peak / average | [6db162421](https://github.com/mas-bandwidth/rocketnet/commit/6db1624212079133de226fe08cb8111bd70e352d), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
 | GSO peak / average | [d9110a19f](https://github.com/mas-bandwidth/rocketnet/commit/d9110a19fedf098a15068ce9a4cb9106f4ee603d), `tests/v1.2/goal-gso` | t=30–60 s | `--world-ms 10 --game-load 0` |
+| IOCP peak / average | [110416b4c](https://github.com/mas-bandwidth/rocketnet/commit/110416b4cec7670c97d43c752b25d454b3b90725), `tests/v1.2/goal-iocp-nofold` | Pending | `--world-ms 0 --game-load 0` |
 
 The io_uring rows use the earlier frame order with no simulated game work.
 GSO starts its network task before the world update with `--space-split top`.
@@ -99,7 +117,7 @@ Rows with game threads half busy with game work are pending for every transport:
 the test's simulated world update was serial, corrected in `4fc1ae05b`.
 Raw result logs are pending;
 the timing percentiles are reported values, not recomputed here. Confirmation
-of the io_uring and GSO percentile aggregation is pending. Different machines, builds, and
+of the io_uring, GSO, and IOCP percentile aggregation is pending. Different machines, builds, and
 sampling windows make these workload results unsuitable for ranking transports
 against one another.
 
@@ -109,7 +127,8 @@ against one another.
 | io_uring with game threads half busy with game work | Pending |
 | GSO with game threads half busy with game work | Pending |
 | RIO peak and average | Pending |
-| IOCP peak and average | Pending |
+| IOCP peak main-thread mean, sampling window, and fewer-network-thread measurements | Pending |
+| IOCP with game threads half busy with game work | Pending |
 | macOS peak and average | Pending |
 
 ## Run it yourself
@@ -145,7 +164,8 @@ sets compiler parallelism. The run commands below assume that binary is
 available at `./bin/harden_load`. Additional profiling build flags are pending.
 
 The current `--game-threads N` flag counts the main thread plus N−1 game
-threads. XDP uses 21; io_uring and GSO use 29. `--world-ms` sets simulated work
+threads. XDP uses 21; io_uring and GSO use 29; IOCP uses 58.
+`--world-ms` sets simulated work
 on the main thread; `--game-load 0.5` requests game work equal to half a frame
 per game thread. Neither is a network timing measurement.
 
@@ -224,6 +244,28 @@ After copying the server public key, run on the client machine:
 Reconcile the logs as above. GSO uses the tool's default 60 Hz and 60-second
 duration; the supplied command does not override its default pattern payload.
 
+For IOCP, use the Windows server build at `110416b4c` and a Linux client.
+The exact MSVC build invocation, NIC receive-steering setup, receive-thread
+affinity setup, and archived launcher are pending. The supplied binary
+workload commands are below. Set `LOAD` to `peak` or `average` and bind the
+server to its specific IPv4 address. In PowerShell on the server:
+
+```powershell
+.\bin\harden_load.exe server --address "${SERVER_IP}:40000" --transport iocp --max-clients 1000 --dev "$SERVER_DEV" --warm-seconds 20 --sample-seconds 60 --payload copy --frame-shape space --load "$LOAD" --game-threads 58 --pin-first-cpu 6 --game-load 0 --world-ms 0 --space-send wide --space-update split --space-net task --num-xdp-queues 2 > server.log 2>&1
+```
+
+Copy the server public key, then run on the Linux client:
+
+```sh
+./bin/harden_load clients --address "$SERVER_IP:40000" --key "$SERVER_KEY" \
+  --clients 1000 --threads 16 --messages 1 --reliable-every 1 \
+  --join-rate 100 --payload copy --input-bytes 256 > clients.log 2>&1
+```
+
+Reconcile both logs on the Linux machine as above. These arguments retain
+the default 60 Hz and 60-second duration; the shared stop-time settings used
+by the original launcher are pending.
+
 ### Command flags
 
 | Flag | Meaning |
@@ -238,11 +280,11 @@ duration; the supplied command does not override its default pattern payload.
 | `--warm-seconds 20` | Delay before the server's first long-run sample; separate from the reported steady window. |
 | `--sample-seconds 60` | Interval between long-run server samples. |
 | `--payload` | `pattern` generates a verifiable body; `copy` copies a prebuilt body. |
-| `--num-xdp-queues 2` | Request two network queues; also controls io_uring and GSO queue counts. |
+| `--num-xdp-queues 2` | Request two network queues for XDP, io_uring, and GSO; also retained in the supplied IOCP command, whose actual thread counts are listed above. |
 | `--frame-shape` | Select the test's job-based frame loop. |
 | `--load` | Set the peak or average server traffic from the workload table. |
 | `--game-threads` | Pool size including the main thread. |
-| `--pin-first-cpu 3` | Pin the main thread to CPU 3 and successive game threads to successive CPUs. |
+| `--pin-first-cpu` | Pin the main thread to this CPU and successive game threads to successive CPUs: 3 for Linux rows, 6 for IOCP. |
 | `--net-first-cpu 1` | Have the load test pin GSO network threads starting at CPU 1 in this build. |
 | `--world-ms` | Main-thread simulated world work in milliseconds; 0 disables it, 10 requests 10 ms. |
 | `--game-load 0` | Disable simulated game jobs. |
@@ -251,7 +293,7 @@ duration; the supplied command does not override its default pattern payload.
 | `--space-net task` | Run network update and send work in the scheduled network task. |
 | `--space-split top` | Start the network task before the main thread's world update so they can overlap. |
 | `--key` | Server public key printed by `harden_ready`. |
-| `--threads 32` | Number of client-machine threads, independent of the server pool size. |
+| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux server rows, 16 for IOCP. |
 | `--messages 1` | One client input message per player per tick. |
 | `--reliable-every 1` | Preserved client command setting; the server's reliable cadence is set separately by `--load`. |
 | `--join-rate 100` | Connect approximately 100 players per second. |
