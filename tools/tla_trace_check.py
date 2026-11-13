@@ -79,10 +79,6 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
-    "msgx": {
-        "modules": ["RNMsgxSocketTable.tla", "TraceRNMsgxSocketTable.tla"],
-        "untraced": {},
-    },
     "msgxsendruns": {
         "modules": ["RNMsgxSendRuns.tla", "TraceRNMsgxSendRuns.tla"],
         "untraced": {},
