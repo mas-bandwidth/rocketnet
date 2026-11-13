@@ -4,10 +4,11 @@
 # regenerating it in every pull request made each landing conflict with every other
 # open pull request. Instead:
 #
-#   - a pull request that changes docs/roadmap.sexp runs `make roadmap-check`: the sexp
-#     parses and every id is unique. ROADMAP.md is not compared, and need not be current.
-#   - a push to main that changes docs/roadmap.sexp runs `make roadmap` on the tip of
-#     main and, when ROADMAP.md changed, commits it as one commit from
+#   - a pull request that changes docs/roadmap.sexp (or the Makefile, whose roadmap
+#     targets run the generator) runs `make roadmap-check`: the sexp parses and every
+#     id is unique. ROADMAP.md is not compared, and need not be current.
+#   - a push to main that changes docs/roadmap.sexp or the Makefile runs `make roadmap`
+#     on the tip of main and, when ROADMAP.md changed, commits it as one commit from
 #     github-actions[bot] and pushes it. A stale page is fixed here, never failed.
 #
 # No loop: the regeneration commit touches only ROADMAP.md, which is outside this
@@ -22,7 +23,7 @@ name: roadmap
 on:
   push:
     branches: [ main ]
-    paths: [ docs/roadmap.sexp, .github/workflows/roadmap.yml ]
+    paths: [ docs/roadmap.sexp, .github/workflows/roadmap.yml, Makefile ]
   pull_request:
     paths: [ docs/roadmap.sexp, .github/workflows/roadmap.yml, Makefile ]
   workflow_dispatch:
@@ -31,7 +32,7 @@ concurrency:
   # each main commit runs in its own group and is never cancelled; pull requests cancel
   # a superseded run. Two regenerations racing on main are safe: each checks out the
   # newest main, a run that finds the page current commits nothing, and a push refused
-  # because main moved starts again from the new tip.
+  # because main moved (non-fast-forward) starts again from the new tip.
   group: roadmap-${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
@@ -88,8 +89,11 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Another landing can move main between checkout and push: then start again
-          # from the new tip, at most three times.
+          # Another landing can move main between checkout and push: git then refuses
+          # the push as not a fast-forward, and the step starts again from the new tip,
+          # at most three times. A push refused for any other reason (a protected
+          # branch, the token) fails at once, with git's own error above it.
+          push_log=$(mktemp)
           for attempt in 1 2 3; do
             make roadmap NOVA_SPRINT="$GITHUB_WORKSPACE/build/nova-sprint"
             if git diff --quiet -- ROADMAP.md; then
@@ -98,8 +102,14 @@ jobs:
             fi
             git add ROADMAP.md
             git commit -m "Regenerate ROADMAP.md from docs/roadmap.sexp at $(git rev-parse --short HEAD)" -- ROADMAP.md
-            if git push origin HEAD:main; then
+            rc=0
+            LC_ALL=C git push origin HEAD:main 2>&1 | tee "$push_log" || rc=$?
+            if [ "$rc" = 0 ]; then
               exit 0
+            fi
+            if ! grep -qE '\[rejected\] .*\((fetch first|non-fast-forward)\)' "$push_log"; then
+              echo "the push to main was refused, and not because main moved (git's error above): not retrying"
+              exit 1
             fi
             git fetch origin main
             git reset --hard origin/main
