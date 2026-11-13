@@ -115,6 +115,10 @@ struct rocketnet_rio_lane_t
     // binds exclusively and runs where Windows schedules it.
     int processor = -1;
     GROUP_AFFINITY pin = {};
+    // what the worker found when it pinned itself
+    // (rocketnet_server_rio_lane_placement), and the Win32 error of a refusal
+    std::atomic<int> placement{ ROCKETNET_RIO_PLACEMENT_PENDING };
+    std::atomic<unsigned long> placement_error{ 0 };
     // each send phase's slots (rocketnet_server_rio_send_queue_size), every
     // phase's frames, and the receive slices (rocketnet_server_rio_receives),
     // for the configured max_clients; the one allocation the slot bytes, the
@@ -1059,6 +1063,9 @@ bool rocketnet_server_rio_available()
 
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument );
 
+// the lanes a failed create leaked to the kernel (rocketnet_server_rio_create_leaks)
+static std::atomic<uint64_t> rocketnet_rio_create_leaks{ 0 };
+
 // proofs/tla/RNRioWorker.tla PassFails on create's inline drain: the wait
 // between two passes. Only one thing is worth waiting for: closesocket
 // succeeded, which cancelled every posted receive, and some of those
@@ -1506,7 +1513,13 @@ failed:
     {
         // proofs/tla/RNRioWorker.tla WLeak: the bounded inline drain gave up;
         // the kernel may still write the region, so leak it, never free it.
-        rocketnet_error( "rio transport: create failed with %d receives posted; leaking the transport", rio->posted_receives.load( std::memory_order_relaxed ) );
+        // Each leak is counted (rocketnet_server_rio_create_leaks) and named:
+        // it is permanent for the process, so repeated late cancellation
+        // accumulates them.
+        const uint64_t leaks = rocketnet_rio_create_leaks.fetch_add( 1, std::memory_order_relaxed ) + 1;
+        rocketnet_error( "rio transport: create failed with %d receives still posted; leaking the lane's socket, its %llu-byte registered region and its "
+                         "completion queues to the kernel (create leak %llu in this process)",
+                         rio->posted_receives.load( std::memory_order_relaxed ), (unsigned long long) rio->layout.total_bytes, (unsigned long long) leaks );
         return NULL;
     }
     rocketnet_rio_lane_destroy( rio );
@@ -2023,9 +2036,18 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
     // a lane's worker runs beside its socket's processor, on that core's other
     // logical processors (rocketnet_rio_lane_create); a refused pin leaves it
     // where Windows schedules it
-    if ( rio->processor >= 0 && rio->pin.Mask != 0 && !SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
+    if ( rio->processor < 0 || rio->pin.Mask == 0 )
     {
-        rocketnet_warn( "rio transport: lane worker not pinned to processor %d (Win32 %lu)", rio->processor, GetLastError() );
+        rio->placement.store( ROCKETNET_RIO_PLACEMENT_NOT_ASKED, std::memory_order_release );
+    }
+    else if ( SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
+    {
+        rio->placement.store( ROCKETNET_RIO_PLACEMENT_PINNED, std::memory_order_release );
+    }
+    else
+    {
+        rio->placement_error.store( GetLastError(), std::memory_order_relaxed );
+        rio->placement.store( ROCKETNET_RIO_PLACEMENT_REFUSED, std::memory_order_release );
     }
 
     for ( ;; )
@@ -3363,9 +3385,34 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_info( "rio transport: port %d, %d lane%s (one socket and I/O worker each), %d receive slices and %d send frames per phase per lane, %llu registered bytes per lane%s",
                     bind_address->port, lanes, lanes > 1 ? "s" : "", rio->lanes[0]->receives, rio->lanes[0]->send_queue_size,
                     (unsigned long long) rio->lanes[0]->layout.total_bytes, packet_filter ? ", receive prefilter on" : "" );
+    // each lane's placement as its worker found it: create waits (at most a
+    // second per lane) for every worker to answer, and says what happened
     for ( int i = 0; lanes > 1 && i < lanes; ++i )
     {
-        rocketnet_info( "rio transport: lane %d on processor %d (SIO_CPU_AFFINITY), worker mask 0x%llx group %d", i, rio->lanes[i]->processor, (unsigned long long) rio->lanes[i]->pin.Mask, (int) rio->lanes[i]->pin.Group );
+        rocketnet_rio_lane_t * lane = rio->lanes[i];
+        for ( int waits = 0; waits < 1000 && lane->placement.load( std::memory_order_acquire ) == ROCKETNET_RIO_PLACEMENT_PENDING; ++waits )
+        {
+            rocketnet_platform_sleep( 0.001 );
+        }
+        const int placement = lane->placement.load( std::memory_order_acquire );
+        if ( placement == ROCKETNET_RIO_PLACEMENT_PINNED )
+        {
+            rocketnet_info( "rio transport: lane %d socket on processor %d (SIO_CPU_AFFINITY), worker pinned to mask 0x%llx in group %d", i, lane->processor,
+                            (unsigned long long) lane->pin.Mask, (int) lane->pin.Group );
+        }
+        else if ( placement == ROCKETNET_RIO_PLACEMENT_REFUSED )
+        {
+            rocketnet_warn( "rio transport: lane %d socket on processor %d (SIO_CPU_AFFINITY), worker NOT pinned: SetThreadGroupAffinity to mask 0x%llx in group %d refused (Win32 %lu)",
+                            i, lane->processor, (unsigned long long) lane->pin.Mask, (int) lane->pin.Group, lane->placement_error.load( std::memory_order_relaxed ) );
+        }
+        else if ( placement == ROCKETNET_RIO_PLACEMENT_NOT_ASKED )
+        {
+            rocketnet_info( "rio transport: lane %d socket on processor %d (SIO_CPU_AFFINITY), worker not pinned (not asked)", i, lane->processor );
+        }
+        else
+        {
+            rocketnet_warn( "rio transport: lane %d socket on processor %d (SIO_CPU_AFFINITY), worker placement not reported within a second", i, lane->processor );
+        }
     }
     return rio;
 }
@@ -3419,6 +3466,34 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 int rocketnet_server_rio_lanes( rocketnet_server_rio_t * rio )
 {
     return rio->num_lanes;
+}
+
+int rocketnet_server_rio_lane_placement( rocketnet_server_rio_t * rio, int lane, uint64_t * mask, int * group, unsigned long * error )
+{
+    if ( !rio || lane < 0 || lane >= rio->num_lanes || !rio->lanes[lane] )
+    {
+        return ROCKETNET_RIO_PLACEMENT_PENDING;
+    }
+    const rocketnet_rio_lane_t * l = rio->lanes[lane];
+    const int placement = l->placement.load( std::memory_order_acquire );
+    if ( mask )
+    {
+        *mask = (uint64_t) l->pin.Mask;
+    }
+    if ( group )
+    {
+        *group = (int) l->pin.Group;
+    }
+    if ( error )
+    {
+        *error = l->placement_error.load( std::memory_order_relaxed );
+    }
+    return placement;
+}
+
+uint64_t rocketnet_server_rio_create_leaks()
+{
+    return rocketnet_rio_create_leaks.load( std::memory_order_relaxed );
 }
 
 // proofs/tla/RNRioLaneLayout.tla LaneOf

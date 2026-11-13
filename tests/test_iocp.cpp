@@ -3303,6 +3303,20 @@ static void test_rio_lanes_send_and_receive()
     }
     CHECK( lanes_used >= 2 );
 
+    // every lane's worker answered where it runs, and on this host pinned
+    int pinned = 0;
+    for ( int l = 0; l < lanes; ++l )
+    {
+        uint64_t mask = 0;
+        int group = -1;
+        unsigned long error = 0;
+        const int placement = rocketnet_server_rio_lane_placement( rio, l, &mask, &group, &error );
+        CHECK( placement != ROCKETNET_RIO_PLACEMENT_PENDING );
+        pinned += placement == ROCKETNET_RIO_PLACEMENT_PINNED && mask != 0 && group >= 0 ? 1 : 0;
+    }
+    CHECK( pinned == lanes );
+    CHECK( rocketnet_server_rio_lane_placement( rio, lanes, NULL, NULL, NULL ) == ROCKETNET_RIO_PLACEMENT_PENDING );
+
     const uint64_t sent = rio_counter( rio, ROCKETNET_RIO_COUNTER_PACKETS_SENT );
     const int round = ++fault_round & 0xFF;
     for ( int i = 0; i < n; ++i )
@@ -3391,7 +3405,7 @@ static void test_rio_lanes_send_and_receive()
     {
         rocketnet_platform_socket_destroy( client[(size_t) c] );
     }
-    printf( "test_rio_transport_lanes_send_and_receive lanes_used=%d\n", lanes_used );
+    printf( "test_rio_transport_lanes_send_and_receive lanes_used=%d pinned=%d of %d\n", lanes_used, pinned, lanes );
 }
 
 // A port another socket already holds, with or without SO_REUSEADDR, is
