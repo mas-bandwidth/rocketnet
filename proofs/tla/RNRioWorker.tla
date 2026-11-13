@@ -6,16 +6,22 @@
 (* RIO request and completion queues are unsynchronized: the request      *)
 (* queue carries both sends and receives, so one thread must issue both.   *)
 (* One I/O worker therefore owns the request queue and both completion    *)
-(* queues.  It dequeues receive completions into the one receive bank it   *)
-(* owns (the fill bank), re-posts each slice, and publishes the fill bank  *)
-(* onto a FIFO of ready banks in exchange for a free bank.  It takes send  *)
-(* phases that main has handed to it, posts their finished slots with      *)
-(* RIO_MSG_DEFER and one commit, retires send completions and returns a    *)
-(* drained phase to main as idle.                                          *)
+(* queues.  It dequeues receive completions into its receive bank (the     *)
+(* worker's bank of the receive handoff, sdk/rocketnet_receive_handoff.h,  *)
+(* over three banks), re-posts each slice, and at the end of a pass that   *)
+(* banked commits the bank's count under the mutex, moving to the free     *)
+(* bank when main has started on its own (RNReceiveHandoff Commit).  It    *)
+(* takes send phases that main has handed to it, posts their finished      *)
+(* slots with RIO_MSG_DEFER and one commit, retires send completions and   *)
+(* returns a drained phase to main as idle.                                *)
 (*                                                                         *)
-(* Main (rocketnet_server_rio_receive_packets) try-locks, returns the     *)
-(* banks it exposed last call to the free FIFO and exposes the ready banks *)
-(* that fit the process view; the views stay valid until its next call.   *)
+(* Main (rocketnet_rio_lane_receive_packets) empties a finished tail,      *)
+(* try-locks and begins (RNReceiveHandoff Call: when the worker has left   *)
+(* main's bank and the tail is finished, main's bank becomes the tail and  *)
+(* main starts on the worker's), then returns the tail's unread datagrams  *)
+(* and its own bank's up to the committed count it last saw, within the   *)
+(* process view; the views stay valid until its next call.  A failed try   *)
+(* returns what main already held.                                         *)
 (* Main (rocketnet_server_rio_send_packets) try-locks, hands the fill      *)
 (* phase to the worker, opening the next of three phases to the fill       *)
 (* threads, only when the worker has returned that phase idle; otherwise   *)
@@ -23,9 +29,11 @@
 (* and phase states change under the mutex; main never waits: every main   *)
 (* try may fail, and a failed try retains everything main owns.            *)
 (*                                                                         *)
-(* When the fill bank is full and no bank is free the worker stops         *)
-(* dequeuing (completions wait in the queue, slices stay unposted) and     *)
-(* waits for main's wake.  When idle it arms RIONotify on the queues it    *)
+(* When the worker's bank is full and main has not started on it the       *)
+(* worker stops dequeuing (completions wait in the queue, slices stay      *)
+(* unposted) and waits for main's wake, which main sets when it starts on  *)
+(* a full bank.  At stop, main counts once what was banked and never       *)
+(* returned (StopCount).  When idle it arms RIONotify on the queues it     *)
 (* can serve and waits on the notification event and the wake.  RIONotify *)
 (* on a non-empty queue sets the event at once (the documented rule).      *)
 (*                                                                         *)
@@ -49,9 +57,13 @@
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
 (*   SwitchOnIdle   main opens the next phase only when it is idle         *)
-(*   BoundedDequeue the worker dequeues at most the fill bank's free room  *)
+(*   BoundedDequeue the worker dequeues at most its bank's free room       *)
 (*   DrainBeforeExit the worker exits only when nothing is kernel owned    *)
-(*   WakeOnReturn   main wakes the worker when it frees a bank             *)
+(*   WakeOnReturn   main wakes the worker when it starts on a full bank    *)
+(*   ReadOnlyLeft   (TRUE in its witness) main reads only a bank the       *)
+(*                  worker has left, as the old ready FIFO did: a          *)
+(*                  datagram committed before a call waits for the next    *)
+(*                  one (DeliveredByNextCall)                              *)
 (*   DrainSendsBeforeClose the worker closes the socket only when no       *)
 (*                  committed send is in flight                            *)
 (*   BoundedStopDrain create's inline drain gives up after                 *)
@@ -74,7 +86,6 @@
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS Slices,          \* receives: rocketnet_server_rio_receives( max_clients )
-          NumBanks,        \* ROCKETNET_RIO_RECEIVE_BANKS
           Cap,             \* receive bank capacity
           View,            \* the process view's capacity
           MaxDatagrams,    \* datagrams the network offers
@@ -85,7 +96,7 @@ CONSTANTS Slices,          \* receives: rocketnet_server_rio_receives( max_clien
           SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
           DrainSendsBeforeClose, BoundedStopDrain, DrainLoop, CountStalledOnly
 
-ASSUME Slices >= 1 /\ NumBanks >= 2 /\ Cap >= 1 /\ View >= Cap
+ASSUME Slices >= 1 /\ Cap >= 1 /\ View >= Cap
 ASSUME MaxDatagrams \in Nat /\ MaxSends \in Nat
 ASSUME DrainBatch >= 1 /\ StopDrainWaits >= 1
 ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
@@ -115,7 +126,15 @@ PrefilterInWorker == TRUE
 Refused == IF PrefilterInWorker THEN Garbage ELSE {}
 Pass(s) == SelectSeq(s, LAMBDA x : x \notin Refused)
 
-Banks == 1..NumBanks
+\* Rule switch (an operator, overridden in a cfg with <-): main reads the
+\* bank the worker is filling, up to its committed count.  TRUE in
+\* MCRNRioWorkerBrokenReadOnlyLeft.cfg: main reads only a bank the worker
+\* has left, the old ready FIFO's rule; must fail DeliveredByNextCall.
+ReadOnlyLeft == FALSE
+
+\* ROCKETNET_RIO_RECEIVE_BANKS, ROCKETNET_RECEIVE_HANDOFF_BUFFERS
+Banks == 0..2
+NoBank == 3
 Ids == 1..MaxDatagrams
 SendIds == 1..MaxSends
 Phases == {0, 1, 2}    \* ROCKETNET_RIO_SEND_PHASES
@@ -130,13 +149,20 @@ VARIABLES
     retry,       \* slices whose re-post was refused
     retired,     \* completed slices deliberately not re-posted after stop
     rcq,         \* the receive completion queue: ids, 0 a cancelled slice
-    data,        \* per bank, its datagrams
-    fill,        \* the worker's fill bank
-    free,        \* free bank FIFO
-    ready,       \* ready bank FIFO
-    exposed,     \* banks main exposed in its last call
-    view,        \* the datagrams of the exposed banks when exposed
-    consumed,    \* datagrams main processed, in order
+    data,        \* per bank, its datagrams (num_packets is its length)
+    wbank,       \* the handoff's worker bank
+    mbank,       \* the handoff's main bank
+    tbank,       \* the handoff's tail
+    fbank,       \* the handoff's free bank, NoBank while there is none
+    committed,   \* per bank, the committed count (under the mutex)
+    mcur, mlim,  \* main's alone: main_cursor, main_limit
+    tcur, tend,  \* main's alone: tail_cursor, tail_end
+    view,        \* main's views from its last call: <<bank, slot, datagram>>
+    consumed,    \* datagrams main returned, in order
+    drained,     \* datagrams the stop pass dequeued and never banked
+    stopdrops,   \* the datagrams StopCount counted RECEIVE_DROP_STOPPED
+    stopcounted, \* main made the StopCount
+    late,        \* ghost: a call broke DeliveredByNextCall
     \* send
     sent,        \* staged packets so far (the next id is sent + 1 ... see staged)
     staged,      \* per phase, the packets staged into it
@@ -162,16 +188,23 @@ VARIABLES
     stoprefused,  \* the last stop-pass commit or closesocket was refused
     waited        \* ghost: the posted phases every send of which the kernel had finished when this pass began
 
-rvars == <<arrived, accepted, posted, retry, retired, rcq, data, fill, free, ready, exposed, view, consumed>>
+mainvars == <<wbank, mbank, tbank, fbank, committed, mcur, mlim, tcur, tend, view, consumed, stopdrops, stopcounted, late>>
+hvars == <<mainvars, drained>>
+rvars == <<arrived, accepted, posted, retry, retired, rcq, data, hvars>>
 svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
 cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 vars == <<rvars, svars, cvars>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
-RECURSIVE Concat(_)
-Concat(s) == IF s = <<>> THEN <<>> ELSE data[Head(s)] \o Concat(Tail(s))
-RECURSIVE Sum(_)
-Sum(s) == IF s = <<>> THEN 0 ELSE Len(data[Head(s)]) + Sum(Tail(s))
+Min(a, b) == IF a < b THEN a ELSE b
+\* slots m+1 .. n of s (empty when n <= m)
+Slots(s, m, n) == IF n <= m THEN <<>> ELSE SubSeq(s, m + 1, n)
+TailFinished == tcur >= tend
+\* what the worker banked that main has not returned, oldest first: the
+\* tail's rest, main's bank past its cursor (committed or not), and the
+\* worker's bank when it has moved on
+Unread == Slots(data[tbank], tcur, tend) \o Slots(data[mbank], mcur, Len(data[mbank]))
+          \o (IF wbank # mbank THEN data[wbank] ELSE <<>>)
 NonZero(s) == SelectSeq(s, LAMBDA x : x # 0)
 OfPhase(p) == {i \in 1..Len(scq) : scq[i][1] = p}
 Outstanding(p) == pend[p] # <<>> \/ infl[p] # <<>> \/ OfPhase(p) # {} \/ inhand = p
@@ -180,9 +213,14 @@ Uncommitted == \E p \in Phases : pend[p] # <<>>
 
 Init ==
     /\ arrived = 0 /\ accepted = <<>> /\ posted = Slices /\ retry = 0 /\ retired = 0 /\ rcq = <<>>
-    /\ data = [b \in Banks |-> <<>>] /\ fill = 1
-    /\ free = [i \in 1..(NumBanks - 1) |-> i + 1] /\ ready = <<>>
-    /\ exposed = <<>> /\ view = <<>> /\ consumed = <<>>
+    \* rocketnet_receive_handoff_init: main and the worker share bank 0,
+    \* bank 1 is free and bank 2 is main's finished, empty tail
+    /\ data = [b \in Banks |-> <<>>]
+    /\ wbank = 0 /\ mbank = 0 /\ tbank = 2 /\ fbank = 1
+    /\ committed = [b \in Banks |-> 0]
+    /\ mcur = 0 /\ mlim = 0 /\ tcur = 0 /\ tend = 0
+    /\ view = <<>> /\ consumed = <<>> /\ drained = <<>>
+    /\ stopdrops = <<>> /\ stopcounted = FALSE /\ late = FALSE
     /\ sent = 0 /\ staged = [p \in Phases |-> <<>>]
     /\ state = [p \in Phases |-> IF p = 0 THEN "fill" ELSE "idle"]
     /\ phase = 0 /\ sready = <<>> /\ inhand = NoPhase
@@ -209,7 +247,7 @@ Arrive ==
     /\ rcq' = Append(rcq, arrived + 1)
     /\ evt' = (evt \/ armed)
     /\ armed' = FALSE
-    /\ UNCHANGED <<retry, retired, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<retry, retired, data, hvars>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
@@ -218,7 +256,7 @@ ArriveDropped ==
     /\ arrived < MaxDatagrams
     /\ posted = 0
     /\ arrived' = arrived + 1
-    /\ UNCHANGED <<accepted, posted, retry, retired, rcq, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<accepted, posted, retry, retired, rcq, data, hvars>>
     /\ UNCHANGED svars /\ UNCHANGED cvars
 
 \* a committed send completes.  Send completions do not arm the event in
@@ -243,7 +281,7 @@ CancelArrives ==
     /\ posted > 0
     /\ posted' = posted - 1
     /\ rcq' = Append(rcq, 0)
-    /\ UNCHANGED <<arrived, accepted, retry, retired, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, retry, retired, data, hvars>>
     /\ UNCHANGED svars /\ UNCHANGED cvars
 
 \* ------------------------------------------------------------------------
@@ -278,32 +316,54 @@ SendPackets ==
     /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
     /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
-RECURSIVE Fit(_, _)
-\* the longest prefix of ready banks whose datagrams fit the view
-Fit(s, room) == IF s = <<>> \/ Len(data[Head(s)]) > room THEN 0
-                ELSE 1 + Fit(Tail(s), room - Len(data[Head(s)]))
-
-\* receive_packets, a successful try: return the exposed banks, expose the
-\* ready banks that fit, and wake the worker if the free FIFO was empty
-ReceivePackets ==
+\* rocketnet_rio_lane_receive_packets, one call (RNReceiveHandoff Call; busy:
+\* the try-acquire failed).  The last call's views have expired, so a
+\* finished tail is emptied.  On a successful try main begins
+\* (rocketnet_receive_handoff_begin): when the worker has left main's bank
+\* and the tail is finished, the tail is freed, main's bank becomes the tail
+\* with its final count and main starts on the worker's bank; main's limit
+\* is its bank's committed count.  Then main returns the tail's unread
+\* datagrams and its own bank's up to the limit, within the view.  Main
+\* wakes the worker when it starts on a full bank (WakeOnReturn).  late
+\* records a call that took the mutex with no backlog and room to spare and
+\* still left a committed datagram unreturned.
+ReceiveCall(busy) ==
     /\ ~stopping
-    /\ LET n == Fit(ready, View)
-           taken == SubSeq(ready, 1, n)
-       IN /\ free' = free \o exposed
-          /\ exposed' = taken
-          /\ ready' = SubSeq(ready, n + 1, Len(ready))
-          /\ view' = Concat(taken)
-          /\ consumed' = consumed \o Concat(taken)
-          /\ wake' = (wake \/ (WakeOnReturn /\ free = <<>> /\ exposed # <<>>))
-    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, fill>>
+    /\ LET d0 == IF TailFinished THEN [data EXCEPT ![tbank] = <<>>] ELSE data
+           adv == ~busy /\ mbank # wbank /\ TailFinished
+           t2 == IF adv THEN mbank ELSE tbank
+           m2 == IF adv THEN wbank ELSE mbank
+           tc == IF adv THEN mcur ELSE tcur
+           te == IF adv THEN committed[mbank] ELSE tend
+           mc == IF adv THEN 0 ELSE mcur
+           ml == IF busy THEN mlim
+                 ELSE IF ReadOnlyLeft /\ m2 = wbank THEN (IF adv THEN 0 ELSE mlim)
+                 ELSE committed[m2]
+           nt == Min(View, te - tc)
+           nm == Min(View - nt, ml - mc)
+           got == [i \in 1..nt |-> <<t2, tc + i, d0[t2][tc + i]>>]
+                  \o [i \in 1..nm |-> <<m2, mc + i, d0[m2][mc + i]>>]
+           backlog == ~(TailFinished /\ mcur >= mlim)
+       IN /\ data' = d0
+          /\ fbank' = IF adv THEN tbank ELSE fbank
+          /\ tbank' = t2 /\ mbank' = m2
+          /\ tcur' = tc + nt /\ tend' = te
+          /\ mcur' = mc + nm /\ mlim' = ml
+          /\ view' = got
+          /\ consumed' = consumed \o [i \in 1..Len(got) |-> got[i][3]]
+          /\ late' = (late \/ (~busy /\ ~backlog /\ Len(got) < View
+                               /\ (te - tc - nt) + (committed[m2] - mc - nm) > 0))
+          /\ wake' = (wake \/ (WakeOnReturn /\ adv /\ ml >= Cap))
+    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, wbank, committed, drained, stopdrops, stopcounted>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
 
-\* a failed try: everything main owns is retained.  This over-approximates
-\* contention: the try may fail at any time.
-TryFail ==
-    /\ ~stopping
-    /\ UNCHANGED vars
+\* a successful try
+ReceivePackets == ReceiveCall(FALSE)
+
+\* a failed try: main returns what it already held, up to its earlier
+\* limit.  This over-approximates contention: the try may fail at any time.
+TryFail == ReceiveCall(TRUE)
 
 \* rocketnet_server_rio_stop: stopping, then the wake
 Stop ==
@@ -325,6 +385,22 @@ Destroy ==
 Poll ==
     /\ stopping
     /\ UNCHANGED vars
+
+\* rocketnet_rio_count_stopped: main, once, when stopped() first finds the
+\* worker exited, so main owns every bank: what was banked and never
+\* returned is counted RECEIVE_DROP_STOPPED, and main's cursors move past
+\* it (main takes nothing after stop).
+StopCount ==
+    /\ exited
+    /\ ~stopcounted
+    /\ stopcounted' = TRUE
+    /\ stopdrops' = Unread
+    /\ tcur' = tend
+    /\ mcur' = Len(data[mbank])
+    /\ mlim' = Len(data[mbank])
+    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, drained>>
+    /\ UNCHANGED <<wbank, mbank, tbank, fbank, committed, tend, view, consumed, late>>
+    /\ UNCHANGED svars /\ UNCHANGED cvars
 
 \* ------------------------------------------------------------------------
 \* The I/O worker.
@@ -425,13 +501,13 @@ WRetireFirst ==
 \* stopDuring summarizes that one Stop interleaving, including its wake.
 \* It does not introduce a second worker or a new fairness assumption.
 \* proofs/tla/RNRioWorker.tla WDequeue, Refused: the prefilter's refusals take
-\* no room, so the worker dequeues while the fill bank has room and it has
+\* no room, so the worker dequeues while its bank has room and it has
 \* taken at most one bank of completions (Slices): it stops with the queue
 \* empty, the room used up or that budget spent.
 Banked(k) == Len(Pass(NonZero(SubSeq(rcq, 1, k))))
 DequeueCounts ==
     IF ~BoundedDequeue THEN {Len(rcq)}
-    ELSE LET room == Cap - Len(data[fill])
+    ELSE LET room == Cap - Len(data[wbank])
          IN {k \in 0..Len(rcq) :
                 /\ k <= Slices
                 /\ (room = 0 => k = 0)
@@ -448,10 +524,10 @@ WDequeue ==
              /\ ~attemptRetry => repost = 0
              /\ LET attempted == IF attemptRetry THEN retry ELSE 0
                     got == Pass(NonZero(SubSeq(rcq, 1, k)))
-                    keep == IF Len(data[fill]) + Len(got) <= Cap THEN got
-                            ELSE SubSeq(got, 1, Cap - Len(data[fill]))
+                    keep == IF Len(data[wbank]) + Len(got) <= Cap THEN got
+                            ELSE SubSeq(got, 1, Cap - Len(data[wbank]))
                 IN \E refused \in 0..(attempted + repost) :
-                     /\ data' = [data EXCEPT ![fill] = data[fill] \o keep]
+                     /\ data' = [data EXCEPT ![wbank] = data[wbank] \o keep]
                      /\ rcq' = SubSeq(rcq, k + 1, Len(rcq))
                      /\ posted' = posted + attempted + repost - refused
                      /\ retry' = retry - attempted + refused
@@ -460,32 +536,38 @@ WDequeue ==
              /\ stopping' = (stopping \/ stopDuring)
              /\ wake' = (wake \/ stopDuring)
     /\ wpc' = "publish"
-    /\ UNCHANGED <<arrived, accepted, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, hvars>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<evt, armed, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
 
-\* under the mutex: publish a non-empty fill bank for a free one, and return
-\* every drained posted phase to main as idle
+\* under the mutex: a bank holding datagrams commits its count
+\* (rocketnet_receive_handoff_commit, RNReceiveHandoff Commit) and, when
+\* main has started on it, the worker moves to the free bank, which main
+\* emptied before freeing it; then every drained posted phase goes back to
+\* main as idle
 WPublish ==
     /\ wpc = "publish"
-    /\ IF data[fill] # <<>> /\ free # <<>>
-       THEN /\ ready' = Append(ready, fill)
-            /\ fill' = Head(free)
-            /\ free' = Tail(free)
-            /\ data' = [data EXCEPT ![Head(free)] = <<>>]
-       ELSE UNCHANGED <<ready, fill, free, data>>
+    /\ IF data[wbank] # <<>>
+       THEN IF mbank = wbank
+            THEN /\ committed' = [committed EXCEPT ![wbank] = Len(data[wbank]), ![fbank] = 0]
+                 /\ wbank' = fbank
+                 /\ fbank' = NoBank
+            ELSE /\ committed' = [committed EXCEPT ![wbank] = Len(data[wbank])]
+                 /\ UNCHANGED <<wbank, fbank>>
+       ELSE UNCHANGED <<committed, wbank, fbank>>
     /\ state' = [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
     /\ wpc' = IF progress THEN "top" ELSE "arm"
-    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, drained>>
+    /\ UNCHANGED <<mbank, tbank, mcur, mlim, tcur, tend, view, consumed, stopdrops, stopcounted, late>>
     /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
-\* nothing progressed: arm RIONotify on the receive queue when the fill bank
+\* nothing progressed: arm RIONotify on the receive queue when its bank
 \* has room (a full bank waits on the wake alone).  A non-empty queue sets
 \* the event at once.
 WArm ==
     /\ wpc = "arm"
-    /\ IF Len(data[fill]) < Cap
+    /\ IF Len(data[wbank]) < Cap
        THEN IF rcq # <<>> THEN evt' = TRUE /\ armed' = FALSE
                           ELSE armed' = TRUE /\ UNCHANGED evt
        ELSE UNCHANGED <<evt, armed>>
@@ -605,7 +687,7 @@ WClose ==
                /\ wpc' = IF DrainBeforeExit THEN "drains" ELSE "exited"
                /\ UNCHANGED <<posted, rcq, scq, done, pend, infl, stopwaits, countedbusy>>
     /\ exited' = (wpc' = "exited")
-    /\ UNCHANGED <<arrived, accepted, retry, retired, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, retry, retired, data, hvars>>
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
     /\ UNCHANGED <<wake, evt, armed, stopping, freed, progress, waited>>
 
@@ -639,6 +721,7 @@ WDrainReceive ==
            fell == n > 0 \/ wpc = "drainrp"
        IN /\ rcq' = SubSeq(rcq, n + 1, Len(rcq))
           /\ retired' = retired + n
+          /\ drained' = drained \o Pass(NonZero(SubSeq(rcq, 1, n)))
           /\ IF DrainLoop /\ n = DrainBatch
              THEN /\ wpc' = "drainrp"
                   /\ UNCHANGED <<exited, stopwaits, countedbusy>>
@@ -648,7 +731,7 @@ WDrainReceive ==
                        /\ UNCHANGED <<stopwaits, countedbusy>>
                   ELSE /\ PassFails(fell)
                        /\ UNCHANGED exited
-    /\ UNCHANGED <<arrived, accepted, posted, retry, data, fill, free, ready, exposed, view, consumed>>
+    /\ UNCHANGED <<arrived, accepted, posted, retry, data, mainvars>>
     /\ UNCHANGED svars
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused, waited>>
 
@@ -665,7 +748,7 @@ WLeak ==
 Next ==
     \/ Arrive \/ ArriveDropped \/ \E p \in Phases : SendComplete(p) \/ CancelArrives
     \/ Stage \/ SendPackets \/ ReceivePackets \/ TryFail
-    \/ Stop \/ Destroy \/ Poll
+    \/ Stop \/ Destroy \/ Poll \/ StopCount
     \/ WTop \/ WRetireFirst \/ WTake \/ WPost \/ WCommit \/ WRetire \/ WDequeue \/ WPublish
     \/ WArm \/ WWait \/ WStop \/ WClose \/ WDrainSend \/ WDrainReceive \/ WLeak
 
@@ -698,7 +781,11 @@ TypeOK ==
     /\ posted \in 0..Slices /\ retry \in 0..Slices /\ retired \in 0..Slices
     /\ data \in [Banks -> Seq(Ids)]
     /\ \A b \in Banks : Len(data[b]) <= Cap
-    /\ fill \in Banks
+    /\ wbank \in Banks /\ mbank \in Banks /\ tbank \in Banks
+    /\ fbank \in Banks \cup {NoBank}
+    /\ committed \in [Banks -> 0..Cap]
+    /\ {mcur, mlim, tcur, tend} \subseteq 0..Cap
+    /\ stopcounted \in BOOLEAN /\ late \in BOOLEAN
     /\ state \in [Phases -> {"fill", "ready", "posted", "idle"}]
     /\ phase \in Phases
     /\ inhand \in Phases \cup {NoPhase}
@@ -716,18 +803,42 @@ SlicesAccounted ==
     /\ posted + Len(rcq) + retry + retired = Slices
     /\ (~stopping => retired = 0)
 
-\* Every bank has exactly one owner: the worker's fill bank, the ready FIFO,
-\* main's exposed banks or the free FIFO.
+\* The handoff's roles (RNReceiveHandoff FreeIffShared, NoSharedSlot,
+\* FreeIsEmpty): main and the worker may share a bank, the tail and the free
+\* bank are nobody else's and a free bank exists exactly while they share;
+\* main reads below the committed count and the worker writes at or past
+\* it, a bank the worker left keeps its final count while main reads it,
+\* and the worker moves only to an empty bank.
 ExclusiveOwnership ==
-    LET owners == <<fill>> \o ready \o exposed \o free
-    IN Len(owners) = NumBanks /\ Range(owners) = Banks
+    /\ tbank # mbank /\ tbank # wbank
+    /\ (fbank # NoBank) <=> (mbank = wbank)
+    /\ fbank # NoBank => fbank \notin {mbank, wbank, tbank}
+    /\ mcur <= mlim
+    /\ (~stopcounted => mlim <= committed[mbank])
+    /\ committed[wbank] <= Len(data[wbank])
+    /\ (mbank # wbank => Len(data[mbank]) = committed[mbank])
+    /\ tcur <= tend
+    /\ (TailFinished \/ tend = Len(data[tbank]))
+    /\ (fbank # NoBank => data[fbank] = <<>>)
 
-\* The views main reads are stable until its next call.
-ExposedStable == Concat(exposed) = view
+\* The views main returned stay valid until its next call: no slot a view
+\* points at is written or emptied.
+ExposedStable ==
+    \A k \in 1..Len(view) :
+        /\ view[k][2] <= Len(data[view[k][1]])
+        /\ data[view[k][1]][view[k][2]] = view[k][3]
 
-\* Exact delivery of every accepted datagram, until stop.
+\* Exact delivery of every accepted datagram: returned, banked and unread
+\* (counted RECEIVE_DROP_STOPPED at the StopCount), dequeued by the stop
+\* pass, or still in the queue, each once and in order.
 ExactDelivery ==
-    ~stopping => consumed \o Concat(ready) \o data[fill] \o Pass(NonZero(rcq)) = Pass(accepted)
+    consumed \o stopdrops \o (IF stopcounted THEN <<>> ELSE Unread) \o drained \o Pass(NonZero(rcq))
+        = Pass(accepted)
+
+\* RNReceiveHandoff DeliveredByNextCall on the rio lane: a call that took the
+\* mutex with no backlog and room to spare returned every datagram the
+\* worker had committed.
+DeliveredByNextCall == ~late
 
 \* A pass posts a new phase only after it returned to main every posted
 \* phase whose sends the kernel had all finished when the pass began.
