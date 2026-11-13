@@ -44,7 +44,7 @@ function lists.
   > connection that ended before the pass aborts at most one frame a flush
   > (`AbortsBounded`); every slot with writable work served within
   > ceil(connected / K) flushes that had the full capacity, the capacity read
-  > live at each visit (`FairService`); a flush is rounds over the last round's
+  > live at each visit, for one send queue (`FairService`; with two queues and a live room a held slot can be walked past, recorded as the code is and handed up under MM057); a flush is rounds over the last round's
   > writers in the first round's order, the cursor as a walk over every
   > connected slot would leave it, at most N + frames visits (`SameOrder`,
   > `OnlyLastWriters`, `EndedWritesNothing`, `CursorAsFullWalk`,
