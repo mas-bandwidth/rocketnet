@@ -1058,7 +1058,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             rn_message_connection_t * connection = rn_message_admit( object, client_index, object->link.acked_connection, k );
             if ( connection )
             {
-                rn_endpoint_on_acked( connection, &packet_ids[k], (uint32_t) ( end - k ), time );   // RNEndpoint OnAcked
+                rn_endpoint_on_acked_ids( connection, &packet_ids[k], (uint32_t) ( end - k ), time );   // RNEndpoint OnAcked
             }
             else
             {
