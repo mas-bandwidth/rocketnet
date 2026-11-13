@@ -2346,7 +2346,7 @@ static void harden_profile_run( harden_profile_t * p )
 
 struct harden_delay_t
 {
-    uint64_t n = 0, late = 0, negative = 0, over = 0, unstamped = 0;
+    uint64_t n = 0, late = 0, late_1ms = 0, negative = 0, over = 0, unstamped = 0;
     double sum = 0.0, max = 0.0;
     uint32_t bins[HARDEN_DELAY_BINS] = {};
 };
@@ -2363,6 +2363,10 @@ static void harden_delay_add( harden_delay_t * d, int64_t wait_ns, int64_t gap_n
     d->sum += updates;
     d->max = std::max( d->max, updates );
     d->late += wait_ns > gap_ns ? 1 : 0;
+    // late by more than a millisecond: sent at least 1 ms before the previous
+    // receive call began, so not a datagram still on the wire or in the
+    // kernel when that call ran
+    d->late_1ms += wait_ns > gap_ns + 1000000 ? 1 : 0;
     const int bin = (int) ( updates * 100.0 );
     if ( bin >= HARDEN_DELAY_BINS )
     {
@@ -2376,6 +2380,7 @@ static void harden_delay_merge( harden_delay_t * into, const harden_delay_t & d 
 {
     into->n += d.n;
     into->late += d.late;
+    into->late_1ms += d.late_1ms;
     into->negative += d.negative;
     into->over += d.over;
     into->unstamped += d.unstamped;
@@ -2410,8 +2415,9 @@ static double harden_delay_percentile( const harden_delay_t & d, double p )
 static void harden_delay_print( const char * tag, double t, const harden_delay_t & d )
 {
     const double n = d.n ? (double) d.n : 1.0;
-    printf( "%s: t=%.1f n=%" PRIu64 " late=%" PRIu64 " late_pct=%.3f wait_updates mean=%.3f p50=%.2f p90=%.2f p99=%.2f max=%.3f over=%" PRIu64 " negative=%" PRIu64 " unstamped=%" PRIu64 "\n", tag, t, d.n,
-            d.late, 100.0 * (double) d.late / n, d.sum / n, harden_delay_percentile( d, 0.50 ), harden_delay_percentile( d, 0.90 ), harden_delay_percentile( d, 0.99 ), d.max, d.over,
+    printf( "%s: t=%.1f n=%" PRIu64 " late=%" PRIu64 " late_pct=%.3f late_1ms=%" PRIu64 " late_1ms_pct=%.3f wait_updates mean=%.3f p50=%.2f p90=%.2f p99=%.2f max=%.3f over=%" PRIu64 " negative=%" PRIu64
+            " unstamped=%" PRIu64 "\n",
+            tag, t, d.n, d.late, 100.0 * (double) d.late / n, d.late_1ms, 100.0 * (double) d.late_1ms / n, d.sum / n, harden_delay_percentile( d, 0.50 ), harden_delay_percentile( d, 0.90 ), harden_delay_percentile( d, 0.99 ), d.max, d.over,
             d.negative, d.unstamped );
 }
 
