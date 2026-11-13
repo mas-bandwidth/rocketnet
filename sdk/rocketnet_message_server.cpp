@@ -1444,8 +1444,14 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             // not a refusal: the ring holds one round and the main thread's
             // send carries the message, as it does for the serial finish
             // (proofs/tla/RNWriterFinish.tla Start, Buffered)
-            const bool ring_only = ( ring_short || header >= 0 ) && object->link.send_buffered &&
-                                   object->link.send_buffered( object->link.transport );
+            bool ring_only = ( ring_short || header >= 0 ) && object->link.send_buffered &&
+                             object->link.send_buffered( object->link.transport );
+#if defined( ROCKETNET_WRITER_FINISH_PLANT )
+            // the trace check's plant on a buffered transport
+            // (tests/tla_trace_writer_finish.cpp): a start the ring had no
+            // slot for is marked as having no capacity
+            ring_only = false;
+#endif // #if defined( ROCKETNET_WRITER_FINISH_PLANT )
             if ( !behind_queue && !ring_only )
             {
                 pending = RN_MESSAGE_OPEN_PENDING_NO_CAPACITY;
