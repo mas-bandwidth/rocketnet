@@ -571,9 +571,9 @@ static int world_ack( world_t * w )
 }
 
 // the walk's ack: the oldest unacked number whose message the receiver has
-// fully released. Acking a live message would free its descriptor in the
-// reference while its ring span is still marked, which the reference's one
-// span map cannot represent; the directed probes ack completing numbers in
+// fully released. Acking a live message would advance U' in the reference
+// before the release unmarks its ring span, which the reference's one span
+// map cannot represent; the directed probes ack completing numbers in
 // states built for it.
 
 static int world_ack_released( world_t * w )

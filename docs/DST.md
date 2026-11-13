@@ -79,7 +79,7 @@ The same seeds and options print the same trace on Linux, macOS and Windows,
 so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=255b8ae11ec099cb
+    PASS seeds=1-50 runs=50 trace=4872414ac933a2a7
 
 measured equal, Release, at executable source 9045dc02c (the v1.1.2 send pass,
 fix/v1.1.2/no-aborted-frames) on Linux, macOS and Windows:
@@ -96,12 +96,20 @@ cb02374fb45015e4. The v1.1.2 send pass moved it to 255b8ae11ec099cb: a client
 packet its send budget refuses is now refused before a frame is started, so
 it no longer takes a session sequence that is never sent (with the
 write-first path limited to the server the trace is cb02374fb45015e4 again).
+W2-51's handshake pacing (e04c7f459) moved it to 4872414ac933a2a7, measured
+on Linux (x64, gcc, Release): the client sends the packet of a state the
+cookie or the challenge just advanced it to in that update, and a send
+interval counts as elapsed one microsecond early. With both reverted on the
+same source the trace is 255b8ae11ec099cb again; with only the early send
+reverted it is e6ad356616a575e5, with only the tolerance reverted
+4feb17ac1b822961. The fixed range and the nine schedules moved with it
+(`.github/workflows/nightly-dst.yml`, measured on Linux at e04c7f459).
 A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
 per-commit Release unit job reads its pin from there), from
 three equal PASS lines. The nightly pins the fixed range 1-2050
-(`DST_FIXED_TRACE`, 5ec8156775d05f45) and each fault schedule over seeds
+(`DST_FIXED_TRACE`, df95d06b07d3f187) and each fault schedule over seeds
 1-50 (`DST_TRACE_<SCHEDULE>`) beside it, set from the three equal lines of
 run 43203428903, and compares each step's whole PASS line; a change that
 moves one moves its pin by the same rule.

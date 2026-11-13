@@ -286,8 +286,8 @@
    :date "2026-11-13" :origin "v1.1.x CI review")
 
   (item "dst-mirror-observations" :group "review-v1-2" :area "proofs"
-   :title "DST: observe what the narrowed mirrors do not (crash, clock, peer-open, receipts)"
-   :text "COVERAGE.tsv now states what the DST checks in tests/dst_checks.h actually observe. Still owed: a crash fault so CrashedEndpointSilent can fail (the harness passes live endpoints only); a ClockMonotone check (clock-back steps a clock back on purpose, and RNSimFaults' SkewBounded bound grows with t while the DST uses the fixed bound it is passed); a peer-open ledger so AckedMeansPacketOpened and AckReportsOnlyReceived mean more than issued-once; for AckedMeansSurfaced, a comparison of the sender's internally acked records against the ids that entered its ACK batch (the DST already sees the surfaced ids); fragment observation for BlockAckedOnlyWhenAllFragmentsAcked (a type 7 behind an earlier undelivered sequence passes unobserved); a type 6/7 deadline for ReceiptProgress; and a replay-bit read for HighestIsReceived. Add each observation to the DST harness and restore the full mirror claims."
+   :title "DST: the observations the narrowed mirrors still owe (crash, clock, opening, receipts)"
+   :text "COVERAGE.tsv now states what the DST checks in tests/dst_checks.h actually observe. Still owed: a crash fault so CrashedEndpointSilent can fail (the harness passes live endpoints only); a ClockMonotone check (clock-back steps a clock back on purpose, and RNSimFaults' SkewBounded bound grows with t while the DST uses the fixed bound it is passed); an open ledger on the receiving side so AckedMeansPacketOpened and AckReportsOnlyReceived mean more than issued-once; for AckedMeansSurfaced, a comparison of the sender's internally acked records against the ids that entered its ACK batch (the DST already sees the surfaced ids); fragment observation for BlockAckedOnlyWhenAllFragmentsAcked (a type 7 behind an earlier undelivered sequence passes unobserved); a type 6/7 deadline for ReceiptProgress; and a replay-bit read for HighestIsReceived. Add each observation to the DST harness and restore the full mirror claims."
    :date "2026-11-13" :origin "Models review M2 (MM013-MM018): claims narrowed to the checks; observations deferred here")
 
   (item "msgx-dead-socket-placeholder" :group "review-v1-2" :area "sdk"
@@ -337,7 +337,7 @@
 
   (item "sodium-windows-lock-owner" :group "audit-remaining" :area "sdk"
    :title "Owner-aware leave for the vendored sodium's Windows lock"
-   :text "sodium_misuse leaves sodium's critical section before taking it again. On POSIX the vendored leave refuses unless this thread holds the lock (a thread-local flag, tools/generate_sodium.py LIFECYCLE_ADAPTATIONS, sodium/README.md \"POSIX lock\"). The Windows branch keeps upstream's check of the process-wide locked flag, so a fatal misuse on a thread outside the section while another thread holds the SRW lock clears that thread's flag and releases a lock it does not own. Reachable only on the abort path. Give the Windows branch the same thread-local owner flag (__declspec(thread) under MSVC, __thread under MinGW), carried through the generator."
+   :text "sodium_misuse leaves sodium's critical section before taking it again. On POSIX the vendored leave refuses unless this thread holds the lock (the holder's pthread_self recorded under the lock and read with atomics, tools/generate_sodium.py LIFECYCLE_ADAPTATIONS, sodium/README.md \"POSIX lock\"). The Windows branch keeps upstream's check of the process-wide locked flag, so a fatal misuse on a thread outside the section while another thread holds the SRW lock clears that thread's flag and releases a lock it does not own. Reachable only on the abort path. Give the Windows branch the same owner test (GetCurrentThreadId recorded under the lock, read with Interlocked operations), carried through the generator; never a thread-local, which a production build may not carry (tools/check_no_thread_local.py)."
    :date "2026-11-13" :origin "fix-review build-sanitizers 4703c70f0 B02")
 
   (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
@@ -750,9 +750,6 @@
    :title "LoopbackQueue cannot reach its full drop, and its Drop does not count"
    :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
    :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
-
-   :text "RNOrderingWrap (the delivery reservation, the duplicate's reservation and the deferral in rn_ordered_receive), RNWindow and RNWindowLayout (rn_window_receive_accept) and RNHeldOwnership have no tests/tla_trace_*.cpp walk. rn_window_receive_duplicate is in no model's actions: it repeats Accept's duplicate test, and it agrees with rn_window_receive_accept only by reading the two functions: tools/tla_trace_check.py does not check the code's receive path against them, so an action reordered in the code stays green against the model. Give the channel receive path a trace walk that emits Receive, ReceiveDuplicate and ReceivePartial with the read index, the held set and the deliveries, checked against RNOrderingWrap."
-   :date "2026-11-13" :origin "Ordered duplicate scan fix")
 
   (item "ci-functional-step-name-per-os" :group "review-v1-2" :area "github"
    :title "The functional suite step says 'on Linux' on the macOS runner"
