@@ -79,6 +79,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // endpoint's link simulator carries the receive_any delivery bound and hint
 // and two receive_any scan counters (sdk/rocketnet_network_simulator.h,
 // 40 bytes).
+// The counter union (53 more rows in every counter block) moved every pin:
+// on Linux x86_64 the client by 832 bytes and the server by 896 (bench, gcc,
+// Debug: actual=15186002 and 3111677747); on macOS the client by 768 and the
+// server by 960 (the studio, Debug); on Windows the client by 832 and the
+// server by 960 (the unit job: actual=15389868 and 1469501759).
 #define LIGHT_REQUIRED_MEMORY_SLACK_BYTES ( (size_t) 1024 * 1024 )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
@@ -122,8 +127,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452223 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14340460 )
+// The server config's two bind addresses add 512 bytes to the server and nothing to the
+// client (measured on the Windows unit job: actual=1469501311).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453695 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -166,8 +173,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // counter block by 8 bytes, adding 64 to the server and 64 to the client
 // (their objects' 64-byte rounding) (measured); the probe's actual= lines
 // are 1469501215 and 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468452639 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server (the object holding the
+// config crosses its rounding) and nothing to the client (measured); the
+// probe's actual= line is 1469501727.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468454111 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988746 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -248,6 +259,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client (measured on bench-nyc-4, gcc, Release, ROCKETNET_DEV=ON, before
 // and after: actual=3111676851 to 5610448051). A Linux build without XDP plans
 // a smaller peak and the check is at most there.
+// The server config's two bind addresses (bind_ipv4_address,
+// bind_ipv6_address) add 512 bytes to the server and nothing to the client
+// (measured on bench-nyc-4, gcc, Debug, DEV ON, as 3111676851 to 3111677363
+// before the send queue change above; the pin below holds both).
 #if defined( __aarch64__ )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
@@ -255,11 +270,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399531ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400939ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399475ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609400883ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14136594 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137426 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

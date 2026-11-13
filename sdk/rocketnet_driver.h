@@ -167,6 +167,19 @@ struct rocketnet_server_transport_io_operations_t
     // buffered backend may switch retained sends to its terminal attempt.
     // stop still follows the final flush and send_idle.
     void ( *begin_shutdown )( void * transport );
+
+    // optional; main thread only. Writes ROCKETNET_RECEIVE_NUM_DROPS values
+    // in rocketnet_receive_drop_t order (sdk/rocketnet_receive_prefilter.h):
+    // the datagrams the transport's own receive dropped, by reason,
+    // cumulative for the transport's life, ACCEPT written as 0. The server
+    // adds each value's growth since its last read to the counters
+    // rocketnet_receive_drop_counters names, so a datagram the transport
+    // refused reads exactly as main would have counted it, and a datagram
+    // with no room in the receive bank reads RECEIVE_DROPPED_FULL. The
+    // builtins read these from the rows their own receive already counts
+    // (sdk/rocketnet_driver_builtin.cpp); the reasons a builtin does not feed
+    // yet are named in tools/check_counter_observed.py (OWED_TRANSPORT_FEEDS).
+    void ( *receive_drop_totals )( void * transport, uint64_t * values );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

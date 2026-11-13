@@ -415,6 +415,8 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_TRANSPORT
 * Environment: ROCKETNET_SERVER_IPV4_ADDRESS
 * Environment: ROCKETNET_SERVER_IPV6_ADDRESS
+* Environment: ROCKETNET_SERVER_BIND_IPV4_ADDRESS (applies only to a server of IPv4 alone; ignored, with a log line, otherwise)
+* Environment: ROCKETNET_SERVER_BIND_IPV6_ADDRESS (applies only to a server of IPv6 alone; ignored, with a log line, otherwise)
 * Environment: ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
 * Environment: ROCKETNET_SERVER_NUM_CHANNELS
 * Environment: ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT

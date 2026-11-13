@@ -294,7 +294,7 @@ the create log line names each feature as yes or no.
   pending when the next run posts keeps the stride it was posted with. Every
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
-  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  resends the run frame by frame, counted in `ROCKETNET_COUNTER_IOCP_USO_FALLBACKS`.
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
   and by RIO: IOCP runs one completion worker plus one send worker and RIO one
   I/O worker, so a client's datagrams are not reordered by several workers
@@ -495,7 +495,7 @@ hands deferred sends to one of three phases; a phase stays worker-owned until
 its sends complete, and four receive banks cross the same bounded ownership seam.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
-`ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
+`ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 three send phases and four receive banks are implemented in
@@ -612,7 +612,7 @@ probes once that the kernel accepts the ring, the opcodes and the provided
 buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
-Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
+Its counters (the public `ROCKETNET_COUNTER_URING_*` rows) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and

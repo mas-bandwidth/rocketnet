@@ -585,7 +585,7 @@ struct rocketnet_server_iocp_t
     std::atomic<bool> stopping{ false };
     std::atomic<int> pending{ 0 };
     std::atomic<int> active_workers{ 0 };
-    std::atomic<uint64_t> counters[ROCKETNET_IOCP_NUM_COUNTERS]{};
+    std::atomic<uint64_t> counters[ROCKETNET_SERVER_IOCP_COUNTER_ROWS]{};
     rocketnet_server_socket_process_packets_t process;
     std::atomic<int> features{ 0 };
     LPFN_WSARECVMSG receive_message = NULL;
@@ -942,7 +942,7 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
     {
         rocketnet_platform_count_receive_reset();
     }
-    iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].fetch_add( 1, std::memory_order_relaxed );
+    iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_REPOST_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
     rocketnet_iocp_queue_retry_receive( &iocp->retry_receives, op->completion_ref, &op->state );
     return false;
 }
@@ -980,14 +980,14 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
     if ( !success || bytes == 0 || ( op->message.dwFlags & MSG_TRUNC ) ||
          !rocketnet_iocp_address_read( &op->address, op->message.namelen, iocp->ipv6, &from ) )
     {
-        iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         if ( success && bytes == 0 )
         {
-            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+            iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         }
         else if ( receive_error == WSAEMSGSIZE || ( success && ( op->message.dwFlags & MSG_TRUNC ) ) )
         {
-            iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+            iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         }
         return;
     }
@@ -1022,20 +1022,20 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
                 buffer->from[index] = from;
                 buffer->packet_bytes[index] = length;
                 memcpy( buffer->data[index], op->uro_data + base + offsets[i], (size_t) length );
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
+                iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_COMPLETED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
             }
             else
             {
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 if ( length < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
                     // shorter than any server-bound packet: never takes a
                     // bank slot (as gso, io_uring, RIO and XDP)
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                    iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 }
                 else if ( length > ROCKETNET_RECEIVE_CEILING )
                 {
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+                    iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 }
             }
         }
@@ -1045,7 +1045,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
 
     if ( segments > 1 )
     {
-        iocp->counters[ROCKETNET_IOCP_URO_BATCHES].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_URO_BATCHES - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
     }
 }
 
@@ -1129,7 +1129,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
 
         if ( count )
         {
-            iocp->counters[ROCKETNET_IOCP_COMPLETION_BATCHES].fetch_add( 1, std::memory_order_relaxed );
+            iocp->counters[ROCKETNET_COUNTER_IOCP_COMPLETION_BATCHES - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         }
 
 #if ROCKETNET_DEV
@@ -1176,8 +1176,8 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                     rocketnet_error( "IOCP send completion matched no posted send (index %d)", op->index );
                     continue;
                 }
-                const int counter = success && bytes == (DWORD) op->run_bytes ? ROCKETNET_IOCP_SEND_COMPLETED : ROCKETNET_IOCP_SEND_FAILED;
-                iocp->counters[counter].fetch_add( (uint64_t) op->run_count, std::memory_order_relaxed );
+                const int counter = success && bytes == (DWORD) op->run_bytes ? ROCKETNET_COUNTER_IOCP_SEND_COMPLETED : ROCKETNET_COUNTER_IOCP_SEND_FAILED;
+                iocp->counters[counter - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( (uint64_t) op->run_count, std::memory_order_relaxed );
                 iocp->pending.fetch_sub( 1, std::memory_order_release );
 
                 const bool retired = rocketnet_iocp_retire_send( iocp, completed );
@@ -1234,20 +1234,20 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 buffer->from[index] = from;
                 buffer->packet_bytes[index] = (int) bytes;
                 memcpy( buffer->data[index], op->frame, bytes );
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_COMPLETED].fetch_add( 1, std::memory_order_relaxed );
+                iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_COMPLETED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
             }
             else if ( running )
             {
-                iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
+                iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_DROPPED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 if ( success && bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
                 {
                     // shorter than any server-bound packet: never takes a
                     // bank slot (as gso, io_uring, RIO and XDP)
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
+                    iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 }
                 else if ( receive_error == WSAEMSGSIZE || ( success && bytes > ROCKETNET_RECEIVE_CEILING ) )
                 {
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
+                    iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
                 }
             }
 
@@ -1735,6 +1735,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
     if ( bind( iocp->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
+        if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
         goto failed;
     }
     address_bytes = sizeof( address );
@@ -1953,7 +1957,7 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     if ( !op->address_bytes )
     {
         // an address this socket cannot carry: counted SEND_FAILED, not a full staging
-        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
         return NULL;
     }
@@ -2001,7 +2005,7 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     // send phase releases it, so the loss is counted here (as RIO finish)
     if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
     {
-        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         return;
     }
     op->packet_bytes = packet_bytes;
@@ -2065,7 +2069,7 @@ static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rock
         // An unsuccessful submission has no completion. All accepted
         // submissions, including immediate success, retire in the worker.
         iocp->pending.fetch_sub( 1, std::memory_order_release );
-        iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_SEND_POSTED );
     }
 }
@@ -2144,7 +2148,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         result = WSASendMsg( iocp->socket, &first->message, 0, NULL, &first->overlapped, NULL );
         if ( result == 0 )
         {
-            iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+            iocp->counters[ROCKETNET_COUNTER_IOCP_USO_SENDS - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
             return true;
         }
 
@@ -2153,7 +2157,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
     if ( error == WSA_IO_PENDING )
     {
-        iocp->counters[ROCKETNET_IOCP_USO_SENDS].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_USO_SENDS - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
         return true;
     }
 
@@ -2167,7 +2171,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         // degrade the tier and resend losslessly, never drop the run.
         rocketnet_warn( "iocp transport: live USO send refused (Winsock %d). degrading to WSASendTo per datagram", error );
         iocp->features.fetch_and( ~ROCKETNET_IOCP_FEATURE_USO, std::memory_order_relaxed );
-        iocp->counters[ROCKETNET_IOCP_USO_FALLBACKS].fetch_add( 1, std::memory_order_relaxed );
+        iocp->counters[ROCKETNET_COUNTER_IOCP_USO_FALLBACKS - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( 1, std::memory_order_relaxed );
 
         rocketnet_iocp_ref_t refs[ROCKETNET_IOCP_USO_MAX_SEGMENTS];
         const bool released = rocketnet_iocp_take_run( iocp, run_ticket, run, refs );
@@ -2179,7 +2183,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
         return false;
     }
 
-    iocp->counters[ROCKETNET_IOCP_SEND_FAILED].fetch_add( (uint64_t) run, std::memory_order_relaxed );
+    iocp->counters[ROCKETNET_COUNTER_IOCP_SEND_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].fetch_add( (uint64_t) run, std::memory_order_relaxed );
 
     const bool retired = rocketnet_iocp_retire_send( iocp, staged[0] );
     rocketnet_assert( retired );
@@ -2427,9 +2431,9 @@ rocketnet_server_socket_process_packets_t * rocketnet_server_iocp_process_packet
 
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters )
 {
-    for ( int i = 0; i < ROCKETNET_IOCP_NUM_COUNTERS; ++i )
+    for ( int i = 0; i < ROCKETNET_SERVER_IOCP_COUNTER_ROWS; ++i )
     {
-        counters[i] = iocp->counters[i].load( std::memory_order_relaxed );
+        counters[ROCKETNET_SERVER_IOCP_FIRST_COUNTER + i] = iocp->counters[i].load( std::memory_order_relaxed );
     }
 }
 
@@ -2650,7 +2654,7 @@ bool rocketnet_server_iocp_test_post_receive_retries_refused_push( int * state_o
 
     *state_out = op ? op->state : -1;
     *pending_out = iocp->pending.load( std::memory_order_relaxed );
-    *repost_failed_out = iocp->counters[ROCKETNET_IOCP_RECEIVE_REPOST_FAILED].load( std::memory_order_relaxed );
+    *repost_failed_out = iocp->counters[ROCKETNET_COUNTER_IOCP_RECEIVE_REPOST_FAILED - ROCKETNET_SERVER_IOCP_FIRST_COUNTER].load( std::memory_order_relaxed );
     *queued_out = (int) rocketnet_iocp_queue_count( &iocp->retry_receives );
 
     for ( int i = 0; i < 2; ++i )

@@ -981,6 +981,13 @@ struct rocketnet_platform_error_text_t
 };
 
 int rocketnet_platform_socket_error();
+
+// 1 when a failed bind was refused by the platform for the address or port:
+// another socket holds it (EADDRINUSE), it is not an address of this host
+// (EADDRNOTAVAIL), or the process may not bind it (EACCES). error is a value
+// from rocketnet_platform_socket_error. A create that fails so reports
+// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED through its status.
+bool rocketnet_platform_bind_refused( int error );
 struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int error );
 
 #endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

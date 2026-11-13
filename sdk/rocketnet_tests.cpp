@@ -11963,6 +11963,8 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv4_address ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, bind_ipv6_address ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
