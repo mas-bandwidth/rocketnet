@@ -55,6 +55,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_server_gso.h"
 #include "rocketnet_send_queue.h"
+#include "rocketnet_socket_buffer.h"
 #include "rocketnet_uring_queue_send.h"
 #include "rocketnet_uring_queue_worker.h"
 #include "rocketnet_uring_receive_queue.h"
@@ -245,50 +246,42 @@ static int rocketnet_server_uring_open_socket( const rocketnet_address_t * bind_
         }
     }
 
-    int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    // request the buffer sizes, read back what was granted, and when the
+    // grant is short ask once more past the sysctl limit with the force
+    // option (rocketnet_socket_buffer_request, shared with the gso
+    // transport). a short grant is not an error -- it is a fact about the
+    // host's sysctls, named at start with the sysctl to set
+    // (rocketnet_socket_buffer_log) so nobody assumes.
+    //
+    // the receive request is one update's inbound packets at the configured
+    // client count (rocketnet_server_transport_receive_buffer_request; a
+    // request, and the kernel charges only what it holds): SO_REUSEPORT may
+    // hash any share of the clients to this one socket
 
-    // one update's inbound packets at the server's configured client count
-    // (rocketnet_server_transport_receive_buffer_request; a request, and the
-    // kernel charges only what it holds)
-    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
+    const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "io_uring", max_clients );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
+    struct rocketnet_socket_buffer_grant_t send_grant;
+    if ( !rocketnet_socket_buffer_request( fd, false, send_buffer_size, &send_grant ) )
     {
         rocketnet_error( "io_uring transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
+    struct rocketnet_socket_buffer_grant_t receive_grant;
+    if ( !rocketnet_socket_buffer_request( fd, true, receive_buffer_size, &receive_grant ) )
     {
         rocketnet_error( "io_uring transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    int granted_send = 0;
-    int granted_receive = 0;
-    socklen_t optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
-    optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
-
-    granted_send /= 2;
-    granted_receive /= 2;
-
     if ( queue_index == 0 )
     {
-        if ( granted_send < send_buffer_size )
-        {
-            rocketnet_warn( "io_uring transport: socket send buffer granted %d of %d requested bytes (raise net.core.wmem_max)",
-                            granted_send, send_buffer_size );
-        }
-
-        rocketnet_server_receive_buffer_granted( "io_uring", receive_buffer_size, granted_receive );
-        if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )
-        {
-            rocketnet_info( "io_uring transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
-        }
+        rocketnet_socket_buffer_log( "io_uring", false, send_buffer_size, &send_grant );
+        rocketnet_socket_buffer_log( "io_uring", true, receive_buffer_size, &receive_grant );
+        rocketnet_server_receive_buffer_granted( "io_uring", receive_buffer_size, receive_grant.granted_bytes );
     }
 
     rocketnet_address_t addr = *bind_address;

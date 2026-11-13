@@ -234,7 +234,7 @@ is a warning naming the limit to raise. On Linux, for 1000 clients:
 sudo sysctl -w net.core.rmem_max=25000000
 ```
 
-The GSO transport also asks past the limit itself. When a queue socket's
+The GSO and io_uring transports also ask past the limit themselves. When a queue socket's
 grant is short it asks once more with `SO_RCVBUFFORCE` (and `SO_SNDBUFFORCE`
 for the send buffer, which asks for 1,000,000 bytes), which the kernel takes
 from a process with `CAP_NET_ADMIN` and refuses from any other. The server
@@ -247,7 +247,7 @@ gso transport: socket receive buffer asked 25000000 bytes, got 4194304 (SO_RCVBU
 ```
 
 A short grant is not fatal: the server runs, and the kernel counts what it
-drops in the host's UDP `RcvbufErrors`. For a GSO server at 1000 clients the
+drops in the host's UDP `RcvbufErrors` (the io_uring transport also counts them, in its `RECEIVE_DROPPED_SOCKET` counter). For a GSO or io_uring server at 1000 clients the
 operator sets both limits, and keeps them across reboots in a file under
 `/etc/sysctl.d/`:
 
