@@ -1900,11 +1900,12 @@ held rather than from the number in flight.
 secret drawn for each connection.** The sender chooses every key, a channel and an
 ordering index, so with a fixed hash it could choose W keys that share one run of cells
 and make every hold and every lookup walk the run, a cost per record that grows with W.
-The key is a secret drawn for each connection at every carve, so a sender that does not
-know it cannot choose keys that share a home. The tests show the old attack keys, and keys
-chosen against one known key, staying short over the sampled drawn keys (the worst probe
-34 cells at W = 1024 over 3000 connections, against 984 with the fixed hash); no bound on
-the worst probe is proven.
+The home depends on a per-connection secret that the sender is never sent and that is
+redrawn at every carve, so the old chosen-key attack (keys picked against a known, fixed
+home) no longer applies. The tests show the old attack keys, and keys chosen against one
+known key, staying short over the sampled drawn keys (the worst probe 34 cells at W = 1024
+over 3000 connections, against 984 with the fixed hash). Neither a bound on the worst probe
+nor resistance to an adaptive sender is proven.
 
 <a id="m8"></a>
 ## m8. Blocks
