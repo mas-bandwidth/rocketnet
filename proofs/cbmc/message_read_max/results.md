@@ -50,7 +50,8 @@ failed, `0` refuted, `0` timed out at the configured bounds).
    - On `FORM_SINGLE` payloads up to the full bound, `rocketnet_message_reader_next` yields exactly one `ROCKETNET_MESSAGE_CODE_UNRELIABLE` record spanning `[payload, payload + bytes - 1)` and `0` thereafter.
 2. **`rocketnet_message_read_config_body` (`harness_message_read_config_body` at `[0, 1416]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`))**:
    - Any `NULL` buffer, any `bytes != ROCKETNET_MESSAGE_CONFIG_BYTES` (`28`), or any buffer with `data[0] != ROCKETNET_MESSAGE_CONTROL_CONFIG` (`1`) is refused with `ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL` without reading past `bytes`.
-   - Any accepted 28-byte config record populates `body` from `data[1..27]` within bounds and enforces `zero == 0` (`data[3]`) and `zero_tail == 0` (`data[24..27]`) when `body.version == ROCKETNET_MESSAGE_CONFIG_VERSION`.
+   - A 28-byte config record is accepted exactly when its version byte is not `ROCKETNET_MESSAGE_CONFIG_VERSION` (`1`) or its reserved bytes `data[3]` and `data[24..27]` are zero, so a well-formed version-1 record is never refused.
+   - An accepted record's `version` and `enabled` equal `data[1]` and `data[2]`, and `num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes` and `fragment_bytes` equal the little-endian u32 at `data[4..7]`, `data[8..11]`, `data[12..15]`, `data[16..19]` and `data[20..23]`, composed in the harness and not through the SDK's reader (asserted since 2026-11-12, read pass B; the property counts above predate these assertions).
 
 ## Unproved multi-record range (`25` up to `ROCKETNET_RECEIVE_PAYLOAD_BYTES` (1416) bytes)
 

@@ -22,7 +22,9 @@
     - harness_message_read_config_body: rocketnet_message_read_config_body
       on buffers of symbolic length in [0, ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416)],
       tail-aligned to the end of the stack object so any read past
-      bytes fails bounds checking.
+      bytes fails bounds checking. A 28-byte CONFIG record is accepted
+      exactly when it is not version 1 or its reserved bytes are zero, and
+      every field of an accepted record equals its wire bytes.
 */
 
 #if defined( ROCKETNET_ESBMC ) || defined( __ESBMC__ )
@@ -64,6 +66,14 @@ unsigned int nondet_uint( void );
 #ifndef CONFIG_BOUND
 #define CONFIG_BOUND ROCKETNET_RECEIVE_PAYLOAD_BYTES
 #endif // #ifndef CONFIG_BOUND
+
+/* a little-endian u32 at four wire bytes, composed here so the config
+   harness does not check the reader against its own read function */
+
+static uint32_t proof_wire_u32( const uint8_t * p )
+{
+    return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 );
+}
 
 static int round16( int bytes )
 {
@@ -217,16 +227,26 @@ void harness_message_read_config_body( void )
         return;
     }
 
+    /* the record's layout, restated from the wire (little-endian u32s at
+       bytes 4, 8, 12, 16 and 20), not read through the sdk's own reader */
+
+    const int reserved_zero = data[3] == 0 && data[24] == 0 && data[25] == 0 && data[26] == 0 && data[27] == 0;
+    const int known_version = data[1] == ROCKETNET_MESSAGE_CONFIG_VERSION;
+
+    __CPROVER_assert( ( violation == ROCKETNET_MESSAGE_VIOLATION_NONE ) == ( !known_version || reserved_zero ),
+                      "a config record is accepted exactly when it is not version 1 or its reserved bytes are zero" );
+
     if ( violation == ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         __CPROVER_assert( body.version == data[1], "config version matches wire byte 1" );
         __CPROVER_assert( body.enabled == data[2], "config enabled mask matches wire byte 2" );
-        if ( body.version == ROCKETNET_MESSAGE_CONFIG_VERSION )
-        {
-            __CPROVER_assert( data[3] == 0, "version 1 reserved byte 3 is zero" );
-            __CPROVER_assert( data[24] == 0 && data[25] == 0 && data[26] == 0 && data[27] == 0,
-                              "version 1 reserved tail is zero" );
-        }
+        __CPROVER_assert( body.num_channels == proof_wire_u32( data + 4 ), "num_channels matches wire bytes 4..7" );
+        __CPROVER_assert( body.reliable_messages_in_flight == proof_wire_u32( data + 8 ),
+                          "reliable_messages_in_flight matches wire bytes 8..11" );
+        __CPROVER_assert( body.receive_message_buffer_bytes == proof_wire_u32( data + 12 ),
+                          "receive_message_buffer_bytes matches wire bytes 12..15" );
+        __CPROVER_assert( body.max_message_bytes == proof_wire_u32( data + 16 ), "max_message_bytes matches wire bytes 16..19" );
+        __CPROVER_assert( body.fragment_bytes == proof_wire_u32( data + 20 ), "fragment_bytes matches wire bytes 20..23" );
     }
 }
 
