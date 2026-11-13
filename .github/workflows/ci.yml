@@ -858,7 +858,7 @@ jobs:
           # three 1000-cycle cells below take about 57 s and run nightly),
           # and the receive-weather pair, registered in development builds
           # only
-          xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000"
+          xdp_root_cases="test_xdp_transport_posix_init_term_1000 test_xdp_transport_posix_client_create_destroy_1000 test_xdp_transport_posix_connect_disconnect_1000 test_receive_latency_server_xdp"
           if [ "${XDP_DEV:-OFF}" = ON ]; then
             xdp_root_cases="$xdp_root_cases test_xdp_transport_linux_receive_weather_ipv4 test_xdp_transport_linux_receive_weather_ipv6"
           fi

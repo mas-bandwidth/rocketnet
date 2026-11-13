@@ -329,19 +329,19 @@ of these rules sets a frame, packet-send or ACK rate.
 
 On the GSO and XDP receive sides the worker fills its bank outside the
 receive mutex, and under the mutex only indices and counts move; neither
-thread copies packets while it holds it. On XDP the worker publishes a
-filled bank and takes a free one, and main, with a try-acquire, swaps the
-published bank for the one it has finished reading. GSO uses the receive
-handoff of `sdk/rocketnet_receive_handoff.h` over three buffers: at the end
-of each pass with results the worker commits its buffer's count under the
-mutex, and moves to the free buffer once main has started on its buffer;
+thread copies packets while it holds it. Both use the receive handoff of
+`sdk/rocketnet_receive_handoff.h` over three buffers: at the end of a pass
+the worker commits its buffer's count under the mutex (GSO after each pass
+with results; XDP after a pass that staged past its committed count, or
+with its buffer full, so an idle busy-poll pass takes no lock), and moves to the free buffer once main has started on its buffer;
 main, with a try-acquire at each call, reads the worker's buffer in place up
 to the committed count, after the unread tail of the buffer it held before.
 A datagram committed before main's call is returned by that call unless the
-mutex was busy, the per-update budget cut the call, or the call began with
-datagrams left from a cut call: main then reads the tail and its own buffer
-but moves on to the worker's only at its next call (`RNReceiveHandoff.DeliveredByNextCall`, bound to the code by
-the `receive-handoff` trace check; `RNGsoHandoff.RxFill` and `RxCall` are
+mutex was busy (on XDP, through every one of a few tries), the per-update
+budget cut the call, or the call began with datagrams left from a cut call:
+main then reads the tail and its own buffer but moves on to the worker's
+only at its next call (`RNReceiveHandoff.DeliveredByNextCall`, bound to the
+code by the `receive-handoff` and `receive-handoff-xdp` trace checks; `RNGsoHandoff.RxFill` and `RxCall` are
 the same exchange beside the send side and the stop count). A GSO worker
 pass that finds its buffer full while main has not started on it, or whose
 receive fails, sleeps 1 ms before the next pass instead of polling again at
