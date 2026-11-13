@@ -16321,6 +16321,13 @@ static uint64_t rocketnet_latency_client_sent( struct rocketnet_client_t * clien
     return stats.packets_sent;
 }
 
+static uint64_t rocketnet_latency_server_sent( struct rocketnet_server_t * server, int client_index )
+{
+    struct rocketnet_server_client_stats_t stats;
+    rocketnet_server_client_stats( server, client_index, &stats );
+    return stats.packets_sent;
+}
+
 // The update time steps at 60 Hz; a short real sleep lets the loopback
 // datagrams and the worker threads move between updates.
 static double rocketnet_latency_step( double now )
@@ -16401,6 +16408,100 @@ void rocketnet_test_handshake_send_follows_reply()
         pair.client = NULL;
     }
     rn_cli_server_stop_and_destroy( pair.server );
+}
+
+// TRANSPORT.md t15.4: a payload the message layer accepts in an update is
+// acknowledged by a standalone ack in that same update when nothing else
+// carries the block. One direction per call: the sender sends one reliable
+// message at a time, the receiver sends nothing of its own, and the case
+// counts updates from the one whose receive handed the receiver the message
+// to the one in which the receiver next sends. Before the fix it was one.
+static void rocketnet_latency_standalone_ack( bool server_to_client )
+{
+    struct rocketnet_latency_pair_t pair;
+    rocketnet_latency_pair_server( &pair );
+    rocketnet_latency_pair_connect( &pair, server_to_client ? (uint64_t) 0x5201 : (uint64_t) 0x5202 );
+    double now = 1000.0;
+    for ( int update = 0; update < 600 && rocketnet_client_state( pair.client ) != ROCKETNET_CLIENT_STATE_CONNECTED; update++ )
+    {
+        rocketnet_server_update( pair.server, now );
+        rocketnet_client_update( pair.client, now );
+        rocketnet_latency_drain( &pair );
+        rocketnet_client_send_packets( pair.client );
+        rocketnet_server_send_packets( pair.server );
+        now = rocketnet_latency_step( now );
+    }
+    rocketnet_check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    const int client_index = rocketnet_client_index( pair.client );
+
+    int measured = 0;
+    int delivered_update = -1;
+    uint64_t sent_at_delivery = 0;
+    for ( int update = 0; update < 1200 && measured < 10; update++ )
+    {
+        rocketnet_server_update( pair.server, now );
+        rocketnet_client_update( pair.client, now );
+        int got = 0;
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( pair.client ) ) != NULL )
+        {
+            got += server_to_client ? batch->num_messages : 0;
+        }
+        while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
+        {
+            got += server_to_client ? 0 : batch->num_messages;
+        }
+        const uint64_t receiver_sent = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
+        if ( got > 0 && delivered_update < 0 )
+        {
+            delivered_update = update;
+            sent_at_delivery = receiver_sent;
+        }
+        else if ( delivered_update >= 0 && receiver_sent > sent_at_delivery )
+        {
+            printf( "standalone ack %s: delivered at update %d, receiver sent at update %d\n", server_to_client ? "s2c" : "c2s", delivered_update, update - 1 );
+            rocketnet_check( update - 1 == delivered_update );
+            measured++;
+            delivered_update = -1;
+        }
+        if ( delivered_update < 0 && update % 6 == 0 )
+        {
+            uint8_t * out = server_to_client
+                ? rocketnet_server_start_message( pair.server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 )
+                : rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 );
+            rocketnet_check( out != NULL );
+            memset( out, 0x7A, 16 );
+            if ( server_to_client )
+            {
+                rocketnet_check( rocketnet_server_finish_message( pair.server, 16 ) != 0 );
+            }
+            else
+            {
+                rocketnet_check( rocketnet_client_finish_message( pair.client, 16 ) != 0 );
+            }
+        }
+        rocketnet_client_send_packets( pair.client );
+        rocketnet_server_send_packets( pair.server );
+        if ( delivered_update == update )
+        {
+            const uint64_t after_send = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
+            if ( after_send > sent_at_delivery )
+            {
+                measured++;
+                delivered_update = -1;
+            }
+        }
+        now = rocketnet_latency_step( now );
+    }
+    rocketnet_check( measured == 10 );
+    rn_cli_client_stop_and_destroy( pair.client, now );
+    rn_cli_server_stop_and_destroy( pair.server );
+}
+
+void rocketnet_test_standalone_ack_same_update_both_directions()
+{
+    rocketnet_latency_standalone_ack( false );
+    rocketnet_latency_standalone_ack( true );
 }
 
 #endif // ROCKETNET_DEV
@@ -16624,6 +16725,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
     { "test_handshake_send_follows_reply", rocketnet_test_handshake_send_follows_reply, NULL },
+    { "test_standalone_ack_same_update_both_directions", rocketnet_test_standalone_ack_same_update_both_directions, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_server_stop_disconnects_every_client_portable", rocketnet_test_server_stop_disconnects_every_client_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

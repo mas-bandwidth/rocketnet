@@ -2103,6 +2103,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
 }
 
 // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks, and only when that debt is nonzero.
+// proofs/tla/SessionAcks.tla Sweep: the maintenance sweep pays a debt carried into the update.
 int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol_t * server,
                                                 int client_index,
                                                 double current_time,
@@ -2131,9 +2132,38 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
                                                        ROCKETNET_CONNECTION_ACK_PACKET,
                                                        NULL, 0, current_time, out_packet, NULL );
 
+    if ( bytes > 0 )
+    {
+        server->acks->endpoints[client_index].standalone_ack_time = current_time;
+    }
+
     rocketnet_spam( "server sent standalone ack to client %d", client_index );
 
     return bytes;
+}
+
+// proofs/tla/SessionAcks.tla LatePass: the send pass's standalone ack
+// for a payload the message layer accepted this update, at most one
+// standalone ack per client per update (OneStandalonePerUpdate)
+int rocketnet_server_protocol_write_accepted_ack( struct rocketnet_server_protocol_t * server,
+                                                  int client_index,
+                                                  double current_time,
+                                                  uint8_t * out_packet )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( out_packet );
+
+    if ( !server->acks )
+    {
+        return 0;
+    }
+
+    if ( server->acks->endpoints[client_index].standalone_ack_time == current_time )
+    {
+        return 0;
+    }
+
+    return rocketnet_server_protocol_write_ack_if_due( server, client_index, current_time, out_packet );
 }
 
 static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protocol_t * server,
@@ -2441,6 +2471,8 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     rocketnet_debug( "server disconnected client %d", client_index );
 }
 
+// proofs/tla/SessionAcks.tla Accept: the message layer accepted the payload; it
+// enters the accepted history the ack block is built from, and raises the debt
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence )
 {
     if ( !sequence || !rocketnet_client_slots_connected( server->client_slots, client_index ) ||

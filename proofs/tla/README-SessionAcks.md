@@ -34,13 +34,20 @@ fill phase's staging):
 |---|---|---|
 | `highestOpened`, `opened` | `highest_opened`, `window[]` | the replay window as the set of opened sequences in `(highestOpened - Window, highestOpened]` |
 | `drained` | the receive drain | packets drained this update |
+| `highestAccepted`, `accepted` | `accepted_session` | the accepted history the block is built from |
+| `pending` | the receive batch | payloads opened this update and not yet accepted (`AckTiming`) |
+| `debt` | `ack_debt` at the threshold | an acknowledgement is owed |
+| `swept`, `lateDone`, `lateRefused`, `standalones` | the update order, `standalone_ack_time` | this update has decided its acks; the send pass has run; it found no room; standalone acks sent to the peer this update (`AckTiming`) |
 
 Ghosts: `burned` (sequences spent and never sent), `surfacedCount`, `openedEver`,
 `namedEver`, `lastExpect`, `lastVisited`.
 
 A payload's packet id is its sequence. Every packet the model sends is a payload, which
-is ack-eligible once it opens (standard/TRANSPORT.md t15.3), so the block is built from
-the opened set.
+is ack-eligible once the message layer accepts it, not when it opens (standard/TRANSPORT.md
+t15.3): the block is built from the accepted history (`accepted_session`,
+`rocketnet_session_ack_block_build`), which a payload enters only through the accept
+(`rocketnet_server_protocol_accept_payload`, `rocketnet_client_protocol_accept_payload`),
+and the accept raises the ack debt.
 
 **Actions**, one per operation and per outside event:
 
@@ -52,6 +59,9 @@ the opened set.
 | `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the reconcile, the walk, the retained window, unknown sequences, the batch and its deferral |
 | `SendAck` | the receiver | a session packet carrying the current block, `rocketnet_ack_block_build`: the first run, then `(gap, run)` pairs to the floor, at most `MaxRanges` |
 | `RecvData` | a packet arrives | the reading order's replay check (`rocketnet_replay_already_received`, `rocketnet_replay_advance`) |
+| `Accept` | the message layer | `accept_payload`: an opened payload enters the accepted history and raises the debt; without `AckTiming` it happens in `RecvData` |
+| `Sweep` | the update ack decision | `rocketnet_server_protocol_write_ack_if_due` in the maintenance sweep, the not-due branch of `rocketnet_client_protocol_update`: a debt carried into the update is paid by a standalone ack (`AckTiming`) |
+| `LatePass` | the start of `send_packets` | `rocketnet_server_transport_write_accepted_acks` with `rocketnet_server_protocol_write_accepted_ack`, `rocketnet_client_protocol_write_owed_ack`: the debt the accepts raised is paid by a standalone ack in the same update, unless one already went to the peer this update (`AckTiming`) |
 | `Tick` | time | one update on both ends: the batch drains, the drain resets, both links `Age` |
 | `D2REnvironment`, `R2DEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
 
@@ -71,6 +81,8 @@ Safety, checked under every loss pattern with no fairness:
 | `BitsCoverRing` | every slot whose record is in the window, written and not acknowledged is in `unacked`, and `unacked` is inside `held` |
 | `BitsMatchRing` | once the reconcile has caught up (`bitsChecked = highestSent`), `held` is exactly the slots whose record is in the window and `unacked` exactly those not acknowledged |
 | `WalkVisitsUnacked` | the bitmap walk visits exactly the named sequences whose ring record holds them unacknowledged |
+| `OneStandalonePerUpdate` | at most one standalone ack to the peer in one update (TRANSPORT.md t15.4, the `standalone_ack_time` stamp) |
+| `SameUpdateAck` | an update that has decided its acks and run its send pass holds no debt unless a standalone ack already went to the peer in it or the wire had no room: an accepted payload is acknowledged in the update that accepted it (TRANSPORT.md t15.4) |
 
 Liveness, under `Spec`:
 
@@ -87,8 +99,16 @@ Reversed witnesses, one constant flip each (the code is `Witness = "none"`):
 | `walkskip` | the walk skips the lowest named sequence whose unacknowledged bit is set | `WalkVisitsUnacked` |
 | `staleheld` | the reconcile keeps a lapped slot's held bit | `BitsMatchRing` |
 | `skipdeferred` | the block memo is kept after an apply that deferred an id | `RepeatExact` |
+| `lateorder` | no send pass: the order before W2-52, the debt an accept raises waits for the next update ack decision | `SameUpdateAck` |
+| `nostamp` | the send pass ignores the stamp and sends a second standalone ack after the update ack decision sent one | `OneStandalonePerUpdate` |
 
 `SurfacedOnce` and `BitsCoverRing` have no reversed witness.
+
+The two W2-52 witnesses, each counterexample read by hand against the code (records of 2026-11-13, pinned tlacheck):
+
+- `lateorder`, 7 states: A stages and flushes a payload; B receives it; the update of B decides its acks (`Sweep`) while it owes none, so no standalone ack goes; the accept that follows raises the debt (`Accept`); under the flip `LatePass` sends nothing, and the update ends owing an ack it never sent. Before W2-52 the code had the same order: the message layer accepted the payload after the update had decided its acks, and nothing sent the ack until the next update decided again, 16.7 ms later at 60 Hz.
+- `nostamp`, 18 states: the first update ends in debt because the wire had no room (`lateRefused`); in the next update the ack decision sends one standalone ack for that debt, a new accept raises debt again, and the send pass sends a second standalone ack in the same update. The code refuses that second send by the stamp, `standalone_ack_time == current_time`, in `rocketnet_client_protocol_write_owed_ack` and `rocketnet_server_protocol_write_accepted_ack`.
+
 `MCSessionAcksBrokenLiveness.cfg` is `OpenedSurfacesOrLaps`'s reversed witness: the
 `dropfull` defect retains an opened payload without surfacing it.
 
@@ -197,6 +217,14 @@ instance that exercises the clear. The two bitmap witnesses use the same instanc
 | `MCSessionAcksWitWalkskip.cfg` | `SpecSafety` | the bits instance, `"walkskip"` | `WalkVisitsUnacked` |
 | `MCSessionAcksWitStaleheld.cfg` | `SpecSafety` | the bits instance, `"staleheld"` | `BitsMatchRing` |
 | `MCSessionAcksWitSkipdeferred.cfg` | `SpecSafety` | the bits instance, `"skipdeferred"`, without `WalkVisitsUnacked` | `RepeatExact` |
+| `MCSessionAcksTiming.cfg` | `SpecSafety` | `AckTiming`, three sequences; every invariant, with `OneStandalonePerUpdate` and `SameUpdateAck` | pass |
+| `MCSessionAcksTimingLive.cfg` | `Spec` | `AckTiming` on the live-small instance; `OpenedSurfacesOrLaps` | pass |
+| `MCSessionAcksWitLateorder.cfg` | `SpecSafety` | `AckTiming`, `"lateorder"` | `SameUpdateAck` |
+| `MCSessionAcksWitNostamp.cfg` | `SpecSafety` | `AckTiming`, `"nostamp"` | `OneStandalonePerUpdate` |
+
+`AckTiming` is a definition, FALSE by default, replaced with `<-` in the four timing
+cfgs: with it off a payload is accepted in the step that opens it, so the other runs
+keep the state space they had while the block is still built from the accepted history.
 
 Duplication is on only in `MCSessionAcksLiveDup.cfg`: with it on, the gate instance and
 the "none" and "burst" patterns pass more than 3.6 million distinct states without

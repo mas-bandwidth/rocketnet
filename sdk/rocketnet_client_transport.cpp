@@ -3882,8 +3882,25 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
 
     client_transport->packet_leases.reset();
 
+    // proofs/tla/SessionAcks.tla LatePass: with the message layer linked
+    // a payload becomes ack-eligible when that layer accepts it, after this
+    // update's protocol step made its ack decision (TRANSPORT.md t15.3).
+    // When the debt that acceptance raised is still owed after the frame's
+    // payloads (any of them carried the block and cleared it), the standalone
+    // ack goes now rather than at the next update: at most one an update.
+
+    uint8_t owed_ack[ROCKETNET_RECEIVE_CEILING];
+    const int owed_ack_bytes = client_transport->protocol.defer_payload_acks
+                                   ? rocketnet_client_protocol_write_owed_ack( &client_transport->protocol, client_transport->time, owed_ack )
+                                   : 0;
+
     if ( rocketnet_client_io_core( client_transport ) )
     {
+        if ( owed_ack_bytes > 0 )
+        {
+            rocketnet_client_transport_io_commit_packet( client_transport, owed_ack, owed_ack_bytes );
+        }
+
         // RNClientIo HandOff or Defer: no transport call on the main thread.
         rocketnet_client_transport_io_hand_off( client_transport );
 
@@ -3924,6 +3941,16 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     }
 
     ring->num_packets = 0;
+
+    if ( owed_ack_bytes > 0 )
+    {
+        client_transport->stats_frames[stats_index].packets_sent++;
+        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( owed_ack_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
+        client_transport->client_stats.packets_sent++;
+        client_transport->client_stats.bytes_sent += (uint64_t) ( owed_ack_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
+
+        rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, owed_ack, owed_ack_bytes );
+    }
 
     rocketnet_client_link_flush( client_transport );
 }

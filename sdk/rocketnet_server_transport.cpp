@@ -5461,6 +5461,83 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
     rocketnet_server_link_flush( server_transport );
 }
 
+// proofs/tla/SessionAcks.tla LatePass: with the message layer linked a
+// payload becomes ack-eligible only when that layer accepts it
+// (TRANSPORT.md t15.3), and it accepts after this update's sweep has made its
+// ack decisions, so the debt it raises would wait for the next update's sweep:
+// one update on every such ack, straight into the sender's round trip and
+// resend delay. Here, after the frame's payloads were written (any of them
+// carried the block and cleared the debt), the clients of this update's
+// payload batch whose debt is still owed get their standalone ack now. The
+// walk is the batch the accept already walked; the sweep and every other
+// client are untouched, and a client the sweep already sent a standalone ack
+// this update waits for the next one (at most one per client per update).
+// A full staging leaves the rest owed for the next sweep, as today.
+
+static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_server_transport_t * server_transport )
+{
+    if ( !server_transport->protocol.defer_payload_acks || !server_transport->protocol.acks )
+    {
+        return;
+    }
+
+    const rocketnet_server_payloads_t * batch = &server_transport->payloads;
+    const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
+    const double current_time = server_transport->time;
+    const struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
+
+    bool staged_any = false;
+
+    for ( int k = 0; k < batch->num_payloads; k++ )
+    {
+        const int i = batch->client_index[k];
+        if ( i < 0 || i >= max_clients || acks->endpoints[i].ack_debt == 0 )
+        {
+            continue;
+        }
+
+        const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
+        if ( mapping_index < 0 || !rocketnet_client_slots_connected( server_transport->protocol.client_slots, i ) )
+        {
+            continue;
+        }
+
+        if ( rocketnet_server_transport_io_send_room( server_transport ) <= 0 )
+        {
+            break;
+        }
+
+        const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
+        struct rocketnet_server_frame_t frame;
+        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
+        if ( !frame_data )
+        {
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) )
+            {
+                break;
+            }
+            continue;
+        }
+        frame.client_index = i;
+
+        const int send_bytes = rocketnet_server_protocol_write_accepted_ack( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
+        if ( send_bytes > 0 )
+        {
+            rocketnet_server_commit_send_frame( server_transport, &frame, send_bytes );
+            staged_any = true;
+        }
+        else
+        {
+            rocketnet_server_abort_send_frame( server_transport, &frame );
+        }
+    }
+
+    if ( staged_any && rocketnet_server_transport_staged( server_transport ) )
+    {
+        server_transport->send_staged++;
+    }
+}
+
 void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -5482,6 +5559,8 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
     // epoch before it flushes. Same bump as update and stop.
 
     server_transport->packet_leases.reset();
+
+    rocketnet_server_transport_write_accepted_acks( server_transport );
 
     rocketnet_server_transport_flush( server_transport, false );
 

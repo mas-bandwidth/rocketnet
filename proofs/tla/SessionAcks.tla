@@ -20,9 +20,23 @@
 (* the window (highestOpened - Window, highestOpened].  The word-level     *)
 (* representation and its large-skip clear is module ReplayWindow's        *)
 (* business; here every block is truthful by construction unless Witness = *)
-(* "overclaim".  Every packet this model sends is a payload, which is ack- *)
-(* eligible once it opens (standard/TRANSPORT.md t15.3), so the block is   *)
-(* built from the opened set.                                              *)
+(* "overclaim".  Every packet this model sends is a payload.  A payload is *)
+(* ack-eligible once the message layer accepts it, not when it opens       *)
+(* (standard/TRANSPORT.md t15.3): the block is built from the accepted     *)
+(* history (accepted_session, rocketnet_session_ack_block_build), which a  *)
+(* payload enters only through the accept (rocketnet_server_protocol_      *)
+(* accept_payload, rocketnet_client_protocol_accept_payload), and the      *)
+(* accept is what raises the ack debt.                                     *)
+(*                                                                         *)
+(* The receiver update, in the code order: the receive drain (RecvData),   *)
+(* the update ack decision (Sweep: the server maintenance sweep and the    *)
+(* client protocol update, which pay a debt carried in), the message layer *)
+(* accepting what arrived (Accept), then the send pass (LatePass:          *)
+(* rocketnet_server_transport_write_accepted_acks and                      *)
+(* rocketnet_client_protocol_write_owed_ack), which pays the debt the      *)
+(* accepts raised with a standalone ack unless one already went to the     *)
+(* peer this update (the standalone_ack_time stamp) or the wire has no     *)
+(* room.  SameUpdateAck and OneStandalonePerUpdate state the two rules.    *)
 (*                                                                         *)
 (* Time.  Tick is one update on both ends: A's acked batch drains, B's     *)
 (* receive drain resets, both links Age.                                   *)
@@ -38,6 +52,10 @@
 (*                 sequence falls below the retained window                *)
 (*   "skipdeferred" the block memo is kept after an apply that deferred an *)
 (*                 id (the batch was full)                                 *)
+(*   "lateorder"   the order before the fix: no send pass, so the debt an  *)
+(*                 accept raises waits for the next update ack decision    *)
+(*   "nostamp"     the send pass ignores the stamp and sends a second      *)
+(*                 standalone ack after the update ack decision sent one   *)
 (*                                                                         *)
 (* The block memo.  process_block remembers the last block it applied in   *)
 (* full when nothing was deferred, and a send clears it; the same block    *)
@@ -63,7 +81,19 @@ CONSTANTS
     Capacity, MaxDelay, Duplication, Reordering,    \* Link parameters
     BurstStart, BurstLen
 
-Witnesses == {"none", "dropfull", "overclaim", "walkskip", "staleheld", "skipdeferred"}
+Witnesses == {"none", "dropfull", "overclaim", "walkskip", "staleheld", "skipdeferred",
+              "lateorder", "nostamp"}
+
+(***************************************************************************)
+(* AckTiming.  TRUE runs the receiver update in its steps (Sweep, Accept,  *)
+(* LatePass) with the debt and the stamp, where SameUpdateAck and          *)
+(* OneStandalonePerUpdate are checked (MCSessionAcksTiming.cfg and the two *)
+(* witnesses).  FALSE, the default, accepts a payload in the step that     *)
+(* opens it: the block is still built from the accepted history, and the   *)
+(* ack-window runs keep the state space they had.  A definition, replaced  *)
+(* with <- in the timing cfgs.                                             *)
+(***************************************************************************)
+AckTiming == FALSE
 
 ASSUME /\ MaxSeq \in Nat \ {0} /\ SentRing \in Nat \ {0}
        /\ BatchCap \in Nat \ {0} /\ Window \in Nat \ {0} /\ MaxRanges \in Nat
@@ -106,6 +136,15 @@ VARIABLES
     highestOpened,  \* replay highest_opened
     opened,         \* opened sequences in (highestOpened - Window, highestOpened]
     drained,        \* packets drained this update
+    \* the receiver: the accepted history and the update ack timing
+    highestAccepted, \* accepted_session highest
+    accepted,       \* accepted sequences in (highestAccepted - Window, highestAccepted]
+    pending,        \* opened payloads the message layer has not accepted yet
+    debt,           \* ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD (1)
+    swept,          \* this update ack decision has run
+    lateDone,       \* this update send pass has run
+    lateRefused,    \* this update send pass found no room for its standalone ack
+    standalones,    \* standalone acks sent to the peer this update
     \* ghosts
     burned,         \* sequences spent and never sent
     surfacedCount,  \* packet id -> how often it entered the batch, saturating at 2
@@ -121,7 +160,8 @@ R2D == INSTANCE Link WITH wire <- r2dWire, sent <- r2dSent, pulse <- r2dPulse,
                           Packets <- AckPackets, Pattern <- R2DPattern
 
 senderVars   == <<nextSeq, sent, highestSent, batch, outbox>>
-receiverVars == <<highestOpened, opened, drained>>
+timingVars   == <<debt, swept, lateDone, lateRefused, standalones>>
+receiverVars == <<highestOpened, opened, drained, highestAccepted, accepted, pending, timingVars>>
 ghostVars    == <<burned, surfacedCount, openedEver, namedEver>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
@@ -144,6 +184,9 @@ Init ==
     /\ batch = <<>>
     /\ outbox = <<>>
     /\ highestOpened = 0 /\ opened = {} /\ drained = 0
+    /\ highestAccepted = 0 /\ accepted = {} /\ pending = {}
+    /\ debt = FALSE /\ swept = FALSE /\ lateDone = FALSE /\ lateRefused = FALSE
+    /\ standalones = 0
     /\ burned = {}
     /\ surfacedCount = [s \in Seqs |-> 0]
     /\ openedEver = {} /\ namedEver = {}
@@ -342,51 +385,135 @@ AdvanceOpened(s)  == {x \in opened \cup {s} : x > AdvanceHighest(s) - Window}
 (* pairs downward to the floor, at most MaxRanges of them; a trailing gap  *)
 (* names nothing.  The block is the set of sequences named.                *)
 (***************************************************************************)
-RunDownFrom(s) == {x \in Floor..s : \A y \in x..s : y \in opened}
+\* The block is built from the accepted history (accepted_session), whose
+\* window runs from its own highest sequence.
+AFloor == IF highestAccepted >= Window THEN highestAccepted - Window + 1 ELSE 1
+
+\* rocketnet_replay_already_received on accepted_session, negated
+AFresh(s) == s > highestAccepted \/ (s >= AFloor /\ s \notin accepted)
+
+\* rocketnet_replay_advance on accepted_session
+AAdvanceHighest(s) == IF s > highestAccepted THEN s ELSE highestAccepted
+AAdvance(s)        == {x \in accepted \cup {s} : x > AAdvanceHighest(s) - Window}
+
+RunDownFrom(s) == {x \in AFloor..s : \A y \in x..s : y \in accepted}
 
 RECURSIVE NamedFrom(_, _)
 NamedFrom(top, runs) ==
-    IF top < Floor \/ runs = 0 THEN {}
-    ELSE IF top \notin opened THEN NamedFrom(top - 1, runs)
+    IF top < AFloor \/ runs = 0 THEN {}
+    ELSE IF top \notin accepted THEN NamedFrom(top - 1, runs)
     ELSE LET run == RunDownFrom(top) IN run \cup NamedFrom(Min(run) - 1, runs - 1)
 
 Block ==
-    IF highestOpened = 0 THEN {}
-    ELSE IF Witness = "overclaim" THEN Floor..highestOpened
-    ELSE NamedFrom(highestOpened, 1 + MaxRanges)
+    IF highestAccepted = 0 THEN {}
+    ELSE IF Witness = "overclaim" THEN AFloor..highestAccepted
+    ELSE NamedFrom(highestAccepted, 1 + MaxRanges)
 
-\* A session packet carrying the current block.  Every session type carries
-\* one; the standalone ack (type 8) is the one sent for the block alone, and
-\* the standard lets an endpoint send it whenever freshness is worth a packet.
+\* One of the receiver own session packets (a payload or a keep-alive)
+\* carrying the current block.  Every session type carries one, and any of
+\* them clears the debt (TRANSPORT.md t15.4).  It is not a standalone ack.
 SendAck ==
     /\ R2D!Send(Block)
     /\ namedEver' = namedEver \cup Block
-    /\ UNCHANGED <<senderVars, receiverVars, burned, surfacedCount, openedEver, d2rVars, bitVars>>
+    /\ debt' = FALSE
+    /\ UNCHANGED <<senderVars, highestOpened, opened, drained, highestAccepted, accepted,
+                   pending, swept, lateDone, lateRefused, standalones,
+                   burned, surfacedCount, openedEver, d2rVars, bitVars>>
+
+\* A standalone ack (type 8) when the wire has room: the block alone, the
+\* debt paid, one more standalone this update.  No room: the debt stays.
+StandaloneOrRefused(refused) ==
+    IF R2D!InFlight < Capacity
+      THEN /\ R2D!Send(Block)
+           /\ namedEver' = namedEver \cup Block
+           /\ debt' = FALSE /\ standalones' = standalones + 1
+           /\ refused = FALSE
+      ELSE /\ UNCHANGED <<r2dVars, namedEver, debt, standalones>>
+           /\ refused = TRUE
+
+\* The update ack decision (the server maintenance sweep in
+\* update_finish_body, rocketnet_server_protocol_write_ack_if_due; the
+\* client in rocketnet_client_protocol_update): a debt carried into the
+\* update is paid with a standalone ack.  It runs after the receive drain
+\* and before the message layer accepts anything this update.
+Sweep ==
+    /\ AckTiming /\ ~swept
+    /\ swept' = TRUE
+    /\ IF debt THEN StandaloneOrRefused(TRUE) \/ StandaloneOrRefused(FALSE)
+               ELSE UNCHANGED <<r2dVars, namedEver, debt, standalones>>
+    /\ UNCHANGED <<senderVars, highestOpened, opened, drained, highestAccepted, accepted,
+                   pending, lateDone, lateRefused, burned, surfacedCount, openedEver,
+                   d2rVars, bitVars>>
+
+\* The message layer accepts a payload opened this update: it enters the
+\* accepted history unless that history already holds it, and the accept
+\* raises the debt (accept_payload).  Every payload that arrived is accepted
+\* before the send pass; a message layer that refuses one is outside this
+\* model.
+Accept(s) ==
+    /\ AckTiming /\ swept /\ ~lateDone /\ s \in pending
+    /\ pending' = pending \ {s}
+    /\ IF AFresh(s)
+         THEN /\ highestAccepted' = AAdvanceHighest(s)
+              /\ accepted' = AAdvance(s)
+              /\ debt' = TRUE
+         ELSE UNCHANGED <<highestAccepted, accepted, debt>>
+    /\ UNCHANGED <<senderVars, highestOpened, opened, drained, swept, lateDone, lateRefused,
+                   standalones, ghostVars, d2rVars, r2dVars, bitVars>>
+
+\* The send pass (rocketnet_server_transport_write_accepted_acks,
+\* rocketnet_client_protocol_write_owed_ack, at the start of send_packets):
+\* a debt the accepts raised is paid by a standalone ack in the same update,
+\* unless one already went to the peer this update (the stamp).  Under
+\* "lateorder" there is no send pass; under "nostamp" it ignores the stamp.
+LatePass ==
+    /\ AckTiming /\ swept /\ ~lateDone /\ pending = {}
+    /\ lateDone' = TRUE
+    /\ IF /\ debt /\ Witness # "lateorder"
+          /\ (standalones = 0 \/ Witness = "nostamp")
+         THEN \/ StandaloneOrRefused(TRUE) /\ lateRefused' = TRUE
+              \/ StandaloneOrRefused(FALSE) /\ UNCHANGED lateRefused
+         ELSE UNCHANGED <<r2dVars, namedEver, debt, standalones, lateRefused>>
+    /\ UNCHANGED <<senderVars, highestOpened, opened, drained, highestAccepted, accepted,
+                   pending, swept, burned, surfacedCount, openedEver, d2rVars, bitVars>>
 
 \* A data packet arrives: the reading order's replay check, then the
 \* payload is opened.  A refused packet was still drained.
 RecvData ==
+    /\ ~swept
     /\ drained < DrainCap
     /\ d2rWire # <<>>
     /\ LET s == Head(d2rWire).pkt IN
         /\ D2R!Deliver(s)
         /\ drained' = drained + 1
         /\ IF ~Fresh(s)
-           THEN UNCHANGED <<highestOpened, opened, openedEver>>
+           THEN UNCHANGED <<highestOpened, opened, openedEver, pending, highestAccepted, accepted>>
            ELSE /\ highestOpened' = AdvanceHighest(s)
                 /\ opened' = AdvanceOpened(s)
                 /\ openedEver' = openedEver \cup {s}
-    /\ UNCHANGED <<senderVars, burned, surfacedCount, namedEver, r2dVars, bitVars>>
+                /\ IF AckTiming
+                     THEN /\ pending' = pending \cup {s}
+                          /\ UNCHANGED <<highestAccepted, accepted>>
+                     ELSE /\ UNCHANGED pending
+                          /\ IF AFresh(s)
+                               THEN /\ highestAccepted' = AAdvanceHighest(s)
+                                    /\ accepted' = AAdvance(s)
+                               ELSE UNCHANGED <<highestAccepted, accepted>>
+    /\ UNCHANGED <<senderVars, timingVars,
+                   burned, surfacedCount, namedEver, r2dVars, bitVars>>
 
 (***************************************************************************)
 (* Time: one update on both ends.                                          *)
 (***************************************************************************)
 Tick ==
+    /\ ~AckTiming \/ (swept /\ lateDone)
     /\ batch' = <<>>
     /\ drained' = 0
+    /\ swept' = FALSE /\ lateDone' = FALSE /\ lateRefused' = FALSE /\ standalones' = 0
     /\ D2R!Age /\ R2D!Age
     /\ UNCHANGED <<nextSeq, sent, highestSent, outbox>>
-    /\ UNCHANGED <<highestOpened, opened, ghostVars, bitVars>>
+    /\ UNCHANGED <<highestOpened, opened, highestAccepted, accepted, pending, debt,
+                   ghostVars, bitVars>>
 
 D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars, bitVars>>
 R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
@@ -399,6 +526,9 @@ Next ==
     \/ RecvAckRepeat
     \/ SendAck
     \/ RecvData
+    \/ Sweep
+    \/ \E s \in Seqs : Accept(s)
+    \/ LatePass
     \/ Tick
     \/ D2REnvironment
     \/ R2DEnvironment
@@ -426,6 +556,7 @@ Next ==
 (***************************************************************************)
 Fairness ==
     /\ WF_vars(Tick)
+    /\ WF_vars(Sweep) /\ WF_vars(\E s \in Seqs : Accept(s)) /\ WF_vars(LatePass)
     /\ SF_vars(Flush)
     /\ SF_vars(SendAck)
     /\ SF_vars(RecvAck \/ RecvAckRepeat)
@@ -448,6 +579,11 @@ TypeOK ==
     /\ highestOpened \in 0..MaxSeq
     /\ opened \subseteq Seqs /\ opened \subseteq Floor..highestOpened
     /\ drained \in 0..DrainCap
+    /\ highestAccepted \in 0..MaxSeq
+    /\ accepted \subseteq Seqs /\ accepted \subseteq AFloor..highestAccepted
+    /\ pending \subseteq Seqs
+    /\ debt \in BOOLEAN /\ swept \in BOOLEAN /\ lateDone \in BOOLEAN
+    /\ lateRefused \in BOOLEAN /\ standalones \in 0..2
     /\ burned \subseteq Seqs
     /\ surfacedCount \in [Seqs -> 0..2]
     /\ openedEver \subseteq Seqs /\ namedEver \subseteq Seqs
@@ -504,6 +640,22 @@ WalkVisitsUnacked == lastVisited = lastExpect
 \* (sdk/rocketnet_ack.cpp, rocketnet_ack_endpoint_process_block). The
 \* reversed witness "skipdeferred" breaks it.
 RepeatExact == repeatExact
+
+\* An accepted payload is acknowledged in the update that accepted it when
+\* none of the receiver own packets carried the block: once the update has
+\* decided its acks and run its send pass it holds no debt, unless a
+\* standalone ack already went to the peer this update or the wire had no
+\* room (TRANSPORT.md t15.4).  A state predicate: after LatePass nothing in
+\* the update can raise the debt again (RecvData needs ~swept, Accept needs
+\* ~lateDone), and Tick needs swept /\ lateDone, so it is the update end.
+\* The reversed witness "lateorder" (the order before the fix) leaves the
+\* debt for the next update.
+SameUpdateAck ==
+    (AckTiming /\ swept /\ lateDone) => (~debt \/ standalones >= 1 \/ lateRefused)
+
+\* At most one standalone ack to the peer in one update (the
+\* standalone_ack_time stamp).  The reversed witness "nostamp" sends two.
+OneStandalonePerUpdate == standalones <= 1
 
 (***************************************************************************)
 (* Liveness.                                                               *)

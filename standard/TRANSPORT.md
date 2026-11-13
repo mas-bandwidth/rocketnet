@@ -3277,6 +3277,14 @@ the debt when it sends any session packet that carries a block. A standalone
 acknowledgement contains the block and no packet-type data. A type 8 packet
 does not add debt, so acknowledgements do not elicit acknowledgements.
 
+Debt raised inside an update after the update decided its acknowledgements,
+as when a message layer accepts a payload, SHOULD be paid by that same
+update: when none of the session packets the update sends carries the block,
+the standalone connection ack packet SHOULD go out with them, so that
+acceptance adds no update to the round trip the peer measures. An endpoint
+MUST NOT send more than one standalone connection ack packet to one peer in
+one update.
+
 <a id="t15.5"></a>
 ### t15.5. Round-trip sampling
 
