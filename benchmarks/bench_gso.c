@@ -23,10 +23,12 @@
     empty queue.
 
     bench_gso recv <port> <warmup> <window> <windows>
-    bench_gso send <ip> <port> <seconds> [drop-half]
+    bench_gso send <ip> <port> <seconds> [drop-half] [pace=<pps>]
 
-    BENCH_FAULT=recv-errno / send-refused force those aborts on a
-    healthy host so the loudness can be watched (benchmarks/selftest.sh).
+    BENCH_FAULT=recv-errno / send-refused / send-partial / send-short /
+    send-zero / send-backpressure force the abort and accounting paths
+    (bench_common.h) on a healthy host so the loudness can be watched
+    (benchmarks/selftest.sh).
 */
 
 #include "bench_common.h"
