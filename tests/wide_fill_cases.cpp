@@ -104,6 +104,10 @@ static void wide_fill_world_create( wide_fill_world_t * world, int num_clients, 
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = world->hub;
+    if ( max_clients > WIDE_FILL_MAX_CLIENTS )
+    {
+        server_config.handshakes_per_update = 1024;     // the full server connects in a few steps, not two clients a step
+    }
     if ( packets_per_update > 0 )
     {
         server_config.packets_per_update = packets_per_update;
