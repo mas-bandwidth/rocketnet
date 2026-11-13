@@ -803,7 +803,7 @@ def main():
 def seeds(text):
     match = re.fullmatch(r"([0-9]+)-([0-9]+)", text)
     if not match or int(match.group(1)) > int(match.group(2)):
-        raise argparse.ArgumentTypeError(f"seeds must be A-B with A <= B: {text}")
+        raise ValueError(f"seeds must be FIRST-LAST with FIRST <= LAST: {text}")
     return range(int(match.group(1)), int(match.group(2)) + 1)
 
 

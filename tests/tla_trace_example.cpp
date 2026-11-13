@@ -13,7 +13,7 @@
 // step: the operation it called ("claim", "drain"), its arguments and what it
 // returned (k for a claim, the places a drain freed), the model action the code's own return value says it took ("Claim" or
 // "Refuse" for a claim, "Drain"), and every model variable after it
-// (tla_step). TraceRNTraceExample.tla
+// (tla_step). proofs/tla/TraceRNTraceExample.tla
 // allows only that action, and only when the operation can be it, so a claim
 // whose code silently did nothing is rejected even though a Drain from the
 // same state could look alike.
