@@ -1070,8 +1070,8 @@ static inline int rocketnet_xdp_cpu_list_has( const char * list, int cpu )
 
 #define ROCKETNET_XDP_IRQAFFINITY_MET         1
 #define ROCKETNET_XDP_IRQAFFINITY_ABSENT      0
-#define ROCKETNET_XDP_IRQAFFINITY_MALFORMED  -1
-#define ROCKETNET_XDP_IRQAFFINITY_ISOLATED   -2
+#define ROCKETNET_XDP_IRQAFFINITY_MALFORMED  (-1)
+#define ROCKETNET_XDP_IRQAFFINITY_ISOLATED   (-2)
 
 static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const char * isolated_list, int * isolated_cpu )
 {

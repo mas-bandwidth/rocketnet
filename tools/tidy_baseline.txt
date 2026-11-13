@@ -117,8 +117,6 @@ clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	4ffb77c36c589be4
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	9b17184b3901e938
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	a8dd40345f19694a
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	b54519818f9e6b56
-clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	b57be0f541120dde
-clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	e39531b7929c9220
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	e685070eb0996f16
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err33-c	f543a3c0eb724155
 clang-tidy	sdk/rocketnet_server_socket_linux.cpp	cert-err34-c	f2cc5bd1622c4473

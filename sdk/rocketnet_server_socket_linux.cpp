@@ -1276,9 +1276,9 @@ static void rocketnet_server_socket_provision_command( char * command, size_t co
     char os_cpus[64] = "";
     if ( num_os_cpus > 1 )
     {
-        snprintf( os_cpus, sizeof( os_cpus ), "ROCKETNET_SERVER_NUM_OS_CPUS=%d ", num_os_cpus );
+        (void) snprintf( os_cpus, sizeof( os_cpus ), "ROCKETNET_SERVER_NUM_OS_CPUS=%d ", num_os_cpus );
     }
-    snprintf( command, command_bytes, "sudo %sscripts/rocketnet-provision %s %d%s%s", os_cpus, interface_name, num_queues, mode[0] ? " " : "", mode );
+    (void) snprintf( command, command_bytes, "sudo %sscripts/rocketnet-provision %s %d%s%s", os_cpus, interface_name, num_queues, mode[0] ? " " : "", mode );
 }
 
 // one irq's smp_affinity_list under root
@@ -1287,7 +1287,7 @@ static bool rocketnet_server_socket_read_affinity( const char * root, int irq, c
 {
     char suffix[64];
     char path[1024];
-    snprintf( suffix, sizeof( suffix ), "/proc/irq/%d/smp_affinity_list", irq );
+    (void) snprintf( suffix, sizeof( suffix ), "/proc/irq/%d/smp_affinity_list", irq );
     return rocketnet_server_socket_root_path( path, sizeof( path ), root, suffix ) &&
            rocketnet_server_socket_read_sysfs( path, affinity, affinity_bytes );
 }
@@ -1351,7 +1351,7 @@ static int rocketnet_server_socket_read_vectors( const char * root, const char *
     {
         if ( count == max )
         {
-            fclose( interrupts );
+            (void) fclose( interrupts );
             return -2;
         }
         vectors[count].irq = irq;
@@ -1359,7 +1359,7 @@ static int rocketnet_server_socket_read_vectors( const char * root, const char *
         count++;
     }
 
-    fclose( interrupts );
+    (void) fclose( interrupts );
     return count;
 }
 
@@ -1598,7 +1598,7 @@ bool rocketnet_server_socket_preflight_rt_throttle( const char * root )
     if ( rocketnet_xdp_rt_release( release ) == ROCKETNET_XDP_RT_READ_CONFIG )
     {
         char config_suffix[512];
-        snprintf( config_suffix, sizeof( config_suffix ), "/boot/config-%s", release );
+        (void) snprintf( config_suffix, sizeof( config_suffix ), "/boot/config-%s", release );
         FILE * config = rocketnet_server_socket_root_path( path, sizeof( path ), root, config_suffix ) ? fopen( path, "r" ) : NULL;
         if ( !config )
         {
@@ -1625,7 +1625,7 @@ bool rocketnet_server_socket_preflight_rt_throttle( const char * root )
             {
                 throttles = 2;
             }
-            fclose( config );
+            (void) fclose( config );
         }
     }
 
@@ -1703,7 +1703,7 @@ int rocketnet_server_socket_queue_irqs_off_worker( const char * root, const char
             {
                 *newline = '\0';
             }
-            snprintf( first, first_bytes, "irq %d, queue %d, on '%s', want cpu %d", vectors[i].irq, queue, read ? affinity : "unreadable", worker );
+            (void) snprintf( first, first_bytes, "irq %d, queue %d, on '%s', want cpu %d", vectors[i].irq, queue, read ? affinity : "unreadable", worker );
         }
         off++;
     }
@@ -1897,7 +1897,8 @@ bool rocketnet_server_socket_preflight_vlan_tag( const char * parent_name, int v
 
     if ( read_errno != 0 )
     {
-        rocketnet_warn( "xdp pre-flight: could not read the offload flags of %s (%s) (R2): cannot show the VLAN %d tag reaches the filter", parent_name, strerror( read_errno ), vlan_id );
+        char error_text[128];
+        rocketnet_warn( "xdp pre-flight: could not read the offload flags of %s (%s) (R2): cannot show the VLAN %d tag reaches the filter", parent_name, strerror_r( read_errno, error_text, sizeof( error_text ) ), vlan_id );
         return false;
     }
 
@@ -2042,7 +2043,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
     // device (the script resolves the parent and checks the VLAN's offload)
 
     char provision_interface[1024];
-    snprintf( provision_interface, sizeof( provision_interface ), "%s", interface_name );
+    (void) snprintf( provision_interface, sizeof( provision_interface ), "%s", interface_name );
 
     {
         char xdp_name[ROCKETNET_GATEWAY_NETLINK_NAME_BYTES];
