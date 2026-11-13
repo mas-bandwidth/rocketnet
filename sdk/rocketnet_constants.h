@@ -71,7 +71,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 
 #define ROCKETNET_XDP_NUM_BUFFERS                                            3
 #define ROCKETNET_XDP_NUM_FRAMES                                         65536
-#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 8 )
+#define ROCKETNET_XDP_SEND_QUEUE_SIZE                             ( 1024 * 16 )
 #define ROCKETNET_XDP_RECV_QUEUE_SIZE                             ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_FRAMES                                 ( 4096 * 4 )
 #define ROCKETNET_XDP_FILL_RING_SIZE         ( 2 * ROCKETNET_XDP_FILL_FRAMES )
