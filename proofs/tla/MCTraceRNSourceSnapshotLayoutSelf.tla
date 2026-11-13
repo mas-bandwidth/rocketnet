@@ -13,7 +13,11 @@
 (***************************************************************************)
 EXTENDS TraceRNSourceSnapshotLayout, TLC
 
-SelfHome(a) == CASE a = 1 -> 3 [] a = 2 -> 3 [] OTHER -> 0
+\* the homes are the cfgs' HomeAt = {7, 11, 12}: addresses 1 and 2 on cell 3,
+\* address 3 on cell 0
+
+\* one record: the call, the action its result names, its arguments, the state
+Rec(o, a, x, s) == [op |-> o, act |-> a, args |-> x, state |-> s]
 
 E4 == [i \in 0..3 |-> 0]
 
@@ -41,9 +45,18 @@ S7 == [S6 EXCEPT !.ann = (1 :> 1), !.rpc = (1 :> "announced")]
 S8 == [S7 EXCEPT !.rpc = (1 :> "held")]
 S9 == [S8 EXCEPT !.look = (1 :> [addr |-> 1, found |-> TRUE])]
 
-GoodLog == << S1, S2, S3, S4, S5, S6, S7, S8, S9 >>
+R1 == Rec("init", "init", << >>, S1)
+R2 == Rec("writer_scan", "Scan", << FALSE >>, S2)
+R3 == Rec("writer_fill", "Fill", << >>, S3)
+R5 == Rec("writer_publish", "Publish", << >>, S5)
+R6 == Rec("reader_load", "Load", << 1, [slot |-> 1, gen |-> 1] >>, S6)
+R7 == Rec("reader_announce", "Announce", << 1 >>, S7)
+R8 == Rec("reader_recheck", "Recheck", << 1, TRUE >>, S8)
+R9 == Rec("contains", "Lookup", << 1, 1, TRUE >>, S9)
+
+GoodLog == << R1, R2, R3, Rec("writer_add", "Add", << 1 >>, S4), R5, R6, R7, R8, R9 >>
 
 \* the add publishes the slot it writes: record 4 is no model step
-BadLog == << S1, S2, S3, [S4 EXCEPT !.pub = [slot |-> 1, gen |-> 1]], S5, S6, S7, S8, S9 >>
+BadLog == << R1, R2, R3, Rec("writer_add", "Add", << 1 >>, [S4 EXCEPT !.pub = [slot |-> 1, gen |-> 1]]), R5, R6, R7, R8, R9 >>
 
 =============================================================================

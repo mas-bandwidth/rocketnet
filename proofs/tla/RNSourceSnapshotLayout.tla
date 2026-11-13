@@ -7,22 +7,26 @@
 (* pub, a slot and a generation; each reader announces a slot in its own   *)
 (* word ann[r].                                                            *)
 (*                                                                         *)
-(* The writer, one step per code call: Scan(r) is                          *)
-(* rocketnet_source_snapshot_writer_scan for reader r, in reader order;    *)
-(* a scan that finds r on the target ends the update with no publish       *)
-(* (begin returns NONE and the caller counts it, skipped).  Fill is        *)
+(* The writer, one step per code call: Scan(skip) is                       *)
+(* rocketnet_source_snapshot_writer_scan for the next reader, in reader    *)
+(* order, with skip the bool it returns: a scan that finds the reader on   *)
+(* the target ends the update with no publish (begin returns NONE and the  *)
+(* caller counts it, skipped).  Fill is                                    *)
 (* rocketnet_source_snapshot_writer_fill: the target cleared.  Add(a) and  *)
 (* Refuse(a) are rocketnet_source_snapshot_writer_add, which inserts a or  *)
 (* refuses it when the target holds MaxEntries already.  Publish is        *)
 (* rocketnet_source_snapshot_writer_publish: one store of the next         *)
 (* generation's word; the other slot becomes the target.                   *)
 (*                                                                         *)
-(* A reader, one step per code call: Load                                 *)
-(* (rocketnet_source_snapshot_reader_load), Announce (_reader_announce),   *)
-(* Recheck (_reader_recheck: the published word is still the one loaded,  *)
-(* or the announcement is withdrawn and the reader starts again), Lookup   *)
-(* (rocketnet_source_snapshot_contains, as many as the batch makes) and    *)
-(* Release (_reader_release).                                              *)
+(* A reader, one step per code call: Load(r, w)                            *)
+(* (rocketnet_source_snapshot_reader_load, w the word it returns),         *)
+(* Announce (_reader_announce), Recheck(r, ok) (_reader_recheck, ok its    *)
+(* result: the published word is still the one loaded, or the             *)
+(* announcement is withdrawn and the reader starts again),                 *)
+(* Lookup(r, a, found) (rocketnet_source_snapshot_contains, found its      *)
+(* result, as many as the batch makes) and Release (_reader_release).      *)
+(* What a call returns is an argument of its action, so the trace check    *)
+(* (TraceRNSourceSnapshotLayout) checks it.                                *)
 (*                                                                         *)
 (* Each step is atomic.  A step of the code is several memory operations, *)
 (* but only the published word and the announcements are shared; the      *)
@@ -50,7 +54,7 @@ CONSTANTS
     Addrs,          \* addresses, 1..A; cell value 0 is an empty cell (ROCKETNET_ADDRESS_NONE)
     Cap,            \* cells per slot: rocketnet_source_snapshot_capacity( MaxEntries )
     MaxEntries,     \* the snapshot's max_entries
-    Home(_),        \* an address's home cell: rocketnet_source_snapshot_home
+    HomeAt,         \* the home cells: a * Cap + h for address a homed on cell h
     MaxUpdates,     \* exploration bound: updates begun (publishes plus skips)
     MaxRefused,     \* exploration bound: refused adds
     HalfPublished,  \* defect: publish before the last add
@@ -58,7 +62,12 @@ CONSTANTS
     LookupNoWrap    \* defect: the lookup does not wrap at the slot's end
 
 ASSUME Cap >= 2 * MaxEntries /\ MaxEntries >= 1
-ASSUME 0 \notin Addrs /\ \A a \in Addrs : Home(a) \in 0..(Cap - 1)
+\* every address has exactly one home cell in HomeAt (a set of integers,
+\* which a cfg can carry, where a function cannot)
+ASSUME 0 \notin Addrs /\ \A a \in Addrs : Cardinality({h \in 0..(Cap - 1) : a * Cap + h \in HomeAt}) = 1
+
+\* an address's home cell: rocketnet_source_snapshot_home
+Home(a) == CHOOSE h \in 0..(Cap - 1) : a * Cap + h \in HomeAt
 ASSUME HalfPublished \in BOOLEAN /\ NoRecheck \in BOOLEAN /\ LookupNoWrap \in BOOLEAN
 
 Slots == {0, 1}
@@ -134,13 +143,14 @@ ReaderVars == <<rpc, rl, held, look>>
 
 \* ---- the writer ----
 
-\* writer_scan of reader wi + 1 (readers in order): on the target the
-\* update ends, skipped; otherwise the next reader
-Scan ==
+\* writer_scan of reader wi + 1 (readers in order), which returns skip:
+\* on the target the update ends, skipped; otherwise the next reader
+Scan(skip) ==
     /\ \/ wpc = "idle" /\ pub.gen + skipped < MaxUpdates
        \/ wpc = "scan"
     /\ wi < Cardinality(Readers)
-    /\ IF ann[wi + 1] = wslot
+    /\ skip = (ann[wi + 1] = wslot)
+    /\ IF skip
        THEN /\ skipped' = skipped + 1
             /\ wpc' = "idle"
             /\ wi' = 0
@@ -208,9 +218,11 @@ EarlyPublish ==
 
 WriterVars == <<slots, pub, wpc, wi, wslot, wset, pset, skipped, refused>>
 
-Load(r) ==
+\* reader_load returns w, the published word
+Load(r, w) ==
     /\ rpc[r] = "idle"
-    /\ rl' = [rl EXCEPT ![r] = pub]
+    /\ w = pub
+    /\ rl' = [rl EXCEPT ![r] = w]
     /\ held' = [held EXCEPT ![r] = pset]
     /\ rpc' = [rpc EXCEPT ![r] = "loaded"]
     /\ UNCHANGED <<ann, look>>
@@ -223,9 +235,11 @@ Announce(r) ==
     /\ UNCHANGED <<rl, held, look>>
     /\ UNCHANGED WriterVars
 
-Recheck(r) ==
+\* reader_recheck returns ok: the published word is still the one loaded
+Recheck(r, ok) ==
     /\ rpc[r] = "announced"
-    /\ IF pub = rl[r]
+    /\ ok = (pub = rl[r])
+    /\ IF ok
        THEN /\ rpc' = [rpc EXCEPT ![r] = "held"]
             /\ UNCHANGED <<ann, rl, held>>
        ELSE /\ rpc' = [rpc EXCEPT ![r] = "idle"]
@@ -235,9 +249,11 @@ Recheck(r) ==
     /\ UNCHANGED look
     /\ UNCHANGED WriterVars
 
-Lookup(r, a) ==
+\* contains returns found
+Lookup(r, a, found) ==
     /\ rpc[r] = "held"
-    /\ look' = [look EXCEPT ![r] = [addr |-> a, found |-> Contains(slots[ann[r]], a)]]
+    /\ found = Contains(slots[ann[r]], a)
+    /\ look' = [look EXCEPT ![r] = [addr |-> a, found |-> found]]
     /\ UNCHANGED <<ann, rpc, rl, held>>
     /\ UNCHANGED WriterVars
 
@@ -251,11 +267,13 @@ Release(r) ==
     /\ UNCHANGED WriterVars
 
 Next ==
-    \/ Scan \/ Fill \/ Publish \/ EarlyPublish
+    \/ \E skip \in BOOLEAN : Scan(skip)
+    \/ Fill \/ Publish \/ EarlyPublish
     \/ \E a \in Addrs : Add(a) \/ Refuse(a)
     \/ \E r \in Readers :
-        \/ Load(r) \/ Announce(r) \/ Recheck(r) \/ Release(r)
-        \/ \E a \in Addrs : Lookup(r, a)
+        \/ Load(r, pub) \/ Announce(r) \/ Release(r)
+        \/ \E ok \in BOOLEAN : Recheck(r, ok)
+        \/ \E a \in Addrs, found \in BOOLEAN : Lookup(r, a, found)
 
 Spec == Init /\ [][Next]_vars
 

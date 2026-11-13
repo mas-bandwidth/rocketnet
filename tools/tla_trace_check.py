@@ -99,7 +99,8 @@ LAYERS = {
     },
     "source-snapshot": {
         "modules": ["RNSourceSnapshotLayout.tla", "TraceRNSourceSnapshotLayout.tla"],
-        "untraced": {},
+        "untraced": {"EarlyPublish": "the HalfPublished defect's step: the code has no early publish but the plant's"},
+        "reach": ["Wrapped", "FoundWrapped"],
     },
 }
 

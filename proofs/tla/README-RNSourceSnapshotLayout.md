@@ -28,18 +28,18 @@ announcement first, and skips its publish when one is on its target.
 | `rpc[r]`, `rl[r]` | where reader r is in `rocketnet_source_snapshot_reader_acquire`, and the word it loaded |
 | `wset`, `pset`, `held[r]` | ghosts: the addresses added this update, the set the published word stands for, the set published at reader r's load |
 | `look[r]` | reader r's last lookup and its answer |
-| `Cap`, `MaxEntries`, `Home(a)` | `rocketnet_source_snapshot_capacity( max_entries )`, `max_entries`, `rocketnet_source_snapshot_home` |
+| `Cap`, `MaxEntries`, `Home(a)` | `rocketnet_source_snapshot_capacity( max_entries )`, `max_entries`, `rocketnet_source_snapshot_home`; `Home(a)` is read from the constant `HomeAt`, the set of `a * Cap + h` for address `a` homed on cell `h` (a cfg carries a set of integers, not a function) |
 
 ## Actions
 
 | Action | Code |
 |---|---|
-| `Scan` | `rocketnet_source_snapshot_writer_scan`, one reader per step; on the target the update ends (`writer_begin` returns NONE) |
+| `Scan(skip)` | `rocketnet_source_snapshot_writer_scan`, one reader per step, `skip` what it returns; on the target the update ends (`writer_begin` returns NONE) |
 | `Fill` | `rocketnet_source_snapshot_writer_fill`: the target cleared |
 | `Add(a)`, `Refuse(a)` | `rocketnet_source_snapshot_writer_add`: the first empty cell on the probe path, or false when the target is full |
 | `Publish` | `rocketnet_source_snapshot_writer_publish`: one store of the next word; the other slot becomes the target |
-| `Load(r)`, `Announce(r)`, `Recheck(r)` | `rocketnet_source_snapshot_reader_load`, `_reader_announce`, `_reader_recheck`, the three steps of `_reader_acquire`; a failed re-check withdraws the announcement |
-| `Lookup(r, a)` | `rocketnet_source_snapshot_contains` |
+| `Load(r, w)`, `Announce(r)`, `Recheck(r, ok)` | `rocketnet_source_snapshot_reader_load` (`w` the word it returns), `_reader_announce`, `_reader_recheck` (`ok` its result), the three steps of `_reader_acquire`; a failed re-check withdraws the announcement |
+| `Lookup(r, a, found)` | `rocketnet_source_snapshot_contains`, `found` its result |
 | `Release(r)` | `rocketnet_source_snapshot_reader_release` |
 
 Each step is atomic in the model. The cells a step writes are read by no one
@@ -76,17 +76,21 @@ memory model.
 | `MCTraceRNSourceSnapshotLayoutSelf.cfg` | the trace check's hand-written good record: pass |
 | `MCTraceRNSourceSnapshotLayoutSelfBrokenAddPublishes.cfg` | the same record with the add changing the published word: `TraceConsistent` fails |
 
-`MCHome` homes addresses 1 and 2 on cell 3 and address 3 on cell 0. The
+`HomeAt = {7, 11, 12}` homes addresses 1 and 2 on cell 3 and address 3 on cell 0. The
 second add on cell 3 wraps to cell 0, and address 3 then probes past it.
 
 ## Trace check
 
 Layer `source-snapshot`: `tests/tla_trace_source_snapshot.cpp` drives the
 header's own step functions in a seeded random walk, with one writer and two
-readers on a snapshot of two entries, and records every model variable after
-each call. It picks three real addresses whose hashed homes are the same as
-`MCHome`'s. The plant build defines `ROCKETNET_SOURCE_SNAPSHOT_PLANT`, which
-makes `writer_add` store the next word before it inserts, so the target is
-published half built. That trace fails `TraceConsistent` at the first add.
+readers on a snapshot of two entries. Each record is one call, its arguments
+and what it returned, the action its result names, and every model variable
+after it (README-TraceCheck.md). It picks three real addresses whose hashed
+homes are the model instances' and writes their homes as `HomeAt`. The plant
+build defines `ROCKETNET_SOURCE_SNAPSHOT_PLANT`, which makes `writer_add`
+store the next word before it inserts, so the target is published half built.
+That trace fails `TraceConsistent` at the first add. Reach: `Wrapped` (an
+address in a cell before its home) and `FoundWrapped` (a lookup that found
+one).
 
 Unit tests: `tests/test_unit_source_snapshot.cpp`.

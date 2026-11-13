@@ -12,22 +12,22 @@
 // writer_fill), writer_add of one of three addresses and writer_publish; a
 // reader's are the pieces of rocketnet_source_snapshot_reader_acquire
 // (reader_load, reader_announce, reader_recheck), contains and
-// reader_release. After each call the walk records every model variable:
-// the cells, the published word and the announcements read from the
-// snapshot's own memory, the writer's target from its state, and the
-// walk's own program counters and ghosts (the sets added and published, the
-// set published at each reader's load, the counts the caller keeps). A
-// call that changes nothing (a repeated add or lookup) is a stutter and
-// writes no record. The three addresses are chosen so the real hash homes
+// reader_release. Each call is one record (tla_step): the call, its
+// arguments and what it returned (the scan's skip, the loaded word, the
+// re-check's result, the lookup's address and answer), the action the
+// call's result names (Add or Refuse by the add's result), and every model
+// variable after it: the cells, the published word and the announcements
+// read from the snapshot's own memory, the writer's target from its state,
+// and the walk's own program counters and ghosts (the sets added and
+// published, the set published at each reader's load, the counts the caller
+// keeps). The writer adds only an address it has not added this update, so
+// no add is a repeat. The three addresses are chosen so the real hash homes
 // two on the last cell and one on cell 0, as MCRNSourceSnapshotLayout does,
-// so the probe wraps.
-// The walk prints PLANT-FIRED n, the adds after which the published slot is
-// the writer's target: the planted code's own act (ROCKETNET_SOURCE_SNAPSHOT_PLANT,
-// the publish store before the add), so the clean walk prints 0.
-
-#if defined( ROCKETNET_TLA_PLANT )
-#define ROCKETNET_SOURCE_SNAPSHOT_PLANT 1
-#endif // #if defined( ROCKETNET_TLA_PLANT )
+// so the probe wraps; their homes are written into the cfg as HomeAt.
+// The planted effect (ROCKETNET_SOURCE_SNAPSHOT_PLANT, the publish store
+// before the add, in sdk/rocketnet_source_snapshot.cpp) is an add after
+// which the published slot is the writer's target, which the clean code
+// never shows.
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
@@ -37,6 +37,11 @@
 #include <string.h>
 
 #include "tla_trace_record.h"
+
+#if defined( ROCKETNET_TLA_PLANT )
+#define ROCKETNET_SOURCE_SNAPSHOT_PLANT 1
+#include "../sdk/rocketnet_source_snapshot.cpp"
+#endif // #if defined( ROCKETNET_TLA_PLANT )
 
 #define SNAPSHOT_READERS 2
 #define SNAPSHOT_ADDRS 3
@@ -94,8 +99,20 @@ static std::string snapshot_set( unsigned bits )
 
 static std::string snapshot_word( uint64_t word )
 {
+    // the generation is 63 bits, so it fits int64_t exactly; tla_int
+    // refuses one past TLC's 32-bit integers
     return "[slot |-> " + tla_int( rocketnet_source_snapshot_word_slot( word ) ) + ", gen |-> " +
            tla_int( (int64_t) rocketnet_source_snapshot_word_generation( word ) ) + "]";
+}
+
+static std::string snapshot_args( const std::vector<std::string> & args )
+{
+    return tla_sequence( args );
+}
+
+static std::string snapshot_arg( int64_t a )
+{
+    return tla_sequence( std::vector<std::string>( 1, tla_int( a ) ) );
 }
 
 static const char * snapshot_writer_pc_name( snapshot_writer_pc_t pc )
@@ -190,7 +207,7 @@ static tla_record_t snapshot_record( const snapshot_walk_t & w )
 }
 
 // three addresses whose real homes in a slot of capacity cells are
-// capacity - 1, capacity - 1 and 0, as MCHome in MCRNSourceSnapshotLayout
+// capacity - 1, capacity - 1 and 0, as HomeAt in MCRNSourceSnapshotLayout.cfg
 static bool snapshot_pick_addresses( snapshot_walk_t & w )
 {
     const int capacity = w.snapshot.capacity;
@@ -245,8 +262,8 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    records.push_back( snapshot_record( w ) );
-    int fired = 0;
+    tla_report_t report;
+    records.push_back( tla_step( "init", "init", "<<>>", snapshot_record( w ) ) );
 
     for ( int step = 0; step < steps; step++ )
     {
@@ -258,7 +275,8 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
             {
                 if ( w.wi < SNAPSHOT_READERS )
                 {
-                    if ( rocketnet_source_snapshot_writer_scan( s, w.wi ) )
+                    const bool skip = rocketnet_source_snapshot_writer_scan( s, w.wi );
+                    if ( skip )
                     {
                         w.skipped++;
                         w.wpc = SNAPSHOT_WRITER_IDLE;
@@ -269,6 +287,9 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                         w.wpc = SNAPSHOT_WRITER_SCAN;
                         w.wi++;
                     }
+                    report.act( "Scan" );
+                    records.push_back( tla_step( "writer_scan", "Scan", snapshot_args( std::vector<std::string>( 1, tla_bool( skip ) ) ),
+                                                 snapshot_record( w ) ) );
                 }
                 else
                 {
@@ -276,6 +297,8 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                     w.wpc = SNAPSHOT_WRITER_ADD;
                     w.wi = 0;
                     w.wset = 0;
+                    report.act( "Fill" );
+                    records.push_back( tla_step( "writer_fill", "Fill", "<<>>", snapshot_record( w ) ) );
                 }
             }
             else if ( random.below( 4 ) == 0 )
@@ -286,12 +309,26 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                 }
                 w.pset = w.wset;
                 w.wpc = SNAPSHOT_WRITER_IDLE;
+                report.act( "Publish" );
+                records.push_back( tla_step( "writer_publish", "Publish", "<<>>", snapshot_record( w ) ) );
             }
             else
             {
-                const int a = random.below( SNAPSHOT_ADDRS );
+                // an address not added this update: there are three and a
+                // slot takes two, so one always remains
+                int choices[SNAPSHOT_ADDRS];
+                int count = 0;
+                for ( int a = 0; a < SNAPSHOT_ADDRS; a++ )
+                {
+                    if ( !( w.wset & ( 1u << a ) ) )
+                    {
+                        choices[count++] = a;
+                    }
+                }
+                const int a = choices[random.below( count )];
                 const int target = s->writer->target;
-                if ( rocketnet_source_snapshot_writer_add( s, &w.addrs[a] ) )
+                const bool added = rocketnet_source_snapshot_writer_add( s, &w.addrs[a] );
+                if ( added )
                 {
                     w.wset |= 1u << a;
                 }
@@ -299,9 +336,13 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                 {
                     w.refused++;
                 }
+                const char * act = added ? "Add" : "Refuse";
+                report.act( act );
+                records.push_back( tla_step( "writer_add", act, snapshot_arg( a + 1 ), snapshot_record( w ) ) );
+                // the planted effect, where it shows: the target published
                 if ( rocketnet_source_snapshot_word_slot( s->published->word.load( std::memory_order_relaxed ) ) == target )
                 {
-                    fired++;
+                    report.planted( (int) records.size() );
                 }
             }
         }
@@ -311,17 +352,30 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
             switch ( w.rpc[r] )
             {
                 case SNAPSHOT_READER_IDLE:
+                {
                     w.rl[r] = rocketnet_source_snapshot_reader_load( s );
                     w.loaded[r] = true;
                     w.held[r] = w.pset;
                     w.rpc[r] = SNAPSHOT_READER_LOADED;
+                    std::vector<std::string> args;
+                    args.push_back( tla_int( r + 1 ) );
+                    args.push_back( snapshot_word( w.rl[r] ) );
+                    report.act( "Load" );
+                    records.push_back( tla_step( "reader_load", "Load", snapshot_args( args ), snapshot_record( w ) ) );
                     break;
+                }
                 case SNAPSHOT_READER_LOADED:
+                {
                     rocketnet_source_snapshot_reader_announce( s, r, w.rl[r] );
                     w.rpc[r] = SNAPSHOT_READER_ANNOUNCED;
+                    report.act( "Announce" );
+                    records.push_back( tla_step( "reader_announce", "Announce", snapshot_arg( r + 1 ), snapshot_record( w ) ) );
                     break;
+                }
                 case SNAPSHOT_READER_ANNOUNCED:
-                    if ( rocketnet_source_snapshot_reader_recheck( s, r, w.rl[r] ) )
+                {
+                    const bool ok = rocketnet_source_snapshot_reader_recheck( s, r, w.rl[r] );
+                    if ( ok )
                     {
                         w.rpc[r] = SNAPSHOT_READER_HELD;
                     }
@@ -331,8 +385,15 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                         w.loaded[r] = false;
                         w.held[r] = 0;
                     }
+                    std::vector<std::string> args;
+                    args.push_back( tla_int( r + 1 ) );
+                    args.push_back( tla_bool( ok ) );
+                    report.act( "Recheck" );
+                    records.push_back( tla_step( "reader_recheck", "Recheck", snapshot_args( args ), snapshot_record( w ) ) );
                     break;
+                }
                 default:
+                {
                     if ( random.below( 4 ) == 0 )
                     {
                         rocketnet_source_snapshot_reader_release( s, r );
@@ -341,49 +402,48 @@ static int trace_source_snapshot( uint64_t seed, int steps, const char * out )
                         w.held[r] = 0;
                         w.look_addr[r] = 0;
                         w.look_found[r] = false;
+                        report.act( "Release" );
+                        records.push_back( tla_step( "reader_release", "Release", snapshot_arg( r + 1 ), snapshot_record( w ) ) );
                     }
                     else
                     {
                         const int a = random.below( SNAPSHOT_ADDRS );
                         const int slot = rocketnet_source_snapshot_word_slot( w.rl[r] );
+                        const bool found = rocketnet_source_snapshot_contains( s, slot, &w.addrs[a] );
                         w.look_addr[r] = a + 1;
-                        w.look_found[r] = rocketnet_source_snapshot_contains( s, slot, &w.addrs[a] );
+                        w.look_found[r] = found;
+                        std::vector<std::string> args;
+                        args.push_back( tla_int( r + 1 ) );
+                        args.push_back( tla_int( a + 1 ) );
+                        args.push_back( tla_bool( found ) );
+                        report.act( "Lookup" );
+                        records.push_back( tla_step( "contains", "Lookup", snapshot_args( args ), snapshot_record( w ) ) );
                     }
                     break;
+                }
             }
         }
-
-        tla_record_t record = snapshot_record( w );
-        if ( record.text() != records.back().text() )
-        {
-            records.push_back( record );
-        }
     }
 
-    printf( "PLANT-FIRED %d\n", fired );
+    report.print();
 
-    std::string home = "MCHome(a) == CASE ";
+    // the homes the code's hash gives the three addresses, as the model's
+    // HomeAt: a * Cap + h for address a on cell h
+    std::string home_at = "{";
     for ( int a = 0; a < SNAPSHOT_ADDRS; a++ )
     {
-        home += ( a > 0 ? " [] " : "" );
-        home += "a = " + tla_int( a + 1 ) + " -> " + tla_int( rocketnet_source_snapshot_home( s, &w.addrs[a] ) );
+        home_at += ( a > 0 ? ", " : "" ) + tla_int( (int64_t) ( a + 1 ) * s->capacity + rocketnet_source_snapshot_home( s, &w.addrs[a] ) );
     }
-    const std::string definitions = home + "\n";
+    home_at += "}";
 
     char constants[1024];
     snprintf( constants, sizeof( constants ),
-              "    Readers = {1, 2}\n    Addrs = {1, 2, 3}\n    Cap = %d\n    MaxEntries = %d\n    Home <- MCHome\n"
+              "    Readers = {1, 2}\n    Addrs = {1, 2, 3}\n    Cap = %d\n    MaxEntries = %d\n    HomeAt = %s\n"
               "    MaxUpdates = 1000000\n    MaxRefused = 1000000\n    HalfPublished = FALSE\n    NoRecheck = FALSE\n"
               "    LookupNoWrap = FALSE\n",
-              s->capacity, SNAPSHOT_MAX_ENTRIES );
+              s->capacity, SNAPSHOT_MAX_ENTRIES, home_at.c_str() );
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceSourceSnapshotPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceSourceSnapshotSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
-    return tla_write_trace( out, name, "TraceRNSourceSnapshotLayout", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceSourceSnapshot", seed, "TraceRNSourceSnapshotLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "source-snapshot", trace_source_snapshot );

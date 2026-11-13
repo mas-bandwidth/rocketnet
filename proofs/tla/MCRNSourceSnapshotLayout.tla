@@ -16,6 +16,7 @@
 (***************************************************************************)
 EXTENDS RNSourceSnapshotLayout
 
-MCHome(a) == CASE a = 1 -> 3 [] a = 2 -> 3 [] OTHER -> 0
+\* the homes are the cfgs' HomeAt = {7, 11, 12}: on Cap 4, address 1 on cell 3
+\* (1 * 4 + 3), address 2 on cell 3 (2 * 4 + 3), address 3 on cell 0 (3 * 4)
 
 =============================================================================
