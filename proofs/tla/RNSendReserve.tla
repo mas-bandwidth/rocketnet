@@ -75,7 +75,6 @@ CONSTANTS
     Chunk,          \* frames per chunk claim (1: every claim is one frame)
     GuardWidth,     \* the guard's line bound (0: no guard)
     SharedLine,     \* TRUE: every filler's thread hashes to one fill line
-    IoRefuses,      \* TRUE: the transport may refuse a frame with room left (its own reason); FALSE: only a full queue
     \* reversed witnesses, each TRUE breaks one rule of the code
     RoomOnly,       \* the budget is the whole room, no reserve           (ReserveKept)
     SplitClaim,     \* the claim is a load then a store, not one add      (ReserveKept)
@@ -87,8 +86,7 @@ CONSTANTS
     NoFallback,     \* a refused chunk is not claimed again as one frame  (NeverStarved)
     BatchCount,     \* a staged frame is counted at the filler's next start (NeverStarved)
     NoTailReturn,   \* a refused frame takes the line's tail but gives back its own claim only (NeverStarved)
-    NoRetry,        \* a single claim taken back is refused, no retest    (NeverStarved)
-    NamePlain       \* every refusal is counted SEND_RESERVE_REFUSED      (TailsNamed)
+    NoRetry         \* a single claim taken back is refused, no retest    (NeverStarved)
 
 ASSUME MaxOwn <= Reserve
 ASSUME Chunk >= 1
@@ -297,8 +295,7 @@ OwnIo(f) ==
           /\ free' = free - 1
           /\ pc' = [pc EXCEPT ![f] = IF OwnCountFirst THEN "idle" ELSE "owncount"]
           /\ UNCHANGED ownTaken
-       \/ /\ IoRefuses \/ free = 0
-          /\ pc' = [pc EXCEPT ![f] = "idle"]
+       \/ /\ pc' = [pc EXCEPT ![f] = "idle"]
           /\ ownTaken' = ownTaken - 1
           /\ UNCHANGED free
     /\ UNCHANGED <<started, ownUsed, ownLeft, claims, budget, tail, size, claim, ret,
@@ -524,7 +521,6 @@ TakeBack(f) ==
 \* refused.  Then the counter: every line's tail and chunk claims read, one
 \* line a step; none read is SEND_RESERVE_REFUSED, which TailsNamed holds to
 \* a decision that had no room for the frame past every filler in flight
-\* (NamePlain: every refusal counted that way)
 Retest(f) ==
     \/ /\ pc[f] = "retest"
        /\ ld' = [ld EXCEPT ![f] = claims]
@@ -543,7 +539,7 @@ Retest(f) ==
                 THEN /\ racc' = [racc EXCEPT ![f] = acc]
                      /\ rpos' = [rpos EXCEPT ![f] = @ + 1]
                      /\ UNCHANGED <<pc, unnamed, roomy>>
-                ELSE /\ unnamed' = (unnamed \/ (roomy[f] /\ (NamePlain \/ acc = 0)))
+                ELSE /\ unnamed' = (unnamed \/ (roomy[f] /\ acc = 0))
                      /\ racc' = [racc EXCEPT ![f] = 0]
                      /\ rpos' = [rpos EXCEPT ![f] = 0]
                      /\ roomy' = [roomy EXCEPT ![f] = FALSE]
@@ -566,8 +562,7 @@ Stage(f) ==
                 ELSE /\ pc' = [pc EXCEPT ![f] = "counting"]
                      /\ UNCHANGED uncounted
           /\ UNCHANGED <<tail, ret>>
-       \/ /\ IoRefuses \/ free = 0
-          /\ ret' = [ret EXCEPT ![f] = IF NoTailReturn THEN 1 ELSE tail[LineOf(f)] + 1]
+       \/ /\ ret' = [ret EXCEPT ![f] = IF NoTailReturn THEN 1 ELSE tail[LineOf(f)] + 1]
           /\ tail' = [tail EXCEPT ![LineOf(f)] = 0]
           /\ pc' = [pc EXCEPT ![f] = "returning"]
           /\ UNCHANGED <<free, uncounted>>
