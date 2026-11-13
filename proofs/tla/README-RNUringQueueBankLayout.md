@@ -35,19 +35,22 @@ check's cfg must be.
 - A caller may hand finish a pointer 1 byte early, exact, or 1 byte late (`MaxSkew = 1`).
 - 2 flushes.
 
-## Results (bench-nyc-5, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13; RUNS.tsv)
+## Results (bench-nyc-4, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13; RUNS.tsv)
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueBankLayout.cfg | pass | pass | 4,578,934 (1,008,425), 28 s |
-| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 1,052 (383) |
-| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 2,363 (847) |
-| MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 41 (25) |
-| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 42 (25) |
+| MCRNUringQueueBankLayout.cfg | pass | pass | 10,861,346 (2,085,725), 43 s |
+| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 2,040 (727) |
+| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 5,246 (1,529) |
+| MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 53 (29) |
+| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 47 (35) |
 
-The control's counts are those of the instance before the trace check's v2 changes
-(returned values as action arguments, `QueueOf` as `d % Q`, `MaxSkew`): the same
-states. Two witnesses moved by one state, the order TLC meets the violation in.
+The model carries two derived variables for the trace check: `lw`, what the last call
+left in the slot it wrote (0 nothing written, 1 packet_bytes zero after an abort, 2 non-zero
+after a finish), so a finish that wrote nothing is not a step; and `stg`, what
+`rocketnet_uring_send_queues_staged` returns for each queue, always min(counter, S) of the
+producer bank. Both grow the state count (the control was 4,578,934 (1,008,425) before them);
+no invariant reads them, they exist to be recorded.
 
 The instance went from 4 starts per thread to 3 so the control fits tlacheck's
 110 s budget; every witness still fires (NarrowCounter needs 5 claims on one bank in a
