@@ -76,7 +76,8 @@
 #include <stdio.h>
 
 // the most packets and bytes one segmented send carries: the gso transport's
-// bounds (the kernel's UDP_MAX_SEGMENTS, the 16-bit UDP payload)
+// bounds (64 segments, the library's own cap: the kernel's UDP_MAX_SEGMENTS
+// is larger, 128 in Linux 6.12; and the 16-bit UDP payload)
 
 #define ROCKETNET_URING_MAX_SUPER_BYTES                 ROCKETNET_GSO_MAX_SUPER_BYTES
 
