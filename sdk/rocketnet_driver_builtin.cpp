@@ -2345,7 +2345,8 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status,
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_uring_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
                                           config->transport->packet_filter );
 }
 

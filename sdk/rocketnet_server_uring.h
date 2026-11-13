@@ -211,6 +211,26 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
 struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int * status = NULL,
                                                                        const uint8_t * packet_filter = NULL );
 
+// create with flags and the placement of the queue workers: queue q's worker
+// pins itself to cpu num_os_cpus + q and sets SCHED_RR at the minimum, as the
+// XDP transport's thread does (rocketnet_uring_pin.h); num_os_cpus 0 pins
+// nothing, which is what create and create_flags do. The server's config
+// num_os_cpus (default 1) reaches this through the builtin driver.
+
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
+                                                                        int * status = NULL, const uint8_t * packet_filter = NULL );
+
+// the cpu queue's worker pinned itself to: the cpu once it has, ROCKETNET_URING_PIN_NONE
+// when not asked or refused (a warning named the queue and the cpu, and
+// rocketnet_server_uring_pin_refusals counted it), ROCKETNET_URING_PIN_PENDING until its thread
+// has run. Never the cpu unless the pin succeeded.
+
+int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue );
+
+// the pins and priorities the workers asked for and the system refused
+
+int rocketnet_server_uring_pin_refusals( struct rocketnet_server_uring_t * uring );
+
 // the packets one receive bank holds: one update's receive budget for the
 // transport's max_clients (rocketnet_server_uring_bank_packets)
 

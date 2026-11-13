@@ -8700,6 +8700,93 @@ void rocketnet_test_server_uring_send_overflow()
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
+// the workers pin themselves (rocketnet_uring_pin.h): with num_os_cpus 0 (the
+// transport driven directly) nothing is pinned and nothing refused; with a
+// cpu the machine does not have, every worker reports NONE, the refusal is
+// counted once for each, and no worker is ever reported on that cpu; with
+// num_os_cpus 1 each worker reports cpu 1 + queue (reported only after
+// pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
+// refusal path as above.
+
+static bool rocketnet_test_uring_wait_pins( struct rocketnet_server_uring_t * uring, int queues )
+{
+    const double start = rocketnet_platform_time();
+    while ( rocketnet_platform_time() - start < 5.0 )
+    {
+        bool all = true;
+        for ( int q = 0; q < queues; q++ )
+        {
+            if ( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_PENDING )
+            {
+                all = false;
+            }
+        }
+        if ( all )
+        {
+            return true;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    return false;
+}
+
+void rocketnet_test_server_uring_worker_pin()
+{
+    const int queues = 2;
+    const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
+
+    // not asked for: unpinned, nothing refused
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0 );
+        rocketnet_check( uring );
+        rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
+        }
+        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) == 0 );
+        rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+    }
+
+    // a cpu the machine does not have: refused by name, counted, never reported pinned
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, online + 1000 );
+        rocketnet_check( uring );
+        rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
+        }
+        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) >= queues );
+        rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+    }
+
+    // placement: queue q on cpu 1 + q
+    if ( online >= 1 + queues )
+    {
+        rocketnet_address_t address;
+        rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+        struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 1 );
+        rocketnet_check( uring );
+        rocketnet_check( rocketnet_test_uring_wait_pins( uring, queues ) );
+        for ( int q = 0; q < queues; q++ )
+        {
+            rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
+        }
+        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) == 0 );
+        rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+    }
+    else
+    {
+        printf( "test_io_uring_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
+        fflush( stdout );
+    }
+}
+
 void rocketnet_test_server_uring_send_wrong_family()
 {
     // an ipv4 server staged packets to an ipv6 destination its socket cannot
@@ -15366,6 +15453,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_gro_cmsg_faults_counted", rocketnet_test_server_uring_gro_cmsg_faults_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
+    { "test_io_uring_transport_worker_pin", rocketnet_test_server_uring_worker_pin, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
