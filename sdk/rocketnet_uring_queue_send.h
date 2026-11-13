@@ -15,8 +15,9 @@
 //
 //   main     publish: with the game threads joined, a producer that staged anything
 //            goes to the back of the ready FIFO and the head of the free FIFO
-//            becomes the producer, reset; with no free bank the producer is
-//            kept with its slots for the next send_packets.
+//            becomes the producer, reset; with no free bank, or the mutex
+//            held by the worker (main only tries it), the producer is kept
+//            with its slots for the next send_packets.
 //   worker   claim: takes the oldest ready bank and cuts its staged slots into
 //            runs with the gather (rocketnet_send_gather.h): each run is
 //            staged slots to one destination in staged order, one send and
@@ -155,10 +156,13 @@ uint64_t rocketnet_uring_queue_send_allocation_bytes( int num_queues, int slots 
 void rocketnet_uring_queue_send_destroy( struct rocketnet_uring_queue_send_t * send );
 
 // main, the game threads joined. RNUringQueueSend Publish: true when the queue staged
-// anything and a free bank replaced its producer; false keeps the producer.
+// anything and a free bank replaced its producer; false keeps the producer
+// (PublishKept), also when the worker holds the handoff mutex: main only
+// tries it and never waits.
 bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * send, int queue );
 
-// main: no bank published and not yet retired, and the producer empty
+// main: no bank published and not yet retired, and the producer empty; false
+// while the worker holds the handoff mutex (main only tries it)
 bool rocketnet_uring_queue_send_idle( struct rocketnet_uring_queue_send_t * send, int queue );
 
 // the worker's

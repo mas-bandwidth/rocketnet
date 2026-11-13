@@ -1019,6 +1019,7 @@ MCRNUringQueueSendLive.cfg	MCRNUringQueueSend.tla	pass	-	check	rnuringqueuesend	
 MCRNUringQueueSendBrokenRetireAtSubmit.cfg	MCRNUringQueueSend.tla	invariant	NoWriteWhileKernelOwned	check	rnuringqueuesend	required	-
 MCRNUringQueueSendBrokenEagainLost.cfg	MCRNUringQueueSend.tla	invariant	Accounted	check	rnuringqueuesend	required	-
 MCRNUringQueueSendBrokenEagainStuck.cfg	MCRNUringQueueSend.tla	temporal	Drains	ignore-terminal	rnuringqueuesend	required	-
+MCRNUringQueueSendBrokenMainWaits.cfg	MCRNUringQueueSend.tla	invariant	MainNeverWaits	check	rnuringqueuesend	required	-
 MCTraceRNUringQueueSendSelf.cfg	MCTraceRNUringQueueSendSelf.tla	pass	-	check	tracernuringqueuesend	required	-
 MCTraceRNUringQueueSendSelfBrokenRetire.cfg	MCTraceRNUringQueueSendSelf.tla	invariant	TraceConsistent	check	tracernuringqueuesend	required	-
 MCRNUringQueueWorker.cfg	MCRNUringQueueWorker.tla	pass	-	check	rnuringqueueworker	required	-

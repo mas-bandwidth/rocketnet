@@ -226,8 +226,10 @@ LAYERS = {
     "queue-send": {
         "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
-                             "length, so it never gets there"},
-        "reach": ["Full", "AgainPosted"],
+                             "length, so it never gets there",
+                     "PublishWaits": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex",
+                     "PublishResumes": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex"},
+        "reach": ["Full", "AgainPosted", "KeptLocked"],
         # the model's Ids grow with MaxFlush, the walk's length: each record
         # carries (steps + 1) * 4 statuses
         "steps": 200,

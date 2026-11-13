@@ -41,6 +41,9 @@
 (*                  or dropped; none is lost without a count.              *)
 (*   Drains         (liveness) once the flushes stop, every published bank *)
 (*                  is sent and back in the free queue.                    *)
+(*   MainNeverWaits main never blocks on the worker: send_packets and idle *)
+(*                  only try the handoff mutex, and a held one keeps the  *)
+(*                  producer (PublishKept) or says not idle.              *)
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   RetireRule  "cqe" retires a bank once its runs are reaped (the        *)
@@ -50,6 +53,9 @@
 (*               "lost" marks them done with no count (Accounted);         *)
 (*               "stuck" hands them back but leaves the run pending        *)
 (*               (Drains).                                                 *)
+(*   LockRule    "try" keeps the producer while the worker holds the       *)
+(*               handoff mutex (the design); "wait" blocks main on it      *)
+(*               until the worker lets go (MainNeverWaits).                *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -61,10 +67,12 @@ CONSTANTS NB,         \* banks per queue (ROCKETNET_URING_SEND_BANKS)
           MaxFlush,   \* bound on flushes
           MaxEagain,  \* bound on eagain completions
           RetireRule, \* "cqe" (the design) or "submitted"
-          EagainRule  \* "retry" (the design), "lost" or "stuck"
+          EagainRule, \* "retry" (the design), "lost" or "stuck"
+          LockRule    \* "try" (the design) or "wait"
 
 ASSUME NB >= 3 /\ S >= 1 /\ MaxSeg >= 1 /\ Demand >= 1 /\ MaxFlush \in Nat /\ MaxEagain \in Nat
 ASSUME RetireRule \in {"cqe", "submitted"} /\ EagainRule \in {"retry", "lost", "stuck"}
+ASSUME LockRule \in {"try", "wait"}
 
 Bs == 0..(NB - 1)
 Sl == 0..(S - 1)
@@ -90,10 +98,12 @@ VARIABLES producer,   \* the bank the fill stages into
           demand,     \* claims in this fill
           flushes,    \* flushes so far
           kernelWrite,\* the fill wrote a kernel-owned slot
-          pids        \* the server's packet id counter: starts so far
+          pids,       \* the server's packet id counter: starts so far
+          locked,     \* the worker is inside a section of the handoff mutex
+          mainWaits   \* main is blocked on the handoff mutex (LockRule "wait")
 
 vars == <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
-          status, nextId, eagains, demand, flushes, kernelWrite, pids>>
+          status, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 Ids == 1..(MaxFlush + 1) * Demand
 
@@ -119,6 +129,8 @@ Init ==
     /\ flushes = 0
     /\ kernelWrite = FALSE
     /\ pids = 0
+    /\ locked = FALSE
+    /\ mainWaits = FALSE
 
 \* start_packet, which returned slot s of the producer and the id pid (one
 \* queue: the server's counter), then finish_packet (f: staged) or
@@ -141,7 +153,7 @@ Stage(d, f, s, pid) ==
                     /\ nextId' = nextId + 1
                ELSE /\ st' = [st EXCEPT ![b][s] = "aborted"]
                     /\ UNCHANGED <<dest, pkt, status, nextId>>
-    /\ UNCHANGED <<producer, ready, worker, free, runs, cq, pend, eagains, flushes>>
+    /\ UNCHANGED <<producer, ready, worker, free, runs, cq, pend, eagains, flushes, locked, mainWaits>>
 
 \* start_packet past the producer's slots: it returned no slot, only the
 \* id; nothing is staged
@@ -152,31 +164,52 @@ StageFull(d, f, pid) ==
     /\ demand' = demand + 1
     /\ pids' = pids + 1
     /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
-                   status, nextId, eagains, flushes, kernelWrite>>
+                   status, nextId, eagains, flushes, kernelWrite, locked, mainWaits>>
 
 \* send_packets with the fill joined: it returned true, the producer staged
-\* something and a free bank replaces it
+\* something, main took the handoff mutex and a free bank replaces it
 Publish ==
+    /\ ~mainWaits
     /\ flushes < MaxFlush
     /\ num[producer] # 0
     /\ free # <<>>
+    /\ ~locked
     /\ flushes' = flushes + 1
     /\ demand' = 0
     /\ ready' = Append(ready, producer)
     /\ producer' = Head(free)
     /\ free' = Tail(free)
     /\ num' = [num EXCEPT ![Head(free)] = 0]
-    /\ UNCHANGED <<worker, st, dest, pkt, runs, cq, pend, status, nextId, eagains, kernelWrite, pids>>
+    /\ UNCHANGED <<worker, st, dest, pkt, runs, cq, pend, status, nextId, eagains, kernelWrite, pids, locked, mainWaits>>
 
-\* send_packets returned false: the producer staged nothing or no free bank
-\* can replace it, and it is kept
+\* send_packets returned false: the producer staged nothing, no free bank
+\* can replace it, or (LockRule "try") the worker holds the handoff mutex,
+\* which main only tries; the producer is kept
 PublishKept ==
+    /\ ~mainWaits
     /\ flushes < MaxFlush
-    /\ num[producer] = 0 \/ free = <<>>
+    /\ num[producer] = 0 \/ free = <<>> \/ (locked /\ LockRule = "try")
     /\ flushes' = flushes + 1
     /\ demand' = 0
     /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
-                   status, nextId, eagains, kernelWrite, pids>>
+                   status, nextId, eagains, kernelWrite, pids, locked, mainWaits>>
+
+\* LockRule "wait" (the code before the fix): main acquires the handoff
+\* mutex the worker holds, and waits on the worker until it is released
+PublishWaits ==
+    /\ LockRule = "wait"
+    /\ ~mainWaits /\ flushes < MaxFlush /\ num[producer] # 0 /\ locked
+    /\ mainWaits' = TRUE
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, demand, flushes, kernelWrite, pids, locked>>
+
+\* the waiting main gets the mutex once the worker releases it, and
+\* publishes on its next step
+PublishResumes ==
+    /\ mainWaits /\ ~locked
+    /\ mainWaits' = FALSE
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, demand, flushes, kernelWrite, pids, locked>>
 
 \* the worker takes the oldest ready bank, b, the bank the claim returned
 WorkerClaim(b) ==
@@ -185,7 +218,7 @@ WorkerClaim(b) ==
     /\ b = Head(ready)
     /\ worker' = b
     /\ ready' = Tail(ready)
-    /\ UNCHANGED <<producer, free, num, st, dest, pkt, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids>>
+    /\ UNCHANGED <<producer, free, num, st, dest, pkt, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 \* the staged slots of destination d in the worker's bank
 StagedOf(d) == {s \in Sl : st[worker][s] = "staged" /\ dest[worker][s] = d}
@@ -205,7 +238,7 @@ WorkerSubmit(d, k, R) ==
           /\ runs' = runs \cup {[b |-> b, slots |-> R, ids |-> {pkt[b][s] : s \in R}]}
           /\ pend' = [pend EXCEPT ![b] = @ + 1]
           /\ status' = [i \in Ids |-> IF \E s \in R : pkt[b][s] = i THEN "kernel" ELSE status[i]]
-    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, cq, nextId, eagains, demand, flushes, kernelWrite, pids>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, cq, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 \* the kernel posts a run's completion (environment)
 KernelComplete(r, res) ==
@@ -214,7 +247,7 @@ KernelComplete(r, res) ==
     /\ runs' = runs \ {r}
     /\ cq' = Append(cq, [run |-> r, res |-> res])
     /\ eagains' = IF res = "eagain" THEN eagains + 1 ELSE eagains
-    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, pend, status, nextId, demand, flushes, kernelWrite, pids>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, pend, status, nextId, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 SetSt(b, R, v) == [st EXCEPT ![b] = [s \in Sl |-> IF s \in R THEN v ELSE st[b][s]]]
 SetStatus(I, v) == [i \in Ids |-> IF i \in I THEN v ELSE status[i]]
@@ -247,7 +280,7 @@ WorkerReap(n) ==
                     /\ st' = SetSt(r.b, r.slots, "staged")
                     /\ status' = SetStatus(r.ids, "staged")
                     /\ UNCHANGED pend
-    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, runs, nextId, eagains, demand, flushes, kernelWrite, pids>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, runs, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 \* the worker retires its bank: nothing staged or in a run, and (RetireRule
 \* "cqe") no run of it pending
@@ -264,13 +297,31 @@ WorkerRetire ==
     /\ st' = [st EXCEPT ![worker] = [s \in Sl |-> "empty"]]
     /\ dest' = [dest EXCEPT ![worker] = [s \in Sl |-> 0]]
     /\ pkt' = [pkt EXCEPT ![worker] = [s \in Sl |-> 0]]
-    /\ UNCHANGED <<producer, ready, num, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids>>
+    /\ UNCHANGED <<producer, ready, num, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 \* the retire returned false: the worker's bank is not yet retirable
 WorkerRetireRefused ==
     /\ worker # NoBank
     /\ ~Retirable(worker)
     /\ UNCHANGED vars
+
+\* the worker inside a section of the handoff mutex: a claim takes it
+\* whenever the worker holds no bank (with none ready too), a retire only
+\* when its bank is retirable (rocketnet_uring_queue_send_claim, _retire);
+\* the claim and the retire are each one atomic step here, so main may find
+\* the mutex held in between
+WorkerLocks ==
+    /\ ~locked
+    /\ worker = NoBank \/ Retirable(worker)
+    /\ locked' = TRUE
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, demand, flushes, kernelWrite, pids, mainWaits>>
+
+WorkerUnlocks ==
+    /\ locked
+    /\ locked' = FALSE
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, demand, flushes, kernelWrite, pids, mainWaits>>
 
 \* the bound on flushes is reached and the worker has nothing left: stutter
 Done ==
@@ -293,6 +344,10 @@ Next ==
     \/ \E d \in Dests, f \in BOOLEAN : StageFull(d, f, pids)
     \/ Publish
     \/ PublishKept
+    \/ PublishWaits
+    \/ PublishResumes
+    \/ WorkerLocks
+    \/ WorkerUnlocks
     \/ \E b \in Bs : WorkerClaim(b)
     \/ \E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k, Earliest(d, k))
     \/ \E n \in 1..MaxSeg : WorkerReap(n)
@@ -309,6 +364,7 @@ Fairness ==
     /\ WF_vars(\E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k, Earliest(d, k)))
     /\ WF_vars(\E n \in 1..MaxSeg : WorkerReap(n))
     /\ WF_vars(WorkerRetire)
+    /\ WF_vars(WorkerUnlocks)
     /\ WF_vars(\E r \in runs, res \in Results : KernelComplete(r, res))
 
 LiveSpec == Spec /\ Fairness
@@ -327,8 +383,12 @@ TypeOK ==
     /\ demand \in 0..Demand
     /\ flushes \in 0..MaxFlush
     /\ pids \in Nat
+    /\ locked \in BOOLEAN /\ mainWaits \in BOOLEAN
 
 NoWriteWhileKernelOwned == ~kernelWrite
+
+\* main never blocks on the worker: it only tries the handoff mutex
+MainNeverWaits == ~mainWaits
 
 PendingMatches ==
     \A b \in Bs : pend[b] = Cardinality({r \in runs : r.b = b}) +

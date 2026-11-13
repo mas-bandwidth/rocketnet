@@ -234,8 +234,14 @@ bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * s
         return false;
     }
 
+    // main never waits on the worker: a mutex the worker holds (its claim or
+    // retire) keeps the producer, with its slots, for the next update
+    // (PublishKept), as the gso transport's publish does
     struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
-    rocketnet_platform_mutex_acquire( &queue->mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->mutex ) )
+    {
+        return false;
+    }
     const int next = rocketnet_buffer_handoff_publish( &queue->handoff, banks->producer, ROCKETNET_URING_SEND_BANKS - 1 );
     rocketnet_platform_mutex_release( &queue->mutex );
 
@@ -259,8 +265,13 @@ bool rocketnet_uring_queue_send_idle( struct rocketnet_uring_queue_send_t * send
         return false;
     }
 
+    // main never waits on the worker: a mutex the worker holds says not idle
+    // yet, and the driver asks again on its next update
     struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
-    rocketnet_platform_mutex_acquire( &queue->mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->mutex ) )
+    {
+        return false;
+    }
     const bool idle = queue->handoff.ready_count == 0 && queue->held < 0;
     rocketnet_platform_mutex_release( &queue->mutex );
     return idle;
