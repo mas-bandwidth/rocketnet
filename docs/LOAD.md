@@ -511,18 +511,22 @@ requirements to each configuration group:
     (1.19 GiB).
 - **AF_XDP queues, CPU count, and compile-time cap (`num_xdp_queues`, `num_os_cpus`, `ROCKETNET_XDP_MEMORY_MIB`)**:
   - Preserve the pinned AF_XDP geometry: `ROCKETNET_XDP_FRAME_SIZE = 4096`,
-    `ROCKETNET_XDP_SEND_QUEUE_SIZE = 4096`,
-    `ROCKETNET_XDP_RECV_QUEUE_SIZE = 16384`,
-    `ROCKETNET_XDP_FILL_FRAMES = 16384`,
-    `ROCKETNET_XDP_FILL_RING_SIZE = 32768`, and
-    `ROCKETNET_XDP_UMEM_FRAMES = 49152`. The UMEM is 192 MiB raw /
-    `201,326,592` bytes per queue. These constants are not runtime tuning
+    `ROCKETNET_XDP_SEND_QUEUE_SIZE = 16384`,
+    `ROCKETNET_XDP_RECV_QUEUE_SIZE = 32768`,
+    `ROCKETNET_XDP_FILL_FRAMES = 32768`,
+    `ROCKETNET_XDP_FILL_RING_SIZE = 65536`, and
+    `ROCKETNET_XDP_UMEM_FRAMES = 98304`. The UMEM is 384 MiB raw /
+    `402,653,184` bytes per queue. These constants are not runtime tuning
     controls; change only the supported queue/CPU configuration below.
+    The send queue is the most packets one queue starts in one update: two
+    queues at 60 Hz start up to 1,966,080 packets a second, twice 10 GbE line
+    rate (958.6k a second at 1304 bytes on the wire), a static assert in
+    `sdk/rocketnet_constants.h`.
   - `num_xdp_queues` (`0` selects the transport default, public range
     `1 .. 1024`) selects the planned AF_XDP queue count. `num_os_cpus`
     (`0` selects the transport default, `1 .. 256`) selects the first worker
     CPU: worker `q` runs on `num_os_cpus + q`. Total planned AF_XDP memory is
-    checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB).
+    checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB).
   - GSO and io_uring also use `num_xdp_queues`, with a maximum of 32, but
     their send staging is shared: 4096 slots in the active GSO producer bank
     and 2048 slots in io_uring's send array. Extra receive queues do not
@@ -571,7 +575,7 @@ memory or a performance qualification. The build used the default constants:
 - `ROCKETNET_MAX_CLIENTS = 1000`
 - `ROCKETNET_MAX_CHANNELS = 32`
 - `ROCKETNET_MAX_MESSAGE_BYTES = 1048576` (1 MiB)
-- `ROCKETNET_XDP_MEMORY_MIB = 4096`
+- `ROCKETNET_XDP_MEMORY_MIB = 8192`
 - `ROCKETNET_ALLOCATION_ALIGNMENT = 64` (cache-line alignment)
 - Per-allocation tracking header overhead: `rocketnet_allocation_overhead() = 87`
   bytes (`sizeof(rocketnet_allocation_header_t) = 24` bytes +
@@ -782,10 +786,10 @@ directions:
      (`8 MiB = 8,388,608` bytes default on Linux x86-64: 2 threads = `16 MiB`
      for `portable`, 5 threads = `40 MiB` for `gso`, 7 threads = `56 MiB` for
      default 7-queue `xdp`, 0 threads for `io_uring` and `loopback`).
-   - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 49,152-frame,
-     page-aligned `201,326,592`-byte (192 MiB raw) UMEM buffer via `mmap` plus
-     kernel fill/completion/RX/TX rings (`327,680` bytes per queue;
-     `1,409,286,144` bytes UMEM + `2,293,760` bytes rings across 7 default
+   - **AF_XDP UMEM and kernel rings**: Each AF_XDP queue allocates a 98,304-frame,
+     page-aligned `402,653,184`-byte (384 MiB raw) UMEM buffer via `mmap` plus
+     kernel fill/completion/RX/TX rings (`786,432` bytes of RX and TX descriptors per queue;
+     `2,818,572,288` bytes UMEM + `5,505,024` bytes rings across 7 default
      queues). UMEM is counted against `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`
      and `-DROCKETNET_XDP_MEMORY_MIB`, but is not allocated from
      `rocketnet_allocator_t`.
