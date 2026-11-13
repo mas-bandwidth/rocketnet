@@ -1345,7 +1345,10 @@ static inline void rocketnet_xdp_reply_macs_forget( struct rocketnet_xdp_reply_m
     }
 }
 
-// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given):
+// proofs/tla/RNXdpReplay.tla Answer (answered_mac given) and Drain (none given);
+// proofs/tla/RNXdpReplyMacsLayout.tla ReplyLearned (the learned MAC returned),
+// ReplyAnswered (the answered entry's MAC returned) and Refuse (no MAC, the
+// reply not sent):
 // the reply MAC for a destination: the learned MAC, else the gateway MAC,
 // else answered_mac (the source MAC of the received frame this reply
 // answers, NULL for none), kept as the address's answered entry; a zero or
