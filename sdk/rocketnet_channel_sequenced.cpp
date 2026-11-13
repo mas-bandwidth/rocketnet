@@ -391,6 +391,13 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
+    // proofs/tla/RNChannelTypes.tla SupersederKept: a newer record releases the
+    // in-turn block only once nothing can refuse it, so a record dropped as
+    // stale or by the allowance leaves the block (accepted, acked) as it was
+    // (standard/MESSAGES.md m6.3). Releasing first is the reversed witness
+    // MCRNChannelBrokenReleaseBeforeRefuse.cfg.
+
+    bool supersedes = false;
     if ( current != RN_DESCRIPTOR_NONE )
     {
         const rn_receive_descriptor_t * held = &region->receive_descriptors[current & ~RN_SEQUENCED_RELIABLE_HOLD];
@@ -408,12 +415,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
                 return ROCKETNET_CHANNEL_DISPATCH_STALE;
             }
 
-            if ( !rn_sequenced_release_in_turn( channels, rx ) )
-            {
-                return ROCKETNET_CHANNEL_DISPATCH_NONE;
-            }
-
-            rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
+            supersedes = true;
         }
     }
 
@@ -425,7 +427,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
             rn_sequenced_release_number( channels, region->receive_descriptors[number_slot].number );
         }
 
-        if ( !rn_sequenced_release_in_turn( channels, rx ) )  // only a continuation still names it here
+        if ( !supersedes && !rn_sequenced_release_in_turn( channels, rx ) )  // only a continuation still names it here
         {
             return ROCKETNET_CHANNEL_DISPATCH_NONE;
         }
@@ -434,15 +436,26 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
         return ROCKETNET_CHANNEL_DISPATCH_STALE;
     }
 
+    if ( !block && !rn_sequenced_room( channels, reliable ) )
+    {
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    if ( supersedes )
+    {
+        if ( !rn_sequenced_release_in_turn( channels, rx ) )
+        {
+            return ROCKETNET_CHANNEL_DISPATCH_NONE;
+        }
+
+        rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
+    }
+
     if ( block )
     {
         return rn_sequenced_block( channels, record, &rx->block_in_turn, &rx->block_in_turn_first, 0, number_slot, out );
     }
 
-    if ( !rn_sequenced_room( channels, reliable ) )
-    {
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
     if ( !rn_channels_deliver_sequenced( channels, record->channel, record->ordering & ROCKETNET_MESSAGE_U24_MASK, sequencing ) )
     {
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -555,6 +568,18 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
             rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
             return ROCKETNET_CHANNEL_DISPATCH_STALE;
+        }
+
+        // proofs/tla/RNChannelTypes.tla SupersederKept: a code-1 record with no
+        // free Ru slot is dropped before it releases anything. Releasing a
+        // code-1 hold frees the slot this record then takes; releasing a code-4
+        // hold frees none, so the accepted (acked) hold stays and the record is
+        // dropped as HOLD_FULL (standard/MESSAGES.md m6.3, state unchanged).
+
+        if ( !reliable && held_reliable && region->sequenced_hold_free_count == 0 )
+        {
+            rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL );
+            return ROCKETNET_CHANNEL_DISPATCH_NONE;
         }
 
         if ( !continuation )

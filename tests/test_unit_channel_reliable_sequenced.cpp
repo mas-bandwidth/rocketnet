@@ -979,3 +979,174 @@ static void test_sequenced_in_turn_block_follows_record_rule()
 }
 
 REGISTER_UNIT_TEST( test_sequenced_in_turn_block_follows_record_rule );
+
+// standard/MESSAGES.md m6.3: a code-1 record the receiver refuses (no free Ru
+// hold slot, the update's unreliable allowance Du full, or stale against the
+// watermark) leaves the channel as it was. The earlier code released the
+// channel's accepted code-4 hold or in-turn block first and then refused the
+// record, so a code-4 message the sender had seen acked was never delivered,
+// and an older message could be delivered in its place
+// (proofs/tla/MCRNChannelBrokenReleaseBeforeRefuse.cfg, SupersederKept).
+
+static void rs_init_config( rs_node_t * node, const rocketnet_message_config_t * config )
+{
+    memset( node, 0, sizeof( *node ) );
+    node->arena = rn_unit_arena_create( config, 1, &node->counters );
+    check( node->arena != NULL );
+    node->region = rn_arena_region( node->arena, 0 );
+    check( rn_ordered_init( &node->ordered, node->region, config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+}
+
+static void test_hold_full_code_1_keeps_the_acked_code_4_hold()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.sequenced_messages_held = 1;
+
+    rs_node_t receiver;
+    rs_init_config( &receiver, &config );
+
+    const uint8_t other = 1, acked = 2, newer = 3, older = 4, ordered = 5;
+    rn_delivery_t out;
+
+    // channel 1's future code-1 state takes the only Ru slot
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, &other );
+    record.channel = 1;
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.region->sequenced_hold_free_count == 0 );
+
+    // channel 0's future code-4 state is accepted (its packet acked) and held
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 1, 1, &acked );
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint32_t hold = receiver.region->channel_receive[0].held_sequenced;
+    check( hold != RN_DESCRIPTOR_NONE );
+
+    // a newer code-1 state finds no free Ru slot: dropped, the hold kept
+    const uint64_t superseded = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
+    const uint64_t full = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 2, &newer );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == full + 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
+    check( receiver.region->channel_receive[0].held_sequenced == hold );
+    check( receiver.region->receive_descriptors[0].live != 0 );
+    check( receiver.ordered.channels.violations == 0 );
+
+    // a late older code-4 state is superseded by the kept hold
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 1, 0, &older );
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+
+    // the ordered record opens epoch 1: the acked state is delivered, once
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2, 0, 0, &ordered );
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    int acked_deliveries = 0;
+    for ( uint32_t i = 0; i < receiver.ordered.channels.deliveries; i++ )
+    {
+        const rn_delivery_t & delivery = receiver.region->deliveries[i];
+        check( delivery.channel != 0 || delivery.code != ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || delivery.data[0] == acked );
+        acked_deliveries += ( delivery.channel == 0 && delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ) ? 1 : 0;
+    }
+    check( acked_deliveries == 1 );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 2 );
+    rn_ordered_end_update( &receiver.ordered );
+    rn_unit_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_hold_full_code_1_keeps_the_acked_code_4_hold );
+
+static void test_allowance_full_code_1_keeps_the_in_turn_block()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.unreliable_messages_per_update = 1;
+
+    rs_node_t receiver;
+    rs_init_config( &receiver, &config );
+
+    uint8_t block[ROCKETNET_MESSAGE_FRAGMENT_BYTES + 20];
+    for ( uint32_t i = 0; i < sizeof( block ); i++ )
+    {
+        block[i] = (uint8_t) ( i * 7 + 3 );
+    }
+
+    const uint8_t unreliable = 1, newer = 2, older = 3;
+    rn_delivery_t out;
+
+    // the first fragment of an in-turn code-4 block is accepted (acked)
+    rocketnet_message_record_t record = rs_fragment( 0, 0, block );
+    record.sequencing = 5;
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint32_t in_turn = receiver.region->channel_receive[0].block_in_turn;
+    check( in_turn != RN_DESCRIPTOR_NONE );
+
+    // a code-0 record spends the allowance (Du = 1)
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, 0, 0, &unreliable );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+
+    // a newer in-turn code-1 state is dropped by the allowance: the block stays
+    const uint64_t superseded = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
+    const uint64_t full = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 6, &newer );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == full + 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
+    check( receiver.region->channel_receive[0].block_in_turn == in_turn );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 0 );
+
+    // the block completes and is delivered whole, once
+    record = rs_fragment( 1, 1, block + ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    record.sequencing = 5;
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( out.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && out.bytes == (int) sizeof( block ) );
+    check( memcmp( out.data, block, sizeof( block ) ) == 0 );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 6 );
+
+    // a late older code-4 state is stale, never delivered after the block
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 2, 0, 1, &older );
+    record.ring = 200;
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.ordered.channels.deliveries == 2 );
+    check( receiver.ordered.channels.violations == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+    rn_unit_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_allowance_full_code_1_keeps_the_in_turn_block );
+
+// RNSequencingWrap at the half range: a record one past the in-turn block but
+// half the range past the watermark is stale. It is dropped and counted once
+// (STALE), and the block, still inside the window, is kept and completes.
+
+static void test_stale_code_1_at_the_half_range_keeps_the_in_turn_block()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+
+    uint8_t block[ROCKETNET_MESSAGE_FRAGMENT_BYTES + 20] = {};
+    const uint8_t stale = 1;
+    rn_delivery_t out;
+
+    rocketnet_message_record_t record = rs_fragment( 0, 0, block );
+    record.sequencing = 0x7FFFFF;
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint32_t in_turn = receiver.region->channel_receive[0].block_in_turn;
+    check( in_turn != RN_DESCRIPTOR_NONE );
+
+    const uint64_t superseded = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
+    const uint64_t stale_before = receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0x800000, &stale );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
+    check( receiver.region->channel_receive[0].block_in_turn == in_turn );
+
+    record = rs_fragment( 1, 1, block + ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    record.sequencing = 0x7FFFFF;
+    check( rs_arrive( &receiver, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( out.bytes == (int) sizeof( block ) );
+    check( receiver.ordered.channels.deliveries == 1 );
+    rn_ordered_end_update( &receiver.ordered );
+    rn_unit_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_stale_code_1_at_the_half_range_keeps_the_in_turn_block );

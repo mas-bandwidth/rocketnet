@@ -316,3 +316,44 @@ assigned in `rn_channels_finish` (`sdk/rocketnet_channel.cpp`), after a
 start that succeeded; `rn_channels_start` (1325) checks the pending start,
 the type and the exhaustion and then takes, writing nothing before the take,
 and `rn_endpoint_start` returns at 473 on a refusal.
+
+## Revision 1.2: a refused code-1 record leaves the channel unchanged
+
+Standard rule: MESSAGES.md m6.3. A code-1 record ahead of its epoch with no
+free hold slot (Ru) is dropped as `MESSAGE_SEQUENCED_HOLD_FULL`, and one in
+turn when the update's unreliable allowance (Du) is spent is dropped as
+`MESSAGE_UNRELIABLE_DELIVERY_FULL`; in both the channel's state is unchanged.
+The code (`rn_channels_dispatch_sequenced` and `rn_sequenced_in_turn`,
+`sdk/rocketnet_channel_sequenced.cpp`) released the channel's code-4 hold or
+in-turn block as superseded and only then refused the record: an accepted,
+acked code-4 message was lost, and an older message could be delivered in its
+place. Before this revision the model had no such refusal (the hold pool and
+the allowance are not modelled), so no configuration could reach it.
+
+- The `refused` scenario runs the blocks plans and `<<3,4,1,2>>` (a future
+  code-4 block, then a newer future code-1 record). `OpenPacket(pid, full)`
+  may refuse a code-1 record (`Refusable`): the pool and the allowance are
+  spent by other channels and codes, so the environment chooses. Every other
+  scenario has `full = FALSE` only and keeps its counts.
+- `Dispatch` refuses before it releases: in turn, after the stale and
+  superseded checks; ahead, after the not-newer check and only when no slot
+  would be freed (releasing a code-1 hold frees the slot the record takes; a
+  code-4 hold or no hold frees none).
+- Ghosts: `refused` (the dropped records) and `superseders` (records that
+  released the hold or in-turn block, recorded in this scenario only).
+  `SequencedArrivedAccounted` counts a refused record as accounted.
+- `SupersederKept`: no superseder is refused. Reversed by
+  `Broken = "ReleaseBeforeRefuse"`, the code before the fix.
+
+| Case | Expected | Exit | Generated | Distinct | Seconds (2 workers, bench-xdp-9) |
+|---|---|---:|---:|---:|---:|
+| `MCRNChannelTypesRefused.cfg` | pass | 0 | 88553 | 24565 | 3.6 |
+| `MCRNChannelBrokenReleaseBeforeRefuse.cfg` | `SupersederKept` | 12 | 150 | 92 | 0.8 |
+
+ReleaseBeforeRefuse's trace, checked by hand: the first fragment of the
+in-turn code-4 block (message 1, ordering 0, sequencing 0) arrives and is in
+`inTurn`; the newer in-turn code-1 record (message 2, sequencing 1) opens with
+the allowance spent; `inTurn` is emptied and message 2 is refused. The code at
+5a2dbf403 does the same: `rn_sequenced_in_turn` released `block_in_turn` and
+counted SUPERSEDED, then `rn_sequenced_room` refused the record
+(`test_allowance_full_code_1_keeps_the_in_turn_block` is this trace).
