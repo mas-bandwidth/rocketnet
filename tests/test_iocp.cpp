@@ -3482,13 +3482,41 @@ static int rio_lanes_take( rocketnet_server_rio_t * rio, int n )
     return count;
 }
 
-// With lanes the sockets share the port with SO_REUSEADDR, so a later socket
-// of the same user may bind it too: on the lanes' own address, or on the
-// wildcard at that port. Windows does not document which socket gets a
-// datagram once a second binds the same address; measured, the first bound
-// keeps everything, and a wildcard binder is less specific than the lanes.
-// This pins both: a change in Windows shows here first. (A binder before the
-// lanes is refused by the probe: test_rio_lanes_refuse_a_held_port.)
+// A later socket on the lanes' port, bound plainly, with SO_REUSEADDR, or with
+// SIO_CPU_AFFINITY to processor 0 (another process doing what the lanes do);
+// true when Windows lets it bind
+static bool rio_later_binder( const rocketnet_address_t * at, int mode, SOCKET * s )
+{
+    *s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( *s != INVALID_SOCKET );
+    BOOL enabled = TRUE;
+    if ( mode == 1 )
+    {
+        CHECK( setsockopt( *s, SOL_SOCKET, SO_REUSEADDR, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+    }
+    else if ( mode == 2 )
+    {
+        USHORT processor = 0;
+        DWORD returned = 0;
+        CHECK( WSAIoctl( *s, 0x98000015u, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == 0 );
+    }
+    u_long non_blocking = 1;
+    CHECK( ioctlsocket( *s, (long) FIONBIO, &non_blocking ) == 0 );
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_port = htons( at->port );
+    memcpy( &a.sin_addr, at->data.ipv4, 4 );
+    return bind( *s, (sockaddr *) &a, sizeof( a ) ) == 0;
+}
+
+// The lanes share the port by SIO_CPU_AFFINITY. A later plain or
+// SO_REUSEADDR socket on the lanes' own address and port is refused; a later
+// plain socket on the wildcard at that port binds but is less specific than
+// the lanes and receives nothing; a later socket that also sets
+// SIO_CPU_AFFINITY joins the port (the documented trade: Windows has no
+// exclusive form of a port shared by processor). This pins all of it: a
+// change in Windows shows here first. (A binder before the lanes is refused by
+// the probe: test_rio_lanes_refuse_a_held_port.)
 static void test_rio_lanes_later_binder_receives_nothing()
 {
     CHECK( rocketnet_server_rio_available() );
@@ -3497,28 +3525,35 @@ static void test_rio_lanes_later_binder_receives_nothing()
     rocketnet_server_rio_t * rio = rio_open_lanes( &bind, 4, NULL );
     rocketnet_address_t target = address( "127.0.0.1:0" );
     target.port = bind.port;
-    SOCKET thief;
-    const bool bound = port_thief_binds( &target, &thief );
-    const int stolen = bound ? port_thief_steals( &target, thief ) : 0;
-    const int kept = rio_lanes_take( rio, 8 );
-    closesocket( thief );
+
+    SOCKET plain;
+    const bool plain_bound = rio_later_binder( &target, 0, &plain );
+    closesocket( plain );
+    SOCKET reuse;
+    const bool reuse_bound = rio_later_binder( &target, 1, &reuse );
+    closesocket( reuse );
 
     rocketnet_address_t wildcard = address( "0.0.0.0:0" );
     wildcard.port = bind.port;
     SOCKET wild_thief;
-    const bool wild_bound = port_thief_binds( &wildcard, &wild_thief );
+    const bool wild_bound = rio_later_binder( &wildcard, 0, &wild_thief );
     const int wild_stolen = wild_bound ? port_thief_steals( &target, wild_thief ) : 0;
     const int wild_kept = rio_lanes_take( rio, 8 );
     closesocket( wild_thief );
 
+    SOCKET joiner;
+    const bool joined = rio_later_binder( &target, 2, &joiner );
+    closesocket( joiner );
+
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
-    printf( "test_rio_transport_lanes_later_binder_receives_nothing bound=%d stolen=%d kept=%d wildcard_bound=%d wildcard_stolen=%d wildcard_kept=%d\n",
-            bound ? 1 : 0, stolen, kept, wild_bound ? 1 : 0, wild_stolen, wild_kept );
-    // both binds must succeed, or nothing here was tested; the lanes keep all 8 each time
-    CHECK( bound );
+    printf( "test_rio_transport_lanes_later_binder_receives_nothing plain_bound=%d reuse_bound=%d wildcard_bound=%d wildcard_stolen=%d wildcard_kept=%d affinity_joined=%d\n",
+            plain_bound ? 1 : 0, reuse_bound ? 1 : 0, wild_bound ? 1 : 0, wild_stolen, wild_kept, joined ? 1 : 0 );
+    CHECK( !plain_bound );
+    CHECK( !reuse_bound );
+    // the wildcard bind must succeed, or the specificity rule was not tested
     CHECK( wild_bound );
-    CHECK( stolen == 0 && kept == 8 );
     CHECK( wild_stolen == 0 && wild_kept == 8 );
+    CHECK( joined );
 }
 
 // More than one lane refuses the wildcard address (either family) and any
@@ -3575,8 +3610,8 @@ static void test_rio_lanes_bind_forms()
 // socket holds (no probe guards that form). This checks it on the Windows
 // that runs the test: ports held by plain, SO_REUSEADDR and
 // SO_EXCLUSIVEADDRUSE sockets on loopback and SO_REUSEADDR sockets on the
-// wildcard, then SO_REUSEADDR port-0 binds as lane 0 makes them; none may land
-// on a held port or on each other's.
+// wildcard, then SIO_CPU_AFFINITY port-0 binds as lane 0 makes them; none may
+// land on a held port or on each other's.
 static SOCKET rio_held_socket( int kind, ULONG ip )
 {
     SOCKET s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -3589,6 +3624,12 @@ static SOCKET rio_held_socket( int kind, ULONG ip )
     else if ( kind == 2 )
     {
         CHECK( setsockopt( s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == 0 );
+    }
+    else if ( kind == 3 )
+    {
+        USHORT processor = 0;
+        DWORD returned = 0;
+        CHECK( WSAIoctl( s, 0x98000015u, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == 0 );
     }
     sockaddr_in a = {};
     a.sin_family = AF_INET;
@@ -3628,7 +3669,7 @@ static void test_rio_lanes_port_zero_never_held()
     int collisions = 0;
     for ( int i = 0; i < binds; ++i )
     {
-        SOCKET s = rio_held_socket( 1, INADDR_LOOPBACK );
+        SOCKET s = rio_held_socket( 3, INADDR_LOOPBACK );
         const uint16_t port = rio_socket_port( s );
         if ( held[port] )
         {

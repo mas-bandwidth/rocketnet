@@ -25,24 +25,29 @@
 //
 // With one lane the socket binds with SO_EXCLUSIVEADDRUSE, to any address and
 // port. With several, the address must be specific (create refuses 0.0.0.0,
-// :: and any IPv4-mapped address with ROCKETNET_STATUS_INVALID_ADDRESS) and
-// every lane socket binds it with SO_REUSEADDR. For an explicit port create
-// first binds a plain probe socket there with SO_EXCLUSIVEADDRUSE, refusing if
-// anything holds the port, and closes it; between that close and lane 0's
-// bind a socket that binds the port with SO_REUSEADDR is first and, as
-// measured, would take every datagram. Port 0 has no such gap, so a server
-// that does not need a fixed port binds port 0. For port 0, lane 0 binds port 0 and the others join the port
-// it was given: the guarantee that nothing else holds that port rests on
-// Windows never handing a port-0 bind a held port, as measured (and checked
-// on every run by test_rio_transport_lanes_port_zero_never_held). The trade:
-// while the lanes run, a socket of any account may bind the same address and
-// port with SO_REUSEADDR and share it; measured, the lanes keep every
-// datagram (tests/test_iocp.cpp pins it). A
+// :: and any IPv4-mapped address with ROCKETNET_STATUS_INVALID_ADDRESS), each
+// lane takes a processor (the first logical processor of core i for lane i,
+// the processor Windows' default RSS layout gives receive queue i), its socket
+// is given that processor with SIO_CPU_AFFINITY before bind, every lane socket
+// binds the same address and port, and the lane's worker is pinned to that
+// processor. The adapter's RSS then delivers each flow to the lane on the
+// flow's RSS processor (measured on ENA: 256 flows spread over 8 lanes); a
+// flow whose RSS processor has no lane goes to the first lane bound. A
+// refused SIO_CPU_AFFINITY refuses create (TRANSPORT_BIND_REFUSED, named in
+// the log); there is no fallback to a shared or exclusive bind. For an
+// explicit port create first binds a plain probe socket there with
+// SO_EXCLUSIVEADDRUSE, refusing if anything holds the port, and closes it.
+// For port 0, lane 0 binds port 0 and the others join the port it was given:
+// the guarantee that nothing else holds that port rests on Windows never
+// handing a port-0 bind a held port (checked on every run by
+// test_rio_transport_lanes_port_zero_never_held). While the lanes run, a later
+// plain or SO_REUSEADDR bind of their address and port is refused, but a
+// socket of another process that also sets SIO_CPU_AFFINITY can join the port
+// and receive the flows RSS hands its processor: Windows has no exclusive
+// form of a port shared by processor (tests/test_iocp.cpp pins all three). A
 // frame is staged in the lane its destination address hashes to
 // (rocketnet_rio_lane_hash), so one client's frames leave through one lane in
-// order. Windows does not say which of several sockets sharing a port
-// receives a datagram (it delivered everything to the first bound in every
-// measured run), so every lane posts receives and banks what it gets, and
+// order. Every lane posts receives and banks what it gets, and
 // receive_packets appends every lane's ready banks to one process view.
 //
 // Each lane's worker runs the stateless receive prefilter
@@ -60,7 +65,9 @@
 // start_packet reserves the next slot of the fill phase with one atomic
 // fetch_add; send_packets (fill threads joined) hands the fill phase to the
 // worker and opens the next phase only when the worker has returned that
-// phase idle (every send of it retired); until then the fill phase stays
+// phase idle (every send of it retired; each worker pass retires the send
+// completions before it takes a phase, so a phase the kernel has finished is
+// idle by the next flush); until then the fill phase stays
 // open and start_packet refuses only when it is full. Receive: every
 // slice is posted at create; the worker copies each completion into its fill
 // bank, re-posts the slice and publishes the bank onto a FIFO of ready banks;

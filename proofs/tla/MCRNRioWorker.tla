@@ -36,6 +36,9 @@
 (* MCRNRioWorkerGarbage.cfg is the rule with datagrams that fail the       *)
 (* prefilter; MCRNRioWorkerBrokenBankGarbage.cfg (PrefilterInWorker) must  *)
 (* fail NoGarbageBanked.                                                   *)
+(* MCRNRioWorkerBrokenTakeBeforeRetire.cfg (RetireFirst) must fail          *)
+(* DrainedReturnedAtPost: a pass posts a phase while one the kernel had    *)
+(* finished is still held posted.                                          *)
 (* README-RNRioWorker.md gives each trace and its check against the code.  *)
 (***************************************************************************)
 EXTENDS RNRioWorker
@@ -49,4 +52,9 @@ CountRefusedPostBroken == FALSE
 \* them; must fail NoGarbageBanked.
 MCGarbage == {2, 3}
 MCPrefilterOnMain == FALSE
+
+\* MCRNRioWorkerBrokenTakeBeforeRetire.cfg: the old pass order, which takes and
+\* posts a phase before it retires completions; must fail
+\* DrainedReturnedAtPost.
+RetireFirstBroken == FALSE
 =============================================================================

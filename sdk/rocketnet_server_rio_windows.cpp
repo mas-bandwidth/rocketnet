@@ -110,6 +110,11 @@ struct rocketnet_rio_lane_t
     void * context;
     SOCKET socket = INVALID_SOCKET;
     bool ipv6 = false;
+    // the lane's processor (rocketnet_rio_lane_processors): its socket's
+    // SIO_CPU_AFFINITY and its worker's affinity. -1 for a single lane, which
+    // binds exclusively and runs where Windows schedules it.
+    int processor = -1;
+    GROUP_AFFINITY pin = {};
     // each send phase's slots (rocketnet_server_rio_send_queue_size), every
     // phase's frames, and the receive slices (rocketnet_server_rio_receives),
     // for the configured max_clients; the one allocation the slot bytes, the
@@ -1106,12 +1111,32 @@ static bool rocketnet_rio_create_failed_drain( rocketnet_rio_lane_t * rio )
     }
 }
 
-// One lane: its socket, region, queues and worker. shared_port binds with
-// SO_REUSEADDR so the transport's other lanes can bind the same address and
-// port; a single-lane transport binds with SO_EXCLUSIVEADDRUSE as before.
+// SIO_CPU_AFFINITY (mstcpip.h): a UDP socket given a processor before bind
+// may bind an address and port that other such sockets hold, and receives
+// the datagrams whose RSS processor is its own. It cannot be combined with
+// SO_REUSEADDR or SO_EXCLUSIVEADDRUSE (measured: the second exclusive
+// socket's bind is refused, 10013).
+#ifndef SIO_CPU_AFFINITY
+#define SIO_CPU_AFFINITY _WSAIOW( IOC_VENDOR, 21 )
+#endif // #ifndef SIO_CPU_AFFINITY
+static_assert( (unsigned long) SIO_CPU_AFFINITY == 0x98000015ul, "SIO_CPU_AFFINITY is the vendor IOCTL 21" );
+
+// One lane: its socket, region, queues and worker. A lane of a transport with
+// several takes cpu (rocketnet_rio_lane_processors): its socket is given that
+// processor by SIO_CPU_AFFINITY before bind, so every lane binds the same
+// address and port and receives the flows RSS hands that processor, and its
+// worker runs there. A refused IOCTL refuses the lane, named in the log and as
+// TRANSPORT_BIND_REFUSED; there is no fallback to a shared or exclusive bind.
+// cpu NULL is a single-lane transport, bound with SO_EXCLUSIVEADDRUSE as before.
 // packet_filter, when not NULL, is copied and the worker prefilters with it.
+struct rocketnet_rio_processor_t
+{
+    int index;                                  // the processor index SIO_CPU_AFFINITY takes
+    GROUP_AFFINITY affinity;                    // the same processor for SetThreadGroupAffinity
+};
+
 static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketnet_address_t * bind_address, int max_clients,
-                                                         bool shared_port, const uint8_t * packet_filter
+                                                         const rocketnet_rio_processor_t * cpu, const uint8_t * packet_filter
 #if ROCKETNET_DEV
                                                          ,
                                                          int fail_stage
@@ -1225,7 +1250,22 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
         goto failed;
     }
 #endif // #if ROCKETNET_DEV
-    if ( setsockopt( rio->socket, SOL_SOCKET, shared_port ? SO_REUSEADDR : SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
+    if ( cpu )
+    {
+        // before bind: the lane joins the port by its processor
+        rio->processor = cpu->index;
+        rio->pin = cpu->affinity;
+        USHORT processor = (USHORT) cpu->index;
+        DWORD returned = 0;
+        if ( WSAIoctl( rio->socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+            rocketnet_error( "rio transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); lanes share the port only through it",
+                             cpu->index, WSAGetLastError() );
+            goto failed;
+        }
+    }
+    else if ( setsockopt( rio->socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         goto failed;
     }
@@ -1811,8 +1851,9 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
     return total;
 }
 
-// proofs/tla/RNRioWorker.tla WTake, WRetire and WPublish: one worker pass, with
-// WPost, WCommit and WDequeue in the calls it makes. True when it did work.
+// proofs/tla/RNRioWorker.tla WRetireFirst, WTake, WRetire and WPublish: one
+// worker pass, with WPost, WCommit and WDequeue in the calls it makes. True
+// when it did work.
 // proofs/tla/RNBankFifoLayout.tla Publish: the receive ready tail % ROCKETNET_RIO_RECEIVE_BANKS and the free
 // stack's top. proofs/tla/RNRioSendSlotLayout.tla TakeAndPost and Retire: the send_ready head % ROCKETNET_RIO_SEND_PHASES
 // and a drained posted phase idle again.
@@ -1820,11 +1861,32 @@ static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
 {
     bool progress = false;
 
-    // WTake: the oldest handed phase, which main now sees posted
+    // WRetireFirst: a refused commit is retried and every send completion
+    // retired before the take, so the take returns every phase the kernel
+    // has finished: main's next flush finds its next phase idle unless the
+    // kernel really is behind (proofs/tla/RNRioWorker.tla DrainedReturnedAtPost)
+
+    rocketnet_rio_commit( rio );
+    if ( rocketnet_rio_outstanding_sends( rio ) > 0 &&
+         rocketnet_rio_dequeue_send( rio ) > 0 )
+    {
+        progress = true;
+    }
+
+    // WTake: every drained posted phase back to main as idle, then the
+    // oldest handed phase, which main now sees posted
 
     int phase = -1;
     int count = 0;
     rocketnet_platform_mutex_acquire( &rio->mutex );
+
+    for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
+    {
+        if ( rio->phase_state[p] == ROCKETNET_RIO_PHASE_POSTED && rio->outstanding[p].load( std::memory_order_relaxed ) == 0 )
+        {
+            rio->phase_state[p] = ROCKETNET_RIO_PHASE_IDLE;
+        }
+    }
 
     if ( rio->send_ready_count > 0
 #if ROCKETNET_DEV
@@ -1922,6 +1984,13 @@ static void rocketnet_rio_idle_wait( rocketnet_rio_lane_t * rio )
 static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument )
 {
     rocketnet_rio_lane_t * rio = (rocketnet_rio_lane_t *) argument;
+
+    // a lane's worker runs on its socket's processor, where RSS completes the
+    // lane's receives; a refused pin leaves it where Windows schedules it
+    if ( rio->processor >= 0 && !SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
+    {
+        rocketnet_warn( "rio transport: lane worker not pinned to processor %d (Win32 %lu)", rio->processor, GetLastError() );
+    }
 
     for ( ;; )
     {
@@ -2926,7 +2995,7 @@ static bool rocketnet_rio_address_is_wildcard( const rocketnet_address_t * addre
 
 // Binds a plain socket to the address with SO_EXCLUSIVEADDRUSE and closes
 // it: refused when anything already holds the address and port, so lanes
-// that share the port with SO_REUSEADDR never join a socket someone else
+// that share the port by SIO_CPU_AFFINITY never join a socket someone else
 // bound first. Never called for port 0.
 static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_address, int * status )
 {
@@ -2968,6 +3037,113 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
     closesocket( probe );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return bound;
+}
+
+// The processor of each lane: the first logical processor of each physical
+// core in processor-index order, then the cores' other logical processors in
+// order, wrapping past the last (two sockets may share a processor). Windows'
+// default RSS layout (base processor 0, one processor per core: on the ENA
+// adapter Get-NetAdapterRss lists 0, 2, 4, ...) hands receive queue i to the
+// first processor of core i, so with as many lanes as queues each queue's
+// flows reach the lane on its processor. A flow whose RSS processor has no
+// lane is delivered to the first lane bound (measured), so a different RSS
+// layout costs spread, never datagrams. The processor index SIO_CPU_AFFINITY
+// takes is the group's offset (the active processors of the groups before it)
+// plus the processor's number in its group. False only when Windows cannot
+// list its processors.
+static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_rio_processor_t * out, int * status )
+{
+    DWORD bytes = 0;
+    if ( GetLogicalProcessorInformationEx( RelationProcessorCore, NULL, &bytes ) || GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_error( "rio transport refused: the processors could not be listed for the lanes (Win32 %lu)", GetLastError() );
+        return false;
+    }
+    const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
+    uint8_t * info = (uint8_t *) rocketnet_malloc( context, (size_t) bytes );
+    rocketnet_rio_processor_t * order = (rocketnet_rio_processor_t *) rocketnet_malloc( context, sizeof( rocketnet_rio_processor_t ) * ( (size_t) logical + 1 ) );
+    if ( !info || !order )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_free( context, order );
+        rocketnet_free( context, info );
+        return false;
+    }
+    bool ok = logical > 0 && GetLogicalProcessorInformationEx( RelationProcessorCore, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX) info, &bytes );
+    int count = 0;
+    // pass 0 takes each core's first logical processor, pass 1 the others
+    for ( int pass = 0; ok && pass < 2; ++pass )
+    {
+        const int first = count;
+        for ( DWORD offset = 0; offset < bytes; )
+        {
+            const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX * entry = (const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *) ( info + offset );
+            if ( entry->Size == 0 )
+            {
+                break;
+            }
+            offset += entry->Size;
+            if ( entry->Relationship != RelationProcessorCore || entry->Processor.GroupCount == 0 )
+            {
+                continue;
+            }
+            const GROUP_AFFINITY * mask = &entry->Processor.GroupMask[0];
+            int group_offset = 0;
+            for ( WORD g = 0; g < mask->Group; ++g )
+            {
+                group_offset += (int) GetActiveProcessorCount( g );
+            }
+            bool seen_first = false;
+            for ( int bit = 0; bit < (int) ( sizeof( KAFFINITY ) * 8 ); ++bit )
+            {
+                if ( !( mask->Mask & ( (KAFFINITY) 1 << bit ) ) )
+                {
+                    continue;
+                }
+                const bool take = pass == 0 ? !seen_first : seen_first;
+                seen_first = true;
+                if ( !take || count >= (int) logical )
+                {
+                    continue;
+                }
+                rocketnet_rio_processor_t * p = &order[count++];
+                p->index = group_offset + bit;
+                memset( &p->affinity, 0, sizeof( p->affinity ) );
+                p->affinity.Group = mask->Group;
+                p->affinity.Mask = (KAFFINITY) 1 << bit;
+                if ( pass == 0 )
+                {
+                    break;
+                }
+            }
+        }
+        // each pass in processor-index order
+        for ( int i = first + 1; i < count; ++i )
+        {
+            const rocketnet_rio_processor_t key = order[i];
+            int j = i - 1;
+            while ( j >= first && order[j].index > key.index )
+            {
+                order[j + 1] = order[j];
+                --j;
+            }
+            order[j + 1] = key;
+        }
+    }
+    ok = ok && count > 0;
+    for ( int i = 0; ok && i < lanes; ++i )
+    {
+        out[i] = order[i % count];
+    }
+    if ( !ok )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_error( "rio transport refused: the processors could not be listed for the lanes (Win32 %lu)", GetLastError() );
+    }
+    rocketnet_free( context, order );
+    rocketnet_free( context, info );
+    return ok;
 }
 
 #if ROCKETNET_DEV
@@ -3043,10 +3219,12 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         }
     }
 #endif // #if ROCKETNET_DEV
-    // More than one lane shares the port with SO_REUSEADDR, so the lanes take
-    // a specific local address: a squatter on that exact address and port is
-    // refused by the probe below, and one on the wildcard is less specific
-    // than the lanes. One lane binds exclusively and takes either.
+    // More than one lane shares the port by SIO_CPU_AFFINITY, which has no
+    // exclusive form, so the lanes take a specific local address: a squatter
+    // on that exact address and port is refused by the probe below, and a
+    // later plain bind of the wildcard at that port (which Windows allows,
+    // measured) is less specific than the lanes. One lane binds exclusively
+    // and takes either.
     if ( lanes > 1 && rocketnet_rio_address_is_wildcard( bind_address ) )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_INVALID_ADDRESS );
@@ -3075,12 +3253,22 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rio->context = context;
 
     // An explicit port is probed. Port 0 is not: lane 0 binds it with
-    // SO_REUSEADDR and Windows hands it a port no socket holds (measured over
-    // thousands of binds against held ports of every kind and another
-    // account's; test_rio_transport_lanes_port_zero_never_held checks it on
-    // every run), so there is no gap between a probe and the lanes; lane 0
-    // writes the port it was given to bind_address and the other lanes join.
+    // SIO_CPU_AFFINITY and Windows hands it a port no socket holds
+    // (test_rio_transport_lanes_port_zero_never_held checks it on every run),
+    // so there is no gap between a probe and the lanes; lane 0 writes the port
+    // it was given to bind_address and the other lanes join. Once lane 0 is
+    // bound, a later plain or SO_REUSEADDR bind of the lanes' address and port
+    // is refused (measured, 10048 and 10013), but a socket of another process
+    // that also sets SIO_CPU_AFFINITY can join the port and receive the flows
+    // RSS hands its processor: Windows offers no exclusive form of a port
+    // shared by processor (SO_EXCLUSIVEADDRUSE refuses the second lane).
     if ( lanes > 1 && bind_address->port != 0 && !rocketnet_rio_exclusive_probe( bind_address, status ) )
+    {
+        rocketnet_rio_free( rio );
+        return NULL;
+    }
+    rocketnet_rio_processor_t processors[ROCKETNET_RIO_MAX_LANES];
+    if ( lanes > 1 && !rocketnet_rio_lane_processors( context, lanes, processors, status ) )
     {
         rocketnet_rio_free( rio );
         return NULL;
@@ -3088,7 +3276,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     for ( int i = 0; i < lanes; ++i )
     {
-        rio->lanes[i] = rocketnet_rio_lane_create( context, bind_address, max_clients, lanes > 1, packet_filter
+        rio->lanes[i] = rocketnet_rio_lane_create( context, bind_address, max_clients, lanes > 1 ? &processors[i] : NULL, packet_filter
 #if ROCKETNET_DEV
                                                    ,
                                                    ( fail_stage >> 4 ) == i ? ( fail_stage & 15 ) : 0
@@ -3136,6 +3324,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_info( "rio transport: port %d, %d lane%s (one socket and I/O worker each), %d receive slices and %d send frames per phase per lane, %llu registered bytes per lane%s",
                     bind_address->port, lanes, lanes > 1 ? "s" : "", rio->lanes[0]->receives, rio->lanes[0]->send_queue_size,
                     (unsigned long long) rio->lanes[0]->layout.total_bytes, packet_filter ? ", receive prefilter on" : "" );
+    for ( int i = 0; lanes > 1 && i < lanes; ++i )
+    {
+        rocketnet_info( "rio transport: lane %d on processor %d (SIO_CPU_AFFINITY, worker pinned)", i, rio->lanes[i]->processor );
+    }
     return rio;
 }
 
