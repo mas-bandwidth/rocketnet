@@ -127,8 +127,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // actual= line is 15389036 (test.exe Debug, plain and under Application
 // Verifier) and the server's 1469500799 (under Application Verifier), read on
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453183 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341292 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453247 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -175,8 +175,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // check's lines, the message object's per-thread open lines, each region's
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads 1469750687 and 15041546 (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702111 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992970 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468702175 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993034 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -274,11 +274,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641451ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641515ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641395ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609641459ULL )
 #endif // #if defined( __aarch64__ )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141650 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141714 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
