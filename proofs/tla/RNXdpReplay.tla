@@ -68,7 +68,10 @@ CONSTANTS
     W,            \* the replay window depth: ROCKETNET_REPLAY_WINDOW_BITS
     Sessions,     \* the number of sessions over the whole run
     MaxInFlight,  \* the bound on packets in the network at once
-    ForgetCapacity \* fixed pending-forget entries, deduplicated by address
+    ForgetCapacity, \* fixed pending-forget entries, deduplicated by address
+    ForgetFailureBudget, \* the forgets the kernel may refuse over a run
+    MarkFailureBudget,   \* the marks the kernel or the buffer may refuse over a run
+    HeldReplyBudget      \* the replies the link may hold over a run
 
 ASSUME /\ Addresses # {}
        /\ MaxSeq \in Nat \ {0}
@@ -76,6 +79,9 @@ ASSUME /\ Addresses # {}
        /\ Sessions \in Nat \ {0}
        /\ MaxInFlight \in Nat \ {0}
        /\ ForgetCapacity \in Nat
+       /\ ForgetFailureBudget \in Nat
+       /\ MarkFailureBudget \in Nat
+       /\ HeldReplyBudget \in Nat
 
 (***************************************************************************)
 (* Rule switches, definitions with the design's values, each overridden    *)
@@ -121,10 +127,12 @@ ASSUME /\ Addresses # {}
 (*     in the same commit is dropped, not kept: the mark was taken after   *)
 (*     the forget was queued, so the entry is a newer session's and the   *)
 (*     stale forget no longer owns it (the design: TRUE).                  *)
+(* The budgets are constants, so every configuration (and the trace check, *)
+(* tests/tla_trace_xdp_replay.cpp) sets each as a plain value.             *)
 (* ForgetFailureBudget bounds the refused forgets over a run, so the       *)
 (* state space stays finite; one is a refused forget, kept, then landed.   *)
-(* The control raises it to two (MCRNXdpReplay.cfg), so a kept forget can  *)
-(* be refused again in the commit that lands a new session's mark.         *)
+(* The control sets two (MCRNXdpReplay.cfg), so a kept forget can be       *)
+(* refused again in the commit that lands a new session's mark.            *)
 (* MarkFailureBudget bounds the refused marks the same way, the kernel's   *)
 (* refusals and the pending buffer's together: 0 in the design's first two *)
 (* controls, raised by MCRNXdpReplayRefusedMark.cfg.                       *)
@@ -146,10 +154,6 @@ AdvanceOnQueueRefusal == FALSE
 KeepAnswered == TRUE
 ForgetLeavesAnswered == TRUE
 AnswerKeyedByAddress == TRUE
-
-ForgetFailureBudget == 1
-MarkFailureBudget == 0
-HeldReplyBudget == 0
 
 NoSession == 0
 SessionIds == 1..Sessions
@@ -178,7 +182,7 @@ VARIABLES
     net,            \* in-flight packets: on the wire, or past the kernel
     pendingForget,  \* the addresses the walk forgets, applied by Commit
     pendingMark,    \* the marks the walk takes, applied by Commit
-    pendingMacForget, \* accepted reply-MAC forgets, applied by Commit
+    pendingMacForget, \* the forgets whose reply MAC the walk dropped, cleared by Commit
     phase,          \* "run" (packet processing) or "flush" (walk done)
     dropped,        \* ghost: genuine packets the kernel dropped
     forgetFailures, \* the forgets the kernel refused so far, at most the budget
@@ -442,6 +446,15 @@ Walk ==
                {m \in pendingMark : /\ \A k \in Marks : k.addr # m.addr
                                     /\ ForgetDropsKeptMark => m.addr \notin accepted}
         /\ pendingMacForget' = accepted
+        \* the sink drops an accepted forget's learned reply MAC as it queues
+        \* it, leaving it as the answered entry (ForgetLeavesAnswered); no
+        \* reply is sent before the commit (every reply action needs "run")
+        /\ replyMac' = [a \in Addresses |->
+                          IF a \in accepted THEN NoSession ELSE replyMac[a]]
+        /\ answered' = [a \in Addresses |->
+                          IF a \in accepted /\ replyMac[a] # NoSession
+                            THEN ForgetLeavesAnswered
+                            ELSE answered[a]]
         /\ marked' = [a \in Addresses |->
                         IF \E m \in advanced : m.addr = a THEN opened[a]
                         ELSE IF a \in accepted THEN 0
@@ -457,9 +470,9 @@ Walk ==
                       ELSE seen[a]]
         /\ phase' = "flush"
         /\ UNCHANGED <<session, nextSession, sent, opened, reached,
-                       seenBeforeRelease, replyMac, kmap, net, dropped,
+                       seenBeforeRelease, kmap, net, dropped,
                        forgetFailures, greeted>>
-        /\ UNCHANGED replyVars
+        /\ UNCHANGED <<heard, held, heldReplies, sentTo, refusedHeld>>
 
 (* Commit: the transport applies all forgets, then all marks, in one commit.  *)
 (* The only action that writes kmap in the design.  The kernel may refuse  *)
@@ -509,18 +522,11 @@ Commit ==
                             \/ /\ ~markOwed[a]
                                /\ ~\E m \in (IF KeepRefusedMarks THEN refused ELSE {}) :
                                       m.addr = a /\ m.hw = 0]
-        /\ replyMac' = [a \in Addresses |->
-                          IF a \in pendingMacForget
-                            THEN NoSession ELSE replyMac[a]]
-        /\ answered' = [a \in Addresses |->
-                          IF a \in pendingMacForget /\ replyMac[a] # NoSession
-                            THEN ForgetLeavesAnswered
-                            ELSE answered[a]]
     /\ pendingMacForget' = {}
     /\ phase' = "run"
     /\ UNCHANGED <<session, nextSession, sent, opened, reached, marked, seen,
-                   seenBeforeRelease, net, dropped, markOwed>>
-    /\ UNCHANGED <<heard, held, heldReplies, sentTo, refusedHeld>>
+                   seenBeforeRelease, replyMac, net, dropped, markOwed>>
+    /\ UNCHANGED replyVars
 
 (***************************************************************************)
 (* The reply MAC under a held reply.  The link holds at most one reply per *)
