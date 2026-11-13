@@ -95,6 +95,13 @@ commit each:
   that 2 and 4 send threads plan, and that 5 is refused.
 - msgx-residue: the macOS light memory pin takes the 8 bytes of the msgx
   server's refused-finish counter.
+- receive-handoff-latency, repaired on its own branch
+  `fix/v1.1.x/gso-handoff-ci-repair` at
+  `005ee4e6aaa72d7a8f2cc34cbaa466e69555e7c3` (merged): the gso receive
+  overflow functional case now waits for the worker's full buffer and
+  reads the counters once its tallies are folded (the counter was right,
+  the test was not), and two new static findings in the gso receive test
+  seams are gone (a dead store and a sockaddr cast).
 
 - Tag: `v1.1.54`, on the merged `main` commit.
 - Release: [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.1.54).
