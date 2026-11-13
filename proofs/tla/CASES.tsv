@@ -929,3 +929,11 @@ MCRNMsgxAddressIndex.cfg	MCRNMsgxAddressIndex.tla	pass	-	check	rnmsgxsockettable
 MCRNMsgxAddressIndexBrokenDeleteWithoutShift.cfg	MCRNMsgxAddressIndex.tla	invariant	LookupFindsOpen	check	rnmsgxsockettable	required	-
 MCTraceRNMsgxSocketTableSelf.cfg	MCTraceRNMsgxSocketTableSelf.tla	pass	-	check	rnmsgxsockettable	required	-
 MCTraceRNMsgxSocketTableSelfBrokenClose.cfg	MCTraceRNMsgxSocketTableSelf.tla	invariant	TraceConsistent	check	rnmsgxsockettable	required	-
+MCRNMsgxSendRuns.cfg	MCRNMsgxSendRuns.tla	pass	-	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBatch3.cfg	MCRNMsgxSendRuns.tla	pass	-	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsRestamp.cfg	MCRNMsgxSendRuns.tla	pass	-	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsRestampOrder.cfg	MCRNMsgxSendRuns.tla	invariant	ClientOrder	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg	MCRNMsgxSendRuns.tla	invariant	ResumeExact	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenUnstableSort.cfg	MCRNMsgxSendRuns.tla	invariant	ClientOrder	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg	MCRNMsgxSendRuns.tla	invariant	NoCrossClient	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenDeadNoResend.cfg	MCRNMsgxSendRuns.tla	invariant	CursorSafe	check	rnmsgxsendruns	required	-
