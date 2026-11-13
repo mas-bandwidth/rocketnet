@@ -453,7 +453,7 @@ int rocketnet_server_gso_send_queue( const rocketnet_address_t * to, int num_que
     rocketnet_assert( num_queues >= 1 );
 
     uint64_t hash = 0xCBF29CE484222325ULL;
-    const uint8_t * address = (const uint8_t *) &to->data;
+    const uint8_t * address = reinterpret_cast<const uint8_t *>( &to->data );
     const int address_bytes = to->type == ROCKETNET_ADDRESS_IPV6 ? 16 : 4;
     for ( int i = 0; i < address_bytes; i++ )
     {
@@ -870,12 +870,12 @@ bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive
     {
         if ( force_tried )
         {
-            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", direction, requested_bytes,
+            (void) snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", direction, requested_bytes,
                       granted_bytes, limit, force_name );
         }
         else
         {
-            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d", direction, requested_bytes, granted_bytes );
+            (void) snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d", direction, requested_bytes, granted_bytes );
         }
         return false;
     }
@@ -883,25 +883,25 @@ bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive
     char force_text[96];
     if ( !force_tried )
     {
-        snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
     }
     else if ( force_error == EPERM )
     {
-        snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
     }
     else if ( force_error != 0 )
     {
-        snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
+        (void) snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
     }
     else
     {
-        snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
+        (void) snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
     }
 
     const char * consequence =
         receive ? "the kernel drops datagrams that arrive past the grant between updates" : "sends wait on a full socket";
 
-    snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", direction, requested_bytes,
+    (void) snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", direction, requested_bytes,
               granted_bytes, force_text, consequence, limit, requested_bytes );
     return true;
 }
@@ -1314,7 +1314,7 @@ static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, strerror( result ) );
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on any cpu", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
         queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
         return;
     }
@@ -2107,11 +2107,11 @@ static int rocketnet_server_gso_send_slot( struct rocketnet_server_gso_t * gso, 
         return -1;
     }
     const uintptr_t offset = address - first;
-    if ( offset % ROCKETNET_FRAME_STRIDE != 0 )
+    if ( offset % (uintptr_t) ROCKETNET_FRAME_STRIDE != 0 )
     {
         return -1;
     }
-    const int slot = (int) ( offset / ROCKETNET_FRAME_STRIDE );
+    const int slot = (int) ( offset / (uintptr_t) ROCKETNET_FRAME_STRIDE );
     if ( slot < 0 || slot >= gso->send_slots )
     {
         return -1;
@@ -2257,8 +2257,8 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
 
         int num_messages = 0;
         int message_first_slot[ROCKETNET_GSO_SEND_BATCH];
-        int message_num_packets[ROCKETNET_GSO_SEND_BATCH];
-        bool message_is_gso[ROCKETNET_GSO_SEND_BATCH];
+        int message_num_packets[ROCKETNET_GSO_SEND_BATCH] = {};
+        bool message_is_gso[ROCKETNET_GSO_SEND_BATCH] = {};
         int num_iovecs = 0;
         int batch_end = slot;
 
@@ -3202,7 +3202,7 @@ static int rocketnet_server_gso_test_datagram_receive( struct rocketnet_server_g
         header->msg_controllen = 0;
         header->msg_flags = 0;
         memset( &queue->names[i], 0, sizeof( queue->names[i] ) );
-        struct sockaddr_in * in4 = (struct sockaddr_in *) &queue->names[i];
+        struct sockaddr_in * in4 = reinterpret_cast<struct sockaddr_in *>( &queue->names[i] );
         in4->sin_family = AF_INET;
         in4->sin_port = htons( 40000 );
         in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
