@@ -169,7 +169,7 @@ after the interface name for more):
     #    then: update-grub && reboot
     #    (irqaffinity= may be any cpu list naming no isolated cpu: with
     #    ROCKETNET_SERVER_NUM_OS_CPUS=2 the XDP threads start at cpu 2, so
-    #    irqaffinity=0-1 isolcpus=2-16 nohz_full=2-16)
+    #    irqaffinity=0-1 isolcpus=2-15 nohz_full=2-15)
     #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
     #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
     #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
@@ -232,8 +232,9 @@ after the interface name for more):
     #      xdp pre-flight failed: this machine is not provisioned ...
     #
     #    Provision refuses to unload rocketnet's own program while a
-    #    rocketnet server on this host is live (R3): stop the server first,
-    #    or set ROCKETNET_PROVISION_UNLOAD_LIVE=1 to unload it anyway.
+    #    rocketnet server on this host is live (R3), on any interface (the
+    #    pin roots do not record one): stop the server first, or set
+    #    ROCKETNET_PROVISION_UNLOAD_LIVE=1 to unload it anyway.
 
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every

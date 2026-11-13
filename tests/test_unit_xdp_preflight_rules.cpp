@@ -96,6 +96,16 @@ static void test_xdp_transport_preflight_irqaffinity_list()
     preflight_cmdline( root, "irqaffinity=0-2 isolcpus=2-3 nohz_full=2-3\n", "2-3\n" );
     rocketnet_unit_check( !rocketnet_server_socket_preflight_boot_line( root ) );
 
+    // the rule compares ranges, never walks a range's cpus: the widest list
+    // there is answers at once, and the cpu named is the lowest shared one
+
+    int isolated_cpu = -1;
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0-2147483647", "5-7,9", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( isolated_cpu == 5 );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0-4,8,10-2147483647", "5-7,9", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_MET );
+    rocketnet_unit_check( rocketnet_xdp_cmdline_irqaffinity( "irqaffinity=0-4,8-12", "5-7,9", &isolated_cpu ) == ROCKETNET_XDP_IRQAFFINITY_ISOLATED );
+    rocketnet_unit_check( isolated_cpu == 9 );
+
     // absent, not left-bounded, empty, malformed
 
     preflight_cmdline( root, "isolcpus=1-2 nohz_full=1-2\n", "1-2\n" );

@@ -1115,7 +1115,10 @@ static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const
         return ROCKETNET_XDP_IRQAFFINITY_MET;
     }
 
-    // every cpu of the value, each checked against the isolated set
+    // every entry of the value against every entry of the isolated set,
+    // range against range (a value of 0-2147483647 is one comparison per
+    // isolated entry, never a walk over its cpus): the first overlap names
+    // the lowest cpu the two share
 
     const char * scan = value;
     while ( true )
@@ -1127,17 +1130,32 @@ static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const
             return ROCKETNET_XDP_IRQAFFINITY_MALFORMED;      // validated above
         }
 
-        for ( int cpu = first; cpu <= last; cpu++ )
+        const char * isolated_scan = isolated_list;
+        while ( *isolated_scan == ' ' || *isolated_scan == '\t' )
         {
-            if ( rocketnet_xdp_cpu_list_has( isolated_list, cpu ) == 1 )
+            isolated_scan++;
+        }
+        while ( true )
+        {
+            int isolated_first = 0;
+            int isolated_last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &isolated_scan, &isolated_first, &isolated_last ) )
+            {
+                return ROCKETNET_XDP_IRQAFFINITY_MET;        // validated above
+            }
+
+            const int low = first > isolated_first ? first : isolated_first;
+            const int high = last < isolated_last ? last : isolated_last;
+            if ( low <= high )
             {
                 if ( isolated_cpu )
                 {
-                    *isolated_cpu = cpu;
+                    *isolated_cpu = low;
                 }
                 return ROCKETNET_XDP_IRQAFFINITY_ISOLATED;
             }
-            if ( cpu == 0x7FFFFFFF )
+
+            if ( *isolated_scan == '\0' )
             {
                 break;
             }

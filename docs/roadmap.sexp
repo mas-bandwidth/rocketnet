@@ -508,7 +508,7 @@
 
   (item "xdp-provision-restart-mode" :group "review-v1-2" :area "rocketnet"
    :title "XDP: one provision step for a restart on NICs whose attach rebuilds the queue vectors"
-   :text "On ixgbe-class NICs the XDP attach and detach rebuild the queue vectors onto the default affinity (cpu 0 under irqaffinity=0), so a safe start is three steps: provision, start the server, repin; and a restart needs provision again first, because the old server's detach moved the vectors back (docs/DEPLOYING.md step 4a). The library only warns after its attach and never changes affinity (standard/TRANSPORT.md t2 rule 5). A script mode that provisions, waits for the new server's attach, then repins (what repin already waits for: the program, the carrier, one queue vector a thread) would make it one operator step, for example a systemd ExecStartPost. Needs an ixgbe bench to show it."
+   :text "On ixgbe-class NICs the XDP attach and detach rebuild the queue vectors onto the default affinity (cpu 0 under irqaffinity=0), so a safe start is three steps: provision, start the server, repin; and a restart needs provision again first, because the old server's detach moved the vectors back (docs/DEPLOYING.md step 4a). The library only warns after its attach and never changes affinity (standard/TRANSPORT.md t2 rule 5). A script mode that provisions, waits for the new server's attach, then repins (what repin already waits for: the program, the carrier, one queue vector a thread) would make it one operator step, for example a systemd ExecStartPost. Needs an ixgbe bench to show it. Also: create's post-attach re-read is silent when it finds no queue vector at all (a driver still rebuilding them when /proc/interrupts is read); counting the vectors the pre-flight saw against the re-read would let it say pinning could not be re-checked."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, findings W2-36 and W2-71")
 
   (item "xdp-capabilities-not-root" :group "review-v1-2" :area "rocketnet"
@@ -540,4 +540,9 @@
    :title "XDP: a queue-count change or device unregister after start is silent"
    :text "After start, an ethtool -L on the interface or the device going away (driver reload, hot unplug) leaves the server bound to queues that no longer exist or to a dead device: datagrams on new queues count DROPPED_NO_SOCKET and nothing else says so, and nothing recovers. Watch the link with an RTNLGRP_LINK subscription on a network thread, log once by name, and say in the docs that a channel change needs a restart."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-42")
+
+  (item "provision-script-gaps" :group "review-v1-2" :area "rocketnet"
+   :title "rocketnet-provision: read-back of R5, a settle wait after R7, and an unprovision mode"
+   :text "From the same reading as the repin fix: provision writes R5's napi_defer_hard_irqs and gro_flush_timeout and does not read them back (R7 and R8 do); after an R7 channel change R4 reads /proc/interrupts at once, while some drivers are still rebuilding their vectors (repin already waits for them; provision should wait the same way, bounded); and there is no mode that puts R4 to R8 back (affinities, busy-poll pair, channels, sched_rt_runtime_us) for a host leaving XDP service."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-75 (script parts)")
  ))

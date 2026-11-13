@@ -2042,7 +2042,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         int first_missing = -1;
         if ( !rocketnet_xdp_pin_targets_isolated( isolated, num_os_cpus, num_queues, &first_missing ) )
         {
-            rocketnet_warn( "xdp pre-flight: pin target cpu %d is not in the isolated set %s (R4): one queue, one core -- run scripts/rocketnet-provision %s %d", first_missing, isolated, interface_name, num_queues );
+            rocketnet_warn( "xdp pre-flight: pin target cpu %d (num_os_cpus %d + queue) is not in the isolated set %s (R4): one queue, one isolated core -- grow isolcpus= and nohz_full= to take in cpus %d to %d (grub + reboot, B1), or lower num_os_cpus", first_missing, num_os_cpus < 1 ? 1 : num_os_cpus, isolated, rocketnet_xdp_thread_cpu( num_os_cpus, 0 ), rocketnet_xdp_thread_cpu( num_os_cpus, num_queues - 1 ) );
             provisioned = false;
         }
     }

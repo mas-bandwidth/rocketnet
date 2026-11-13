@@ -570,7 +570,9 @@ unmet; only the file keeps it across a reboot. The library's pre-flight
 checks the same rule from the same files and refuses `xdp` while it is unmet:
 a kernel of 6.12 or later passes unless `/boot/config-<release>` carries
 `CONFIG_RT_GROUP_SCHED=y`, and one whose `/boot` config cannot be read is
-unmet unless the value is already -1. What it costs: an ordinary task on a worker's CPU no longer
+unmet unless the value is already -1. A container usually has no `/boot`:
+there, set the value to -1 on the host (the sysctl is not per namespace)
+before starting the server. What it costs: an ordinary task on a worker's CPU no longer
 gets any time while the worker spins. On the isolated CPUs of this layout
 that leaves only per-CPU kernel work there, which waits too, so keep every
 other thread and IRQ off the worker CPUs. From 6.12 the throttle is gone: a

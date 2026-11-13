@@ -682,18 +682,23 @@ r3_enforce()
                     # a live server's own program: unloading it stops that
                     # server receiving, so a re-run of provision beside it
                     # refuses unless asked in so many words. rocketnet's
-                    # program is named server_xdp; a crashed server's
-                    # leftover has no live instance and unloads as before
+                    # program is the function server_xdp_filter
+                    # (sdk/xdp/server_xdp.c), which the kernel names
+                    # server_xdp_filt (15 characters) and xdp-loader shows
+                    # in either form; a crashed server's leftover has no
+                    # live instance and unloads as before. The pin roots do
+                    # not name an interface, so a live server on another
+                    # interface refuses too: the message says so
 
                     LIVE_PIDS=""
-                    if query_xdp_slot_stdout "$INTERFACE" | grep -qw server_xdp; then
+                    if query_xdp_slot_stdout "$INTERFACE" | grep -Eq '(^|[[:space:]])server_xdp_filt(er)?([[:space:]]|$)'; then
                         LIVE_PIDS="$(live_rocketnet_instances)"
                     fi
 
                     if [ $VERIFY -eq 1 ]; then
                         fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
                     elif [ -n "$LIVE_PIDS" ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
-                        fail "rocketnet's server_xdp is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): unloading it would stop that server receiving. stop the server first; to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
+                        fail "rocketnet's server_xdp_filter is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): if that server is on $INTERFACE, unloading would stop it receiving. stop the server first; if it is on another interface, or to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
                     else
                         # the act half of R3 lives under the same law as its
                         # query half: a failed unload is UNMET, and the slot is
@@ -1145,7 +1150,13 @@ case "$1" in
                 echo "$IFACE                     xdp_pass_prog     skb      115  d4f8542f2b42fac5 "
                 ;;
             rocketnet)
-                echo "$IFACE                     server_xdp        native   140  5a1f07c3e2b9d841 "
+                echo "$IFACE                     server_xdp_filt   native   140  5a1f07c3e2b9d841 "
+                ;;
+            rocketnet_full)
+                echo "$IFACE                     server_xdp_filter native   140  5a1f07c3e2b9d841 "
+                ;;
+            lookalike)
+                echo "$IFACE                     server_xdp        native   141  77a1f07c3e2b9d84 "
                 ;;
         esac
         echo ""
@@ -1305,6 +1316,10 @@ STUB
     OUT="$(run_r3 0 live2)"; expect_case "r3 provision unloads a foreign program beside a live server" $? 0 "$OUT" "confirmed clear after unload"
     echo rocketnet > "$STUB_STATE_DIR/state.live3"
     OUT="$(run_r3 1 live3)"; expect_case "r3 verify with a live server's program" $? 1 "$OUT" "run without verify" 1
+    echo rocketnet_full > "$STUB_STATE_DIR/state.live4"
+    OUT="$(run_r3 0 live4)"; expect_case "r3 provision refuses a live server's program by its full name" $? 1 "$OUT" "a rocketnet server is running on this host (pid $$) (R3)" 1 "unloading XDP programs"
+    echo lookalike > "$STUB_STATE_DIR/state.live5"
+    OUT="$(run_r3 0 live5)"; expect_case "r3 provision unloads a program merely named like rocketnet's" $? 0 "$OUT" "confirmed clear after unload"
     rm -rf "$R3_PIN_ROOTS/rocketnet_xdp_7_$$_${SELF_START}_${SELF_BOOT}"
 
     mkdir -p "$R3_PIN_ROOTS/rocketnet_xdp_7_999999999_12345_${SELF_BOOT}"
@@ -1728,8 +1743,12 @@ STUB
     echo "irqaffinity=0-2 isolcpus=2-3 nohz_full=2-3 nosmt" > "$SR/proc/cmdline"
     OUT="$( ROCKETNET_SERVER_NUM_OS_CPUS=2 run_stub_root "$SR" 2 )"
     expect_case "stub root: num_os_cpus 2, irqaffinity=0-2 refused" $? 1 "$OUT" "irqaffinity=0-2 names cpu 2, which is in the isolated set 2-3 (B1)" 1
-    stub_root_case "R4 fewer isolated cpus than queues" 4 1 "only 3 isolated cpus for 4 queues" \
+    stub_root_case "R4 fewer isolated cpus than queues" 4 2 "only 3 isolated cpus for 4 queues" \
         'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R4 fewer isolated cpus than queues names the pin target" 4 2 "pin target cpu 4 (num_os_cpus 1 + queue) is not in the isolated set 1-3 (R4)" \
+        'echo 4 > "$STUB_STATE_DIR/combined.stubiface2"'
+    stub_root_case "R4 pin target outside the isolated set" 2 1 "pin target cpu 1 (num_os_cpus 1 + queue) is not in the isolated set 2-5 (R4)" \
+        'echo "irqaffinity=0 isolcpus=2-5 nohz_full=2-5 nosmt" > "$SR/proc/cmdline"; echo 2-5 > "$SR/sys/devices/system/cpu/isolated"'
     stub_root_case "R5 napi_defer_hard_irqs unset" 2 1 "napi_defer_hard_irqs is 0, want 2 (R5)" \
         'echo 0 > "$SR/sys/class/net/stubiface2/napi_defer_hard_irqs"'
     stub_root_case "R5 gro_flush_timeout unset" 2 1 "gro_flush_timeout is 0, want 200000 (R5)" \
@@ -2242,6 +2261,25 @@ fi
 QUEUE_VECTORS="${QUEUE_VECTORS:-}"
 if [ ${#ISOLATED_CPUS[@]} -gt 0 ] && [ ${#ISOLATED_CPUS[@]} -lt "$NUM_QUEUES" ]; then
     fail "only ${#ISOLATED_CPUS[@]} isolated cpus for $NUM_QUEUES queues (B1/R4 scale together): one queue wants one isolated core"
+fi
+
+# R4's pin targets: the xdp threads pin to cpus num_os_cpus .. num_os_cpus +
+# num_queues - 1, and every one of them must be isolated -- the library
+# pre-flight's rocketnet_xdp_pin_targets_isolated, the same rule. Only the
+# boot tier can fix it, so it is unmet in both modes.
+
+if [ ${#ISOLATED_CPUS[@]} -gt 0 ]; then
+    for (( K=0; K<NUM_QUEUES; K++ )); do
+        TARGET=$(( OS_CPUS + K ))
+        TARGET_ISOLATED=0
+        for CPU_CANDIDATE in "${ISOLATED_CPUS[@]}"; do
+            [ "$CPU_CANDIDATE" = "$TARGET" ] && TARGET_ISOLATED=1
+        done
+        if [ $TARGET_ISOLATED -eq 0 ]; then
+            fail "pin target cpu $TARGET (num_os_cpus $OS_CPUS + queue) is not in the isolated set $ISOLATED (R4): one queue, one isolated core -- grow isolcpus= and nohz_full= to take in cpus $OS_CPUS to $(( OS_CPUS + NUM_QUEUES - 1 )) (B1), or lower num_os_cpus"
+            break
+        fi
+    done
 fi
 
 IRQ_COUNT=$(echo "$IRQS" | grep -c .)
