@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# harden-cell: one cell of the server transport hardening matrix
+# (docs/HARDEN_LOAD.md). A functional/bench tool: real sockets, real time,
+# two network namespaces joined by a veth pair, run as root (sudo).
+#
+#   sudo scripts/harden-cell --bin build/bin --transport io_uring --row control --out DIR [options]
+#
+# Rows: control, space, churn, impair, duplicate, hostile, longrun. The server runs in
+# namespace rnhs-N (veth hs0-N, 10.77.N.1); its players and the hostile load
+# in rnhc-N (veth hc0-N, 10.77.N.2), N from --slot so cells can run side by
+# side. Impairment is tc netem on the egress of both veth ends, so each
+# direction is impaired once, on the sender's side of the link.
+#
+# Every role ends with harden_term lines; the reconcile role puts them into
+# one chain per direction and judges the cell. Exit 0 only on PASS.
+
+set -euo pipefail
+
+bin=""
+transport=""
+row="control"
+out=""
+slot=1
+seconds=60
+clients=1000
+threads=8
+burst_clients=""
+hostile_pps=200000
+frame_p99_us=12000
+warm_seconds=""
+xdp_queues=0
+quiet=1.5
+
+usage()
+{
+    echo "usage: sudo $0 --bin DIR --transport NAME --row control|bar|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--fill-jobs J] [--payload pattern|copy] [--hostile-pps P] [--frame-p99-us U]" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bin) bin="$2"; shift 2 ;;
+        --transport) transport="$2"; shift 2 ;;
+        --row) row="$2"; shift 2 ;;
+        --out) out="$2"; shift 2 ;;
+        --slot) slot="$2"; shift 2 ;;
+        --seconds) seconds="$2"; shift 2 ;;
+        --clients) clients="$2"; shift 2 ;;
+        --threads) threads="$2"; shift 2 ;;
+        --burst-clients) burst_clients="$2"; shift 2 ;;
+        --fill-jobs) fill_jobs="$2"; shift 2 ;;
+        --payload) payload="$2"; shift 2 ;;
+        --hostile-pps) hostile_pps="$2"; shift 2 ;;
+        --frame-p99-us) frame_p99_us="$2"; shift 2 ;;
+        --warm-seconds) warm_seconds="$2"; shift 2 ;;
+        --xdp-queues) xdp_queues="$2"; shift 2 ;;
+        --quiet-seconds) quiet="$2"; shift 2 ;;
+        *) usage ;;
+    esac
+done
+[ -n "$bin" ] && [ -n "$transport" ] && [ -n "$out" ] || usage
+[ "$(id -u)" = "0" ] || { echo "harden-cell: run as root (network namespaces, tc, AF_PACKET)" >&2; exit 2; }
+tool="$bin/harden_load"
+[ -x "$tool" ] || { echo "harden-cell: no $tool" >&2; exit 2; }
+mkdir -p "$out"
+
+ns_s="rnhs-$slot"
+ns_c="rnhc-$slot"
+dev_s="hs0-$slot"
+dev_c="hc0-$slot"
+ip_s="10.77.$slot.1"
+ip_c="10.77.$slot.2"
+port=40000
+address="$ip_s:$port"
+
+cleanup()
+{
+    ip netns pids "$ns_s" 2>/dev/null | xargs -r kill 2>/dev/null || true
+    ip netns pids "$ns_c" 2>/dev/null | xargs -r kill 2>/dev/null || true
+    ip netns del "$ns_s" 2>/dev/null || true
+    ip netns del "$ns_c" 2>/dev/null || true
+}
+trap cleanup EXIT
+cleanup
+
+# the link: two namespaces, one veth pair, IPv4 only, static neighbours, so
+# only the cell's UDP (and the ICMP it provokes) crosses it
+ip netns add "$ns_s"
+ip netns add "$ns_c"
+ip link add "$dev_s" type veth peer name "$dev_c"
+ip link set "$dev_s" netns "$ns_s"
+ip link set "$dev_c" netns "$ns_c"
+for ns in "$ns_s" "$ns_c"; do
+    ip netns exec "$ns" sysctl -q -w net.ipv6.conf.all.disable_ipv6=1
+    ip netns exec "$ns" sysctl -q -w net.ipv6.conf.default.disable_ipv6=1
+    ip netns exec "$ns" ip link set lo up
+done
+ip netns exec "$ns_s" ip addr add "$ip_s/24" dev "$dev_s"
+ip netns exec "$ns_c" ip addr add "$ip_c/24" dev "$dev_c"
+ip netns exec "$ns_s" ip link set "$dev_s" up
+ip netns exec "$ns_c" ip link set "$dev_c" up
+mac_s=$(ip netns exec "$ns_s" cat "/sys/class/net/$dev_s/address")
+mac_c=$(ip netns exec "$ns_c" cat "/sys/class/net/$dev_c/address")
+ip netns exec "$ns_s" ip neigh replace "$ip_c" lladdr "$mac_c" dev "$dev_s" nud permanent
+ip netns exec "$ns_c" ip neigh replace "$ip_s" lladdr "$mac_s" dev "$dev_c" nud permanent
+
+# the row's settings (scripts/harden-rows, docs/HARDEN_LOAD.md "Rows")
+# shellcheck source=scripts/harden-rows
+source "$(dirname "${BASH_SOURCE[0]}")/harden-rows"
+harden_row "$row" || usage
+if [ -n "$netem" ]; then
+    # shellcheck disable=SC2086
+    ip netns exec "$ns_s" tc qdisc add dev "$dev_s" root netem $netem
+    # shellcheck disable=SC2086
+    ip netns exec "$ns_c" tc qdisc add dev "$dev_c" root netem $netem
+else
+    # a plain qdisc on every row: its "Sent ... pkt" counts each GSO
+    # segment, so the wire's datagrams are counted where they leave
+    ip netns exec "$ns_s" tc qdisc add dev "$dev_s" root pfifo limit 200000
+    ip netns exec "$ns_c" tc qdisc add dev "$dev_c" root pfifo limit 200000
+fi
+
+: "${warm_seconds:=$(( seconds > 120 ? 60 : seconds / 3 ))}"
+{
+    echo "harden_cell: transport=$transport row=$row slot=$slot seconds=$seconds clients=$clients threads=$threads netem=\"$netem\" hostile=$hostile hostile_pps=$hostile_pps utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "harden_cell: kernel=$(uname -r) host=$(hostname)"
+} | tee "$out/cell.txt"
+
+ulimit -n 65536
+
+# CPU placement: the CPUs this cell was given (its nova-reserve slots, or the
+# whole machine) are split, the server on the first third (at least one) and
+# the players and hostile load on the rest, so the generators never take the
+# server's CPUs. A veth charges the receiver's softirq to the sender's CPU, so
+# server-to-client delivery is paid on the server's CPUs and client-to-server
+# on the players'; the frame time on one machine is therefore an upper bound,
+# and the frame-time cells that count run on two machines.
+cpus=()
+for range in $(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status | tr ',' ' '); do
+    first=${range%-*}
+    last=${range#*-}
+    for (( cpu = first; cpu <= last; cpu++ )); do
+        cpus+=("$cpu")
+    done
+done
+server_count=$(( ${#cpus[@]} / 3 ))
+[ "$server_count" -ge 1 ] || server_count=1
+server_cpus=$(IFS=,; echo "${cpus[*]:0:$server_count}")
+client_cpus=$(IFS=,; echo "${cpus[*]:$server_count}")
+[ -n "$client_cpus" ] || client_cpus=$server_cpus
+echo "harden_cell: cpus server=$server_cpus clients=$client_cpus" | tee -a "$out/cell.txt"
+
+# the server first; its ready line carries the key the players need
+xdp_args=()
+if [ "$xdp_queues" -gt 0 ]; then
+    xdp_args=(--num-xdp-queues "$xdp_queues")
+fi
+# the end is a wall time every role shares: joins take clients/100 seconds,
+# then the measured run
+join_seconds=$(( clients / 100 + 5 ))
+end_at=$(( $(date +%s) + join_seconds + seconds + 3 ))
+ip netns exec "$ns_s" taskset -c "$server_cpus" "$tool" server --address "$address" --transport "$transport" --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" \
+    --dev "$dev_s" --warm-seconds "$warm_seconds" --sample-seconds 60 "${xdp_args[@]}" "${server_shape[@]}" > "$out/server.log" 2>&1 &
+server_pid=$!
+key=""
+for _ in $(seq 1 100); do
+    key=$(sed -n 's/^harden_ready: .* key=\([0-9a-f]*\) .*/\1/p' "$out/server.log" | head -1)
+    [ -n "$key" ] && break
+    sleep 0.1
+done
+if [ -z "$key" ]; then
+    echo "harden-cell: the server never became ready" >&2
+    cat "$out/server.log" >&2
+    exit 1
+fi
+
+ip netns exec "$ns_c" taskset -c "$client_cpus" "$tool" clients --address "$address" --key "$key" --clients "$clients" --threads "$threads" --end-at "$end_at" --quiet-seconds "$quiet" \
+    --dev "$dev_c" "${client_shape[@]}" > "$out/clients.log" 2>&1 &
+clients_pid=$!
+
+hostile_pid=""
+if [ "$hostile" = "1" ]; then
+    # after the players are on: the replay kind needs their packets on the wire
+    sleep "$join_seconds"
+    ip netns exec "$ns_c" taskset -c "$client_cpus" "$tool" hostile --address "$address" --key "$key" --end-at "$end_at" --pps "$hostile_pps" --sockets 256 \
+        --kinds garbage,prefixed,truncated,badsig,expired,reqreplay,replay --capture-dev "$dev_c" > "$out/hostile.log" 2>&1 &
+    hostile_pid=$!
+fi
+
+status=0
+wait "$server_pid" || status=1
+wait "$clients_pid" || status=1
+if [ -n "$hostile_pid" ]; then
+    wait "$hostile_pid" || status=1
+fi
+
+logs="$out/server.log,$out/clients.log"
+if [ "$hostile" = "1" ]; then
+    logs="$logs,$out/hostile.log"
+fi
+"$tool" reconcile --logs "$logs" --netem-duplicates "$duplicates" --min-delivery "$min_delivery" --frame-p99-us "$frame_p99_us" | tee "$out/reconcile.txt" || status=1
+grep -h "harden_verdict" "$out"/*.log | tee -a "$out/reconcile.txt"
+echo "harden_cell: transport=$transport row=$row exit=$status utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "$out/reconcile.txt"
+exit "$status"
