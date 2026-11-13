@@ -1,7 +1,8 @@
 # RocketNet on macOS
 
 This is the page a Mac engine programmer reads first: how to build, which
-transport a client or server gets and how to pin one, the client's threads and
+transport a client or server gets and how to pin one, running a server at
+rate (what a Mac sends, how to set it up and how to profile it), the client's threads and
 App Nap, what socket errors and ICMP do, the file-descriptor limit, the
 application firewall prompt, debugging, and the commands that verify a Mac, in
 order.
@@ -240,6 +241,133 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 `test_transport_dual_stack_ipv4_client` and `test_transport_env_pin_is_honoured`
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
+
+## Running a server on macOS
+
+A Mac server's send rate is set by the Mac's network interface driver, not by
+rocketnet. Two Macs were measured on 2026-11-13 with the `msgx` server at
+rocketnet main 5366e4f13, 1000 players on a Linux box across a direct 10 GbE
+LAN, and the space game's peak load: 15 unreliable 1200-byte packets per client
+per tick at 60 Hz, 900,000 packets a second offered (9.4 Gb/s on the wire). The
+load test is `tests/load/harden_load.cpp` ([HARDEN_LOAD.md](HARDEN_LOAD.md));
+the server ran `harden_load server --transport msgx --max-clients 1000
+--num-xdp-queues N --frame-shape space --load peak --space-send wide
+--space-update split --space-net task --space-split top`.
+
+| Mac | interface, driver | transmit workers | packets/s sent at peak |
+|---|---|---|---|
+| Mac mini, M5 Pro, 18 cpus, macOS 27.2 | Realtek RTL8127 10GBASE-T, `AppleEthernetRL` | 3 | 900k, all offered (2 workers: 885k with 11 frame overruns, measured on the v1.2 work branch) |
+| Mac Studio, M3 Ultra, 32 cpus, macOS 27.2 | Aquantia AQC113 10GBASE-T, `AppleEthernetAquantiaAqtion` | 1 / 2 / 3 / 4 / 6 | 678k / **694k** / 660k / 610k / 492k |
+
+The Studio's ceiling is the machine's. A plain program with no rocketnet in it
+and the same socket shape (1000 connected UDP sockets on one port with
+`SO_REUSEPORT`, one `sendmsg_x` of 15 datagrams per socket per tick) sent 696k
+packets a second from the Studio with 2 threads, 677k to 696k with 3 and 632k
+with 4; with 60 datagrams per call, 717k with 3. The kernel time per packet
+rose with the threads: 2.97 us at 2, 4.4 us at 3, 6.4 us at 4. From the Mac
+mini the same program sent 884k with 2 threads and 900k with 3 into another
+Mac, and 900k with 3 into the Linux players' box. In every row the
+interface queue was empty (`qlength 0`), with no drops and no flow control: the
+queue is not the limit.
+
+### Why more transmit workers are not faster
+
+`msgx` gives every client its own connected socket, and each client belongs to
+exactly one transmit worker (`rocketnet_server_msgx_send_queue_of` in
+`sdk/rocketnet_server_msgx_apple.cpp`), so no two workers share a socket. A
+worker sends one client's packets with one `sendmsg_x`
+(`sdk/rocketnet_msgx_send_runs.h`); the destination is the connected socket's,
+so the kernel does no per-packet route lookup. The worker's own code is about 1%
+of its time; the rest is the kernel inside `sendmsg_x`.
+
+Below the sockets every packet goes through one interface. A kernel-stack
+profile of the Studio (below) shows its shape: each sending thread enqueues
+into the interface's output queue under that queue's lock (`ifnet_enqueue`),
+and one kernel thread, `ifnet_start_en0`, dequeues under the same lock
+(`ifnet_dequeue_multi`) and hands each packet to the driver, which on the
+Studio copies it into its transmit ring (`tx_pkt_queue`, `mbuf_copydata`) and
+later frees it (`releaseFreePackets`). With 1 worker that kernel thread used
+3.1 s of CPU in 5 s and the worker spent 12% of its samples spinning on the
+queue lock; with 3 workers the kernel thread used 4.2 s in 5 s, each worker
+spent about 20% spinning, and the workers' cycles per instruction rose from
+0.82 to 2.08. Every added worker spins on the same lock and cache lines, so the
+total stays near 700k and falls past 2. On the Mac mini the same path scales to
+900k at 3 workers.
+
+### Setting it up
+
+- **Transmit workers.** The server config's `num_xdp_queues`
+  (`ROCKETNET_SERVER_NUM_XDP_QUEUES`) is also the `msgx` transmit worker count
+  (the `msgx` create in `sdk/rocketnet_driver_builtin.cpp` hands it to
+  `rocketnet_server_msgx_create`); zero takes `ROCKETNET_MSGX_DEFAULT_WORKERS`
+  (3, `sdk/rocketnet_server_msgx.h`). Use the smallest count that sends what
+  you offer: 3 on the Mac mini, 2 on the Studio. More was never faster on
+  either Mac. The server also runs one receive worker.
+- **What to expect.** A Mac like the Mac mini above sends 900k 1200-byte
+  packets a second (9.4 Gb/s). A Mac like the Studio sends about 700k (about 7
+  Gb/s); the rest of the frame is unaffected (60 frames a second, the main
+  thread's network work 0.3 ms a frame, players whole), but the game threads'
+  sends past that rate are refused (`MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`).
+  The space game's average load (8 packets per client per tick, 480k a
+  second) fits on both.
+- **The players' side must not pause the Mac.** The Mac's 10GBASE-T port
+  negotiates Ethernet flow control. A receiver that cannot keep up sends
+  pause frames; the Mac's interface queue then fills, the kernel drops packets
+  (`drop overflow` in `netstat -I en0 -qq`) and answers sends with `ENOBUFS`.
+  A Linux receiver with one receive queue takes all of a server's traffic on
+  one core: spread it with receive packet steering, for example `echo ffff |
+  sudo tee /sys/class/net/<dev>/queues/rx-0/rps_cpus`. Without it the plain
+  program above sent 708k with 3 threads from the Mac mini into such a
+  receiver; with it, 900k.
+- **Nothing else on the Mac.** macOS has no core isolation and pinning is
+  advisory: the transmit workers run at user-interactive QoS, and other load
+  on the Mac (builds, CI runners) takes the same cores.
+- **Descriptors.** `msgx` opens a socket per client: see "The file-descriptor
+  limit" below.
+- **Interface settings, not measured.** Both Macs negotiate flow control and
+  energy-efficient ethernet (EEE). They are media options of the interface:
+  `ifconfig -m en0` lists the media the port supports (no privilege), and
+  `sudo ifconfig en0 media 10Gbase-T mediaopt full-duplex` would select
+  10GBASE-T without flow control and without EEE (it needs admin, and the link
+  renegotiates). Neither was changed: on the Studio the queue stayed empty and
+  the senders are bound by the kernel's send path, so neither is expected to
+  raise the rate. The interface queue's own settings
+  (`net.link.generic.system.sndq_maxlen`, `net.classq.fq_codel.*`, read with
+  `sysctl`) need admin to change and were not changed for the same reason.
+
+### Checking that the interface is not the limit
+
+During a row, on the server (no privilege):
+
+```
+netstat -I en0 -qq     # sched FQ_CODEL: qlength, dropped pkts, flow control, drop overflow
+netstat -I en0 -b      # Opkts, Obytes (diff two readings for the rate)
+netstat -s -p udp      # datagrams output
+top -l 2 -s 3 -o cpu -n 4 -stats pid,command,cpu,threads   # the server and kernel_task
+ps -M -p <server pid>  # per-thread CPU: transmit workers near 100% system time
+```
+
+Diff two readings. A growing `drop overflow` or `flow control` count means the
+queue fills (look at the receiver first); a `qlength` at 0 with the transmit
+workers near 100% system time means the kernel's send path is the limit.
+
+### Profiling
+
+- `sample <pid> 10 -file out.txt` (no privilege) gives every thread's user
+  stacks. A transmit worker reads as `rocketnet_server_msgx_worker` ->
+  `rocketnet_server_msgx_run_send` -> `sendmsg_x`; the kernel frames below it
+  are not shown.
+- `sudo spindump <pid> 5 10 -file out.txt` (admin; read-only) samples every
+  process for 5 seconds every 10 ms with kernel stacks, and lists the given
+  process first. In the server's transmit workers look under `sendmsg_x` for
+  `ifnet_enqueue` and how many of its samples sit one call below it in a lock
+  (on the Studio, the frames at `kernel.release.t6031 + 441296`). In the
+  `kernel_task` process find the thread named `ifnet_start_en0`: its `cpu time`
+  over the 5 seconds is how busy the interface's single drain thread is, and its
+  stack names the driver (`AppleEthernetAquantiaAqtion::outputStart` on the
+  Studio). A thread `dlil_input_en0` is the receive side.
+- The release kernel exports few symbols, so most kernel frames read `???`;
+  compare the same frames between a 1-worker and a 3-worker row.
 
 ## The client's threads, QoS and App Nap
 
