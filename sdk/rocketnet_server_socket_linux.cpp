@@ -3602,10 +3602,6 @@ bool rocketnet_server_socket_test_buffer_exchange()
     return valid;
 }
 
-// A queue whose send flow index is -1 (constructed, before create publishes
-// the producer) has no staging buffer. finish and abort through any pointer
-// must return without forming send_buffer[-1]: tools/check_xdp_guard_control.py
-// removes both guards and expects this check to trip the sanitizer.
 // The per-queue room the server's send reserve reads (send_queues,
 // send_queue_of, send_room_queue) over two queues: the queue send_queue_of
 // names is the one a start really takes a slot in, its room is one under the
@@ -3720,6 +3716,10 @@ bool rocketnet_server_socket_test_queue_room()
     return valid;
 }
 
+// A queue whose send flow index is -1 (constructed, before create publishes
+// the producer) has no staging buffer. finish and abort through any pointer
+// must return without forming send_buffer[-1]: tools/check_xdp_guard_control.py
+// removes both guards and expects this check to trip the sanitizer.
 bool rocketnet_server_socket_test_inactive_flow()
 {
     void * server_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_socket_t ) );
