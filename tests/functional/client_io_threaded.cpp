@@ -26,8 +26,12 @@
 // than ROCKETNET_CLIENT_IO_BATCH live slots in one ring flush mid-ring), and
 // per-datagram send and receive. Each case ends with the stop; with the
 // progress table the I/O thread still holds a half-sent ring when it sees
-// quit (proofs/tla/RNClientIoShutdown.tla Start). No socket; the only clock
-// reads are the handshake bounds and the core's idle guard.
+// quit (proofs/tla/RNClientIoShutdown.tla Start). The stop runs on a thread of
+// its own with its wake call held, and the I/O thread's exit must not close
+// the transport until that call returns (WorkerQuiesce). No socket; the only
+// clock reads are the handshake bounds (the wait for the exit's discard
+// count among them), the core's idle guard, and the 100 ms in which the
+// exit must not close.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -112,6 +116,15 @@ struct threaded_fake_t
     std::atomic<bool> released_relaxed;
     std::atomic<uint64_t> sent_relaxed;
     uint64_t hold_timeouts;
+    // the held wake at the stop: armed, the next wake sets the wake, marks
+    // itself in flight and blocks until released, so stop's wake call is
+    // still to return while the I/O thread runs its exit. The close must
+    // wait for that call (proofs/tla/RNClientIoShutdown.tla WorkerQuiesce)
+    bool wake_hold_armed;
+    bool wake_in_flight;
+    bool wake_released;
+    uint64_t close_calls;
+    bool close_saw_wake_in_flight;
 };
 
 // ---- the payloads ----------------------------------------------------------
@@ -352,27 +365,54 @@ static bool threaded_wait( void * transport, bool readable, double timeout_secon
 static void threaded_wake( void * transport )
 {
     threaded_fake_t * fake = (threaded_fake_t *) transport;
-    std::lock_guard<std::mutex> guard( fake->lock );
+    std::unique_lock<std::mutex> guard( fake->lock );
     fake->wake = true;
+    fake->cond.notify_all();
+    if ( fake->wake_hold_armed )
+    {
+        fake->wake_hold_armed = false;
+        fake->wake_in_flight = true;
+        fake->cond.notify_all();
+        if ( !fake->cond.wait_for( guard, std::chrono::seconds( THREADED_HANDSHAKE_SECONDS ), [fake]
+                                   { return fake->wake_released; } ) )
+        {
+            fake->hold_timeouts++;
+        }
+        fake->wake_in_flight = false;
+        fake->cond.notify_all();
+    }
+}
+
+// the I/O thread's exit closes the handles once; a close while a wake call
+// is still to return is the write to a closed handle the exit must not allow
+static void threaded_close( void * transport )
+{
+    threaded_fake_t * fake = (threaded_fake_t *) transport;
+    std::lock_guard<std::mutex> guard( fake->lock );
+    fake->close_calls++;
+    if ( fake->wake_in_flight )
+    {
+        fake->close_saw_wake_in_flight = true;
+    }
     fake->cond.notify_all();
 }
 
 static const rocketnet_client_transport_io_operations_t threaded_operations_progress = {
     threaded_create, threaded_destroy, threaded_send, threaded_receive,
     threaded_send_batch, threaded_receive_batch, threaded_wait, threaded_wake,
-    NULL, NULL, NULL, threaded_send_batch_progress
+    NULL, NULL, threaded_close, threaded_send_batch_progress
 };
 
 static const rocketnet_client_transport_io_operations_t threaded_operations_batch = {
     threaded_create, threaded_destroy, threaded_send, threaded_receive,
     threaded_send_batch, threaded_receive_batch, threaded_wait, threaded_wake,
-    NULL, NULL, NULL, NULL
+    NULL, NULL, threaded_close, NULL
 };
 
 static const rocketnet_client_transport_io_operations_t threaded_operations_single = {
     threaded_create, threaded_destroy, threaded_send, threaded_receive,
     NULL, NULL, threaded_wait, threaded_wake,
-    NULL, NULL, NULL, NULL
+    NULL, NULL, threaded_close, NULL
 };
 
 // ---- the caller's side -----------------------------------------------------
@@ -607,6 +647,11 @@ static void threaded_run( const rocketnet_client_transport_io_operations_t * ope
     rig->fake.released_relaxed.store( false, std::memory_order_relaxed );
     rig->fake.sent_relaxed.store( 0, std::memory_order_relaxed );
     rig->fake.hold_timeouts = 0;
+    rig->fake.wake_hold_armed = false;
+    rig->fake.wake_in_flight = false;
+    rig->fake.wake_released = false;
+    rig->fake.close_calls = 0;
+    rig->fake.close_saw_wake_in_flight = false;
     rig->committed_live = 0;
     rig->pushed = 0;
     rig->pushed_oversize = 0;
@@ -616,6 +661,10 @@ static void threaded_run( const rocketnet_client_transport_io_operations_t * ope
     rig->transport.operations = operations;
     rig->transport.instance = &rig->fake;
     rocketnet_client_io_init( &rig->io, &rig->transport, &rig->mutex, rig->view, rig->buffers, threaded_time, NULL );
+
+    // the exit stores the discard count just before it waits for stop's
+    // wake call to return; a value no exit can store marks that it has not
+    rig->io.receive_discarded_at_stop.store( UINT64_MAX, std::memory_order_relaxed );
 
     const bool oversize = true;
 
@@ -735,7 +784,21 @@ static void threaded_run( const rocketnet_client_transport_io_operations_t * ope
     const uint64_t final_slots = threaded_fill_ring( rig, 9, THREADED_ROUNDS + 2 );
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, threaded_round_port( THREADED_ROUNDS + 2 ) );
-    rocketnet_client_io_stop( &rig->io, final_slots, &to );
+
+    // stop runs on its own thread with its wake call held, so the I/O thread
+    // reaches its exit while that call is still to return
+    // (proofs/tla/RNClientIoShutdown.tla WorkerQuiesce): the exit reads what
+    // is queued, stores the discard count, and then must wait. A close here
+    // would be a write to a closed, possibly reused, handle by the wake
+
+    {
+        std::lock_guard<std::mutex> guard( rig->fake.lock );
+        rig->fake.wake_hold_armed = true;
+    }
+    std::thread stop_thread( [rig, final_slots, &to]
+                             { rocketnet_client_io_stop( &rig->io, final_slots, &to ); } );
+    threaded_handshake( rig, [rig]
+                        { return rig->fake.wake_in_flight; }, "stop wake held" );
 
     if ( hold )
     {
@@ -743,6 +806,26 @@ static void threaded_run( const rocketnet_client_transport_io_operations_t * ope
         rig->fake.released = true;
         rig->fake.cond.notify_all();
     }
+
+    {
+        const std::chrono::steady_clock::time_point until = std::chrono::steady_clock::now() + std::chrono::seconds( THREADED_HANDSHAKE_SECONDS );
+        while ( rig->io.receive_discarded_at_stop.load( std::memory_order_relaxed ) == UINT64_MAX && std::chrono::steady_clock::now() < until )
+        {
+            std::this_thread::yield();
+        }
+        threaded_check( rig->io.receive_discarded_at_stop.load( std::memory_order_relaxed ) != UINT64_MAX );
+    }
+
+    // the exit is at its wait: give it 100 ms to close, which it must not
+    {
+        std::unique_lock<std::mutex> guard( rig->fake.lock );
+        threaded_check( !rig->fake.cond.wait_for( guard, std::chrono::milliseconds( 100 ), [rig]
+                                                  { return rig->fake.close_calls > 0; } ) );
+        threaded_check( rig->fake.close_calls == 0 );
+        rig->fake.wake_released = true;
+        rig->fake.cond.notify_all();
+    }
+    stop_thread.join();
 
     rocketnet_platform_thread_join( thread );
     rocketnet_platform_thread_destroy( thread );
@@ -754,6 +837,10 @@ static void threaded_run( const rocketnet_client_transport_io_operations_t * ope
         threaded_check( rig->fake.batch_calls == 3 );
     }
 
+    threaded_check( rig->fake.close_calls == 1 );
+    threaded_check( !rig->fake.close_saw_wake_in_flight );
+    threaded_check( !rig->fake.wake_in_flight );
+    threaded_check( rig->fake.hold_timeouts == 0 );
     threaded_check( rig->io.stopped.load( std::memory_order_acquire ) );
     threaded_check( rocketnet_client_io_step( &rig->io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     threaded_check( rig->fake.send_errors == 0 );
