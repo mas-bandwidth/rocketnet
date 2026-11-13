@@ -136,7 +136,10 @@ typedef int harden_socket_t;
 #endif // #if defined( _WIN32 )
 
 #if defined( __linux__ )
+#include <dirent.h>
 #include <linux/if_ether.h>
+#include <sched.h>
+#include <sys/syscall.h>
 #include <pthread.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
@@ -448,6 +451,7 @@ struct harden_options_t
     int fill_jobs = 0;
     bool space_shape = false; // --frame-shape space: space game's server frame (see harden_space_t)
     int game_threads = 0;     // --game-threads N: the ThreadPool, N threads in all, the main thread first
+    int net_first_cpu = -1;   // --net-first-cpu C: the library's own network threads (gso queue workers) on cores C, C+1, ... (xdp pins its own)
     int pin_first_cpu = -1;   // --pin-first-cpu C: the main thread on core C, game thread i on C + i
     double world_ms = 2.0;    // --world-ms: the main thread's own share of the stand-in world update
     double game_load = 0.5;   // --game-load F: stand-in game jobs, F of each game thread per frame
@@ -647,6 +651,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         else if ( strcmp( a, "--game-threads" ) == 0 )
         {
             o->game_threads = atoi( v );
+        }
+        else if ( strcmp( a, "--net-first-cpu" ) == 0 )
+        {
+            o->net_first_cpu = atoi( v );
         }
         else if ( strcmp( a, "--pin-first-cpu" ) == 0 )
         {
@@ -2091,6 +2099,44 @@ static void harden_profile_run( harden_profile_t * p )
 }
 #endif // #if defined( _WIN32 )
 
+
+// pins every thread of this process but the calling one to its own core, first_cpu upward,
+// in thread id order; prints each as harden_net_threads
+static void harden_pin_network_threads( int first_cpu )
+{
+    const pid_t self = (pid_t) syscall( SYS_gettid );
+    DIR * dir = opendir( "/proc/self/task" );
+    if ( !dir )
+    {
+        printf( "harden_net_threads: unavailable (cannot read /proc/self/task)\n" );
+        return;
+    }
+    std::vector<pid_t> tids;
+    for ( struct dirent * e = readdir( dir ); e; e = readdir( dir ) )
+    {
+        const pid_t tid = (pid_t) atoi( e->d_name );
+        if ( tid > 0 && tid != self )
+        {
+            tids.push_back( tid );
+        }
+    }
+    closedir( dir );
+    std::sort( tids.begin(), tids.end() );
+    int cpu = first_cpu;
+    for ( pid_t tid : tids )
+    {
+        cpu_set_t set;
+        CPU_ZERO( &set );
+        CPU_SET( cpu, &set );
+        const int rc = sched_setaffinity( tid, sizeof( set ), &set );
+        printf( "harden_net_threads: tid=%d cpu=%d rc=%d\n", (int) tid, cpu, rc );
+        cpu++;
+    }
+    fflush( stdout );
+}
+#endif // #if defined( __linux__ )
+
+
 static int harden_server_main( const harden_options_t & o )
 {
     const char * role = "server";
@@ -2144,6 +2190,16 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_verdict: role=server verdict=FAIL reason=transport granted=%s pinned=%s\n", granted, o.transport.c_str() );
         return 1;
     }
+#if defined( __linux__ )
+    // the owner's layout for a transport whose network threads are the library's own
+    // (gso queue workers): CPU 0 the OS, the network threads on the next cores, each on
+    // its own. Every thread that exists now but this one is a network thread: the game
+    // threads and the fill jobs are made later.
+    if ( o.net_first_cpu >= 0 )
+    {
+        harden_pin_network_threads( o.net_first_cpu );
+    }
+#endif // #if defined( __linux__ )
     uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, key );
     char key_hex[2 * ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 1];
