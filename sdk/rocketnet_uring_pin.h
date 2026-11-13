@@ -14,11 +14,13 @@
 #ifndef ROCKETNET_SDK_ROCKETNET_URING_PIN_H
 #define ROCKETNET_SDK_ROCKETNET_URING_PIN_H
 
+#include <stdint.h>
+
 // the pin states a worker reports (rocketnet_server_uring_worker_cpu): a cpu
 // number once pinned, or one of these
 
 #define ROCKETNET_URING_PIN_PENDING ( -2 ) // the worker thread has not run its pin yet
-#define ROCKETNET_URING_PIN_NONE ( -1 )  // not pinned: not asked for (num_os_cpus 0) or refused (counted, logged by name)
+#define ROCKETNET_URING_PIN_NONE ( -1 )  // not pinned: refused (counted, logged by name)
 
 // why a pin was refused
 
@@ -58,33 +60,47 @@ static inline int rocketnet_uring_pin_check( int cpu, int set_size, int online )
     return ROCKETNET_URING_PIN_OK;
 }
 
-// where a worker whose pin was refused may run: the first cpu it may use, or
-// -1 for none to confine to. The cpus the OS leaves to the server,
-// num_os_cpus .. online - 1, and when there is none past the OS's but the
-// machine has more than one cpu (online <= num_os_cpus), 1 .. online - 1:
-// never cpu 0, the OS's core. The refused worker would otherwise keep the
-// mask it inherited, which includes cpu 0. Only a one cpu machine has nothing
-// to confine to: the mask stays as it was.
+// where a worker whose pin was refused may run, as a cpu bitmask (bit c of
+// word c / 64 is cpu c): taken from the mask the worker has now, which holds
+// only cpus the system lets it use (online, inside its cpuset; gaps in the
+// numbering are its own), so the confine never asks for a cpu the system
+// would refuse. The cpus of that mask from the OS's up (num_os_cpus, never
+// below 1); when none of them is, every cpu of it but cpu 0. Never cpu 0, the
+// OS's core: the refused worker would otherwise keep the mask it inherited,
+// which holds cpu 0. false, and confined all zero, when nothing but cpu 0 is
+// left (a mask of cpu 0 alone, or an empty one): the mask stays as it was.
 
-static inline int rocketnet_uring_pin_fallback_first( int num_os_cpus, int online )
+static inline bool rocketnet_uring_pin_confine_words( const uint64_t * current, int words, int num_os_cpus, uint64_t * confined )
 {
     const int os_cpus = rocketnet_uring_pin_os_cpus( num_os_cpus );
-    if ( online > os_cpus )
+    bool past_os = false;
+    for ( int w = 0; w < words; w++ )
     {
-        return os_cpus;
+        uint64_t keep = current[w];
+        const int first = w * 64;
+        if ( os_cpus >= first + 64 )
+        {
+            keep = 0;
+        }
+        else if ( os_cpus > first )
+        {
+            keep &= ~( ( (uint64_t) 1 << ( os_cpus - first ) ) - 1 );
+        }
+        confined[w] = keep;
+        past_os = past_os || keep != 0;
     }
-    return online > 1 ? 1 : -1;
-}
+    if ( past_os )
+    {
+        return true;
+    }
 
-static inline bool rocketnet_uring_pin_fallback_allows( int cpu, int num_os_cpus, int online )
-{
-    const int first = rocketnet_uring_pin_fallback_first( num_os_cpus, online );
-    return first >= 0 && cpu >= first && cpu < online;
-}
-
-static inline bool rocketnet_uring_pin_fallback_possible( int num_os_cpus, int online )
-{
-    return rocketnet_uring_pin_fallback_first( num_os_cpus, online ) >= 0;
+    bool any = false;
+    for ( int w = 0; w < words; w++ )
+    {
+        confined[w] = w == 0 ? ( current[w] & ~(uint64_t) 1 ) : current[w];
+        any = any || confined[w] != 0;
+    }
+    return any;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_URING_PIN_H

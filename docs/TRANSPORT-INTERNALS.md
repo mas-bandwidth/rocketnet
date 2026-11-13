@@ -196,7 +196,7 @@ bounded per receive call by the read budget below.
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | 16384 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
-| io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_RECEIVE_BANK_FLOOR`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
+| io_uring | per queue, a producer bank of at least 4096 send slots sized by rate (at most 32768) and two banks the worker sends from; the worker reaps its own completions (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `rocketnet_server_uring_send_slots`, `ROCKETNET_URING_SEND_MAX_BANK_SLOTS`) | 4096 receive buffers of 66 KiB per queue; a receive bank per queue of at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR` (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
 | rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
@@ -595,9 +595,10 @@ up to 64 KiB, so a provided buffer is 66 KiB (`ROCKETNET_URING_RECV_BUFFER_BYTES
 4096 buffers are 264 MiB of address space per queue, allocated at create
 (8 MiB of 2 KiB buffers before `UDP_GRO`), and the buffers are not written at
 create, so a page is resident only once the kernel writes it: small datagrams
-keep about one page of each buffer resident. Each `send_packets` and `receive_packets` call reaps at most a
-fixed completion budget (`ROCKETNET_URING_RECEIVE_BANK_FLOOR`, and the receive
-bank's size, `rocketnet_server_uring_bank_size`) and neither call waits, so an
+keep about one page of each buffer resident. The queue workers reap every
+completion; `receive_packets` takes at most the receive bank's size
+(`rocketnet_server_uring_bank_size`, at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR`)
+and neither call waits, so an
 update returns under sustained traffic; completions past a budget stay queued
 for the next call, and a send without its completion keeps its slot until a
 later call reaps it. A queue count past
@@ -619,7 +620,7 @@ re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
-segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (`RECEIVE_ERRORS`). Stop requests cancellation, and stopped remains
+segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (the server's `RECEIVE_FAILED`). Stop requests cancellation, and stopped remains
 false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;

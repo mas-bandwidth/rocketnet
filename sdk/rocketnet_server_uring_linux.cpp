@@ -376,33 +376,59 @@ static bool rocketnet_server_uring_receive_armed( void * context )
 // transport driven directly).
 
 // a refused pin leaves the worker on the mask it inherited, which may include
-// cpu 0, the OS's core: confine it to the cpus past the OS's
-// (rocketnet_uring_pin_fallback_allows), where that is itself allowed; the
-// pin state stays NONE either way
+// cpu 0, the OS's core: confine it to the cpus of its own mask past the OS's,
+// or to all of them but cpu 0 (rocketnet_uring_pin_confine_words); the pin
+// state stays NONE either way
 
-static void rocketnet_server_uring_confine_worker( struct rocketnet_server_uring_t * uring, int queue_index, int online )
+#define ROCKETNET_URING_PIN_WORDS ( CPU_SETSIZE / 64 )
+
+static void rocketnet_server_uring_confine_worker( const struct rocketnet_server_uring_t * uring, int queue_index, int online )
 {
-    if ( !rocketnet_uring_pin_fallback_possible( uring->num_os_cpus, online ) )
+    // the mask the worker has now (only cpus the system lets it use); when it
+    // cannot be read, every online cpu
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    uint64_t current[ROCKETNET_URING_PIN_WORDS] = {};
+    if ( pthread_getaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset ) == 0 )
     {
+        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+        {
+            if ( CPU_ISSET( (size_t) cpu, &cpuset ) )
+            {
+                current[cpu / 64] |= (uint64_t) 1 << ( cpu % 64 );
+            }
+        }
+    }
+    else
+    {
+        for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
+        {
+            current[cpu / 64] |= (uint64_t) 1 << ( cpu % 64 );
+        }
+    }
+
+    uint64_t confined[ROCKETNET_URING_PIN_WORDS] = {};
+    if ( !rocketnet_uring_pin_confine_words( current, ROCKETNET_URING_PIN_WORDS, uring->num_os_cpus, confined ) )
+    {
+        rocketnet_warn( "io_uring worker %d: no cpu but cpu 0 to confine it to; it keeps its cpus", queue_index );
         return;
     }
 
-    cpu_set_t cpuset;
     CPU_ZERO( &cpuset );
-    for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
+    for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
     {
-        if ( rocketnet_uring_pin_fallback_allows( cpu, uring->num_os_cpus, online ) )
+        if ( confined[cpu / 64] & ( (uint64_t) 1 << ( cpu % 64 ) ) )
         {
             CPU_SET( (size_t) cpu, &cpuset );
         }
     }
 
+    // a subset of the cpus it may use: refused only when one went offline in
+    // between; named, the refusal of the pin itself is already counted
     const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
     if ( result != 0 )
     {
-        uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "io_uring worker %d: confining it to cpus %d .. %d refused (%s); it keeps its inherited cpus", queue_index,
-                        rocketnet_uring_pin_fallback_first( uring->num_os_cpus, online ), online - 1, rocketnet_platform_socket_error_text( result ).text );
+        rocketnet_warn( "io_uring worker %d: confining it past the OS's cpus refused (%s); it keeps its cpus", queue_index, rocketnet_platform_socket_error_text( result ).text );
     }
 }
 
@@ -791,8 +817,8 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     // the io_uring transport's own buffer step after the shared open: when the
     // open's grant is short, ask once more past the sysctl limit with the
-    // force option (rocketnet_socket_buffer_request, shared with the gso
-    // transport) and name a short grant at start with the sysctl to set
+    // force option (rocketnet_socket_buffer_request) and name a short grant
+    // at start with the sysctl to set
     // (rocketnet_socket_buffer_log). a short grant is a fact about the host,
     // not an error
 

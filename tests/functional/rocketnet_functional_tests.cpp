@@ -8093,6 +8093,9 @@ void rocketnet_test_server_gso_receive_overflow_counted()
 #include "rocketnet_server_uring.h"
 #include "reserved_port.h"
 
+#include <pthread.h>
+#include <sched.h>
+
 #if ROCKETNET_DEV
 #if defined( __GNUC__ ) || defined( __clang__ )
 __attribute__( ( noinline ) )
@@ -8915,6 +8918,20 @@ void rocketnet_test_server_uring_worker_pin()
 
     // a cpu the machine does not have: refused by name, counted, never reported pinned
     {
+        // the workers inherit this thread's mask: every online cpu, cpu 0
+        // among them (a runner may have narrowed it), so the confine is what
+        // keeps them off cpu 0; put back after
+        cpu_set_t saved;
+        CPU_ZERO( &saved );
+        const bool restore = pthread_getaffinity_np( pthread_self(), sizeof( saved ), &saved ) == 0;
+        cpu_set_t every;
+        CPU_ZERO( &every );
+        for ( int cpu = 0; cpu < online && cpu < CPU_SETSIZE; cpu++ )
+        {
+            CPU_SET( (size_t) cpu, &every );
+        }
+        (void) pthread_setaffinity_np( pthread_self(), sizeof( every ), &every );
+
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
         struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create_pinned( NULL, &address, queues, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, online + 1000 );
@@ -8936,6 +8953,11 @@ void rocketnet_test_server_uring_worker_pin()
         }
         rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == (uint64_t) queues );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+
+        if ( restore )
+        {
+            (void) pthread_setaffinity_np( pthread_self(), sizeof( saved ), &saved );
+        }
     }
 
     // placement: queue q on cpu 1 + q

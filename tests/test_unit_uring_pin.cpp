@@ -60,44 +60,59 @@ static void test_uring_pin_check_refusals()
     check( rocketnet_uring_pin_check( 1, 1024, 1 ) == ROCKETNET_URING_PIN_OFFLINE );
 }
 
-// a refused worker is confined to the cpus past the OS's, or to 1 .. online - 1
-// when there is none past them; never cpu 0 on a machine with more than one
-// cpu, and the mask is left alone only on a one cpu machine. Pure: the unit
-// suite never sets an affinity (the confine itself is a functional case)
+// a refused worker is confined to the cpus of its own mask past the OS's, or
+// to all of them but cpu 0 when none is past them; never cpu 0, and the mask
+// is left alone only when nothing but cpu 0 is in it. Pure: the unit suite
+// never sets an affinity (the confine itself is a functional case)
 
-static void test_uring_pin_fallback_never_allows_core_zero()
+static void test_uring_pin_confine_never_allows_core_zero()
 {
-    for ( int num_os_cpus = -1; num_os_cpus <= 40; num_os_cpus++ )
-    {
-        for ( int online = 1; online <= 16; online++ )
-        {
-            if ( online > 1 )
-            {
-                check( !rocketnet_uring_pin_fallback_allows( 0, num_os_cpus, online ) );
-                check( rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) );
-            }
-            else
-            {
-                check( !rocketnet_uring_pin_fallback_possible( num_os_cpus, online ) );
-            }
+    const int words = 4;
 
+    // every mask of the first 12 cpus, every num_os_cpus around them
+    for ( uint64_t mask = 0; mask < ( (uint64_t) 1 << 12 ); mask++ )
+    {
+        for ( int num_os_cpus = -1; num_os_cpus <= 14; num_os_cpus++ )
+        {
+            uint64_t current[4] = { mask, 0, 0, 0 };
+            uint64_t confined[4] = { ~(uint64_t) 0, ~(uint64_t) 0, ~(uint64_t) 0, ~(uint64_t) 0 };
+            const bool ok = rocketnet_uring_pin_confine_words( current, words, num_os_cpus, confined );
             const int os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
-            int allowed = 0;
-            for ( int cpu = 0; cpu < online; cpu++ )
-            {
-                if ( rocketnet_uring_pin_fallback_allows( cpu, num_os_cpus, online ) )
-                {
-                    check( cpu >= 1 );
-                    allowed++;
-                }
-            }
-            const int expected = online > os_cpus ? online - os_cpus : ( online > 1 ? online - 1 : 0 );
-            check( allowed == expected );
+            const uint64_t past = os_cpus >= 64 ? 0 : ( mask & ~( ( (uint64_t) 1 << os_cpus ) - 1 ) );
+            const uint64_t expected = past != 0 ? past : ( mask & ~(uint64_t) 1 );
+            check( ok == ( expected != 0 ) );
+            check( confined[0] == expected );
+            check( ( confined[0] & 1 ) == 0 );
+            check( confined[1] == 0 && confined[2] == 0 && confined[3] == 0 );
         }
     }
 
-    // a cpu past the online ones is never allowed
-    check( !rocketnet_uring_pin_fallback_allows( 16, 1, 16 ) );
+    // gaps in the numbering: cpus 0, 4, 5, 6 (the count online is 4)
+    {
+        uint64_t current[4] = { ( 1u << 0 ) | ( 1u << 4 ) | ( 1u << 5 ) | ( 1u << 6 ), 0, 0, 0 };
+        uint64_t confined[4];
+        check( rocketnet_uring_pin_confine_words( current, words, 1, confined ) );
+        check( confined[0] == ( ( 1u << 4 ) | ( 1u << 5 ) | ( 1u << 6 ) ) );
+    }
+
+    // cpus past the first word: the OS's 70, the mask 0, 65, 130
+    {
+        uint64_t current[4] = { 1, 2, 4, 0 };
+        uint64_t confined[4];
+        check( rocketnet_uring_pin_confine_words( current, words, 70, confined ) );
+        check( confined[0] == 0 && confined[1] == 0 && confined[2] == 4 && confined[3] == 0 );
+        check( rocketnet_uring_pin_confine_words( current, words, 200, confined ) );
+        check( confined[0] == 0 && confined[1] == 2 && confined[2] == 4 );
+    }
+
+    // cpu 0 alone, or nothing: left alone
+    {
+        uint64_t current[4] = { 1, 0, 0, 0 };
+        uint64_t confined[4];
+        check( !rocketnet_uring_pin_confine_words( current, words, 1, confined ) );
+        check( confined[0] == 0 );
+    }
+
     // the OS keeps at least cpu 0, whatever the config says
     check( rocketnet_uring_pin_os_cpus( 0 ) == 1 );
     check( rocketnet_uring_pin_os_cpus( -5 ) == 1 );
@@ -106,6 +121,6 @@ static void test_uring_pin_fallback_never_allows_core_zero()
 }
 
 REGISTER_UNIT_TEST( test_uring_pin_cpu_placement );
-REGISTER_UNIT_TEST( test_uring_pin_fallback_never_allows_core_zero );
+REGISTER_UNIT_TEST( test_uring_pin_confine_never_allows_core_zero );
 REGISTER_UNIT_TEST( test_uring_pin_never_chooses_core_zero );
 REGISTER_UNIT_TEST( test_uring_pin_check_refusals );

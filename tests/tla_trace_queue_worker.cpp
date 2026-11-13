@@ -17,10 +17,11 @@
 // or cancelled; the receive ending on its own or cancelled. A cancel's own
 // completion comes with its target's and changes no model variable. The
 // receive is a fake that is armed from the start, as the transport arms it,
-// and armed again by the worker after it ends on its own. Every record is
-// read off the fake kernel (what it holds and what it has posted) and the
-// handoff, never off the worker's own flags, so a worker that miscounts
-// what it put in the kernel shows as a step the model does not take.
+// and armed again by the worker after it ends on its own. Every record reads
+// the worker's own state from the library's struct (in_kernel, the armed and
+// cancelled flags, the class of the send completion it reaped) and what the
+// fake kernel has posted, so a worker that miscounts what it put in the
+// kernel shows as a step the model does not take.
 //
 // One record per step (tla_step): the call, the action its own result says
 // it took, and every model variable after it. A worker step is the action
