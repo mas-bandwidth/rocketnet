@@ -1372,7 +1372,7 @@ static bool rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        char why[160];
+        char why[192];
         snprintf( why, sizeof( why ), "confining it away from the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
         rocketnet_server_gso_warn_left_on_core_zero( queue_index, calls, why );
         return false;

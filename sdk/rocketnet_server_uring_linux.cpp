@@ -494,7 +494,7 @@ static bool rocketnet_server_uring_confine_worker( const struct rocketnet_server
     const int result = calls->set( &cpuset );
     if ( result != 0 )
     {
-        char why[160];
+        char why[192];
         snprintf( why, sizeof( why ), "confining it past the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
         rocketnet_server_uring_warn_left_on_core_zero( queue_index, mask_read ? &kept : NULL, why );
         return false;
