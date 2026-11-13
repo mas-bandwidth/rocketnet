@@ -895,18 +895,30 @@ inline unsigned suite_planned_cpus( unsigned usable, unsigned host )
     return ( std::min )( spread, host );
 }
 
-// The job count for a requested count (0: none): the cpus this process may
-// run on, this host's memory budget, and this platform's ceiling.
-inline int suite_job_count_requested( int requested )
+// This platform's ceiling on the job count: the Windows wait set, and none
+// elsewhere.
+inline int suite_platform_job_ceiling()
 {
 #if defined( _WIN32 )
-    const int ceiling = SUITE_WAIT_HANDLES;
+    return SUITE_WAIT_HANDLES;
 #else
-    const int ceiling = 0;
+    return 0;
 #endif // #if defined( _WIN32 )
+}
 
-    const unsigned planned = suite_planned_cpus( suite_usable_cpus(), std::thread::hardware_concurrency() );
-    return suite_job_count_for( planned, suite_memory_budget_bytes(), requested, ceiling );
+// The job count from what the host reports, passed in: the cpus this process
+// may run on, the host's cpu count, its memory budget, and a requested count
+// (0: none), under this platform's ceiling.
+inline int suite_job_count_planned( unsigned usable, unsigned host, uint64_t budget, int requested )
+{
+    return suite_job_count_for( suite_planned_cpus( usable, host ), budget, requested, suite_platform_job_ceiling() );
+}
+
+// The job count for a requested count (0: none) on this host: its usable
+// cpus, its cpu count and its memory budget, read live.
+inline int suite_job_count_requested( int requested )
+{
+    return suite_job_count_planned( suite_usable_cpus(), std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested );
 }
 
 inline int suite_job_count()
