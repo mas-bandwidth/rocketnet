@@ -214,8 +214,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110628147ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137506 )
+// The protocol send reserve keeps, per send queue, a fill budget, its claims
+// and the reserve (three uint64_t by ROCKETNET_SERVER_MAX_SEND_QUEUES, 1536
+// bytes), and one own-frame flag a client slot with their count (1008
+// bytes); the worker receive drops keep their totals (a uint64_t a reason,
+// 128 bytes); and three counters are appended (24 bytes, in every counter
+// block). Measured on bench-nyc-6 (gcc, Debug, ROCKETNET_TEST_VERBOSE=1):
+// actual=3111679475 for the server, 2752 above the last reading with the
+// object's alignment, and actual=15186146 for the client, 64 above it (the
+// counters cross its object's 64-byte rounding).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110630899ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137570 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

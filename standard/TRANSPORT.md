@@ -3760,6 +3760,7 @@ The registry of counters, in index order, is:
 | `DISCONNECT_BURST_DROPPED` | `refusal` | `none` |
 | `RECEIVE_DROPPED_FULL` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
+| `RECEIVE_FAILED` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3873,7 +3874,7 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
 a1 00 00 00 51 8b 57 c4 00 00 00 83 0e ee 6b 00
-00 00
+00 00 b2 57 b6 3d 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
