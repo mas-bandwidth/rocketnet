@@ -132,6 +132,99 @@ for want in "blocks.yml / strip apt-get install" "blocks.yml / fold brew install
   fi
 done
 
+# The hosted-only guard exempts a step only when it is exactly
+# `runner.environment == 'github-hosted'`: `!=` (a fleet-only step) and an
+# `||` are read like any other step.
+mkdir -p "$tmp/guards/wf"
+cat > "$tmp/guards/wf/guards.yml" <<'EOF'
+name: guards
+on: [push]
+jobs:
+  hosted:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Exact guard
+        if: runner.environment == 'github-hosted'
+        run: sudo apt-get install -y cmake
+      - name: Exact guard in an expression
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: brew install cmake
+  negated:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Fleet-only step
+        if: runner.environment != 'github-hosted'
+        run: sudo apt-get install -y cbmc
+  either:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Either runner
+        if: runner.environment == 'github-hosted' || github.event_name == 'push'
+        run: cargo install ripgrep
+EOF
+if ROCKETNET_WF_DIR="$tmp/guards/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/guards.out" 2>&1; then
+  echo "SELFTEST FAIL: a negated or widened hosted guard exempted an install" >&2
+  cat "$tmp/guards.out" >&2
+  exit 1
+fi
+if ! grep -q "guards.yml / negated apt-get install" "$tmp/guards.out" ||
+   ! grep -q "guards.yml / either cargo install" "$tmp/guards.out" ||
+   grep -q "guards.yml / hosted " "$tmp/guards.out"; then
+  echo "SELFTEST FAIL: the hosted guard did not exempt exactly the exact guard" >&2
+  cat "$tmp/guards.out" >&2
+  exit 1
+fi
+
+# Matrix rows: a scalar axis is expanded beside include rows (an include that
+# matches no combination adds its own), and a block-sequence axis is read.
+mkdir -p "$tmp/matrix/wf"
+cat > "$tmp/matrix/wf/matrix.yml" <<'EOF'
+name: matrix
+on: [push]
+jobs:
+  with-include:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-2404
+            extra: 1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: make
+  block-axis:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-2404
+          - macos-14
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: make
+  merged:
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            runner: '["self-hosted", "fleet"]'
+    runs-on: ${{ matrix.runner && fromJSON(matrix.runner) || matrix.os }}
+    steps:
+      - run: make
+EOF
+if ROCKETNET_WF_DIR="$tmp/matrix/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/matrix.out" 2>&1; then
+  echo "SELFTEST FAIL: a hosted label in a matrix axis passed" >&2
+  cat "$tmp/matrix.out" >&2
+  exit 1
+fi
+if ! grep -q "matrix.yml / with-include runs on hosted label ubuntu-latest" "$tmp/matrix.out" ||
+   ! grep -q "matrix.yml / block-axis runs on hosted label macos-14" "$tmp/matrix.out" ||
+   grep -q "matrix.yml / merged " "$tmp/matrix.out"; then
+  echo "SELFTEST FAIL: matrix axes beside include rows, or block-sequence axes, were not read as GitHub expands them" >&2
+  cat "$tmp/matrix.out" >&2
+  exit 1
+fi
+
 # DISABLED exceptions: a row exempts only a job that carries `if: false` and
 # a `# DISABLED:` comment. A live job listed DISABLED with an unguarded
 # install is refused (its row and its install); the disabled job's install
@@ -176,6 +269,29 @@ if ! grep -q "disabled.yml / live has a DISABLED exception but is live" "$tmp/li
    ! grep -q "disabled.yml / live apt-get install" "$tmp/live.out"; then
   echo "SELFTEST FAIL: the stale DISABLED row or the live job's install was not named" >&2
   cat "$tmp/live.out" >&2
+  exit 1
+fi
+
+# A live job on a hosted label with a DISABLED row is refused once, not once
+# for the row and again for the label.
+mkdir -p "$tmp/hosted-live/wf"
+cat > "$tmp/hosted-live/wf/hl.yml" <<'EOF'
+name: hl
+on: [push]
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: make
+EOF
+printf 'hl.yml live DISABLED stale\n' > "$tmp/exc-hl"
+if ROCKETNET_WF_DIR="$tmp/hosted-live/wf" ROCKETNET_EXC_FILE="$tmp/exc-hl" python3 "$check" > "$tmp/hl.out" 2>&1; then
+  echo "SELFTEST FAIL: a live hosted job with a DISABLED row passed" >&2
+  exit 1
+fi
+if [ "$(grep -c "hl.yml / live" "$tmp/hl.out")" -ne 1 ]; then
+  echo "SELFTEST FAIL: a live hosted job with a DISABLED row was not refused exactly once" >&2
+  cat "$tmp/hl.out" >&2
   exit 1
 fi
 

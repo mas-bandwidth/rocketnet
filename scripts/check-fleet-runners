@@ -11,7 +11,6 @@ Reads every workflow under .github/workflows and:
 
 A workflow+job pair is exempt when the job is listed in
 scripts/fleet-runners-exceptions.txt with one of:
-  TEMPORARY  naming the card that removes the entry (nightly workflows today)
   DISABLED   the job carries `if: false` and a `# DISABLED:` comment
   GUEST      an install inside a VM the job boots
 
@@ -46,12 +45,25 @@ INSTALL_CHECKS = [
     (re.compile(r"\bluarocks\s+install\b"), "luarocks install"),
 ]
 
-GUARDED_OK = re.compile(r"runner\.environment.*github-hosted|github-hosted.*runner\.environment")
+# The whole `if:` is exactly `runner.environment == 'github-hosted'` (bare or
+# in ${{ }}): a step that runs only on a hosted runner. Any other condition that
+# names the two (`!=`, a negation, an `||`) may run on the fleet and is read.
+GUARDED_OK = re.compile(r"^(?:\$\{\{\s*)?runner\.environment\s*==\s*'github-hosted'(?:\s*\}\})?$")
 
 # A YAML block-scalar header: `|` or `>`, then any chomping (`-`, `+`) and
 # indentation (`1`-`9`) indicators, then an optional comment. `run: |-`,
 # `run: >+`, `run: |2` all open a block whose lines are the script.
 BLOCK_HEADER = re.compile(r"^([|>])[-+1-9]*(?:\s+#.*)?$")
+
+
+def unquote_scalar(text):
+    """A YAML scalar's text without a trailing comment, and without its quotes
+    only when the whole scalar is quoted: `if: runner.environment ==
+    'github-hosted'` keeps the quotes that belong to the expression."""
+    text = re.split(r"\s+#", text.strip(), maxsplit=1)[0].strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        return text[1:-1].strip()
+    return text
 
 
 def run_body(body):
@@ -116,14 +128,6 @@ def parse_label_list(text):
     return [text.strip('"').strip("'")]
 
 
-def extract_matrix_paths(text):
-    """Return the YAML path of a matrix include row, for line reporting."""
-    m = re.search(r"\bos\s*:\s*([^\s,]+)", text)
-    if m:
-        return m.group(1).strip('"').strip("'")
-    return ""
-
-
 def resolve_runs_on(raw, row):
     raw = (raw or "").strip()
     if not raw:
@@ -157,15 +161,25 @@ def resolve_runs_on(raw, row):
 
 
 def matrix_rows(job):
+    """The matrix as GitHub expands it, for the os and runner axes: the
+    product of the scalar axes, then each include row merged into every
+    combination whose original axis values it does not change, or added as
+    a combination of its own when it matches none."""
+    axes = [key for key in ("os", "runner") if getattr(job, "scalar_" + key)]
     rows = []
-    if job.include_rows:
-        rows = list(job.include_rows)
-    else:
-        os_list = job.scalar_os or [""]
-        runner_list = job.scalar_runner or [""]
-        for o in os_list:
-            for r in runner_list:
+    if axes:
+        for o in job.scalar_os or [""]:
+            for r in job.scalar_runner or [""]:
                 rows.append({"os": o, "runner": r})
+    product = len(rows)
+    for inc in job.include_rows:
+        matched = False
+        for row in rows[:product]:
+            if all(inc[key] == row[key] for key in axes if key in inc):
+                row.update(inc)
+                matched = True
+        if not matched:
+            rows.append(dict(inc))
     if not rows:
         rows = [{"os": "", "runner": ""}]
     return rows
@@ -182,6 +196,7 @@ def parse_workflow(lines):
     cur_step = None
     run_collect = None
     run_indent = None
+    cur_axis = None
 
     def flush():
         # the job's last step and last include row end where the job does
@@ -254,6 +269,7 @@ def parse_workflow(lines):
         if in_strategy and indent == 6 and stripped == "matrix:":
             in_matrix = True
             in_include = False
+            cur_axis = None
             cur_row = None
             cur_step = None
             continue
@@ -261,13 +277,19 @@ def parse_workflow(lines):
             in_include = True
             cur_row = None
             continue
+        if in_matrix and in_include and indent == 8:
+            # an axis after the include list ends the list
+            if cur_row is not None:
+                job.include_rows.append(cur_row)
+            cur_row = None
+            in_include = False
         if in_matrix and in_include and indent >= 10:
             if stripped.startswith("- "):
                 if cur_row is not None:
                     job.include_rows.append(cur_row)
                 cur_row = {}
                 body = stripped[2:].strip()
-                body = re.split(r"\s+#", body, 1)[0].strip()
+                body = re.split(r"\s+#", body, maxsplit=1)[0].strip()
                 if body.startswith("{") and body.endswith("}"):
                     inner = body[1:-1]
                     for kv in split_top_level(inner):
@@ -287,6 +309,7 @@ def parse_workflow(lines):
                     cur_row[km.group(1)] = km.group(2).strip('"').strip("'")
                 continue
         if in_matrix and not in_include and indent == 8:
+            cur_axis = None
             km = re.match(r"^([\w]+)\s*:\s*(\[.*\])$", stripped)
             if km:
                 key = km.group(1)
@@ -295,7 +318,8 @@ def parse_workflow(lines):
                         getattr(job, "scalar_" + key).append(item)
                 continue
             if stripped in ("os:", "runner:"):
-                pass
+                # a block-sequence axis: its `- value` items follow at indent 10
+                cur_axis = stripped[:-1]
             continue
         if in_matrix and not in_include and indent == 10:
             km = re.match(r"^-\s*([\w]+)\s*:\s*(.*)$", stripped)
@@ -307,6 +331,9 @@ def parse_workflow(lines):
             km2 = re.match(r"^([\w]+):\s*(.*)$", stripped)
             if km2 and km2.group(1) in ("os", "runner"):
                 getattr(job, "scalar_" + km2.group(1)).append(km2.group(2).strip('"').strip("'"))
+                continue
+            if cur_axis is not None and stripped.startswith("-"):
+                getattr(job, "scalar_" + cur_axis).append(unquote_scalar(stripped[1:]))
             continue
 
         if indent == 4 and stripped == "steps:":
@@ -351,7 +378,7 @@ def parse_workflow(lines):
                     run_indent = indent
                 continue
             if stripped.startswith("if:"):
-                cur_step[1] = stripped[len("if:"):].strip().strip('"').strip("'")
+                cur_step[1] = unquote_scalar(stripped[len("if:"):])
                 continue
             if stripped.startswith("uses:"):
                 continue
@@ -434,13 +461,11 @@ def main():
                     if HOSTED.match(label):
                         hosted_found.append(label)
             if hosted_found:
-                if exc_type in ("TEMPORARY", "GUEST"):
+                if exc_type == "GUEST":
                     pass
                 elif exc_type == "DISABLED":
-                    if not disabled(job):
-                        sys.stdout.write("%s:%d: %s / %s runs on hosted %s but its DISABLED row lacks `if: false` + `# DISABLED:` comment\n"
-                                         % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
-                        exit_code = 1
+                    # a live job with a DISABLED row is refused once, above
+                    pass
                 else:
                     sys.stdout.write("%s:%d: %s / %s runs on hosted label %s; this job must run on the fleet or be DISABLED\n"
                                      % (name, job.runs_on_line or 1, name, job.name, ", ".join(sorted(set(hosted_found)))))
@@ -448,7 +473,7 @@ def main():
 
             for run_line, guard, run_text in job.steps:
                 for vio in install_violations(run_text, guard):
-                    if exc_type in ("TEMPORARY", "GUEST"):
+                    if exc_type == "GUEST":
                         continue
                     if exc_type == "DISABLED" and disabled(job):
                         continue
