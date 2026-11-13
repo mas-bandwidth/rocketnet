@@ -49,6 +49,7 @@ static struct
     int queue_for_all;            // the queue every address hashes to
     int room[SR_MAX_QUEUES];      // free frames per queue, as start takes them
     int starts;
+    int refuse_next;              // starts the fake refuses with room left (a transport refusal)
 } sr;
 
 // the frames start hands out, outside sr so the struct carries no alignment padding (MSVC C4324)
@@ -57,6 +58,12 @@ alignas( 16 ) static uint8_t sr_pool[SR_POOL][ROCKETNET_FRAME_STRIDE];
 static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
 {
     const int queue = sr.queues > 0 ? sr.queue_for_all : 0;
+    if ( sr.refuse_next > 0 )
+    {
+        sr.refuse_next--;
+        *id = 0;
+        return NULL;
+    }
     if ( sr.room[queue] <= 0 || sr.starts >= SR_POOL )
     {
         *id = 0;
@@ -201,6 +208,7 @@ static void test_server_send_reserve_one_queue()
     sr_connect( &rig, 4 );
     memset( sr.room, 0, sizeof( sr.room ) );
     sr.starts = 0;
+    sr.refuse_next = 0;
     sr.queue_for_all = 0;
     sr_swap_in_fake( &rig, 0 );
 
@@ -244,6 +252,7 @@ static void test_server_send_reserve_per_queue()
     sr_connect( &rig, 4 );
     memset( sr.room, 0, sizeof( sr.room ) );
     sr.starts = 0;
+    sr.refuse_next = 0;
     sr.queue_for_all = 1;
     sr_swap_in_fake( &rig, SR_MAX_QUEUES );
 
@@ -280,6 +289,7 @@ static void test_server_send_reserve_own_frame()
     sr_connect( &rig, 4 );
     memset( sr.room, 0, sizeof( sr.room ) );
     sr.starts = 0;
+    sr.refuse_next = 0;
     sr.queue_for_all = 0;
     sr_swap_in_fake( &rig, 0 );
 
@@ -312,7 +322,105 @@ static void test_server_send_reserve_own_frame()
     sr_teardown( &rig );
 }
 
+// RNSendReserve NoRefresh: frames the transport retires during the fill
+// phase come back to the fill. The budget opens at nothing (the room is the
+// reserve); room that frees up after it opened is granted at the next claim,
+// and the reserve is still kept.
+static void test_server_send_reserve_refill()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_swap_in_fake( &rig, 0 );
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    sr.room[0] = (int) reserve;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 0 );
+    check( sr_fill( &rig, 10 ) == 0 );
+
+    // three frames retire mid-phase
+    sr.room[0] += 3;
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) == 3 );
+    check( sr_fill( &rig, 10 ) == 3 );
+    check( sr.room[0] == (int) reserve );
+
+    sr_teardown( &rig );
+}
+
+// RNSendReserve Stage, a queue that refuses: a granted frame the transport
+// refuses gives its claim back, so the next frame gets the grant. Kept, the
+// claim would hold a grant no frame used for the rest of the phase.
+static void test_server_send_reserve_refused_start_returns_claim()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_swap_in_fake( &rig, 0 );
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    sr.room[0] = (int) reserve + 2;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 2 );
+
+    sr.refuse_next = 1;
+    const uint64_t refused_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+    check( sr_fill( &rig, 1 ) == 0 );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before );
+
+    check( sr_fill( &rig, 10 ) == 2 );
+    check( sr.room[0] == (int) reserve );
+
+    sr_teardown( &rig );
+}
+
+// RNSendReserve OwnIo and witness OwnCountFirst: an own frame lowers the
+// reserve only once it has left the room. Refused by the transport, it
+// stays in the reserve (its client's keep-alive is still due), so the fill
+// gets nothing more from a room that is only the reserve.
+static void test_server_send_reserve_refused_own_frame_stays_reserved()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.refuse_next = 0;
+    sr.queue_for_all = 0;
+    sr_swap_in_fake( &rig, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 1 );
+    sr.room[0] = (int) reserve;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_fill_own_frames_for_test( rig.server ) == 1 );
+
+    sr.refuse_next = 1;
+    check( sr_fill( &rig, 1 ) == 0 );
+    check( rocketnet_server_transport_fill_own_frames_for_test( rig.server ) == 0 );
+    check( sr_fill( &rig, 10 ) == 0 );
+    check( sr.room[0] == (int) reserve );
+
+    sr_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
+REGISTER_UNIT_TEST( test_server_send_reserve_refill );
+REGISTER_UNIT_TEST( test_server_send_reserve_refused_own_frame_stays_reserved );
+REGISTER_UNIT_TEST( test_server_send_reserve_refused_start_returns_claim );
 REGISTER_UNIT_TEST( test_server_send_reserve_own_frame );
 REGISTER_UNIT_TEST( test_server_send_reserve_per_queue );
 
