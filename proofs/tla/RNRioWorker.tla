@@ -337,22 +337,6 @@ WTop ==
     /\ UNCHANGED rvars /\ UNCHANGED svars
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
 
-\* Before it takes a phase the worker retires every send completion (and
-\* retries a refused commit), so the take below returns the phases that
-\* drained to main as idle: a flush then finds its next phase idle unless
-\* the kernel really is behind.
-WRetireFirst ==
-    /\ wpc = "first"
-    /\ \/ CommitSuccess
-       \/ UNCHANGED <<pend, infl>>
-    /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
-    /\ scq' = <<>>
-    /\ progress' = (progress \/ scq # <<>>)
-    /\ wpc' = "take"
-    /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
-
 \* every posted phase with nothing outstanding, returned to main as idle
 DrainedIdle == [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
 
@@ -415,6 +399,22 @@ WRetire ==
     /\ scq' = <<>>
     /\ progress' = (progress \/ scq # <<>>)
     /\ wpc' = "dequeue"
+    /\ UNCHANGED rvars
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+
+\* Before it takes a phase the worker retires every send completion (and
+\* retries a refused commit), so the take below returns the phases that
+\* drained to main as idle: a flush then finds its next phase idle unless
+\* the kernel really is behind.
+WRetireFirst ==
+    /\ wpc = "first"
+    /\ \/ CommitSuccess
+       \/ UNCHANGED <<pend, infl>>
+    /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
+    /\ scq' = <<>>
+    /\ progress' = (progress \/ scq # <<>>)
+    /\ wpc' = "take"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>

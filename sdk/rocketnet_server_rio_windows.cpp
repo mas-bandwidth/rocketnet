@@ -1133,6 +1133,7 @@ struct rocketnet_rio_processor_t
 {
     int index;                                  // the processor index SIO_CPU_AFFINITY takes
     GROUP_AFFINITY affinity;                    // the same processor for SetThreadGroupAffinity
+    GROUP_AFFINITY core;                        // every logical processor of its core
 };
 
 static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketnet_address_t * bind_address, int max_clients,
@@ -1255,6 +1256,31 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
         // before bind: the lane joins the port by its processor
         rio->processor = cpu->index;
         rio->pin = cpu->affinity;
+#if ROCKETNET_DEV
+        // development library only: ROCKETNET_TEST_RIO_PIN places the lane
+        // worker for a measurement: "sibling" on its core's other logical
+        // processors (the RSS processor keeps the receive DPCs), "core" on
+        // the whole core, "none" unpinned; unset is the RSS processor
+        {
+            char pin[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+            if ( rocketnet_platform_getenv( "ROCKETNET_TEST_RIO_PIN", pin, sizeof( pin ) ) > 0 )
+            {
+                if ( strcmp( pin, "sibling" ) == 0 && ( cpu->core.Mask & ~cpu->affinity.Mask ) != 0 )
+                {
+                    rio->pin = cpu->core;
+                    rio->pin.Mask &= ~cpu->affinity.Mask;
+                }
+                else if ( strcmp( pin, "core" ) == 0 )
+                {
+                    rio->pin = cpu->core;
+                }
+                else if ( strcmp( pin, "none" ) == 0 )
+                {
+                    rio->pin.Mask = 0;
+                }
+            }
+        }
+#endif // #if ROCKETNET_DEV
         USHORT processor = (USHORT) cpu->index;
         DWORD returned = 0;
         if ( WSAIoctl( rio->socket, SIO_CPU_AFFINITY, &processor, sizeof( processor ), NULL, 0, &returned, NULL, NULL ) == SOCKET_ERROR )
@@ -1987,7 +2013,7 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
 
     // a lane's worker runs on its socket's processor, where RSS completes the
     // lane's receives; a refused pin leaves it where Windows schedules it
-    if ( rio->processor >= 0 && !SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
+    if ( rio->processor >= 0 && rio->pin.Mask != 0 && !SetThreadGroupAffinity( GetCurrentThread(), &rio->pin, NULL ) )
     {
         rocketnet_warn( "rio transport: lane worker not pinned to processor %d (Win32 %lu)", rio->processor, GetLastError() );
     }
@@ -3112,6 +3138,9 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
                 memset( &p->affinity, 0, sizeof( p->affinity ) );
                 p->affinity.Group = mask->Group;
                 p->affinity.Mask = (KAFFINITY) 1 << bit;
+                memset( &p->core, 0, sizeof( p->core ) );
+                p->core.Group = mask->Group;
+                p->core.Mask = mask->Mask;
                 if ( pass == 0 )
                 {
                     break;
@@ -3326,7 +3355,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
                     (unsigned long long) rio->lanes[0]->layout.total_bytes, packet_filter ? ", receive prefilter on" : "" );
     for ( int i = 0; lanes > 1 && i < lanes; ++i )
     {
-        rocketnet_info( "rio transport: lane %d on processor %d (SIO_CPU_AFFINITY, worker pinned)", i, rio->lanes[i]->processor );
+        rocketnet_info( "rio transport: lane %d on processor %d (SIO_CPU_AFFINITY), worker mask 0x%llx group %d", i, rio->lanes[i]->processor, (unsigned long long) rio->lanes[i]->pin.Mask, (int) rio->lanes[i]->pin.Group );
     }
     return rio;
 }
