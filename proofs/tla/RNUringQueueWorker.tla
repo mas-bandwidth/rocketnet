@@ -34,9 +34,10 @@
 (* stop the kernel may answer -EAGAIN without bound: that is the socket    *)
 (* that stays full.  Before it, WF on KernelPoll is the socket draining.   *)
 (* The worker exits only when nothing of its is in the kernel or waiting.  *)
-(* Main joins it after.  A cancel's own completion is not modelled: it     *)
-(* changes none of these variables, and the code's exit does not wait for  *)
-(* it (the ring is torn down after the join).                              *)
+(* Main joins it after.  A cancel's own completion changes none of these   *)
+(* variables, and the code's exit does not wait for it (the ring is torn   *)
+(* down after the join): its reap is ReapCancel, a stutter of the awake    *)
+(* worker, outside WorkerStep, so it moves no fairness and no Sleep.       *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
 (*   ExitDrained   (invariant) the worker exits only with no bank held or  *)
@@ -248,6 +249,11 @@ ReapWake ==
     /\ wakeRead' = "none"
     /\ UNCHANGED <<quit, seen, st, handed, ready, held, u, k, cOk, cAgain, cRef, blocked, poll, recv, wakeCount, agains, againsBefore, refusals, recvEnds, p>>
 
+\* a cancel's own completion reaped: nothing of these variables changes
+ReapCancel ==
+    /\ Awake
+    /\ UNCHANGED vars
+
 \* a bank all of whose runs are done goes back to the free FIFO
 Retire ==
     /\ Awake /\ held /\ u = 0 /\ k = 0 /\ cOk = 0 /\ cAgain = 0 /\ cRef = 0 /\ p = 0
@@ -363,7 +369,17 @@ KernelStep ==
     \/ KernelOk \/ KernelAgain \/ KernelRefuse
     \/ KernelPoll \/ KernelRecvEnd \/ KernelRecvEndsItself \/ KernelWakeRead \/ KernelWakeEnd \/ KernelWakesWorker
 
-Next == Publish \/ Stop \/ WorkerStep \/ KernelStep \/ Done
+\* every action by name (the trace check takes the actions Next names): main,
+\* the worker (WorkerStep, and ReapCancel), the kernel (KernelStep), the end
+Next ==
+    \/ Publish \/ Stop
+    \/ Observe \/ ReapOk \/ ReapAgain \/ ReapRefused \/ ReapPoll \/ ReapRecvEnd \/ ReapWake \/ ReapCancel
+    \/ Retire \/ Claim \/ Submit \/ Split \/ Drop \/ Abandon
+    \/ ArmPoll \/ ArmRecv \/ CancelRecv \/ CancelWake \/ CancelPoll
+    \/ ArmWake \/ Exit \/ Sleep
+    \/ KernelOk \/ KernelAgain \/ KernelRefuse
+    \/ KernelPoll \/ KernelRecvEnd \/ KernelRecvEndsItself \/ KernelWakeRead \/ KernelWakeEnd \/ KernelWakesWorker
+    \/ Done
 
 Spec == Init /\ [][Next]_vars
 

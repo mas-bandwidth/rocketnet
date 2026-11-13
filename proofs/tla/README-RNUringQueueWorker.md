@@ -87,14 +87,16 @@ The trace instance (`tests/tla_trace_queue_worker.cpp`) has 3 slots (`R` = 3), 2
 
 ## Cases (CASES.tsv, group rnuringqueueworker)
 
-| cfg | expected |
-|---|---|
-| MCRNUringQueueWorker.cfg | pass |
-| MCRNUringQueueWorkerLive.cfg | pass (StopFinishes, Drains) |
-| MCRNUringQueueWorkerBrokenExitEarly.cfg | ExitDrained violated: the witness "exit before drain" |
-| MCRNUringQueueWorkerBrokenRetryUnbounded.cfg | StopFinishes violated: after the stop, -EAGAIN is retried forever on a socket that stays full |
-| MCRNUringQueueWorkerBrokenWakeSkip.cfg | StopFinishes violated: the worker sleeps with no wake read armed |
+Results (bench-nyc-5, pinned jar 936a2620..., TLC 2.19, 2 workers, 2026-11-13):
 
-Status: the model, its trace module and the code are written. The TLC results and the
-witnesses, each checked by hand against the code, go here when the pinned tlacheck run
-on the bench lands.
+| cfg | expected | result | states (distinct) |
+|---|---|---|---|
+| MCRNUringQueueWorker.cfg | pass | pass | 856,073 (160,306), 5.6 s |
+| MCRNUringQueueWorkerLive.cfg | pass (StopFinishes, Drains) | pass | 856,073 (160,306), 29.4 s |
+| MCRNUringQueueWorkerBrokenExitEarly.cfg | ExitDrained violated: the witness "exit before drain" | violated | 94 (53) |
+| MCRNUringQueueWorkerBrokenRetryUnbounded.cfg | StopFinishes violated: after the stop, -EAGAIN is retried forever on a socket that stays full | violated (temporal) | 1,032,581 (190,930) |
+| MCRNUringQueueWorkerBrokenWakeSkip.cfg | StopFinishes violated: the worker sleeps with no wake read armed | violated (temporal) | 862,306 (162,229) |
+
+Status: the model, its trace module and the code are written; the trace check binds
+the code to the model (tools/tla_trace_check.py, layer queue-worker). RUNS.tsv holds
+the run above.

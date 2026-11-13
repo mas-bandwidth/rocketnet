@@ -103,7 +103,10 @@ LAYERS = {
     },
     "queue-worker": {
         "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
-        "quiet": True,
+        "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
+                                   "READ before the worker can see quit, and the worker arms no READ after it: "
+                                   "a READ to cancel is left only when the write and the arm race on two threads",
+                     "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
     },
 }
 
