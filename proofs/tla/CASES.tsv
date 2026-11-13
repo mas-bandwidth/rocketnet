@@ -781,6 +781,7 @@ MCRNServerReplaySlotsBrokenNoOweOnRefusal.cfg	MCRNServerReplaySlots.tla	invarian
 MCRNServerReplaySlotsScanEveryForget.cfg	MCRNServerReplaySlots.tla	pass	-	check	rnserverreplayslots	required	-
 MCServerStopSpread.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadLive.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
+MCServerStopSpreadLiveNoRoom.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadBrokenSingleShot.cfg	MCServerStopSpread.tla	invariant	FullBurstBeforeStopped	check	serverstopspread	required	-
 MCServerStopSpreadBrokenRingSmall.cfg	MCServerStopSpread.tla	invariant	RingHolds	check	serverstopspread	required	-
 MCServerStopSpreadBrokenSteadyCapOffByOne.cfg	MCServerStopSpread.tla	invariant	RingHolds	check	serverstopspread	required	-

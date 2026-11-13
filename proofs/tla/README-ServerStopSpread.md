@@ -85,7 +85,8 @@ control) against a staging of three, so it spreads across steps.
 | Config | Expected |
 |---|---|
 | `MCServerStopSpread.cfg` | pass, every invariant (bursts of three) |
-| `MCServerStopSpreadLive.cfg` | pass, `StopFinishes` and `StopFinishesWithoutRoom` under `FairSpec` |
+| `MCServerStopSpreadLive.cfg` | pass, `StopFinishes` under `FairSpec` |
+| `MCServerStopSpreadLiveNoRoom.cfg` | pass, `StopFinishesWithoutRoom` under `FairSpec` (one property a run keeps each within the record budget) |
 | `MCServerStopSpreadBrokenSingleShot.cfg` | `FullBurstBeforeStopped` violated |
 | `MCServerStopSpreadBrokenRingSmall.cfg` | `RingHolds` violated |
 | `MCServerStopSpreadBrokenSteadyCapOffByOne.cfg` | `RingHolds` violated |
