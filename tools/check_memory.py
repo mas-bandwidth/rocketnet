@@ -22,6 +22,37 @@ elif sys.platform.startswith('linux'):
     transports.append('gso')
 
 
+def build_dirs():
+    """Where the build's CMakeCache.txt is looked for: ROCKETNET_BUILD_DIR, else ./build."""
+    named = os.environ.get('ROCKETNET_BUILD_DIR')
+    return [Path(named)] if named else [Path('build')]
+
+
+def cache_found(value):
+    return bool(value) and not value.upper().endswith('NOTFOUND') and value.upper() not in ('OFF', '0', 'FALSE', 'NO')
+
+
+def uring_built():
+    """True when the build compiled the io_uring transport, False when it did
+    not, None with no cache. cmake/RocketNetDependencies.cmake builds it when
+    ROCKETNET_IO_URING is on, liburing's library and header are found, and
+    liburing has multishot receive (ROCKETNET_URING_HAS_RECV_MULTISHOT); each
+    of those is recorded in the build's CMakeCache.txt."""
+    for directory in build_dirs():
+        cache = directory / 'CMakeCache.txt'
+        if cache.is_file():
+            entries = {}
+            for line in cache.read_text().splitlines():
+                if ':' in line and '=' in line and not line.startswith(('#', '//')):
+                    key, _, value = line.partition('=')
+                    entries[key.split(':', 1)[0]] = value.strip()
+            option = entries.get('ROCKETNET_IO_URING', 'ON')
+            multishot = entries.get('ROCKETNET_URING_HAS_RECV_MULTISHOT', '1')
+            return (cache_found(option) and cache_found(entries.get('ROCKETNET_Uring_LIBRARY', ''))
+                    and cache_found(entries.get('ROCKETNET_Uring_INCLUDE_DIR', '')) and cache_found(multishot))
+    return None
+
+
 def run(*arguments):
     result = subprocess.run([str(binary), *map(str, arguments)],
                             capture_output=True, text=True, timeout=execution_timeout(120))
@@ -114,14 +145,22 @@ if sys.platform.startswith('linux'):
     assert xdp['sockets'] == 7
     assert xdp['os_bytes'] >= xdp['umem_bytes'] + xdp['thread_stack_bytes'] and xdp['thread_stack_bytes'] > 0
     # the provided buffer rings are kernel-mapped memory outside the allocator;
-    # a build without liburing has no io_uring plan
+    # a build without liburing has no io_uring plan, and a build with it must
+    # plan: the build's own cache says which this is
+    built = uring_built()
+    if built is None:
+        raise SystemExit("cannot tell whether this build has liburing: no CMakeCache.txt in "
+                         f"{', '.join(str(d) for d in build_dirs())}; set ROCKETNET_BUILD_DIR to the build tree")
     uring = subprocess.run([str(binary), '1', '1416', 'io_uring', '4', '--plan-only'],
                            capture_output=True, text=True, timeout=execution_timeout(10))
-    if uring.returncode == 0:
+    if built:
+        assert uring.returncode == 0, ('io_uring is built (ROCKETNET_Uring_LIBRARY in the cache) but has no plan',
+                                       uring.returncode, uring.stdout, uring.stderr)
         uring_plan = json.loads(uring.stdout)
         assert uring_plan['mapped_ring_bytes'] > 0 and uring_plan['os_bytes'] >= uring_plan['mapped_ring_bytes']
     else:
-        assert 'memory plan unavailable' in uring.stderr, (uring.returncode, uring.stdout, uring.stderr)
+        assert uring.returncode != 0 and 'memory plan unavailable' in uring.stderr, \
+            ('io_uring is not built, so it has no plan', uring.returncode, uring.stdout, uring.stderr)
 if sys.platform == 'win32':
     rio_plan, = run(1, 1416, 'rio', 0, '--plan-only')
     assert rio_plan['worker_threads'] == 1  # one RIO I/O worker

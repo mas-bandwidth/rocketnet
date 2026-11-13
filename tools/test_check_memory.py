@@ -4,7 +4,9 @@ transport_memory written into a temporary directory, so nothing is built and
 no server starts: a probe whose observed allocator peak is over its plan makes
 the tool exit nonzero, a probe whose rows keep every rule makes it exit 0, and
 a probe that prints zero rows (or an empty, unrunnable file) makes it exit
-nonzero. The fake answers every transport the tool drives on any host."""
+nonzero. The fake answers every transport the tool drives on any host. A
+fixture build/CMakeCache.txt says whether io_uring is built: built with no
+plan, or not built with one, exits nonzero, and no cache exits nonzero."""
 
 import os
 import subprocess
@@ -49,6 +51,9 @@ if flag == "--plan-only":
         out({"umem_bytes": umem, "worker_threads": queues, "sockets": queues,
              "thread_stack_bytes": stack * queues, "os_bytes": umem + stack * queues})
     elif transport == "io_uring":
+        if mode == "uring-unavailable":
+            sys.stderr.write("memory plan unavailable\n")
+            sys.exit(1)
         out({"mapped_ring_bytes": 4096, "os_bytes": 4096 + stack})
     elif transport == "rio":
         out({"worker_threads": 1, "allocator_bytes": planned, "planned_bytes": planned,
@@ -87,6 +92,18 @@ elif flag in ("--lifecycle", "--light-lifecycle"):
 '''
 
 
+URING_BUILT = ("ROCKETNET_IO_URING:BOOL=ON\n"
+               "ROCKETNET_Uring_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/liburing.so\n"
+               "ROCKETNET_Uring_INCLUDE_DIR:PATH=/usr/include\n"
+               "ROCKETNET_URING_HAS_RECV_MULTISHOT:INTERNAL=1\n")
+URING_NOT_FOUND = ("ROCKETNET_IO_URING:BOOL=ON\n"
+                   "ROCKETNET_Uring_LIBRARY:FILEPATH=ROCKETNET_Uring_LIBRARY-NOTFOUND\n"
+                   "ROCKETNET_Uring_INCLUDE_DIR:PATH=ROCKETNET_Uring_INCLUDE_DIR-NOTFOUND\n")
+URING_NO_MULTISHOT = URING_BUILT.replace("ROCKETNET_URING_HAS_RECV_MULTISHOT:INTERNAL=1",
+                                         "ROCKETNET_URING_HAS_RECV_MULTISHOT:INTERNAL=")
+URING_OPTION_OFF = URING_BUILT.replace("ROCKETNET_IO_URING:BOOL=ON", "ROCKETNET_IO_URING:BOOL=OFF")
+
+
 class CheckMemoryProcessTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -94,6 +111,48 @@ class CheckMemoryProcessTest(unittest.TestCase):
         self.probe = self.dir / "transport_memory"
         self.probe.write_text("#!" + sys.executable + " -S\n" + FAKE_PROBE)
         self.probe.chmod(0o755)
+        # the build's cache, read for whether io_uring is built (./build)
+        self.write_cache(URING_BUILT)
+
+    def write_cache(self, text):
+        (self.dir / "build").mkdir(exist_ok=True)
+        (self.dir / "build" / "CMakeCache.txt").write_text(text)
+
+    def run_as_linux(self, mode):
+        """The tool's linux branch (xdp, io_uring) from any host."""
+        runner = ("import runpy, sys; sys.platform = sys.argv.pop(1); "
+                  "sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[2:]; "
+                  "runpy.run_path(sys.argv[0], run_name='__main__')")
+        env = {key: value for key, value in os.environ.items()
+               if key not in ("ROCKETNET_SERVER_MAX_CLIENTS", "ROCKETNET_DEV_SERVER_LATENCY_MS",
+                              "ROCKETNET_BUILD_DIR")}
+        env["FAKE_MEMORY"] = mode
+        return subprocess.run([sys.executable, "-c", runner, "linux", str(TOOL.parent), str(TOOL), str(self.probe)],
+                              capture_output=True, text=True, env=env, cwd=self.dir)
+
+    def test_a_built_io_uring_without_a_plan_fails(self):
+        # a liburing build whose io_uring plan is unavailable is broken, not "not built"
+        result = self.run_as_linux("uring-unavailable")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("io_uring is built", result.stderr)
+
+    def test_an_unbuilt_io_uring_without_a_plan_passes(self):
+        for cache in (URING_NOT_FOUND, URING_NO_MULTISHOT, URING_OPTION_OFF):
+            self.write_cache(cache)
+            result = self.run_as_linux("uring-unavailable")
+            self.assertEqual(result.returncode, 0, cache + result.stderr[-800:])
+
+    def test_an_unbuilt_io_uring_with_a_plan_fails(self):
+        self.write_cache(URING_NOT_FOUND)
+        result = self.run_as_linux("honest")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("io_uring is not built", result.stderr)
+
+    def test_no_build_cache_fails(self):
+        (self.dir / "build" / "CMakeCache.txt").unlink()
+        result = self.run_as_linux("honest")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cannot tell whether this build has liburing", result.stderr)
 
     def tearDown(self):
         self.tmp.cleanup()
