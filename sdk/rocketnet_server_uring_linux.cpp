@@ -427,7 +427,7 @@ static void rocketnet_server_uring_warn_left_on_core_zero( int queue_index, cons
     char cpus[128] = "unknown";
     if ( mask )
     {
-        unsigned char in_mask[CPU_SETSIZE];
+        unsigned char in_mask[CPU_SETSIZE] = { 0 };
         for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
         {
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;

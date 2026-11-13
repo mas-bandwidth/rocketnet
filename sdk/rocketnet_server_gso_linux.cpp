@@ -1330,7 +1330,7 @@ static void rocketnet_server_gso_warn_left_on_core_zero( int queue_index, const 
     CPU_ZERO( &mask );
     if ( calls->get( &mask ) == 0 )
     {
-        unsigned char in_mask[CPU_SETSIZE];
+        unsigned char in_mask[CPU_SETSIZE] = { 0 };
         for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
         {
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;

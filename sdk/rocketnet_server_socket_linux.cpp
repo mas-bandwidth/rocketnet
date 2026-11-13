@@ -4245,7 +4245,7 @@ static void xdp_thread_warn_left_on_core_zero( int queue, const cpu_set_t * mask
     char cpus[128] = "unknown";
     if ( mask )
     {
-        unsigned char in_mask[CPU_SETSIZE];
+        unsigned char in_mask[CPU_SETSIZE] = { 0 };
         for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
         {
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
@@ -4360,7 +4360,7 @@ static void xdp_thread_place( rocketnet_server_xdp_socket_t * socket, int online
         if ( result != 0 )
         {
             char call[64];
-            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
+            (void) snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
             rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
         }
     }
