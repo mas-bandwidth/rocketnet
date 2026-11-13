@@ -207,7 +207,6 @@ struct rocketnet_uring_queue_worker_t
     int cancels;                                    // cancels in the kernel
     int agains;                                     // agains: waits after shutdown since a run was done or a bank claimed, up to max_retry
     uint64_t wake_value;                            // the READ's destination
-    alignas( 8 ) int64_t timer_spec[2];             // the timer's __kernel_timespec (seconds, nanoseconds), read by the kernel at submit
     struct rocketnet_segment_refused_t refused;     // the destinations that refused a segmented send
     std::atomic<uint64_t> counters[ROCKETNET_URING_WORKER_NUM_COUNTERS];
 };
