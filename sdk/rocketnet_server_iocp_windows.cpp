@@ -838,7 +838,8 @@ static_assert( ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_MAX_CLIENTS ) <= U
 
 static std::atomic<uint64_t> rocketnet_iocp_next_owner_epoch{ 1 };
 
-// the endpoint an operation is posted on: a receive's by its index, a send's
+// proofs/tla/RNIocpEndpoints.tla PostOn and Owner: the endpoint an operation
+// is posted on, whoever posts it: a receive's by its index, a send's
 // by its lane (operations [lane * send_queue_size, ...) are the lane's)
 static int rocketnet_iocp_op_endpoint( const rocketnet_server_iocp_t * iocp, const rocketnet_iocp_operation_t * op )
 {
@@ -1412,7 +1413,8 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         {
             // Every worker repeats cancellation after its last possible repost.
             // Cancel only receives, so the final posted sends can complete.
-            // the worker's endpoint is its own: its receives are
+            // proofs/tla/RNIocpEndpoints.tla Cancel and Exit: the worker's
+            // endpoint is its own: its receives are
             // [endpoint * ROCKETNET_IOCP_RECEIVES_PER_WORKER, ...)
             if ( iocp->sockets[endpoint] != INVALID_SOCKET )
             {
@@ -1435,6 +1437,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
         OVERLAPPED_ENTRY entries[64];
         ULONG count = 0;
         const DWORD timeout = rocketnet_iocp_queue_count( &iocp->retry_receives ) ? 1 : 50;
+        // proofs/tla/RNIocpEndpoints.tla Dequeue: only this endpoint's port
         const BOOL ok = GetQueuedCompletionStatusEx( iocp->ports[endpoint], entries, 64, &count, timeout, FALSE );
         if ( !ok )
         {
