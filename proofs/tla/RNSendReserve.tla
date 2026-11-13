@@ -117,8 +117,10 @@ Busy(f) == Cardinality({g \in Fillers \ {f} : pc[g] /= "idle"})
 Checking == {"claimed", "read1", "read2", "read3"}
 TailHeld(g) == tail[g] + (IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0)
 OthersTail(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE TailHeld(g)], Fillers)
-\* another filler's hold on the room: its chunk hold, or one frame while it is in flight
-Held(g) == IF pc[g] = "idle" THEN 0 ELSE Max(1, TailHeld(g))
+\* another filler's hold on the room: its chunk hold, plus the frame it has
+\* staged and not yet counted; at least one frame while it is in flight
+Held(g) == IF pc[g] = "idle" THEN 0
+           ELSE Max(1, TailHeld(g) + (IF pc[g] = "counting" THEN 1 ELSE 0))
 OthersHeld(f) == SumOver([g \in Fillers |-> IF g = f THEN 0 ELSE Held(g)], Fillers)
 
 \* a room of r frames is above what the protocol still needs, with a frame
