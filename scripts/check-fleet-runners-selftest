@@ -79,6 +79,59 @@ if ! grep -q "apt-get install" "$tmp/dirty.out"; then
   exit 1
 fi
 
+# Every YAML block-scalar header opens a script the lint reads: `|-`, `>-`,
+# `|+`, `|2` and a header with a comment each hide an install that must be named.
+mkdir -p "$tmp/blocks/wf"
+cat > "$tmp/blocks/wf/blocks.yml" <<'EOF'
+name: blocks
+on: [push]
+jobs:
+  strip:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Literal strip
+        run: |-
+          sudo apt-get install -y cbmc
+  fold:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - run: >-
+          brew install
+          cmake
+  keep:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Literal keep
+        run: |+
+          cargo install ripgrep
+  indent:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Explicit indentation
+        run: |2
+            pip install pyyaml
+  comment:
+    runs-on: [self-hosted, Linux, X64, fleet]
+    steps:
+      - name: Header with a comment
+        run: | # the install below
+          go install example.com/tool@latest
+EOF
+if ROCKETNET_WF_DIR="$tmp/blocks/wf" ROCKETNET_EXC_FILE="$tmp/exc" python3 "$check" > "$tmp/blocks.out" 2>&1; then
+  echo "SELFTEST FAIL: block-scalar run bodies were not read (an install passed)" >&2
+  cat "$tmp/blocks.out" >&2
+  exit 1
+fi
+for want in "blocks.yml / strip apt-get install" "blocks.yml / fold brew install" \
+            "blocks.yml / keep cargo install" "blocks.yml / indent pip install" \
+            "blocks.yml / comment go install"; do
+  if ! grep -q "$want" "$tmp/blocks.out"; then
+    echo "SELFTEST FAIL: block-scalar run body not read: $want not named" >&2
+    cat "$tmp/blocks.out" >&2
+    exit 1
+  fi
+done
+
 # DISABLED exceptions: a row exempts only a job that carries `if: false` and
 # a `# DISABLED:` comment. A live job listed DISABLED with an unguarded
 # install is refused (its row and its install); the disabled job's install

@@ -48,6 +48,23 @@ INSTALL_CHECKS = [
 
 GUARDED_OK = re.compile(r"runner\.environment.*github-hosted|github-hosted.*runner\.environment")
 
+# A YAML block-scalar header: `|` or `>`, then any chomping (`-`, `+`) and
+# indentation (`1`-`9`) indicators, then an optional comment. `run: |-`,
+# `run: >+`, `run: |2` all open a block whose lines are the script.
+BLOCK_HEADER = re.compile(r"^([|>])[-+1-9]*(?:\s+#.*)?$")
+
+
+def run_body(body):
+    """Return (inline_text, block_style) for the text after `run:`:
+    a block header gives ("", "|" or ">"), an empty body (a plain scalar on
+    the lines below) ("", ">"), anything else (body, None)."""
+    if not body:
+        return "", ">"
+    m = BLOCK_HEADER.match(body)
+    if m:
+        return "", m.group(1)
+    return body, None
+
 
 class JobInfo(object):
     def __init__(self, name):
@@ -309,10 +326,11 @@ def parse_workflow(lines):
                     body = rm.group(1).strip()
                     guard = ""
                     cur_step = [lineno, guard, ""]
-                    if body and body not in ("|", ">"):
-                        cur_step[2] = body
+                    inline, style = run_body(body)
+                    if style is None:
+                        cur_step[2] = inline
                     else:
-                        run_collect = "|" if body == "|" else ">"
+                        run_collect = style
                         run_indent = indent
                 else:
                     cur_step = [lineno, "", ""]
@@ -325,10 +343,11 @@ def parse_workflow(lines):
             if stripped.startswith("run:"):
                 rm = re.search(r"\brun:\s*(.*)$", stripped)
                 body = rm.group(1).strip()
-                if body and body not in ("|", ">"):
-                    cur_step[2] = body
+                inline, style = run_body(body)
+                if style is None:
+                    cur_step[2] = inline
                 else:
-                    run_collect = "|" if body == "|" else ">"
+                    run_collect = style
                     run_indent = indent
                 continue
             if stripped.startswith("if:"):
