@@ -751,8 +751,7 @@ struct rocketnet_iocp_lane_t
     std::atomic<uint64_t> num_staged{ 0 };
     rocketnet_iocp_send_bank_t send_banks[ROCKETNET_IOCP_SEND_BANKS];
     rocketnet_platform_mutex_t send_mutex = {};
-    rocketnet_platform_wake_t * send_wake = NULL;
-    rocketnet_platform_thread_t * send_thread = NULL;
+    rocketnet_platform_wake_t * send_wake = NULL; // its send thread's wake (rocketnet_iocp_send_thread_t), not owned
     int send_producer = 0; // caller-owned until stop publishes stopping
     // proofs/tla/RNBankFifoLayout.tla Init: as a stack this literal holds banks 1 and 2, right for three banks only.
     int send_free[ROCKETNET_IOCP_SEND_BANKS] = { 1, 2, 0 };
@@ -767,6 +766,17 @@ struct rocketnet_iocp_lane_t
     int * order = NULL;                         // send_queue_size entries
     rocketnet_send_gather_run_t * runs = NULL;  // send_queue_size entries
     rocketnet_send_gather_scratch_t gather = {}; // over send_queue_size slots, in the sized allocation
+};
+
+// A send thread: it alone takes the ready banks of its lanes (lane l belongs
+// to thread l % num_send_threads), groups and posts them, and owns the wake
+// those lanes' flushes set.
+struct rocketnet_iocp_send_thread_t
+{
+    rocketnet_server_iocp_t * owner = NULL;
+    int index = 0;
+    rocketnet_platform_wake_t * wake = NULL;
+    rocketnet_platform_thread_t * thread = NULL;
 };
 
 struct rocketnet_server_iocp_t
@@ -784,6 +794,17 @@ struct rocketnet_server_iocp_t
     void * sized_storage = NULL;
     uint64_t owner_epoch = 0;
     rocketnet_iocp_lane_t * lanes[ROCKETNET_IOCP_MAX_LANES] = {}; // each its own allocation
+    // The send threads: ROCKETNET_IOCP_SEND_THREADS, or the lanes when there
+    // are fewer. Each is pinned to a core of its own after the completion
+    // workers' (rocketnet_iocp_send_processors); what each found when it
+    // pinned itself is rocketnet_server_iocp_send_placement, and every
+    // refusal is counted in send_pin_refusals.
+    int num_send_threads = 0;
+    rocketnet_iocp_send_thread_t send_threads[ROCKETNET_IOCP_MAX_SEND_THREADS];
+    GROUP_AFFINITY send_pins[ROCKETNET_IOCP_MAX_SEND_THREADS] = {};
+    std::atomic<int> send_placements[ROCKETNET_IOCP_MAX_SEND_THREADS] = {};
+    std::atomic<unsigned long> send_placement_errors[ROCKETNET_IOCP_MAX_SEND_THREADS] = {};
+    std::atomic<uint64_t> send_pin_refusals{ 0 };
     // the lanes whose TX worker has not exited; zero before any is created
     std::atomic<int> live_lanes{ 0 };
     void * context;
@@ -1717,21 +1738,25 @@ void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp )
     {
         return;
     }
+    for ( int t = 0; t < iocp->num_send_threads; ++t )
+    {
+        rocketnet_iocp_send_thread_t * send = &iocp->send_threads[t];
+        if ( send->thread )
+        {
+            rocketnet_platform_thread_join( send->thread );
+            rocketnet_platform_thread_destroy( send->thread );
+        }
+        if ( send->wake )
+        {
+            rocketnet_platform_wake_destroy( send->wake );
+        }
+    }
     for ( int l = 0; l < iocp->num_lanes; ++l )
     {
         rocketnet_iocp_lane_t * lane = iocp->lanes[l];
         if ( !lane )
         {
             continue;
-        }
-        if ( lane->send_thread )
-        {
-            rocketnet_platform_thread_join( lane->send_thread );
-            rocketnet_platform_thread_destroy( lane->send_thread );
-        }
-        if ( lane->send_wake )
-        {
-            rocketnet_platform_wake_destroy( lane->send_wake );
         }
         if ( lane->send_mutex.ok )
         {
@@ -1992,37 +2017,35 @@ static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_add
     return bound;
 }
 
-// The processor of each endpoint, into iocp->processors and iocp->pins: the
-// first logical processor of each physical core in processor-index order,
-// then the cores' other logical processors in order, wrapping past the last.
-// Windows' default RSS layout (base processor 0, one processor per core: on
-// the ENA adapter Get-NetAdapterRss lists 0, 2, 4, ...) hands receive queue i
-// to the first processor of core i, so with as many workers as queues each
-// queue's flows reach the endpoint on its processor. A flow whose RSS
-// processor has no endpoint is delivered to the first endpoint bound
-// (measured), so a different RSS layout costs spread, never datagrams. The
-// index SIO_CPU_AFFINITY takes is the group's offset (the active processors
-// of the groups before it) plus the processor's number in its group. The same
-// order as the RIO transport's lanes (rocketnet_rio_lane_processors). False
-// only when Windows cannot list its processors.
-static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server_iocp_t * iocp, int * status )
+// A logical processor in the order the transport places its threads: the first
+// logical processor of each physical core in processor-index order, then the
+// cores' other logical processors in order.
+struct rocketnet_iocp_core_t
 {
+    int index;           // the processor index SIO_CPU_AFFINITY takes
+    GROUP_AFFINITY pin;  // the same processor
+    GROUP_AFFINITY core; // every logical processor of its core
+};
+
+// The placement order, in *order (count entries, one per logical processor
+// at most; freed with rocketnet_free on context). The index SIO_CPU_AFFINITY
+// takes is the group's offset (the active processors of the groups before it)
+// plus the processor's number in its group. False only when Windows cannot
+// list its processors (status and an error naming who asked are set).
+static bool rocketnet_iocp_core_order( void * context, const char * who, rocketnet_iocp_core_t ** order_out, int * count_out, int * status )
+{
+    *order_out = NULL;
+    *count_out = 0;
     DWORD bytes = 0;
     if ( GetLogicalProcessorInformationEx( RelationProcessorCore, NULL, &bytes ) || GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 )
     {
         rocketnet_platform_windows_create_status( status, GetLastError() );
-        rocketnet_error( "iocp transport refused: the processors could not be listed for the workers (Win32 %lu)", GetLastError() );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, GetLastError() );
         return false;
     }
-    struct processor_t
-    {
-        int index;           // the processor index SIO_CPU_AFFINITY takes
-        GROUP_AFFINITY pin;  // the same processor
-        GROUP_AFFINITY core; // every logical processor of its core
-    };
     const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
     uint8_t * info = (uint8_t *) rocketnet_malloc( context, (size_t) bytes );
-    processor_t * order = (processor_t *) rocketnet_malloc( context, sizeof( processor_t ) * ( (size_t) logical + 1 ) );
+    rocketnet_iocp_core_t * order = (rocketnet_iocp_core_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_core_t ) * ( (size_t) logical + 1 ) );
     if ( !info || !order )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
@@ -2067,7 +2090,7 @@ static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server
                 {
                     continue;
                 }
-                processor_t * p = &order[count++];
+                rocketnet_iocp_core_t * p = &order[count++];
                 memset( p, 0, sizeof( *p ) );
                 p->index = group_offset + bit;
                 p->pin.Group = mask->Group;
@@ -2083,7 +2106,7 @@ static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server
         // each pass in processor-index order
         for ( int i = first + 1; i < count; ++i )
         {
-            const processor_t key = order[i];
+            const rocketnet_iocp_core_t key = order[i];
             int j = i - 1;
             while ( j >= first && order[j].index > key.index )
             {
@@ -2094,27 +2117,109 @@ static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server
         }
     }
     ok = ok && count > 0;
-    for ( int i = 0; ok && i < iocp->num_endpoints; ++i )
+    if ( !ok )
+    {
+        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, GetLastError() );
+        rocketnet_free( context, order );
+        rocketnet_free( context, info );
+        return false;
+    }
+    rocketnet_free( context, info );
+    *order_out = order;
+    *count_out = count;
+    return true;
+}
+
+// The processor of each endpoint, into iocp->processors and iocp->pins: the
+// cores in placement order (rocketnet_iocp_core_order), wrapping past the last.
+// Windows' default RSS layout (base processor 0, one processor per core: on
+// the ENA adapter Get-NetAdapterRss lists 0, 2, 4, ...) hands receive queue i
+// to the first processor of core i, so with as many workers as queues each
+// queue's flows reach the endpoint on its processor. A flow whose RSS
+// processor has no endpoint is delivered to the first endpoint bound
+// (measured), so a different RSS layout costs spread, never datagrams. The
+// same order as the RIO transport's lanes (rocketnet_rio_lane_processors).
+// False only when Windows cannot list its processors.
+static bool rocketnet_iocp_endpoint_processors( void * context, rocketnet_server_iocp_t * iocp, int * status )
+{
+    rocketnet_iocp_core_t * order = NULL;
+    int count = 0;
+    if ( !rocketnet_iocp_core_order( context, "the workers", &order, &count, status ) )
+    {
+        return false;
+    }
+    for ( int i = 0; i < iocp->num_endpoints; ++i )
     {
         iocp->processors[i] = order[i % count].index;
         iocp->pins[i] = order[i % count].pin;
         iocp->cores[i] = order[i % count].core;
     }
-    if ( ok && iocp->num_endpoints > count )
+    if ( iocp->num_endpoints > count )
     {
         // a fallback: named at warn, and each worker's processor is readable
         // after start (rocketnet_server_iocp_worker_placement)
         rocketnet_warn( "iocp transport: %d workers asked for %d logical processors; workers %d..%d share processors with workers 0..%d", iocp->num_endpoints,
                         count, count, iocp->num_endpoints - 1, iocp->num_endpoints - 1 - count );
     }
-    if ( !ok )
+    rocketnet_free( context, order );
+    return true;
+}
+
+// The core of each send thread, into iocp->send_pins: thread t takes the
+// core t places after the last core a completion worker is pinned to (the
+// cores in placement order, as above), one logical processor of it, so every
+// thread has a core of its own and the receive threads' cores keep the
+// network threads together in order, then the game's threads. One worker,
+// which is not pinned (rocketnet_server_iocp_worker_placement NOT_ASKED),
+// holds the first core. Past the last core the threads wrap onto the first
+// ones, named at warn. Run after the workers' pins are final, and before the
+// send threads start. False only when Windows cannot list its processors.
+static bool rocketnet_iocp_send_processors( void * context, rocketnet_server_iocp_t * iocp, int flags, int * status )
+{
+    rocketnet_iocp_core_t * order = NULL;
+    int count = 0;
+    if ( !rocketnet_iocp_core_order( context, "the send threads", &order, &count, status ) )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
-        rocketnet_error( "iocp transport refused: the processors could not be listed for the workers (Win32 %lu)", GetLastError() );
+        return false;
+    }
+    int first = 1;
+    if ( iocp->num_endpoints > 1 )
+    {
+        first = 0;
+        for ( int e = 0; e < iocp->num_endpoints; ++e )
+        {
+            for ( int i = 0; i < count; ++i )
+            {
+                const bool same_core = iocp->pins[e].Mask != 0 ? ( order[i].core.Group == iocp->pins[e].Group && ( order[i].core.Mask & iocp->pins[e].Mask ) != 0 )
+                                                                  : order[i].index == iocp->processors[e];
+                if ( same_core )
+                {
+                    first = first > i + 1 ? first : i + 1;
+                    break;
+                }
+            }
+        }
+    }
+    if ( first + iocp->num_send_threads > count )
+    {
+        rocketnet_warn( "iocp transport: %d workers and %d send threads need %d cores after the first and the machine has %d: send threads past the last core share cores with earlier threads",
+                        iocp->num_endpoints, iocp->num_send_threads, first + iocp->num_send_threads - 1, count );
+    }
+    for ( int t = 0; t < iocp->num_send_threads; ++t )
+    {
+        iocp->send_pins[t] = order[( first + t ) % count].pin;
+#if ROCKETNET_DEV
+        if ( flags & ROCKETNET_IOCP_REFUSE_SEND_PINS )
+        {
+            iocp->send_pins[t].Group = 0xFFFF;
+        }
+#else
+        (void) flags;
+#endif // #if ROCKETNET_DEV
     }
     rocketnet_free( context, order );
-    rocketnet_free( context, info );
-    return ok;
+    return true;
 }
 
 #if ROCKETNET_DEV
@@ -2263,6 +2368,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     iocp->owner_epoch = rocketnet_iocp_next_owner_epoch.fetch_add( 1, std::memory_order_relaxed );
     iocp->send_queue_size = layout.send_queue_size;
     iocp->num_lanes = layout.num_lanes;
+    iocp->num_send_threads = layout.num_lanes < ROCKETNET_IOCP_SEND_THREADS ? layout.num_lanes : ROCKETNET_IOCP_SEND_THREADS;
     iocp->num_sends = layout.num_lanes * layout.send_queue_size;
     iocp->receive_queue_size = layout.receive_queue_size;
 
@@ -2485,6 +2591,16 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     }
 #endif // #if ROCKETNET_DEV
 
+    // the send threads' cores, after the workers' (the workers' pins are final)
+#if ROCKETNET_DEV
+    if ( !rocketnet_iocp_send_processors( context, iocp, flags, status ) )
+#else // #if ROCKETNET_DEV
+    if ( !rocketnet_iocp_send_processors( context, iocp, 0, status ) )
+#endif // #if ROCKETNET_DEV
+    {
+        goto failed;
+    }
+
     // One endpoint per worker. Endpoint 0 binds the address (and takes the
     // port when it is 0); the others bind the address endpoint 0 was given.
     // The probes run on every bound socket and a feature is used only when
@@ -2665,23 +2781,33 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
             setsockopt( iocp->sockets[e], IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *) &off, sizeof( off ) );
         }
     }
-    for ( int l = 0; l < iocp->num_lanes; ++l )
+    // The send threads: thread t owns lanes t, t + threads, ..., and the one
+    // wake their flushes set.
+    for ( int t = 0; t < iocp->num_send_threads; ++t )
     {
-        rocketnet_iocp_lane_t * lane = iocp->lanes[l];
-        lane->send_wake = rocketnet_platform_wake_create( context, NULL, status );
-        if ( !lane->send_wake )
+        rocketnet_iocp_send_thread_t * send = &iocp->send_threads[t];
+        send->owner = iocp;
+        send->index = t;
+        send->wake = rocketnet_platform_wake_create( context, NULL, status );
+        if ( !send->wake )
         {
             goto failed;
         }
-        iocp->live_lanes.fetch_add( 1, std::memory_order_relaxed );
-        lane->send_thread = rocketnet_platform_thread_create( context, rocketnet_iocp_send_worker, lane, status );
-        if ( !lane->send_thread )
+        int owned = 0;
+        for ( int l = t; l < iocp->num_lanes; l += iocp->num_send_threads )
         {
-            iocp->live_lanes.fetch_sub( 1, std::memory_order_relaxed );
+            iocp->lanes[l]->send_wake = send->wake;
+            ++owned;
+        }
+        iocp->live_lanes.fetch_add( owned, std::memory_order_relaxed );
+        send->thread = rocketnet_platform_thread_create( context, rocketnet_iocp_send_worker, send, status );
+        if ( !send->thread )
+        {
+            iocp->live_lanes.fetch_sub( owned, std::memory_order_relaxed );
             goto failed;
         }
 
-        rocketnet_platform_server_thread_priority( lane->send_thread );
+        rocketnet_platform_server_thread_priority( send->thread );
     }
 
     for ( int i = 0; i < num_workers; ++i )
@@ -2736,7 +2862,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     {
         goto failed;
     }
-    rocketnet_info( "iocp transport: %d completion workers and %d send lanes of %d on port %d, USO %s, URO %s", num_workers, iocp->num_lanes, iocp->send_queue_size, bind_address->port,
+    rocketnet_info( "iocp transport: %d completion workers, %d send threads and %d send lanes of %d on port %d, USO %s, URO %s", num_workers, iocp->num_send_threads, iocp->num_lanes,
+                    iocp->send_queue_size, bind_address->port,
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_USO ) ? "yes" : "no (WSASendTo per datagram)",
                     ( iocp->features.load() & ROCKETNET_IOCP_FEATURE_URO ) ? "yes" : "no (WSARecvFrom per datagram)" );
     // each worker's placement as it found it: create waits (at most a second
@@ -2766,6 +2893,28 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
         else
         {
             rocketnet_warn( "iocp transport: worker %d socket on processor %d (SIO_CPU_AFFINITY), worker placement not reported within a second", e, iocp->processors[e] );
+        }
+    }
+    // each send thread's placement as it found it, the same way
+    for ( int t = 0; t < iocp->num_send_threads; ++t )
+    {
+        for ( int waits = 0; waits < 1000 && iocp->send_placements[t].load( std::memory_order_acquire ) == ROCKETNET_IOCP_PLACEMENT_PENDING; ++waits )
+        {
+            rocketnet_platform_sleep( 0.001 );
+        }
+        const int placement = iocp->send_placements[t].load( std::memory_order_acquire );
+        if ( placement == ROCKETNET_IOCP_PLACEMENT_PINNED )
+        {
+            rocketnet_info( "iocp transport: send thread %d pinned to mask 0x%llx in group %d", t, (unsigned long long) iocp->send_pins[t].Mask, (int) iocp->send_pins[t].Group );
+        }
+        else if ( placement == ROCKETNET_IOCP_PLACEMENT_REFUSED )
+        {
+            rocketnet_warn( "iocp transport: send thread %d NOT pinned: SetThreadGroupAffinity to mask 0x%llx in group %d refused (Win32 %lu)", t,
+                            (unsigned long long) iocp->send_pins[t].Mask, (int) iocp->send_pins[t].Group, iocp->send_placement_errors[t].load( std::memory_order_relaxed ) );
+        }
+        else
+        {
+            rocketnet_warn( "iocp transport: send thread %d placement not reported within a second", t );
         }
     }
     return iocp;
@@ -3267,87 +3416,127 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
     }
 }
 
-// One lane's TX worker: it alone takes the lane's ready banks, groups and
-// posts them.
-// proofs/tla/RNIocpSendLanes.tla Post.
-static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, void * argument )
+// One lane's turn on its send thread: the lane's ready bank, if there is one,
+// grouped and posted, or, once stopping with none left, the lane's final
+// producer bank. Returns 1 when it sent a bank, 0 when it had nothing, 2 when
+// the lane is finished (stop's last bank is posted).
+// proofs/tla/RNIocpSendLanes.tla Post: per lane, as before; the thread only
+// chooses which of its lanes takes the next turn.
+static int rocketnet_iocp_send_lane_turn( rocketnet_platform_thread_t * thread, rocketnet_server_iocp_t * iocp, rocketnet_iocp_lane_t * lane )
 {
-    // proofs/tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
-    rocketnet_iocp_lane_t * lane = (rocketnet_iocp_lane_t *) argument;
-    rocketnet_server_iocp_t * iocp = lane->owner;
     (void) thread; // the development test hold sleeps on it
-
+#if ROCKETNET_DEV
     for ( ;; )
     {
-#if ROCKETNET_DEV
-        for ( ;; )
+        while ( iocp->test_hold_tx.load( std::memory_order_acquire ) &&
+                !iocp->stopping.load( std::memory_order_acquire ) )
         {
-            while ( iocp->test_hold_tx.load( std::memory_order_acquire ) &&
-                    !iocp->stopping.load( std::memory_order_acquire ) )
-            {
-                rocketnet_platform_thread_sleep( thread, 0.001 );
-            }
-            iocp->test_active_tx_batches.fetch_add( 1, std::memory_order_acq_rel );
-            if ( !iocp->test_hold_tx.load( std::memory_order_acquire ) ||
-                 iocp->stopping.load( std::memory_order_acquire ) )
-            {
-                break;
-            }
-            iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
+            rocketnet_platform_thread_sleep( thread, 0.001 );
         }
-#endif // #if ROCKETNET_DEV
-
-        // proofs/tla/RNBankFifoLayout.tla Take: the ready head; Release: the bank back on the free stack after its sends.
-        rocketnet_platform_mutex_acquire( &lane->send_mutex );
-
-        int index = -1;
-
-        if ( lane->send_ready_count )
-        {
-            index = lane->send_ready[lane->send_ready_head];
-            lane->send_ready_head = ( lane->send_ready_head + 1 ) % ROCKETNET_IOCP_SEND_BANKS;
-            lane->send_ready_count--;
-        }
-
-        const bool finish = index < 0 && iocp->stopping.load( std::memory_order_acquire );
-        rocketnet_platform_mutex_release( &lane->send_mutex );
-
-        if ( index >= 0 )
-        {
-            rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[index] );
-            rocketnet_platform_mutex_acquire( &lane->send_mutex );
-            lane->send_free[lane->send_free_count++] = index;
-            rocketnet_platform_mutex_release( &lane->send_mutex );
-#if ROCKETNET_DEV
-            iocp->test_pending_tx_banks.fetch_sub( 1, std::memory_order_release );
-#endif // #if ROCKETNET_DEV
-        }
-        else if ( finish )
-        {
-            // Stop's release transferred the last unpublished producer. It
-            // contains no kernel-owned sends; post those frames outside the
-            // mutex before advertising that no later post is possible.
-            rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[lane->send_producer] );
-        }
-#if ROCKETNET_DEV
-        iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
-#endif // #if ROCKETNET_DEV
-        if ( finish )
+        iocp->test_active_tx_batches.fetch_add( 1, std::memory_order_acq_rel );
+        if ( !iocp->test_hold_tx.load( std::memory_order_acquire ) ||
+             iocp->stopping.load( std::memory_order_acquire ) )
         {
             break;
         }
-        if ( index < 0 )
-        {
-            rocketnet_platform_wake_wait( lane->send_wake, false, 0.05 );
-        }
+        iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
+    }
+#endif // #if ROCKETNET_DEV
+
+    // proofs/tla/RNBankFifoLayout.tla Take: the ready head; Release: the bank back on the free stack after its sends.
+    rocketnet_platform_mutex_acquire( &lane->send_mutex );
+
+    int index = -1;
+
+    if ( lane->send_ready_count )
+    {
+        index = lane->send_ready[lane->send_ready_head];
+        lane->send_ready_head = ( lane->send_ready_head + 1 ) % ROCKETNET_IOCP_SEND_BANKS;
+        lane->send_ready_count--;
     }
 
-    // the completion workers exit once every lane has: wake them on each
-    // lane's exit, so the last one is never missed
-    iocp->live_lanes.fetch_sub( 1, std::memory_order_acq_rel );
-    for ( int e = 0; e < iocp->num_endpoints; ++e )
+    const bool finish = index < 0 && iocp->stopping.load( std::memory_order_acquire );
+    rocketnet_platform_mutex_release( &lane->send_mutex );
+
+    if ( index >= 0 )
     {
-        PostQueuedCompletionStatus( iocp->ports[e], 0, 0, NULL );
+        rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[index] );
+        rocketnet_platform_mutex_acquire( &lane->send_mutex );
+        lane->send_free[lane->send_free_count++] = index;
+        rocketnet_platform_mutex_release( &lane->send_mutex );
+#if ROCKETNET_DEV
+        iocp->test_pending_tx_banks.fetch_sub( 1, std::memory_order_release );
+#endif // #if ROCKETNET_DEV
+    }
+    else if ( finish )
+    {
+        // Stop's release transferred the last unpublished producer. It
+        // contains no kernel-owned sends; post those frames outside the
+        // mutex before advertising that no later post is possible.
+        rocketnet_iocp_send_bank( iocp, lane, &lane->send_banks[lane->send_producer] );
+    }
+#if ROCKETNET_DEV
+    iocp->test_active_tx_batches.fetch_sub( 1, std::memory_order_release );
+#endif // #if ROCKETNET_DEV
+    return finish ? 2 : ( index >= 0 ? 1 : 0 );
+}
+
+// One send thread: it alone takes the ready banks of the lanes it owns (lane
+// t, t + threads, ...), one bank a lane in turn, and posts them. It pins
+// itself first to the core rocketnet_iocp_send_processors chose and records
+// what happened: a refusal is counted, never reported as a pin.
+static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, void * argument )
+{
+    // proofs/tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
+    rocketnet_iocp_send_thread_t * send = (rocketnet_iocp_send_thread_t *) argument;
+    rocketnet_server_iocp_t * iocp = send->owner;
+    const int t = send->index;
+
+    if ( SetThreadGroupAffinity( GetCurrentThread(), &iocp->send_pins[t], NULL ) )
+    {
+        iocp->send_placements[t].store( ROCKETNET_IOCP_PLACEMENT_PINNED, std::memory_order_release );
+    }
+    else
+    {
+        iocp->send_placement_errors[t].store( GetLastError(), std::memory_order_relaxed );
+        iocp->send_pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+        iocp->send_placements[t].store( ROCKETNET_IOCP_PLACEMENT_REFUSED, std::memory_order_release );
+    }
+
+    bool finished[ROCKETNET_IOCP_MAX_LANES] = {};
+    int live = 0;
+    for ( int l = t; l < iocp->num_lanes; l += iocp->num_send_threads )
+    {
+        ++live;
+    }
+    while ( live > 0 )
+    {
+        bool sent = false;
+        for ( int l = t; l < iocp->num_lanes; l += iocp->num_send_threads )
+        {
+            if ( finished[l] )
+            {
+                continue;
+            }
+            const int turn = rocketnet_iocp_send_lane_turn( thread, iocp, iocp->lanes[l] );
+            sent = sent || turn == 1;
+            if ( turn == 2 )
+            {
+                // the completion workers exit once every lane has: wake them on
+                // each lane's exit, so the last one is never missed
+                finished[l] = true;
+                --live;
+                iocp->live_lanes.fetch_sub( 1, std::memory_order_acq_rel );
+                for ( int e = 0; e < iocp->num_endpoints; ++e )
+                {
+                    PostQueuedCompletionStatus( iocp->ports[e], 0, 0, NULL );
+                }
+            }
+        }
+        if ( live > 0 && !sent )
+        {
+            rocketnet_platform_wake_wait( send->wake, false, 0.05 );
+        }
     }
 }
 
@@ -3470,6 +3659,38 @@ int rocketnet_server_iocp_worker_placement( rocketnet_server_iocp_t * iocp, int 
         *error = iocp->placement_errors[worker].load( std::memory_order_relaxed );
     }
     return placement;
+}
+
+int rocketnet_server_iocp_send_thread_count( rocketnet_server_iocp_t * iocp )
+{
+    return iocp ? iocp->num_send_threads : 0;
+}
+
+int rocketnet_server_iocp_send_placement( rocketnet_server_iocp_t * iocp, int thread, uint64_t * mask, int * group, unsigned long * error )
+{
+    if ( !iocp || thread < 0 || thread >= iocp->num_send_threads )
+    {
+        return ROCKETNET_IOCP_PLACEMENT_PENDING;
+    }
+    const int placement = iocp->send_placements[thread].load( std::memory_order_acquire );
+    if ( mask )
+    {
+        *mask = (uint64_t) iocp->send_pins[thread].Mask;
+    }
+    if ( group )
+    {
+        *group = (int) iocp->send_pins[thread].Group;
+    }
+    if ( error )
+    {
+        *error = iocp->send_placement_errors[thread].load( std::memory_order_relaxed );
+    }
+    return placement;
+}
+
+uint64_t rocketnet_server_iocp_send_pin_refusals( rocketnet_server_iocp_t * iocp )
+{
+    return iocp ? iocp->send_pin_refusals.load( std::memory_order_relaxed ) : 0;
 }
 
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )

@@ -45,6 +45,17 @@
 #define ROCKETNET_IOCP_DEFAULT_WORKERS 1
 #define ROCKETNET_IOCP_MAX_WORKERS 32
 
+// The send threads. A send thread takes the ready banks of the lanes it owns
+// (lane l belongs to thread l % threads), groups and posts them. There are
+// ROCKETNET_IOCP_SEND_THREADS of them, or as many as there are lanes when
+// there are fewer, each pinned to a core of its own after the completion
+// workers' cores (rocketnet_server_iocp_send_placement). The count is the
+// smallest measured to hold the space game's peak (1000 players, 15 packets
+// of 1200 bytes each per 60 Hz frame, 900k packets a second, the game threads
+// half busy, 2 completion workers): 60 frames a second with every player whole.
+#define ROCKETNET_IOCP_SEND_THREADS 2
+#define ROCKETNET_IOCP_MAX_SEND_THREADS 16
+
 // The send staging is sized by rate. The lanes together stage
 // ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT for every sized client: 32 at 1000
 // clients is 8 lanes of 4096, twice the 17 a client's share of 10 Gb/s of
@@ -70,6 +81,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES * ROCKETNET_IOCP_LANE_PACKETS 
                          "every lane's send operations fit the packet handle's sixteen index bits" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS + ROCKETNET_IOCP_LANE_HEADROOM <= ROCKETNET_IOCP_MAX_OPERATIONS,
                          "one lane holds every client slot and the headroom within sixteen index bits" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_SEND_THREADS >= 1 && ROCKETNET_IOCP_SEND_THREADS <= ROCKETNET_IOCP_MAX_SEND_THREADS &&
+                             ROCKETNET_IOCP_MAX_SEND_THREADS == ROCKETNET_IOCP_MAX_LANES,
+                         "a send thread owns at least one lane: the threads are at most the lanes there can be" );
 
 // one lane's staging and operation pool for sized clients (a power of two):
 // a fair share of the rate, at most ROCKETNET_IOCP_LANE_PACKETS, and never
@@ -145,6 +159,8 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 // on a host that has the feature. Production does not carry these controls.
 #define ROCKETNET_IOCP_DISABLE_USO 1
 #define ROCKETNET_IOCP_DISABLE_URO 2
+// every send thread's pin is refused by Windows (a group that does not exist)
+#define ROCKETNET_IOCP_REFUSE_SEND_PINS 4
 #endif // #if ROCKETNET_DEV
 
 // rocketnet_server_iocp_features bits
@@ -256,6 +272,21 @@ enum
     ROCKETNET_IOCP_PLACEMENT_REFUSED = 3,
 };
 int rocketnet_server_iocp_worker_placement( rocketnet_server_iocp_t * iocp, int worker, uint64_t * mask, int * group, unsigned long * error );
+
+// The send threads and where each runs, as the thread found it when it pinned
+// itself. The count is ROCKETNET_IOCP_SEND_THREADS, or the lanes when there
+// are fewer. Thread t is on the core after the last completion worker's, plus
+// t (the same in-order rule the workers follow), one logical processor of it,
+// so the core's other logical processors stay free. The placement is PINNED to
+// *mask in *group, REFUSED (SetThreadGroupAffinity failed; *error is its Win32
+// error; the thread runs wherever Windows puts it, is warned by name, counted
+// in rocketnet_server_iocp_send_pin_refusals and never reported as pinned) or
+// PENDING (not reached yet, or no such thread). Create waits for every
+// thread's answer and logs it.
+int rocketnet_server_iocp_send_thread_count( rocketnet_server_iocp_t * iocp );
+int rocketnet_server_iocp_send_placement( rocketnet_server_iocp_t * iocp, int thread, uint64_t * mask, int * group, unsigned long * error );
+// the send threads whose pin was refused, since create
+uint64_t rocketnet_server_iocp_send_pin_refusals( rocketnet_server_iocp_t * iocp );
 
 #if ROCKETNET_DEV
 // A development test control: flags every later create ORs into its own (the

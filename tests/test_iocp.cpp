@@ -2878,6 +2878,149 @@ static void test_iocp_endpoints_share_by_processor()
     rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
 }
 
+// The send threads: ROCKETNET_IOCP_SEND_THREADS of them (as many as there are
+// lanes when fewer), each pinned to a logical processor of its own, none the
+// completion workers'. A pin Windows refuses is warned by name, counted, and
+// the thread is never reported as pinned.
+static std::atomic<int> send_pin_warnings{ 0 };
+static std::atomic<int> send_pin_warning_threads{ 0 };
+
+static void send_pin_log( void *, rocketnet_log_level_t, const char * message, size_t )
+{
+    const char * found = strstr( message, "iocp transport: send thread " );
+    if ( found && strstr( message, " NOT pinned: SetThreadGroupAffinity" ) && strstr( message, "refused (Win32 " ) )
+    {
+        send_pin_warnings.fetch_add( 1 );
+        send_pin_warning_threads.fetch_or( 1 << atoi( found + strlen( "iocp transport: send thread " ) ) );
+    }
+}
+
+static void test_iocp_send_threads_pinned_and_refusal()
+{
+    const int lanes = rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS );
+    const int expected = lanes < ROCKETNET_IOCP_SEND_THREADS ? lanes : ROCKETNET_IOCP_SEND_THREADS;
+
+    // the count
+    CHECK( ROCKETNET_IOCP_SEND_THREADS >= 1 && expected >= 1 );
+
+    // placement: two workers and the send threads, every one on a logical
+    // processor of its own
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( transport );
+        CHECK( rocketnet_server_iocp_send_thread_count( transport ) == expected );
+        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == 0 );
+        uint64_t seen[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
+        int groups[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
+        int num_seen = 0;
+        for ( int w = 0; w < 2; ++w )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            unsigned long error = 0;
+            CHECK( rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            seen[num_seen] = mask;
+            groups[num_seen++] = group;
+        }
+        for ( int t = 0; t < expected; ++t )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            unsigned long error = 7;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            CHECK( mask != 0 && ( mask & ( mask - 1 ) ) == 0 && group >= 0 ); // one logical processor
+            for ( int i = 0; i < num_seen; ++i )
+            {
+                CHECK( !( groups[i] == group && seen[i] == mask ) ); // its own: no worker's, no earlier send thread's
+            }
+            seen[num_seen] = mask;
+            groups[num_seen++] = group;
+        }
+        CHECK( rocketnet_server_iocp_send_placement( transport, expected, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+        CHECK( rocketnet_server_iocp_send_placement( transport, -1, NULL, NULL, NULL ) == ROCKETNET_IOCP_PLACEMENT_PENDING );
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+
+    // one worker (not pinned): the send threads still take cores of their own, after it
+    {
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        CHECK( transport );
+        uint64_t first_mask = 0;
+        for ( int t = 0; t < expected; ++t )
+        {
+            uint64_t mask = 0;
+            int group = -1;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, NULL ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
+            CHECK( mask != 0 );
+            CHECK( t == 0 || mask != first_mask );
+            first_mask = t == 0 ? mask : first_mask;
+        }
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+
+    // refusal: Windows refuses every pin (a processor group that does not
+    // exist). Each is named in a warning, counted, reported REFUSED with its
+    // Win32 error and never PINNED, and the transport still runs.
+    {
+        send_pin_warnings.store( 0 );
+        send_pin_warning_threads.store( 0 );
+        rocketnet_log_function( send_pin_log, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+        rocketnet_server_iocp_test_force_flags( ROCKETNET_IOCP_REFUSE_SEND_PINS );
+        rocketnet_address_t bind = address( "127.0.0.1:0" );
+        rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+        rocketnet_server_iocp_test_force_flags( 0 );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+        rocketnet_log_function( NULL, NULL );
+        CHECK( transport );
+        CHECK( rocketnet_server_iocp_send_thread_count( transport ) == expected );
+        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == (uint64_t) expected );
+        CHECK( send_pin_warnings.load() == expected );
+        CHECK( send_pin_warning_threads.load() == ( 1 << expected ) - 1 ); // each thread named once
+        for ( int t = 0; t < expected; ++t )
+        {
+            unsigned long error = 0;
+            CHECK( rocketnet_server_iocp_send_placement( transport, t, NULL, NULL, &error ) == ROCKETNET_IOCP_PLACEMENT_REFUSED );
+            CHECK( error != 0 );
+        }
+
+        // refused or not, the transport sends and receives
+        rocketnet_address_t client_address = address( "127.0.0.1:0" );
+        rocketnet_platform_socket_t * client = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 256 * 1024, 256 * 1024 );
+        CHECK( client );
+        uint64_t id = 0;
+        uint8_t * frame = rocketnet_server_iocp_start_packet( transport, &client_address, &id );
+        CHECK( frame );
+        if ( frame )
+        {
+            memset( frame, 0x5C, FAULT_BYTES );
+            rocketnet_server_iocp_finish_packet( transport, id, frame, FAULT_BYTES );
+            rocketnet_server_iocp_send_packets( transport );
+            uint8_t data[ROCKETNET_RECEIVE_CEILING];
+            rocketnet_address_t from;
+            int received = 0;
+            const double deadline = rocketnet_platform_time() + 5.0;
+            while ( received == 0 && rocketnet_platform_time() < deadline )
+            {
+                received = rocketnet_platform_socket_receive_packet( client, &from, data, (int) sizeof( data ) );
+                if ( received == 0 )
+                {
+                    rocketnet_platform_sleep( 0.001 );
+                }
+            }
+            CHECK( received == FAULT_BYTES && data[0] == 0x5C );
+        }
+        rocketnet_platform_socket_destroy( client );
+        wait_stopped( transport );
+        rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    }
+    printf( "test_iocp_send_threads_pinned_and_refusal threads=%d\n", expected );
+}
+
 static std::atomic<int> send_failed_logs{ 0 };
 
 static void send_failed_log( void *, rocketnet_log_level_t, const char * message, size_t )
@@ -3458,6 +3601,7 @@ static const fault_case_t fault_cases[] = {
     { "test_windows_create_refused_for_commit_is_out_of_memory", test_windows_create_refused_for_commit_is_out_of_memory },
     { "test_windows_port_exclusive", test_windows_port_exclusive },
     { "test_iocp_endpoints_share_by_processor", test_iocp_endpoints_share_by_processor },
+    { "test_iocp_send_threads_pinned_and_refusal", test_iocp_send_threads_pinned_and_refusal },
     { "test_windows_send_failures_counted", test_windows_send_failures_counted },
     { "test_windows_sockets_not_inherited", test_windows_sockets_not_inherited },
     { "test_platform_socket_is_non_blocking", test_platform_socket_is_non_blocking },
