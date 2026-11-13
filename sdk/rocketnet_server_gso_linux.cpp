@@ -1325,7 +1325,7 @@ static const struct rocketnet_gso_affinity_calls_t rocketnet_gso_affinity_real =
 // and the mask it is left on (read back; "unknown" when it cannot be read)
 static void rocketnet_server_gso_warn_left_on_core_zero( int queue_index, const struct rocketnet_gso_affinity_calls_t * calls, const char * why )
 {
-    char cpus[128];
+    char cpus[128] = "unknown";
     cpu_set_t mask;
     CPU_ZERO( &mask );
     if ( calls->get( &mask ) == 0 )
@@ -1336,10 +1336,6 @@ static void rocketnet_server_gso_warn_left_on_core_zero( int queue_index, const 
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, &mask ) ? 1 : 0;
         }
         rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
-    }
-    else
-    {
-        snprintf( cpus, sizeof( cpus ), "%s", "unknown" );
     }
     rocketnet_warn( "gso worker %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue_index, cpus, why );
 }
@@ -1373,7 +1369,7 @@ static bool rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         char why[192];
-        snprintf( why, sizeof( why ), "confining it away from the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
+        (void) snprintf( why, sizeof( why ), "confining it away from the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
         rocketnet_server_gso_warn_left_on_core_zero( queue_index, calls, why );
         return false;
     }
@@ -1448,8 +1444,9 @@ static void rocketnet_server_gso_place_worker( struct rocketnet_server_gso_queue
         if ( result != 0 )
         {
             char call[64];
-            snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
-            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+            (void) snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, rocketnet_platform_socket_error_text( result ).text,
+                                                        "the thread runs at its default priority" );
         }
     }
 }

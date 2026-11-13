@@ -4242,7 +4242,7 @@ static const rocketnet_xdp_affinity_calls_t xdp_affinity_real = { xdp_affinity_g
 // queue and the mask (NULL: the mask could not be read)
 static void xdp_thread_warn_left_on_core_zero( int queue, const cpu_set_t * mask, const char * why )
 {
-    char cpus[128];
+    char cpus[128] = "unknown";
     if ( mask )
     {
         unsigned char in_mask[CPU_SETSIZE];
@@ -4251,10 +4251,6 @@ static void xdp_thread_warn_left_on_core_zero( int queue, const cpu_set_t * mask
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
         }
         rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
-    }
-    else
-    {
-        snprintf( cpus, sizeof( cpus ), "%s", "unknown" );
     }
     rocketnet_warn( "xdp thread %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue, cpus, why );
 }
@@ -4290,7 +4286,7 @@ static bool xdp_thread_leave_core_zero( int queue, const rocketnet_xdp_affinity_
     {
         char error_text[128];
         char why[192];
-        snprintf( why, sizeof( why ), "leaving core 0 was refused (%s)", strerror_r( result, error_text, sizeof( error_text ) ) );
+        (void) snprintf( why, sizeof( why ), "leaving core 0 was refused (%s)", strerror_r( result, error_text, sizeof( error_text ) ) );
         xdp_thread_warn_left_on_core_zero( queue, &allowed, why );
         return false;
     }

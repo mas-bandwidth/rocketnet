@@ -465,7 +465,7 @@ void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, ch
                                       : snprintf( range, sizeof( range ), "%s%d", used > 0 ? "," : "", cpu );
         if ( length < 0 || used + length > text_bytes - 4 )
         {
-            snprintf( text + used, (size_t) ( text_bytes - used ), "..." );
+            (void) snprintf( text + used, (size_t) ( text_bytes - used ), "..." );
             return;
         }
         memcpy( text + used, range, (size_t) length + 1 );
@@ -474,7 +474,7 @@ void rocketnet_platform_cpu_list_text( const unsigned char * cpus, int count, ch
     }
     if ( used == 0 )
     {
-        snprintf( text, (size_t) text_bytes, "none" );
+        (void) snprintf( text, (size_t) text_bytes, "none" );
     }
 }
 

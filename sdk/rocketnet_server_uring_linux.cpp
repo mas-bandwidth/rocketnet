@@ -424,7 +424,7 @@ static const struct rocketnet_uring_affinity_calls_t rocketnet_uring_affinity_re
 // and the mask (NULL: the mask could not be read)
 static void rocketnet_server_uring_warn_left_on_core_zero( int queue_index, const cpu_set_t * mask, const char * why )
 {
-    char cpus[128];
+    char cpus[128] = "unknown";
     if ( mask )
     {
         unsigned char in_mask[CPU_SETSIZE];
@@ -433,10 +433,6 @@ static void rocketnet_server_uring_warn_left_on_core_zero( int queue_index, cons
             in_mask[cpu] = CPU_ISSET( (size_t) cpu, mask ) ? 1 : 0;
         }
         rocketnet_platform_cpu_list_text( in_mask, CPU_SETSIZE, cpus, (int) sizeof( cpus ) );
-    }
-    else
-    {
-        snprintf( cpus, sizeof( cpus ), "%s", "unknown" );
     }
     rocketnet_warn( "io_uring worker %d left on cpus %s, cpu 0 among them: %s; it asks for no real-time scheduling", queue_index, cpus, why );
 }
@@ -495,7 +491,7 @@ static bool rocketnet_server_uring_confine_worker( const struct rocketnet_server
     if ( result != 0 )
     {
         char why[192];
-        snprintf( why, sizeof( why ), "confining it past the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
+        (void) snprintf( why, sizeof( why ), "confining it past the OS's cpus was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
         rocketnet_server_uring_warn_left_on_core_zero( queue_index, mask_read ? &kept : NULL, why );
         return false;
     }
