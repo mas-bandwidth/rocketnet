@@ -93,8 +93,9 @@
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
 // stores and 64 loads, independent of max_clients.
 //
-// The check is armed or not (rocketnet_fill_phase_arm; armed after init,
-// which is what RNFillPhase models and the trace check walks). The server
+// The check is armed or not (rocketnet_fill_phase_arm; armed after init;
+// proofs/tla/RNFillPhase.tla Arm, and FillSkip and MainSkip for a scope that
+// begins not armed; the trace check walks both sides of the latch). The server
 // disarms it at create and arms it, for good, at the game's first call that
 // names a client (rocketnet_server_finish_client_message or
 // rocketnet_server_abort_client_message). Until then the game makes today's

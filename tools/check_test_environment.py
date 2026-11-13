@@ -298,20 +298,36 @@ COMMIT_LINE_RE = re.compile(r"commit available [0-9]+ MiB of a [0-9]+ MiB limit,
                             r"|commit lock: test_[a-z0-9_]+ waited [0-9.]+ s for another run's full-capacity case")
 
 
-def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
+# ROCKETNET_TEST_REPORT=1 also prints the job count before the cases (tests/suite_runner.h)
+JOBS_LINE_RE = re.compile(r"jobs: [0-9]+ \(cpus this run may use: [0-9]+\)")
+SHARD_LINE_RE = re.compile(r"shard ([0-9]+)/([0-9]+): [0-9]+ of [0-9]+ cases")
+
+
+def shard_of(name, shards):
+    """tests/suite_runner.h suite_shard_of: FNV-1a (32 bit) of the name, mod shards."""
+    h = 2166136261
+    for b in name.encode():
+        h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+    return h % shards
+
+
+def check_functional_log(lines, rows, exec_names, other_names=frozenset(), shard=None):
     """Cases run == registered rows - skips, from one passing functional run.
 
     Returns a list of problems (empty when the run is whole): every row
     outside a preprocessor condition printed or SKIPPED, a SKIPPED row only
     one with a predicate and named with it, no row both, every printed or
     skipped name registered (or an exec case's), and the skipped count
-    equal to the SKIPPED lines.
+    equal to the SKIPPED lines. With shard (I, N), one shard's run: only the
+    rows of shard I (suite_shard_of) are owed, and the run printed its
+    "shard I/N: k of m cases" line.
     """
     lines = [line.rstrip("\r") for line in lines]
     problems = []
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         return ["the run does not end with a blank line, %r and a blank line" % PASSED_LINE]
     printed, skipped, counts, other, keep_going = [], {}, [], [], 0
+    shard_lines = []
     for line in lines[:-3]:
         if TEST_NAME_RE.fullmatch(line):
             printed.append(line)
@@ -328,6 +344,12 @@ def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
             continue
         if KEEP_GOING_PASS_RE.fullmatch(line):
             keep_going += 1
+            continue
+        if JOBS_LINE_RE.fullmatch(line):
+            continue
+        m = SHARD_LINE_RE.fullmatch(line)
+        if m:
+            shard_lines.append((int(m.group(1)), int(m.group(2))))
             continue
         if line == "" or RSS_OVER_RE.fullmatch(line) or REPORT_LINE_RE.fullmatch(line) or COMMIT_LINE_RE.fullmatch(line):
             continue
@@ -361,8 +383,13 @@ def check_functional_log(lines, rows, exec_names, other_names=frozenset()):
             problems.append("SKIPPED a row with no predicate: %s" % name)
         elif predicate not in (row_predicate, "runs_here"):
             problems.append("SKIPPED %s names %s, its row names %s" % (name, predicate, row_predicate))
+    if shard is not None and shard_lines != [shard]:
+        problems.append("expected one 'shard %d/%d: <k> of <m> cases' line, found %r" % (shard[0], shard[1], shard_lines))
+    if shard is None and shard_lines:
+        problems.append("a shard line in a whole-suite log: %r" % shard_lines)
     lost = sorted(name for name, (unconditional, _) in rows.items()
-                  if unconditional and name not in ran and name not in skipped)
+                  if unconditional and name not in ran and name not in skipped
+                  and (shard is None or shard_of(name, shard[1]) == shard[0]))
     if lost:
         problems.append("registered rows that neither ran nor were SKIPPED: " + ", ".join(lost[:20]))
     return problems
@@ -387,12 +414,12 @@ def functional_exec_unit_names():
     return names
 
 
-def check_functional_log_file(path):
+def check_functional_log_file(path, shard=None):
     try:
         text = Path(path).read_text(errors="replace")
     except OSError as error:
         sys.exit("functional log %s: %s" % (path, error))
-    problems = check_functional_log(text.splitlines(), functional_rows(), exec_functional_names(), functional_exec_unit_names())
+    problems = check_functional_log(text.splitlines(), functional_rows(), exec_functional_names(), functional_exec_unit_names(), shard)
     if problems:
         sys.exit("functional run %s is not registered rows minus skips:\n  %s" % (path, "\n  ".join(problems)))
     print("ok: functional run %s ran every registered row or SKIPPED it" % path)
@@ -495,9 +522,17 @@ def run_binary(binary, env, timeout):
 def main():
     if sys.argv[1:2] == ["--functional-log"]:
         # a functional run's output, as tools/run_functional.sh logs it
-        if len(sys.argv) != 3:
-            sys.exit("usage: check_test_environment.py --functional-log LOG")
-        check_functional_log_file(sys.argv[2])
+        shard = None
+        rest = sys.argv[2:]
+        if len(rest) == 3 and rest[1] == "--shard":
+            m = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", rest[2])
+            if not m or int(m.group(1)) >= int(m.group(2)):
+                sys.exit("check_test_environment.py: --shard is I/N with 0 <= I < N: %s" % rest[2])
+            shard = (int(m.group(1)), int(m.group(2)))
+            rest = rest[:1]
+        if len(rest) != 1:
+            sys.exit("usage: check_test_environment.py --functional-log LOG [--shard I/N]")
+        check_functional_log_file(rest[0], shard)
         return
     args = [arg for arg in sys.argv[1:] if arg != "--production"]
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),

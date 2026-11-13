@@ -240,7 +240,7 @@ jobs:
         # functional_production is the include row below). The nightly tier
         # runs all. Both tiers exclude the plain Linux Release unit row: its
         # two shard rows replace it.
-        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
+        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
@@ -275,6 +275,20 @@ jobs:
           # excluded in both tiers; the macOS Debug unit row stays one job.
           - { os: linux, build_type: Debug, leg: unit, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Debug, leg: unit, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # The Linux functional legs run in three shards each (the suite's own --shard
+          # I/N, tests/suite_runner.h: a case's shard is a function of its name):
+          # the suite step alone took 81 s (Debug) and 106 s (Release, the production
+          # suite) against the 120 s cap, and main never showed a whole result. The
+          # plain Linux functional rows are excluded in both tiers; summary jobs
+          # carry their names. Shard 2/3 also runs the small steps (wide fill,
+          # pinned-portable pass, platform primitives, load census, lifecycle
+          # binary, production client lifecycle); the memlock check runs in both.
+          - { os: linux, build_type: Debug, leg: functional, shard: 0/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 1/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 2/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 0/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 1/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 2/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The macOS Release functional row ran both suites in one job, 1m30
           # to 1m50 against the two-minute bound. The production library's
           # suite (functional_production) runs in this row of its own, on its
@@ -614,22 +628,23 @@ jobs:
         # the value is empty, which is scale 1 (tests/time_scale.h).
         env:
           ROCKETNET_TEST_CASE_TIME_SCALE: ${{ inputs.full && runner.os == 'Linux' && matrix.build_type == 'Debug' && '2' || '' }}
+          ROCKETNET_TEST_REPORT: '1'
         run: |
           set -euo pipefail
-          bash tools/run_functional.sh dev --log functional-auto.log ./bin/functional
+          bash tools/run_functional.sh dev --log functional-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional
 
       # The wide fill (tests/wide_fill_cases.cpp): fills from several job
       # threads at once and the fill-phase check's refusals, on the
       # development library (bin/test_wide_fill exists only there).
       - name: Run the wide fill cases (job threads)
-        if: matrix.leg == 'functional' && matrix.dev == 'ON'
+        if: matrix.leg == 'functional' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '1/3'
         run: ./bin/test_wide_fill
 
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
       # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
-        if: matrix.leg == 'functional'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -641,12 +656,14 @@ jobs:
       # macOS it is the functional_production row's, beside the functional row.
       - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        env:
+          ROCKETNET_TEST_REPORT: '1'
         run: |
           set -euo pipefail
-          bash tools/run_functional.sh prod --log functional-production-auto.log ./bin/functional_production
+          bash tools/run_functional.sh prod --log functional-production-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional_production
 
       - name: Run functional_production suite (portable rung pinned by env)
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -657,7 +674,7 @@ jobs:
       # (docs/BUILD-REFERENCE.md lists it as a production gate); built on
       # ROCKETNET_DEV=OFF only, under a second here.
       - name: "Functional: production client lifecycle"
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
         run: ./bin/test_production_client_lifecycle
 
       # tests/functional/platform_primitives.cpp built standalone: the real
@@ -668,7 +685,7 @@ jobs:
       # Release rows OFF, and the line it prints must name the DEV setting
       # this row built.
       - name: "Functional: platform primitives (standalone, both DEV settings)"
-        if: matrix.leg == 'functional'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         shell: bash
         run: |
           set -euo pipefail
@@ -685,7 +702,7 @@ jobs:
       # self-test plants a file left open, a reused descriptor number, the
       # random device and a thread left running.
       - name: "Functional: load harness census self-test"
-        if: matrix.leg == 'functional'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         shell: bash
         run: |
           set -euo pipefail
@@ -916,7 +933,7 @@ jobs:
           exit "$failed"
 
       - name: "Functional: lifecycle binary"
-        if: matrix.leg == 'functional'
+        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -1368,6 +1385,102 @@ jobs:
             exit 1
           fi
           python3 tools/check_debug_unit_shards.py "$DEBUG_UNIT_JOBS"
+
+  # The required checks "linux / Debug / functional" and "linux / Release / functional" are
+  # the two summary jobs below: each Linux functional leg runs as two shard rows of
+  # build-and-test, and its summary is green only when both shards are
+  # (tools/check_debug_unit_shards.py, the shard names as arguments).
+  debug-functional:
+    name: linux / Debug / functional
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Debug functional shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: debug-functional-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/3)" "linux / Debug / functional (1/3)" "linux / Debug / functional (2/3)"
+
+  release-functional:
+    name: linux / Release / functional
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Release functional shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: release-functional-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every

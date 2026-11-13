@@ -175,6 +175,9 @@ void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase )
     RN_FILL_PHASE_TRACE( "MainDrop", -1, epoch, false );
 }
 
+// proofs/tla/RNFillPhase.tla Arm: the latch arms at the game's first call
+// that names a client. Until then the call sites' scopes
+// (rocketnet_fill_phase.h) do nothing: FillSkip and MainSkip.
 void rocketnet_fill_phase_arm( struct rocketnet_fill_phase_t * fill_phase, bool armed )
 {
     rocketnet_assert( fill_phase );
