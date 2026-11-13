@@ -55,7 +55,8 @@
 (*               (Drains).                                                 *)
 (*   LockRule    "try" keeps the producer while the worker holds the       *)
 (*               handoff mutex (the design); "wait" blocks main on it      *)
-(*               until the worker lets go (MainNeverWaits).                *)
+(*               until the worker lets go (MainNeverWaits); "none" leaves  *)
+(*               the mutex out, for a witness the lock has no part in.     *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -68,11 +69,11 @@ CONSTANTS NB,         \* banks per queue (ROCKETNET_URING_SEND_BANKS)
           MaxEagain,  \* bound on eagain completions
           RetireRule, \* "cqe" (the design) or "submitted"
           EagainRule, \* "retry" (the design), "lost" or "stuck"
-          LockRule    \* "try" (the design) or "wait"
+          LockRule    \* "try" (the design), "wait" or "none"
 
 ASSUME NB >= 3 /\ S >= 1 /\ MaxSeg >= 1 /\ Demand >= 1 /\ MaxFlush \in Nat /\ MaxEagain \in Nat
 ASSUME RetireRule \in {"cqe", "submitted"} /\ EagainRule \in {"retry", "lost", "stuck"}
-ASSUME LockRule \in {"try", "wait"}
+ASSUME LockRule \in {"try", "wait", "none"}
 
 Bs == 0..(NB - 1)
 Sl == 0..(S - 1)
@@ -311,8 +312,9 @@ WorkerRetireRefused ==
 \* the claim and the retire are each one atomic step here, so main may find
 \* the mutex held in between
 WorkerLocks ==
+    /\ LockRule # "none"
     /\ ~locked
-    /\ worker = NoBank \/ Retirable(worker)
+    /\ IF worker = NoBank THEN TRUE ELSE Retirable(worker)
     /\ locked' = TRUE
     /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
                    status, nextId, eagains, demand, flushes, kernelWrite, pids, mainWaits>>

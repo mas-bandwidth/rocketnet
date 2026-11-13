@@ -4,6 +4,11 @@
 - **The fill:** it stages into the queue's producer bank.
 - **Main's send_packets:** it publishes the producer to the ready FIFO when a free
   bank can replace it; otherwise the producer is kept for the next flush.
+- **The handoff's lock:** the worker takes it (`WorkerLocks`, `WorkerUnlocks`) to
+  claim and retire. Main only tries it (LockRule "try"): a publish that finds it held
+  keeps the producer for the next flush, and the idle check says not idle, so main
+  never waits on the worker (`MainNeverWaits`). LockRule "wait" is the code before
+  the fix: main blocks on the lock (`PublishWaits`, `PublishResumes`).
 - **The worker:** it takes the oldest ready bank and submits its staged slots as runs.
   A run is the earliest staged slots of one destination, at most `MaxSeg` of them,
   sent as one SENDMSG with one completion. The worker reaps completions in posted
