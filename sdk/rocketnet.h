@@ -2989,18 +2989,25 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
-/// rocketnet_server_update in three calls, so the game's own jobs apply the
-/// acknowledgements each client's packets carried: update_receive, then
-/// update_client once for each client index on any of the game's threads,
-/// then update_finish. The result is rocketnet_server_update's exactly;
-/// a client nobody calls update_client for is applied by update_finish.
+/// By default a server is updated by one call, rocketnet_server_update, on
+/// one thread, and needs nothing below.
 ///
-/// Thread: update_receive and update_finish on the thread that owns the
-/// server. Between them, update_client may run on any number of threads at
-/// once, one call per client index (a second call for the same index finds
-/// nothing to do), and nothing else may be called on the server. The game
-/// joins its jobs (a join or a barrier, not a wall-clock wait) before
-/// update_finish.
+/// These three calls are rocketnet_server_update split up, for a game that
+/// wants its game threads to apply the acknowledgements each client's
+/// packets carried: rocketnet_server_update_receive on the main thread, then
+/// rocketnet_server_update_client once for each client index on the game
+/// threads, then rocketnet_server_update_finish on the main thread. The
+/// result is rocketnet_server_update's exactly; a client nobody calls
+/// rocketnet_server_update_client for is applied by
+/// rocketnet_server_update_finish.
+///
+/// Thread: rocketnet_server_update_receive and rocketnet_server_update_finish
+/// on the main thread. Between them, the main thread and the game threads
+/// may call rocketnet_server_update_client at once, one call per client
+/// index (a second call for the same index finds nothing to do), and nothing
+/// else may be called on the server. The game joins its game threads (a join
+/// or a barrier, not a wall-clock wait) before
+/// rocketnet_server_update_finish.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time As rocketnet_server_update's.
