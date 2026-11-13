@@ -34,24 +34,36 @@
 (* receive the kernel keeps refusing is armed once a period, never at      *)
 (* completion speed.                                                       *)
 (*                                                                         *)
-(* The server's stop (rocketnet_server_transport_stop) first tells the     *)
-(* worker shutdown has begun (BeginStop: the driver's begin_shutdown,      *)
-(* ShutdownRule "begin") and asks the transport to stop (Stop: quit and    *)
-(* the eventfd write) only once nothing waits: no bank ready or held       *)
-(* (send_idle).  From shutdown on, each wait a full answer starts counts   *)
-(* toward MaxRetry as it begins; a run done (ok) or a new bank claimed     *)
-(* starts the count again, and once MaxRetry waits have begun what waits   *)
-(* is abandoned (at the start of the last wait, not after its timer), so   *)
-(* a socket that stays full cannot keep send_idle false.  Once the server  *)
-(* is stopping the kernel may answer full without bound: that is the       *)
-(* socket that stays full.  Before it, full answers are bounded by         *)
-(* MaxAgain.  Once it sees quit the worker cancels its receive and its     *)
-(* wake read, keeps sending what is published, waits on its timer between  *)
-(* retries, and exits only when nothing of its is in the kernel or         *)
-(* waiting.  Main joins it after.  A cancel's own completion changes none  *)
-(* of these variables, and the code's exit does not wait for it (the ring  *)
-(* is torn down after the join): its reap is ReapCancel, a stutter of the  *)
-(* awake worker, outside WorkerStep, so it moves no fairness and no Sleep. *)
+(* The server's stop (rocketnet_server_transport_stop, ServerStopSpread    *)
+(* Stop) first tells the worker shutdown has begun (BeginStop: the         *)
+(* driver's rocketnet_server_uring_begin_shutdown over                     *)
+(* rocketnet_uring_queue_worker_begin_shutdown, ShutdownRule "begin") and  *)
+(* asks the transport to stop (Stop, ServerStopSpread RequestIoStop: quit  *)
+(* and the eventfd write) only once nothing waits on any queue: no bank    *)
+(* ready or held (rocketnet_server_uring_send_idle).  ShutdownDrains       *)
+(* discharges ServerStopSpread's premise that send_idle eventually holds   *)
+(* while disconnect batches may still Publish onto a socket that stays     *)
+(* full; an un-started rocketnet_server_uring_free calls Stop directly     *)
+(* without BeginStop, so Stop itself carries no idle guard.  From shutdown *)
+(* on, each wait a full answer starts counts toward MaxRetry as it begins; *)
+(* a run done (ok) or a new bank claimed starts the count again, and once  *)
+(* MaxRetry waits have begun what waits is abandoned (at the start of the  *)
+(* last wait, not after its timer), so a socket that stays full cannot     *)
+(* keep send_idle false.  Once the server is stopping the kernel may       *)
+(* answer full without bound: that is the socket that stays full.  Before  *)
+(* it, full answers are bounded by MaxAgain.  Once it sees quit the worker *)
+(* cancels its receive and its wake read, keeps sending what is published, *)
+(* waits on its timer between retries, and exits only when nothing of its  *)
+(* is in the kernel or waiting.  Main joins it after.  A cancel's own      *)
+(* completion changes none of these variables, and the code's exit does    *)
+(* not wait for it (the ring is torn down after the join): its reap is     *)
+(* ReapCancel, a stutter of the awake worker, outside WorkerStep, so it    *)
+(* moves no fairness and no Sleep.  Submission-queue exhaustion in         *)
+(* rocketnet_uring_queue_worker_sqe sets worker->starved and leaves the    *)
+(* step at STEP_NONE ([UNCHANGED vars]), and rocketnet_uring_queue_worker_ *)
+(* pass turns starved into CONTINUE so rocketnet_uring_queue_worker_run    *)
+(* flushes prepared SQEs without waiting rather than entering Sleep        *)
+(* (checked by tests/test_unit_uring_queue_worker.cpp).                    *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
 (*   ExitDrained   (invariant) the worker exits only with no bank held or  *)
@@ -483,7 +495,10 @@ Busy ==
     \/ ArmTimer \/ ArmRecvTimer \/ ArmRecv \/ CancelRecv \/ CancelWake
 
 \* nothing to do now: the wait. The code sleeps only with nothing it could
-\* do, the wake read armed (WakeRule "armed") and not able to exit
+\* do, the wake read armed (WakeRule "armed") and not able to exit; if a
+\* full submission queue refused an SQE (rocketnet_uring_queue_worker_sqe),
+\* worker->starved makes rocketnet_uring_queue_worker_pass return CONTINUE
+\* instead of SLEEP so the prepared SQEs are submitted without waiting first
 Sleep ==
     /\ Awake
     /\ ~ENABLED Busy

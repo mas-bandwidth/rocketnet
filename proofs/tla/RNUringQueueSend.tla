@@ -1,11 +1,18 @@
 ---------------------------- MODULE RNUringQueueSend ----------------------------
 (***************************************************************************)
-(* One queue of the io_uring server's per-queue send (layer L1): the bank  *)
-(* handoff between the fill, main's send_packets and the queue's worker,   *)
-(* and the kernel's ownership of a submitted run until its completion.     *)
-(* The queues share nothing but main's loop, so one queue is the machine;  *)
-(* RNUringQueueBankLayout checks the claim and slot arithmetic across      *)
-(* queues and RNBankFifoLayout the exchange's index arrays.                *)
+(* One queue of the io_uring server's per-queue send (layer L1,            *)
+(* sdk/rocketnet_uring_queue_send.cpp over                                 *)
+(* sdk/rocketnet_uring_send_queue.cpp): the bank handoff between the fill  *)
+(* (rocketnet_uring_send_queues_start, rocketnet_uring_send_queues_finish, *)
+(* rocketnet_uring_send_queues_abort), main's send_packets                 *)
+(* (rocketnet_uring_queue_send_publish, rocketnet_uring_queue_send_idle)   *)
+(* and the queue's worker (rocketnet_uring_queue_send_claim,               *)
+(* rocketnet_uring_queue_send_next, rocketnet_uring_queue_send_complete,   *)
+(* rocketnet_uring_queue_send_retire), and the kernel's ownership of a     *)
+(* submitted run until its completion.  The queues share nothing but       *)
+(* main's loop, so one queue is the machine; RNUringQueueBankLayout checks *)
+(* the claim and slot arithmetic across queues and RNBankFifoLayout the    *)
+(* exchange's index arrays.                                                *)
 (*                                                                         *)
 (* NB banks.  The fill stages into the producer bank: a claim takes the    *)
 (* next of its S slots or is refused when the bank is full; a claimed slot *)
@@ -27,7 +34,7 @@
 (* full is the stop's bounded retry, layer L3).                            *)
 (*                                                                         *)
 (* A segmented run its destination refuses is resent plain by the reap     *)
-(* (RNSegmentRefusal, RNUringSendPhases ReapRefused); here that is an      *)
+(* (RNSegmentRefusal, RNUringQueueWorker ReapRefused); here that is an     *)
 (* "eagain" that hands the slots back, the same ownership step.            *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
@@ -48,11 +55,13 @@
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   RetireRule  "cqe" retires a bank once its runs are reaped (the        *)
 (*               design); "submitted" once every slot is submitted, runs   *)
-(*               still in the kernel (NoWriteWhileKernelOwned).            *)
+(*               still in the kernel (NoWriteWhileKernelOwned); "dup"      *)
+(*               appends the retired bank to free without clearing worker  *)
+(*               (BanksPartition).                                         *)
 (*   EagainRule  "retry" hands an eagain run's slots back (the design);    *)
 (*               "lost" marks them done with no count (Accounted);         *)
 (*               "stuck" hands them back but leaves the run pending        *)
-(*               (Drains).                                                 *)
+(*               (PendingMatches under MCSpec, Drains under MCLiveSpec).   *)
 (*   LockRule    "try" keeps the producer while the worker holds the       *)
 (*               handoff mutex (the design); "wait" blocks main on it      *)
 (*               until the worker lets go (MainNeverWaits); "none" leaves  *)
@@ -67,12 +76,12 @@ CONSTANTS NB,         \* banks per queue (ROCKETNET_URING_SEND_BANKS)
           Demand,     \* claims one fill makes
           MaxFlush,   \* bound on flushes
           MaxEagain,  \* bound on eagain completions
-          RetireRule, \* "cqe" (the design) or "submitted"
+          RetireRule, \* "cqe" (the design), "submitted" or "dup"
           EagainRule, \* "retry" (the design), "lost" or "stuck"
           LockRule    \* "try" (the design), "wait" or "none"
 
 ASSUME NB >= 3 /\ S >= 1 /\ MaxSeg >= 1 /\ Demand >= 1 /\ MaxFlush \in Nat /\ MaxEagain \in Nat
-ASSUME RetireRule \in {"cqe", "submitted"} /\ EagainRule \in {"retry", "lost", "stuck"}
+ASSUME RetireRule \in {"cqe", "submitted", "dup"} /\ EagainRule \in {"retry", "lost", "stuck"}
 ASSUME LockRule \in {"try", "wait", "none"}
 
 Bs == 0..(NB - 1)
@@ -284,17 +293,17 @@ WorkerReap(n) ==
     /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, runs, nextId, eagains, demand, flushes, kernelWrite, pids, locked, mainWaits>>
 
 \* the worker retires its bank: nothing staged or in a run, and (RetireRule
-\* "cqe") no run of it pending
+\* "cqe" or "dup") no run of it pending
 Retirable(b) ==
     /\ \A s \in Sl : st[b][s] \notin {"staged", "run"} \/ (RetireRule = "submitted" /\ st[b][s] = "run")
-    /\ (RetireRule = "cqe" => pend[b] = 0)
+    /\ (RetireRule \in {"cqe", "dup"} => pend[b] = 0)
 
-\* the retire returned true
+\* the retire returned true (rocketnet_uring_queue_send_retire)
 WorkerRetire ==
     /\ worker # NoBank
     /\ Retirable(worker)
     /\ free' = Append(free, worker)
-    /\ worker' = NoBank
+    /\ worker' = IF RetireRule = "dup" THEN worker ELSE NoBank
     /\ st' = [st EXCEPT ![worker] = [s \in Sl |-> "empty"]]
     /\ dest' = [dest EXCEPT ![worker] = [s \in Sl |-> 0]]
     /\ pkt' = [pkt EXCEPT ![worker] = [s \in Sl |-> 0]]

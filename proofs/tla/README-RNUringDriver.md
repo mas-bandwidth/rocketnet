@@ -1,11 +1,18 @@
-# RNUringDriver: the io_uring server driver
+# RNUringDriver: historical one-ring io_uring server driver
 
-`RNUringDriver.tla` models the io_uring server driver
-(`sdk/rocketnet_server_uring_linux.cpp`). The driver names the model's
-actions in its comments, and the `io-uring-driver` row in `COVERAGE.tsv`
-tracks the coverage. The code receives on one socket per queue, each with its
+> **Historical design only.** `RNUringDriver.tla` models the earlier one-ring,
+> main-thread `io_uring` server driver before the per-queue worker rewrite. No
+> current code implements this module, and its cases in `CASES.tsv` sit on the
+> `bench` gate as historical evidence. The shipped per-queue `io_uring` server
+> transport is modelled by `RNUringQueueBankLayout`, `RNUringQueueSend`,
+> `RNSendGatherLayout`, `RNUringQueueWorker`, `RNUringQueueReceive` and
+> `RNUringQueueReceiveLayout`. The `io-uring-driver` row in `COVERAGE.tsv`
+> records this historical scope, and the description below preserves the
+> original design record.
+
+In that earlier design, the driver owned one `io_uring` on the main thread, received on one socket per queue (each with its
 own multishot RECVMSG and provided buffer ring; the model abstracts those to
-one multishot and one buffer ring.
+one multishot and one buffer ring).
 
 ## The abstraction
 

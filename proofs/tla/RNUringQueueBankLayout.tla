@@ -22,19 +22,22 @@
 (* pointer's byte offset past the queue's producer bank: refused           *)
 (* (-1) when the offset is negative, not a whole number of strides or past *)
 (* the bank, all tested before the division, so a refused pointer writes   *)
-(* nothing.  A caller may hand finish a pointer up to MaxSkew bytes off,   *)
-(* either way, the one start returned (a contract violation): it must      *)
-(* fail closed.                                                            *)
+(* nothing.  A caller may hand finish a pointer up to MaxSkew bytes        *)
+(* (MaxSkew < Stride: sub-stride misalignment or past a bank's boundary)   *)
+(* off, either way, the one start returned: it must fail closed.  Because  *)
+(* packet_id carries only the queue, a whole-stride offset that lands on   *)
+(* another slot inside the same producer bank cannot be distinguished by   *)
+(* pointer alignment or bank bounds alone.                                 *)
 (*                                                                         *)
 (* What each call gives back is an argument of its action, so the trace    *)
 (* check binds it (README-TraceCheck.md): start's pointer and id (Start,   *)
 (* or StartFull when it returns NULL, with the id it still writes),        *)
 (* finish's and abort's result (Finish when true, FinishRefused when       *)
-(* false), and the queues a turn turned (Flush(n)).  lw is what the last  *)
-(* call left in the slot it wrote: 0 when it wrote nothing, 1 packet_bytes *)
-(* zero (an abort), 2 non-zero (a finish); so a finish that wrote nothing  *)
-(* is not a step.  stg is what staged() returns for each queue, always     *)
-(* min(counter, S) of its producer bank.                                   *)
+(* false), and the queues a turn turned (Flush(n)).  lw is whether the     *)
+(* last call wrote non-zero packet_bytes into a slot: 1 after a finish     *)
+(* (start already zeroed packet_bytes, so abort leaves it 0), 0 otherwise; *)
+(* so a finish that wrote nothing is not a step.  stg is what staged()     *)
+(* returns for each queue, always min(counter, S) of its producer bank.    *)
 (*                                                                         *)
 (* Flush is send_packets with the fill threads joined (the phase           *)
 (* contract): each queue that staged anything moves its producer to its    *)
@@ -84,7 +87,7 @@ CONSTANTS Q,            \* queues (num_xdp_queues)
           IdRule        \* "mul" (the code) or "add"
 
 ASSUME Q >= 1 /\ NB >= 2 /\ S >= 1 /\ Stride >= 2 /\ Demand >= 1 /\ MaxFlush >= 0
-ASSUME MaxSkew \in Nat
+ASSUME MaxSkew \in Nat /\ MaxSkew < Stride
 ASSUME Dests \subseteq Nat
 ASSUME ClaimCmp \in {"ge", "gt"} /\ CounterWrap \in Nat
 ASSUME SlotRule \in {"check", "divide"} /\ IdRule \in {"mul", "add"}
@@ -127,7 +130,7 @@ VARIABLES prod,       \* each queue's producer bank (the flow index)
           gid,        \* the server's packet id counter
           held,       \* each thread's claim: its queue, bank, slot, pointer and id, or None
           owner,      \* the thread a slot of a producer bank was handed to in this fill, or -1
-          lw,         \* what the last call left in the slot it wrote: 0 nothing written, 1 packet_bytes zero, 2 non-zero
+          lw,         \* 1 when the last call wrote non-zero packet_bytes (finish), 0 otherwise
           stg,        \* what rocketnet_uring_send_queues_staged returns for each queue
           demand,     \* start_packet calls each thread made in this fill
           flushes,    \* flushes so far
@@ -213,7 +216,7 @@ Finish(t, k, w) ==
           /\ held' = [held EXCEPT ![t] = None]
           /\ routeBad' = (routeBad \/ qd # h.q)
           /\ foreign' = (foreign \/ owner[<<qd, b, s>>] # t \/ s # h.slot)
-          /\ lw' = IF w THEN 2 ELSE 1
+          /\ lw' = IF w THEN 1 ELSE 0
     /\ UNCHANGED <<prod, cnt, gid, owner, stg, demand, flushes, oob, shared>>
 
 \* finish_packet or abort_packet on thread t with the pointer k bytes off,
@@ -269,7 +272,7 @@ TypeOK ==
     /\ gid \in Nat
     /\ \A t \in Threads : held[t] = None \/ held[t].slot \in 0..S
     /\ owner \in [SlotKeys -> Threads \cup {-1}]
-    /\ lw \in 0..2
+    /\ lw \in 0..1
     /\ stg \in [Qs -> 0..S]
     /\ demand \in [Threads -> 0..Demand]
     /\ flushes \in 0..MaxFlush

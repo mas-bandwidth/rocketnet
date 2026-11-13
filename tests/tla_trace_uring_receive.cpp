@@ -51,7 +51,10 @@
 #include <sys/socket.h>
 
 // the instance: a bank of three slots, four buffers, receives of up to two
-// datagrams, drains of up to two
+// datagrams, drains of up to two; up to forty receives reuse the four
+// masked buffer-ring entries at the kernel's 16-bit counter width without
+// wrapping those counters (MCRNUringQueueReceiveLayout.cfg checks the
+// counter wrap at TailWrap = 4)
 #define RECEIVE_SLOTS 3
 #define RECEIVE_BUFFERS 4
 #define RECEIVE_MAX_SEGS 2
@@ -78,6 +81,7 @@ struct receive_datagram_t
 struct receive_completion_t
 {
     bool end;
+    bool more;
     int bid;
     int32_t res;
     std::vector<receive_datagram_t> segs;
@@ -200,7 +204,7 @@ static tla_record_t receive_record( const receive_walk_t & walk )
         }
         else
         {
-            cq += "[kind |-> \"data\", bid |-> " + tla_int( walk.cq[i].bid ) + ", segs |-> " + receive_segs( walk.cq[i].segs ) + "]";
+            cq += "[kind |-> \"data\", bid |-> " + tla_int( walk.cq[i].bid ) + ", more |-> " + tla_bool( walk.cq[i].more ) + ", segs |-> " + receive_segs( walk.cq[i].segs ) + "]";
         }
     }
     cq += ">>";
@@ -288,7 +292,7 @@ static void receive_arrive( receive_walk_t & walk, tla_random_t & random )
 
 // the fake kernel takes the socket's oldest receive into the buffer at its
 // head of the queue's real buffer ring; returns the buffer test_take gave
-static int receive_kernel_receive( receive_walk_t & walk )
+static int receive_kernel_receive( receive_walk_t & walk, tla_random_t & random )
 {
     const int bid = rocketnet_uring_receive_queue_test_take( walk.queue, &walk.br_head );
     if ( bid < 0 || bid >= RECEIVE_BUFFERS )
@@ -301,6 +305,8 @@ static int receive_kernel_receive( receive_walk_t & walk )
         walk.dup = true;
     }
     walk.owner_ring[bid] = false;
+    const bool more = random.below( 8 ) != 0;
+    walk.karmed = more;
 
     const std::vector<receive_datagram_t> segs = walk.sock.front();
     walk.sock.erase( walk.sock.begin() );
@@ -331,6 +337,7 @@ static int receive_kernel_receive( receive_walk_t & walk )
     const int payload_bytes = (int) segs.size() * RECEIVE_DATAGRAM_BYTES;
     receive_completion_t completion;
     completion.end = false;
+    completion.more = more;
     completion.bid = bid;
     completion.segs = segs;
     completion.res = rocketnet_uring_receive_queue_test_write( walk.queue, bid, &name, (int) sizeof( struct sockaddr_in ), payload, payload_bytes,
@@ -344,6 +351,7 @@ static void receive_kernel_end( receive_walk_t & walk, int32_t res )
     walk.karmed = false;
     receive_completion_t completion;
     completion.end = true;
+    completion.more = false;
     completion.bid = -1;
     completion.res = res;
     walk.cq.push_back( completion );
@@ -365,7 +373,7 @@ static int receive_complete( receive_walk_t & walk )
         return rocketnet_uring_receive_queue_cqe( queue, completion.res, 0 );
     }
 
-    const uint32_t flags = IORING_CQE_F_BUFFER | ( (uint32_t) completion.bid << IORING_CQE_BUFFER_SHIFT ) | IORING_CQE_F_MORE;
+    const uint32_t flags = IORING_CQE_F_BUFFER | ( (uint32_t) completion.bid << IORING_CQE_BUFFER_SHIFT ) | ( completion.more ? IORING_CQE_F_MORE : 0 );
     const int banked = rocketnet_uring_receive_queue_cqe( queue, completion.res, flags );
     walk.owner_ring[completion.bid] = true;
 
@@ -501,7 +509,7 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
         {
             enabled.push_back( KERNEL_CANCEL );
         }
-        if ( !queue->stopping && random.below( 64 ) == 0 )
+        if ( !queue->stopping && ( step >= steps - 8 || random.below( 64 ) == 0 ) )
         {
             enabled.push_back( STOP );
         }
@@ -535,7 +543,7 @@ static int trace_receive( uint64_t seed, int steps, const char * out )
                 act = "Arrive";
                 break;
             case KERNEL_RECEIVE:
-                args = tla_sequence( { tla_int( receive_kernel_receive( walk ) ) } );
+                args = tla_sequence( { tla_int( receive_kernel_receive( walk, random ) ) } );
                 op = "receive";
                 act = "KernelReceive";
                 break;

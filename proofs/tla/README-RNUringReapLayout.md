@@ -1,13 +1,22 @@
-# RNUringReapLayout: the io_uring reap at the code's layout
+# RNUringReapLayout: historical one-ring io_uring reap layout
 
-`RNUringReapLayout.tla` models the reap of the io_uring server transport
-(`sdk/rocketnet_server_uring_linux.cpp`) with the code's own index
-arithmetic: the completion ring the reap reads oldest first, each queue's
+> **Historical design only.** `RNUringReapLayout.tla` models the completion reap
+> and per-queue held-receive ring of the earlier one-ring, main-thread
+> `io_uring` server driver before the per-queue worker rewrite. No current code
+> implements this module, and its cases in `CASES.tsv` sit on the `bench` gate
+> as historical evidence. The shipped per-queue `io_uring` server transport is
+> modelled by `RNUringQueueBankLayout`, `RNUringQueueSend`,
+> `RNSendGatherLayout`, `RNUringQueueWorker`, `RNUringQueueReceive` and
+> `RNUringQueueReceiveLayout`. The `io-uring-reap-layout` row in `COVERAGE.tsv`
+> records this historical scope, and the description below preserves the
+> original design record.
+
+In that earlier design, `RNUringReapLayout.tla` modelled the reap of the one-ring `io_uring` server transport
+with its index arithmetic: the completion ring the reap read oldest first, each queue's
 ring of receives held for the fill bank's room, the turn the copy of held
-receives takes across the queues, and the room test. `RNUringDriver` is the
-abstract model of the same driver; its completion queue is a set, so it
+receives took across the queues, and the room test. `RNUringDriver` is the
+abstract model of that same historical driver; its completion queue is a set, so it
 cannot show what the order of the completion ring does. This model can.
-The `io-uring-reap-layout` row in `COVERAGE.tsv` tracks the coverage.
 
 ## The layout
 

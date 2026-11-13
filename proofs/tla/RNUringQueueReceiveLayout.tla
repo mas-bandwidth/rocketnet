@@ -27,7 +27,9 @@
 (*                                                                         *)
 (* A completion carries one datagram, or with UDP_GRO a coalesced run of   *)
 (* them, each accepted or refused by the transport's checks and the        *)
-(* prefilter (refused: counted by name).                                   *)
+(* prefilter (refused: counted by name), and either keeps the multishot    *)
+(* armed (IORING_CQE_F_MORE, more = TRUE) or ends it on the same           *)
+(* completion (more = FALSE).                                              *)
 (*                                                                         *)
 (* The checked claims (each a flag the step that breaks it sets, or a      *)
 (* state predicate):                                                       *)
@@ -37,6 +39,9 @@
 (*   NoDoubleTake     the kernel takes only a buffer the ring holds.       *)
 (*   Accounted        every datagram is at the socket, in a completion,    *)
 (*                    banked, refused by name or counted BANK_FULL.        *)
+(*   ArmedAgrees      while the worker needs an arm no multishot is live   *)
+(*                    in the kernel, and once posted completions drain     *)
+(*                    with none live the worker needs an arm.              *)
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   RoomRule     "refresh": load head again when headSeen says full (the  *)
@@ -49,6 +54,10 @@
 (*                (InOrder at S = 3, k = 4).                               *)
 (*   B            a power of two (create refuses any other); B = 3 shows   *)
 (*                why: the mask folds two entries into one (NoDoubleTake). *)
+(*   DataRearmRule "clear" (the code): a data completion without           *)
+(*                IORING_CQE_F_MORE clears armed; overridden by            *)
+(*                MCDataRearmKeep ("keep") to leave armed set              *)
+(*                (ArmedAgrees).                                           *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -81,6 +90,7 @@ Wrap(x) == IF CounterWrap = 0 THEN x ELSE x % CounterWrap
 Diff(a, b) == IF CounterWrap = 0 THEN a - b ELSE (a - b) % CounterWrap
 SlotOf(t) == IF SlotRule = "mod" THEN t % S ELSE (t + 1) % S
 Min(a, b) == IF a < b THEN a ELSE b
+DataRearmRule == "clear"
 
 \* create: buffer b at entry b & mask, so with B a power of two entry e
 \* holds buffer e; an entry no buffer was added at holds 0 (zeroed memory)
@@ -91,7 +101,7 @@ VARIABLES arrived,      \* receives the network sent
           nextId,       \* the next datagram's id
           sock,         \* the socket's receives, oldest first: each a sequence of [d, ok]
           karmed,       \* a multishot is live in the kernel
-          cq,           \* completions not handled: [kind "data", bid, segs] or [kind "end"]
+          cq,           \* completions not handled: [kind "data", bid, more, segs] or [kind "end"]
           armed,        \* the worker's armed
           stopping,
           brHead,       \* the kernel's buffer ring head (16-bit)
@@ -151,10 +161,12 @@ KernelReceive(bid) ==
     /\ bid = entries[Entry(brHead)]
     /\ dup' = (dup \/ owner[bid] # "ring")
     /\ owner' = [owner EXCEPT ![bid] = "cq"]
-    /\ cq' = Append(cq, [kind |-> "data", bid |-> bid, segs |-> Head(sock)])
+    /\ \E more \in BOOLEAN :
+         /\ karmed' = more
+         /\ cq' = Append(cq, [kind |-> "data", bid |-> bid, more |-> more, segs |-> Head(sock)])
     /\ brHead' = (brHead + 1) % TailWrap
     /\ sock' = Tail(sock)
-    /\ UNCHANGED <<arrived, nextId, karmed, armed, stopping, brTail, entries>>
+    /\ UNCHANGED <<arrived, nextId, armed, stopping, brTail, entries>>
     /\ UNCHANGED BankVars /\ UNCHANGED MainVars
 
 KernelNoBuffers ==
@@ -226,7 +238,8 @@ Complete(n) ==
                     /\ entries' = [entries EXCEPT ![Entry(brTail)] = c.bid]
                     /\ brTail' = (brTail + 1) % TailWrap
                     /\ owner' = [owner EXCEPT ![c.bid] = "ring"]
-                    /\ UNCHANGED <<armed, brHead, dup>>
+                    /\ armed' = IF c.more \/ DataRearmRule = "keep" THEN armed ELSE FALSE
+                    /\ UNCHANGED <<brHead, dup>>
     /\ UNCHANGED <<arrived, nextId, sock, karmed, stopping>> /\ UNCHANGED MainVars
 
 -----------------------------------------------------------------------------
@@ -296,5 +309,9 @@ Accounted == nextId - 1 = SockSegs + DataSegs(cq) + Len(banked) + named + full
 
 \* the ring and the completions hold every buffer between them, once
 BuffersKept == RingCount + Len(SelectSeq(cq, LAMBDA c : c.kind = "data")) = B
+
+\* the worker needs an arm when and, once posted completions drain, only when
+\* the kernel has no multishot
+ArmedAgrees == (~armed => ~karmed) /\ ((cq = <<>> /\ ~karmed) => ~armed)
 
 =============================================================================

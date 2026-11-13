@@ -156,7 +156,7 @@ static tla_record_t bank_record( const bank_walk_t & walk )
     record.add( "gid", tla_int( (int64_t) queues->packet_id.load() ) );
     record.add( "held", tla_function( thread_keys, held ) );
     record.add( "owner", tla_function( slot_keys, owner ) );
-    record.add( "lw", tla_int( walk.lw_q < 0 ? 0 : ( walk.lw_nonzero ? 2 : 1 ) ) );
+    record.add( "lw", tla_int( walk.lw_q >= 0 && walk.lw_nonzero ? 1 : 0 ) );
     record.add( "stg", tla_function( queue_keys, staged ) );
     record.add( "demand", tla_function( thread_keys, demand ) );
     record.add( "flushes", tla_int( walk.flushes ) );
@@ -211,9 +211,7 @@ static const char * bank_start( bank_walk_t & walk, int t, int d, std::string & 
 
 // RNUringQueueBankLayout Finish(t, k, w), or FinishRefused(t, k) when the code
 // returns false: the code's finish or abort with the pointer k bytes off.
-// The slot it wrote is found by comparing every slot record before and
-// after. NULL when the abort's own finish through the right pointer was
-// refused, which the code never does
+// The slot it wrote is found by comparing every slot record before and after.
 static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packet_bytes )
 {
     bank_claim_t & c = walk.claim[t];
@@ -233,33 +231,7 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
 
     uint8_t * pointer = queues->queue[0].bank[0].data + c.ptr + k;
     walk.lw_q = -1;
-    bool ok = false;
-    if ( abort )
-    {
-        // an abort of a finished packet writes 0 over packet_bytes: make the
-        // claim's slot visible first by finishing it through the right
-        // pointer, which must be taken
-        if ( !rocketnet_uring_send_queues_finish( queues, c.pid, queues->queue[0].bank[0].data + c.ptr, packet_bytes ) )
-        {
-            return NULL;
-        }
-        const size_t held_index = (size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot );
-        const int prior = before[held_index].packet_bytes;
-        before[held_index].packet_bytes = packet_bytes;
-        ok = rocketnet_uring_send_queues_abort( queues, c.pid, pointer );
-        if ( !ok )
-        {
-            // a refused abort writes nothing: the scaffolding's finish is
-            // undone, so the slot is as the start left it (the model's
-            // FinishRefused changes no slot)
-            queues->queue[c.q].bank[c.b].slot[c.slot].packet_bytes = prior;
-            before[held_index].packet_bytes = prior;
-        }
-    }
-    else
-    {
-        ok = rocketnet_uring_send_queues_finish( queues, c.pid, pointer, packet_bytes );
-    }
+    const bool ok = abort ? rocketnet_uring_send_queues_abort( queues, c.pid, pointer ) : rocketnet_uring_send_queues_finish( queues, c.pid, pointer, packet_bytes );
 
     size_t index = 0;
     for ( int q = 0; q < BANK_QUEUES; q++ )
@@ -442,12 +414,6 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
             const int k = random.below( 2 * BANK_MAX_SKEW + 1 ) - BANK_MAX_SKEW;
             const bool abort = random.below( 4 ) == 0;
             const char * act = bank_finish( walk, t, k, abort, 1 + random.below( ROCKETNET_RECEIVE_CEILING ) );
-            if ( !act )
-            {
-                fprintf( stderr, "tla_trace bank: the finish through the start's own pointer was refused\n" );
-                rocketnet_uring_send_queues_destroy( walk.queues );
-                return 1;
-            }
             report.act( act );
             records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ), tla_bool( !abort ) } ), bank_record( walk ) ) );
         }

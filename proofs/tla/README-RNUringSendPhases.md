@@ -1,17 +1,26 @@
-# RNUringSendPhases: the io_uring send staging's phases at the code's layout
+# RNUringSendPhases: historical one-ring io_uring send staging phases
 
-`RNUringSendPhases.tla` models the send staging of the io_uring server
-transport (`sdk/rocketnet_server_uring_linux.cpp`) with the code's own index
-arithmetic: two phases of slots in one array, the fill phase start_packet
-reserves from, each phase's reservation index, submitted mark and pending
-count, and the phase a send's completion is charged to. A send is a run of
+> **Historical design only.** `RNUringSendPhases.tla` models the two-phase
+> main-thread send staging of the earlier one-ring `io_uring` server driver
+> before the per-queue worker rewrite. No current code implements this module,
+> and its cases in `CASES.tsv` sit on the `bench` gate as historical evidence.
+> The shipped per-queue `io_uring` server transport is modelled by
+> `RNUringQueueBankLayout`, `RNUringQueueSend`, `RNSendGatherLayout`,
+> `RNUringQueueWorker`, `RNUringQueueReceive` and `RNUringQueueReceiveLayout`.
+> The `io-uring-send-phases` row in `COVERAGE.tsv` records this historical
+> scope, and the description below preserves the original design record.
+
+In that earlier design, `RNUringSendPhases.tla` modelled the send staging of the one-ring `io_uring` server
+transport with its index
+arithmetic: two phases of slots in one array, the fill phase `start_packet`
+reserved from, each phase's reservation index, submitted mark and pending
+count, and the phase a send's completion was charged to. A send was a run of
 consecutive slots (up to `ROCKETNET_URING_MAX_SEGMENTS`) retired by one
-completion; an aborted or unroutable slot is skipped without a send; a
-submit pass can stop part way, the rest submitted by a later call; and
-`send_pending` counts sends, not slots. `RNUringDriver` is the abstract
-model of the same driver; its slots are one phase, and its `ResetIndex` is
-one phase's reset. The `io-uring-send-phases` row in `COVERAGE.tsv` tracks
-the coverage.
+completion; an aborted or unroutable slot was skipped without a send; a
+submit pass could stop part way, the rest submitted by a later call; and
+`send_pending` counted sends, not slots. `RNUringDriver` is the abstract
+model of that same historical driver; its slots are one phase, and its `ResetIndex` is
+one phase's reset.
 
 ## Why two phases
 

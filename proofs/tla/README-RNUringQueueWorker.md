@@ -6,12 +6,17 @@ that owns one queue's ring and does all of that queue's kernel-facing work. The 
 is one action of the model, named in a comment beside it.
 
 - **Main:**
-  - `Publish` hands a bank to the worker.
-  - `BeginStop` is the driver's `begin_shutdown` (ShutdownRule "begin"): the server is
-    stopping, the worker's shutdown flag is set and the worker is woken. The driver asks
-    `Stop` only once the queue is idle (`send_idle`: no bank ready or held).
-  - `Stop` sets shutdown and the quit flag. The transport's free asks it at any time,
-    so the worker's rules hold for a stop whatever waits.
+  - `Publish` hands a bank to the worker (including disconnect batches while stopping).
+  - `BeginStop` is the driver's `rocketnet_server_uring_begin_shutdown` over
+    `rocketnet_uring_queue_worker_begin_shutdown` (ShutdownRule "begin", called when
+    `ServerStopSpread.tla` enters `Stop`): the server is stopping, the worker's shutdown
+    flag is set and the worker is woken. `ShutdownDrains` discharges `ServerStopSpread`'s
+    premise that `send_idle` (`rocketnet_server_uring_send_idle`: no bank ready or held)
+    eventually holds even on a permanently full socket, after which `ServerStopSpread`'s
+    `RequestIoStop` asks `Stop` (`rocketnet_server_uring_stop`).
+  - `Stop` (`rocketnet_uring_queue_worker_stop`) sets shutdown and the quit flag. An
+    un-started `rocketnet_server_uring_free` asks it directly without `BeginStop`, so the
+    worker's rules hold for a stop whatever waits.
   - Each signals the queue's eventfd (`Signal`): an armed or cancelling wake read
     becomes posted, otherwise the count stays in the eventfd for the next read.
 - **The kernel:**
@@ -62,9 +67,13 @@ is one action of the model, named in a comment beside it.
   - It exits only when nothing of its own is in the kernel (its timer included) and no
     bank is held.
 - **Sleep** is enabled only when no other worker step is. With WakeRule "armed" that
-  includes `ArmWake`, so a publish or a stop always reaches a sleeping worker. The code
-  meets this by never sleeping after a step the full submission queue had no room for:
-  that pass says continue instead, and the submit that follows frees the room.
+  includes `ArmWake`, so a publish or a stop always reaches a sleeping worker. At the
+  model's grain each SQE-taking action acquires its SQE atomically; in the code, when a
+  full submission queue refuses `rocketnet_uring_queue_worker_sqe`, `worker->starved` is
+  set, the step returns `STEP_NONE` (a stuttering step on the model variables), and
+  `rocketnet_uring_queue_worker_pass` clears `starved` and returns `CONTINUE` so
+  `rocketnet_uring_queue_worker_run` submits the prepared SQEs with `wait = false`
+  instead of entering `SLEEP`.
 
 `Runs == u + k + cOk + cAgain + cRef` counts one bank's runs: waiting, in the kernel
 and answered. `RunsBounded` keeps it at most `R`. The bank's slot arithmetic is not
@@ -79,9 +88,13 @@ failed, a datagram, a receive that ends on its own (-ENOBUFS or -EINVAL, more of
 than a datagram comes), either retry timer firing, a wake read. A trace that never
 has the receive waiting on its timer asleep (`RecvWaits`) fails the check.
 
-- Each record is read off the fake kernel (what it holds and what it has posted), off
-  the handoff, and off the worker's struct. A worker that miscounts what it put in the
-  kernel therefore shows as a step the model does not take.
+- Each record reads the worker's struct (`shutdown`, `quit`, `seen`, `blocked`, `agains`,
+  `recv_refused`, `recv_waiting`, and the armed and cancelled flags), the send and receive
+  queues (`ready_count`, `held`, `unsubmitted`, `armed`), and the fake kernel (in-flight
+  runs and posted completions), together with the walk's own history for fields the
+  production struct does not keep (`stopping`, `st`, `handed`, `wakeCount`, `againsBefore`,
+  `refusals`, `recvEnds`, `recvQuick`). A worker that miscounts what it put in the kernel
+  therefore shows as a step the model does not take.
 - Late in the walk main begins the server's stop, mostly while a wait is on, and stops
   the worker once the queue is idle; it may also stop the worker at once with no begin
   (the transport's free).

@@ -23,8 +23,11 @@ its plant, the turn without its reset, is rejected at the turn onto the reused b
 
 `QueueOf(d)` is `d % Q`: destinations are numbered by the queue the code's hash gives
 them, so any assignment of destinations to queues is a choice of `Dests`. The finish
-pointer's offsets are `-MaxSkew..MaxSkew`. Both are plain constants, as the trace
-check's cfg must be.
+pointer's offsets are `-MaxSkew..MaxSkew` with `MaxSkew < Stride`: sub-stride
+misalignment and pointers past a bank's boundary fail closed (`packet_id` carries only
+the queue, so a whole-stride offset landing on another slot inside the same producer
+bank is outside what alignment and bank-bounds checks can distinguish). Both are plain
+constants, as the trace check's cfg must be.
 
 ## The small instance (MCRNUringQueueBankLayout.tla)
 
@@ -35,22 +38,18 @@ check's cfg must be.
 - A caller may hand finish a pointer 1 byte early, exact, or 1 byte late (`MaxSkew = 1`).
 - 2 flushes.
 
-## Results (bench-nyc-4, pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-13; RUNS.tsv)
+## Results
 
-| cfg | expected | result | states (distinct) |
-|---|---|---|---|
-| MCRNUringQueueBankLayout.cfg | pass | pass | 10,861,346 (2,085,725), 43 s |
-| MCRNUringQueueBankLayoutBrokenClaimPastEnd.cfg | InBounds | InBounds violated | 2,040 (727) |
-| MCRNUringQueueBankLayoutBrokenNarrowCounter.cfg | NoSharedSlot | NoSharedSlot violated | 5,246 (1,529) |
-| MCRNUringQueueBankLayoutBrokenDivideFirst.cfg | NoForeignWrite | NoForeignWrite violated | 53 (29) |
-| MCRNUringQueueBankLayoutBrokenIdAdd.cfg | RouteMatches | RouteMatches violated | 47 (35) |
+`RUNS.tsv` holds the state counts and runtimes for the control and reversed witnesses,
+merged through the pinned `tlacheck`.
 
-The model carries two derived variables for the trace check: `lw`, what the last call
-left in the slot it wrote (0 nothing written, 1 packet_bytes zero after an abort, 2 non-zero
-after a finish), so a finish that wrote nothing is not a step; and `stg`, what
+The model carries two derived variables for the trace check: `lw`, whether the last call
+wrote non-zero `packet_bytes` into a slot (1 after a finish, 0 otherwise, since `start`
+already zeroes `packet_bytes` and `abort` leaves it zero), so a finish that wrote nothing
+is not a step; and `stg`, what
 `rocketnet_uring_send_queues_staged` returns for each queue, always min(counter, S) of the
-producer bank. Both grow the state count (the control was 4,578,934 (1,008,425) before them);
-no invariant reads them, they exist to be recorded.
+producer bank. Both grow the state count; no invariant reads them, they exist to be
+recorded.
 
 The instance went from 4 starts per thread to 3 so the control fits tlacheck's
 110 s budget; every witness still fires (NarrowCounter needs 5 claims on one bank in a

@@ -5,11 +5,18 @@
 (* thread and main, and the life of the queue's multishot RECVMSG.         *)
 (*                                                                         *)
 (* The kernel side: datagrams arrive at the socket, which holds SockCap    *)
-(* and drops the rest (sk_drops, which each later datagram carries as its  *)
-(* SO_RXQ_OVFL stamp).  While the multishot is armed the kernel takes the  *)
-(* socket's oldest datagram into a free provided buffer and posts a        *)
-(* completion that names it; with no free buffer the multishot ends        *)
-(* (ENOBUFS), and a stop's cancel ends it too.                             *)
+(* and drops the rest (sk_drops, which a later whole-control datagram      *)
+(* carries as its SO_RXQ_OVFL stamp; a short header or MSG_CTRUNC carries  *)
+(* no stamp and leaves the count for the next whole-control datagram).     *)
+(* While the multishot is armed the kernel takes the socket's oldest       *)
+(* datagram into a free provided buffer and posts a data completion that   *)
+(* either keeps the multishot armed (IORING_CQE_F_MORE, more = TRUE) or    *)
+(* ends it on the same completion (more = FALSE); with no free buffer      *)
+(* (ENOBUFS), on a kernel receive error (res < 0), or on a stop's cancel   *)
+(* (ECANCELED) the multishot ends with no buffer.  Each data completion    *)
+(* carries one datagram here so Write and Publish interleave cleanly;      *)
+(* RNUringQueueReceiveLayout models the UDP_GRO split of 1..MaxSegs        *)
+(* datagrams per buffer and returning the buffer after the last segment.   *)
 (*                                                                         *)
 (* The worker handles the completions in order.  An ended multishot        *)
 (* leaves the queue needing an arm, which the worker gives it unless the   *)
@@ -40,7 +47,11 @@
 (*   BuffersKept      every provided buffer is in the ring, in a           *)
 (*                    completion or with the worker: none leaks.          *)
 (*   SocketCounted    the socket drops the worker counted are exactly the *)
-(*                    stamp of the last datagram it handled.               *)
+(*                    stamp of the last whole-control datagram it handled  *)
+(*                    (a short header or MSG_CTRUNC carries no stamp).     *)
+(*   ArmedAgrees      while the worker needs an arm no multishot is live   *)
+(*                    in the kernel, and once posted completions drain     *)
+(*                    with none live the worker needs an arm.              *)
 (*   Rearms           (liveness) a multishot that ended while the queue    *)
 (*                    runs is armed again.                                 *)
 (*                                                                         *)
@@ -56,9 +67,11 @@
 (*                the worker writes slots main is reading (NoTornRead).    *)
 (*   FullCount    "count": a full bank's drop is counted (the code);       *)
 (*                "silent" drops it uncounted (Accounted).                 *)
-(*   RearmRule    "clear": an ended multishot clears the worker's armed    *)
-(*                (the code); "keep" leaves it set, so nothing arms again  *)
-(*                (Rearms).                                                *)
+(*   RearmRule    "clear": any completion without IORING_CQE_F_MORE clears *)
+(*                the worker's armed (the code); "keep" leaves it set on   *)
+(*                every ending (Rearms); "end_only" clears it on an error  *)
+(*                or cancel ending but leaves it set on a data completion  *)
+(*                without IORING_CQE_F_MORE (ArmedAgrees).                 *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
@@ -71,17 +84,17 @@ CONSTANTS S,            \* bank slots
           PublishRule,  \* "after" (the code) or "before"
           ReleaseRule,  \* "next" (the code) or "take"
           FullCount,    \* "count" (the code) or "silent"
-          RearmRule     \* "clear" (the code) or "keep"
+          RearmRule     \* "clear" (the code), "keep" or "end_only"
 
 ASSUME S >= 1 /\ B >= 1 /\ SockCap >= 1 /\ MaxArrive >= 1 /\ DrainMax >= 1
 ASSUME FullRule \in {"lt", "le"} /\ PublishRule \in {"after", "before"}
 ASSUME ReleaseRule \in {"next", "take"} /\ FullCount \in {"count", "silent"}
-ASSUME RearmRule \in {"clear", "keep"}
+ASSUME RearmRule \in {"clear", "keep", "end_only"}
 
 Slots == 0..(S - 1)
 
 VARIABLES arrived,      \* datagrams the network sent the socket (ids 1..arrived)
-          sock,         \* the socket's queue: [d, ok, stamp], oldest first
+          sock,         \* the socket's queue: [d, ok, ctrl, stamp], oldest first
           kdrops,       \* datagrams the socket dropped (sk_drops)
           free,         \* buffers in the provided ring
           karmed,       \* a multishot is live in the kernel
@@ -101,7 +114,7 @@ VARIABLES arrived,      \* datagrams the network sent the socket (ids 1..arrived
           full,         \* BANK_FULL drops counted
           lost,         \* BANK_FULL drops not counted
           sockCounted,  \* socket drops the worker counted (SO_RXQ_OVFL)
-          lastStamp,    \* the stamp of the last datagram the worker handled
+          lastStamp,    \* the stamp of the last whole-control datagram the worker handled
           overwrite, torn  \* flags the broken steps set
 
 vars == <<arrived, sock, kdrops, free, karmed, cq, marmed, stopping, wstate, wd, wpos,
@@ -133,8 +146,8 @@ Arrive ==
     /\ arrived < MaxArrive
     /\ arrived' = arrived + 1
     /\ IF Len(sock) < SockCap
-         THEN \E ok \in BOOLEAN :
-                 /\ sock' = Append(sock, [d |-> arrived + 1, ok |-> ok, stamp |-> kdrops])
+         THEN \E ok \in BOOLEAN, ctrl \in BOOLEAN :
+                 /\ sock' = Append(sock, [d |-> arrived + 1, ok |-> ok, ctrl |-> ctrl, stamp |-> kdrops])
                  /\ UNCHANGED kdrops
          ELSE /\ kdrops' = kdrops + 1
               /\ UNCHANGED sock
@@ -143,13 +156,22 @@ Arrive ==
 KernelReceive ==
     /\ karmed /\ sock # <<>> /\ free > 0
     /\ free' = free - 1
-    /\ cq' = Append(cq, [kind |-> "data"] @@ Head(sock))
+    /\ \E more \in BOOLEAN :
+         /\ karmed' = more
+         /\ cq' = Append(cq, [kind |-> "data", more |-> more] @@ Head(sock))
     /\ sock' = Tail(sock)
-    /\ UNCHANGED <<arrived, kdrops, karmed, stopping>> /\ UNCHANGED WorkerVars /\ UNCHANGED MainVars
+    /\ UNCHANGED <<arrived, kdrops, stopping>> /\ UNCHANGED WorkerVars /\ UNCHANGED MainVars
 
 \* ENOBUFS: the ring is empty, so the multishot ends
 KernelNoBuffers ==
     /\ karmed /\ sock # <<>> /\ free = 0
+    /\ karmed' = FALSE
+    /\ cq' = Append(cq, [kind |-> "end"])
+    /\ UNCHANGED <<arrived, sock, kdrops, free, stopping>> /\ UNCHANGED WorkerVars /\ UNCHANGED MainVars
+
+\* a receive error (res < 0, not ECANCELED) ends the multishot even with free buffers
+KernelError ==
+    /\ karmed
     /\ karmed' = FALSE
     /\ cq' = Append(cq, [kind |-> "end"])
     /\ UNCHANGED <<arrived, sock, kdrops, free, stopping>> /\ UNCHANGED WorkerVars /\ UNCHANGED MainVars
@@ -184,11 +206,13 @@ Complete ==
     /\ LET c == Head(cq) IN
        /\ cq' = Tail(cq)
        /\ IF c.kind = "end"
-            THEN /\ marmed' = IF RearmRule = "clear" THEN FALSE ELSE marmed
+            THEN /\ marmed' = IF RearmRule \in {"clear", "end_only"} THEN FALSE ELSE marmed
                  /\ UNCHANGED <<free, wstate, wd, wpos, slot, tail, banked, named, full, lost, sockCounted, lastStamp>>
-            ELSE /\ sockCounted' = sockCounted + (c.stamp - lastStamp)
-                 /\ lastStamp' = c.stamp
-                 /\ UNCHANGED marmed
+            ELSE /\ IF c.ctrl
+                      THEN /\ sockCounted' = sockCounted + (c.stamp - lastStamp)
+                           /\ lastStamp' = c.stamp
+                      ELSE UNCHANGED <<sockCounted, lastStamp>>
+                 /\ marmed' = IF c.more \/ RearmRule \in {"keep", "end_only"} THEN marmed ELSE FALSE
                  /\ IF ~c.ok
                       THEN /\ named' = named + 1
                            /\ free' = free + 1
@@ -263,7 +287,7 @@ Done ==
 -----------------------------------------------------------------------------
 
 Next ==
-    \/ Arrive \/ KernelReceive \/ KernelNoBuffers \/ KernelCancel \/ Stop
+    \/ Arrive \/ KernelReceive \/ KernelNoBuffers \/ KernelError \/ KernelCancel \/ Stop
     \/ Arm \/ Complete \/ Write \/ Publish
     \/ Drain \/ Done
 
@@ -300,8 +324,9 @@ Accounted ==
     /\ arrived = Len(sock) + kdrops + DataIn(cq) + Len(banked) + named + full + lost
     /\ lost = 0
 
-\* the worker needs an arm only when the kernel has no multishot
-ArmedAgrees == ~marmed => ~karmed
+\* the worker needs an arm when and, once posted completions drain, only when
+\* the kernel has no multishot
+ArmedAgrees == (~marmed => ~karmed) /\ ((cq = <<>> /\ ~karmed) => ~marmed)
 
 BuffersKept == free + DataIn(cq) + (IF wstate = "idle" THEN 0 ELSE 1) = B
 

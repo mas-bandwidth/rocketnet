@@ -565,7 +565,7 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         {
             can.push_back( REAP );
         }
-        if ( queue->held >= 0 && queue->unsubmitted == 0 && !walk.locked )
+        if ( queue->held >= 0 && !walk.locked && ( queue->unsubmitted == 0 || random.below( 4 ) == 0 ) )
         {
             can.push_back( RETIRE );
         }

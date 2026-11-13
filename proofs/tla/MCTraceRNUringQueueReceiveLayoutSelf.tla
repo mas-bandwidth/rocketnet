@@ -33,10 +33,10 @@ S2 == [S1 EXCEPT !.arrived = 1, !.nextId = 2, !.sock = << <<D1>> >>]
 \* Arm
 S3 == [S2 EXCEPT !.armed = TRUE, !.karmed = TRUE]
 
-\* KernelReceive: entry 0 holds buffer 0
+\* KernelReceive: entry 0 holds buffer 0, multishot stays armed
 S4 == [S3 EXCEPT !.sock = <<>>, !.brHead = 1,
                  !.owner = (0 :> "cq" @@ 1 :> "ring" @@ 2 :> "ring" @@ 3 :> "ring"),
-                 !.cq = << [kind |-> "data", bid |-> 0, segs |-> <<D1>>] >>]
+                 !.cq = << [kind |-> "data", bid |-> 0, more |-> TRUE, segs |-> <<D1>>] >>]
 
 \* Complete: banked at slot 0, buffer 0 back at entry 4 & 3 = 0
 S5 == [S4 EXCEPT !.cq = <<>>, !.slotD = (0 :> 1 @@ 1 :> 0 @@ 2 :> 0), !.tail = 1,

@@ -156,7 +156,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsendspans` | Send-span ring storage and ownership. |
 | `rnsentmap` | The sent-packet map against the window (README-RNSentMap.md). |
 | `rnwindow` | Abstract reliable sender/receiver window. |
-| `rnuringdriver` | io_uring transport (README-RNUringDriver.md). |
+| `rnuringdriver` | Historical one-ring main-thread io_uring driver design (README-RNUringDriver.md); current per-queue transport is RNUringQueueBankLayout, RNUringQueueSend, RNSendGatherLayout, RNUringQueueWorker, RNUringQueueReceive and RNUringQueueReceiveLayout. |
 | `rnclientio` | Client I/O ownership and progress in threaded and step-driven modes. |
 | `rnclientiodecrypt` | Decrypt on the client I/O thread. |
 | `sessionacks` | Session ACK window and retained sent-ring bitmaps. |
@@ -215,8 +215,8 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
 | `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
-| `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
-| `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
+| `rnuringreaplayout` | Historical one-ring io_uring reap layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md); current per-queue receive is RNUringQueueReceive and RNUringQueueReceiveLayout. |
+| `rnuringsendphases` | Historical one-ring io_uring two-phase send staging layout, phases of two slots over four updates (README-RNUringSendPhases.md); current per-queue send is RNUringQueueBankLayout and RNUringQueueSend. |
 | `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
 | `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6 (README-RNSequencingWrap.md). |
 
