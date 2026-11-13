@@ -112,6 +112,30 @@ LAYERS = {
         # seven steps a bank (six stages and the call): 100 calls a seed
         "steps": 700,
     },
+    "queue-send": {
+        "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
+                             "length, so it never gets there"},
+        "reach": ["Full", "AgainPosted"],
+        # the model's Ids grow with MaxFlush, the walk's length: each record
+        # carries (steps + 1) * 4 statuses
+        "steps": 200,
+    },
+    "queue-worker": {
+        "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],
+        "untraced": {"CancelWake": "the stop writes the eventfd in the walk's one step, which completes an armed "
+                                   "READ before the worker can see quit, and the worker arms no READ after it: "
+                                   "a READ to cancel is left only when the write and the arm race on two threads",
+                     "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
+    },
+    "receive": {
+        "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
+        "untraced": {},
+        "reach": ["BankFull", "RingDry"],
+        # a record carries the datagrams banked and delivered so far, so TLC's
+        # time grows faster than the walk: 200 steps a seed stays in budget
+        "steps": 200,
+    },
 }
 
 STEPS = 400

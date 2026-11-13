@@ -619,7 +619,7 @@ re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
 send calls that returned with sends still owned by the kernel
 (`SEND_DEFERRED`), receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and live
-segmentation turned off for the transport (`GSO_FALLBACKS`). Stop requests cancellation, and stopped remains
+segmentation turned off for the transport (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (`RECEIVE_ERRORS`). Stop requests cancellation, and stopped remains
 false until outstanding completions have relinquished their storage. Destroy
 requires stopped and no longer uses a timed wait followed by leaked storage as
 normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;

@@ -81,6 +81,8 @@ ALLOWED = [
      "the kernel's sockaddr_in6 holds network-order groups; the endian-aware helper converts each"),
     ("sdk/rocketnet_uring_codec.h", "ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] )",
      "the kernel's sockaddr_in6 holds network-order groups; libc's ntohs converts each"),
+    ("sdk/rocketnet_uring_codec.h", "( (uint16_t *) &out->sin6_addr )[i] = htons(",
+     "the kernel's sockaddr_in6 holds network-order groups; libc's htons converts each"),
     ("sdk/rocketnet_gateway_netlink_linux.cpp", "memcpy( value, attributes->value[type], sizeof( uint32_t ) )",
      "a netlink attribute is host order: the local kernel wrote it"),
     ("sdk/rocketnet_platform.h", "long long observed = *(volatile long long *) value;",
