@@ -115,18 +115,20 @@ counterexample below was checked against the C by hand.
 
 1. **`MCRNServerPayloadRingLayoutBrokenNoClamp.cfg`** (`Clamp = FALSE`, capacity
    two, ring of three): the flush without `if ( num_packets > send_capacity )
-   num_packets = send_capacity`. Violates `InBounds`: a claim takes the chunk
-   0..1 and the second thread takes slot 1 from the line; a third take finds
-   the room below the guard and its single fetch-add gets 2, the capacity, and
-   is refused, but `num_packets` is now 3; the flush walks `i < 3` and reads
-   `info[2]`, a record no take of this update wrote. At the code's sizing (ring
-   equal to the capacity) that read is past the array.
+   num_packets = send_capacity`. Violates `InBounds`: `t1` claims the chunk
+   0..1; `t2` looks at the still empty line, finds the room below the guard
+   and goes to the single fetch-add; `t1` installs, takes slot 0 and finishes
+   it; `t2`'s fetch-add gets 2, the capacity, and is refused, but
+   `num_packets` is now 3; the flush walks `i < 3` and reads `info[2]`, a
+   record no take of this update wrote. At the code's sizing (ring equal to
+   the capacity) that read is past the array.
 2. **`MCRNServerPayloadRingLayoutBrokenFullOffByOne.cfg`** (`FullTest = FALSE`,
    ring of two): the refusal tests `base > send_capacity` and `one >
-   send_capacity`. Violates `InBounds`: slots 0 and 1 are handed out, and the
-   next take gets 2, equal to the capacity and the ring size, and is not
-   refused, so it writes `info[2]` and is handed `data + 2 *
-   ROCKETNET_FRAME_STRIDE`, both past the ring.
+   send_capacity`. Violates `InBounds`: `t1` claims the chunk 0..1 and has
+   not installed it yet; `t2` looks at the empty line, finds the room below
+   the guard, and its single fetch-add gets 2, equal to the capacity and the
+   ring size, which is not refused, so it writes `info[2]` and is handed
+   `data + 2 * ROCKETNET_FRAME_STRIDE`, both past the ring.
 3. **`MCRNServerPayloadRingLayoutBrokenWrongStride.cfg`** (`RecoverStride =
    FALSE`): the slot recovered as `( frame - data ) / ROCKETNET_FRAME_SIZE`
    (a size below the stride). Violates `ExactSend`: slot 0 is finished
@@ -143,12 +145,14 @@ counterexample below was checked against the C by hand.
    second time.
 5. **`MCRNServerPayloadRingLayoutBrokenNoLostClear.cfg`** (`LostClear = FALSE`,
    two threads on one line, capacity four): a lost install without the loop
-   that marks its chunk empty. Violates `ExactSend`: one update fills slots
-   0..3 and sends them; in the next both threads look at the empty line and
-   pass the guard, one claims 0..1 and the other 2..3, the first installs, and
-   the second's install finds the line changed, so it takes slot 1 from the
-   first's chunk. Slots 2 and 3 are below `num_packets` (4) and still hold the
-   first update's `wire_bytes`, so the flush sends them again.
+   that marks its chunk empty. Violates `ExactSend`: in the first update `t1`
+   claims the chunk 0..1, finishes slot 0 and the flush sends it; in the next
+   both threads look at the empty line and pass the guard, `t1` claims 0..1
+   and `t2` claims 2..3, `t2` installs its tail and takes 2, and `t1`'s install
+   finds the line changed, so it looks again and takes slot 3 from `t2`'s
+   chunk. Slots 2 and 3 are finished. Slot 0, of the lost chunk, is below
+   `num_packets` (4) and still holds the first update's `wire_bytes`, so the
+   flush sends it again.
 
 ## Runs
 

@@ -53,7 +53,8 @@ Functions in `sdk/rocketnet_allocator.cpp`.
   `keep_free_slot`.
 - **`AllocSpan`**: the descriptor take of `rn_region_send_alloc_span`.
 - **`Refuse`**: `rn_region_send_fit_store` failing (no descriptor, or the
-  store's find) and `rn_region_send_refuse` exhausting the region.
+  store's find) and `rn_region_send_refuse`, which counts the refusal and
+  leaves the region as it was (revision 1.1 below).
 - **`Free(d)`**: `rn_region_send_free`: `rn_send_store_free_checked`
   clears the live bit and lowers the cursor, then
   `rn_region_descriptor_release` pushes `d` into
@@ -121,7 +122,7 @@ counterexample below was checked against the C by hand.
    allocs take chunks 0, 1, 2 and leave `free_head = 3`; freeing chunk 0
    leaves it at 3; the next alloc has `free_count = 1` but the scan from 3
    meets nothing, so `rn_region_send_fit_store` returns
-   `RN_SEND_FIT_STORE_FULL` and the region is exhausted with chunk 0 free.
+   `RN_SEND_FIT_STORE_FULL` and the send is refused with chunk 0 free.
    This is the bug class a cursor scan without a wrap has; the code needs no
    wrap because the free lowers the cursor.
 3. **`MCRNSendStoreLayoutBrokenChunkGenZero.cfg`** (`ChunkSkipZero = FALSE`):

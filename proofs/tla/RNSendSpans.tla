@@ -272,7 +272,7 @@ Reset ==
     /\ tailUndo' = NoUndo
     /\ fresh' = FALSE
     /\ admitted' = {}
-    /\ UNCHANGED <<start, len, prv, nxt, refused, calls>
+    /\ UNCHANGED <<start, len, prv, nxt, refused, calls>>
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
