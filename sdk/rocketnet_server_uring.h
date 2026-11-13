@@ -12,6 +12,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
+#include "rocketnet_uring_pin.h"
 #include "rocketnet_uring_send_queue.h"
 
 // The io_uring server transport, the XDP shape: one worker thread per queue,
