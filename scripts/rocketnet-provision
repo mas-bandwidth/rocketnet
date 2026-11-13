@@ -1643,6 +1643,7 @@ STUB
         expect_case "stub root: $1 (summary counts it)" 0 0 "$OUT" "verify FAILED: $3 unmet condition(s)"
     }
 
+    stub_root_unnamed='printf "%s\n" "            CPU0       CPU1       CPU2       CPU3" " 120:  0  9  0  0  IR-PCI-MSIX-0000:01:00.0  1-edge  stubiface2-0" " 121:  0  0  8  0  IR-PCI-MSIX-0000:01:00.0  2-edge  stubiface2-1" > "$SR/proc/interrupts"'
     stub_root_case "R1 caller not root" 2 1 "not root (R1)" \
         'echo 1000 > "$SR/stub-euid"'
     stub_root_case "B1 irqaffinity names an isolated cpu" 2 1 "irqaffinity=1 names cpu 1, which is in the isolated set 1-3 (B1)" \
@@ -1661,8 +1662,12 @@ STUB
         'echo "irqaffinity=0 xisolcpus=1-3 nohz_full=1-3 nosmt" > "$SR/proc/cmdline"'
     stub_root_case "B1 nohz_full without a value" 2 1 "lacks nohz_full=<range> (B1)" \
         'echo "irqaffinity=0 isolcpus=1-3 nohz_full= nosmt" > "$SR/proc/cmdline"'
-    stub_root_case "B2 no isolated cpus" 2 2 "no isolated cpus (B2)" \
+    # named queue vectors are judged against the xdp threads' cpus, not the
+    # isolated set, so B2 alone names the empty set (as in the pre-flight)
+    stub_root_case "B2 no isolated cpus" 2 1 "no isolated cpus (B2)" \
         ': > "$SR/sys/devices/system/cpu/isolated"'
+    stub_root_case "B2 no isolated cpus, unnamed vectors" 2 2 "cannot pin stubiface2 IRQs (R4): no isolated cpus" \
+        "$stub_root_unnamed"'; : > "$SR/sys/devices/system/cpu/isolated"'
     stub_root_case "R2 interface down" 2 1 "is not up (R2)" \
         'echo 0x1002 > "$SR/sys/class/net/stubiface2/flags"'
     stub_root_case "R2 interface absent" 2 1 "does not exist (R2)" \
@@ -1694,7 +1699,6 @@ STUB
 
     # an interface whose vectors carry no queue names keeps the rule by count:
     # one isolated cpu each, none doubled, no more of them than isolated cpus
-    stub_root_unnamed='printf "%s\n" "            CPU0       CPU1       CPU2       CPU3" " 120:  0  9  0  0  IR-PCI-MSIX-0000:01:00.0  1-edge  stubiface2-0" " 121:  0  0  8  0  IR-PCI-MSIX-0000:01:00.0  2-edge  stubiface2-1" > "$SR/proc/interrupts"'
     stub_root_met "$SR"
     eval "$stub_root_unnamed"
     OUT="$(run_stub_root "$SR" 2)"
@@ -1751,8 +1755,9 @@ STUB
     OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=2 ROCKETNET_PROVISION_STUB_ROOT="$SR" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface2 verify 2>&1 )"
     expect_case "queue count from ROCKETNET_SERVER_NUM_XDP_THREADS" $? 0 "$OUT" "queue count 2 from ROCKETNET_SERVER_NUM_XDP_THREADS" 0
     OUT="$( ROCKETNET_PROVISION_STUB_ROOT="$SR" PATH="$STUB_DIR:$PATH" STUB_STATE_DIR="$STUB_STATE_DIR" bash "$SELF" stubiface2 verify 2>&1 )"
-    expect_case "queue count defaults to the server's default" $? 1 "$OUT" "queue count 1, the server's default XDP thread count" 1 "verify passed"
+    expect_case "queue count defaults to the server's default" $? 1 "$OUT" "queue count 1, the server's default XDP thread count" 2 "verify passed"
     expect_case "default queue count checked against the NIC" 1 1 "$OUT" "combined queue count is 2, want 1 (R7)"
+    expect_case "default queue count: the second queue's vector is past it" 1 1 "$OUT" "irq 121 is queue 1 of stubiface2, past the 1 queues the server runs (R4, R7)"
     OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=3 ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 2 verify 2>&1 )"
     expect_case "queue count argument differing from the variable refused" $? 2 "$OUT" "num_queues 2 differs from ROCKETNET_SERVER_NUM_XDP_THREADS=3"
     OUT="$( ROCKETNET_SERVER_NUM_XDP_THREADS=two ROCKETNET_PROVISION_STUB_ROOT="$SR" bash "$SELF" stubiface2 verify 2>&1 )"
