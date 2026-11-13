@@ -229,6 +229,14 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
 int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue );
 
+// the lowest cpu of queue's worker's affinity mask as the system reports it
+// (pthread_getaffinity_np) once the pin or its confine has run: what the
+// worker may actually run on, so cpu 0 here means it can run on the OS's core.
+// ROCKETNET_URING_PIN_PENDING until its thread has pinned, ROCKETNET_URING_PIN_NONE
+// when the mask could not be read.
+
+int rocketnet_server_uring_worker_lowest_cpu( struct rocketnet_server_uring_t * uring, int queue );
+
 // the pins the workers asked for and the system refused (a refused priority is
 // rocketnet_platform_thread_priority_refusals)
 

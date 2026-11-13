@@ -13,6 +13,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_server_uring.h"
 #include "../sdk/rocketnet_memory.h"
+#include "../sdk/rocketnet_uring_receive_queue.h"
 
 #define check rocketnet_unit_check
 
@@ -62,7 +63,7 @@ static void test_uring_ring_mapped_bound_covers_the_rings()
 #if defined( ROCKETNET_IO_URING )
     // the plan: every queue's buffer ring and its ring mappings
     const uint64_t one = rocketnet_server_uring_mapped_bytes( 1 );
-    check( one > bound );
+    check( one == rocketnet_uring_receive_queue_mapped_bytes( ROCKETNET_URING_RECV_BUFFERS ) + bound );
     check( rocketnet_server_uring_mapped_bytes( 3 ) == 3 * one );
     check( rocketnet_server_uring_mapped_bytes( 0 ) == 0 );
 #endif // #if defined( ROCKETNET_IO_URING )

@@ -8848,10 +8848,11 @@ void rocketnet_test_server_uring_send_overflow()
     rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
-// the workers pin themselves (rocketnet_uring_pin.h): with num_os_cpus 0 (the
-// transport driven directly) nothing is pinned and nothing refused; with a
-// cpu the machine does not have, every worker reports NONE, the refusal is
-// counted once for each, and no worker is ever reported on that cpu; with
+// the workers pin themselves (rocketnet_uring_pin.h): num_os_cpus 0 (the
+// transport driven directly) reads as 1, so each worker pins to cpu 1 + queue;
+// with a cpu the machine does not have, every worker reports NONE, the refusal
+// is counted once for each, no worker is ever reported on that cpu, and the
+// mask the system reports for it holds no cpu 0 (the confine); with
 // num_os_cpus 1 each worker reports cpu 1 + queue (reported only after
 // pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
 // refusal path as above.
@@ -8906,6 +8907,7 @@ void rocketnet_test_server_uring_worker_pin()
         for ( int q = 0; q < queues; q++ )
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
+            rocketnet_check( rocketnet_server_uring_worker_lowest_cpu( uring, q ) == 1 + q );
         }
         rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
@@ -8921,6 +8923,16 @@ void rocketnet_test_server_uring_worker_pin()
         for ( int q = 0; q < queues; q++ )
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
+
+            // what the refused worker may run on, read back from the system:
+            // never cpu 0 on a machine with more than one cpu (the confine
+            // to the cpus past the OS's; the inherited mask holds cpu 0)
+            const int lowest = rocketnet_server_uring_worker_lowest_cpu( uring, q );
+            rocketnet_check( lowest != ROCKETNET_URING_PIN_NONE && lowest != ROCKETNET_URING_PIN_PENDING );
+            if ( online > 1 )
+            {
+                rocketnet_check( lowest >= 1 );
+            }
         }
         rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == (uint64_t) queues );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
@@ -9099,6 +9111,44 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == (uint64_t) datagrams );
     rocketnet_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_URING_PIN_REFUSALS ) == (uint64_t) queues );
     rn_native_server_transport_stop_and_destroy( server );
+}
+
+// the io_uring transport's own buffer step after the shared open
+// (rocketnet_socket_buffer_request, then rocketnet_socket_buffer_log): its
+// line names the transport and the grant at create, whether the host granted
+// the request or not
+
+static std::atomic<int> uring_buffer_lines( 0 );
+
+static void rocketnet_test_uring_buffer_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+    if ( strstr( message, "io_uring transport: socket receive buffer asked" ) != NULL )
+    {
+        uring_buffer_lines++;
+    }
+}
+
+void rocketnet_test_server_uring_buffer_step()
+{
+    uring_buffer_lines.store( 0 );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( rocketnet_test_uring_buffer_log, NULL );
+
+    rocketnet_address_t address;
+    rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( uring );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+
+    // named once for the group (queue 0's grant)
+    rocketnet_check( uring_buffer_lines.load() == 1 );
+
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
 }
 
 void rocketnet_test_server_uring_send_wrong_family()
@@ -15958,6 +16008,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_worker_pin", rocketnet_test_server_uring_worker_pin, rocketnet_server_uring_available },
     { "test_io_uring_transport_rows_reach_the_server", rocketnet_test_server_uring_rows_reach_the_server, rocketnet_server_uring_available },
+    { "test_io_uring_transport_buffer_step", rocketnet_test_server_uring_buffer_step, rocketnet_server_uring_available },
     { "test_io_uring_transport_receive_left_at_stop_counted", rocketnet_test_server_uring_receive_left_at_stop_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

@@ -122,6 +122,12 @@ struct rocketnet_server_uring_queue_t
 
     std::atomic<int> pin_cpu{ ROCKETNET_URING_PIN_PENDING };
 
+    // the lowest cpu of the worker's mask as the system reports it after the
+    // pin or the confine (rocketnet_server_uring_worker_lowest_cpu); stored
+    // before pin_cpu, so a reader that saw pin_cpu leave PENDING sees it
+
+    std::atomic<int> lowest_cpu{ ROCKETNET_URING_PIN_PENDING };
+
     // the worker thread stores it (release) after its loop's last access to
     // the ring; main loads it (acquire) in stopped
 
@@ -400,6 +406,27 @@ static void rocketnet_server_uring_confine_worker( struct rocketnet_server_uring
     }
 }
 
+// what the worker may run on now, read back from the system: the lowest cpu
+// of its mask, or NONE when the mask cannot be read
+static void rocketnet_server_uring_note_mask( struct rocketnet_server_uring_queue_t * queue )
+{
+    cpu_set_t cpuset;
+    CPU_ZERO( &cpuset );
+    int lowest = ROCKETNET_URING_PIN_NONE;
+    if ( pthread_getaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset ) == 0 )
+    {
+        for ( int cpu = 0; cpu < CPU_SETSIZE; cpu++ )
+        {
+            if ( CPU_ISSET( (size_t) cpu, &cpuset ) )
+            {
+                lowest = cpu;
+                break;
+            }
+        }
+    }
+    queue->lowest_cpu.store( lowest, std::memory_order_relaxed );
+}
+
 static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_queue_t * queue )
 {
     struct rocketnet_server_uring_t * uring = queue->uring;
@@ -418,6 +445,7 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
             rocketnet_warn( "io_uring worker %d not pinned: cpu %d is not online (0 .. %d); it runs on the cpus past the OS's", queue->index, cpu, online - 1 );
         }
         rocketnet_server_uring_confine_worker( uring, queue->index, online );
+        rocketnet_server_uring_note_mask( queue );
         queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
     }
     else
@@ -431,11 +459,13 @@ static void rocketnet_server_uring_pin_worker( struct rocketnet_server_uring_que
             uring->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
             rocketnet_warn( "io_uring worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it runs on the cpus past the OS's", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
             rocketnet_server_uring_confine_worker( uring, queue->index, online );
+            rocketnet_server_uring_note_mask( queue );
             queue->pin_cpu.store( ROCKETNET_URING_PIN_NONE, std::memory_order_release );
         }
         else
         {
             rocketnet_info( "io_uring worker %d pinned to cpu %d", queue->index, cpu );
+            rocketnet_server_uring_note_mask( queue );
             queue->pin_cpu.store( cpu, std::memory_order_release );
         }
     }
@@ -1181,6 +1211,17 @@ int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, 
     return uring->queues[queue].pin_cpu.load( std::memory_order_acquire );
 }
 
+int rocketnet_server_uring_worker_lowest_cpu( struct rocketnet_server_uring_t * uring, int queue )
+{
+    rocketnet_assert( uring );
+    rocketnet_assert( queue >= 0 && queue < uring->num_queues );
+    if ( uring->queues[queue].pin_cpu.load( std::memory_order_acquire ) == ROCKETNET_URING_PIN_PENDING )
+    {
+        return ROCKETNET_URING_PIN_PENDING;
+    }
+    return uring->queues[queue].lowest_cpu.load( std::memory_order_relaxed );
+}
+
 int rocketnet_server_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
@@ -1395,6 +1436,13 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 }
 
 int rocketnet_server_uring_worker_cpu( struct rocketnet_server_uring_t * uring, int queue )
+{
+    (void) uring;
+    (void) queue;
+    return ROCKETNET_URING_PIN_NONE;
+}
+
+int rocketnet_server_uring_worker_lowest_cpu( struct rocketnet_server_uring_t * uring, int queue )
 {
     (void) uring;
     (void) queue;
