@@ -18,8 +18,9 @@
 //     in a development build, the two network simulator calls counts one
 //     misuse, fires one assert and returns false or does nothing;
 //   * test_public_server_keygen_failure_leaves_the_block_unwritten: a create
-//     refused because the key cannot be made frees its block without writing
-//     it, so a default server does not touch the pages of its whole plan.
+//     refused because the key cannot be made (the crypto source seam fails
+//     the real key generation) frees its block without writing it, so a
+//     default server does not touch the pages of its whole plan.
 //
 // The loopback transport carries packets in memory; callers provide every
 // time, and no case sleeps or opens a socket.
@@ -310,10 +311,10 @@ static void test_public_server_keygen_failure_leaves_the_block_unwritten()
     api_core_server_config( &config );
 
     state.watching = true;
-    rocketnet_dev_set_server_keygen_failure( true );
+    rocketnet_dev_set_crypto_source_failure( true );
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     rocketnet_server_t * server = rocketnet_server_create( &state, "127.0.0.1:0", NULL, &config, &status );
-    rocketnet_dev_set_server_keygen_failure( false );
+    rocketnet_dev_set_crypto_source_failure( false );
     state.watching = false;
 
     check( server == NULL );
