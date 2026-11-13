@@ -45,6 +45,29 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
 std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
+
+// The client I/O stop-wait hold (sdk/rocketnet_test_seams.h): a unit test
+// answers each poll of the exit's stop_woken wait and fails at its own
+// ceiling, so the wait does not sleep and cannot hang. Per process, null by
+// default.
+static rocketnet_dev_client_io_stop_wait_function_t * rn_client_io_stop_wait_hold;
+static void * rn_client_io_stop_wait_hold_context;
+
+void rocketnet_dev_set_client_io_stop_wait_hook( rocketnet_dev_client_io_stop_wait_function_t * function, void * context )
+{
+    rn_client_io_stop_wait_hold = function;
+    rn_client_io_stop_wait_hold_context = context;
+}
+
+bool rocketnet_dev_client_io_stop_wait_poll( void )
+{
+    if ( !rn_client_io_stop_wait_hold )
+    {
+        return false;
+    }
+    rn_client_io_stop_wait_hold( rn_client_io_stop_wait_hold_context );
+    return true;
+}
 #endif // #if ROCKETNET_DEV
 
 // the ordinal each client's link simulator seed mixes in, so two clients on

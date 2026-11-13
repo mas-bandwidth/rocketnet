@@ -735,4 +735,9 @@
    :title "Client bind family: count the late IPv6 cookie exactly"
    :text "test_unit_client_bind_family.cpp checks ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE >= 1 after the one late IPv6 cookie the case sends (about line 416), so a double count passes. If the case's schedule fixes the count (one late cookie, no other foreign datagram), check it moved by exactly 1 from a reading taken before the cookie is sent; if it does not, say why beside the check."
    :date "2026-11-13" :origin "2026-11-10 review, tests addendum row TA008, P7's site (optional)")
+
+  (item "portable-tx-wait-kind-witness" :group "review-v1-2" :area "sdk"
+   :title "The portable tx worker's choice of wait has no witness"
+   :text "portable_tx_worker (sdk/rocketnet_driver_builtin.cpp, the WAIT / WAIT_CARRY branch) maps the step's result to wake_wait(0.1) or wake_wait_writable(0.001) inline, and the carry_wake fixture checks only the step's enum, so swapping the two waits passes every unit case. Lift the mapping into a pure helper the worker calls (step result -> wait kind and timeout) and check it in the fixture, red on a swapped branch. The portable transport is the fallback, so this waits until it is worth an sdk change."
+   :date "2026-11-13" :origin "Tests review v1.2 merge, row TM154 (P9)")
  ))

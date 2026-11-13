@@ -1107,7 +1107,7 @@ bool rocketnet_portable_tx_test_handoff()
     // ownership transition, and the worker's passes run on this thread
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     // exercise the same cleanup entry with each partially constructed owner.
     // Sanitizer/allocator gates can detect a leaked wake or bank allocation.
@@ -1336,7 +1336,7 @@ bool rocketnet_portable_tx_test_sizing()
     // sized for 1000 clients.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     rocketnet_server_transport_config_t config = {};
     bool valid = portable_tx_capacity( NULL ) == ROCKETNET_SEND_PACKETS_PER_CLIENT * ROCKETNET_DEFAULT_MAX_CLIENTS;
@@ -1391,7 +1391,7 @@ bool rocketnet_portable_tx_test_sizing()
 bool rocketnet_portable_tx_test_stop_publishes_across_polls()
 {
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     portable_server_t * server = portable_tx_test_owner( 4 );
     if ( !server )
@@ -1452,7 +1452,7 @@ bool rocketnet_portable_tx_test_drop_paths()
     // test takes a ready bank by hand to keep it in flight.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     portable_server_t * server = portable_tx_test_owner( rocketnet_server_send_batch_packets( ROCKETNET_DEFAULT_MAX_CLIENTS ) );
     if ( !server )
@@ -1553,7 +1553,7 @@ bool rocketnet_portable_rx_test_handoff()
     // The separate worker case below proves full-queue stop and partial creation.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     portable_server_t * server = portable_rx_test_owner();
     if ( !server )
@@ -1646,7 +1646,7 @@ bool rocketnet_portable_rx_test_worker_steps()
     // its wake, so the pass after a stop exits however the wait ended.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     portable_server_t * server = portable_rx_test_owner();
     if ( !server )
@@ -1735,7 +1735,7 @@ bool rocketnet_portable_rx_test_chaff_drain()
     // and a quit set then ends the next pass before any read.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-    return true;
+    return false; // no portable transport here: the unit case is left out (UNIT_TEST_SKIPPED_UNLESS), never passed
 #else
     portable_server_t * server = portable_rx_test_owner();
     if ( !server )
