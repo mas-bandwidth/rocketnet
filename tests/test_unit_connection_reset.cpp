@@ -208,7 +208,7 @@ static void test_connection_reset_inventory_covers_every_field()
     }
 
     check( reset_fields == 35 );
-    check( keep_fields == 8 );
+    check( keep_fields == 9 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
                                                           encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),
@@ -2385,6 +2385,7 @@ struct reset_key_hooks_t
 {
     int published;
     int retired;
+    int opened;
     const rocketnet_client_protocol_t * client;
     uint8_t key_byte_at_retire;
 };
@@ -2401,6 +2402,12 @@ static void reset_hooks_retire( void * context )
     reset_key_hooks_t * hooks = (reset_key_hooks_t *) context;
     hooks->retired++;
     hooks->key_byte_at_retire = ( (const uint8_t *) &hooks->client->keys )[0];
+}
+
+static void reset_hooks_open_payloads( void * context )
+{
+    reset_key_hooks_t * hooks = (reset_key_hooks_t *) context;
+    hooks->opened++;
 }
 
 static void test_connection_reset_client_keeps_every_keep_member()
@@ -2427,6 +2434,7 @@ static void test_connection_reset_client_keeps_every_keep_member()
     client->defer_payload_acks = 1;
     client->publish_keys = reset_hooks_publish;
     client->retire_keys = reset_hooks_retire;
+    client->open_payloads = reset_hooks_open_payloads;
     client->keys_context = &hooks;
 
     const int terminal[] = { ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,
@@ -2444,9 +2452,11 @@ static void test_connection_reset_client_keeps_every_keep_member()
         check( hooks.retired == round + 1 );
         check( hooks.key_byte_at_retire == 0xA5 );
         check( hooks.published == 0 );
+        check( hooks.opened == 0 );
 
         check( client->publish_keys == reset_hooks_publish );
         check( client->retire_keys == reset_hooks_retire );
+        check( client->open_payloads == reset_hooks_open_payloads );
         check( client->keys_context == &hooks );
         check( client->defer_payload_acks == 1 );
         check( client->send_rate == 33.0 );
