@@ -99,7 +99,7 @@ LAYERS = {
             "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
             "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
         },
-        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
+        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired", "RegisterRefused"],
         "steps": 500,
     },
     "msgxsendruns": {
@@ -109,6 +109,11 @@ LAYERS = {
         # of a 400-step walk would be Done records, each paid for by the
         # template's ASSUME
         "steps": 150,
+    },
+    "msgxreceivefill": {
+        "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
+        "untraced": {},
+        "reach": ["ShortRoom", "Held"],
     },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
@@ -269,7 +274,7 @@ SHARDS = [
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive"],
+    ["ackapply", "bank", "receive", "msgxreceivefill"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
 ]
 

@@ -13,7 +13,19 @@
 #if ROCKETNET_DEV
 // Unit-library instrumentation only: hold entries visited by the hold take
 // and by the end-of-update pass, per thread; no shipped library carries it.
-thread_local unsigned long long g_sequenced_hold_visit_count = 0;
+// Static to this file: tests read and clear it through the two functions
+// below, never by an extern thread_local (rocketnet_ack_visit_count says why).
+static thread_local unsigned long long g_sequenced_hold_visit_count = 0;
+
+unsigned long long rocketnet_sequenced_hold_visit_count()
+{
+    return g_sequenced_hold_visit_count;
+}
+
+void rocketnet_sequenced_hold_visit_count_reset()
+{
+    g_sequenced_hold_visit_count = 0;
+}
 #endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold

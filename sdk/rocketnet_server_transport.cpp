@@ -2433,7 +2433,10 @@ uint64_t rocketnet_server_transport_required_memory( const rocketnet_server_tran
 // rocketnet_server_transport_receive_buffer_request, the function each create
 // calls (rocketnet_driver_builtin.cpp, rocketnet_server_gso_linux.cpp,
 // rocketnet_server_uring_linux.cpp, rocketnet_server_iocp_windows.cpp,
-// rocketnet_server_rio_windows.cpp); each xdp queue's AF_XDP socket asks for
+// rocketnet_server_rio_windows.cpp). msgx's sockets differ (one shared socket
+// asks for those, each client's connected socket for
+// ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER each way), so its plan carries its own
+// sums (socket_buffers_planned); each xdp queue's AF_XDP socket asks for
 // ROCKETNET_XDP_RECV_QUEUE_SIZE RX and ROCKETNET_XDP_SEND_QUEUE_SIZE TX
 // descriptors and sets no socket buffer (rocketnet_server_socket_linux.cpp).
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config,
@@ -2472,6 +2475,12 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
 #else
         return false;
 #endif // #if ROCKETNET_XDP
+    }
+    else if ( plan.socket_buffers_planned )
+    {
+        // sockets that ask for different buffers: the plan's own sums
+        e.socket_send_buffer_bytes = plan.socket_send_buffer_bytes;
+        e.socket_receive_buffer_bytes = plan.socket_receive_buffer_bytes;
     }
     else
     {

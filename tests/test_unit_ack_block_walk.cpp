@@ -17,7 +17,8 @@
 #include <stdio.h>
 #include <string.h>
 
-extern thread_local unsigned long long g_ack_visit_count;
+extern unsigned long long rocketnet_ack_visit_count();
+extern void rocketnet_ack_visit_count_reset();
 
 static void rec_sent( struct rocketnet_ack_endpoint_t * ep, uint64_t sequence )
 {
@@ -83,22 +84,22 @@ static void test_ack_block_walk_visits_only_unacknowledged()
 
     int acked_count = 0;
     uint64_t unknown = 0, batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     apply_block( ep, N, N, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == (int) N );
     rocketnet_unit_check( unknown == 0 );
     rocketnet_unit_check( batch_full == 0 );
-    rocketnet_unit_check( g_ack_visit_count == N );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == N );
 
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     apply_block( ep, N, N, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 0 );
     rocketnet_unit_check( unknown == 0 );
     rocketnet_unit_check( batch_full == 0 );
-    rocketnet_unit_check( g_ack_visit_count == 0 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 0 );
 
     for ( uint64_t s = N + 1; s <= N + 4; s++ )
     {
@@ -108,12 +109,12 @@ static void test_ack_block_walk_visits_only_unacknowledged()
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     apply_block( ep, N + 4, N, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 4 );
     rocketnet_unit_check( unknown == 0 );
     rocketnet_unit_check( batch_full == 0 );
-    rocketnet_unit_check( g_ack_visit_count == 4 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 4 );
 
     rocketnet_free( NULL, acked );
     rocketnet_free( NULL, ep );
@@ -153,11 +154,11 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
 
     int acked_count = 0;
     uint64_t unknown = 0, batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == (int) ( N - 1 ) );
     rocketnet_unit_check( acked_count == (int) ( N - 1 ) );
     rocketnet_unit_check( unknown == 0 );
-    rocketnet_unit_check( g_ack_visit_count == N - 1 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == N - 1 );
 
     uint64_t highest = N;
 
@@ -189,11 +190,11 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
         acked_count = 0;
         unknown = 0;
         batch_full = 0;
-        g_ack_visit_count = 0;
+        rocketnet_ack_visit_count_reset();
         rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &b, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == 64 );
         rocketnet_unit_check( acked_count == 64 );
         rocketnet_unit_check( unknown == 0 );
-        rocketnet_unit_check( g_ack_visit_count == 64 );
+        rocketnet_unit_check( rocketnet_ack_visit_count() == 64 );
     }
 
     // the rounds took highest past N + 100, so 100 left the window; a further
@@ -209,10 +210,10 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     apply_block( ep, highest, highest - window_low + 1, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 64 );
-    rocketnet_unit_check( g_ack_visit_count == 64 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 64 );
 
     rocketnet_free( NULL, acked );
     rocketnet_free( NULL, ep );
@@ -236,20 +237,20 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &db, 3000.0, da, 2, &acked_count, &unknown, &batch_full ) == 2 );
     rocketnet_unit_check( acked_count == 2 );
     rocketnet_unit_check( batch_full == 1 );
-    rocketnet_unit_check( g_ack_visit_count == 3 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 3 );
 
     acked_count = 0;
     unknown = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &db, 3100.0, da, 2, &acked_count, &unknown, &batch_full ) == 1 );
     rocketnet_unit_check( acked_count == 1 );
     rocketnet_unit_check( batch_full == 0 );
-    rocketnet_unit_check( g_ack_visit_count == 1 );
+    rocketnet_unit_check( rocketnet_ack_visit_count() == 1 );
 
     rocketnet_free( NULL, ep );
 }
@@ -723,10 +724,10 @@ static void test_ack_block_memo_cleared_by_send_and_by_deferral()
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, 8, &acked_count, &unknown, &batch_full ) == 4 );
     rocketnet_unit_check( unknown == 2 && acked_count == 4 && ep->block_memo.valid );
 
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     acked_count = 0;
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3001.0, acked, 8, &acked_count, &unknown, &batch_full ) == 0 );
-    rocketnet_unit_check( unknown == 4 && acked_count == 0 && g_ack_visit_count == 0 );
+    rocketnet_unit_check( unknown == 4 && acked_count == 0 && rocketnet_ack_visit_count() == 0 );
 
     rec_sent( ep, 5 );
     rocketnet_unit_check( !ep->block_memo.valid );

@@ -2032,9 +2032,10 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 // the msgx server owns its sockets (a shared one and one connected socket per
 // client), so its send seam is the transport's own: each injected errno meets
-// the next send calls on the TX workers. A full socket (ENOBUFS, EAGAIN)
-// keeps the bank and sends it whole once the socket takes it; ECONNREFUSED
-// sends the run again once; ENOTCONN reports the client's socket dead and
+// the next send calls on the TX workers. A full socket (ENOBUFS, EAGAIN) or
+// a signal (EINTR) keeps the bank and sends it whole once the socket takes
+// it; an ICMP report on the connected socket (ECONNREFUSED, host or network
+// unreachable or down) sends the run again once; ENOTCONN reports the client's socket dead and
 // sends the run on the shared socket; any other errno drops the run counted
 // in SEND_FAILED. Every case ends with the connection up and traffic flowing.
 
@@ -2132,8 +2133,15 @@ static void posix_msgx_send_seam_cell( int ipv6 )
     const struct posix_msgx_seam_t seams[] = {
         { ENOBUFS, 3, true, nullptr },
         { EAGAIN, 3, true, nullptr },
+        { EINTR, 3, true, nullptr },
         { ECONNREFUSED, 1, true, &rocketnet_server_msgx_stats_t::send_refused },
-        { EHOSTUNREACH, 1000, false, &rocketnet_server_msgx_stats_t::send_dropped },
+        // an ICMP report of the client's host or network on its connected
+        // socket (review E5): sent again once, as ECONNREFUSED, and dropped
+        // counted only when it stays
+        { EHOSTUNREACH, 1, true, &rocketnet_server_msgx_stats_t::send_refused },
+        { ENETUNREACH, 1, true, &rocketnet_server_msgx_stats_t::send_refused },
+        { EHOSTUNREACH, 1000, false, &rocketnet_server_msgx_stats_t::send_refused },
+        { EBADF, 1000, false, &rocketnet_server_msgx_stats_t::send_dropped },
         { ENOTCONN, 1, true, &rocketnet_server_msgx_stats_t::socket_dead },
     };
 
@@ -2380,6 +2388,70 @@ void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
     struct rocketnet_server_msgx_stats_t stats;
     rocketnet_server_msgx_stats( msgx, &stats );
     posix_check( stats.socket_open_failed == 0 );
+
+    rocketnet_server_msgx_stop( msgx );
+    const double stop_deadline = rocketnet_platform_time() + 5.0;
+    while ( !rocketnet_server_msgx_stopped( msgx ) && rocketnet_platform_time() < stop_deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    posix_check( rocketnet_server_msgx_stopped( msgx ) );
+    rocketnet_server_msgx_destroy( msgx );
+}
+
+// The shared socket's receive buffer at the most clients (review E4b, found
+// in review by Emma): the request (rocketnet_server_receive_buffer_request,
+// 25,000,000 at 1000 clients) is past Darwin's limit, which refuses an
+// over-limit SO_RCVBUF with ENOBUFS instead of clamping it. One setsockopt
+// of the request, as the transport made before the fix, leaves the socket at
+// the kernel's default; the transport now walks down by halves to what the
+// kernel grants. Real sockets: one plain UDP socket shows the refusal, then
+// the server's transport directly, no datagram sent.
+
+void rocketnet_test_posix_msgx_shared_receive_buffer_granted()
+{
+    const int max_clients = ROCKETNET_MAX_CLIENTS;
+    const int request = rocketnet_server_transport_receive_buffer_request( "msgx", max_clients );
+
+    // what one setsockopt of the request does on this host
+    const int plain = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( plain >= 0 );
+    int size = request;
+    const int set = setsockopt( plain, SOL_SOCKET, SO_RCVBUF, &size, sizeof( size ) );
+    const int set_error = set == 0 ? 0 : errno;
+    int plain_granted = 0;
+    socklen_t length = sizeof( plain_granted );
+    posix_check( getsockopt( plain, SOL_SOCKET, SO_RCVBUF, &plain_granted, &length ) == 0 );
+    close( plain );
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, "127.0.0.1:0" ) );
+    uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES];
+    memset( packet_filter, 0x5a, sizeof( packet_filter ) );
+    int status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, max_clients, packet_filter, &status );
+    posix_check( msgx != NULL );
+
+    struct rocketnet_server_msgx_stats_t stats;
+    rocketnet_server_msgx_stats( msgx, &stats );
+    printf( "  msgx shared SO_RCVBUF at %d clients: requested %d; one setsockopt %s (%s), left at %d; the transport was granted %llu\n",
+            max_clients, request, set == 0 ? "took it" : "refused", set == 0 ? "-" : strerror( set_error ), plain_granted,
+            (unsigned long long) stats.shared_receive_buffer );
+    fflush( stdout );
+
+    // granted what the kernel allows: the whole request where it fits, and
+    // otherwise at least half of a request the kernel refused, never the
+    // default a single refused request leaves
+    posix_check( stats.shared_receive_buffer > 0 );
+    if ( set == 0 )
+    {
+        posix_check( stats.shared_receive_buffer >= (uint64_t) plain_granted );
+    }
+    else
+    {
+        posix_check( stats.shared_receive_buffer > (uint64_t) plain_granted );
+        posix_check( stats.shared_receive_buffer >= (uint64_t) ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    }
 
     rocketnet_server_msgx_stop( msgx );
     const double stop_deadline = rocketnet_platform_time() + 5.0;

@@ -29,14 +29,26 @@ struct rocketnet_crypto_tally_t
     uint64_t seal_open;
 };
 
-extern thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+// The tally is thread-local and static to sdk/rocketnet_protocol.cpp, and
+// every other file reaches it through these functions, defined there. An
+// extern thread_local read from another file can leave a weak initializer
+// unresolved at address 0 in optimized sanitizer builds (GCC 15 -O2 with
+// -fsanitize=undefined took it for a null object), as
+// rocketnet_server_cookie_mac_count says for its own tally.
+struct rocketnet_crypto_tally_t * rocketnet_crypto_tally_this_thread( void );
 
 static inline struct rocketnet_crypto_tally_t rocketnet_crypto_tally_get( void )
 {
-    return rocketnet_crypto_tally;
+    return *rocketnet_crypto_tally_this_thread();
 }
 
-#define ROCKETNET_CRYPTO_TALLY( field ) ( rocketnet_crypto_tally.field++ )
+static inline void rocketnet_crypto_tally_reset( void )
+{
+    const struct rocketnet_crypto_tally_t zero = { 0, 0, 0, 0, 0, 0 };
+    *rocketnet_crypto_tally_this_thread() = zero;
+}
+
+#define ROCKETNET_CRYPTO_TALLY( field ) ( rocketnet_crypto_tally_this_thread()->field++ )
 
 #else // #if ROCKETNET_DEV
 
