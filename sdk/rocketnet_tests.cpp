@@ -13687,8 +13687,8 @@ void rocketnet_test_config_bytes_exact()
     rocketnet_test_config_bytes_exact_fields( "server", &server, fields, count );
 
     uint8_t tiny = 0;
-    const rocketnet_config_field_t tiny_field = { "test_one_byte", ROCKETNET_CONFIG_KIND_BYTES, 0, 1, 0, 0, 0 };
-    rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, &tiny_field, 1 );
+    const rocketnet_config_field_t tiny_fields[1] = { { "test_one_byte", ROCKETNET_CONFIG_KIND_BYTES, 0, 1, 0, 0, 0 } };
+    rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, tiny_fields, 1 );
 }
 
 // Every override logs the variable and displaced value while keeping secret
