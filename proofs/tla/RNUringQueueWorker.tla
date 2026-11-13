@@ -260,7 +260,7 @@ Claim ==
     /\ Awake /\ ~held /\ ready > 0
     /\ ready' = ready - 1 /\ held' = TRUE
     /\ p' \in 0..R
-    /\ u' \in Left(p', p')
+    /\ u' \in IF p' = 0 THEN {0} ELSE 1..p'
     /\ UNCHANGED <<quit, seen, st, handed, k, cOk, cAgain, cRef, blocked, poll, recv, wakeRead, wakeCount, agains, againsBefore, refusals, recvEnds>>
 
 \* the code abandons before it sends: nothing is sent once abandoning

@@ -530,7 +530,7 @@ static void qwork_choices( const qwork_walk_t & walk, tla_random_t & random, boo
     {
         can.push_back( QWORK_PUBLISH );
     }
-    if ( !quit && ( !main_works || walk.handed == QWORK_U || random.below( 8 ) == 0 ) )
+    if ( !quit && ( !main_works || walk.handed == QWORK_U || random.below( 32 ) == 0 ) )
     {
         can.push_back( QWORK_STOP );
     }
