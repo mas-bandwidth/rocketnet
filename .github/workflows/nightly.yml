@@ -20,7 +20,9 @@
 # the newest earlier night it was green and a `git bisect start <bad> <good>`
 # line, and fails on any red job tools/nightly_dispositions.txt does not give
 # to an open pull request. Whoever is on the estate that morning owns walking
-# it back, starting from that line.
+# it back, starting from that line. Every leg for the run's own ref checks out
+# the run's head commit (github.sha), never the branch tip when the step runs,
+# so the commits that line names are the ones the legs tested.
 #
 # What is here, and why it is not on the per-commit gate:
 #
@@ -159,7 +161,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Print compiler versions
         run: |
@@ -203,7 +205,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Build (Release, through the Makefile)
         timeout-minutes: 10
@@ -270,7 +272,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Build (Release, through the Makefile)
         timeout-minutes: 10
@@ -335,7 +337,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure
         timeout-minutes: 2
@@ -519,7 +521,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Build Release
         timeout-minutes: 13
@@ -595,7 +597,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           persist-credentials: false
 
       - name: Build Release
@@ -649,7 +651,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure
         timeout-minutes: 2
@@ -721,7 +723,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Check committed XDP fallback source on Windows
         # Uses the Python and CMake on the fleet Windows runner's job PATH.
@@ -834,7 +836,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure
         timeout-minutes: 2
@@ -874,7 +876,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure with AddressSanitizer
         timeout-minutes: 1
@@ -974,7 +976,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
 
       - name: Configure clang-cl x64
         timeout-minutes: 3
@@ -1101,7 +1103,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           fetch-depth: 0
 
       - name: Mutation campaign, the day's slice; any survivor not in the reviewed baseline fails
