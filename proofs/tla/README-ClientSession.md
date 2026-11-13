@@ -8,7 +8,7 @@ finalize the old generation and reuse the block. The detailed two-ring and key
 wipe ownership model remains [RNClientIoShutdown](README-RNClientIoShutdown.md).
 These models are related by their completion boundary, not a proved refinement.
 The current Linux measurements are recorded in `proofs/tla/RUNS.tsv`; all
-twelve declared cases have their expected outcomes for this revision.
+fourteen declared cases have their expected outcomes for this revision.
 
 `proofs/tla/ClientSession.tla` models the client object over many connections: create (no token,
 DISCONNECTED), connect(token), the handshake abstracted to its three stages, CONNECTED, every
@@ -62,6 +62,7 @@ one lifetime count, the not-connected drops, is not modelled.
 | `RetryPending`, `WorkerComplete`, `Connect(tok)` | A terminal retry with a running old worker requests stop and returns `CLIENT_NOT_DISCONNECTED`; a stuck worker stays pending. Completion is separate. Connect is enabled immediately for token-only errors or after completed old ownership; it joins/finalizes the old generation before reuse. Live states still refuse. Connect has the code's five outcomes (`rn_client_connect`): `malformed` (not one base64 token) is refused before anything changes, whatever the old worker is doing; `valid` starts the handshake; `invalid` and `expired` end in `INVALID_CONNECT_TOKEN` and `CONNECT_TOKEN_EXPIRED`; `createfails` (socket, thread or memory) leaves `DISCONNECTED`. |
 | `HandshakeStep` | the server's reply to the current stage arrives; the challenge writes the session keys; the establishing keep-alive reaches CONNECTED |
 | `Deny`, `TokenExpires`, `Timer` | a denial during the handshake; the token expiring during the handshake; each stage's deadline and the connected timeout |
+| `HandshakeViolation` | a challenge carrying a small-order server ephemeral key in sending connection request: `PROTOCOL_VIOLATION`, the end of that name an authenticated server packet causes in the handshake (TRANSPORT.md t11.2 step 4) |
 | `ServerDisconnect`, `ClientDisconnect` | the server's disconnect; the client's disconnect from the handshake or connected |
 
 The model's end states read the reasons of `enum rocketnet_disconnect_reason_t` (`sdk/rocketnet.h`):
@@ -282,3 +283,30 @@ itself; the start below it sets `send_error` to MESSAGE_MEMORY_EXHAUSTED only
 when `rn_region_exhausted` (`sdk/rocketnet_endpoint.cpp`), which
 only the receive side sets; a start with no room counts `send_refused`
 and returns NULL.
+
+## Revision 1.1.3: a small-order challenge ends the handshake in PROTOCOL_VIOLATION
+
+The transport now ends an attempt in protocol violation (-10) when the
+connection challenge carries a small-order server ephemeral key (TRANSPORT.md
+t11.2 step 4), and `rocketnet_client_state` passes -10 through as
+`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION`. Before it this model reached that
+public state only from CONNECTED (`MessageEnd`). `HandshakeViolation` is the new
+end: from `SENDING_CONNECTION_REQUEST` only, through `End` like `Deny`, so
+the one Reset runs and the worker keeps running. A connect from it is a
+connect from a terminal error (`PROTOCOL_VIOLATION` was already in
+`RestartStates`).
+
+`NoHandshakeViolation` (`[][~(st = "SENDING_CONNECTION_REQUEST" /\ st' =
+"PROTOCOL_VIOLATION")]_vars`) is a reachability witness only.
+
+| Case | Expected | Exit | Distinct | Seconds (aws-mut-4, as in RUNS.tsv) |
+|---|---|---:|---:|---:|
+| `MCClientSession.cfg` | pass | 0 | 33897 | 2.909 |
+| `MCClientSessionReachHandshakeViolation.cfg` | `NoHandshakeViolation` | 13 | 34 | 0.702 |
+
+The other twelve cases reach their declared results unchanged. The witness
+trace (5 states): create, connect, the cookie, then `HandshakeViolation` from
+`SENDING_CONNECTION_REQUEST`. In the code `rocketnet_client_process_challenge`
+(`sdk/rocketnet_client_protocol.cpp`) is reached only in sending connection
+request (2), and its small-order arm calls `rocketnet_client_set_state` with
+-10, which runs `rocketnet_client_connection_reset`.

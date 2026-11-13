@@ -13,7 +13,8 @@ as far as it drives the client. `proofs/tla/MCClientConnection.tla` and
 ## What the model covers
 
 **States** are the standard's numbers (STANDARD.md, _Client State Machine_;
-`sdk/rocketnet.h`): -7 token expired, -5 connection timed out, -4 response
+`sdk/rocketnet.h`): -10 protocol violation (a challenge carrying a small-order
+server key), -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
 4 connected. -6 (invalid token) is decided before anything is sent and is not modelled.
@@ -54,6 +55,7 @@ models in the module:
 | `ClientDiscCopy` | the client | one copy of the disconnect burst |
 | `ClientRecvCookie` | a packet arrives | `rocketnet_client_process_cookie`: 1 or 2, salt matches, store, 1 → 2 |
 | `ClientRecvChallenge` | a packet arrives | `rocketnet_client_process_challenge`: 2 only, commit keys, erase ephemeral, 2 → 3 |
+| `ClientRecvSmallOrder` | a packet arrives | `rocketnet_client_process_challenge`, the small-order arm: 2 only, the derivation refuses a small-order server ephemeral, → -10, keys and ephemeral zeroed (TRANSPORT.md t7 rule 5, t11.2 step 4) |
 | `ClientRecvDenied` | a packet arrives | `rocketnet_client_process_denied`: 2 or 3, → -1, keys and ephemeral zeroed |
 | `ClientRecvSession` | a packet arrives | `rocketnet_client_open_session` then keep-alive (3 → 4, index set), payload (accepted in 4 only, `rocketnet_client_session_state_accepts`), disconnect (→ 0, keys zeroed) |
 | `ServerRecvRequest` | a packet arrives | `rocketnet_server_protocol_process_connection_request`: connected address ignored; half-open mapping answers its stored challenge; no cookie → cookie; no slot → denied, no mapping; else a mapping and its challenge |
@@ -63,6 +65,7 @@ models in the module:
 | `ServerPayload` | the server application | a payload, at most one per send interval |
 | `ServerAppDisconnect`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, slot and mapping gone at once |
 | `ServerCrash` | the outside | the mapping vanishes with nothing sent |
+| `ServerSmallOrder` | the server, `SmallOrderServer` only | a half-open mapping answers with a challenge sealed under its handshake keys whose server ephemeral key is a small-order point |
 | `OtherJoins`, `OtherLeaves` | other clients | a slot taken or freed |
 | `Tick` | time | one send interval passes: `rocketnet_client_check_deadlines` (total deadline in 1..3, then idle timeout to -(state+1)), `rocketnet_server_protocol_update` (handshake deadline for a half-open mapping, idle timeout for an established one), both links `Age` |
 | `C2SEnvironment`, `S2CEnvironment` | the path | Link's `Drop`, `Duplicate`, `Reorder`, `Delay` |
@@ -89,7 +92,8 @@ Safety, checked under every loss pattern with no fairness:
 | `NoSendOnArrival` | no receive sends (STANDARD.md, ClientConnection NoSendOnArrival) |
 | `EarlySendPerAdvance` | the early send is bounded by the advances, not by the arrivals: none in 1, at most one in 2, at most two in an attempt (TRANSPORT.md t11 rule 7) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
-| `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
+| `SmallOrderEndsAttempt` | a challenge of this attempt carrying a small-order server key, delivered in 2, ends the attempt at once in protocol violation (-10) with the keys and the ephemeral erased (TRANSPORT.md t7 rule 5, t11.2 step 4) |
+| `FreshAttemptFromFailure` | a connect from a failure state (-10, -7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
 
 Liveness, under the fairness described below:
@@ -682,3 +686,51 @@ carries a declared budget. Duplicated and reordered datagrams stay in the
 required set through `MCClientConnectionSFirstSmall.cfg`, sized to the budget,
 and its reach witness shows that case reaches connected through both early
 sends. The `clientconnection` group now has 44 cases.
+
+### A small-order challenge ends the attempt (SmallOrderEndsAttempt)
+
+Standard rule: TRANSPORT.md t7 rule 5 and t11.2 step 4. A challenge that opens
+under the attempt's handshake keys but carries a small-order server ephemeral
+key is what the protocol forbids; the client counts
+`CLIENT_CHALLENGE_SMALL_ORDER_KEY` and ends the attempt in protocol violation
+(-10) at once, keys, token keys and ephemeral erased, instead of waiting out
+its deadline. Before W2-113 it counted the challenge and stayed in sending
+connection request (2).
+
+`SmallOrderServer` (a definition replaced with `<-`) adds the packet type
+"smallorder" and `ServerSmallOrder`: a server with a half-open mapping
+sends a challenge of that kind. `ClientRecvSmallOrder` is the small-order arm
+of `rocketnet_client_process_challenge`; under `SmallOrderIgnored` it
+discards the packet, the code before W2-113. The action property
+`SmallOrderEndsAttempt` says a small-order challenge of this attempt delivered
+in 2 lands in -10 with the keys and the ephemeral erased.
+
+| Case | Expected | Exit | Distinct |
+|---|---|---:|---:|
+| `MCClientConnectionSmallOrder.cfg` (Timeout 2, two attempts, reordering; `SafetyInvariants`, `KeysErasedWhenDown`, `EphemeralErasedOutsideHandshake`, `SmallOrderEndsAttempt`, `FreshAttemptFromFailure`, `DisconnectIsTerminal`, `TerminalAbsorbing`, `StepsForwardOrFails`) | pass | 0 | 939986 |
+| `MCClientConnectionBrokenSmallOrderIgnored.cfg` (one attempt, reordering, `SmallOrderIgnored`) | `SmallOrderEndsAttempt` | 13 | 114 |
+
+Both cases turn reordering on. The server sends its genuine challenge in the
+step that opens the mapping, so on a FIFO wire the small-order challenge
+always arrives behind it, after the client has moved to 3: with
+`Reordering = FALSE` the reversed witness passed (exit 0, 34,529 distinct
+states), the property vacuous. With reordering the pass case at Timeout 3
+is 5,253,040 distinct states (4 min on two workers), past the 110 s budget;
+at Timeout 2 it is 939,986 (42.6 s on aws-mut-4).
+
+Witness trace, read by hand (10 states): connect (1); the cookie request; the
+server's cookie; the client takes it (2) and sends the request early; the
+server opens the mapping and sends the challenge; `ServerSmallOrder` puts a
+small-order challenge behind it; the wire reorders them; the client receives
+the small-order challenge in 2 and, under the witness, stays in 2 with the
+genuine challenge still on the wire. Against the C: before W2-113 the
+small-order arm of `rocketnet_client_process_challenge` counted
+`CLIENT_CHALLENGE_SMALL_ORDER_KEY` and returned 0 with the state unchanged;
+it now calls `rocketnet_client_set_state` with
+`ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION`, which runs
+`rocketnet_client_connection_reset` (at or below DISCONNECTED) and erases
+the keys and the ephemeral; `rocketnet_client_protocol_connect` accepts -10
+and starts a fresh attempt. `test_client_small_order_challenge_is_a_protocol_violation`
+is the unit case, red on the code before. The `clientconnection` group now
+has 46 cases: every required case reaches its declared result, and the nine
+declared bench cases exit 124 at the 110 s budget.
