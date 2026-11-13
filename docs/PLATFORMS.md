@@ -90,8 +90,13 @@ A supported row promises three things, and only these three:
    in the row and runs the unit and functional suite, or the platform-specific
    subset the row describes, on the operating system and architecture in the
    row.
-2. A red leg on that platform is a merge blocker. It is not a nightly finding
-   that may wait for morning.
+2. The leg runs on every pull request. A red light job on that platform
+   (build, unit suite, checks) blocks the landing. A red job that
+   `tools/release_gates.txt` marks `full` (the functional suites, the
+   transport matrix, the happy path, the sanitizer legs) is printed and
+   does not block a landing by `tools/land.py`; `tools/land.py --full` and a
+   minor or major release hold it, and the nightly tier runs it again
+   ([RELEASING.md](RELEASING.md), "Landing on main").
 3. The workflow file and runner operating-system and architecture tokens in
    the row correspond to labels present in that file.
 
