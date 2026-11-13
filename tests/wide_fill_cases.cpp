@@ -1586,7 +1586,7 @@ static void test_wide_fill_split_update_window_on_early_return()
     // the server's first update, with a time that is not finite: clamped,
     // the clock not started, nothing received; the update is open
 
-    rocketnet_server_update_receive( world.server, NAN );
+    rocketnet_server_update_receive( world.server, (double) NAN );
     check( rocketnet_fill_phase_armed( phase ) );
     g_wide_fill_asserts = 0;
     const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
