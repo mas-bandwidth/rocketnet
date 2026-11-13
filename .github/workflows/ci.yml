@@ -1292,6 +1292,62 @@ jobs:
       - if: always()
         uses: ./.github/actions/ccache-stats
 
+  # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
+  # walks every layer's code at fixed seeds and the pinned tlacheck checks every
+  # trace is a behaviour of the layer's spec, and that the plant build's
+  # trace of the same walk is not. tlc.yml runs a rolling range nightly.
+  tla-trace:
+    name: TLA+ trace check (fixed seeds)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/ccache
+
+      - name: Build the trace harness and its plant
+        env:
+          CC: gcc
+          CXX: g++
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          cmake --build build --target tla_trace_all --parallel 8
+
+      - name: Build the pinned tlacheck and find the pinned jar
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+          GOFLAGS: -mod=readonly
+        run: |
+          set -euo pipefail
+          job=$(mktemp -d "$RUNNER_TEMP/rocketnet-trace.XXXXXX")
+          echo "TRACE_JOB=$job" >> "$GITHUB_ENV"
+          git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
+          git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
+          (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
+          jar=/opt/tla/tla2tools.jar
+          want=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+          if [ ! -f "$jar" ] || [ "$(sha256sum "$jar" | cut -d' ' -f1)" != "$want" ]; then
+            echo "TOOL-MISSING tla2tools.jar sha256 $want at $jar on $RUNNER_NAME"
+            exit 1
+          fi
+
+      - name: Every trace is a behaviour of its spec, every plant's is not
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/tla_trace_check.py --bin bin --tlacheck "$TRACE_JOB/tlacheck" --jar /opt/tla/tla2tools.jar \
+            --layer all --seeds 1-4 --jobs 8 --dir "$TRACE_JOB/work"
+
+      - name: Remove the trace work
+        if: always() && env.TRACE_JOB != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- "$TRACE_JOB"
+
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a
   # Release build, on its own runner, so the optimizer sees those cases on
