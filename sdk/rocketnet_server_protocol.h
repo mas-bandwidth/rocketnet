@@ -313,6 +313,18 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
                                                 double current_time,
                                                 uint8_t * out_packet );
 
+// The same standalone ack, written by the send pass after the message layer
+// accepted this update's payloads and after this frame's payloads went out:
+// when the debt is still nonzero, no session packet carried the block this
+// update, and the ack leaves now instead of at the next update's sweep.
+// Returns 0 when a standalone ack already went to this client at
+// current_time: at most one standalone ack per client per update.
+
+int rocketnet_server_protocol_write_accepted_ack( struct rocketnet_server_protocol_t * server,
+                                                  int client_index,
+                                                  double current_time,
+                                                  uint8_t * out_packet );
+
 // The paced form, and which clock it reads turns on whether this client has
 // ACKNOWLEDGED a keep-alive:
 //

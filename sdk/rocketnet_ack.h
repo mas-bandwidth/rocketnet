@@ -274,6 +274,7 @@ struct rocketnet_ack_endpoint_t
     uint64_t largest_acked_sequence;            // highest sent sequence the receiver has acknowledged; update thread only
     uint64_t highest_received_sequence;         // highest session sequence recorded as received
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
+    double standalone_ack_time;                 // update time of the last standalone ack written: at most one an update; update thread only
 
     // published per-connection statistics. The running aggregates below keep
     // them current as each send, receive and ack lands. Every field is

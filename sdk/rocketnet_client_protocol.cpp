@@ -423,6 +423,39 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     return bytes;
 }
 
+// proofs/tla/RNEndpoint.tla WriteAck, proofs/tla/SessionAcks.tla LatePass:
+// the standalone ack, when connected with the debt at the threshold and no
+// standalone ack yet at this update's time (OneStandalonePerUpdate).
+// The update writes it for the debt its receive raised, and the transport's
+// send pass for the debt the message layer raised accepting payloads after
+// that, so the ack leaves in the update the payload was accepted.
+
+int rocketnet_client_protocol_write_owed_ack( struct rocketnet_client_protocol_t * client,
+                                              double current_time,
+                                              uint8_t * out_packet )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( out_packet );
+
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
+         client->ack.ack_debt < ROCKETNET_ACK_DEBT_THRESHOLD ||
+         client->ack.standalone_ack_time == current_time )
+    {
+        return 0;
+    }
+
+    const int bytes = rocketnet_client_write_session_packet( client, ROCKETNET_CONNECTION_ACK_PACKET,
+                                                             NULL, 0, current_time, out_packet );
+    if ( bytes > 0 )
+    {
+        client->ack.standalone_ack_time = current_time;
+
+        rocketnet_spam( "client sent standalone ack" );
+    }
+
+    return bytes;
+}
+
 // The scheduled send is due once the send interval has elapsed. The clock is
 // the caller's, and a game loop often adds up a fixed step in floating point:
 // six steps of 1/60 s sum to just under 0.1 s, so an exact comparison waits a
@@ -471,24 +504,14 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                               client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     client->handshake_early_send = 0;
 
-    // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
-    // An owed ack goes out on this update, outside the scheduled send rate.
+    // proofs/tla/RNEndpoint.tla WriteAck, proofs/tla/SessionAcks.tla Sweep: sends a packet
+    // that carries only the owed acks. An owed ack goes out on this update, outside the
+    // scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
     if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
     {
-        if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-             client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
-        {
-            int bytes = rocketnet_client_write_session_packet( client, ROCKETNET_CONNECTION_ACK_PACKET,
-                                                               NULL, 0, current_time, out_packet );
-            if ( bytes > 0 )
-            {
-                *out_packet_bytes = bytes;
-
-                rocketnet_spam( "client sent standalone ack" );
-            }
-        }
+        *out_packet_bytes = rocketnet_client_protocol_write_owed_ack( client, current_time, out_packet );
 
         return;
     }
@@ -1656,6 +1679,8 @@ double rocketnet_client_protocol_rtt( const struct rocketnet_client_protocol_t *
     return (double) client->ack.rtt / 1000.0;
 }
 
+// proofs/tla/SessionAcks.tla Accept: the message layer accepted the payload; it
+// enters the accepted history the ack block is built from, and raises the debt
 void rocketnet_client_protocol_accept_payload( struct rocketnet_client_protocol_t * client, uint64_t sequence )
 {
     if ( !sequence || client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||

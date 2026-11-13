@@ -147,6 +147,16 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                                        uint8_t * out_packet,
                                        int * out_packet_bytes );
 
+// The standalone ack when it is owed: connected, the ack debt at the
+// threshold, and no standalone ack yet at current_time (at most one an
+// update). Returns its wire size, or 0 when none is owed. The update calls it
+// for the debt its receive raised; the transport's send pass calls it again
+// for the debt the message layer raised accepting this update's payloads.
+
+int rocketnet_client_protocol_write_owed_ack( struct rocketnet_client_protocol_t * client,
+                                              double current_time,
+                                              uint8_t * out_packet );
+
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name
 // why. out_payload_capacity is the true size of out_payload, which must be at
