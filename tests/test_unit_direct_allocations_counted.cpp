@@ -163,7 +163,7 @@ static void test_rio_fixture_create_destroy_counted()
     const size_t calls_before = g_direct_allocation_calls;
     const uint64_t direct_before = rocketnet_direct_allocation_bytes();
 
-    uint64_t counters[2 * ROCKETNET_RIO_NUM_COUNTERS] = {};
+    uint64_t counters[2 * ROCKETNET_NUM_COUNTERS] = {};
     int packet_counts[2] = { 0, 0 };
     int repost_calls = 0;
     int pending_receives = 0;

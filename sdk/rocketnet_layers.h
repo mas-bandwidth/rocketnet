@@ -507,8 +507,8 @@ int rocketnet_client_transport_payloads( struct rocketnet_client_transport_t * c
  *
  * @param client_transport Client transport; NULL is a counted no-op returning NULL.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when reservation fails.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when reservation fails.
  */
 uint8_t * rocketnet_client_transport_start_packet( struct rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context );
 
@@ -597,6 +597,26 @@ struct rocketnet_server_transport_io_operations_t;
 void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
                                                   const struct rocketnet_server_transport_io_operations_t ** operations,
                                                   void ** instance );
+/** @brief The budget and the protocol reserve main's last opening gave a send queue, for a unit test (RNSendReserve). */
+uint64_t rocketnet_server_transport_fill_budget_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+uint64_t rocketnet_server_transport_send_reserve_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+/** @brief Marks a client's keep-alive acknowledged or not, so a unit test reaches the own-frame rule of the send reserve (RNSendReserve). */
+void rocketnet_server_transport_set_keep_alive_acked_for_test( struct rocketnet_server_transport_t * server_transport, int client_index, int acked );
+/** @brief The own frames (RNSendReserve) not yet taken since the budget opened, for a test. */
+uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocketnet_server_transport_t * server_transport );
+/** @brief The fill's chunked claims, for a unit test (RNSendReserve, the fill lines): a queue's claims; a fill line's tail word [held:32][tail:32] (line -1: the calling thread's); set a line's word; refuse the next reserve chunk claims; add claims a queue's other fillers hold (wrapping: a negative delta as its two's complement); take claims back, as another filler would, between the next single claim's refusal and its retest; the payload ring's counter; the calling thread's ring chunk [end:32][next:32]. */
+uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+uint64_t rocketnet_server_transport_fill_tail_for_test( const struct rocketnet_server_transport_t * server_transport, int line, int queue );
+void rocketnet_server_transport_set_fill_tail_for_test( struct rocketnet_server_transport_t * server_transport, int line, int queue, uint64_t word );
+void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_server_transport_t * server_transport, int chunks );
+void rocketnet_server_transport_add_fill_claims_for_test( struct rocketnet_server_transport_t * server_transport, int queue, uint64_t claims );
+void rocketnet_server_transport_retest_take_back_for_test( struct rocketnet_server_transport_t * server_transport, uint64_t claims );
+uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport );
+uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport );
+/** @brief The rest of a send queue's reserve words, for the trace check (tests/tla_trace_send_reserve.cpp): the game frames staged and the own frames used since the budget opened, and whether a client still holds its own frame. */
+uint64_t rocketnet_server_transport_fill_started_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+uint64_t rocketnet_server_transport_fill_own_used_for_test( const struct rocketnet_server_transport_t * server_transport, int queue );
+bool rocketnet_server_transport_fill_own_frame_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index );
 #endif // #if ROCKETNET_DEV
 
 // a NULL client_transport is a counted no-op that returns 0
@@ -1084,10 +1104,11 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
  */
 int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
-// the send surface is acquire, write, commit: start_packet hands back a
-// 16-aligned frame; the payload is written at frame + payload_index --
-// itself 16-aligned, capacity a multiple of eight, so any word-based
-// serializer roots there directly -- and finish_packet seals it in place
+// the send surface is acquire, write, commit: start_packet hands back the
+// payload pointer, 16-aligned, with context->payload_capacity bytes behind
+// it, a multiple of eight, so any word-based serializer roots there
+// directly. The wire header in front of the payload is the transport's own
+// and is never the caller's to write. finish_packet seals it in place
 // on the calling thread and stages it. Nothing is copied at any step; the
 // packet is encrypted where it was written. send_packets flushes
 // everything staged.
@@ -1145,9 +1166,9 @@ int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_t
  */
 struct rocketnet_packet_context_t
 {
-    /** @brief Reserved frame, borrowed for the active lease. */
+    /** @brief The transport's own: the whole wire frame of the lease. Write at the pointer start_packet returns, never here. */
     uint8_t * frame;
-    /** @brief Byte offset from frame to the payload start. */
+    /** @brief The transport's own: byte offset from frame to the payload start_packet returns. */
     int payload_index;
     /** @brief Writable payload capacity in bytes. */
     int payload_capacity;
@@ -1159,15 +1180,24 @@ struct rocketnet_packet_context_t
     int client_index;
 };
 
+struct rocketnet_fill_phase_t;
+/**
+ * @brief The transport's fill-phase check (sdk/rocketnet_fill_phase.h), which the message layer above it brackets its own main-thread operations and fill calls with.
+ *
+ * @param server_transport Server transport; NULL returns NULL.
+ * @return The transport's fill phase, valid for the transport's life.
+ */
+struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct rocketnet_server_transport_t * server_transport );
+
 // a NULL server_transport or context is a counted no-op that returns NULL
 /**
- * @brief Reserves a send frame for one connected server client.
+ * @brief Reserves a send frame for one connected server client and returns its writable payload.
  *
  * @param server_transport Server transport; NULL is a counted no-op returning NULL.
  * @param client_index Connected client slot index.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
- * @param context Receives lease metadata; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
+ * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
+ * @return Writable payload pointer, 16-aligned, with context->payload_capacity bytes behind it, or NULL when slot or reservation is invalid. Fill calls may run concurrently between update and the following flush.
  */
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 

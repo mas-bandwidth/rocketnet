@@ -167,7 +167,40 @@ struct rocketnet_server_transport_io_operations_t
     // buffered backend may switch retained sends to its terminal attempt.
     // stop still follows the final flush and send_idle.
     void ( *begin_shutdown )( void * transport );
+
+    // optional; main thread only. Writes ROCKETNET_RECEIVE_NUM_DROPS values
+    // in rocketnet_receive_drop_t order (sdk/rocketnet_receive_prefilter.h):
+    // the datagrams the transport's own receive dropped, by reason,
+    // cumulative for the transport's life, ACCEPT written as 0. The server
+    // adds each value's growth since its last read to the counters
+    // rocketnet_receive_drop_counters names, so a datagram the transport
+    // refused reads exactly as main would have counted it, and a datagram
+    // with no room in the receive bank reads RECEIVE_DROPPED_FULL. The
+    // builtins read these from the rows their own receive already counts
+    // (sdk/rocketnet_driver_builtin.cpp); the reasons a builtin does not feed
+    // yet are named in tools/check_counter_observed.py (OWED_TRANSPORT_FEEDS).
+    void ( *receive_drop_totals )( void * transport, uint64_t * values );
+
+    // optional, all three or none: a staged transport whose staging is per
+    // queue (or per send lane). Without them the transport is one queue whose
+    // room is send_room. The server keeps a protocol reserve in each queue:
+    // a game packet start (rocketnet_server_transport_start_packet) is refused,
+    // counted as SEND_RESERVE_REFUSED, once its claims in a queue reach that
+    // queue's room when main last opened the budget, less the reserve; the
+    // protocol's own frames (responses, keep-alives, disconnect bursts) may
+    // use the whole room (proofs/tla/RNSendReserve.tla).
+    //   send_queues: any thread; the queue count, fixed after create,
+    //     1 .. ROCKETNET_SERVER_MAX_SEND_QUEUES.
+    //   send_queue_of: any thread, pure; the queue start_packet stages a
+    //     frame to this address in (the destination hash).
+    //   send_room_queue: main thread only; send_room for one queue.
+    int ( *send_queues )( void * transport );
+    int ( *send_queue_of )( void * transport, const rocketnet_address_t * to );
+    int ( *send_room_queue )( void * transport, int queue );
 };
+
+// the most send queues a transport may report through send_queues
+#define ROCKETNET_SERVER_MAX_SEND_QUEUES 64
 
 // the start_packet id of a refusal for want of a link-layer destination
 #define ROCKETNET_TRANSPORT_PACKET_UNREACHABLE    0xFFFFFFFFFFFFFFFFULL

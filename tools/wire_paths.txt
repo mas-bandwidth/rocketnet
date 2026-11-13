@@ -69,6 +69,8 @@ sdk/rocketnet_driver_builtin.cpp	built-in transport drivers
 sdk/rocketnet_driver_loopback.cpp	in-process loopback transport
 sdk/rocketnet_driver_loopback.h	in-process loopback transport
 sdk/rocketnet_drivers.inc	the driver rows each build mode compiles
+sdk/rocketnet_fill_phase.cpp	the check of the thread rules for server calls: process state, nothing on the wire
+sdk/rocketnet_fill_phase.h	the check of the thread rules for server calls: process state, nothing on the wire
 sdk/rocketnet_gateway_netlink.h	XDP gateway discovery through rtnetlink
 sdk/rocketnet_gateway_netlink_linux.cpp	XDP gateway discovery through rtnetlink
 sdk/rocketnet_hash.cpp	FNV-1a for in-process tables
@@ -124,6 +126,7 @@ sdk/rocketnet_xdp_limits.h	XDP map sizes
 sdk/rocketnet_xdp_replay_marks.h	userspace buffer for the kernel replay map
 sdk/rocketnet_xdp_socket_config.h	AF_XDP socket bind config
 sdk/xdp/server_xdp.c	the kernel filter: :360-424 read header bytes at the offsets rocketnet_wire.h defines, write none
+sdk/rocketnet_receive_prefilter.h	the receive drop reasons and their counters, and the drop tallies; reads and writes no byte
 # Files a review named as defining wire bytes that the owner has not yet
 # ruled on. The check accepts them and names every one on every run; they
 # are not in the gate above until the owner moves each to a list.
