@@ -1594,10 +1594,12 @@ struct rocketnet_server_config_t
     /// address and port hash to. One lane (zero or 1) binds the port
     /// exclusively, as before. More than one lane needs a specific local
     /// address and a nonzero port: create refuses a wildcard address (0.0.0.0
-    /// or ::) or port 0. The lane sockets share the port (SO_REUSEADDR), so a
-    /// process that can bind that same address and port can share it too.
-    /// That is the trade for spreading the work: use one lane where nothing on
-    /// the machine can be trusted with the port.
+    /// or ::) or port 0. The lane sockets share the port (SO_REUSEADDR), so
+    /// while the lanes run, a process of any account on the machine can bind
+    /// that address and port too. Windows does not document which socket then
+    /// receives; measured, the lanes keep every datagram. That is the trade
+    /// for spreading the work: use one lane where nothing on the machine can
+    /// be trusted with the port.
 
     int num_xdp_queues;
 
