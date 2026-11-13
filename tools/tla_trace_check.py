@@ -37,7 +37,7 @@ the first record it changed.
 Across the seeds, red when an action of Next that is not untraced, or a
 reach predicate of the row, was never taken or reached in a clean trace.
 
-Per commit the work is split by SHARDS (--shard I/9): each shard is a set of
+Per commit the work is split by SHARDS (--shard I/10): each shard is a set of
 (layer, seed) pairs, and the table is red unless every pair is in exactly one
 shard. A layer's cross-seed checks run in the shard holding its first seed.
 
@@ -268,7 +268,7 @@ LAYERS = {
     },
 }
 
-# The per-commit shards (ci.yml tla-trace, --shard I/9 with --seeds 1-4): each is
+# The per-commit shards (ci.yml tla-trace, --shard I/10 with --seeds 1-4): each is
 # a set of (layer, seed) pairs, written "layer:seed", or "layer" for the layer's
 # every seed in SHARD_SEEDS. Every pair of every layer is in exactly one shard: a
 # pair in two shards, or in none, or an empty shard is red. A layer's action
@@ -284,18 +284,23 @@ LAYERS = {
 # tries each predicate on them; coverage stays at the home. A layer's reach is
 # in at most one such entry, and only a layer with reach predicates has one.
 # msgx's reach (five predicates, RegisterRefused found late) doubled its home's
-# check step (aws-gso-x86, 37fe98dd9: 78.7 s against main's 41.5 s).
+# check step (aws-gso-x86, 37fe98dd9: 78.7 s against main's 41.5 s), and beside
+# msgx:4, msgxsendruns and gather it took shard 3 near the 120 s job cap
+# (v1.1.55 replays: 97.6 s alone, 123 to 129 s loaded), so it is alone in shard
+# 9 (aws-mut-4, 8f0940371, each shard alone: 9 is 73.9 s, the others 43.8 to
+# 70.7 s).
 SHARD_SEEDS = range(1, 5)
 SHARDS = [
     ["msgx:1"],
     ["msgx:2", "xdp-replay"],
     ["msgx:3", "gso"],
-    ["msgx:4", "msgxsendruns", "gather", "msgx:reach"],
+    ["msgx:4", "msgxsendruns", "gather"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
     ["ackapply", "bank", "receive", "msgxreceivefill"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
+    ["msgx:reach"],
 ]
 
 STEPS = 400
