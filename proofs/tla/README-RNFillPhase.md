@@ -101,9 +101,13 @@ update (`MainEpoch(w, s)`; `update_receive` opens it, `update_finish` and
 check's word, which follows it) and its other operations meet it (`MainIn`).
 
 The model's operations are the layer-3 API's (`sdk/rocketnet_api.cpp`). The
-layer-1 and layer-2 entry points in `sdk/rocketnet_layers.h` are internal
-and unarmed by contract: they take no fill-phase scope, and nothing here
-checks them.
+layer-1 and layer-2 entry points in `sdk/rocketnet_layers.h` construct the
+same scopes, but only the layer-3 API arms the check
+(`rocketnet_fill_phase_arm` in `sdk/rocketnet_api.cpp`; the transport's
+create leaves it not armed). Used on their own, with no layer-3 server over
+them, those scopes find the check not armed and do nothing, by contract;
+under a layer-3 server whose check is armed they are checked as part of the
+layer-3 call that reaches them.
 
 ## The window of the split update (found in review by Stella)
 
