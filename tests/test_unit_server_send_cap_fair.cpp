@@ -1197,6 +1197,13 @@ static void pc_expect_healthy_identical( const pc_kind_t * kinds, int num_client
         {
             continue;
         }
+        for ( int t = 0; t < PC_TICKS; t++ )
+        {
+            if ( control->client_received[c][t] != run->client_received[c][t] || control->server_received[c][t] != run->server_received[c][t] || control->server_packets[c][t] != run->server_packets[c][t] )
+            {
+                fprintf( stderr, "DIAG client %d tick %d: client_received %d/%d server_received %d/%d server_packets %llu/%llu\n", c, t, control->client_received[c][t], run->client_received[c][t], control->server_received[c][t], run->server_received[c][t], (unsigned long long) control->server_packets[c][t], (unsigned long long) run->server_packets[c][t] );
+            }
+        }
         check( memcmp( control->client_received[c], run->client_received[c], sizeof( control->client_received[c] ) ) == 0 );
         check( memcmp( control->server_received[c], run->server_received[c], sizeof( control->server_received[c] ) ) == 0 );
         check( memcmp( control->server_packets[c], run->server_packets[c], sizeof( control->server_packets[c] ) ) == 0 );
