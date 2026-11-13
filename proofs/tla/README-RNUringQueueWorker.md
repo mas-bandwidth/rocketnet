@@ -43,8 +43,9 @@ is one action of the model, named in a comment beside it.
     wait.
   - Once shutdown has begun, the full answer that starts a wait counts toward
     `MaxRetry` (one a wait, not each run the burst refused). A run done or a new bank
-    claimed starts the count again. Past the bound it abandons what waits, so the queue
-    turns idle however full the socket stays.
+    claimed starts the count again. Once `MaxRetry` waits have begun it abandons what
+    waits, at the start of the last wait (not after its timer), so the queue turns idle
+    however full the socket stays.
   - It re-arms a receive that ended on its own and arms the wake read until it sees the
     stop; then it cancels both. The cancels have weak fairness of their own: a pass reaps
     at most `ROCKETNET_URING_WORKER_CQE_BATCH` completions and then goes on to the rest of
@@ -118,7 +119,7 @@ has the receive waiting on its timer asleep (`RecvWaits`) fails the check.
 - 2 banks published (`U`), each of at most 2 runs (`R`).
 - 2 runs in the kernel at once (`K`).
 - 1 full answer before the server is stopping (`MaxAgain`).
-- 2 waits after shutdown, with no run done, before the worker abandons (`MaxRetry`).
+- 2 waits begun after shutdown, with no run done, and the worker abandons (`MaxRetry`).
 - 1 segment refusal (`MaxRefuse`).
 - 2 receives that end on their own (`MaxRecvEnd`; 1 in the liveness control, 3 in
   `MCRNUringQueueWorkerLiveRecv.cfg`, which has 1 bank and no full answers or refusals so

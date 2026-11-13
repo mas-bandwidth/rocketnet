@@ -324,8 +324,9 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
     }
 }
 
-// abandon (RNUringQueueWorker.tla Abandoning): shutdown begun and the socket
-// full past the bound
+// abandon (RNUringQueueWorker.tla Abandoning): shutdown begun and max_retry
+// waits begun with no run done; the last is abandoned at its start, not
+// after its timer (the bound counts waits begun, not waits completed)
 
 static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_uring_queue_worker_t * worker )
 {

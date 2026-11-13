@@ -9,9 +9,9 @@
 // publishes, stops submitting after a full answer (-EAGAIN, -EINTR,
 // -ENOBUFS, -ENOMEM: every packet kept) until its retry timer fires (or,
 // before shutdown, main's wake), never a POLLOUT poll; once shutdown has
-// begun counts its waits, starting again when a run is done or a bank
-// claimed, and abandons what waits once the socket has stayed full past its
-// bound, so the queue turns idle before the stop; after the stop cancels its
+// begun counts its waits as each begins, starting again when a run is done
+// or a bank claimed, and abandons what waits once max_retry waits have begun
+// (at the start of the last, not after its timer), so the queue turns idle before the stop; after the stop cancels its
 // receive and wake read, never sleeps with a step the full submission queue had no
 // room for still to take, and exits only with
 // nothing of its in the kernel (the witness "exit before drain" is the
@@ -1107,7 +1107,7 @@ static void test_uring_queue_worker_shutdown_drains_a_full_socket()
 REGISTER_UNIT_TEST( test_uring_queue_worker_shutdown_drains_a_full_socket );
 
 // RNUringQueueWorker ReapOk and Claim (finding L1): the bound counts waits
-// with no run done. A socket that drains slowly after the stop, one run a
+// begun with no run done. A socket that drains slowly after the stop, one run a
 // wait, never loses a packet however many waits it takes; and a new bank
 // claimed after an abandon gets the bound afresh instead of being abandoned
 // unsent
@@ -1169,7 +1169,10 @@ static void test_uring_queue_worker_retry_bound_resets_on_progress()
     check( rocketnet_uring_queue_send_idle( t.send, 0 ) );
 
     // a bank abandoned once shutdown has begun, then a new one published
-    // (the server's last disconnect batches): the new bank is sent
+    // (the server's last disconnect batches): the new bank is sent. With
+    // max_retry 1 the first full answer after shutdown begins the one wait
+    // the bound allows, and what waits is abandoned at that wait's start,
+    // before its timer: the bound counts waits begun, not waits completed
     worker_test_t s( 8, 8, 1 );
     check( s.ok );
     check( s.settle() == ROCKETNET_URING_WORKER_SLEEP );

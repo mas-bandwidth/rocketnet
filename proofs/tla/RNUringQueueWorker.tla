@@ -39,18 +39,19 @@
 (* ShutdownRule "begin") and asks the transport to stop (Stop: quit and    *)
 (* the eventfd write) only once nothing waits: no bank ready or held       *)
 (* (send_idle).  From shutdown on, each wait a full answer starts counts   *)
-(* toward MaxRetry; a run done (ok) or a new bank claimed starts the count *)
-(* again, and past the bound what waits is abandoned, so a socket that     *)
-(* stays full cannot keep send_idle false.  Once the server is stopping    *)
-(* the kernel may answer full without bound: that is the socket that       *)
-(* stays full.  Before it, full answers are bounded by MaxAgain.  Once it  *)
-(* sees quit the worker cancels its receive and its wake read, keeps       *)
-(* sending what is published, waits on its timer between retries, and      *)
-(* exits only when nothing of its is in the kernel or waiting.  Main joins *)
-(* it after.  A cancel's own completion changes none of these variables,   *)
-(* and the code's exit does not wait for it (the ring is torn down after   *)
-(* the join): its reap is ReapCancel, a stutter of the awake worker,       *)
-(* outside WorkerStep, so it moves no fairness and no Sleep.               *)
+(* toward MaxRetry as it begins; a run done (ok) or a new bank claimed     *)
+(* starts the count again, and once MaxRetry waits have begun what waits   *)
+(* is abandoned (at the start of the last wait, not after its timer), so   *)
+(* a socket that stays full cannot keep send_idle false.  Once the server  *)
+(* is stopping the kernel may answer full without bound: that is the       *)
+(* socket that stays full.  Before it, full answers are bounded by         *)
+(* MaxAgain.  Once it sees quit the worker cancels its receive and its     *)
+(* wake read, keeps sending what is published, waits on its timer between  *)
+(* retries, and exits only when nothing of its is in the kernel or         *)
+(* waiting.  Main joins it after.  A cancel's own completion changes none  *)
+(* of these variables, and the code's exit does not wait for it (the ring  *)
+(* is torn down after the join): its reap is ReapCancel, a stutter of the  *)
+(* awake worker, outside WorkerStep, so it moves no fairness and no Sleep. *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
 (*   ExitDrained   (invariant) the worker exits only with no bank held or  *)
@@ -97,7 +98,7 @@ EXTENDS Integers
 CONSTANTS U,            \* banks main may publish before the stop
           R,            \* the most runs waiting in one bank
           K,            \* runs the ring holds in the kernel at once
-          MaxRetry,     \* waits after shutdown, with no run done, before the worker abandons
+          MaxRetry,     \* waits begun after shutdown, with no run done, at which the worker abandons
           MaxAgain,     \* full answers before the server stops (bounds the state space)
           MaxRefuse,    \* segment refusals (bounds the state space)
           MaxRecvEnd,   \* times the receive ends on its own (bounds the state space)
@@ -135,7 +136,7 @@ VARIABLES stopping,   \* the server is stopping (rocketnet_server_transport_stop
           recvQuick,  \* (ghost) arms after a refused end since the receive's timer fired or a datagram came, up to 2
           wakeRead,   \* the eventfd READ: "none", "armed", "cancelling" or "posted"
           wakeCount,  \* the eventfd's count is nonzero
-          agains,     \* waits after shutdown since a run was done or a bank claimed, up to MaxRetry
+          agains,     \* waits begun after shutdown since a run was done or a bank claimed, up to MaxRetry
           againsBefore, \* full answers before the server stopped
           refusals,   \* segment refusals so far
           recvEnds,   \* times the receive ended on its own so far
@@ -413,7 +414,8 @@ Drop ==
     /\ p' \in Left(Runs - 1, p - 1)
     /\ UNCHANGED <<stopping, shutdown, quit, seen, st, handed, ready, held, k, cOk, cAgain, cRef, blocked, timer, recv, recvData, recvStreak, recvWait, recvTimer, recvQuick, wakeRead, wakeCount, agains, againsBefore, refusals, recvEnds>>
 
-\* past MaxRetry waits after shutdown with no run done, what waits is abandoned
+\* once MaxRetry waits have begun after shutdown with no run done (the last at
+\* its start, not after its timer), what waits is abandoned
 Abandon ==
     /\ Awake /\ Abandoning /\ held /\ u > 0
     /\ u' = 0
