@@ -239,7 +239,8 @@ struct rocketnet_client_io_open_t
 
 // The send handoff is rocketnet_buffer_handoff_t, modelled by
 // proofs/tla/RNBufferHandoff.tla: each ring has one owner at a time. The
-// receive handoff is rocketnet_receive_handoff_t (proofs/tla/RNReceiveHandoff.tla).
+// receive handoff is rocketnet_receive_handoff_t, modelled by
+// proofs/tla/RNReceiveHandoff.tla.
 // Only indices and counts cross threads, under the transport's mutex (shared in development
 // builds only with rocketnet_network_simulator_reconfigure, which acquires it
 // blocking to hand a simulator setting over, and
@@ -676,7 +677,9 @@ inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t co
 
 // proofs/tla/RNReceiveHandoff.tla Call (bound by the trace check
 // tests/tla_trace_client_receive_handoff.cpp): main thread, at update's start.
-// proofs/tla/RNClientIoDecrypt.tla Call: update reads the records in arrival order.
+// proofs/tla/RNClientIoDecrypt.tla Expose: the committed records, for update to read in arrival order.
+// proofs/tla/RNClientIo.tla Expose and Return (historical two-buffer design): the exposure of the
+// ready buffer and its give-back at update's end, which this call replaces (nothing is given back).
 // Fills view with every record the I/O thread committed before this call
 // took the mutex, at most budget of them (the rest are returned by the next
 // call; none is lost), and returns how many. The view is valid until the next
@@ -817,12 +820,12 @@ inline bool rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring,
 
 // proofs/tla/RNBufferHandoff.tla Consume: sends every committed slot of the ring in hand.
 // proofs/tla/RNReceiveHandoff.tla Bank: reads datagrams into the I/O thread's buffer while it has room.
-// proofs/tla/RNReceiveHandoff.tla Commit and RxMove: commits that buffer's count, and moves to the free buffer once update has started on it.
+// proofs/tla/RNReceiveHandoff.tla Commit: commits that buffer's count, and moves to the free buffer once update has started on it.
 // proofs/tla/RNBufferHandoff.tla WorkerExit: after every ready ring and the final ring are sent, stores stopped and leaves.
 // proofs/tla/RNClientIo.tla IoSend, IoReceive, IoWait, IoWake, IoClearWake and IoExit
 // (historical two-ring design): the same steps over two rings and two buffers.
 // proofs/tla/RNClientIoDecrypt.tla IoReceive: the same drain opens each datagram before its count is committed.
-// proofs/tla/RNClientIoDecrypt.tla IoCommit: commits the I/O thread's buffer after the open.
+// proofs/tla/RNClientIoDecrypt.tla IoPublish: the commit makes the I/O thread's records visible after the open.
 // proofs/tla/RNClientIoDecrypt.tla IoWait: the same idle wait.
 // proofs/tla/RNClientIoDecrypt.tla IoWake: the same return from the idle wait.
 // proofs/tla/RNClientIoDecrypt.tla IoClearWake: the same already-set wake returning at once.
@@ -933,7 +936,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // proofs/tla/RNClientSendCursorLayout.tla Release: send_slot == committed gives the ring back, and a later ring does not send it.
     // proofs/tla/RNClientIoShutdown.tla FinishRing: the same release, the sending ring becoming sent.
     // proofs/tla/RNClientIoShutdown.tla TakeRing: takes the oldest handed-off ring into the sending hand.
-    // proofs/tla/RNBufferHandoff.tla ConsumerExchange: gives back the ring sent last step and takes the oldest ready one.
+    // proofs/tla/RNBufferHandoff.tla WorkerLock, ConsumerExchange and Unlock: acquires the mutex, gives back the ring sent last step and takes the oldest ready one, and releases it.
     // The send runs outside the mutex. Once quit is stored this repeats until no ring is ready.
 
     do
@@ -1102,13 +1105,15 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     // proofs/tla/RNReceiveHandoff.tla Commit (bound by the trace check
     // tests/tla_trace_client_receive_handoff.cpp): the pass ends by making its
     // buffer's count visible to update under the mutex, each datagram opened
-    // before it (proofs/tla/RNClientIoDecrypt.tla IoCommit), and, when update
+    // before it (proofs/tla/RNClientIoDecrypt.tla IoPublish), and, when update
     // has started on this buffer, moving to the free one, which update emptied
     // before freeing it. Otherwise the I/O thread keeps its buffer and appends
     // to it while it has room; full, it reads no more until update starts on
     // it and wakes this thread (FullWaitsOnWake). A pass that read nothing
     // still commits a buffer holding records, so a full buffer update has
     // started on is left. A move is worked.
+    // proofs/tla/RNClientIo.tla IoPublish and IoOwe (historical two-buffer design): the publish, or the
+    // owed publish, which the commit replaces (it never waits on update).
     // proofs/tla/RNClientIoCompactLayout.tla Publish: the next buffer fills from slot 0 again.
 
     if ( buffer->num_packets > 0 )

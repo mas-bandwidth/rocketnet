@@ -7,9 +7,11 @@ calls `rocketnet_client_send_packets` last.
 
 By default the client transport owns a background I/O thread that does every
 socket send and receive. Datagrams cross between that thread and the caller
-thread in preallocated buffers: three send rings and three receive buffers,
-each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
-`proofs/tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
+thread in preallocated buffers: three send rings, each owned by one side at a
+time (`sdk/rocketnet_buffer_handoff.h`, `proofs/tla/RNBufferHandoff.tla`), and
+three receive buffers shared through the receive handoff the server transports
+use (`sdk/rocketnet_receive_handoff.h`, `proofs/tla/RNReceiveHandoff.tla`). Only
+buffer indices and counts move, under a mutex held for
 that exchange (and, in development builds, for a pending network-simulator
 setting hand-over via `rocketnet_network_simulator_reconfigure` and
 `rocketnet_network_simulator_take_setting`). `update` and `send_packets` only
@@ -25,12 +27,14 @@ tests perform transport receive and send work inside those calls without a
 client I/O thread. A production library refuses the field at create, does not
 recognize that variable, and always uses the normal worker-owned route.
 
-The BASE receive path uses the same ownership queues and reserves one buffer
-for the producer. Up to N-1 batches may be READY. Each update takes all oldest
-READY batches that fit its 1024-packet budget, processes them outside the mutex,
-and returns their indices in the same update. A busy return keeps those cleared
-buffers caller-owned until the next successful exchange; no packet is processed
-twice or overwritten. Batches beyond the budget remain READY in order.
+On receive, the I/O thread appends datagrams to its buffer and, at the end of
+each pass, commits the buffer's count under the mutex; once update has started
+on that buffer, the commit moves the I/O thread to the free one. Update's
+try-acquire at its start takes every datagram committed before it, the rest of
+the buffer it left (the tail) first, within its 1024-packet budget; the rest
+wait for the next update in order, and none is processed twice or overwritten.
+A datagram committed before an update that took the mutex is returned by that
+update (`DeliveredByNextCall`). The legacy receive path shares the same handoff.
 
 On the legacy path (a connection created with an active development link
 simulator or without wait/wake), `stop` transfers the simulator to the worker
