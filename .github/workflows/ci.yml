@@ -239,8 +239,10 @@ jobs:
         # rows below) and three macOS rows (macOS Release
         # functional_production is the include row below). The nightly tier
         # runs all. Both tiers exclude the plain Linux Release unit row: its
-        # two shard rows replace it.
-        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
+        # two shard rows replace it. The plain Linux Release checks row is
+        # excluded in both tiers the same way: its two shard rows below
+        # replace it.
+        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"linux","build_type":"Release","leg":"checks"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"linux","build_type":"Release","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
@@ -266,15 +268,38 @@ jobs:
           - { os: linux, build_type: Release, leg: unit, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Release, leg: unit, shard: 1/2, with_builds: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
-          # The Linux Debug unit leg runs in two shards as well (test --shard i/2):
-          # one row ran the build and fifteen sequential checks, 76 to 125 s on
-          # the fleet against the 120 s cap (runs 43374944017, 43373385606,
-          # 43372259877). Shard 0/2 keeps the purity, environment and shard
-          # partition checks; shard 1/2 keeps the development-build source audit
-          # and the counter-observed check. The plain Linux Debug unit row is
-          # excluded in both tiers; the macOS Debug unit row stays one job.
-          - { os: linux, build_type: Debug, leg: unit, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: unit, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # The Linux Debug unit leg runs in three shards (test --shard i/3): one
+          # row ran the build and fifteen sequential checks, 76 to 125 s on the
+          # fleet against the 120 s cap (runs 43374944017, 43373385606,
+          # 43372259877), so two; then shard 0/2 (build, its half of the suite
+          # under strace, purity, and the environment check, which runs the
+          # whole suite again) ran 46 to 119 s on main and was cancelled at the
+          # cap (126 s, 135 s) when the rebuilt transports added cases, so
+          # three. Shard 0/3 keeps the sodium known answers, the shard
+          # partition check and the environment check; shard 1/3 keeps the
+          # development-build source audit and the counter-observed check;
+          # shard 2/3 keeps the purity check (it also draws the longest cases,
+          # by the name hash). The plain Linux Debug unit row is excluded in
+          # both tiers; the macOS Debug unit row stays one job.
+          - { os: linux, build_type: Debug, leg: unit, shard: 0/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 1/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 2/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # The Linux Release checks leg runs in two rows split by what each
+          # builds: one row ran the Release build and some forty checks, 61 to
+          # 120 s on main (about 98 s on a quiet runner, 117 to 127 s on a busy
+          # one). Shard 0/2 is the Release build (warnings as errors) and every
+          # check that reads it: thread-local storage, the scaffolding and
+          # production boundaries, release hardening, the source audit, memory
+          # plans, the matrix oracle, the native driver contract and the XDP
+          # object. Shard 1/2 builds no Release tree: the RelWithDebInfo and
+          # MinSizeRel hardening builds and the checks that read only the
+          # source tree (the SDK source list, header guards, DST wiring, the
+          # floating-point floors, the transport matrix cells, the platform
+          # policy, tsan flags, the export source gate, the ABI baseline, the
+          # gates' verdict tests, the provisioning selftest). The summary job
+          # release-checks carries the required name "linux / Release / checks".
+          - { os: linux, build_type: Release, leg: checks, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: checks, shard: 1/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The Linux functional legs run in three shards each (the suite's own --shard
           # I/N, tests/suite_runner.h: a case's shard is a function of its name):
           # the suite step alone took 81 s (Debug) and 106 s (Release, the production
@@ -311,16 +336,19 @@ jobs:
 
       # One SDK source list for the library and every vendoring application;
       # first, so a later red step cannot skip it.
+      # A checks step names the Linux Release checks shard it runs in
+      # (matrix.shard != '1/2': the Release build's shard, 0/2; != '0/2': the
+      # source and hardening shard, 1/2); an unsharded checks row runs both.
       - name: Every SDK source is in cmake/RocketnetSources.cmake
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '0/2'
         run: python3 tools/check_sdk_sources.py
 
       - name: Check header guards across all tracked headers
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '0/2'
         run: python3 tools/check_header_guards.py
 
       - name: Every DST check is reached by the DST run
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '0/2'
         run: |
           python3 tools/check_dst_checks_wired.py --self-test
           python3 tools/check_dst_checks_wired.py
@@ -365,9 +393,11 @@ jobs:
       # it. A front door nothing opens rots. Debug has no Makefile spelling, so
       # those rows configure directly.
 
+      # The Linux Release checks shard 1/2 reads no Release tree (its hardening
+      # step builds RelWithDebInfo and MinSizeRel in their own directories).
       - name: Build (Release, through the Makefile)
         timeout-minutes: 6
-        if: matrix.build_type == 'Release'
+        if: matrix.build_type == 'Release' && (matrix.leg != 'checks' || matrix.shard != '1/2')
         run: make ROCKETNET_DEV=${{ matrix.dev }}
 
       - name: Build (Debug)
@@ -410,7 +440,7 @@ jobs:
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
 
       - name: Check the floating-point floor on every compiler invocation
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: |
           bash tools/check_fp_contract.sh --self-test
           bash tools/check_fp_contract.sh
@@ -423,7 +453,7 @@ jobs:
       # rocketnet_check_fp_floor holds every target to the clang-cl floor on
       # each push. Configure only: nothing is compiled or linked.
       - name: Check the clang-cl floating-point floor (cross configure)
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: |
           set -euo pipefail
           if ! clang="$(command -v clang)"; then
@@ -452,7 +482,7 @@ jobs:
       # preprocessing of every sdk unit and read the built libraries'
       # sections and symbols. --self-test holds the red and green controls.
       - name: Check no thread-local storage in a production build
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2'
         # The four reads share nothing and run at once (tools/run_parallel.py):
         # the step takes its slowest, the preprocessing, not their sum.
         run: |
@@ -479,9 +509,10 @@ jobs:
       # functional run pins the portable floor by env.
 
       # The sodium, purity and environment checks below run once per unit
-      # leg: on the Linux Release leg, in shard 0/2 only.
+      # leg: on the Linux Release leg, in shard 0/2 only; on the Linux Debug
+      # leg, sodium and the environment check in shard 0/3, purity in 2/3.
       - name: Sodium known answers
-        if: matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
         run: ./bin/test_sodium
 
       # The committed sodium pair from its SHA-256 pinned inputs, byte for
@@ -544,13 +575,13 @@ jobs:
       # ROCKETNET_TEST_NIGHTLY from the tier: the nightly tier's unit cases
       # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
-        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
-        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: unit-cases-${{ runner.os }}-${{ matrix.build_type }}
@@ -569,12 +600,12 @@ jobs:
       # (tools/check_unit_no_sockets.sh). The suite's output and verdict print
       # as in the plain run.
       - name: The shards partition the unit suite
-        if: matrix.leg == 'unit' && matrix.shard == '0/2'
+        if: matrix.leg == 'unit' && (matrix.shard == '0/2' || matrix.shard == '0/3')
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_test_shards.py --self-test
-          python3 tools/check_test_shards.py ./bin/test 2
+          python3 tools/check_test_shards.py ./bin/test ${{ matrix.shard == '0/3' && '3' || '2' }}
 
       # On the Linux Release leg each shard row runs its shard of the suite.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
@@ -591,13 +622,13 @@ jobs:
       # fixtures they call (tools/check_unit_purity.py); its self-test plants
       # each in a fixture tree.
       - name: Unit suite uses no real time, sleep, thread or resolver
-        if: matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '0/3' && matrix.shard != '1/3'
         run: |
           python3 tools/check_unit_purity.py --self-test
           python3 tools/check_unit_purity.py .
 
       - name: Ambient config isolation and passing output
-        if: matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
         run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
@@ -964,11 +995,11 @@ jobs:
           esac
 
       - name: Check test scaffolding boundary (red controls)
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
+        if: matrix.leg == 'checks' && matrix.shard != '1/2' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
         run: python3 tools/check_test_scaffolding_boundary.py --red-controls
 
       - name: Check production library boundary
-        if: matrix.leg == 'checks' && matrix.dev == 'OFF'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2' && matrix.dev == 'OFF'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
@@ -982,7 +1013,7 @@ jobs:
       # imported, no writable+executable segment) and INFO for CET, then one verdict
       # line. It reads the Release library the Makefile built (well under a second).
       - name: Check release hardening
-        if: matrix.leg == 'checks' && matrix.build_type == 'Release'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2' && matrix.build_type == 'Release'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_hardening.py bin/librocketnet.dylib
@@ -995,7 +1026,7 @@ jobs:
       # checker reads it. The two share nothing and build at once
       # (tools/run_parallel.py).
       - name: Check RelWithDebInfo and MinSizeRel hardening
-        if: matrix.leg == 'checks' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
         shell: bash
         run: |
           set -euo pipefail
@@ -1007,7 +1038,7 @@ jobs:
           python3 tools/run_parallel.py "${commands[@]}"
 
       - name: Check every driver row has transport matrix cells
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/check_transport_matrix.py
 
       # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
@@ -1016,14 +1047,14 @@ jobs:
       # (check_wildcard_binds). It reads files only, so one leg per Linux
       # row runs it.
       - name: Check the platform policy and tests/functional/ wildcard binds
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '0/2'
         run: python3 tools/check_platform_policy.py
 
       # tools/check_tsan_flags.py exits 1 when a workflow compiles with
       # -fsanitize=thread below -O1, where tsan misses a struct copy's
       # memcpy write after an unordered read. It reads files only.
       - name: Check every tsan build compiles at -O1 or above
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '0/2'
         run: |
           python3 tools/check_tsan_flags.py --self-test
           python3 tools/check_tsan_flags.py
@@ -1032,7 +1063,7 @@ jobs:
       # header and doc files (no socket, no thread, no network), so one Linux
       # leg runs it beside the client/server-words check.
       - name: Run the source audit
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '1/2'
         run: ./bin/source_audit
 
       # The config-env audit (tests/source_audit_config_env_names.cpp) reads
@@ -1040,7 +1071,7 @@ jobs:
       # it out. The Linux Debug unit leg builds DEV=ON on every commit: it runs
       # the audit there, and the case must have run.
       - name: Run the source audit in the development build (config-env names)
-        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/2'
+        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '2/3'
         shell: bash
         run: |
           set -euo pipefail
@@ -1052,13 +1083,13 @@ jobs:
       # platform's own transport counters, judged on the development build
       # whose DEV blocks the tests read.
       - name: Every counter is observed by a test
-        if: matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/2'
+        if: matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '2/3'
         run: |
           python3 tools/check_counter_observed.py --self-test
           python3 tools/check_counter_observed.py --build build --platform ${{ runner.os == 'Linux' && 'linux' || 'macos' }}
 
       - name: Check export source gate
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
       # the 1.x C ABI against its recorded baseline, tools/abi_v1.txt (from
@@ -1066,37 +1097,37 @@ jobs:
       # offsets, sizes and types, enumerator values and macro values; one
       # small C compile. test_check_abi.py plants each kind of change
       - name: Check the 1.x ABI baseline
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: |
           python3 tools/test_check_abi.py
           python3 tools/check_abi.py
 
       - name: Test the hardening checker's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_hardening.py
 
       - name: Test the MSan gate's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_msan.py
 
       - name: Test the static gate's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_static.py
 
       - name: Test the tidy gate's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_tidy.py
 
       - name: Test the Application Verifier runner's image name
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_appverif_run.py
 
       - name: Test the toolchain nightly's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_toolchain_build.py
 
       - name: Test the real-load nightly's verdicts
-        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
+        if: matrix.leg == 'checks' && matrix.shard != '0/2' && ( runner.os == 'Linux' )
         run: python3 tools/test_real_load_report.py
 
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
@@ -1228,7 +1259,7 @@ jobs:
           ./bin/transport_memory 1 1416 msgx 1
 
       - name: Memory plans against allocator observations
-        if: ${{ matrix.leg == 'checks' && (success() || steps.memory_echo.outcome == 'failure') }}
+        if: ${{ matrix.leg == 'checks' && matrix.shard != '1/2' && (success() || steps.memory_echo.outcome == 'failure') }}
         run: python3 tools/check_memory.py ./bin/transport_memory
 
       # The message matrix's receive oracle (tests/matrix_receive.h) held to
@@ -1237,13 +1268,13 @@ jobs:
       # (held before the sent report, named after it, no fault for a sender
       # that drove one mode). The --matrix pair itself needs a bench.
       - name: The matrix oracle's self-test
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2'
         run: ./bin/server --matrix --seed 7 --self-test-result "$RUNNER_TEMP/matrix-server-self-test.tsv"
 
       # The contract and the extension's build share nothing and run at once
       # (tools/run_parallel.py).
       - name: "Functional: native driver contract and external backend"
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2'
         run: python3 tools/run_parallel.py ./bin/test_transport 'python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}'
 
       - name: Enforce combined unit and functional timing
@@ -1299,11 +1330,11 @@ jobs:
       # Linux: the embedded server_xdp.o is reproducible and equals a fresh
       # compile of the current sources; elsewhere: the listed inputs exist.
       - name: Embedded XDP object is reproducible and current
-        if: matrix.leg == 'checks'
+        if: matrix.leg == 'checks' && matrix.shard != '1/2'
         run: python3 tools/check_xdp_archive.py
 
       - name: The build compiled and embedded the XDP program
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '1/2'
         run: test -s build/generated/server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
@@ -1317,13 +1348,13 @@ jobs:
       # only a private temp dir it creates and removes.
 
       - name: Provisioning script selftest
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '0/2'
         run: bash scripts/rocketnet-provision selftest
 
       # XDP SAFETY 4's kernel rule for the in-tree i40e, in the live fleet
       # script and in the bench server, held to one case list
       - name: In-tree i40e kernel rule selftest
-        if: runner.os == 'Linux' && matrix.leg == 'checks'
+        if: runner.os == 'Linux' && matrix.leg == 'checks' && matrix.shard != '1/2'
         run: bash scripts/live-xdp-fleet-remote i40e-guard-selftest ./bin/server
 
       - if: always()
@@ -1331,9 +1362,9 @@ jobs:
 
   # The required check "linux / Debug / unit" (.github/rulesets/main.json,
   # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
-  # leg runs as two shard rows above, and this row is green only when both
-  # shards are. needs: build-and-test only orders it after the matrix; it
-  # reads the two shards' own conclusions from the run's job list
+  # leg runs as three shard rows above, and this row is green only when all
+  # three are. needs: build-and-test only orders it after the matrix; it
+  # reads the three shards' own conclusions from the run's job list
   # (tools/check_debug_unit_shards.py), so another leg's result never decides
   # it. An ordinary checkout, for the script.
   debug-unit:
@@ -1374,7 +1405,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: Both Linux Debug unit shards succeeded
+      - name: All three Linux Debug unit shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           DEBUG_UNIT_JOBS: debug-unit-jobs.json
@@ -1481,6 +1512,57 @@ jobs:
             exit 1
           fi
           python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
+
+  # The required check "linux / Release / checks" is this job: the Linux
+  # Release checks leg runs as two shard rows of build-and-test (0/2 the
+  # Release build and the checks that read it, 1/2 the hardening builds and
+  # the source checks), and this row is green only when both are
+  # (tools/check_debug_unit_shards.py, the shard names as arguments).
+  release-checks:
+    name: linux / Release / checks
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Release checks shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: release-checks-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / checks (0/2)" "linux / Release / checks (1/2)"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
