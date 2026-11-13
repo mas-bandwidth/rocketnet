@@ -2284,9 +2284,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 #include "rocketnet_server_socket.h"
 #endif // #if ROCKETNET_XDP
 
-// the native transports' drop counts behind send_failures and receive_drops,
-// defined as rocketnet_server_gso_receive_drops (sdk/rocketnet_server_gso_linux.cpp) and rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
-void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
+// the native transports' drop counts behind send_failures,
+// defined as rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
 // gso's begin_shutdown hook, rocketnet_server_gso_begin_shutdown in sdk/rocketnet_server_gso_linux.cpp
 void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso );
 
@@ -2306,7 +2305,9 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
         return NULL;
     }
 
-    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, config->status );
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_gso_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+                                               config->transport->packet_filter );
 }
 
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t *) transport ); }
@@ -2319,31 +2320,32 @@ ROCKETNET_STAGED_ADAPTER( gso, rocketnet_server_gso_t, rocketnet_server_gso )
 
 static uint64_t gso_send_failures( void * transport )
 {
-    // SEND_DROPPED: the datagrams a refused sendmmsg dropped
+    // SEND_DROPPED: the datagrams a refused sendmmsg dropped; and the frames a
+    // refused finish never staged
 
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
-    return counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED];
+    return counters[ROCKETNET_COUNTER_GSO_SEND_DROPPED] + rocketnet_server_gso_send_finish_refused( (rocketnet_server_gso_t *) transport );
 }
 
+// the queue workers' prefilter and bank drops (sdk/rocketnet_receive_prefilter.h)
 static void gso_receive_drop_totals( void * transport, uint64_t * values )
 {
-    // read from the gso rows the receive worker already counts, at the same
-    // sites, so each pair agrees: a full receive queue (BANK_FULL is
-    // GSO_RECEIVE_DROPPED_OVERFLOW) and a source the boundary cannot read
-    // (RECEIVE_FAILED is GSO_RECEIVE_DROPPED_SOURCE). A failed recvmmsg call
-    // (GSO_RECEIVE_ERRORS) names no datagram and is not one of them.
-
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
-    rocketnet_server_gso_counters( (rocketnet_server_gso_t *) transport, counters );
-    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
-    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW];
-    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] = counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE];
+    rocketnet_server_gso_receive_drop_totals( (rocketnet_server_gso_t *) transport, values );
 }
 
-static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
+// per-queue staging: the queue a destination's frames are staged in is the
+// one rocketnet_server_gso_start_packet uses
+static int gso_send_queues( void * transport ) { return rocketnet_server_gso_send_queues( (rocketnet_server_gso_t *) transport ); }
+
+static int gso_send_queue_of( void * transport, const rocketnet_address_t * to )
 {
-    rocketnet_server_gso_receive_drops( (rocketnet_server_gso_t *) transport, too_short, too_large );
+    return rocketnet_server_gso_send_queue( to, rocketnet_server_gso_send_queues( (rocketnet_server_gso_t *) transport ) );
+}
+
+static int gso_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_gso_send_room_queue( (rocketnet_server_gso_t *) transport, queue );
 }
 
 static void gso_begin_shutdown( void * transport ) { rocketnet_server_gso_begin_shutdown( (rocketnet_server_gso_t *) transport ); }
@@ -2352,7 +2354,8 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown, gso_receive_drop_totals, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle, gso_begin_shutdown, gso_receive_drop_totals,
+    gso_send_queues, gso_send_queue_of, gso_send_room_queue
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -2886,11 +2889,7 @@ bool rocketnet_server_transport_io_receive_drops( const rocketnet_server_transpo
     // name, so custom transports retain their own counter policy without a cast.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    if ( operations == &gso_operations )
-    {
-        gso_receive_drops( transport, too_short, too_large );
-    }
-    else if ( operations == &io_uring_operations )
+    if ( operations == &io_uring_operations )
     {
         io_uring_receive_drops( transport, too_short, too_large );
     }
