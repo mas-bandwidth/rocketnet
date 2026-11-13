@@ -381,34 +381,8 @@ inline int rocketnet_msgx_socket_table_cooldown_entry( const struct rocketnet_ad
 // receive poller before (retire_hook); forget's caller deregisters it after,
 // from retired_fd. An event the receive holder takes in between resolves
 // through the word, whose generation has already moved, so it is dropped.
-inline void rocketnet_msgx_socket_table_retire( struct rocketnet_msgx_socket_table_t * table, int slot )
-{
-    struct rocketnet_msgx_socket_slot_t * entry = &table->slots[slot];
-    rocketnet_assert( entry->state == ROCKETNET_MSGX_SLOT_OPEN );
-
-    rocketnet_msgx_socket_table_index_remove( table, slot );
-    entry->generation++;
-    entry->word.store( rocketnet_msgx_word( entry->generation, -1 ), std::memory_order_seq_cst );
-    for ( int h = 0; h < table->num_holders; h++ )
-    {
-        entry->snapshot[h] = table->pass[h].load( std::memory_order_seq_cst );
-    }
-#if defined( ROCKETNET_MSGX_SOCKET_TABLE_PLANT )
-    // the trace check's plant (proofs/tla/README-TraceCheck.md): close at the
-    // retire, no quarantine. tests/tla_trace_msgx.cpp's traces must then fail
-    // TraceConsistent; never defined outside the plant build
-    table->close( table->user, entry->fd );
-    entry->fd = -1;
-    entry->state = ROCKETNET_MSGX_SLOT_FREE;
-    table->free_slots[table->num_free++] = slot;
-    table->counters[ROCKETNET_MSGX_TABLE_COUNTER_CLOSED]++;
-    table->num_open--;
-    return;
-#endif // #if defined( ROCKETNET_MSGX_SOCKET_TABLE_PLANT )
-    entry->state = ROCKETNET_MSGX_SLOT_RETIRED;
-    table->retired[table->num_retired++] = slot;
-    table->num_open--;
-}
+// (out of line, sdk/rocketnet_msgx_socket_table.cpp: the trace check's plant is library code)
+void rocketnet_msgx_socket_table_retire( struct rocketnet_msgx_socket_table_t * table, int slot );
 
 // proofs/tla/RNMsgxSocketTable.tla Mark: the replay walk saw a connected client at address.
 // Opens its socket when it has none, within the update's open budget. False
