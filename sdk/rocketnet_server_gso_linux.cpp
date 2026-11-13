@@ -821,6 +821,100 @@ static void rocketnet_server_gso_set_socket_option( void * user, int level, int 
     setsockopt( fd, level, option_name, &value, sizeof( value ) );
 }
 
+// the grant of one buffer in the bytes requested: linux reports double its
+// grant for its own bookkeeping, so this halves it. 0 when unreadable
+static int rocketnet_server_gso_buffer_granted( int fd, int option )
+{
+    int granted = 0;
+    socklen_t optlen = sizeof( granted );
+    if ( getsockopt( fd, SOL_SOCKET, option, &granted, &optlen ) != 0 )
+    {
+        return 0;
+    }
+    return granted / 2;
+}
+
+// one buffer (rocketnet_server_gso_buffer_step): the plain request, the grant
+// read back, and when short the force option once. false only when the plain
+// request itself is refused (errno set); a refused force is a fact for the
+// start line, kept in force_error
+static bool rocketnet_server_gso_request_buffer( int fd, bool receive, int requested_bytes, int * granted_bytes, bool * force_tried, int * force_error )
+{
+    const int option = receive ? SO_RCVBUF : SO_SNDBUF;
+    const int force_option = receive ? SO_RCVBUFFORCE : SO_SNDBUFFORCE;
+
+    *force_tried = false;
+    *force_error = 0;
+
+    int size = requested_bytes;
+    if ( setsockopt( fd, SOL_SOCKET, option, &size, sizeof( size ) ) != 0 )
+    {
+        return false;
+    }
+    *granted_bytes = rocketnet_server_gso_buffer_granted( fd, option );
+
+    if ( rocketnet_server_gso_buffer_step( requested_bytes, *granted_bytes, false ) == ROCKETNET_SERVER_GSO_BUFFER_FORCE )
+    {
+        *force_tried = true;
+        size = requested_bytes;
+        if ( setsockopt( fd, SOL_SOCKET, force_option, &size, sizeof( size ) ) != 0 )
+        {
+            *force_error = errno;
+        }
+        *granted_bytes = rocketnet_server_gso_buffer_granted( fd, option );
+    }
+    return true;
+}
+
+bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive, int requested_bytes, int granted_bytes, bool force_tried, int force_error )
+{
+    rocketnet_assert( line );
+    rocketnet_assert( line_bytes > 0 );
+
+    const char * direction = receive ? "receive" : "send";
+    const char * force_name = receive ? "SO_RCVBUFFORCE" : "SO_SNDBUFFORCE";
+    const char * limit = receive ? "net.core.rmem_max" : "net.core.wmem_max";
+
+    if ( rocketnet_server_gso_buffer_step( requested_bytes, granted_bytes, true ) == ROCKETNET_SERVER_GSO_BUFFER_GRANTED )
+    {
+        if ( force_tried )
+        {
+            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (past %s with %s)", direction, requested_bytes,
+                      granted_bytes, limit, force_name );
+        }
+        else
+        {
+            snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d", direction, requested_bytes, granted_bytes );
+        }
+        return false;
+    }
+
+    char force_text[96];
+    if ( !force_tried )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s not tried", force_name );
+    }
+    else if ( force_error == EPERM )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s refused: the process lacks CAP_NET_ADMIN", force_name );
+    }
+    else if ( force_error != 0 )
+    {
+        snprintf( force_text, sizeof( force_text ), "%s refused: errno %d", force_name, force_error );
+    }
+    else
+    {
+        snprintf( force_text, sizeof( force_text ), "%s taken and still short", force_name );
+    }
+
+    const char * consequence =
+        receive ? "the kernel drops datagrams that arrive past the grant between updates" : "sends wait on a full socket";
+
+    snprintf( line, (size_t) line_bytes, "gso transport: socket %s buffer asked %d bytes, got %d (%s); %s: set sysctl %s=%d", direction, requested_bytes,
+              granted_bytes, force_text, consequence, limit, requested_bytes );
+    return true;
+}
+
 static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_address, int queue_index, int max_clients, uint16_t * bound_port )
 {
     const bool ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
@@ -864,55 +958,63 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         }
     }
 
-    // request the buffer sizes, then read back what was granted. linux
-    // returns the doubled bookkeeping value from getsockopt, so halve it
-    // before comparing against the request. a small grant is not an error --
-    // it is a fact about the host's sysctls, reported so nobody assumes.
+    // request the buffer sizes, read back what was granted, and when the
+    // grant is short ask once more past the sysctl limit with the force
+    // option (rocketnet_server_gso_buffer_step). a short grant is not an
+    // error -- it is a fact about the host's sysctls, named at start with the
+    // sysctl to set (rocketnet_server_gso_buffer_note) so nobody assumes.
     //
     // the receive request is one update's inbound packets at the full client
     // count (rocketnet_server_transport_receive_buffer_request): the worker
     // stops reading while its buffers wait for main, and SO_REUSEPORT may hash
     // any share of the clients to this one socket
 
-    int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
-    int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", max_clients );
+    const int send_buffer_size = ROCKETNET_SOCKET_SEND_BUFFER_SIZE;
+    const int receive_buffer_size = rocketnet_server_transport_receive_buffer_request( "gso", max_clients );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &send_buffer_size, sizeof( int ) ) != 0 )
+    int granted_send = 0;
+    bool send_force_tried = false;
+    int send_force_error = 0;
+    if ( !rocketnet_server_gso_request_buffer( fd, false, send_buffer_size, &granted_send, &send_force_tried, &send_force_error ) )
     {
         rocketnet_error( "gso transport: failed to set socket send buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &receive_buffer_size, sizeof( int ) ) != 0 )
+    int granted_receive = 0;
+    bool receive_force_tried = false;
+    int receive_force_error = 0;
+    if ( !rocketnet_server_gso_request_buffer( fd, true, receive_buffer_size, &granted_receive, &receive_force_tried, &receive_force_error ) )
     {
         rocketnet_error( "gso transport: failed to set socket receive buffer size: %s", strerror( errno ) );
         close( fd );
         return -1;
     }
 
-    int granted_send = 0;
-    int granted_receive = 0;
-    socklen_t optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &granted_send, &optlen );
-    optlen = sizeof( int );
-    getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted_receive, &optlen );
-    granted_send /= 2;
-    granted_receive /= 2;
-
     if ( queue_index == 0 )
     {
-        if ( granted_send < send_buffer_size )
+        char line[512];
+        if ( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), false, send_buffer_size, granted_send, send_force_tried, send_force_error ) )
         {
-            rocketnet_warn( "gso transport: socket send buffer granted %d of %d requested bytes (raise net.core.wmem_max)",
-                            granted_send, send_buffer_size );
+            rocketnet_warn( "%s", line );
+        }
+        else
+        {
+            rocketnet_info( "%s", line );
+        }
+
+        if ( rocketnet_server_gso_buffer_note( line, (int) sizeof( line ), true, receive_buffer_size, granted_receive, receive_force_tried,
+                                               receive_force_error ) )
+        {
+            rocketnet_warn( "%s", line );
+        }
+        else
+        {
+            rocketnet_info( "%s", line );
         }
 
         rocketnet_server_receive_buffer_granted( "gso", receive_buffer_size, granted_receive );
-        if ( granted_send >= send_buffer_size && granted_receive >= receive_buffer_size )
-        {
-            rocketnet_info( "gso transport: socket buffers granted: send %d receive %d", granted_send, granted_receive );
-        }
     }
 
     // bind. every queue binds the same address and port; the first queue may
