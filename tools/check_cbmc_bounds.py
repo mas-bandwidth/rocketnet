@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Check that the bounds the CBMC records state match the SDK.
 
-The inventory, results and harness comments under proofs/cbmc state a bound
+The inventory, results, harness comments (.c, .cpp, .h) and make files
+(*.mk, Makefile) under proofs/cbmc state a bound
 tied to an SDK constant as the constant's expression followed by its value in
 parentheses: `ROCKETNET_RECEIVE_CEILING + 1` (1453) in Markdown, or
 ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416) in a C comment; or as the value with
@@ -85,6 +86,15 @@ def evaluate(expressions):
     return [values[index] for index in range(len(expressions))]
 
 
+# every record and harness kind under proofs/cbmc: the Markdown records, the C
+# and C++ harnesses, their headers, and the make files that set the unwinds
+RECORD_PATTERNS = ("**/*.md", "**/*.c", "**/*.cpp", "**/*.h", "**/*.mk", "**/Makefile")
+
+
+def record_files(proofs):
+    return sorted({path for pattern in RECORD_PATTERNS for path in proofs.glob(pattern)})
+
+
 def check(files):
     found = [(path, number, expression, stated) for path in files for number, expression, stated in statements(path)]
     if not found:
@@ -116,12 +126,26 @@ def self_test():
             if check([planted]):
                 print(f"FAIL: a stale statement passed the check: {text.strip()}", file=sys.stderr)
                 return False
+        # a stale statement in a C++ harness, a header or a make file is read too
+        tree = Path(directory) / "tree"
+        (tree / "harness").mkdir(parents=True)
+        for name, text in (("harness/proof.cpp", "// len <= ROCKETNET_RECEIVE_PAYLOAD_BYTES (1439)\n"),
+                           ("harness/shim.h", "/* ROCKETNET_RECEIVE_PAYLOAD_BYTES (1439) */\n"),
+                           ("harness/proof.mk", "# unwind ROCKETNET_RECEIVE_PAYLOAD_BYTES (1439)\n"),
+                           ("Makefile", "# unwind ROCKETNET_RECEIVE_PAYLOAD_BYTES (1439)\n")):
+            for old in tree.rglob("*"):
+                if old.is_file():
+                    old.unlink()
+            (tree / name).write_text(text, encoding="utf-8")
+            if check(record_files(tree)):
+                print(f"FAIL: a stale statement in {name} passed the check", file=sys.stderr)
+                return False
         empty = Path(directory) / "empty.md"
         empty.write_text("no statements\n", encoding="utf-8")
         if check([empty]):
             print("FAIL: a tree with no statements passed the check", file=sys.stderr)
             return False
-    print("OK self-test: stale statements in both forms and an empty tree are refused")
+    print("OK self-test: stale statements in both forms, in a C++ harness, a header and a make file, and an empty tree are refused")
     return True
 
 
@@ -133,8 +157,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return 0 if self_test() else 1
-    files = sorted(path for pattern in ("**/*.md", "**/*.c") for path in args.proofs.glob(pattern))
-    return 0 if check(files) else 1
+    return 0 if check(record_files(args.proofs)) else 1
 
 
 if __name__ == "__main__":
