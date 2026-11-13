@@ -208,6 +208,11 @@ OnOwnerSocket == \A o \in Pending : on[o] = Owner(o)
 \* exits nothing is ever posted again
 ExitedOnlyDrained == \A e \in Eps : exited[e] => Pending = {}
 
+\* a receive in the kernel or on a port has a drainer: the worker of the
+\* port it was posted on has not exited (A01: the owner exited and another
+\* worker's retry of its receive landed on its port)
+DrainerLives == \A o \in Pending : ~exited[on[o]]
+
 \* every worker exits after stop
 EveryWorkerExits == stopping ~> \A e \in Eps : exited[e]
 =============================================================================
