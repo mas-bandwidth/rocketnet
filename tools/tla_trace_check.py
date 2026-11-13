@@ -112,8 +112,9 @@ LAYERS = {
     },
     "msgxreceivefill": {
         "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
-        "untraced": {},
-        "reach": ["ShortRoom", "Held"],
+        "untraced": {"Done": "the model's end once the worker has exited and the arrivals bound is spent, a stutter; "
+                             "the walk's bound is one past its own arrivals, so it never gets there"},
+        "reach": ["ShortRoom", "Held", "BudgetCaps"],
     },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],

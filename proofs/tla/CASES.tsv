@@ -1003,6 +1003,7 @@ MCRNMsgxSendRunsBrokenPartialCountsAborted.cfg	MCRNMsgxSendRuns.tla	invariant	Re
 MCRNMsgxSendRunsBrokenUnstableSort.cfg	MCRNMsgxSendRuns.tla	invariant	ClientOrder	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg	MCRNMsgxSendRuns.tla	invariant	NoCrossClient	check	rnmsgxsendruns	required	-
 MCRNMsgxSendRunsBrokenDeadNoResend.cfg	MCRNMsgxSendRuns.tla	invariant	CursorSafe	check	rnmsgxsendruns	required	-
+MCRNMsgxSendRunsBrokenPartialKeeps.cfg	MCRNMsgxSendRuns.tla	action	KeptOnlyWhenNothingLeft	check	rnmsgxsendruns	required	-
 MCTraceRNMsgxSendRunsSelf.cfg	MCTraceRNMsgxSendRunsSelf.tla	pass	-	check	rnmsgxsendruns	required	-
 MCTraceRNMsgxSendRunsSelfBrokenSortBlind.cfg	MCTraceRNMsgxSendRunsSelf.tla	invariant	TraceConsistent	check	rnmsgxsendruns	required	-
 MCRNMsgxReceiveFill.cfg	MCRNMsgxReceiveFill.tla	pass	-	check	rnmsgxreceivefill	required	-
@@ -1010,6 +1011,8 @@ MCRNMsgxReceiveFillLive.cfg	MCRNMsgxReceiveFill.tla	pass	-	check	rnmsgxreceivefi
 MCRNMsgxReceiveFillBrokenReadPastRoom.cfg	MCRNMsgxReceiveFill.tla	invariant	NoFullDrop	check	rnmsgxreceivefill	required	-
 MCRNMsgxReceiveFillBrokenPublishOverReady.cfg	MCRNMsgxReceiveFill.tla	invariant	Conserved	check	rnmsgxreceivefill	required	-
 MCRNMsgxReceiveFillBrokenHoldWithoutPublish.cfg	MCRNMsgxReceiveFill.tla	action	HoldOnlyWhenNowhere	check	rnmsgxreceivefill	required	-
+MCRNMsgxReceiveFillBrokenClaimAfterStop.cfg	MCRNMsgxReceiveFill.tla	invariant	StopCounted	check	rnmsgxreceivefill	required	-
+MCRNMsgxReceiveFillBrokenReadPastBudget.cfg	MCRNMsgxReceiveFill.tla	invariant	BudgetKept	check	rnmsgxreceivefill	required	-
 MCTraceRNMsgxReceiveFillSelf.cfg	MCTraceRNMsgxReceiveFillSelf.tla	pass	-	check	rnmsgxreceivefill	required	-
 MCTraceRNMsgxReceiveFillSelfBrokenReadPastRoom.cfg	MCTraceRNMsgxReceiveFillSelf.tla	invariant	TraceConsistent	check	rnmsgxreceivefill	required	-
 MCRNSendReserveCallsChunk.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-

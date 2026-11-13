@@ -276,15 +276,20 @@
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
    :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
 
-  (item "msgx-partial-send-no-sleep" :group "audit-remaining" :area "sdk"
-   :title "Do not sleep after a partial sendmsg_x"
-   :text "A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is."
-   :date "2026-11-13" :origin "Piece P cold read")
-
   (item "posix-hk-mark-after-last-send" :group "audit-remaining" :area "tests"
    :title "Hard-killed client cases: take the wire mark after the clients read the last pass's sends"
    :text "posix_hk_quiesce (tests/functional/posix_hard_killed_client.cpp) updates the clients, then the server, then sends the server's packets, so a datagram the server sends in the last pass is counted sent at posix_hk_wire_mark and received after it. That datagram hides one real loss in lost_down, and a payload lost on the way then fails posix_hk_require_accounted with lost 0. Seen once on a parallel macOS run (send_to_closed_port, server portable, ipv6, client msgx: down 79/80, lost 0). Fix: end the quiesce with a client-only read pass before the mark, or mark the client and server reads at the same point."
    :date "2026-11-13" :origin "Piece P CI read")
+
+  (item "msgx-dead-socket-placeholder" :group "review-v1-2" :area "sdk"
+   :title "macOS msgx: stop a socket retired as dead from taking its client's datagrams until it closes"
+   :text "A connected socket retired as dead (rocketnet_msgx_socket_table_sweep) stays open and connected through its quarantine, one quiescent pass, normally until the next sweep, so the kernel keeps delivering that client's datagrams to it and not to the shared socket; each is counted RECEIVE_DROP_RETIRED at the close (sdk/rocketnet_server_msgx_apple.cpp rocketnet_server_msgx_table_close), none is lost unnamed. Design: at the retire, count the datagrams it holds (SO_NUMRCVPKT) and dup2 a placeholder descriptor over the fd, which closes the real socket at once (later datagrams reach the shared socket) and keeps the fd number reserved until the quarantine close. Cost: a send worker that resolved the fd before the retire sends on the placeholder and gets ENOTSOCK instead of reaching the old remote, which changes the quarantine promise of proofs/tla/RNMsgxSocketTable.tla (a resolved socket stays open and connected to its remote until the pass ends); the model, the send path's error kinds and the counts change with it. The trigger (a receive errno that marks a connected UDP socket dead) is not established; take it only if the path is seen."
+   :date "2026-11-13" :origin "Review round 1, R70 (FW3); owner's call: leave as counted")
+
+  (item "msgx-socket-opens-off-main" :group "review-v1-2" :area "sdk"
+   :title "macOS msgx: open client sockets off the main thread"
+   :text "The replay walk's mark (rocketnet_server_msgx_mark) opens up to ROCKETNET_MSGX_OPENS_PER_UPDATE (64) connected client sockets an update on main (socket, bind with SO_REUSEPORT, two setsockopt, connect, a kevent registration: rocketnet_server_msgx_table_open), bounded but not free. Moving the opens to a worker would hand main a ready descriptor through the table the way the receive banks hand datagrams; it changes RNMsgxSocketTable's open path and its model. Measure the walk's open cost on a churn row first."
+   :date "2026-11-13" :origin "Review round 1, R70 (FW2, second part)")
 
   (item "msgx-port-exclusive" :group "review-v1-2" :area "sdk"
    :title "macOS msgx: keep the server's port from other local sockets"

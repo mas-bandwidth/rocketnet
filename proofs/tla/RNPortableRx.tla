@@ -1,6 +1,7 @@
 ---------------------------- MODULE RNPortableRx ----------------------------
 (***************************************************************************)
-(* The portable (and macOS msgx) server receive worker of                 *)
+(* The portable server receive worker (and msgx off macOS; on macOS the   *)
+(* msgx server is its own, RNMsgxReceiveFill) of                          *)
 (* sdk/rocketnet_driver_builtin.cpp: portable_rx_worker,                  *)
 (* portable_rx_publish, portable_rx_acquire, portable_receive and the RX   *)
 (* half of portable_stop / portable_stopped.                              *)
