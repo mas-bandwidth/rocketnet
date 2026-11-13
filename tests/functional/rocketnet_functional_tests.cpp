@@ -7705,14 +7705,21 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
         rocketnet_platform_sleep( 0.001 );
     }
     rocketnet_check( refused >= 2 );
+    // exact where the machine allows the confinement that follows a refused
+    // pin (a second cpu to confine to): one refusal for each queue worker
+    if ( sysconf( _SC_NPROCESSORS_ONLN ) >= 2 )
+    {
+        rocketnet_platform_sleep( 0.05 );
+        rocketnet_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] == 2 );
+    }
 
     rocketnet_server_transport_stop( server );
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_GSO_PIN_REFUSALS );
 }
 
-// the workers pin themselves (rocketnet_gso_pin.h): with num_os_cpus 0 (the
-// transport driven directly) nothing is pinned and nothing refused; with a
+// the workers pin themselves (rocketnet_gso_pin.h): with num_os_cpus 0 (read as 1,
+// the OS keeps cpu 0) each worker reports cpu 1 + queue; with a
 // cpu the machine does not have, every worker reports NONE, the refusal is
 // counted once for each, and no worker is ever reported on that cpu; with
 // num_os_cpus 1 each worker reports cpu 1 + queue (reported only after
@@ -7746,7 +7753,10 @@ void rocketnet_test_server_gso_worker_pin()
     const int queues = 2;
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
 
-    // not asked for: unpinned, nothing refused
+    // num_os_cpus 0 is read as 1 by the transport (the OS keeps cpu 0): the
+    // workers pin from cpu 1, never unpinned, and nothing is refused where the
+    // machine has the cpus
+    if ( online >= 1 + queues )
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1" ) );
@@ -7755,7 +7765,7 @@ void rocketnet_test_server_gso_worker_pin()
         rocketnet_check( rocketnet_test_gso_wait_pins( gso, queues ) );
         for ( int q = 0; q < queues; q++ )
         {
-            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == ROCKETNET_GSO_PIN_NONE );
+            rocketnet_check( rocketnet_server_gso_worker_cpu( gso, q ) == 1 + q );
         }
         rocketnet_check( rocketnet_server_gso_pin_refusals( gso ) == 0 );
         rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );

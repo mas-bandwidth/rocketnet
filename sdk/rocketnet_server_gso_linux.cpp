@@ -1322,11 +1322,6 @@ static void rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
 static void rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t * queue )
 {
     struct rocketnet_server_gso_t * gso = queue->gso;
-    if ( gso->num_os_cpus <= 0 )
-    {
-        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
-        return;
-    }
 
     const int cpu = rocketnet_gso_pin_cpu( queue->index, gso->num_os_cpus );
     const int online = (int) sysconf( _SC_NPROCESSORS_ONLN );
@@ -1527,9 +1522,9 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
 
     gso->context = context;
     gso->num_queues = num_queues;
-    // the OS keeps cpu 0 on Linux: a count below 0 is read as 1, here and not
-    // only in the builtin driver; 0 stays "pin nothing" (the transport driven directly)
-    gso->num_os_cpus = num_os_cpus < 0 ? 1 : num_os_cpus;
+    // the OS keeps cpu 0 on Linux: a count below 1 is read as 1, here and not
+    // only in the builtin driver, so no worker is ever left free to run on cpu 0
+    gso->num_os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     if ( packet_filter )
     {
@@ -2880,14 +2875,15 @@ int rocketnet_server_gso_test_send_slot( struct rocketnet_server_gso_t * gso, ui
     return rocketnet_server_gso_send_slot( gso, packet_id, packet_data, &bank );
 }
 
-// queue 0's worker pin run on the calling thread for a cpu outside the cpu
-// set: refused, counted in GSO_PIN_REFUSALS, the queue left unpinned, and no
-// affinity changed (no cpu is left to confine to)
+// a refused pin as the worker records it: counted in GSO_PIN_REFUSALS, the
+// queue left unpinned. No system call is made and no thread's affinity is
+// changed (the real refusal and its confinement run on a worker thread, in
+// the functional cases)
 void rocketnet_server_gso_test_refused_pin( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
-    gso->num_os_cpus = CPU_SETSIZE;
-    rocketnet_server_gso_pin_worker( &gso->queues[0] );
+    gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
+    gso->queues[0].pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
 }
 
 int rocketnet_server_gso_test_send_packet_bytes( struct rocketnet_server_gso_t * gso, int queue_index, int bank, int slot )

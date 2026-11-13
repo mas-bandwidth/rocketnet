@@ -266,16 +266,16 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
 // the same, and each queue's worker pins itself to cpu num_os_cpus + queue
 // (rocketnet_gso_pin.h, the XDP transport's rule) and sets SCHED_RR at the
-// minimum unless the platform priority switch is off. num_os_cpus 0 pins
-// nothing, which is what rocketnet_server_gso_create does: the transport
-// driven directly. The server's num_os_cpus (default 1) reaches this through
+// minimum unless the platform priority switch is off. A num_os_cpus below 1
+// is read as 1 (the OS keeps cpu 0 on Linux), which is what
+// rocketnet_server_gso_create passes: the transport driven directly pins from
+// cpu 1 too. The server's num_os_cpus (default 1) reaches this through
 // the builtin driver. A refusal (cpu outside the set or not online, affinity
 // or priority refused) is a warning naming the queue and the cpu, is counted
 // in rocketnet_server_gso_pin_refusals, and the worker is never reported
 // pinned. A refused worker is confined to the online cpus from num_os_cpus up
 // (rocketnet_gso_pin_fallback), never left on a mask that includes cpu 0; a
-// confinement the system refuses is counted too. A num_os_cpus below 0 is read
-// as 1 (the OS keeps cpu 0 on Linux).
+// confinement the system refuses is counted too.
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
                                                                     int * status = NULL, const uint8_t * packet_filter = NULL );

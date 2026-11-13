@@ -852,6 +852,12 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
                                   "    ClaimCmp = \"ge\"\n    ClaimRule = \"cas\"\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n"
                                   "    FlushRule = \"joined\"\n";
 
+    if ( walk.steps_lost == 0 )
+    {
+        fprintf( stderr, "tla_trace: gso: no claim lost its compare-and-swap inside start_packet: the walk never contested the library's loop\n" );
+        return 1;
+    }
+
     if ( walk.own_missed > 0 )
     {
         fprintf( stderr, "tla_trace: gso: a finish through the exact pointer did not write its own slot\n" );
