@@ -46,7 +46,7 @@ struct rocketnet_server_gso_t;
 // send staging: one phase's worth of slots, the same budget as the xdp
 // transport's send queue. each slot is a frame-stride wire packet.
 
-#define ROCKETNET_GSO_SEND_QUEUE_SIZE                                     4096
+#define ROCKETNET_GSO_SEND_QUEUE_SIZE                                    16384
 
 // receive staging per queue per buffer: twice the send staging and half
 // the process array, so two queues at full tilt cover a whole drain and
@@ -54,7 +54,7 @@ struct rocketnet_server_gso_t;
 // counted -- correct behaviour under flood, ample at design load where
 // the reuseport hash spreads flows
 
-#define ROCKETNET_GSO_RECV_QUEUE_SIZE                                     8192
+#define ROCKETNET_GSO_RECV_QUEUE_SIZE                                    32768
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: GSO receive queue holds at least twice the send queue" );
