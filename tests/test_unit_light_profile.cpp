@@ -341,7 +341,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141778 )
+// The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
+// 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141842 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
