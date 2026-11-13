@@ -28,6 +28,7 @@
 
 #include "rocketnet_server_msgx.h"
 #include "rocketnet_msgx_socket_table.h"
+#include "rocketnet_msgx_send_runs.h"
 #include "rocketnet_buffer_handoff.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_constants.h"
@@ -670,27 +671,11 @@ static void rocketnet_server_msgx_release( struct rocketnet_server_msgx_worker_t
 
 // the bank's slots in socket-slot order, staged order kept within a slot:
 // a counting sort, the shared socket's packets (slot -1) first
+// (sdk/rocketnet_msgx_send_runs.h, proofs/tla/RNMsgxSendRuns.tla Sort)
 static int rocketnet_server_msgx_sort( struct rocketnet_server_msgx_worker_t * worker, const struct rocketnet_server_msgx_send_bank_t * bank, int count,
                                        int capacity )
 {
-    const int buckets = capacity + 1;
-    memset( worker->bucket, 0, sizeof( int ) * (size_t) ( buckets + 1 ) );
-    for ( int i = 0; i < count; i++ )
-    {
-        const int slot = bank->info[i].table_slot;
-        const int key = slot >= 0 && slot < capacity ? slot + 1 : 0;
-        worker->bucket[key + 1]++;
-    }
-    for ( int b = 0; b < buckets; b++ )
-    {
-        worker->bucket[b + 1] += worker->bucket[b];
-    }
-    for ( int i = 0; i < count; i++ )
-    {
-        const int slot = bank->info[i].table_slot;
-        const int key = slot >= 0 && slot < capacity ? slot + 1 : 0;
-        worker->order[worker->bucket[key]++] = i;
-    }
+    rocketnet_msgx_send_runs_sort( bank->info, count, capacity, worker->bucket, worker->order );
     return count;
 }
 
@@ -713,161 +698,123 @@ static bool rocketnet_server_msgx_test_send_fails( struct rocketnet_server_msgx_
     return false;
 }
 
-static bool rocketnet_server_msgx_send_full_error( int error )
+// what one call of rocketnet_server_msgx_send_bank works on: the callbacks'
+// user of sdk/rocketnet_msgx_send_runs.h
+struct rocketnet_server_msgx_send_context_t
 {
-    return error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS;
-}
+    struct rocketnet_server_msgx_t * msgx;
+    struct rocketnet_server_msgx_worker_t * worker;
+    struct rocketnet_server_msgx_send_bank_t * bank;
+};
 
 static bool rocketnet_server_msgx_dead_error( int error )
 {
     return error == ENOTCONN || error == EPIPE || error == EDESTADDRREQ;
 }
 
-// one packet on the shared socket. false: the socket is full, try again later
-static bool rocketnet_server_msgx_send_shared( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_worker_t * worker,
-                                               struct rocketnet_server_msgx_send_bank_t * bank, int i )
+static int rocketnet_server_msgx_send_error_kind( int error )
 {
+    if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
+    {
+        return ROCKETNET_MSGX_SEND_FULL;
+    }
+    if ( error == ECONNREFUSED )
+    {
+        return ROCKETNET_MSGX_SEND_REFUSED;
+    }
+    if ( rocketnet_server_msgx_dead_error( error ) )
+    {
+        return ROCKETNET_MSGX_SEND_DEAD;
+    }
+    return ROCKETNET_MSGX_SEND_ERROR;
+}
+
+static int rocketnet_server_msgx_run_resolve( void * user, int table_slot, uint32_t generation )
+{
+    struct rocketnet_server_msgx_send_context_t * context = (struct rocketnet_server_msgx_send_context_t *) user;
+    return rocketnet_msgx_socket_table_resolve( context->msgx->table, table_slot, generation );
+}
+
+static void rocketnet_server_msgx_run_report_dead( void * user, int table_slot, uint32_t generation )
+{
+    struct rocketnet_server_msgx_send_context_t * context = (struct rocketnet_server_msgx_send_context_t *) user;
+    rocketnet_msgx_socket_table_report_dead( context->msgx->table, table_slot, generation );
+}
+
+// one sendmsg_x of the run on the client's connected socket
+static int rocketnet_server_msgx_run_send( void * user, int fd, const int * packets, int num_packets )
+{
+    struct rocketnet_server_msgx_send_context_t * context = (struct rocketnet_server_msgx_send_context_t *) user;
+    struct rocketnet_server_msgx_worker_t * worker = context->worker;
+    struct rocketnet_server_msgx_send_bank_t * bank = context->bank;
+    rocketnet_assert( num_packets >= 1 && num_packets <= ROCKETNET_MSGX_SEND_BATCH );
+    for ( int n = 0; n < num_packets; n++ )
+    {
+        const int i = packets[n];
+        worker->iovecs[n].iov_base = bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET;
+        worker->iovecs[n].iov_len = (size_t) bank->info[i].packet_bytes;
+        memset( &worker->messages[n], 0, sizeof( worker->messages[n] ) );
+        worker->messages[n].msg_iov = &worker->iovecs[n];
+        worker->messages[n].msg_iovlen = 1;
+    }
+    worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
+    const ssize_t result = rocketnet_server_msgx_test_send_fails( context->msgx ) ? -1 : context->msgx->sendmsg_x( fd, worker->messages, (u_int) num_packets, 0 );
+    if ( result >= 0 )
+    {
+        return result > num_packets ? num_packets : (int) result;
+    }
+    return rocketnet_server_msgx_send_error_kind( errno );
+}
+
+// one packet on the shared socket
+static int rocketnet_server_msgx_run_send_shared( void * user, int i )
+{
+    struct rocketnet_server_msgx_send_context_t * context = (struct rocketnet_server_msgx_send_context_t *) user;
+    struct rocketnet_server_msgx_t * msgx = context->msgx;
+    struct rocketnet_server_msgx_send_bank_t * bank = context->bank;
     struct sockaddr_storage sockaddr;
     const socklen_t socklen = rocketnet_server_msgx_address_to_sockaddr( &bank->info[i].to, msgx->ipv6, &sockaddr );
     if ( socklen == 0 )
     {
-        worker->dropped.fetch_add( 1, std::memory_order_relaxed );
-        return true;
+        return ROCKETNET_MSGX_SHARED_DROPPED;
     }
-    worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
+    context->worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
     const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : sendto( msgx->shared_fd, bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET, (size_t) bank->info[i].packet_bytes, 0,
                                    (const struct sockaddr *) &sockaddr, socklen );
     if ( result >= 0 )
     {
-        worker->sent_shared.fetch_add( 1, std::memory_order_relaxed );
-        return true;
+        return ROCKETNET_MSGX_SHARED_SENT;
     }
-    if ( rocketnet_server_msgx_send_full_error( errno ) )
-    {
-        return false;
-    }
-    worker->dropped.fetch_add( 1, std::memory_order_relaxed );
-    return true;
+    return rocketnet_server_msgx_send_error_kind( errno ) == ROCKETNET_MSGX_SEND_FULL ? ROCKETNET_MSGX_SHARED_FULL : ROCKETNET_MSGX_SHARED_DROPPED;
 }
 
-// Sends the sorted bank from *cursor. Returns false when a socket is full:
+// Sends the sorted bank from *cursor (sdk/rocketnet_msgx_send_runs.h,
+// proofs/tla/RNMsgxSendRuns.tla). Returns false when a socket is full:
 // *cursor is the first packet not yet taken, the rest kept in order for the
 // next attempt. Runs inside one table pass (holder worker->index).
 static bool rocketnet_server_msgx_send_bank( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_worker_t * worker,
                                              struct rocketnet_server_msgx_send_bank_t * bank, int count, int * cursor )
 {
-    while ( *cursor < count )
-    {
-        const int first = worker->order[*cursor];
-        const rocketnet_server_msgx_send_info_t * head = &bank->info[first];
+    struct rocketnet_server_msgx_send_context_t context = { msgx, worker, bank };
+    struct rocketnet_msgx_send_runs_io_t io;
+    io.user = &context;
+    io.resolve = rocketnet_server_msgx_run_resolve;
+    io.send = rocketnet_server_msgx_run_send;
+    io.send_shared = rocketnet_server_msgx_run_send_shared;
+    io.report_dead = rocketnet_server_msgx_run_report_dead;
 
-        if ( head->packet_bytes <= 0 )
-        {
-            ( *cursor )++;                      // aborted or never finished: nothing to send
-            continue;
-        }
+    int run_packets[ROCKETNET_MSGX_SEND_BATCH];
+    struct rocketnet_msgx_send_runs_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    const bool sent = rocketnet_msgx_send_runs_send( bank->info, worker->order, count, ROCKETNET_MSGX_SEND_BATCH, run_packets, cursor, &io, &counters );
 
-        const int fd = head->table_slot >= 0 ? rocketnet_msgx_socket_table_resolve( msgx->table, head->table_slot, head->generation ) : -1;
-        if ( fd < 0 )
-        {
-            if ( head->table_slot >= 0 )
-            {
-                worker->retired.fetch_add( 1, std::memory_order_relaxed );
-            }
-            if ( !rocketnet_server_msgx_send_shared( msgx, worker, bank, first ) )
-            {
-                return false;
-            }
-            ( *cursor )++;
-            continue;
-        }
-
-        // the run: this slot's packets at this generation, in staged order
-        int run = 0;
-        int scan = *cursor;
-        while ( scan < count && run < ROCKETNET_MSGX_SEND_BATCH )
-        {
-            const int i = worker->order[scan];
-            const rocketnet_server_msgx_send_info_t * info = &bank->info[i];
-            if ( info->table_slot != head->table_slot || info->generation != head->generation )
-            {
-                break;
-            }
-            scan++;
-            if ( info->packet_bytes <= 0 )
-            {
-                continue;
-            }
-            worker->iovecs[run].iov_base = bank->data[i] + ROCKETNET_FRAME_WIRE_OFFSET;
-            worker->iovecs[run].iov_len = (size_t) info->packet_bytes;
-            memset( &worker->messages[run], 0, sizeof( worker->messages[run] ) );
-            worker->messages[run].msg_iov = &worker->iovecs[run];
-            worker->messages[run].msg_iovlen = 1;
-            run++;
-        }
-
-        int attempts = 0;
-        for ( ;; )
-        {
-            worker->send_calls.fetch_add( 1, std::memory_order_relaxed );
-            const ssize_t result = rocketnet_server_msgx_test_send_fails( msgx ) ? -1 : msgx->sendmsg_x( fd, worker->messages, (u_int) run, 0 );
-            if ( result == run )
-            {
-                worker->sent_connected.fetch_add( (uint64_t) run, std::memory_order_relaxed );
-                *cursor = scan;
-                break;
-            }
-            const int error = errno;
-            if ( result > 0 )
-            {
-                // a prefix went: count it, and keep the rest for the retry
-                worker->sent_connected.fetch_add( (uint64_t) result, std::memory_order_relaxed );
-                int taken = 0;
-                while ( taken < (int) result )
-                {
-                    if ( bank->info[worker->order[*cursor]].packet_bytes > 0 )
-                    {
-                        taken++;
-                    }
-                    ( *cursor )++;
-                }
-                return false;
-            }
-            if ( rocketnet_server_msgx_send_full_error( error ) )
-            {
-                return false;
-            }
-            if ( error == ECONNREFUSED && attempts == 0 )
-            {
-                // the socket's pending ICMP error answered this call and is
-                // now cleared: the run goes again once
-                worker->refused.fetch_add( 1, std::memory_order_relaxed );
-                attempts++;
-                continue;
-            }
-            if ( rocketnet_server_msgx_dead_error( error ) )
-            {
-                // the socket was disconnected under us: main retires it, and
-                // this run leaves through the shared socket now
-                worker->dead.fetch_add( 1, std::memory_order_relaxed );
-                rocketnet_msgx_socket_table_report_dead( msgx->table, head->table_slot, head->generation );
-                while ( *cursor < scan )
-                {
-                    const int i = worker->order[*cursor];
-                    if ( bank->info[i].packet_bytes > 0 && !rocketnet_server_msgx_send_shared( msgx, worker, bank, i ) )
-                    {
-                        return false;
-                    }
-                    ( *cursor )++;
-                }
-                break;
-            }
-            worker->dropped.fetch_add( (uint64_t) run, std::memory_order_relaxed );
-            *cursor = scan;
-            break;
-        }
-    }
-    return true;
+    worker->sent_connected.fetch_add( counters.sent_connected, std::memory_order_relaxed );
+    worker->sent_shared.fetch_add( counters.sent_shared, std::memory_order_relaxed );
+    worker->dropped.fetch_add( counters.dropped, std::memory_order_relaxed );
+    worker->refused.fetch_add( counters.refused, std::memory_order_relaxed );
+    worker->retired.fetch_add( counters.retired, std::memory_order_relaxed );
+    worker->dead.fetch_add( counters.dead, std::memory_order_relaxed );
+    return sent;
 }
 
 static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * context )
