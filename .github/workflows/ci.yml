@@ -3598,6 +3598,15 @@ jobs:
           python3 tools/check_continue_on_error.py --self-test
           python3 tools/check_continue_on_error.py
 
+      # tools/verification_matrix.tsv declares every required verification cell and the job
+      # that runs it; a test binary, transport, option value, fuzz harness, DST
+      # schedule or checker with no cell, a cell whose step does not run it, or
+      # an owed cell past its date is red here. The nightly watch adds --remote.
+      - name: Every verification cell is declared and wired to the job that runs it
+        run: |
+          python3 tools/check_run_matrix.py --self-test
+          python3 tools/check_run_matrix.py
+
       # tools/check_run_shell.py: every run step's shell stops on its first
       # failure (bash -euo pipefail, the workflow default; Git Bash with set
       # -euo pipefail on Windows; pwsh one command or $LASTEXITCODE checked
