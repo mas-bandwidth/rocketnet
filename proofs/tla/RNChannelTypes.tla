@@ -37,15 +37,20 @@ EXTENDS Naturals, Sequences, FiniteSets, TLC
 \* "CountersAtStart" assigns the channel's ordering and sequencing counters
 \* at the start, before the room is known, and keeps them on a refusal;
 \* "StaleStepPossible" is the v1.1 StepPossible, written when a refusal was
-\* a stutter. The receive side's overflow in OpenPacket keeps its end (a
-\* broken invariant of the receiver).
+\* a stutter. No receive step ends the connection either: the code drops
+\* and counts (HOLD_FULL, UNRELIABLE_DELIVERY_FULL), and BuffersBounded
+\* checks that the holds stay inside their capacities.
 \* The "refused" scenario runs the blocks plans and lets an arriving code-1
 \* record be refused (OpenPacket's full): no free hold slot (Ru) ahead of
-\* its epoch, or the update's unreliable allowance (Du) spent in turn. Both
-\* are spent by other channels and codes, so the environment chooses. A
-\* refused record is dropped and counted and the channel is left as it was
-\* (standard/MESSAGES.md m6.3); releasing a code-1 hold frees the slot the
-\* record then takes, so only a code-4 hold or no hold meets a full pool.
+\* its epoch, or a record ahead of its epoch larger than one packet's payload
+\* (HOLD_FULL), or the update's unreliable allowance (Du) spent in turn
+\* (UNRELIABLE_DELIVERY_FULL). Pool and allowance are spent by other channels
+\* and codes, so the environment chooses. A refused record is dropped and
+\* counted and the channel is left as it was (standard/MESSAGES.md m6.3);
+\* releasing a code-1 hold frees the slot the record then takes, so only a
+\* code-4 hold or no hold meets a full pool. An arriving code-3 record may
+\* also carry full: its delivery's drain finds Du spent and releases a held
+\* code-1 record, counted (Drain's du).
 \* SupersederKept: no record that released another is itself refused.
 \* Broken = "ReleaseBeforeRefuse" is the earlier code, which released the
 \* channel's code-4 hold or in-turn block and then refused the record.
@@ -107,15 +112,31 @@ Starts == <<maxPayload, sendRefused, calls>>
 \* The first three sends of the promote plan are too big for one record, so
 \* each unreliable one is promoted to its reliable twin (the promotion rule). The
 \* promote scenario also runs the mixed plan with nothing large, so the main
-\* configuration keeps checking it.
+\* configuration keeps checking it. Read off the plan, so it holds before the
+\* send is queued (the start's route reads it) and after.
 Large(m) == Scenario = "promote" /\ m \in {1,2,3} /\
             [i \in DOMAIN plan |-> plan[i].code] = PromotePlanCodes
 
+\* The start's route (sdk/rocketnet_endpoint.cpp rn_endpoint_send_route): an
+\* unreliable source over the record capacity leaves with out_type set to its
+\* reliable twin, written as the code's nested conditional; every other start
+\* keeps its source. Enqueue stores the result as the queued send's wire code,
+\* so PromotedIsTwin and PromotedNeverUnreliable check the route's result
+\* against the rule (Twin), not a definition. Broken = "NoPromotion": the
+\* oversize unreliable send keeps its source code; Broken =
+\* "PromoteSequencedToReliable": code 1 is routed to 2, losing its sequencing.
+Route(k, large) ==
+    IF large /\ k \in UnreliableSources /\ Broken # "NoPromotion"
+    THEN IF k = 0 THEN 2
+         ELSE IF k = 1 THEN (IF Broken = "PromoteSequencedToReliable" THEN 2 ELSE 4)
+         ELSE 2
+    ELSE k
+
 \* Message ids stand for stable reliable numbers after first packet write.
 \* numbers records their independent late assignment order; code 1 takes none.
-\* A promoted message carries its twin's wire code (0 to 2, 1 to 4, 5 to 2).
-Source(m) == queue[m].code
-Code(m) == IF Large(m) /\ Source(m) \in PromotionSources THEN Twin(Source(m)) ELSE Source(m)
+\* A promoted message carries the wire code its route gave it.
+Source(m) == queue[m].source
+Code(m) == queue[m].code
 Channel(m) == queue[m].channel
 Order(m) == queue[m].ordering
 Sequence(m) == queue[m].sequencing
@@ -182,12 +203,20 @@ DeliverMessage(r,m,held) ==
 \* Drain consumes a held sequenced value before the ordered successor of
 \* that epoch, and repeats. Fuel is a finite recursion bound, not a guard
 \* that silently drops work: each recursion removes one held record.
-RECURSIVE Drain(_,_,_)
+\* du: the update's unreliable allowance (Du) is spent when the drain reaches
+\* a held code-1 record (the "refused" scenario's environment choice on the
+\* ordered arrival that opens the epoch): rn_channels_drain_sequenced's
+\* rn_sequenced_room refuses, counts UNRELIABLE_DELIVERY_FULL and releases the
+\* hold, so the record joins released (a counted drop). A held code-4 record
+\* meeting a full delivery table exhausts the region instead; the table is
+\* W + Du entries and reliable deliveries take at most W of them, so that is
+\* an invariant break of the code, not modelled here.
+RECURSIVE Drain(_,_,_,_)
 \* Bind the receiver value once per recursive call. This singleton mapping is
 \* extensionally the same function; it avoids repeated lazy evaluation of
 \* nested record updates while draining several held records. No transition,
 \* bound, arrival order, loss action or fairness assumption changes.
-Drain(input,c,fuel) ==
+Drain(input,c,fuel,du) ==
     CHOOSE output \in {
         LET stale == {m \in r.heldSequenced : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
             staleTurn == {m \in r.inTurn : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
@@ -197,32 +226,39 @@ Drain(input,c,fuel) ==
             readyS == {m \in turn : Complete(s,m)}
             openS == turn \ readyS
             readyO == {m \in s.heldOrdered : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
-            \* DrainStale: the drain's delivery refused these records. The
-            \* earlier code (Broken = "DrainStaleSilent") releases them and
-            \* counts nothing; the fixed code releases and counts them.
-            refused == IF Broken = "DrainStaleSilent" THEN readyS
-                       ELSE IF Broken = "SequencedBackwards" THEN {}
+            \* DrainStale: the records rn_channels_deliver_sequenced refuses
+            \* (the code's predicate: behind the epoch's watermark), released
+            \* and counted SEQUENCED_STALE. Unreachable at this model's small
+            \* indexes: the watermark is 0 when an epoch opens and a channel
+            \* holds one record, so the set is empty; the code reaches the
+            \* branch only at the 24-bit half range, which RNSequencingWrap's
+            \* OpenEpoch (its refused branch) covers.
+            refused == IF Broken = "SequencedBackwards" THEN {}
                        ELSE {m \in readyS : Sequence(m) < s.sequenced_watermark[c]}
             freshS == readyS \ refused
+            duFull == {m \in freshS : du /\ Code(m) = 1}
         IN IF fuel=0 THEN s
            \* a held block still short of fragments when its epoch opens is
            \* in turn now: it leaves the future-state slot (the earlier code
            \* kept it there)
            ELSE IF openS # {} /\ Broken # "BlockInTurnHeld" THEN
-             Drain(TLCEval([s EXCEPT !.heldSequenced = @ \ openS, !.inTurn = @ \cup openS]), c, fuel-1)
+             Drain(TLCEval([s EXCEPT !.heldSequenced = @ \ openS, !.inTurn = @ \cup openS]), c, fuel-1, du)
+           ELSE IF duFull # {} THEN
+             LET m == Min(duFull)
+                 t == [s EXCEPT !.heldSequenced = @ \ {m}, !.released = @ \cup {m}]
+             IN Drain(TLCEval(t), c, fuel-1, du)
            ELSE IF freshS # {} THEN
              LET m == Min(freshS)
                  t == [s EXCEPT !.heldSequenced = @ \ {m}]
-             IN Drain(TLCEval(DeliverMessage(t,m,TRUE)), c, fuel-1)
+             IN Drain(TLCEval(DeliverMessage(t,m,TRUE)), c, fuel-1, du)
            ELSE IF refused # {} THEN
              LET m == Min(refused)
-                 t == [s EXCEPT !.heldSequenced = @ \ {m},
-                       !.released = IF Broken = "DrainStaleSilent" THEN @ ELSE @ \cup {m}]
-             IN Drain(TLCEval(t), c, fuel-1)
+                 t == [s EXCEPT !.heldSequenced = @ \ {m}, !.released = @ \cup {m}]
+             IN Drain(TLCEval(t), c, fuel-1, du)
            ELSE IF readyO # {} THEN
              LET m == Min(readyO)
                  t == [s EXCEPT !.heldOrdered = @ \ {m}]
-             IN Drain(TLCEval(DeliverMessage(t,m,TRUE)), c, fuel-1)
+             IN Drain(TLCEval(DeliverMessage(t,m,TRUE)), c, fuel-1, du)
            ELSE s
       : r \in {input} } : TRUE
 
@@ -232,9 +268,13 @@ Supersede(r,m,gone) ==
     IF Scenario = "refused" /\ gone # {} THEN [r EXCEPT !.superseders = @ \cup {m}] ELSE r
 Refuse1(r,m) == [r EXCEPT !.refused = @ \cup {m}]
 
-\* full: the environment's Ru pool or Du allowance has no room for m (only
-\* for a Refusable record). The fixed code refuses before it releases
-\* anything; Broken = "ReleaseBeforeRefuse" releases first.
+\* full, for a Refusable (code-1) record: the environment's Ru pool or Du
+\* allowance has no room for m, or (ahead of its turn) m is larger than one
+\* packet's payload and cannot fit the fixed future-state slot. The fixed code
+\* refuses before it releases anything; Broken = "ReleaseBeforeRefuse"
+\* releases first. full, for a code-3 record (the "refused" scenario): the
+\* allowance is spent when its delivery's drain reaches a held code-1 record
+\* (Drain's du). No refusal ends the connection: each is a counted drop.
 Dispatch(r,m,full) ==
     IF Reliable(Code(m)) /\ m \in r.seen /\ Broken # "ReliableTwice" THEN r
     ELSE LET s == IF Reliable(Code(m)) THEN [r EXCEPT !.seen = @ \cup {m}] ELSE r
@@ -245,7 +285,10 @@ Dispatch(r,m,full) ==
                IF Sequenced(Code(m)) /\ Broken # "SequencedBackwards" /\
                  Sequence(m) < s.sequenced_watermark[Channel(m)] THEN
                 \* in turn but behind the epoch's watermark: counted stale
-                [s EXCEPT !.released = @ \cup {m}]
+                \* (rn_sequenced_in_turn, SEQUENCED_STALE). Broken =
+                \* "InTurnStaleSilent" drops the record and counts nothing.
+                IF Broken = "InTurnStaleSilent" THEN s
+                ELSE [s EXCEPT !.released = @ \cup {m}]
                ELSE IF Sequenced(Code(m)) THEN
                 \* one in-turn rule: an in-turn block at least as new
                 \* supersedes this record; an older one is released
@@ -256,21 +299,23 @@ Dispatch(r,m,full) ==
                    ELSE IF full /\ Broken = "ReleaseBeforeRefuse"
                    THEN Refuse1(Supersede(ReleaseInTurn(s,cur),m,cur),m)
                    ELSE IF full THEN Refuse1(s,m)
-                   ELSE Drain(TLCEval(DeliverMessage(Supersede(ReleaseInTurn(s,cur),m,cur),m,FALSE)), Channel(m), MaxMessages+1)
-               ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1)
+                   ELSE Drain(TLCEval(DeliverMessage(Supersede(ReleaseInTurn(s,cur),m,cur),m,FALSE)), Channel(m), MaxMessages+1, FALSE)
+               ELSE Drain(TLCEval(DeliverMessage(s,m,FALSE)), Channel(m), MaxMessages+1, full)
              ELSE IF Code(m)=3 THEN [s EXCEPT !.heldOrdered = @ \cup {m}]
              ELSE LET held == {n \in s.heldSequenced : Channel(n)=Channel(m)}
                       newest == held = {} \/ (\A n \in held : Newer(m,n))
-                      \* releasing a code-1 hold frees the slot m then takes
-                      noSlot == full /\ \A n \in held : Code(n) = 4
                       replaced == Supersede([s EXCEPT !.heldSequenced = (@ \ held) \cup {m},
                                                       !.released = @ \cup held], m, held)
                  IN IF Broken="HoldAllSequenced" THEN [s EXCEPT !.heldSequenced = @ \cup {m}]
-                    ELSE IF ~newest THEN [s EXCEPT !.released = @ \cup {m}]
-                    \* Ru full: dropped (HOLD_FULL), the hold kept
-                    ELSE IF noSlot /\ Broken = "ReleaseBeforeRefuse"
+                    \* oversize, or Ru full where no slot would be freed
+                    \* (releasing a code-1 hold frees the slot m then takes;
+                    \* each plan has one code-1 message, so a refused record
+                    \* never meets a code-1 hold): dropped (HOLD_FULL), the
+                    \* hold kept
+                    ELSE IF full /\ newest /\ Broken = "ReleaseBeforeRefuse"
                     THEN Refuse1([replaced EXCEPT !.heldSequenced = @ \ {m}], m)
-                    ELSE IF noSlot THEN Refuse1(s,m)
+                    ELSE IF full THEN Refuse1(s,m)
+                    ELSE IF ~newest THEN [s EXCEPT !.released = @ \cup {m}]
                     ELSE replaced
 
 \* One block fragment, r.arrived already counting it. In turn, the rule: the
@@ -287,18 +332,18 @@ DispatchFragment(r0,m,f) ==
        ELSE IF Order(m) = r0.ordered_read[c] /\ Broken # "BlockInTurnHeld" THEN
          LET cur == {n \in r0.inTurn : Channel(n)=c}
          IN IF m \in cur THEN
-              IF Complete(more,m) THEN Drain(TLCEval(DeliverMessage([more EXCEPT !.inTurn = @ \ {m}],m,FALSE)), c, MaxMessages+1)
+              IF Complete(more,m) THEN Drain(TLCEval(DeliverMessage([more EXCEPT !.inTurn = @ \ {m}],m,FALSE)), c, MaxMessages+1, FALSE)
               ELSE more
             ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN r0
             ELSE LET t == [anchor EXCEPT !.inTurn = @ \ cur]
-                 IN IF Complete(t,m) THEN Drain(TLCEval(DeliverMessage(t,m,FALSE)), c, MaxMessages+1)
+                 IN IF Complete(t,m) THEN Drain(TLCEval(DeliverMessage(t,m,FALSE)), c, MaxMessages+1, FALSE)
                     ELSE [t EXCEPT !.inTurn = @ \cup {m}]
        ELSE LET held == {n \in r0.heldSequenced : Channel(n)=c}
                 t == IF m \in held THEN more
                      ELSE IF \A n \in held : Newer(m,n) THEN [anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
                      ELSE r0
             IN IF m \in t.heldSequenced /\ Complete(t,m) /\ Order(m) = t.ordered_read[c] THEN
-                 Drain(TLCEval(DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)), c, MaxMessages+1)
+                 Drain(TLCEval(DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)), c, MaxMessages+1, FALSE)
                ELSE t
 
 \* Independent ordered-only receiver. Its input is ordered packet arrivals
@@ -333,11 +378,11 @@ NextSequenced(k,c) == IF k=3 THEN [sequenced_write EXCEPT ![c]=0]
 Enqueue(cap) ==
     /\ sendRefused'=sendRefused /\ calls'=(calls+1) % CountMod
     /\ connected /\ Len(queue)<MaxMessages /\ Len(queue)<SendCapacity
-    /\ LET m == Len(queue)+1 c == plan[m].channel k == plan[m].code
-       IN /\ queue'=Append(queue,[code |-> k, channel |-> c,
+    /\ LET m == Len(queue)+1 c == plan[m].channel k == plan[m].code w == Route(k, Large(m))
+       IN /\ queue'=Append(queue,[source |-> k, code |-> w, channel |-> c,
                   ordering |-> ordered_write[c], sequencing |-> sequenced_write[c]])
-          /\ ordered_write'=NextOrdered(k,c)
-          /\ sequenced_write'=NextSequenced(k,c)
+          /\ ordered_write'=NextOrdered(w,c)
+          /\ sequenced_write'=NextSequenced(w,c)
           /\ maxPayload'=IF k \in UnreliableSources THEN cap ELSE maxPayload
     /\ UNCHANGED <<connected,reason,missed>>
     /\ UNCHANGED <<plan,written,numbers,opened,lost,acked,resend,
@@ -362,23 +407,22 @@ WritePacket(m,attempt) ==
 OpenPacket(pid,full) ==
     /\ UNCHANGED Starts
     /\ connected /\ pid \in written \ (opened \cup lost)
-    /\ full => Refusable(PacketMessage(pid))
+    /\ full => Refusable(PacketMessage(pid)) \/
+               (Scenario = "refused" /\ Code(PacketMessage(pid)) = 3)
     /\ opened'=opened \cup {pid}
+    \* No receive step ends the connection: the code never ends it on a full
+    \* hold. Every refusal is a counted drop (Dispatch's full, Drain's du);
+    \* BuffersBounded checks that the holds stay inside their capacities.
     /\ LET m == PacketMessage(pid)
            r == TLCEval(Dispatch(receiver,m,full))
-           overflow == Cardinality(r.heldOrdered)>OrderedCapacity \/
-               (Broken # "HoldAllSequenced" /\ Cardinality(r.heldSequenced)>HoldCapacity)
-       IN /\ receiver'=IF overflow THEN [r EXCEPT !.heldOrdered={}, !.heldSequenced={} ] ELSE r
-          /\ connected'=~overflow
-          /\ resend'=IF overflow THEN {} ELSE resend
-          /\ reason'=IF overflow THEN "MESSAGE_MEMORY_EXHAUSTED" ELSE reason
+       IN /\ receiver'=r
           /\ orderedInputs'=IF Code(m)=3 THEN orderedInputs \cup {m} ELSE orderedInputs
-          /\ missed'=IF ~overflow /\ ~(Reliable(Code(m)) /\ m \in receiver.seen) /\
+          /\ missed'=IF ~(Reliable(Code(m)) /\ m \in receiver.seen) /\
                          Deliverable(receiver,m) /\ m \notin Values(r.trace) /\ ~full
                       THEN missed \cup {m} ELSE missed
     /\ referenceTrace'=[c \in Channels |-> OrderedReference(orderedInputs',c,0)]
     /\ UNCHANGED <<plan,queue,ordered_write,sequenced_write,written,numbers,
-                    lost,acked>>
+                    lost,acked,resend,connected,reason>>
 
 ReceiveAck(q) ==
     /\ UNCHANGED Starts
@@ -485,7 +529,7 @@ Spec == SafetySpec /\ ([]<>~StepPossible \/ []<><<TRUE>>_vars)
 
 TypeOK ==
     /\ plan \in Plans /\ Len(queue)<=MaxMessages
-    /\ queue \in Seq([code:Codes, channel:Channels, ordering:0..MaxMessages, sequencing:0..MaxMessages])
+    /\ queue \in Seq([source:Codes, code:Codes, channel:Channels, ordering:0..MaxMessages, sequencing:0..MaxMessages])
     /\ ordered_write \in [Channels -> 0..MaxMessages]
     /\ sequenced_write \in [Channels -> 0..MaxMessages]
     /\ receiver.ordered_read \in [Channels -> 0..MaxMessages]
@@ -524,11 +568,16 @@ SequencedNeverBackwards == \A c \in Channels :
         i<j /\ Order(t[i])=Order(t[j]) => Sequence(t[i])<=Sequence(t[j])
 NoSequencedDuplicate == \A c \in Channels :
     LET t == SequencedTrace(receiver,c) IN Len(t)=Cardinality(Values(t))
+\* The route's wire code against the rule: reversed by Broken =
+\* "PromoteSequencedToReliable" (and "NoPromotion").
 PromotedIsTwin == \A m \in DOMAIN queue :
     Large(m) /\ Source(m) \in PromotionSources => Code(m) = Twin(Source(m))
+\* An oversize unreliable send never leaves on an unreliable wire code, so its
+\* delivery is the reliable twin's (ReliableExactlyOnce, and the liveness
+\* EveryReliableAckedAndDelivered for codes 2 and 3). Reversed by Broken =
+\* "NoPromotion".
 PromotedNeverUnreliable == \A m \in DOMAIN queue :
-    Large(m) /\ Source(m) \in {0,5} /\ m \in {PacketMessage(pid) : pid \in opened} =>
-        m \in Values(receiver.trace)
+    Large(m) /\ Source(m) \in PromotionSources => Reliable(Code(m))
 ReliableExactlyOnce ==
     LET t == ReliableTrace(receiver)
         arrived == {PacketMessage(pid) : pid \in opened}
