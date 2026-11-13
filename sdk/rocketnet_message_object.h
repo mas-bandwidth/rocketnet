@@ -71,6 +71,13 @@ struct rn_message_link_t
 
     void ( *update )( void * transport, double time );
 
+    // update in three parts (the server's link only; NULL elsewhere):
+    // update_receive, update_client_acks per client from the game's jobs,
+    // update_finish. Used only while update is the server transport's own.
+    void ( *update_receive )( void * transport, double time );
+    int ( *update_client_acks )( void * transport, int client_index );
+    void ( *update_finish )( void * transport );
+
     // the update's payload batch, valid until the next update. The client's
     // link leaves *client_index NULL.
     int ( *payloads )( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
@@ -307,6 +314,8 @@ struct rn_message_object_t
     // thread's last open while exactly one is open (rn_message_open_count,
     // rn_message_open_last)
     struct rn_message_open_line_t open_lines[ROCKETNET_FILL_PHASE_FILL_LINES];
+    int update_stage;                           // RN_MESSAGE_UPDATE_*: where a split update stands
+    int update_result;                          // the split update's result so far
 
     // the one receive queue, pumped by each receive: the update's deliveries,
     // connection by connection in index order, each connection's in its
@@ -374,6 +383,22 @@ void rn_message_object_destroy( struct rn_message_object_t * object );
 // the update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
 // ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
+
+// the same update in two parts around the game's per-client ack apply:
+// begin runs through the transport's update_receive, end from its
+// update_finish on and returns the update's result. update is begin then
+// end. A begin with the last one not ended ends it first (misuse, counted).
+
+enum
+{
+    RN_MESSAGE_UPDATE_CLOSED = 0,               // no split update in progress
+    RN_MESSAGE_UPDATE_SPLIT = 1,                // the transport's receive ran; end finishes it
+    RN_MESSAGE_UPDATE_WHOLE = 2,                // the transport updated whole (or not at all); end does the rest
+    RN_MESSAGE_UPDATE_DONE = 3                  // begin returned early; end returns the result only
+};
+
+void rn_message_object_update_begin( struct rn_message_object_t * object, double time );
+int rn_message_object_update_end( struct rn_message_object_t * object );
 
 void rn_message_object_send_packets( struct rn_message_object_t * object );
 
