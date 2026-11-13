@@ -25,7 +25,10 @@
 # clients: the ring and the provided buffers are fixed per queue and do not
 # grow with max_clients), and fails when that
 # is over the per-case need (the suite runner's value is stale for this
-# kernel). It prints the limit, both needs, the runners and PASS, or FAIL and
+# kernel). The measurement counts every live ring of this user, so it is
+# judged only when this user runs one runner; with more, another job's
+# io_uring cases may be holding rings, and the figure is printed as a
+# user-wide upper bound instead. It prints the limit, both needs, the runners and PASS, or FAIL and
 # exits 1. Creating the measuring server opens a loopback socket; the script
 # changes no system setting.
 
@@ -107,9 +110,18 @@ if [ -x "$probe" ]; then
     done
     server_kib="$hi KiB"
     if [ "$hi" -gt "$case_kib" ]; then
-        echo "memlock: per-server need $hi KiB is over the per-case need $case_kib KiB in tests/suite_runner.h"
-        echo "memlock: FAIL: measure the io_uring cases on this kernel and raise the per-case need"
-        exit 1
+        if [ "$runners" -gt 1 ]; then
+            # the kernel charges this user's other live rings to the same
+            # total, and with more than one runner another job's io_uring
+            # cases may hold rings now: the figure is user-wide, an upper
+            # bound on one server's need, and is reported, not judged
+            server_kib="$hi KiB (user-wide with $runners runners: an upper bound, not judged)"
+            echo "memlock: per-server need measured $hi KiB, over the per-case need $case_kib KiB, but user-wide: $runners runners of this user may hold rings now"
+        else
+            echo "memlock: per-server need $hi KiB is over the per-case need $case_kib KiB in tests/suite_runner.h"
+            echo "memlock: FAIL: measure the io_uring cases on this kernel and raise the per-case need"
+            exit 1
+        fi
     fi
 fi
 

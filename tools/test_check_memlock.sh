@@ -2,10 +2,12 @@
 # Self-test for tools/check_memlock.sh: a RLIMIT_MEMLOCK under runners times
 # the per-case need exits nonzero, a limit that covers it exits 0, and a tree
 # whose tests/suite_runner.h carries zero per-case need defines exits nonzero
-# naming the count. Runs on any host: fake uname (Linux 6.12) and pgrep (one
-# runner) come first on PATH, the /proc read is a fixture, the soft limit is
-# lowered in the child shell only, and no transport_memory probe exists, so
-# nothing creates a socket or a ring.
+# naming the count; a measured per-server need over the per-case need fails
+# with one runner and is reported, not judged, with two. Runs on any host:
+# fake uname (Linux 6.12) and pgrep (FAKE_RUNNERS runners) come first on PATH,
+# the /proc read is a fixture, the soft limit is lowered in the child shell
+# only, and the transport_memory probe is a fake that only compares its
+# ulimit, so nothing creates a socket or a ring.
 set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 tool="$root/tools/check_memlock.sh"
@@ -18,8 +20,12 @@ fail() { echo "check_memlock self-test FAIL: $*"; exit 1; }
 mkdir -p "$tmp/bin" "$tmp/proc/sys/kernel"
 # shellcheck disable=SC2016  # the fake's own shell expands $1
 printf '#!/bin/sh\ncase "$1" in -r) echo 6.12.0 ;; *) echo Linux ;; esac\n' > "$tmp/bin/uname"
-printf '#!/bin/sh\necho 1\n' > "$tmp/bin/pgrep"
-chmod +x "$tmp/bin/uname" "$tmp/bin/pgrep"
+# shellcheck disable=SC2016  # the fake's own shell expands the variable
+printf '#!/bin/sh\necho "${FAKE_RUNNERS:-1}"\n' > "$tmp/bin/pgrep"
+# a fake transport_memory: creates its server only under FAKE_NEED KiB or more
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n[ "$(ulimit -l)" -ge "$FAKE_NEED" ]\n' > "$tmp/probe"
+chmod +x "$tmp/bin/uname" "$tmp/bin/pgrep" "$tmp/probe"
 echo 0 > "$tmp/proc/sys/kernel/io_uring_disabled"
 
 # the soft limit the tool sees: 1024 KiB, or the hard limit when that is lower
@@ -39,14 +45,16 @@ fixture()
 }
 fixture covered $((limit / 2))
 fixture short $((limit * 2))
+fixture stale $((limit / 4))
 mkdir -p "$tmp/empty"
 
-# expect CASE STATUS TEXT TREE: the tool under the lowered limit exits STATUS and prints TEXT
+# expect CASE STATUS TEXT TREE [PROBE]: the tool under the lowered limit exits
+# STATUS and prints TEXT (FAKE_RUNNERS and FAKE_NEED pass through)
 expect()
 {
     local status=0
     PATH="$tmp/bin:$PATH" ROCKETNET_MEMLOCK_PROC="$tmp/proc" \
-        bash -c 'ulimit -S -l "$1" && exec bash "$2" --root "$3"' memlock "$limit" "$tool" "$4" \
+        bash -c 'ulimit -S -l "$1" && exec bash "$2" --root "$3" ${4:+"$4"}' memlock "$limit" "$tool" "$4" "${5:-}" \
         > "$tmp/$1.log" 2>&1 || status=$?
     [ "$status" = "$2" ] || fail "$1: exited $status, expected $2: $(cat "$tmp/$1.log")"
     grep -qF -- "$3" "$tmp/$1.log" || fail "$1: output lacks '$3': $(cat "$tmp/$1.log")"
@@ -56,4 +64,12 @@ expect covered 0 "memlock: $limit KiB covers $((limit / 2)) KiB: PASS" "$tmp/cov
 expect short 1 "memlock: FAIL: $limit KiB is under $((limit * 2)) KiB" "$tmp/short"
 expect zero 1 'memlock: FAIL: 0 of 2 per-case need defines' "$tmp/empty"
 
-echo "check_memlock self-test passed: covered, short limit ($limit KiB), and zero defines."
+# a measured per-server need over the per-case need: stale with one runner,
+# a user-wide upper bound (reported, not judged) with two
+export FAKE_NEED=$((limit / 2))
+FAKE_RUNNERS=1 expect stale-one-runner 1 "memlock: FAIL: measure the io_uring cases on this kernel" "$tmp/stale" "$tmp/probe"
+FAKE_RUNNERS=2 expect stale-two-runners 0 "but user-wide: 2 runners of this user may hold rings now" "$tmp/stale" "$tmp/probe"
+grep -qF -- "memlock: $limit KiB covers $((2 * (limit / 4))) KiB: PASS" "$tmp/stale-two-runners.log" \
+    || fail "stale-two-runners: the runners comparison did not decide: $(cat "$tmp/stale-two-runners.log")"
+
+echo "check_memlock self-test passed: covered, short limit ($limit KiB), zero defines, and a measured need over the per-case need with one runner (FAIL) and two (reported)."
