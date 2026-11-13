@@ -153,7 +153,7 @@ static bool delta_gso_read_address( void * context, const struct sockaddr_storag
     (void) context;
     rocketnet_unit_check( storage->ss_family == AF_INET );
     const struct sockaddr_in * name = (const struct sockaddr_in *) storage;
-    rocketnet_address_load_ipv4( from, ntohl( name->sin_addr.s_addr ), ntohs( name->sin_port ) );
+    rocketnet_address_load_ipv4( from, name->sin_addr.s_addr, name->sin_port );
     return true;
 }
 

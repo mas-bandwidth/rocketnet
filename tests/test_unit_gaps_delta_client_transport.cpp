@@ -258,12 +258,13 @@ static void test_delta_client_hand_off_bytes_reach_the_bandwidth_window()
     delta_tr_connect( &pair, &identity );
     rocketnet_client_transport_t * transport = delta_tr_transport( &pair );
 
-    // two seconds of quiet: every earlier stats frame leaves the window, and
+    // over a second of quiet: every earlier stats frame leaves the window, and
     // the update at t starts a frame of its own
 
-    const double t = pair.time + 2.0;
+    const double t = pair.time + 1.05;
     rocketnet_client_transport_update( transport, t );
     rocketnet_client_transport_send_packets( transport );
+    printf( "delta bandwidth: state %d\n", rocketnet_client_transport_state( transport ) );
 
     struct rocketnet_client_transport_stats_t start;
     rocketnet_client_transport_stats( transport, &start );
