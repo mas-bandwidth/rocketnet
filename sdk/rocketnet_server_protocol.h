@@ -38,6 +38,7 @@ struct rocketnet_counters_t;
 #define ROCKETNET_SERVER_TEST_FAIL_WRITER_NONE               0
 #define ROCKETNET_SERVER_TEST_FAIL_REQUEST_DENIED_WRITER     1
 #define ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER    2
+#define ROCKETNET_SERVER_TEST_FAIL_KEEP_ALIVE_WRITER         3
 #endif // #if ROCKETNET_DEV
 
 // The outcomes of processing a connection request: IGNORED sends nothing;
