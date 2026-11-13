@@ -2282,7 +2282,7 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
 #include "rocketnet_server_msgx.h"
 
 // the macOS batched server, staged: a connected socket per client sent with
-// sendmsg_x from per-queue transmit workers (sdk/rocketnet_server_msgx_darwin.cpp).
+// sendmsg_x from per-queue transmit workers (sdk/rocketnet_server_msgx_apple.cpp).
 // The replay walk's forget and mark feed its socket table (the high water is
 // not used: the table only needs to know which addresses hold a connected
 // client); its client side is the portable one, which batches with msgx.
