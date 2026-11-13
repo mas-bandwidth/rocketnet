@@ -41,6 +41,9 @@
 #   --client-remote DIR  the players' checkout (default --remote)
 #   --local-bin DIR    this machine's harden_load (default ./bin)
 #   --ssh "CMD"        the ssh command (default "ssh -o BatchMode=yes")
+#   --plant-loss N     drop one in N of the server's datagrams on the players' machine
+#                      before its UDP sees them, named by no counter: the chain must
+#                      FAIL (scripts/harden-pair; a check of the check)
 #   --profile          sample the server with perf during the row and write the
 #                      per-thread-class ranked lists to OUT/profile.txt (needs
 #                      perf and sudo on the server machine)
@@ -54,7 +57,7 @@ server_host=""; client_host=""; server_ip=""; remote=""; out=""
 server_dev=""; client_dev=""; load=""
 game_threads=21; first_cpu=3; queues=2; game_load=0; world_ms=0; split=top
 input_bytes=256; seconds=60; clients=1000; threads=32
-client_remote=""; local_bin=./bin; ssh_command="ssh -o BatchMode=yes"; profile=0
+client_remote=""; local_bin=./bin; ssh_command="ssh -o BatchMode=yes"; profile=0; plant_loss=0
 
 usage()
 {
@@ -85,6 +88,7 @@ while [ $# -gt 0 ]; do
         --threads) threads="$2"; shift 2 ;;
         --local-bin) local_bin="$2"; shift 2 ;;
         --ssh) ssh_command="$2"; shift 2 ;;
+        --plant-loss) plant_loss="$2"; shift 2 ;;
         --profile) profile=1; shift ;;
         *) usage ;;
     esac
@@ -164,7 +168,7 @@ status=0
     --server-ip "$server_ip" --remote "$remote" --client-remote "${client_remote:-$remote}" --transport xdp --row space \
     --xdp-queues "$queues" --server-dev "$server_dev" --client-dev "$client_dev" --seconds "$seconds" --clients "$clients" \
     --threads "$threads" --server-sudo --server-args "$server_args" --client-args "--input-bytes $input_bytes" \
-    --local-bin "$local_bin" --out "$out" || status=$?
+    --plant-loss "$plant_loss" --local-bin "$local_bin" --out "$out" || status=$?
 
 if [ "$profile" = 1 ]; then
     profile_status=0
