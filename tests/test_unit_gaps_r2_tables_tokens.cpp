@@ -25,6 +25,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 static void gaps_r2_tables_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
     (void) condition;
@@ -32,6 +33,7 @@ static void gaps_r2_tables_quiet_assert( const char * condition, const char * fu
     (void) file;
     (void) line;
 }
+#endif // #if ROCKETNET_DEV
 
 static bool gaps_r2_tables_all( const uint8_t * bytes, size_t count, uint8_t value )
 {
