@@ -4199,7 +4199,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     {
         return;
     }
-    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase );
+    rocketnet_fill_phase_main_scope_t phase( &server_transport->fill_phase, true );
     if ( !phase.entered )
     {
         return;
@@ -4436,6 +4436,10 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
 
     rocketnet_server_acks_open( server_transport->protocol.acks );
     server_transport->update_open = 1;
+
+    // proofs/tla/RNFillPhase.tla MainEpoch: the window opens; until
+    // update_finish only update_client and the update calls run
+    rocketnet_fill_phase_window( &server_transport->fill_phase, true );
 }
 
 static void rocketnet_server_transport_update_finish_body( struct rocketnet_server_transport_t * server_transport );
@@ -4467,6 +4471,7 @@ static void rocketnet_server_transport_update_finish_body( struct rocketnet_serv
         return;
     }
     server_transport->update_open = 0;
+    rocketnet_fill_phase_window( &server_transport->fill_phase, false );   // proofs/tla/RNFillPhase.tla MainEpoch
 
     // proofs/tla/RNAckApplyPhase.tla Close: after the game's join, every
     // client nobody took applies here, and the batch is published in arrival

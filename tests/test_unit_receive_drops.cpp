@@ -88,6 +88,42 @@ static void test_receive_drop_samples_name_the_first_refused_datagrams()
 }
 
 REGISTER_UNIT_TEST( test_receive_drop_samples_name_the_first_refused_datagrams );
+
+// refused datagrams need no authentication, so a flood reaches the sampler
+// without end: once the samples are full it stops counting, so its count
+// never grows toward its type's end and never becomes an index outside the
+// samples. The seam puts the count far past the samples, as a long flood
+// would, without two billion calls
+
+static void test_receive_drop_samples_stop_counting_when_full()
+{
+    rocketnet_address_t from;
+    check( rocketnet_address_parse( &from, "127.0.0.1:4243" ) );
+    uint8_t data[24];
+    memset( data, 0x5A, sizeof( data ) );
+
+    auto & next = rocketnet_receive_drop_sample_next();
+    const auto saved = next.load();
+    const std::string before = rocketnet_receive_drop_samples_text();
+
+    // just past the samples, at a 32-bit signed count's end (where the old
+    // count wrapped to a negative index), and at the 64-bit count's end
+    const uint64_t far[3] = { ROCKETNET_RECEIVE_DROP_SAMPLES, 0x7FFFFFF0ULL, UINT64_MAX };
+    for ( int k = 0; k < 3; k++ )
+    {
+        next.store( far[k] );
+        for ( int i = 0; i < 32; i++ )
+        {
+            rocketnet_receive_drop_sample_record( ROCKETNET_RECEIVE_DROP_WRONG_VALUE, &from, data, 24 );
+        }
+        check( next.load() == far[k] );
+        check( rocketnet_receive_drop_samples_text() == before );
+    }
+
+    next.store( saved );
+}
+
+REGISTER_UNIT_TEST( test_receive_drop_samples_stop_counting_when_full );
 #endif // #if ROCKETNET_DEV
 
 static void test_receive_drop_tally_counts_and_sums()

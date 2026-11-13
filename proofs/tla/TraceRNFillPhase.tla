@@ -4,7 +4,9 @@
 (* template TraceRNTraceExample.tla.  TraceLog is the record sequence      *)
 (* tests/tla_trace_fill_phase.cpp writes over sdk/rocketnet_fill_phase.cpp *)
 (* run by real threads, one main and three fillers, released one step at  *)
-(* a time from the code's own trace hook: one record per step, with the   *)
+(* a time from the code's own trace hook (a filler makes fill calls and   *)
+(* takes, the main thread update calls that open and close the window and *)
+(* other operations): one record per step, with the                       *)
 (* operation the thread was in (op), the step's arguments and what it     *)
 (* gave back (args), the model action the hook named (act) and every      *)
 (* model variable after it (state).  Record 1 is "init".                   *)
@@ -41,31 +43,36 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [mpc |-> mpc, mscan |-> mscan, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
-            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, fillsIn |-> fillsIn,
-            fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed, opted |-> opted,
+VarsRec == [mpc |-> mpc, mscan |-> mscan, mkind |-> mkind, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
+            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, fillsIn |-> fillsIn,
+            fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed,
+            overlaps |-> overlaps, twoFillers |-> twoFillers, opted |-> opted,
             fbroke |-> fbroke,
             phaseIn |-> phaseIn, falseAlarm |-> falseAlarm, mainsDone |-> mainsDone,
-            fillsDone |-> fillsDone]
+            fillsDone |-> fillsDone, takesDone |-> takesDone]
 
 \* the steps each call of the code can take
 OpActs == [main_begin |-> {"MainAnnounce", "MainLook", "MainIn"},
            main_end |-> {"MainEpoch", "MainDrop"},
            fill_begin |-> {"FillBegin", "FillLock", "FillDecide", "FillCount", "FillLook"},
            fill_end |-> {"FillUnclaim", "FillLeave"},
+           take_begin |-> {"TakeCount", "TakeLook"},
+           take_end |-> {"TakeLeave"},
            fill_scope |-> {"FillSkip"},
+           take_scope |-> {"TakeSkip"},
            main_scope |-> {"MainSkip"},
            arm |-> {"Arm"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
-Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce
+Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce(x[1])
                [] a = "MainLook" -> MainLook(x[1], x[2])
-               [] a = "MainIn" -> MainIn
-               [] a = "MainEpoch" -> MainEpoch
+               [] a = "MainIn" -> MainIn(x[1])
+               [] a = "MainEpoch" -> MainEpoch(x[1])
                [] a = "MainDrop" -> MainDrop
-               [] a = "MainSkip" -> MainSkip
+               [] a = "MainSkip" -> MainSkip(x[1])
                [] a = "FillSkip" -> FillSkip(x[1])
+               [] a = "TakeSkip" -> TakeSkip(x[1])
                [] a = "Arm" -> Arm
                [] a = "FillBegin" -> FillBegin(x[1], x[2])
                [] a = "FillLock" -> FillLock(x[1], x[2])
@@ -74,6 +81,23 @@ Act(a, x) == CASE a = "MainAnnounce" -> MainAnnounce
                [] a = "FillLook" -> FillLook(x[1], x[2])
                [] a = "FillUnclaim" -> FillUnclaim(x[1])
                [] a = "FillLeave" -> FillLeave(x[1])
+               [] a = "TakeCount" -> TakeCount(x[1], x[2])
+               [] a = "TakeLook" -> TakeLook(x[1], x[2])
+               [] a = "TakeLeave" -> TakeLeave(x[1])
+
+\* each refusal of the check, and the window's work, taken in some accepted
+\* trace of the seeds (tools/tla_trace_check.py, the row's reach)
+RefusedMainLook == refusal = "MainLook"
+RefusedMainIn == refusal = "MainIn" /\ window
+RefusedFillLock == refusal = "FillLock"
+RefusedFillDecide == refusal = "FillDecide"
+RefusedFillLookByMain == refusal = "FillLook" /\ ~window
+RefusedFillLookInWindow == refusal = "FillLook" /\ window /\ mpc = "idle"
+RefusedTakeLook == refusal = "TakeLook"
+TakeInWindow == window /\ mpc = "idle" /\ \E f \in Fillers : fpc[f] = "tin"
+TwoTakesInWindow == window /\ \E f, g \in Fillers : f # g /\ fpc[f] = "tin" /\ fpc[g] = "tin"
+RefusedMainBesideTake == refusal = "MainLook" /\ \E f \in Fillers : fpc[f] = "tin"
+WindowOpened == window /\ mpc = "epoched" /\ mkind = "update"
 
 TraceInit ==
     /\ Init

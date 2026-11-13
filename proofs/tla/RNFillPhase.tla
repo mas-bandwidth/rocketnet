@@ -6,16 +6,23 @@
 (*                                                                         *)
 (* One main thread makes main-thread operations (update, send_packets,     *)
 (* stop ...); fillers make fill calls (start, finish, abort), each for one *)
-(* client.  The contract: no fill call overlaps a main operation, and in   *)
-(* one fill phase (between two main operations) every fill call for a      *)
-(* client comes from one filler.  The environment here may break the       *)
-(* contract.  The model checks that no break gets through the check        *)
-(* (Sound, OneFiller) and that every refusal is of a call or operation     *)
-(* that broke the contract or met a break (NoFalseAlarm).  A refused call  *)
-(* or operation does nothing and ends.                                     *)
+(* client, and takes (update_client).  The contract: no fill call or take  *)
+(* overlaps a main operation; in one fill phase (between two main          *)
+(* operations) every fill call for a client comes from one filler; and in  *)
+(* the window of the update in three calls (from update_receive's main     *)
+(* operation to update_finish's) only takes and the update calls run.  The *)
+(* environment here may break the contract.  The model checks that no      *)
+(* break gets through the check (Sound, OneFiller, TakeSound, WindowShut)  *)
+(* and that every refusal is of a call or operation that broke the         *)
+(* contract or met a break (NoFalseAlarm).  A refused call or operation    *)
+(* does nothing and ends.                                                  *)
 (*                                                                         *)
 (* The code's words:                                                       *)
 (*   mainCalls  fill_phase->main_calls                                     *)
+(*   window     fill_phase->window: the update in three calls is open      *)
+(*   mkind      the main operation's kind: "update" (begun with           *)
+(*              update_call: update, update_receive, update_finish) or    *)
+(*              "other"; "none" between operations                         *)
 (*   fillsIn[l] fill_phase->lines[l].fills_in; a call counts on the line  *)
 (*              its thread id hashes to, a line of LineChoice(f) (any line; *)
 (*              an MC gives each filler its own), and fillers may share one *)
@@ -28,14 +35,17 @@
 (*   fepoch[f]  the epoch fill_begin loaded first                          *)
 (*   seen[f]    the word fill_begin's lock replaced (before)               *)
 (*   saved[f]   the owner fill_begin's decide replaced (owner_before)      *)
+(*   overlaps   the MAIN_THREAD_CALL_OVERLAP counter (overlap_counter)     *)
+(*   twoFillers the CLIENT_SEND_TWO_THREADS counter (two_fillers_counter)  *)
 (* Nesting (main_owner, main_depth, a word's depth above 1) and a client   *)
 (* index outside the server's range are not modelled: a nested call or     *)
 (* operation is the outer one's own work and checks nothing.               *)
 (*                                                                         *)
 (* What a step of the code gives back is an argument of its action: the   *)
-(* line a count took (FillCount's l), and whether a look, lock or decide   *)
-(* let the call or operation go on (ok), which the action requires to be  *)
-(* what the state says.                                                    *)
+(* line a count took (FillCount's and TakeCount's l), whether a look, lock *)
+(* or decide let the call or operation go on (ok), which the action        *)
+(* requires to be what the state says, and the window an update           *)
+(* operation's work left (MainEpoch's w).                                  *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -44,12 +54,16 @@ CONSTANTS
     Clients,        \* the client indexes
     MaxMain,        \* main operations in a behaviour
     MaxFills,       \* fill calls per filler in a behaviour
+    MaxTakes,       \* takes (update_client) per filler in a behaviour
     LookFirst,      \* TRUE: each side looks at the other before it announces (reversed witness)
     LoadStore,      \* TRUE: the lock is a load, then a store, not a CAS (reversed witness)
     ResetOnLeave,   \* FALSE: main_end leaves the epoch as it was (reversed witness)
     NoEpochLook,    \* TRUE: the look reads main_calls only, not the epoch again (reversed witness)
     NoRestore,      \* TRUE: a refused look leaves its claim, out, in place of the word and owner it replaced (reversed witness)
     ScanOne,        \* TRUE: main_begin looks at one fills_in line only, as if there were one counter (reversed witness)
+    NoWindow,       \* TRUE: a fill call's look does not read the window (reversed witness)
+    NoMainWindow,   \* TRUE: main_begin does not read the window (reversed witness)
+    TakeUncounted,  \* TRUE: a take does not count itself in on a fills_in line (reversed witness)
     OptedAtStart,   \* TRUE: the game named a client before anything here (the armed check, as every case before the latch)
     ArmedAtCreate,  \* TRUE: the check is armed from create, whatever the game calls (reversed witness)
     Lines,          \* the fills_in lines, their indexes
@@ -61,6 +75,7 @@ ASSUME Lines \subseteq Nat
 Epochs == 0..(MaxMain + 1)
 Words == [ep : Epochs, held : BOOLEAN, in : BOOLEAN]
 Owners == Fillers \cup {NoOwner}
+Kinds == {"update", "other"}
 
 \* the lines filler f's calls may count on: any (the code hashes the thread
 \* id); an MC overrides it to give each filler one line, as a thread has
@@ -69,113 +84,151 @@ LineChoice(f) == Lines
 \* a call that counts on no line
 NoLine == -1
 
+\* a filler's control states inside a fill call, and inside a take
+FillStates == {"begun", "loaded", "locked", "decided", "counted", "looked", "in", "unclaimed"}
+TakeStates == {"tcounted", "tin"}
+
+\* the refusal steps, for the trace check's reach predicates
+Refusals == {"none", "MainLook", "MainIn", "FillLock", "FillDecide", "FillLook", "TakeLook"}
+
 VARIABLES
     mpc,            \* main: "idle", "announced" (scanning), "scan" (LookFirst: scanning before it announces), "in", "epoched"
     mscan,
-    fpc,            \* each filler: "idle", "begun", "loaded" (LoadStore), "locked", "decided", "counted", "looked" (LookFirst), "in", "unclaimed"
-    fclient,        \* the client of each filler's current call
+    mkind,
+    fpc,            \* each filler: "idle", a fill state, or a take state ("tcounted", "tin")
+    fclient,        \* the client of each filler's current fill call
     fepoch,
     seen,
     saved,
     mainCalls,
+    window,
     fillsIn,
     fline,
     epoch,
     word,
     owner,
     armed,          \* the latch: calls enter the check (armed)
+    overlaps,
+    twoFillers,
     \* ghost: the contract itself, read off what happened
-    opted,          \* the game has made a call that names a client: from then on the thread rules are its contract
+    opted,          \* the game has made a call that names a client or opens a split update: from then on the thread rules are its contract
     fbroke,         \* each filler's current call has overlapped a main operation
     phaseIn,        \* the fillers whose calls on each client passed the check in this fill phase
     falseAlarm,     \* a refusal of a call or operation that neither broke the contract nor met a break
+    refusal,        \* the last refusal step taken ("none" before any): history for the trace check's reach predicates
     mainsDone,
-    fillsDone
+    fillsDone,
+    takesDone
 
-vars == <<mpc, mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
-          armed, opted, fbroke, phaseIn, falseAlarm, mainsDone, fillsDone>>
+vars == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+          armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, mainsDone, fillsDone, takesDone>>
+
+\* what the MC runs fingerprint (VIEW View): the refusal counts and the last
+\* refusal are history no step reads but to count on, and would only
+\* multiply the states
+View == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+               armed, opted, fbroke, phaseIn, falseAlarm, mainsDone, fillsDone, takesDone>>
 
 NoWord == [ep |-> 0, held |-> FALSE, in |-> FALSE]
 
 TypeOK ==
     /\ mpc \in {"idle", "announced", "scan", "in", "epoched"}
     /\ mscan \subseteq Lines
-    /\ fpc \in [Fillers -> {"idle", "begun", "loaded", "locked", "decided", "counted", "looked", "in", "unclaimed"}]
+    /\ mkind \in Kinds \cup {"none"}
+    /\ fpc \in [Fillers -> {"idle"} \cup FillStates \cup TakeStates]
     /\ fclient \in [Fillers -> Clients]
     /\ fepoch \in [Fillers -> Epochs]
     /\ seen \in [Fillers -> Words]
     /\ saved \in [Fillers -> Owners]
     /\ mainCalls \in 0..1
+    /\ window \in BOOLEAN
     /\ fillsIn \in [Lines -> 0..Cardinality(Fillers)]
     /\ fline \in [Fillers -> Lines \cup {NoLine}]
     /\ epoch \in Epochs
     /\ word \in [Clients -> Words]
     /\ owner \in [Clients -> Owners]
     /\ armed \in BOOLEAN
+    /\ overlaps \in Nat
+    /\ twoFillers \in Nat
     /\ opted \in BOOLEAN
     /\ fbroke \in [Fillers -> BOOLEAN]
     /\ phaseIn \in [Clients -> SUBSET Fillers]
     /\ falseAlarm \in BOOLEAN
+    /\ refusal \in Refusals
     /\ mainsDone \in 0..MaxMain
     /\ fillsDone \in [Fillers -> 0..MaxFills]
+    /\ takesDone \in [Fillers -> 0..MaxTakes]
 
 Init ==
     /\ mpc = "idle"
     /\ mscan = {}
+    /\ mkind = "none"
     /\ fpc = [f \in Fillers |-> "idle"]
     /\ fclient = [f \in Fillers |-> CHOOSE c \in Clients : TRUE]
     /\ fepoch = [f \in Fillers |-> 0]
     /\ seen = [f \in Fillers |-> NoWord]
     /\ saved = [f \in Fillers |-> NoOwner]
     /\ mainCalls = 0
+    /\ window = FALSE
     /\ fillsIn = [l \in Lines |-> 0]
     /\ fline = [f \in Fillers |-> NoLine]
     /\ epoch = 1
     /\ word = [c \in Clients |-> NoWord]
     /\ owner = [c \in Clients |-> NoOwner]
     /\ armed = (OptedAtStart \/ ArmedAtCreate)
+    /\ overlaps = 0
+    /\ twoFillers = 0
     /\ opted = OptedAtStart
     /\ fbroke = [f \in Fillers |-> FALSE]
     /\ phaseIn = [c \in Clients |-> {}]
     /\ falseAlarm = FALSE
+    /\ refusal = "none"
     /\ mainsDone = 0
     /\ fillsDone = [f \in Fillers |-> 0]
+    /\ takesDone = [f \in Fillers |-> 0]
 
-\* a fill call in progress, from its first step to its leave
+\* a fill call or a take in progress, from its first step to its leave
 FillBusy == \E f \in Fillers : fpc[f] # "idle"
 MainBusy == mpc # "idle"
 
-\* the ghost of a main step: every fill call in progress has met a main operation
+\* the ghost of a main step: every call in progress has met a main operation
 MainMeets == fbroke' = [g \in Fillers |-> fbroke[g] \/ fpc[g] # "idle"]
+
+\* a falseAlarm, when the step's refusal is not justified
+Alarm(justified) == IF justified THEN UNCHANGED falseAlarm ELSE falseAlarm' = TRUE
 
 (***************************************************************************)
 (* Main: main_begin is MainAnnounce (main_calls fetch_add), then MainLook  *)
 (* for each fills_in line (one load each; refused at a line that is not   *)
-(* 0), then MainIn; main_end is MainEpoch (the epoch store) then MainDrop  *)
-(* (main_calls fetch_sub).  LookFirst scans first (MainScan), then         *)
-(* announces.  One main thread: the refusal of a second main operation is  *)
-(* not modelled.                                                           *)
+(* 0), then MainIn (the window's load: an operation other than an update  *)
+(* call is refused while the window is open); main_end is MainEpoch (the  *)
+(* operation's work, which for an update call may open or close the       *)
+(* window, then the epoch store) then MainDrop (main_calls fetch_sub).    *)
+(* LookFirst scans first (MainScan), then announces.  One main thread: the *)
+(* refusal of a second main operation is not modelled.                    *)
 (***************************************************************************)
 ScanLines == IF ScanOne THEN {CHOOSE l \in Lines : TRUE} ELSE Lines
 
-MainAnnounce ==
+MainAnnounce(k) ==
     /\ \/ ~LookFirst /\ armed /\ mpc = "idle" /\ mainsDone < MaxMain /\ mpc' = "announced" /\ mscan' = ScanLines
-       \/ LookFirst /\ mpc = "scan" /\ mscan = {} /\ mpc' = "in" /\ UNCHANGED mscan
+          /\ mkind' = k
+       \/ LookFirst /\ mpc = "scan" /\ mscan = {} /\ mpc' = "in" /\ UNCHANGED mscan /\ k = mkind /\ UNCHANGED mkind
     /\ mainCalls' = mainCalls + 1
     /\ MainMeets
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
-MainScan ==
+MainScan(k) ==
     /\ LookFirst
     /\ armed
     /\ mpc = "idle"
     /\ mainsDone < MaxMain
     /\ mpc' = "scan"
     /\ mscan' = ScanLines
+    /\ mkind' = k
     /\ MainMeets
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* ok: main_begin's look at line l let the operation go on (the line's
 \* count was 0); a look at a counted line refuses it
@@ -187,41 +240,61 @@ MainLook(l, ok) ==
     /\ IF ~ok
           THEN /\ mpc' = "idle"
                /\ mscan' = {}
+               /\ mkind' = "none"
                /\ mainsDone' = mainsDone + 1
-               /\ falseAlarm' = (falseAlarm \/ ~FillBusy)
+               /\ Alarm(FillBusy)
                /\ mainCalls' = IF LookFirst THEN mainCalls ELSE mainCalls - 1
+               /\ overlaps' = overlaps + 1
+               /\ refusal' = "MainLook"
           ELSE /\ mscan' = mscan \ {l}
-               /\ UNCHANGED <<mpc, mainCalls, mainsDone, falseAlarm>>
-    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+               /\ UNCHANGED <<mpc, mkind, mainCalls, mainsDone, falseAlarm, overlaps, refusal>>
+    /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, fillsDone>>
+    /\ UNCHANGED <<armed, opted, twoFillers, takesDone>>
 
-MainIn ==
+\* ok: the window's load let the operation in: it is an update call, or the
+\* window is shut. An operation refused here broke the window's rule
+MainIn(ok) ==
     /\ ~LookFirst
     /\ mpc = "announced"
     /\ mscan = {}
-    /\ mpc' = "in"
+    /\ ok = ~(window /\ mkind = "other" /\ ~NoMainWindow)
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ IF ~ok
+          THEN /\ mpc' = "idle"
+               /\ mkind' = "none"
+               /\ mainCalls' = mainCalls - 1
+               /\ mainsDone' = mainsDone + 1
+               /\ overlaps' = overlaps + 1
+               /\ refusal' = "MainIn"
+          ELSE /\ mpc' = "in"
+               /\ UNCHANGED <<mkind, mainCalls, mainsDone, overlaps, refusal>>
+    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
+    /\ UNCHANGED <<armed, opted, twoFillers, takesDone>>
 
-\* the operation's work done: the epoch moves, and a new fill phase begins
-MainEpoch ==
+\* the operation's work done, then the epoch moves and a new fill phase
+\* begins.  w: the window the work left: an update call's work may open it
+\* (update_receive) or close it (update_finish, update); any other
+\* operation leaves it
+MainEpoch(w) ==
     /\ mpc = "in"
+    /\ IF mkind = "update" THEN w \in BOOLEAN ELSE w = window
     /\ mpc' = "epoched"
+    /\ window' = w
     /\ epoch' = IF ResetOnLeave THEN epoch + 1 ELSE epoch
     /\ phaseIn' = [c \in Clients |-> {}]
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, word, owner, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, word, owner, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 MainDrop ==
     /\ mpc = "epoched"
     /\ mpc' = "idle"
+    /\ mkind' = "none"
     /\ mainCalls' = mainCalls - 1
     /\ mainsDone' = mainsDone + 1
     /\ MainMeets
-    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 (***************************************************************************)
 (* A filler: fill_begin is FillBegin (load the epoch), FillLock (one CAS   *)
@@ -229,11 +302,12 @@ MainDrop ==
 (* FillStore, FillDecide (refused when another filler claimed the client   *)
 (* in this epoch, restoring the word; else the owner and the claim are     *)
 (* stored), FillCount (fills_in fetch_add on the line l the thread hashes  *)
-(* to), FillLook (load main_calls and the epoch again; refused, restoring  *)
-(* the owner and the word, when a main operation is running or ran since   *)
-(* FillBegin).  fill_end is FillUnclaim (clear in) then FillLeave          *)
-(* (fills_in fetch_sub).  The fetch_subs are on the line the call counted  *)
-(* on (fline).  LookFirst looks before it counts.                          *)
+(* to), FillLook (load main_calls, the epoch and the window again;        *)
+(* refused, restoring the owner and the word, when a main operation is     *)
+(* running or ran since FillBegin, or the window is open).  fill_end is    *)
+(* FillUnclaim (clear in) then FillLeave (fills_in fetch_sub).  The        *)
+(* fetch_subs are on the line the call counted on (fline).  LookFirst      *)
+(* looks before it counts.                                                 *)
 (***************************************************************************)
 
 \* a fill step: the call meets the main operation in progress, if any
@@ -242,16 +316,16 @@ FillMeets(f) == fbroke' = [fbroke EXCEPT ![f] = @ \/ MainBusy]
 \* another filler passed the check on this client in this fill phase
 Second(f) == (phaseIn[fclient[f]] \ {f}) # {}
 
-\* another filler is inside a call on this client
-OtherOn(f) == \E g \in Fillers \ {f} : fpc[g] # "idle" /\ fclient[g] = fclient[f]
+\* another filler is inside a fill call on this client
+OtherOn(f) == \E g \in Fillers \ {f} : fpc[g] \in FillStates /\ fclient[g] = fclient[f]
 
 \* a refusal of f's call is justified when the call broke the contract or met a break
-Justified(f) == fbroke[f] \/ MainBusy \/ Second(f) \/ OtherOn(f)
+Justified(f) == fbroke[f] \/ MainBusy \/ Second(f) \/ OtherOn(f) \/ window
 
 FillRefused(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "idle"]
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
-    /\ falseAlarm' = (falseAlarm \/ ~Justified(f))
+    /\ Alarm(Justified(f))
 
 FillBegin(f, c) ==
     /\ armed
@@ -261,8 +335,8 @@ FillBegin(f, c) ==
     /\ fclient' = [fclient EXCEPT ![f] = c]
     /\ fepoch' = [fepoch EXCEPT ![f] = epoch]
     /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
-    /\ UNCHANGED <<mpc, mscan, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mpc, mscan, mkind, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* ok: the lock was taken (the in bit was clear); else the call is refused
 FillLock(f, ok) ==
@@ -273,13 +347,15 @@ FillLock(f, ok) ==
     /\ FillMeets(f)
     /\ IF ~ok
           THEN /\ FillRefused(f)
+               /\ twoFillers' = twoFillers + 1
+               /\ refusal' = "FillLock"
                /\ UNCHANGED <<seen, word>>
           ELSE /\ seen' = [seen EXCEPT ![f] = word[c]]
                /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.in = TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
-               /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<armed, opted>>
+               /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers, refusal>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, takesDone>>
 
 FillLoad(f) ==
     /\ LoadStore
@@ -287,8 +363,8 @@ FillLoad(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "loaded"]
     /\ seen' = [seen EXCEPT ![f] = word[fclient[f]]]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, saved, mainCalls, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillStore(f) ==
     LET c == fclient[f] IN
@@ -296,12 +372,13 @@ FillStore(f) ==
     /\ FillMeets(f)
     /\ IF seen[f].in
           THEN /\ FillRefused(f)
+               /\ twoFillers' = twoFillers + 1
                /\ UNCHANGED word
           ELSE /\ word' = [word EXCEPT ![c] = [seen[f] EXCEPT !.in = TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
-               /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<armed, opted>>
+               /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, refusal, takesDone>>
 
 \* the lock is held: only f writes the word and the owner until it clears in.
 \* ok: f claimed the client; else another filler holds it in this epoch and
@@ -313,15 +390,17 @@ FillDecide(f, ok) ==
     /\ FillMeets(f)
     /\ IF ~ok
           THEN /\ FillRefused(f)
+               /\ twoFillers' = twoFillers + 1
+               /\ refusal' = "FillDecide"
                /\ word' = [word EXCEPT ![c] = seen[f]]
                /\ UNCHANGED <<saved, owner>>
           ELSE /\ saved' = [saved EXCEPT ![f] = owner[c]]
                /\ owner' = [owner EXCEPT ![c] = f]
                /\ word' = [word EXCEPT ![c] = [ep |-> fepoch[f], held |-> TRUE, in |-> TRUE]]
                /\ fpc' = [fpc EXCEPT ![f] = "decided"]
-               /\ UNCHANGED <<falseAlarm, fillsDone>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, mainCalls, fillsIn, fline, epoch, phaseIn, mainsDone>>
-    /\ UNCHANGED <<armed, opted>>
+               /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers, refusal>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, mainCalls, window, fillsIn, fline, epoch, phaseIn, mainsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, takesDone>>
 
 \* l: the line the call counted on
 FillCount(f, l) ==
@@ -332,16 +411,16 @@ FillCount(f, l) ==
     /\ fillsIn' = [fillsIn EXCEPT ![l] = @ + 1]
     /\ fline' = [fline EXCEPT ![f] = l]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, word, owner, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* a main operation running, or one that ran since this call loaded the
-\* epoch: refused (ok FALSE)
+\* epoch, or the window open: refused (ok FALSE)
 FillLook(f, ok) ==
     LET c == fclient[f] IN
     /\ \/ ~LookFirst /\ fpc[f] = "counted"
        \/ LookFirst /\ fpc[f] = "decided"
-    /\ ok = ~(mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f]))
+    /\ ok = ~(mainCalls > 0 \/ (~NoEpochLook /\ epoch # fepoch[f]) \/ (~NoWindow /\ window))
     /\ FillMeets(f)
     /\ IF ~ok
           THEN /\ FillRefused(f)
@@ -349,12 +428,14 @@ FillLook(f, ok) ==
                /\ owner' = IF NoRestore THEN owner ELSE [owner EXCEPT ![c] = saved[f]]
                /\ fillsIn' = IF LookFirst THEN fillsIn ELSE [fillsIn EXCEPT ![fline[f]] = @ - 1]
                /\ fline' = IF LookFirst THEN fline ELSE [fline EXCEPT ![f] = NoLine]
+               /\ overlaps' = overlaps + 1
+               /\ refusal' = "FillLook"
                /\ UNCHANGED phaseIn
           ELSE /\ fpc' = [fpc EXCEPT ![f] = IF LookFirst THEN "looked" ELSE "in"]
                /\ phaseIn' = IF LookFirst THEN phaseIn ELSE [phaseIn EXCEPT ![c] = @ \cup {f}]
-               /\ UNCHANGED <<falseAlarm, fillsDone, word, owner, fillsIn, fline>>
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, mainsDone>>
-    /\ UNCHANGED <<armed, opted>>
+               /\ UNCHANGED <<falseAlarm, fillsDone, word, owner, fillsIn, fline, overlaps, refusal>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, mainsDone>>
+    /\ UNCHANGED <<armed, opted, twoFillers, takesDone>>
 
 FillUnclaim(f) ==
     LET c == fclient[f] IN
@@ -362,8 +443,8 @@ FillUnclaim(f) ==
     /\ fpc' = [fpc EXCEPT ![f] = "unclaimed"]
     /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.held = FALSE, !.in = FALSE]]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillLeave(f) ==
     /\ fpc[f] = "unclaimed"
@@ -372,51 +453,113 @@ FillLeave(f) ==
     /\ fline' = [fline EXCEPT ![f] = NoLine]
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
     /\ FillMeets(f)
-    /\ UNCHANGED <<mpc, mscan, fclient, fepoch, seen, saved, mainCalls, epoch, word, owner, phaseIn, falseAlarm, mainsDone>>
-    /\ UNCHANGED <<armed, opted>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
+
+(***************************************************************************)
+(* A take (update_client): take_begin is TakeCount (fills_in fetch_add on  *)
+(* the thread's line) then TakeLook (main_calls load; refused, the count   *)
+(* dropped, when a main operation runs); take_end is TakeLeave (fills_in  *)
+(* fetch_sub).  A take claims no client.  TakeUncounted takes no count, so *)
+(* a main operation's look cannot see it.                                  *)
+(***************************************************************************)
+TakeCount(f, l) ==
+    /\ armed
+    /\ takesDone[f] < MaxTakes
+    /\ fpc[f] = "idle"
+    /\ fpc' = [fpc EXCEPT ![f] = "tcounted"]
+    /\ fillsIn' = IF TakeUncounted THEN fillsIn ELSE [fillsIn EXCEPT ![l] = @ + 1]
+    /\ fline' = [fline EXCEPT ![f] = l]
+    /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal, takesDone>>
+
+TakeLook(f, ok) ==
+    /\ fpc[f] = "tcounted"
+    /\ ok = (mainCalls = 0)
+    /\ FillMeets(f)
+    /\ IF ~ok
+          THEN /\ fpc' = [fpc EXCEPT ![f] = "idle"]
+               /\ takesDone' = [takesDone EXCEPT ![f] = @ + 1]
+               /\ fillsIn' = IF TakeUncounted THEN fillsIn ELSE [fillsIn EXCEPT ![fline[f]] = @ - 1]
+               /\ fline' = [fline EXCEPT ![f] = NoLine]
+               /\ Alarm(fbroke[f] \/ MainBusy)
+               /\ overlaps' = overlaps + 1
+               /\ refusal' = "TakeLook"
+          ELSE /\ fpc' = [fpc EXCEPT ![f] = "tin"]
+               /\ UNCHANGED <<takesDone, fillsIn, fline, falseAlarm, overlaps, refusal>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, twoFillers>>
+
+TakeLeave(f) ==
+    /\ fpc[f] = "tin"
+    /\ fpc' = [fpc EXCEPT ![f] = "idle"]
+    /\ fillsIn' = IF TakeUncounted THEN fillsIn ELSE [fillsIn EXCEPT ![fline[f]] = @ - 1]
+    /\ fline' = [fline EXCEPT ![f] = NoLine]
+    /\ takesDone' = [takesDone EXCEPT ![f] = @ + 1]
+    /\ FillMeets(f)
+    /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<armed, opted, overlaps, twoFillers, refusal>>
 
 \* The latch.  The server creates the check not armed, and the game's first
-\* call that names a client arms it, for good (Arm).  Not armed, a call's
-\* scope does nothing: the whole call is one step that touches no word of
-\* the check (FillSkip, MainSkip).  A call that began armed runs the check to
-\* its end.  A call that began before Arm and is still running after it is
-\* not in the model: the check does not see it.
+\* call that names a client, or its first update_receive, arms it, for good
+\* (Arm).  Not armed, a call's scope does nothing: the whole call is one
+\* step that touches no word of the check (FillSkip, TakeSkip, MainSkip; an
+\* update call's work may still open or close the window, MainSkip's w).  A
+\* call that began armed runs the check to its end.  A call that began
+\* before Arm and is still running after it is not in the model: the check
+\* does not see it.
 Arm ==
     /\ ~opted
     /\ opted' = TRUE
     /\ armed' = TRUE
-    /\ UNCHANGED <<mpc, mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
-                   fbroke, phaseIn, falseAlarm, mainsDone, fillsDone>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+                   overlaps, twoFillers, fbroke, phaseIn, falseAlarm, refusal, mainsDone, fillsDone, takesDone>>
 
 FillSkip(f) ==
     /\ ~armed
     /\ fpc[f] = "idle"
     /\ fillsDone[f] < MaxFills
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
-    /\ UNCHANGED <<mpc, mscan, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
-                   armed, opted, fbroke, phaseIn, falseAlarm, mainsDone>>
+    /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, mainsDone, takesDone>>
 
-MainSkip ==
+TakeSkip(f) ==
+    /\ ~armed
+    /\ fpc[f] = "idle"
+    /\ takesDone[f] < MaxTakes
+    /\ takesDone' = [takesDone EXCEPT ![f] = @ + 1]
+    /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, mainsDone, fillsDone>>
+
+MainSkip(w) ==
     /\ ~armed
     /\ mpc = "idle"
     /\ mainsDone < MaxMain
+    /\ w \in BOOLEAN
+    /\ window' = w
     /\ mainsDone' = mainsDone + 1
-    /\ UNCHANGED <<mscan, mpc, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
-                   armed, opted, fbroke, phaseIn, falseAlarm, fillsDone>>
+    /\ UNCHANGED <<mscan, mpc, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, fillsDone, takesDone>>
 
 Done ==
     /\ mpc = "idle" /\ mainsDone = MaxMain
-    /\ \A f \in Fillers : fpc[f] = "idle" /\ fillsDone[f] = MaxFills
-    /\ UNCHANGED vars
+    /\ \A f \in Fillers : fpc[f] = "idle" /\ fillsDone[f] = MaxFills /\ takesDone[f] = MaxTakes
+    \* every variable by name, not vars: the ghost refusal is read by no step
+    /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner,
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, mainsDone, fillsDone, takesDone>>
 
 Next ==
-    \/ MainAnnounce \/ MainScan \/ MainIn \/ MainEpoch \/ MainDrop
+    \/ \E k \in Kinds : MainAnnounce(k) \/ MainScan(k)
+    \/ \E ok \in BOOLEAN : MainIn(ok)
+    \/ \E w \in BOOLEAN : MainEpoch(w) \/ MainSkip(w)
+    \/ MainDrop
     \/ \E l \in Lines, ok \in BOOLEAN : MainLook(l, ok)
     \/ \E f \in Fillers, c \in Clients : FillBegin(f, c)
-    \/ \E f \in Fillers, ok \in BOOLEAN : FillLock(f, ok) \/ FillDecide(f, ok) \/ FillLook(f, ok)
-    \/ \E f \in Fillers : \E l \in LineChoice(f) : FillCount(f, l)
-    \/ \E f \in Fillers : FillLoad(f) \/ FillStore(f) \/ FillUnclaim(f) \/ FillLeave(f) \/ FillSkip(f)
-    \/ Arm \/ MainSkip
+    \/ \E f \in Fillers, ok \in BOOLEAN : FillLock(f, ok) \/ FillDecide(f, ok) \/ FillLook(f, ok) \/ TakeLook(f, ok)
+    \/ \E f \in Fillers : \E l \in LineChoice(f) : FillCount(f, l) \/ TakeCount(f, l)
+    \/ \E f \in Fillers : FillLoad(f) \/ FillStore(f) \/ FillUnclaim(f) \/ FillLeave(f) \/ FillSkip(f) \/ TakeLeave(f) \/ TakeSkip(f)
+    \/ Arm
     \/ Done
 
 Spec == Init /\ [][Next]_vars
@@ -427,6 +570,14 @@ Spec == Init /\ [][Next]_vars
 
 \* a main operation and a fill call are never both past their checks
 Sound == ~(mpc \in {"in", "epoched"} /\ \E f \in Fillers : fpc[f] \in {"in", "unclaimed"})
+
+\* a main operation and a take are never both past their checks
+TakeSound == ~(mpc \in {"in", "epoched"} /\ \E f \in Fillers : fpc[f] = "tin")
+
+\* with the window open no fill call and no main operation but an update
+\* call is past its check
+WindowShut == window => /\ \A f \in Fillers : fpc[f] \notin {"in", "unclaimed"}
+                        /\ ~(mpc \in {"in", "epoched"} /\ mkind = "other")
 
 \* in one fill phase, the calls on a client that pass the check are one filler's
 OneFiller == \A c \in Clients : Cardinality(phaseIn[c]) <= 1

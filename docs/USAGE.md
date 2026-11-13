@@ -35,7 +35,24 @@ lookup and time calls are thread-safe, and client and server objects are not.
   Every call on one object (update, receive, start, finish and abort message,
   send packets, receipts, stats, connect, disconnect, start, stop and destroy)
   is made from one thread at a time, never concurrently. Internal I/O locks do
-  not make concurrent public calls on an object safe.
+  not make concurrent public calls on an object safe. This is the default and
+  needs nothing more.
+- **A server may opt in to game threads.** One thread at a time, the main
+  thread, makes the server's calls. Between one main thread call and the next,
+  game threads may call `rocketnet_server_start_message`,
+  `rocketnet_server_finish_client_message` and
+  `rocketnet_server_abort_client_message`, each client index from one thread.
+  The update may be split in three: `rocketnet_server_update_receive` on the
+  main thread, then `rocketnet_server_update_client` on the game threads (one
+  call per client index), then `rocketnet_server_update_finish` on the main
+  thread after the game threads are joined; between receive and finish nothing
+  else is called on the server. The game joins its game threads before the
+  main thread's next call. The server checks these rules from its first
+  finish or abort client message or its first `update_receive`, in every
+  build: a call that breaks one does nothing, asserts in a debug build and is
+  counted (`MAIN_THREAD_CALL_OVERLAP` for calls at once or a call between
+  receive and finish, `CLIENT_SEND_TWO_THREADS` for a second thread on one
+  client). `rocketnet_server_t` in `sdk/rocketnet.h` gives the whole contract.
 - **The caller may move an object between threads** with its own handoff, for
   example a mutex, a queue or a thread join, so that the last call on the old
   thread happens before the first call on the new one. The library adds no
