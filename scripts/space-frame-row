@@ -17,6 +17,11 @@
 # runs as root (sudo -n). The control machine needs a harden_load of its own for
 # the reconcile (--local-bin).
 #
+# The game threads write and finish their own players' messages (--space-send wide),
+# the server update runs in three calls with the per-client part over the game
+# threads (--space-update split), and the packets leave and the update runs at the end
+# of the split-off task (--space-net task): the main thread takes the least.
+#
 # The load: --load peak is 15 unreliable 1200-byte messages per player per tick
 # (about 895k packets a second at 1000 players, 60 Hz), average is 8; a small
 # reliable trickle; each player sends an input of --input-bytes every tick.
@@ -89,7 +94,7 @@ done
 [ "$split" = top ] || [ "$split" = bottom ] || usage
 mkdir -p "$out"
 
-server_args="--frame-shape space --game-threads $game_threads --pin-first-cpu $first_cpu"
+server_args="--frame-shape space --game-threads $game_threads --pin-first-cpu $first_cpu --space-send wide --space-update split --space-net task"
 server_args="$server_args --space-split $split --game-load $game_load --world-ms $world_ms --load $load"
 
 # the profile (--profile): on the server machine, find the harden_load process (the
