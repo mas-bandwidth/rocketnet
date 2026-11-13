@@ -8,6 +8,9 @@
 #include "rocketnet_wire.h"
 
 #include <stdio.h>
+// PLANT begin
+#include <stdlib.h>
+// PLANT end
 
 int rocketnet_num_counters() { return ROCKETNET_NUM_COUNTERS; }
 
@@ -117,6 +120,12 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
     {
         counters->values[rocketnet_prefilter_table[i]] = prefilter[i];
+        // PLANT begin
+        if ( getenv( "LOSSLESS_PLANT_SDK_XDP" ) && rocketnet_prefilter_table[i] == ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH && prefilter[i] > 100 )
+        {
+            counters->values[rocketnet_prefilter_table[i]] = prefilter[i] - 1;
+        }
+        // PLANT end
     }
 }
 
