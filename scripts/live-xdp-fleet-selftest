@@ -276,6 +276,19 @@ if ! HOME="$tmp/root-home" PATH="$tmp/bin:$PATH" bash "$tmp/user/rocketnet-live/
     fail_case "live-xdp-fleet-remote looked for its tree under \$HOME, not beside itself"
 fi
 
+# 8. restore with no rocketnet-provision to sweep with does not report a
+# clean teardown. Fake root, ip and systemctl: nothing is attached.
+mkdir -p "$tmp/rootbin"
+printf '#!/usr/bin/env bash\necho 0\n' > "$tmp/rootbin/id"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/rootbin/ip"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/rootbin/systemctl"
+chmod +x "$tmp/rootbin/id" "$tmp/rootbin/ip" "$tmp/rootbin/systemctl"
+if PATH="$tmp/rootbin:$PATH" bash "$tmp/user/rocketnet-live/live-xdp-fleet-remote" restore "$commit" eth0 \
+        > "$tmp/restore.out" 2>&1; then
+    fail_case "restore passed though rocketnet-provision was missing and the sweep never ran"
+    cat "$tmp/restore.out" >&2
+fi
+
 if [ "$failures" -ne 0 ]; then
     echo "SELFTEST FAIL: $failures case(s)" >&2
     exit 1

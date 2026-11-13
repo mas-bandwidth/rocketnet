@@ -383,6 +383,9 @@ cmd_restore()
     local provision="$BASE/$commit/scripts/rocketnet-provision" sweep_status=0
     if [ -x "$provision" ]; then
         "$provision" sweep || sweep_status=$?
+    else
+        echo "restore: no $provision; the sweep did not run" >&2
+        sweep_status=missing
     fi
 
     systemctl stop rn-live-watchdog.service 2>/dev/null || true
@@ -391,6 +394,7 @@ cmd_restore()
     systemctl stop rn-live-deadman.service 2>/dev/null || true
     systemctl reset-failed rn-live-deadman.service 2>/dev/null || true
 
+    [ "$sweep_status" != missing ] || fail "restore: rocketnet-provision sweep not run (no $provision)"
     [ "$sweep_status" = 0 ] || fail "restore: rocketnet-provision sweep exited $sweep_status"
     echo "restore:no program attached to $nic; watchdog stopped; dead-man cancelled"
 }
