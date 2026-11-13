@@ -8434,7 +8434,32 @@ void rocketnet_test_server_gso_receive_overflow_counted()
     }
     rocketnet_check( queued == 0 );
 
-    // read everything: the buffer main shares with the worker, then the full one
+    // an empty socket is not yet a full buffer: on a loaded host the kernel
+    // can still hold sends before the socket (a deferred softirq). The worker
+    // has staged them all once its buffer's committed count is the queue size
+
+    int committed = -1;
+    const double full_deadline = rocketnet_time() + 5.0;
+    while ( rocketnet_time() < full_deadline )
+    {
+        committed = rocketnet_server_gso_test_receive_committed( gso, 0 );
+        if ( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( committed == ROCKETNET_GSO_RECV_QUEUE_SIZE );
+
+    // read everything: the buffer main shares with the worker, then the full
+    // one. A buffer's tallies (its GRO batches and its overflow) reach the
+    // counters only when the worker has left it and main's next call makes it
+    // the tail (rocketnet_receive_handoff_begin); the worker leaves the full
+    // buffer at its next pass after main has started on it, so on a loaded
+    // host the last datagram can surface a call or two before the tallies
+    // do. The reads go on until
+    // the full buffer's GRO batches are counted, which folds its overflow
+    // with them.
 
     const uint64_t expected_received = 2 + (uint64_t) ( sends * segments - 1 );
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
@@ -8445,7 +8470,8 @@ void rocketnet_test_server_gso_receive_overflow_counted()
         rocketnet_server_gso_receive_packets( gso );
         surfaced += (uint64_t) rocketnet_server_gso_process_packets( gso )->num_packets;
         rocketnet_server_gso_counters( gso, counters );
-        if ( surfaced >= expected_received || rocketnet_time() >= claim_deadline )
+        const bool folded = counters[ROCKETNET_COUNTER_GSO_GRO_BATCHES] >= (uint64_t) sends;
+        if ( ( surfaced >= expected_received && folded ) || rocketnet_time() >= claim_deadline )
         {
             break;
         }
