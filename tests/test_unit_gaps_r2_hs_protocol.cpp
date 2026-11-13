@@ -74,7 +74,7 @@ REGISTER_UNIT_TEST( test_gaps_r2_hs_session_sequence_take_at_zero );
 // mutation gap: hunt 2/3406
 // mutation gap: hunt 2/3414
 //
-// The in-place payload sealer refuses sequence 0 (the nonce no peer accepts)
+// The in-place payload sealer refuses sequence 0 (the nonce no receiver accepts)
 // and a payload of 0 bytes or one byte more than the send budget leaves room
 // for beside the block, and a refusal writes nothing into the wire buffer.
 // The same sealer seals a 4-byte payload under sequence 1.
