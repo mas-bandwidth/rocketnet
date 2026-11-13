@@ -2053,6 +2053,13 @@ struct portable_io_client_t
     void * context;
 };
 
+// the bytes portable_io_client_create allocates for its record, so the client
+// memory plan counts the record itself, never a copy of its layout
+uint64_t rocketnet_portable_io_client_allocation_bytes()
+{
+    return rocketnet_memory_allocations( { sizeof( portable_io_client_t ) } );
+}
+
 static void * portable_io_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     // proofs/tla/RNClientIo.tla Init, Stop, Join, Free (portable_io_client_create): create owns

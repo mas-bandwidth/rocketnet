@@ -701,6 +701,14 @@ const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations
     rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close, rocketnet_client_gso_send_batch_progress
 };
 
+// the bytes rocketnet_client_gso_create allocates for its record, so the client
+// memory plan counts the record itself, never a copy of its layout
+
+uint64_t rocketnet_client_gso_io_allocation_bytes()
+{
+    return rocketnet_memory_allocations( { sizeof( rocketnet_client_gso_io_t ) } );
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 int rocketnet_client_gso_linux_cpp_dummy = 0;
