@@ -1514,17 +1514,23 @@ REGISTER_UNIT_TEST( test_uring_queue_worker_run_retries_refused_submits );
 
 #endif // #if defined( __linux__ ) && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT )
 
-// Linux without liburing (ROCKETNET_IO_URING off), or with uapi headers older
-// than IORING_RECV_MULTISHOT, compiles every case above out: one SKIPPED line
-// says so rather than dropping them in silence. CI installs liburing, so
-// every CI leg runs the cases. Run by name (--run), it only confirms this
-// build compiled them out.
-#if defined( __linux__ ) && !( defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT ) )
+// Every Linux build registers this case. With the cases above built it runs
+// and finds them registered; without liburing (ROCKETNET_IO_URING off), or
+// with uapi headers older than IORING_RECV_MULTISHOT, which compile them
+// out, it is skipped and the run prints SKIPPED with the condition, rather
+// than dropping them in silence. CI installs liburing, so every Linux CI leg
+// lists and runs it.
+#if defined( __linux__ )
+#if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT )
+#define ROCKETNET_IO_URING_WITH_RECV_MULTISHOT 1
+#else
 #define ROCKETNET_IO_URING_WITH_RECV_MULTISHOT 0
-static void test_uring_queue_worker_every_case()
+#endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT )
+static void test_uring_queue_worker_cases_are_built()
 {
-    rocketnet_unit_check( !ROCKETNET_IO_URING_WITH_RECV_MULTISHOT );
+    rocketnet_unit_check( rocketnet_unit_file_find( "test_uring_queue_worker_init_refuses_bad_config" ) != NULL );
+    rocketnet_unit_check( rocketnet_unit_file_find( "test_uring_queue_worker_run_retries_refused_submits" ) != NULL );
 }
-REGISTER_UNIT_TEST( test_uring_queue_worker_every_case );
-UNIT_TEST_SKIPPED_UNLESS( test_uring_queue_worker_every_case, ROCKETNET_IO_URING_WITH_RECV_MULTISHOT );
-#endif // #if defined( __linux__ ) && !( defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING && defined( IORING_RECV_MULTISHOT ) )
+REGISTER_UNIT_TEST( test_uring_queue_worker_cases_are_built );
+UNIT_TEST_SKIPPED_UNLESS( test_uring_queue_worker_cases_are_built, ROCKETNET_IO_URING_WITH_RECV_MULTISHOT );
+#endif // #if defined( __linux__ )
