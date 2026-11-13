@@ -16,6 +16,12 @@ endforeach()
 # The soak allocator telemetry uses a native lock across callback threads.
 target_link_libraries( example_soak PRIVATE Threads::Threads )
 
+# The server examples split off the second half of the network update onto a
+# platform thread (examples/thread.h) and join it at the start of the next frame.
+target_link_libraries( example_backend_server PRIVATE Threads::Threads )
+target_link_libraries( example_client_server_server PRIVATE Threads::Threads )
+target_link_libraries( example_game_loop PRIVATE Threads::Threads )
+
 # backend_check_token runs the library's own token checks on a token one of
 # the backends in examples/backend/ minted (tools/run_backend_examples.py). It
 # is a test of the backends, not an example, so it may use the library's

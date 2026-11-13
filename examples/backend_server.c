@@ -11,6 +11,13 @@
     the two environment variables the backends in examples/backend/ read. It
     echoes the client's message and exits after its first client disconnects.
 
+    The server runs a game server's 60 Hz frame. The main thread does a bit
+    of networking at the start of the frame, then the second half of the
+    network update is split off to run on another thread in parallel with
+    the main thread, and joined at the start of the next frame. A frame's
+    echoes go on the wire at the start of the next frame: one frame of added
+    send latency, 16.67 ms on average.
+
     Run this server, then a backend, then example_backend_client. See
     examples/backend/README.md.
 */
@@ -20,11 +27,55 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 #include "shutdown.h"
+#include "thread.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define ENV_FILE "backend.env"
+
+#define FRAME_DT        ( 1.0 / 60.0 )
+#define MAX_ECHOES      64          // messages echoed in one frame
+#define MAX_ECHO_BYTES  256         // a longer message is printed, not echoed
+
+// One frame of the game's state: what the main thread took from the network,
+// for the second half of the network update to send back. The server keeps
+// two and swaps them at the frame boundary, so the main thread never writes
+// the frame the other thread is sending from.
+
+struct echo_frame_t
+{
+    struct rocketnet_server_t * server;
+    int num_messages;
+    int client_index[MAX_ECHOES];
+    int bytes[MAX_ECHOES];
+    uint8_t data[MAX_ECHOES][MAX_ECHO_BYTES];
+    int echoed;     // written by the other thread, read by the main thread after the join
+};
+
+// The second half of the network update, split off from the main thread:
+// queue this frame's echoes. From the split until the join, this thread is
+// the server's only user.
+
+static void queue_echoes( void * data )
+{
+    struct echo_frame_t * frame = (struct echo_frame_t *) data;
+
+    for ( int i = 0; i < frame->num_messages; i++ )
+    {
+        // echo: skip this message when there is no room
+
+        if ( rocketnet_server_can_send_message( frame->server, frame->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, frame->bytes[i] ) )
+        {
+            uint8_t * p = rocketnet_server_start_message( frame->server, (uint64_t) frame->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, frame->bytes[i] );
+            if ( p )
+            {
+                memcpy( p, frame->data[i], (size_t) frame->bytes[i] );
+                frame->echoed |= rocketnet_server_finish_message( frame->server, frame->bytes[i] ) != 0;
+            }
+        }
+    }
+}
 
 // standard base64 with padding, the form the backends read keys in
 static void write_base64( const uint8_t * bytes, int count, char * output )
@@ -178,13 +229,38 @@ int main( int argc, char ** argv )
     printf( "server wrote %s for the backend\n", ENV_FILE );
     fflush( stdout );
 
-    int had_client = 0, echoed = 0;
+    static struct echo_frame_t frames[2];
+    struct echo_frame_t * split_off = NULL;     // the frame the other thread is sending from, until the join
+    struct rn_cli_thread_t network;
+    memset( &network, 0, sizeof( network ) );
+    int had_client = 0, echoed = 0, thread_failed = 0;
     const double start = rocketnet_time();
-    while ( rocketnet_time() - start < 60.0 )
+    double frame_end = start + FRAME_DT;
+    for ( uint32_t frame_number = 0; rocketnet_time() - start < 60.0; frame_number++ )
     {
+        // 1. join: wait for last frame's second half of the network update.
+        // The main thread owns the server again from here
+
+        rn_cli_thread_join( &network );
+        if ( split_off )
+        {
+            echoed |= split_off->echoed;
+            split_off = NULL;
+        }
+
+        // 2. a bit of networking on the main thread: put last frame's echoes
+        // on the wire, take in what arrived, and copy each message into this
+        // frame's state, so nothing reads the batch after the next update
+
+        rocketnet_server_send_packets( server );
         rocketnet_server_update( server, 1000.0 + rocketnet_time() - start );
 
-        // one queue across every client, each message naming its sender: echo each one back
+        struct echo_frame_t * frame = &frames[frame_number % 2];
+        frame->server = server;
+        frame->num_messages = 0;
+        frame->echoed = 0;
+
+        // one queue across every client, each message naming its sender
 
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
@@ -193,22 +269,18 @@ int main( int argc, char ** argv )
             {
                 const int client_index = batch->client_index[i];
                 printf( "server received from client %llx: %.*s\n", (unsigned long long) rocketnet_server_client_id( server, client_index ), batch->bytes[i], (const char *) batch->data[i] );
-
-                // echo: skip this message when there is no room
-
-                if ( rocketnet_server_can_send_message( server, client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
+                if ( frame->num_messages < MAX_ECHOES && batch->bytes[i] <= MAX_ECHO_BYTES )
                 {
-                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-                    if ( p )
-                    {
-                        memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-                        echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
-                    }
+                    frame->client_index[frame->num_messages] = client_index;
+                    frame->bytes[frame->num_messages] = batch->bytes[i];
+                    memcpy( frame->data[frame->num_messages], batch->data[i], (size_t) batch->bytes[i] );
+                    frame->num_messages++;
                 }
             }
         }
 
-        rocketnet_server_send_packets( server );
+        // 3. the world update, on the main thread: a game simulates here.
+        // This server only notes whether its client has come and gone
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )
         {
@@ -220,7 +292,39 @@ int main( int argc, char ** argv )
             break;
         }
 
-        rocketnet_sleep( 0.001 );
+        // 4. split off the second half of the network update: another thread
+        // queues this frame's echoes in parallel with the main thread, which
+        // must not touch the server until the join at the start of the next frame
+
+        if ( !rn_cli_thread_start( &network, queue_echoes, frame ) )
+        {
+            thread_failed = 1;
+            break;
+        }
+
+        split_off = frame;
+
+        // 5. the main thread waits for the frame edge; a game's main thread
+        // goes on with the rest of its frame here
+
+        const double now = rocketnet_time();
+        if ( now < frame_end )
+        {
+            rocketnet_sleep( frame_end - now );
+        }
+
+        frame_end = now > frame_end + FRAME_DT ? now + FRAME_DT : frame_end + FRAME_DT;
+    }
+
+    rn_cli_thread_join( &network );
+    if ( split_off )
+    {
+        echoed |= split_off->echoed;
+    }
+
+    if ( thread_failed )
+    {
+        printf( "FAIL: could not start a thread\n" );
     }
 
     rn_cli_server_stop_and_destroy( server );
@@ -232,6 +336,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    printf( had_client && echoed ? "PASS\n" : "FAIL: a client connected and its message was echoed\n" );
-    return had_client && echoed ? 0 : 1;
+    const int passed = had_client && echoed && !thread_failed;
+    printf( passed ? "PASS\n" : "FAIL: a client connected and its message was echoed\n" );
+    return passed ? 0 : 1;
 }

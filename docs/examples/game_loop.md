@@ -2,19 +2,46 @@
 
 A 60 Hz fixed-step loop driving one server and N clients in one process, and
 what it costs: client network calls per frame against a 100 microsecond
-budget, the server's tick, and message latency in frames.
+budget, what the server's frame takes from its main thread, and message
+latency in frames.
 
 ## What it shows
 
 1. A fixed-step loop: accumulate `rocketnet_time()`, run one frame per 1/60 s
    of it, and `rocketnet_sleep` for the rest.
-2. The frame order, on every client and on the server: (1) `*_update` takes in
-   what arrived; (2) `*_receive_messages` drains every message batch until `NULL`; (3) simulate;
-   (4) queue this frame's messages with guarded `*_start_message` (checking the non-`NULL` pointer)
-   and `*_finish_message` inside that branch; (5)
-   `*_send_packets` last, making this frame's queued work available to the
-   transport.
-3. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
+2. The client frame order: (1) `rocketnet_client_update` takes in what
+   arrived; (2) `rocketnet_client_receive_messages` drains every message batch
+   until `NULL`; (3) simulate; (4) queue this frame's messages with guarded
+   `rocketnet_client_start_message` (checking the non-`NULL` pointer) and
+   `rocketnet_client_finish_message` inside that branch; (5)
+   `rocketnet_client_send_packets` last, making this frame's queued work
+   available to the transport.
+3. The server frame, the way a game server runs it, with the second half of
+   the network update split off to run in parallel with the main thread:
+   1. join: the main thread waits for last frame's split-off half, and owns
+      the server again;
+   2. a bit of networking on the main thread: `rocketnet_server_send_packets`
+      puts last frame's state updates on the wire, `rocketnet_server_update`
+      takes in what arrived, and `rocketnet_server_receive_messages` is
+      drained into the game's state;
+   3. the world update on the main thread, which writes this frame's state;
+   4. the second half of the network update is split off onto another thread
+      (`examples/thread.h`, the platform's own threads): it queues every
+      client's state update with `rocketnet_server_start_message` and
+      `rocketnet_server_finish_message`, while the main thread goes on with
+      its frame. It is the server's only user until the join.
+
+   The server keeps two frames of state and swaps them at the frame boundary,
+   so the main thread never writes the frame the other thread is sending
+   from. A game hands the split-off half to its job system on its game
+   threads; the example uses one platform thread so it depends on nothing
+   else. Each server is used from one thread at a time
+   ([USAGE](../USAGE.md)): the join is what hands it back.
+
+   The price is one frame of added send latency: a state update queued in
+   frame F goes on the wire at the start of frame F + 1, 16.67 ms later on
+   average at 60 Hz.
+4. Each client sends its position every frame (`ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED`,
    channel 0) and an event twice a second (`ROCKETNET_RELIABILITY_RELIABLE_ORDERED`, channel
    1); the server sends each client a state update every frame. Each message
    carries the frame it was queued in, and the receiver counts frames since.
@@ -29,7 +56,7 @@ From the repository root, after the normal build:
 
 ```sh
 ./bin/example_game_loop                      # 32 clients, 5 seconds
-./bin/example_game_loop --wrong-order        # send_packets before queuing
+./bin/example_game_loop --wrong-order        # clients call send_packets before queuing
 ./bin/example_game_loop --clients 1000 --seconds 30
 ```
 
@@ -44,10 +71,11 @@ run prints `PASS` last; a failure prints one `FAIL: ...` line and exits 1.
 
 ```
 32 clients, server transport loopback
-[end] client frame p50 7.1 us, p99 24.3 us, max 313.6 us (budget 100 us); server tick mean 183.1 us, max 412.4 us
+[end] client frame p50 7.1 us, p99 24.3 us, max 313.6 us (budget 100 us)
+server main thread in rocketnet mean 120.4 us, max 380.2 us; split-off half mean 61.0 us, max 140.7 us
 client frame budget held at p99 (informational, never a failure)
 latency client->server frames: min 0 mean 0.00 max 0
-latency server->client frames: min 1 mean 1.00 max 1
+latency server->client frames: min 2 mean 2.00 max 2
 latency: 0 extra frame(s) (correct order)
 PASS
 ```
@@ -55,12 +83,18 @@ PASS
 A `[1s]` line prints every second and `[end]` covers the run. `client frame`
 is one client's update, receive, queue and send calls in one frame: p50 is the
 typical frame, p99 the slow one in a hundred. The budget verdict never fails
-the run, because a shared machine's noise is not the library's cost. `server tick` is the server's frame over all clients.
+the run, because a shared machine's noise is not the library's cost.
+`server main thread in rocketnet` is what the server's frame takes from the
+main thread: the join, send, update and receive of steps 1 and 2.
+`split-off half` is the other thread's queuing of every client's state
+update, in parallel with the main thread.
 
 The two `latency ... frames` lines give each direction's min, mean, and max.
 Clients run their frames before the server. The causal minimum is therefore
-0 frames client-to-server and 1 server-to-client; `--wrong-order` adds one to
-each minimum. Both directions pass through background handoffs, which can add
+0 frames client-to-server and 2 server-to-client: 1 because the clients run
+first, and 1 for the split-off half, whose state updates go on the wire at the
+start of the next server frame. `--wrong-order` adds one to the
+client-to-server minimum. Both directions pass through background handoffs, which can add
 more frames. Neither direction has a fixed delivery frame count.
 
 The printed `extra frame(s)` is the rounded mean client-to-server latency. It
