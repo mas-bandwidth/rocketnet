@@ -51,7 +51,8 @@
 // frame is staged in the lane its destination address hashes to
 // (rocketnet_rio_lane_hash), so one client's frames leave through one lane in
 // order. Every lane posts receives and banks what it gets, and
-// receive_packets appends every lane's ready banks to one process view.
+// receive_packets appends what every lane's worker has committed to one
+// process view, in lane order.
 //
 // Each lane's worker runs the stateless receive prefilter
 // (sdk/rocketnet_receive_prefilter.h) before a datagram takes a bank slot and
@@ -72,13 +73,20 @@
 // completions before it takes a phase, so a phase the kernel has finished is
 // idle by the next flush); until then the fill phase stays
 // open and start_packet refuses only when it is full. Receive: every
-// slice is posted at create; the worker copies each completion into its fill
-// bank, re-posts the slice and publishes the bank onto a FIFO of ready banks;
-// receive_packets exposes the ready banks that fit the process view, valid
-// until the next call. With every bank full the worker stops dequeuing, so
-// completions wait in the queue rather than being dropped. Stop requests,
-// the worker commits deferred sends, closes the socket and drains both
-// queues; stopped reports that drain before destroy frees the region.
+// slice is posted at create; the worker copies each completion into the bank
+// it is filling, re-posts the slice and, at the end of each pass, commits the
+// bank's count to the three-bank shared receive handoff
+// (sdk/rocketnet_receive_handoff.h). receive_packets tries the mutex once to
+// catch up to that count, then returns the rest of the bank the worker left
+// and the worker's own bank up to the committed count, read in place, as far
+// as the process view has room; the views stay valid until the next call. A
+// datagram committed before a call is returned by that call when the try
+// succeeds, the call begins with no backlog from a cut call and the view has
+// room; otherwise by a later call. A full bank the worker cannot leave stops
+// it dequeuing, so completions wait in the queue rather than being dropped.
+// Stop requests, the worker commits deferred sends, closes the socket and
+// drains both queues; stopped reports that drain before destroy frees the
+// region.
 // proofs/tla/RNRioWorker.tla models the design; the functions that implement a
 // model action cite it.
 //
