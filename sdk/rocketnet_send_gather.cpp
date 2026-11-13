@@ -202,7 +202,7 @@ int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stri
         {
             const int bytes = rocketnet_send_gather_bytes( packet_bytes, bytes_stride, order[p] );
 
-            const bool fits = run && !closed && run->count < max_segments && run_total + bytes <= max_bytes && bytes <= run->segment_bytes;
+            const bool fits = run && !closed && run->count < max_segments && bytes <= max_bytes - run_total && bytes <= run->segment_bytes;
             if ( fits )
             {
                 run->count++;

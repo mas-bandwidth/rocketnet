@@ -14,7 +14,7 @@ pointer: one byte before a bank lands inside its neighbour.
 
 Status: built. sdk/rocketnet_uring_send_queue.cpp implements it and cites each action:
 start is Start(t, d, ptr, pid) with the pointer and id it gives back, or StartFull(t, d,
-pid) when it returns NULL; finish and abort are Finish(t, k) when they return true,
+pid) when it returns NULL; finish and abort are Finish(t, k, w) when they return true,
 FinishRefused(t, k) when false; turn is Flush(n) with the queues it returns. The shared
 arithmetic is sdk/rocketnet_send_queue.h, the same arithmetic the XDP transport's own send staging carries. The code is
 bound to the model by the trace check (TraceRNUringQueueBankLayout.tla,

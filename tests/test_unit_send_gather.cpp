@@ -189,10 +189,10 @@ static void test_send_gather_smaller_packet_ends_its_run()
 
 REGISTER_UNIT_TEST( test_send_gather_smaller_packet_ends_its_run );
 
-// a full table: as many destinations as slots, so every probe chain is
-// long and wraps the table's end (witness NoProbeMod)
+// as many destinations as slots in a table twice that size: every
+// destination gets its own run, in staged order
 
-static void test_send_gather_full_table_wraps()
+static void test_send_gather_one_run_a_destination_at_full_slots()
 {
     const int n = 256;
     gather_test_t t( n );
@@ -207,4 +207,54 @@ static void test_send_gather_full_table_wraps()
     }
 }
 
-REGISTER_UNIT_TEST( test_send_gather_full_table_wraps );
+REGISTER_UNIT_TEST( test_send_gather_one_run_a_destination_at_full_slots );
+
+// the probe wraps the table's end (witness NoProbeMod): two destinations
+// whose home bucket is the last one, so the second probes past the end and
+// must land in bucket 0. Without the mask the probe reads the scratch's next
+// array (the group heads) as buckets and never finds a free one.
+
+static void test_send_gather_probe_wraps_past_the_last_bucket()
+{
+    gather_test_t t( 4 );
+    const int buckets = t.scratch.buckets;
+    check( buckets == 8 );
+
+    int found[2] = { -1, -1 };
+    int num = 0;
+    for ( int d = 0; d < 100000 && num < 2; d++ )
+    {
+        const struct rocketnet_address_t a = gather_test_address( d );
+        if ( rocketnet_send_gather_home( &a, buckets ) == buckets - 1 )
+        {
+            found[num++] = d;
+        }
+    }
+    check( num == 2 );
+
+    // a, b, a, b: both homed on the last bucket, b displaced to bucket 0
+    t.stage( found[0], 1000 );
+    t.stage( found[1], 1000 );
+    t.stage( found[0], 1000 );
+    t.stage( found[1], 1000 );
+    check( t.gather( 64, 65000 ) == 2 );
+    check( t.runs[0].count == 2 && t.runs[1].count == 2 );
+    check( t.run( 0 ) == std::vector<int>( { 0, 2 } ) );
+    check( t.run( 1 ) == std::vector<int>( { 1, 3 } ) );
+}
+
+REGISTER_UNIT_TEST( test_send_gather_probe_wraps_past_the_last_bucket );
+
+// a run's byte total is tested as bytes <= max_bytes - run_total, so two
+// packets whose sum passes the largest int are two runs, not a wrapped sum
+
+static void test_send_gather_byte_cap_does_not_overflow()
+{
+    gather_test_t t( 4 );
+    t.stage( 1, 1500000000 );
+    t.stage( 1, 1500000000 );
+    check( t.gather( 64, 2147483647 ) == 2 );
+    check( t.runs[0].count == 1 && t.runs[1].count == 1 );
+}
+
+REGISTER_UNIT_TEST( test_send_gather_byte_cap_does_not_overflow );

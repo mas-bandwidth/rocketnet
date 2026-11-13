@@ -159,7 +159,7 @@ uint8_t * rocketnet_uring_send_queues_start( struct rocketnet_uring_send_queues_
     return bank->data + (size_t) index * (size_t) ROCKETNET_FRAME_STRIDE;
 }
 
-// proofs/tla/RNUringQueueBankLayout.tla Finish(t, k), or FinishRefused(t, k)
+// proofs/tla/RNUringQueueBankLayout.tla Finish(t, k, w), or FinishRefused(t, k)
 // when finish or abort returns false: the queue from the id (id mod Q) and
 // the slot from the pointer's offset past that queue's producer bank, tested
 // before the division (SlotFrom, SlotRule "check"); a pointer that names no

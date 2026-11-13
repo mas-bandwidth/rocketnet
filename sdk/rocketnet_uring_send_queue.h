@@ -94,7 +94,9 @@ bool rocketnet_uring_send_queues_finish( struct rocketnet_uring_send_queues_t * 
 
 bool rocketnet_uring_send_queues_abort( struct rocketnet_uring_send_queues_t * queues, uint64_t packet_id, uint8_t * packet_data );
 
-// the slots of a queue's producer bank the fill has claimed: min(num, slots)
+// the slots of a queue's producer bank the game threads have claimed:
+// min(num, slots). Main thread only, with the game threads joined (as turn
+// is): the count is read while no game thread claims
 
 int rocketnet_uring_send_queues_staged( const struct rocketnet_uring_send_queues_t * queues, int queue );
 

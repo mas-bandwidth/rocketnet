@@ -49,7 +49,8 @@ struct rocketnet_send_gather_scratch_t
 size_t rocketnet_send_gather_scratch_bytes( int max_slots );
 
 // lays the scratch out in memory of rocketnet_send_gather_scratch_bytes(
-// max_slots ) bytes, aligned for int. false when max_slots < 1.
+// max_slots ) bytes, aligned for int. false when memory is NULL or max_slots is
+// below 1 or above 1 << 24.
 bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t * scratch, void * memory, int max_slots );
 
 // Groups count slots. Slot i's destination is *(const rocketnet_address_t *)
@@ -63,7 +64,10 @@ bool rocketnet_send_gather_scratch_init( struct rocketnet_send_gather_scratch_t 
 // exceeds the scratch's max_slots, max_segments < 1, max_bytes < 1 or bytes_stride
 // is not a multiple of sizeof( int ); a
 // packet larger than max_bytes is a run of its own. The grouping is a stable
-// counting placement, no links: O(count) with the table at most half full.
+// counting placement, no links: O(count) in the slots staged, with the table at
+// most half full, plus a clear of the table's buckets (at least 2 * max_slots,
+// under 4 * max_slots: the scratch's size, not count's) on every call that
+// stages anything.
 int rocketnet_send_gather( const struct rocketnet_address_t * to, size_t to_stride,
                            const int * packet_bytes, size_t bytes_stride, int count,
                            int max_segments, int max_bytes,

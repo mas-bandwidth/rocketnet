@@ -1,25 +1,25 @@
 ------------------------ MODULE RNUringQueueBankLayout ------------------------
 (***************************************************************************)
 (* The io_uring server's per-queue send banks at the code's layout (layer  *)
-(* L0 of the per-queue send; sdk/rocketnet_server_uring_linux.cpp          *)
-(* rocketnet_server_uring_start_packet, _finish_packet, _abort_packet and  *)
-(* the slot arithmetic they share).                                        *)
+(* L0 of the per-queue send; sdk/rocketnet_uring_send_queue.cpp            *)
+(* rocketnet_uring_send_queues_start, _finish and _abort, and the slot     *)
+(* arithmetic they share, sdk/rocketnet_send_queue.h).                     *)
 (*                                                                         *)
 (* Q queues, each with NB banks of S slots of Stride bytes.  The banks of  *)
 (* every queue are laid end to end, bank b of queue q at byte address      *)
 (* Addr(q, b), so a pointer one byte before a bank is inside its           *)
 (* neighbour: the worst case for a slot computed from a pointer.           *)
 (*                                                                         *)
-(* A fill thread's start_packet picks the destination's queue (QueueOf,    *)
+(* A game thread's start picks the destination's queue (QueueOf,           *)
 (* the address-and-port hash the XDP transport uses: destinations are      *)
 (* numbered so that d mod Q is the queue the hash gives, so any assignment *)
 (* of destinations to queues is a choice of Dests), takes the packet id    *)
 (* gid * Q + q from one fetch_add on the server's id counter, and claims   *)
 (* the next index of the queue's producer bank with one fetch_add on that  *)
 (* bank's counter; an index at or past S is refused (NULL, counted) and    *)
-(* the counter stays past S until the bank is reset.  finish_packet and    *)
-(* abort_packet take the queue from the id (id mod Q) and the slot from    *)
-(* the pointer's byte offset past the queue's producer bank: refused       *)
+(* the counter stays past S until the bank is reset.  finish and abort     *)
+(* take the queue from the id (id mod Q) and the slot from the             *)
+(* pointer's byte offset past the queue's producer bank: refused           *)
 (* (-1) when the offset is negative, not a whole number of strides or past *)
 (* the bank, all tested before the division, so a refused pointer writes   *)
 (* nothing.  A caller may hand finish a pointer up to MaxSkew bytes off,   *)
@@ -30,7 +30,11 @@
 (* check binds it (README-TraceCheck.md): start's pointer and id (Start,   *)
 (* or StartFull when it returns NULL, with the id it still writes),        *)
 (* finish's and abort's result (Finish when true, FinishRefused when       *)
-(* false), and the queues a turn turned (Flush(n)).                        *)
+(* false), and the queues a turn turned (Flush(n)).  fin is whether a slot *)
+(* claimed in this fill holds a finished packet (packet_bytes non-zero: a  *)
+(* finish sets it, an abort clears it, a start clears it), so a finish that *)
+(* wrote nothing is not a step; stg is what staged() returns for each      *)
+(* queue, always min(counter, S) of its producer bank.                     *)
 (*                                                                         *)
 (* Flush is send_packets with the fill threads joined (the phase           *)
 (* contract): each queue that staged anything moves its producer to its    *)
@@ -56,8 +60,9 @@
 (*                > 0 counts modulo k, so a narrow counter wraps back to   *)
 (*                slot 0 while it is claimed (NoSharedSlot).               *)
 (*   SlotRule     "check" tests the offset before dividing (the code);     *)
-(*                "divide" divides first with C's truncation toward zero,  *)
-(*                so an offset of -Stride+1..-1 becomes slot 0             *)
+(*                "divide" divides first, with C's truncation toward       *)
+(*                zero: an unaligned offset names the slot below it, so a  *)
+(*                pointer one byte early names the slot before it          *)
 (*                (NoForeignWrite).                                        *)
 (*   IdRule       "mul" is gid * Q + q (the code); "add" is gid + q, whose *)
 (*                remainder is not the queue (RouteMatches).               *)
@@ -66,7 +71,7 @@ EXTENDS Integers, FiniteSets
 
 CONSTANTS Q,            \* queues (num_xdp_queues)
           NB,           \* banks per queue (ROCKETNET_URING_SEND_BANKS)
-          S,            \* slots per bank (ROCKETNET_URING_SEND_QUEUE_SIZE)
+          S,            \* slots per bank (the runtime slots of rocketnet_uring_send_queues_create)
           Stride,       \* bytes per slot (ROCKETNET_FRAME_STRIDE)
           Threads,      \* fill threads
           Dests,        \* destinations the fill sends to, numbered by their queue (QueueOf)
@@ -101,11 +106,17 @@ Addr(q, b) == (q * NB + b) * S * Stride
 \* C's division: truncation toward zero
 Trunc(a, b) == IF a >= 0 THEN a \div b ELSE -((-a) \div b)
 
-\* the slot a pointer names in a bank, or -1 (rocketnet_server_uring_slot)
+\* the slot a pointer names in a bank, or -1 (rocketnet_send_queue_slot)
 SlotFrom(off) ==
     IF SlotRule = "check"
       THEN IF off < 0 \/ off % Stride # 0 \/ off \div Stride >= S THEN -1 ELSE off \div Stride
       ELSE LET s == Trunc(off, Stride) IN IF s < 0 \/ s >= S THEN -1 ELSE s
+
+Min(a, b) == IF a < b THEN a ELSE b
+
+\* what staged returns for each queue after a step: the claimed slots of its
+\* producer bank, min(counter, S)
+StagedOf(c, p) == [q \in Qs |-> Min(c[q][p[q]], S)]
 
 Bump(c) == IF CounterWrap = 0 THEN c + 1 ELSE (c + 1) % CounterWrap
 Granted(i) == IF ClaimCmp = "ge" THEN i < S ELSE i <= S
@@ -116,11 +127,13 @@ VARIABLES prod,       \* each queue's producer bank (the flow index)
           gid,        \* the server's packet id counter
           held,       \* each thread's claim: its queue, bank, slot, pointer and id, or None
           owner,      \* the thread a slot of a producer bank was handed to in this fill, or -1
+          fin,        \* whether a slot claimed in this fill holds a finished packet (packet_bytes # 0)
+          stg,        \* what rocketnet_uring_send_queues_staged returns for each queue
           demand,     \* start_packet calls each thread made in this fill
           flushes,    \* flushes so far
           oob, shared, foreign, routeBad   \* the flags the broken steps set
 
-vars == <<prod, cnt, gid, held, owner, demand, flushes, oob, shared, foreign, routeBad>>
+vars == <<prod, cnt, gid, held, owner, fin, stg, demand, flushes, oob, shared, foreign, routeBad>>
 
 SlotKeys == Qs \X Bs \X (0..S)
 
@@ -130,6 +143,8 @@ Init ==
     /\ gid = 0
     /\ held = [t \in Threads |-> None]
     /\ owner = [k \in SlotKeys |-> -1]
+    /\ fin = [k \in SlotKeys |-> FALSE]
+    /\ stg = [q \in Qs |-> 0]
     /\ demand = [t \in Threads |-> 0]
     /\ flushes = 0
     /\ oob = FALSE /\ shared = FALSE /\ foreign = FALSE /\ routeBad = FALSE
@@ -155,6 +170,8 @@ Start(t, d, ptr, pid) ==
           /\ demand' = [demand EXCEPT ![t] = @ + 1]
           /\ held' = [held EXCEPT ![t] = [q |-> q, b |-> b, slot |-> i, ptr |-> ptr, pid |-> pid]]
           /\ owner' = [owner EXCEPT ![<<q, b, i>>] = t]
+          /\ fin' = [fin EXCEPT ![<<q, b, i>>] = FALSE]
+          /\ stg' = StagedOf(cnt', prod)
           /\ oob' = (oob \/ i >= S)
           /\ shared' = (shared \/ owner[<<q, b, i>>] # -1)
     /\ UNCHANGED <<prod, flushes, foreign, routeBad>>
@@ -172,7 +189,8 @@ StartFull(t, d, pid) ==
           /\ gid' = gid + 1
           /\ cnt' = [cnt EXCEPT ![q][b] = Bump(i)]
           /\ demand' = [demand EXCEPT ![t] = @ + 1]
-    /\ UNCHANGED <<prod, held, owner, flushes, oob, shared, foreign, routeBad>>
+          /\ stg' = StagedOf(cnt', prod)
+    /\ UNCHANGED <<prod, held, owner, fin, flushes, oob, shared, foreign, routeBad>>
 
 \* the slot finish or abort on thread t finds for the pointer k bytes off the
 \* one start returned (k = 0 is the contract), or -1
@@ -181,9 +199,10 @@ FinishSlot(t, k) ==
         qd == h.pid % Q
     IN SlotFrom(h.ptr + k - Addr(qd, prod[qd]))
 
-\* finish_packet or abort_packet on thread t with the pointer k bytes off,
-\* returning true: it wrote slot FinishSlot(t, k)
-Finish(t, k) ==
+\* finish or abort on thread t with the pointer k bytes off, returning true:
+\* it wrote slot FinishSlot(t, k), packet_bytes non-zero for a finish (w) and
+\* zero for an abort (not w)
+Finish(t, k, w) ==
     /\ held[t] # None
     /\ LET h == held[t]
            qd == h.pid % Q
@@ -193,7 +212,8 @@ Finish(t, k) ==
           /\ held' = [held EXCEPT ![t] = None]
           /\ routeBad' = (routeBad \/ qd # h.q)
           /\ foreign' = (foreign \/ owner[<<qd, b, s>>] # t \/ s # h.slot)
-    /\ UNCHANGED <<prod, cnt, gid, owner, demand, flushes, oob, shared>>
+          /\ fin' = [fin EXCEPT ![<<qd, b, s>>] = w]
+    /\ UNCHANGED <<prod, cnt, gid, owner, stg, demand, flushes, oob, shared>>
 
 \* finish_packet or abort_packet on thread t with the pointer k bytes off,
 \* returning false: the pointer names no slot, nothing is written
@@ -202,7 +222,7 @@ FinishRefused(t, k) ==
     /\ FinishSlot(t, k) = -1
     /\ held' = [held EXCEPT ![t] = None]
     /\ routeBad' = (routeBad \/ held[t].pid % Q # held[t].q)
-    /\ UNCHANGED <<prod, cnt, gid, owner, demand, flushes, oob, shared, foreign>>
+    /\ UNCHANGED <<prod, cnt, gid, owner, fin, stg, demand, flushes, oob, shared, foreign>>
 
 \* send_packets, the fill joined: every queue that staged turns its producer
 \* over to its next bank, reset before any fill sees it; the turn returns n,
@@ -216,6 +236,8 @@ Flush(n) ==
           /\ prod' = next
           /\ cnt' = [q \in Qs |-> [b \in Bs |-> IF q \in moved /\ b = next[q] THEN 0 ELSE cnt[q][b]]]
     /\ owner' = [k \in SlotKeys |-> -1]
+    /\ fin' = [k \in SlotKeys |-> FALSE]
+    /\ stg' = StagedOf(cnt', prod')
     /\ demand' = [t \in Threads |-> 0]
     /\ flushes' = flushes + 1
     /\ UNCHANGED <<gid, held, oob, shared, foreign, routeBad>>
@@ -230,7 +252,7 @@ Done ==
 Next ==
     \/ \E t \in Threads, d \in Dests : Start(t, d, StartPtr(d), StartPid(d))
     \/ \E t \in Threads, d \in Dests : StartFull(t, d, StartPid(d))
-    \/ \E t \in Threads, k \in Skew : Finish(t, k)
+    \/ \E t \in Threads, k \in Skew, w \in BOOLEAN : Finish(t, k, w)
     \/ \E t \in Threads, k \in Skew : FinishRefused(t, k)
     \/ \E n \in 0..Q : Flush(n)
     \/ Done
@@ -245,6 +267,8 @@ TypeOK ==
     /\ gid \in Nat
     /\ \A t \in Threads : held[t] = None \/ held[t].slot \in 0..S
     /\ owner \in [SlotKeys -> Threads \cup {-1}]
+    /\ fin \in [SlotKeys -> BOOLEAN]
+    /\ stg \in [Qs -> 0..S]
     /\ demand \in [Threads -> 0..Demand]
     /\ flushes \in 0..MaxFlush
 
@@ -252,8 +276,6 @@ InBounds == ~oob
 NoSharedSlot == ~shared
 NoForeignWrite == ~foreign
 RouteMatches == ~routeBad
-
-Min(a, b) == IF a < b THEN a ELSE b
 
 \* the claimed slots of each producer bank are exactly the first min(counter, S)
 StagedMatches ==

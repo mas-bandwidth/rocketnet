@@ -45,9 +45,11 @@ inline int rocketnet_send_queue_of( const rocketnet_address_t * to, int num_queu
     return (int) ( hash % (uint64_t) num_queues );
 }
 
-// the packet id of the serial-th start on a queue: a multiple of the queue
-// count plus the queue, so the id's remainder by the queue count is the
-// queue (proofs/tla/RNUringQueueBankLayout.tla PidOf, IdRule "mul")
+// the packet id of the serial-th start on a queue: serial * num_queues +
+// queue, so the id's remainder by the queue count is the queue
+// (proofs/tla/RNUringQueueBankLayout.tla PidOf, IdRule "mul"). The id is 64
+// bits: serial * num_queues + queue stays below 2^64 while serial is below
+// 2^64 / num_queues (a server never makes that many starts)
 
 inline uint64_t rocketnet_send_queue_packet_id( uint64_t serial, int num_queues, int queue )
 {
@@ -82,7 +84,9 @@ inline int rocketnet_send_queue_claim( std::atomic<uint64_t> & num_packets, int 
 // the slot a pointer names in a bank of slots of stride bytes, from its byte
 // offset past the bank's first slot: a negative, unaligned or past-the-end
 // offset is refused (-1) BEFORE it is divided, since C division truncates
-// toward zero and would map -stride+1..-1 to slot 0
+// toward zero and would map an unaligned offset to the slot below it (the
+// reversed witness BrokenDivideFirst: one byte early names the slot before)
+// and -stride+1..-1 to slot 0
 // (proofs/tla/RNUringQueueBankLayout.tla SlotFrom, SlotRule "check")
 
 static inline int rocketnet_send_queue_slot( ptrdiff_t offset, int stride, int slots )

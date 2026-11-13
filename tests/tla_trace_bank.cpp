@@ -13,7 +13,7 @@
 // result says it took, and every model variable after it. A start that
 // returns a pointer is Start(t, d, ptr, pid) with the pointer's offset and
 // the id it wrote, one that returns NULL is StartFull(t, d, pid); a finish
-// or abort is Finish(t, k) when it returns true, FinishRefused(t, k) when
+// or abort is Finish(t, k, w) when it returns true, FinishRefused(t, k) when
 // false; a turn is Flush(n) with the queues it says it turned.
 //
 // The plant binary's code is the banks with ROCKETNET_URING_SEND_QUEUE_PLANT
@@ -127,6 +127,7 @@ static tla_record_t bank_record( const bank_walk_t & walk )
 
     std::vector<std::string> slot_keys;
     std::vector<std::string> owner;
+    std::vector<std::string> fin;
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
         for ( int b = 0; b < ROCKETNET_URING_SEND_BANKS; b++ )
@@ -135,8 +136,17 @@ static tla_record_t bank_record( const bank_walk_t & walk )
             {
                 slot_keys.push_back( "<<" + tla_int( q ) + ", " + tla_int( b ) + ", " + tla_int( s ) + ">>" );
                 owner.push_back( tla_int( walk.owner[q][b][s] ) );
+                // fin: a slot claimed in this fill whose packet_bytes the code left non-zero
+                fin.push_back( tla_bool( s < BANK_SLOTS && walk.owner[q][b][s] != -1 && queues->queue[q].bank[b].slot[s].packet_bytes != 0 ) );
             }
         }
+    }
+
+    // stg: what staged returns for each queue, called once for this record
+    std::vector<std::string> staged;
+    for ( int q = 0; q < BANK_QUEUES; q++ )
+    {
+        staged.push_back( tla_int( rocketnet_uring_send_queues_staged( queues, q ) ) );
     }
 
     tla_record_t record;
@@ -145,6 +155,8 @@ static tla_record_t bank_record( const bank_walk_t & walk )
     record.add( "gid", tla_int( (int64_t) queues->packet_id.load() ) );
     record.add( "held", tla_function( thread_keys, held ) );
     record.add( "owner", tla_function( slot_keys, owner ) );
+    record.add( "fin", tla_function( slot_keys, fin ) );
+    record.add( "stg", tla_function( queue_keys, staged ) );
     record.add( "demand", tla_function( thread_keys, demand ) );
     record.add( "flushes", tla_int( walk.flushes ) );
     record.add( "oob", tla_bool( walk.oob ) );
@@ -195,7 +207,7 @@ static const char * bank_start( bank_walk_t & walk, int t, int d, std::string & 
     return "Start";
 }
 
-// RNUringQueueBankLayout Finish(t, k), or FinishRefused(t, k) when the code
+// RNUringQueueBankLayout Finish(t, k, w), or FinishRefused(t, k) when the code
 // returns false: the code's finish or abort with the pointer k bytes off.
 // The slot it wrote is found by comparing every slot record before and
 // after. NULL when the abort's own finish through the right pointer was
@@ -228,8 +240,18 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
         {
             return NULL;
         }
-        before[(size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot )].packet_bytes = packet_bytes;
+        const size_t held_index = (size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot );
+        const int prior = before[held_index].packet_bytes;
+        before[held_index].packet_bytes = packet_bytes;
         ok = rocketnet_uring_send_queues_abort( queues, c.pid, pointer );
+        if ( !ok )
+        {
+            // a refused abort writes nothing: the scaffolding's finish is
+            // undone, so the slot is as the start left it (the model's
+            // FinishRefused changes no slot)
+            queues->queue[c.q].bank[c.b].slot[c.slot].packet_bytes = prior;
+            before[held_index].packet_bytes = prior;
+        }
     }
     else
     {
@@ -415,7 +437,7 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
                 return 1;
             }
             report.act( act );
-            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ) } ), bank_record( walk ) ) );
+            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ), tla_int( abort ? 0 : 1 ) } ), bank_record( walk ) ) );
         }
         else
         {

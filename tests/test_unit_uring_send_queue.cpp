@@ -52,8 +52,9 @@ static struct rocketnet_address_t uring_send_queue_client_on( int q, int num_que
 }
 
 // the slot arithmetic: a negative, unaligned or past-the-end offset is
-// refused before it is divided (RNUringQueueBankLayout SlotFrom, the
-// reversed witness BrokenDivideFirst)
+// refused before it is divided (RNUringQueueBankLayout SlotFrom; the reversed
+// witness BrokenDivideFirst catches the unaligned case, an offset of 1 byte
+// truncating to the slot below)
 
 static void test_send_queue_slot_refuses_before_dividing()
 {
@@ -62,7 +63,7 @@ static void test_send_queue_slot_refuses_before_dividing()
     check( rocketnet_send_queue_slot( stride, stride, 3 ) == 1 );
     check( rocketnet_send_queue_slot( 2 * stride, stride, 3 ) == 2 );
 
-    // C truncates -stride+1..-1 to slot 0: refused first
+    // refused before any division (C would truncate -stride+1..-1 to slot 0)
     check( rocketnet_send_queue_slot( -1, stride, 3 ) == -1 );
     check( rocketnet_send_queue_slot( -( stride - 1 ), stride, 3 ) == -1 );
     check( rocketnet_send_queue_slot( -stride, stride, 3 ) == -1 );
