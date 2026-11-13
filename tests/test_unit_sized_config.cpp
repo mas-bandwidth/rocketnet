@@ -892,6 +892,37 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
 #endif // #if ROCKETNET_DEV
 }
 
+// a transport name shorter than the default "auto" is copied whole, its
+// terminator included, so nothing of the default is left behind it, on
+// the client and on the server (the resolve calls are ROCKETNET_DEV only)
+
+#if ROCKETNET_DEV
+static void test_public_config_short_transport_name_is_copied_whole()
+{
+    const char * names[] = { "gso", "xdp", "portable", "auto" };
+
+    for ( int i = 0; i < COUNT( names ); i++ )
+    {
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+
+        struct rocketnet_client_config_t client_config;
+        check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+        client_config.transport = names[i];
+        struct rocketnet_client_transport_config_t client_transport;
+        check( rocketnet_client_config_resolve( &client_config, false, &client_transport, &message, &kbps ) );
+        check( strcmp( client_transport.transport, names[i] ) == 0 );
+
+        struct rocketnet_server_config_t server_config;
+        check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+        server_config.transport = names[i];
+        struct rocketnet_server_transport_config_t server_transport;
+        check( rocketnet_server_config_resolve( &server_config, false, &server_transport, &message, &kbps ) );
+        check( strcmp( server_transport.transport, names[i] ) == 0 );
+    }
+}
+#endif // #if ROCKETNET_DEV
+
 static void test_public_config_bytes_newer_larger_ignores_the_tail()
 {
     struct sized_config_newer_client_t newer_client;
@@ -1207,6 +1238,9 @@ REGISTER_UNIT_TEST( test_sized_config_server_create_checks_the_config );
 REGISTER_UNIT_TEST( test_public_config_bytes_zeroed_is_refused );
 REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_public_config_short_transport_name_is_copied_whole );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
 REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );

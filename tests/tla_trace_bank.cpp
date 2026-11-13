@@ -8,11 +8,18 @@
 // proofs/tla/RNUringQueueBankLayout.tla), checked by
 // proofs/tla/TraceRNUringQueueBankLayout.tla (proofs/tla/README-TraceCheck.md).
 // No socket, no clock, no thread: the walk interleaves the fill threads'
-// calls itself, one call per step. It writes MCTraceBankSeed<seed>, or
-// MCTraceBankPlantSeed<seed> from tla_trace_plant, whose code is the banks
-// with ROCKETNET_URING_SEND_QUEUE_PLANT (the turn without its reset). The
-// walk prints PLANT-FIRED n, the turns that met a bank not yet reset: the
-// planted code's own act, so the clean code's count is 0.
+// calls itself, one call per step, and writes one record per call
+// (tla_step): the call, what it took and gave back, the action its own
+// result says it took, and every model variable after it. A start that
+// returns a pointer is Start(t, d, ptr, pid) with the pointer's offset and
+// the id it wrote, one that returns NULL is StartFull(t, d, pid); a finish
+// or abort is Finish(t, k) when it returns true, FinishRefused(t, k) when
+// false; a turn is Flush(n) with the queues it says it turned.
+//
+// The plant binary's code is the banks with ROCKETNET_URING_SEND_QUEUE_PLANT
+// (the turn without its reset). The walk reports (tla_report_t) the planted
+// effect where it shows: a turn whose new producer bank still counts claims,
+// which the clean code never leaves.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_URING_SEND_QUEUE_PLANT 1
@@ -35,15 +42,18 @@
 #include "tla_trace_record.h"
 
 // the instance: small enough for TLC to check each trace in seconds, with
-// claims past a bank's slots and every bank of a queue reused
+// claims past a bank's slots and every bank of a queue reused. Destinations
+// are numbered BANK_FIRST_DEST.. so that d mod BANK_QUEUES is the queue the
+// code's hash gives (the model's QueueOf): 2 and 4 on queue 0, 3 on queue 1
 #define BANK_QUEUES 2
 #define BANK_SLOTS 3
 #define BANK_THREADS 2
+#define BANK_FIRST_DEST 2
 #define BANK_DESTS 3
 #define BANK_DEMAND 4
-#define BANK_MAX_FLUSH 6
 
-static const int bank_skew[] = { -1, 0, 1 };
+// the most bytes a finish's pointer is off the start's, either way (the model's MaxSkew)
+#define BANK_MAX_SKEW 1
 
 struct bank_claim_t
 {
@@ -58,7 +68,7 @@ struct bank_claim_t
 struct bank_walk_t
 {
     struct rocketnet_uring_send_queues_t * queues;
-    struct rocketnet_address_t dest[BANK_DESTS + 1];     // destinations 1..BANK_DESTS
+    struct rocketnet_address_t dest[BANK_FIRST_DEST + BANK_DESTS];     // destinations BANK_FIRST_DEST..
     bank_claim_t claim[BANK_THREADS + 1];               // threads 1..BANK_THREADS
     int owner[BANK_QUEUES][ROCKETNET_URING_SEND_BANKS][BANK_SLOTS + 1];
     int demand[BANK_THREADS + 1];
@@ -67,7 +77,6 @@ struct bank_walk_t
     bool shared;
     bool foreign;
     bool route_bad;
-    int stale_turns;    // turns onto a bank whose count was not zero: the plant firing
 };
 
 // the byte offset of a pointer past the first bank: the model's address
@@ -145,19 +154,23 @@ static tla_record_t bank_record( const bank_walk_t & walk )
     return record;
 }
 
-// RNUringQueueBankLayout Start(t, d): the code's start, read back as the
-// model's claim: the queue, bank and slot are where the returned pointer lies
-static void bank_start( bank_walk_t & walk, int t, int d )
+// RNUringQueueBankLayout Start(t, d, ptr, pid), or StartFull(t, d, pid) when
+// the code returns NULL: the code's start, read back as the model's claim:
+// the queue, bank and slot are where the returned pointer lies. Returns the
+// action and writes the call's arguments and results
+static const char * bank_start( bank_walk_t & walk, int t, int d, std::string & args )
 {
     uint64_t pid = 0;
     uint8_t * frame = rocketnet_uring_send_queues_start( walk.queues, &walk.dest[d], &pid );
     walk.demand[t]++;
     if ( !frame )
     {
-        return;
+        args = tla_sequence( { tla_int( t ), tla_int( d ), tla_int( (int64_t) pid ) } );
+        return "StartFull";
     }
 
     const int64_t ptr = bank_offset( walk, frame );
+    args = tla_sequence( { tla_int( t ), tla_int( d ), tla_int( ptr ), tla_int( (int64_t) pid ) } );
     const int64_t bank_bytes = (int64_t) BANK_SLOTS * ROCKETNET_FRAME_STRIDE;
     const int64_t bank_index = ptr >= 0 ? ptr / bank_bytes : -1;
     bank_claim_t & c = walk.claim[t];
@@ -171,7 +184,7 @@ static void bank_start( bank_walk_t & walk, int t, int d )
     if ( ptr < 0 || c.q >= BANK_QUEUES || c.slot >= BANK_SLOTS || ( ptr - bank_index * bank_bytes ) % ROCKETNET_FRAME_STRIDE != 0 )
     {
         walk.oob = true;
-        return;
+        return "Start";
     }
 
     if ( walk.owner[c.q][c.b][c.slot] != -1 )
@@ -179,12 +192,15 @@ static void bank_start( bank_walk_t & walk, int t, int d )
         walk.shared = true;
     }
     walk.owner[c.q][c.b][c.slot] = t;
+    return "Start";
 }
 
-// RNUringQueueBankLayout Finish(t, k): the code's finish or abort with the
-// pointer k bytes off; the slot it wrote is found by comparing every slot
-// record before and after
-static void bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packet_bytes )
+// RNUringQueueBankLayout Finish(t, k), or FinishRefused(t, k) when the code
+// returns false: the code's finish or abort with the pointer k bytes off.
+// The slot it wrote is found by comparing every slot record before and
+// after. NULL when the abort's own finish through the right pointer was
+// refused, which the code never does
+static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packet_bytes )
 {
     bank_claim_t & c = walk.claim[t];
 
@@ -202,17 +218,22 @@ static void bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packe
     }
 
     uint8_t * pointer = queues->queue[0].bank[0].data + c.ptr + k;
+    bool ok = false;
     if ( abort )
     {
         // an abort of a finished packet writes 0 over packet_bytes: make the
-        // claim's slot visible first by finishing it through the right pointer
-        (void) rocketnet_uring_send_queues_finish( queues, c.pid, queues->queue[0].bank[0].data + c.ptr, packet_bytes );
+        // claim's slot visible first by finishing it through the right
+        // pointer, which must be taken
+        if ( !rocketnet_uring_send_queues_finish( queues, c.pid, queues->queue[0].bank[0].data + c.ptr, packet_bytes ) )
+        {
+            return NULL;
+        }
         before[(size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot )].packet_bytes = packet_bytes;
-        (void) rocketnet_uring_send_queues_abort( queues, c.pid, pointer );
+        ok = rocketnet_uring_send_queues_abort( queues, c.pid, pointer );
     }
     else
     {
-        (void) rocketnet_uring_send_queues_finish( queues, c.pid, pointer, packet_bytes );
+        ok = rocketnet_uring_send_queues_finish( queues, c.pid, pointer, packet_bytes );
     }
 
     size_t index = 0;
@@ -238,23 +259,28 @@ static void bank_finish( bank_walk_t & walk, int t, int k, bool abort, int packe
     }
 
     c.held = false;
+    return ok ? "Finish" : "FinishRefused";
 }
 
-// RNUringQueueBankLayout Flush: the code's turn, the fill joined
-static void bank_flush( bank_walk_t & walk )
+// RNUringQueueBankLayout Flush(n): the code's turn, the fill joined; n is
+// the queues the turn says it turned. Returns whether a turned queue's new
+// producer bank still counts claims: the planted effect, which the clean
+// code never leaves
+static bool bank_flush( bank_walk_t & walk, int * turned )
 {
     int before[BANK_QUEUES];
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
         before[q] = walk.queues->queue[q].producer;
     }
-    (void) rocketnet_uring_send_queues_turn( walk.queues );
+    *turned = rocketnet_uring_send_queues_turn( walk.queues );
+    bool stale = false;
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
         const struct rocketnet_uring_send_queue_t * queue = &walk.queues->queue[q];
         if ( queue->producer != before[q] && queue->bank[queue->producer].num_packets.load() != 0 )
         {
-            walk.stale_turns++;
+            stale = true;
         }
     }
     for ( int q = 0; q < BANK_QUEUES; q++ )
@@ -272,6 +298,7 @@ static void bank_flush( bank_walk_t & walk )
         walk.demand[t] = 0;
     }
     walk.flushes++;
+    return stale;
 }
 
 static int trace_bank( uint64_t seed, int steps, const char * out )
@@ -284,23 +311,29 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
         return 1;
     }
 
-    // destinations: two on queue 0 and one on queue 1, by the code's hash
-    int found[BANK_QUEUES] = { 0, 0 };
-    const int want[BANK_QUEUES] = { 2, 1 };
-    int d = 1;
-    for ( int port = 40000; port < 41000 && d <= BANK_DESTS; port++ )
+    // destination d is the first address, by port, whose queue by the
+    // code's hash is d mod BANK_QUEUES (the model's QueueOf)
+    for ( int d = BANK_FIRST_DEST; d < BANK_FIRST_DEST + BANK_DESTS; d++ )
     {
-        struct rocketnet_address_t a;
-        memset( &a, 0, sizeof( a ) );
-        a.type = ROCKETNET_ADDRESS_IPV4;
-        a.data.ipv4[0] = 10;
-        a.data.ipv4[3] = 9;
-        a.port = (uint16_t) port;
-        const int q = rocketnet_send_queue_of( &a, BANK_QUEUES );
-        if ( found[q] < want[q] )
+        bool found = false;
+        for ( int port = 40000; port < 41000 && !found; port++ )
         {
-            found[q]++;
-            walk.dest[d++] = a;
+            struct rocketnet_address_t a;
+            memset( &a, 0, sizeof( a ) );
+            a.type = ROCKETNET_ADDRESS_IPV4;
+            a.data.ipv4[0] = 10;
+            a.data.ipv4[3] = (uint8_t) d;
+            a.port = (uint16_t) port;
+            if ( rocketnet_send_queue_of( &a, BANK_QUEUES ) == d % BANK_QUEUES )
+            {
+                walk.dest[d] = a;
+                found = true;
+            }
+        }
+        if ( !found )
+        {
+            rocketnet_uring_send_queues_destroy( walk.queues );
+            return 1;
         }
     }
 
@@ -317,7 +350,8 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    records.push_back( bank_record( walk ) );
+    tla_report_t report;
+    records.push_back( tla_step( "init", "init", "<<>>", bank_record( walk ) ) );
 
     for ( int step = 0; step < steps; step++ )
     {
@@ -344,8 +378,9 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
         }
         // a flush before the threads have spent their demand is offered one
         // step in eight, so most fills stage on every queue and the walk
-        // reuses each bank (the plant's condition) within its flushes
-        const bool can_flush = all_free && walk.flushes < BANK_MAX_FLUSH && ( all_done || random.below( 8 ) == 0 );
+        // reuses each bank (the plant's condition); the model's bound on
+        // flushes is the walk's length, which no walk reaches
+        const bool can_flush = all_free && walk.flushes < steps && ( all_done || random.below( 8 ) == 0 );
 
         const int choices = (int) can_start.size() + (int) can_finish.size() + ( can_flush ? 1 : 0 );
         if ( choices == 0 )
@@ -361,53 +396,66 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
 
         if ( pick < (int) can_start.size() )
         {
-            bank_start( walk, can_start[(size_t) pick], 1 + random.below( BANK_DESTS ) );
+            const int t = can_start[(size_t) pick];
+            std::string args;
+            const char * act = bank_start( walk, t, BANK_FIRST_DEST + random.below( BANK_DESTS ), args );
+            report.act( act );
+            records.push_back( tla_step( "start", act, args, bank_record( walk ) ) );
         }
         else if ( pick < (int) ( can_start.size() + can_finish.size() ) )
         {
             const int t = can_finish[(size_t) pick - can_start.size()];
-            const int k = bank_skew[random.below( (int) ( sizeof( bank_skew ) / sizeof( bank_skew[0] ) ) )];
-            bank_finish( walk, t, k, random.below( 4 ) == 0, 1 + random.below( ROCKETNET_RECEIVE_CEILING ) );
+            const int k = random.below( 2 * BANK_MAX_SKEW + 1 ) - BANK_MAX_SKEW;
+            const bool abort = random.below( 4 ) == 0;
+            const char * act = bank_finish( walk, t, k, abort, 1 + random.below( ROCKETNET_RECEIVE_CEILING ) );
+            if ( !act )
+            {
+                fprintf( stderr, "tla_trace bank: the finish through the start's own pointer was refused\n" );
+                rocketnet_uring_send_queues_destroy( walk.queues );
+                return 1;
+            }
+            report.act( act );
+            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ) } ), bank_record( walk ) ) );
         }
         else
         {
-            bank_flush( walk );
+            int turned = 0;
+            const bool stale = bank_flush( walk, &turned );
+            report.act( "Flush" );
+            records.push_back( tla_step( "turn", "Flush", tla_sequence( { tla_int( turned ) } ), bank_record( walk ) ) );
+            if ( stale )
+            {
+                report.planted( (int) records.size() );
+            }
         }
-
-        records.push_back( bank_record( walk ) );
     }
 
+    // the model's constants, read from the code's own structures and definitions
+    const int num_queues = walk.queues->num_queues;
+    const int slots = walk.queues->slots;
     rocketnet_uring_send_queues_destroy( walk.queues );
 
-    // the plant build must fire for its trace to be a witness; the clean
-    // build never does
-    printf( "PLANT-FIRED %d\n", walk.stale_turns );
+    report.print();
 
-    std::string queue_of = "MCQueueOf(d) == CASE ";
-    for ( int i = 1; i <= BANK_DESTS; i++ )
+    std::string threads;
+    for ( int t = 1; t <= BANK_THREADS; t++ )
     {
-        if ( i > 1 )
-        {
-            queue_of += " [] ";
-        }
-        queue_of += "d = " + tla_int( i ) + " -> " + tla_int( rocketnet_send_queue_of( &walk.dest[i], BANK_QUEUES ) );
+        threads += ( t > 1 ? ", " : "" ) + tla_int( t );
     }
-    const std::string definitions = queue_of + "\nMCSkew == {-1, 0, 1}\n";
+    std::string dests;
+    for ( int d = BANK_FIRST_DEST; d < BANK_FIRST_DEST + BANK_DESTS; d++ )
+    {
+        dests += ( d > BANK_FIRST_DEST ? ", " : "" ) + tla_int( d );
+    }
 
     char constants[1024];
     snprintf( constants, sizeof( constants ),
-              "    Q = %d\n    NB = %d\n    S = %d\n    Stride = %d\n    Threads = {1, 2}\n    Dests = {1, 2, 3}\n"
-              "    QueueOf <- MCQueueOf\n    Demand = %d\n    MaxFlush = %d\n    Skew <- MCSkew\n"
+              "    Q = %d\n    NB = %d\n    S = %d\n    Stride = %d\n    Threads = {%s}\n    Dests = {%s}\n"
+              "    Demand = %d\n    MaxFlush = %d\n    MaxSkew = %d\n"
               "    ClaimCmp = \"ge\"\n    CounterWrap = 0\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n",
-              BANK_QUEUES, ROCKETNET_URING_SEND_BANKS, BANK_SLOTS, ROCKETNET_FRAME_STRIDE, BANK_DEMAND, BANK_MAX_FLUSH );
+              num_queues, ROCKETNET_URING_SEND_BANKS, slots, ROCKETNET_FRAME_STRIDE, threads.c_str(), dests.c_str(), BANK_DEMAND, steps, BANK_MAX_SKEW );
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceBankPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceBankSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
-    return tla_write_trace( out, name, "TraceRNUringQueueBankLayout", definitions, constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceBank", seed, "TraceRNUringQueueBankLayout", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "bank", trace_bank );

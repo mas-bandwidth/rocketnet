@@ -10,11 +10,11 @@
 # rather than finding a defect; each one is named with its reason:
 #
 #   -bugprone-easily-swappable-parameters
-#       the sdk is a C-style API in the netcode/Next style: functions take
+#       the sdk is a C-style API: functions take
 #       several adjacent parameters of one type (sizes, indexes, times) by
 #       design, and the check flags every such signature, not a misuse.
 #   -performance-enum-size
-#       enums are plain int-sized throughout, in the netcode style, and the
+#       enums are plain int-sized throughout, and the
 #       public ones cross the C ABI where a narrower type would change it; the
 #       check flags every enum whose values fit a byte, not a hot-path cost.
 #

@@ -8,6 +8,8 @@
 
 #include <string.h>
 
+// proofs/tla/RNSendGatherCall.tla Gather(o, r) is one call, as its caller
+// sees it: o the order it writes, r the runs it returns.
 // proofs/tla/RNSendGatherLayout.tla models the gather at this layout: the
 // scan's open-addressed table probed modulo its size, a group per
 // destination in order of its first slot, the counts turned into starts, a

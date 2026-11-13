@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.1.7 of v1.1.7;
+# CMake's VERSION holds numbers only, so it is the 1.1.8 of v1.1.8;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.1.7 LANGUAGES C CXX)
+project(rocketnet VERSION 1.1.8 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -1029,10 +1029,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,
-    # test_serialize, test_transport_control,
+    # test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
-    # test. ./bin/functional runs test_serialize, test_transport_control and
+    # test. ./bin/functional runs test_transport_control and
     # the platform's transport binary (the execs table in tests/functional/main.cpp's
     # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
@@ -1056,10 +1056,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_include_directories(test_transport PRIVATE tests)
     target_link_libraries(test_transport PRIVATE rocketnet)
     rocketnet_warning_floor(test_transport)
-    add_executable(test_serialize tests/test_serialize.cpp)
-    target_include_directories(test_serialize PRIVATE tests)
-    target_link_libraries(test_serialize PRIVATE rocketnet_dev)
-    rocketnet_warning_floor(test_serialize)
     # Compiles the server transport itself and runs on development keys, so it needs the development library.
     add_executable(test_transport_control tests/test_transport_control.cpp)
     target_include_directories(test_transport_control PRIVATE tests)
@@ -1221,16 +1217,16 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     target_compile_features(functional PRIVATE cxx_std_11)
     add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
         if(ROCKETNET_XDP)
             add_dependencies(functional test_xdp)
         endif()
     elseif(APPLE)
-        add_dependencies(functional test_msgx test_serialize test_transport_control)
+        add_dependencies(functional test_msgx test_transport_control)
     elseif(WIN32)
-        add_dependencies(functional test_iocp test_serialize test_transport_control)
+        add_dependencies(functional test_iocp test_transport_control)
     else()
-        add_dependencies(functional test_serialize test_transport_control)
+        add_dependencies(functional test_transport_control)
     endif()
     # functional_production: the production-library functional executable.
     # Built only in a production build (ROCKETNET_DEV=OFF), where the
@@ -1324,6 +1320,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak tests/soak/soak.c)
     add_executable(load tests/load/load.c)
     add_executable(load_split tests/load/load_split.c)
+    # the load harness census self-test (tools/test_load_census.c): a
+    # functional test of the OS census, run per commit (ci.yml functional leg)
+    add_executable(test_load_census tools/test_load_census.c)
+    target_link_libraries(test_load_census PRIVATE Threads::Threads)
+    rocketnet_warning_floor(test_load_census)
     add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
@@ -1333,20 +1334,45 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(dst PRIVATE cxx_std_11)
     # The TLA+ trace harness (proofs/tla/README-TraceCheck.md): a seeded walk
     # of a layer's code writes its trace for TLC. Each layer is one file,
-    # tests/tla_trace_<layer>.cpp, that registers itself; both binaries take
-    # every such file. tla_trace_plant compiles them with ROCKETNET_TLA_PLANT,
-    # and each layer's file then includes its own code with its plant, in
-    # place of the library's.
+    # tests/tla_trace_<layer>.cpp, that registers itself. tla_trace takes
+    # every such file. Each layer also has a plant binary of its own,
+    # tla_trace_plant_<layer>, of that one file compiled with
+    # ROCKETNET_TLA_PLANT: the file then includes its own code with its
+    # plant, in place of the library's, so one layer's plant never touches
+    # another's trace. Every trace target compiles with the library's own
+    # private definitions, include directories and options (ROCKETNET_IO_URING,
+    # ROCKETNET_XDP, generated/, the floating-point floor), so a planted copy
+    # of library code is the code the library builds.
+    function(rocketnet_tla_trace_target target)
+        target_compile_definitions(${target} PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
+        target_include_directories(${target} BEFORE PRIVATE $<TARGET_PROPERTY:rocketnet_dev,INCLUDE_DIRECTORIES>)
+        target_compile_options(${target} PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_OPTIONS>)
+        if(TARGET rocketnet_xdp_header)
+            add_dependencies(${target} rocketnet_xdp_header)
+        endif()
+        target_link_libraries(${target} PRIVATE rocketnet_dev)
+        rocketnet_use_sodium(${target})
+        rocketnet_warning_floor(${target})
+        target_compile_features(${target} PRIVATE cxx_std_11)
+    endfunction()
     file(GLOB ROCKETNET_TLA_TRACE_LAYERS CONFIGURE_DEPENDS tests/tla_trace_*.cpp)
     add_executable(tla_trace tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
-    target_link_libraries(tla_trace PRIVATE rocketnet_dev)
-    rocketnet_use_sodium(tla_trace)
-    target_compile_features(tla_trace PRIVATE cxx_std_11)
-    add_executable(tla_trace_plant tests/tla_trace.cpp ${ROCKETNET_TLA_TRACE_LAYERS})
-    target_compile_definitions(tla_trace_plant PRIVATE ROCKETNET_TLA_PLANT=1)
-    target_link_libraries(tla_trace_plant PRIVATE rocketnet_dev)
-    rocketnet_use_sodium(tla_trace_plant)
-    target_compile_features(tla_trace_plant PRIVATE cxx_std_11)
+    rocketnet_tla_trace_target(tla_trace)
+    set(ROCKETNET_TLA_TRACE_PLANTS "")
+    foreach(layer_file IN LISTS ROCKETNET_TLA_TRACE_LAYERS)
+        get_filename_component(layer_stem "${layer_file}" NAME_WE)
+        string(REPLACE "tla_trace_" "tla_trace_plant_" plant_target "${layer_stem}")
+        add_executable(${plant_target} tests/tla_trace.cpp "${layer_file}")
+        target_compile_definitions(${plant_target} PRIVATE ROCKETNET_TLA_PLANT=1)
+        rocketnet_tla_trace_target(${plant_target})
+        list(APPEND ROCKETNET_TLA_TRACE_PLANTS ${plant_target})
+    endforeach()
+    # the library's own definitions, which tools/tla_trace_check.py compares
+    # with the CONFIG line every trace binary prints
+    file(GENERATE OUTPUT "$<TARGET_FILE_DIR:tla_trace>/tla_trace_config.txt"
+        CONTENT "$<JOIN:$<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>,\n>\n")
+    # cmake --build build --target tla_trace_all builds the harness and every plant
+    add_custom_target(tla_trace_all DEPENDS tla_trace ${ROCKETNET_TLA_TRACE_PLANTS})
     add_executable(keygen tools/keygen.cpp)
     add_executable(transport_memory benchmarks/transport_memory.cpp)
     add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)
@@ -1429,7 +1455,7 @@ if(ROCKETNET_BUILD_TOOLS)
     # loopback case does, so the harness object goes first on the link line:
     # lld-link loads an archive member as soon as an earlier object
     # references one of its symbols (see ROCKETNET_UNIT_TRANSPORT_SOURCE).
-    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
+    set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session rocketnet_fuzz_session_raw)
     foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_xdp_frame rocketnet_fuzz_uring_recvmsg rocketnet_fuzz_gateway_netlink rocketnet_fuzz_endpoint rocketnet_fuzz_xdp_filter ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
             add_executable(fuzz_replay_${harness} tests/fuzz/${harness}.cpp tests/fuzz/replay_main.cpp)
@@ -1459,7 +1485,7 @@ if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
 # Internal harnesses use repository-relative tests/helper includes.
-foreach(harness client server soak load load_split soak_sim)
+foreach(harness client server soak load load_split soak_sim test_load_census)
     if(TARGET ${harness})
         target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     endif()
@@ -1483,8 +1509,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.1.7; the label
-# v1.1.7 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.1.8; the label
+# v1.1.8 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)

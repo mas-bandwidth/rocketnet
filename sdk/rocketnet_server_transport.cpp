@@ -378,8 +378,8 @@ struct rocketnet_server_transport_t
 
     struct rocketnet_server_payloads_t payloads;
     // payloads.capacity slots of ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES, plus 8:
-    // serialize's BitReader loads 8-byte windows at byte granularity, so any
-    // buffer a ReadStream is bound over must extend at least 8 bytes past the
+    // a caller's bit reader may load 8-byte windows at byte granularity, so a
+    // payload it reads in place must have at least 8 readable bytes past the
     // end of its data -- the storage is the last carve, so the slack is real.
     uint8_t * payload_storage;
 };

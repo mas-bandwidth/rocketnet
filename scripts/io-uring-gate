@@ -13,15 +13,20 @@
 #
 # The machine is $RUNNER_NAME on a runner, else the host name. Callers: nightly-soak.yml (soak,
 # the LOAD io_uring cell) and scripts/transport-cells-repeat (the io_uring cells).
+#
+# Test seams (tools/test_transport_cells_repeat.sh): ROCKETNET_IO_URING_DISABLED_FILE is read in
+# place of the kernel switch, and ROCKETNET_IO_URING_ABSENT_RUNNERS in place of the list.
 set -euo pipefail
 label=${1:?usage: io-uring-gate <label>}
 root=$(cd "$(dirname "$0")/.." && pwd)
 disabled=$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)
+if [ -n "${ROCKETNET_IO_URING_DISABLED_FILE:-}" ]; then disabled=$(cat "$ROCKETNET_IO_URING_DISABLED_FILE" 2>/dev/null || echo 0); fi
+absent_list=${ROCKETNET_IO_URING_ABSENT_RUNNERS:-$root/tools/io_uring_absent_runners.txt}
 if [ "$disabled" = 0 ]; then
     exit 0
 fi
 name=${RUNNER_NAME:-$(hostname)}
-reason=$(awk -F'\t' -v n="$name" '!/^#/ && $1 == n { print $2; exit }' "$root/tools/io_uring_absent_runners.txt")
+reason=$(awk -F'\t' -v n="$name" '!/^#/ && $1 == n { print $2; exit }' "$absent_list")
 if [ -n "$reason" ]; then
     echo "$label [SKIPPED io_uring absent on $name: $reason]"
     exit 3

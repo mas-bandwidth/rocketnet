@@ -2,7 +2,7 @@
    RocketNet. Copyright 2026 Más Bandwidth LLC.
    Licensed under the GNU Affero General Public License v3.0
 
-   A very simple backend, in the spirit of yojimbo's matcher: one HTTP
+   A very simple backend: one HTTP
    endpoint that mints a RocketNet connect token for a client and returns it
    as base64. The client passes the string to rocketnet_client_connect, and
    the token sends it to the one server it names.

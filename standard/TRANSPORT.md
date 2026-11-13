@@ -4036,26 +4036,6 @@ The vectors of RN-1 appear in their defining sections. Each vector has a
 unique section-qualified identifier, declared inputs and expected output bytes.
 The vector identifier stays with the case when surrounding prose changes.
 
-<a id="tb"></a>
-## tb. Appendix B: changes from netcode 1.02
-
-This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
-the bytes on the wire and in the decisions a receiver makes. It states no
-requirements; each difference is specified by the section named in its row.
-
-| Area | netcode 1.02 | RN-1 |
-|---|---|---|
-| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
-| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
-| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
-| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the first source address that presents a valid request, until the handshake deadline, and then to the source address whose connection response first opened under it; it admits one live connection ([t12 Handshake: server](#t12)). |
-| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
-| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
-| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
-| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
-| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
-| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
-
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
 
