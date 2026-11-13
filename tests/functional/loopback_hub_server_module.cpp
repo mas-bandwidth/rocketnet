@@ -72,6 +72,13 @@ int loopback_hub_server_module_start( struct rocketnet_loopback_hub_t ** hub, ch
     return 1;
 }
 
+// Returns the pings received this update, or LOOPBACK_HUB_SERVER_MODULE_REFUSED
+// when the pong finish returned no receipt serial (rocketnet_server_finish_message
+// returns a nonzero serial for every message it accepts): the host adds the
+// returns and requires exactly one ping, so a refused finish fails the case.
+
+#define LOOPBACK_HUB_SERVER_MODULE_REFUSED ( -1000000 )
+
 int loopback_hub_server_module_update( double time )
 {
     rocketnet_server_update( module_server, time );
@@ -97,7 +104,10 @@ int loopback_hub_server_module_update( double time )
         if ( out )
         {
             memcpy( out, "pong", 4 );
-            rocketnet_server_finish_message( module_server, 4 );
+            if ( rocketnet_server_finish_message( module_server, 4 ) == 0 )
+            {
+                return LOOPBACK_HUB_SERVER_MODULE_REFUSED;
+            }
         }
     }
 
