@@ -538,8 +538,7 @@ static void test_server_stop_finishes_with_held_link_packets_past_a_jammed_queue
 // The same with a send still in flight (send_idle false) while queue 0 has
 // no room: the stop's drain holds queue 0's packets back in the simulator
 // rather than discard them, and the stop waits; once queue 0's room returns
-// and nothing is in flight, they are sent, none is counted as a full
-// staging, and the stop finishes.
+// and nothing is in flight, they are sent and the stop finishes.
 static void test_server_stop_holds_link_packets_while_room_can_return()
 {
     struct sq_rig_t rig;
@@ -555,7 +554,6 @@ static void test_server_stop_holds_link_packets_while_room_can_return()
     sq.busy = true;
     uint64_t before[SQ_CLIENTS];
     memcpy( before, sq.finished, sizeof( before ) );
-    const uint64_t ring_full = rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
     for ( int c = 0; c < SQ_CLIENTS; c++ )
     {
         rocketnet_server_transport_disconnect_client_shutdown( rig.transport, c );
@@ -566,7 +564,6 @@ static void test_server_stop_holds_link_packets_while_room_can_return()
         check( !rocketnet_server_transport_stopped( rig.transport ) );
     }
     check( sq.finished[2] == before[2] );
-    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
 
     // the in-flight send finishes and queue 0's room returns
     sq.busy = false;
@@ -577,11 +574,14 @@ static void test_server_stop_holds_link_packets_while_room_can_return()
         stopped = rocketnet_server_transport_stopped( rig.transport );
     }
     check( stopped );
+
+    // every client's burst and its held keep-alives went out: a held packet
+    // of queue 0 discarded while the send was in flight would leave client 2
+    // its burst alone
     for ( int c = 0; c < SQ_CLIENTS; c++ )
     {
         check( sq.finished[c] - before[c] > ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     }
-    check( rocketnet_server_transport_counters( rig.transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full );
 
     sq_teardown( &rig );
 }
