@@ -1,9 +1,10 @@
 ----------------------------- MODULE RNWindow -----------------------------
 (***************************************************************************)
 (* rocketnet: the message layer's reliable window (docs/CHANNELS.md,       *)
-(* layer 3, sections 6 and 15).  Written before the window code exists:    *)
-(* the model is the design, and the code card that follows                 *)
-(* (the-receive-window-accepts-each-reliable-number-once) is built to it.  *)
+(* layer 3, sections 6 and 15).  Written before the window code; the code  *)
+(* now exists and cites it (sdk/rocketnet_window_send.cpp,                 *)
+(* rocketnet_window_receive.cpp, rocketnet_window_ack.cpp), bound by       *)
+(* citation, not by a trace walk.                                          *)
 (*                                                                         *)
 (* One sender and one receiver, joined by two instances of Link: the       *)
 (* forward link carries data packets (a packet id and the message numbers  *)
@@ -225,11 +226,17 @@ Init ==
 \* A record takes the next number, late, under the count bound n < U' + W
 \* (6.2).  The block takes all its numbers at once, under one check of its
 \* last number (section 8).  The byte bound is RNRing's.
-\* WouldNumber is that check alone, asked before anything is spent on the
-\* record: the send pass's due test and its stall
-\* (rn_window_send_would_number, rn_window_send_stall_unless_numbered)
-\* ask exactly the test NumberRecord applies, so a pass found due always
-\* numbers a record or resends one.
+\* WouldNumber is the count half of the code's admit test
+\* (rn_window_send_fits, asked by rn_window_send_would_number and
+\* rn_window_send_stall_unless_numbered).  The code's test also needs the
+\* record's span to fit in the send ring above the ring floor (U''s
+\* ring_start) for every holdable record (RNRing Admits); that half is not
+\* here.  So NumberRecord is enabled in states where the code stalls on ring
+\* bytes: safety only gains behaviours, and the liveness below assumes the
+\* ring fits the record once acks move U' (the ring and the window are not
+\* composed in any model).
+\* (Before revision 1.2 this comment said WouldNumber asks exactly the test
+\* NumberRecord applies in the code; it asks the count half.)
 WouldNumber ==
     IF next = BlockFirst
       THEN BlockFirst + BlockLen - 1 < UPrime + W
@@ -285,65 +292,83 @@ ReceiveUsefulAck == \E q \in AckPackets : q \cap MapIds # {} /\ ReceiveAck(q)
 
 
 \* The receiver opens a packet (P2: the id goes into the next ack whatever
-\* happens below) and runs 6.5 on each number: a duplicate is dropped; a
-\* number outside the window, or whose slot is live with another number,
-\* is a violation, after which nothing more is parsed (R6).  Accepted
-\* numbers set their bit and claim their descriptor; R advances past the
-\* set bits, clearing them.  Then dispatch (7.2): an unordered number is
-\* delivered now; an ordered number is delivered when every ordered
-\* predecessor has been received, and it drains the holds that become
-\* releasable with it; otherwise it is held.  Delivered and held numbers
-\* are live.  Under P6 this happens only while the batch is open.
+\* happens below) and runs 6.5 on each number in turn, as rn_ordered_receive
+\* does record by record (sdk/rocketnet_channel.cpp, through
+\* rn_window_receive_accept): a duplicate is dropped; a number outside the
+\* window, or whose slot is live with another number, is a violation, after
+\* which nothing more is parsed (R6), and the records before it in the packet
+\* stay accepted and dispatched.  An accepted number sets its bit and claims
+\* its descriptor; R advances past the set bits, clearing them.  Then
+\* dispatch (7.2): an unordered number is delivered now; an ordered number is
+\* delivered when every ordered predecessor has been received, and it drains
+\* the holds that become releasable with it; otherwise it is held.  Delivered
+\* and held numbers are live.  Under P6 this happens only while the batch is
+\* open.
 \*
-\* Each number is first reconstructed from its wire value against R (6.5).
-\* The code reconstructs record by record as R advances inside the packet;
-\* here every number of the packet is read against the R the packet found.
-\* Both R values lie in the same window, so the two readings agree whenever
-\* the half range holds, and WireNumberReconstructs checks exactly that.
+\* Each number is reconstructed from its wire value against R as it stands
+\* when the record is read (6.5), R having advanced over the packet's
+\* earlier records, as the code does.  The order of the records in the packet
+\* is any order of its numbers (the writer's order is the scheduler's).  A
+\* reconstruction that names a different number sets misread and ends the
+\* packet.  (Revision 1.2: before it every number of the packet was read
+\* against the R the packet found, and a violation discarded the whole
+\* packet; with MaxPerPacket = 1 in every case the two readings agree.)
 
-\* 6.5 and 7.2 on the numbers of one packet, every one read correctly
-Accept(nums) ==
-    LET fresh   == IF DropDuplicates
-                     THEN {n \in nums : n >= R /\ n \notin rbits}
-                     ELSE nums
-        outside == {n \in fresh : n >= R + W}
-        clash   == {n \in fresh : n < R + W /\ desc[n % W].live /\ desc[n % W].num # n}
-        A       == fresh \ (outside \cup clash)
-        bits1   == rbits \cup A
-        R1      == Advance(bits1, R)
-        rbits1  == {n \in bits1 : n >= R1}
-        rcvd    == ReceivedSet(R1, rbits1)
-        cand    == held \cup (A \cap Ordered)
-        release == IF HoldOrdered
-                     THEN {n \in cand : OrderedPred(n) \subseteq rcvd}
-                     ELSE cand
-        now     == (A \ Ordered) \cup release
-    IN  IF outside \cup clash # {}
-          THEN /\ violations' = violations \cup
-                      (IF outside # {} THEN {"outside"} ELSE {}) \cup
-                      (IF clash # {} THEN {"slot"} ELSE {})
-               /\ UNCHANGED <<R, rbits, desc, held, delivered, everDelivered, dup>>
-          ELSE /\ R' = R1
-               /\ rbits' = rbits1
-               /\ desc' = [s \in Slots |->
-                             IF \E n \in A : n % W = s
-                               THEN [num |-> CHOOSE n \in A : n % W = s, live |-> TRUE]
-                               ELSE desc[s]]
-               /\ held' = cand \ release
-               /\ delivered' = delivered \cup now
-               /\ everDelivered' = everDelivered \cup now
-               /\ dup' = (dup \/ (now \cap everDelivered # {}))
-               /\ UNCHANGED violations
+\* the receiver's state as one packet's records pass over it
+RecvState(r, bits, d, h, dl, ed, du, vi) ==
+    [R |-> r, bits |-> bits, desc |-> d, held |-> h, deliv |-> dl, ever |-> ed,
+     dup |-> du, viol |-> vi, misread |-> FALSE, stop |-> FALSE]
+
+\* 6.5 and 7.2 on one record n
+AcceptOne(st, n) ==
+    IF st.stop THEN st
+    ELSE IF Recon(n % NumMod, st.R) # n
+      THEN [st EXCEPT !.misread = TRUE, !.stop = TRUE]
+    ELSE IF DropDuplicates /\ (n < st.R \/ n \in st.bits)
+      THEN st
+    ELSE IF n >= st.R + W
+      THEN [st EXCEPT !.viol = @ \cup {"outside"}, !.stop = TRUE]
+    ELSE IF st.desc[n % W].live /\ st.desc[n % W].num # n
+      THEN [st EXCEPT !.viol = @ \cup {"slot"}, !.stop = TRUE]
+    ELSE LET bits1   == st.bits \cup {n}
+             R1      == Advance(bits1, st.R)
+             rbits1  == {m \in bits1 : m >= R1}
+             rcvd    == ReceivedSet(R1, rbits1)
+             cand    == IF n \in Ordered THEN st.held \cup {n} ELSE st.held
+             release == IF HoldOrdered
+                          THEN {m \in cand : OrderedPred(m) \subseteq rcvd}
+                          ELSE cand
+             now     == (IF n \in Ordered THEN {} ELSE {n}) \cup release
+         IN  [st EXCEPT !.R = R1, !.bits = rbits1,
+                        !.desc = [@ EXCEPT ![n % W] = [num |-> n, live |-> TRUE]],
+                        !.held = cand \ release,
+                        !.deliv = @ \cup now,
+                        !.ever = @ \cup now,
+                        !.dup = @ \/ (now \cap st.ever # {})]
+
+RECURSIVE AcceptFrom(_, _, _)
+AcceptFrom(ord, i, st) ==
+    IF i > Len(ord) THEN st ELSE AcceptFrom(ord, i + 1, AcceptOne(st, ord[i]))
+
+\* the orders a packet's records can come in
+Orders(S) == {s \in [1..Cardinality(S) -> S] : \A x \in S : \E i \in 1..Cardinality(S) : s[i] = x}
 
 OpenPacket(p) ==
     /\ phase = "receive" \/ ~KeepP6
     /\ Fwd!Deliver(p)
     /\ pending' = pending \cup {p.id}
-    /\ IF \E n \in p.nums : Recon(n % NumMod, R) # n
-         THEN /\ misread' = TRUE
-              /\ UNCHANGED <<R, rbits, desc, held, delivered, everDelivered, dup, violations>>
-         ELSE /\ UNCHANGED misread
-              /\ Accept(p.nums)
+    /\ \E ord \in Orders(p.nums) :
+         LET f == AcceptFrom(ord, 1, RecvState(R, rbits, desc, held, delivered,
+                                               everDelivered, dup, violations))
+         IN  /\ R' = f.R
+             /\ rbits' = f.bits
+             /\ desc' = f.desc
+             /\ held' = f.held
+             /\ delivered' = f.deliv
+             /\ everDelivered' = f.ever
+             /\ dup' = f.dup
+             /\ violations' = f.viol
+             /\ misread' = (misread \/ f.misread)
     /\ UNCHANGED <<senderVars, phase, evicted, revVars>>
 
 OpenAny  == \E p \in DataPackets : OpenPacket(p)
@@ -417,11 +442,21 @@ Next ==
 (* DeliveryFairHead: the head of each wire is delivered.  Enough for the   *)
 (* deterministic patterns on a FIFO link without duplication.              *)
 (*                                                                         *)
-(* AcksLand: acks that still matter land.  The model's stand-in for real   *)
-(* time: with the RTO abstract, the sender may write faster than any ack   *)
-(* returns and evict every entry before its ack lands; the real RTO is     *)
-(* above the RTT, so acks land before eviction.  In Fairness, because the  *)
-(* abstract RTO outpaces every pattern, not only "arbitrary".              *)
+(* AcksLand: acks that still matter land.  An ASSUMPTION of the liveness   *)
+(* below, which the code does not keep in general.  The model's stand-in   *)
+(* for real time: with the RTO abstract, the sender may write faster than  *)
+(* any ack returns and evict every entry before its ack lands.  RNSentMap  *)
+(* shows when acks land before eviction: P >= W with acks in send order,   *)
+(* RTO >= RTT and no receipt-only packets.  The code also commits          *)
+(* receipt-only packets into the same P-entry map, which W does not bound, *)
+(* and then evicts entries whose acks are on their way                     *)
+(* (MCRNSentMapReceiptEviction.cfg; rn_window_ack_commit_receipt_packet).  *)
+(* That is the documented contract of packets_in_flight (sdk/rocketnet.h,  *)
+(* standard/MESSAGES.md m9.1), and the repair is docs/roadmap.sexp         *)
+(* sent-map-receipts-give-way.  So EveryReliableAckedAndDelivered holds    *)
+(* here only while the map holds every tracked packet sent between a send  *)
+(* and the processing of its ack.  In Fairness, because the abstract RTO   *)
+(* outpaces every pattern, not only "arbitrary".                           *)
 (*                                                                         *)
 (* OldestLands (FairnessTyped) adds what "arbitrary" needs, where Drop     *)
 (* removes copies in flight: the oldest number, written without bound, is  *)
@@ -456,6 +491,8 @@ DeliveryFairHead == SF_vars(OpenHead) /\ SF_vars(ReceiveAckAny)
 \* with the RTO abstract, TLC found the sender writing a number twice
 \* between the receiver opening it and its ack landing, so every ack named
 \* an evicted id and the number was never acked (README-RNWindow.md).
+\* An assumption, not kept by the code under receipt-only traffic past P
+\* (the header of Fairness above; RNSentMap).
 AcksLand == ([]<> <<SendAckThrough>>_vars) => ([]<> <<ReceiveUsefulAck>>_vars)
 
 \* The oldest number, written without bound, is opened without bound:

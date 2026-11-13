@@ -17,8 +17,11 @@
 (* Each message here is one fragment, so its descriptor is freed by the    *)
 (* ack of its one number; a block's descriptor waits for its last          *)
 (* fragment, which changes no name.  Generations run to GenMax, wrapping   *)
-(* to 1 as the allocator does at UINT32_MAX; RNSendStoreLayout checks the  *)
-(* wrap itself.                                                            *)
+(* to 1 as the allocator does at UINT32_MAX (rn_region_send_alloc).  With  *)
+(* GenMax = 2 (MCRNResendGenerationsWrap.cfg) the wrap fires and one       *)
+(* descriptor writes two numbers under one name; the number comparison     *)
+(* alone keeps every invariant.  RNSendStoreLayout checks the wrap's skip  *)
+(* of 0 at the code's layout.                                              *)
 (*                                                                         *)
 (* Parameters (the code's values first):                                   *)
 (*   CheckNumber   TRUE: the ack skips a slot that holds another number    *)
@@ -193,4 +196,10 @@ NoStaleNameInFlight ==
         /\ dGen[w.d] # w.g
         /\ sn[SlotOf(w.n)].n # w.n
         /\ sn[SlotOf(w.n)].d = w.d
+
+\* Reachability, violated by MCRNResendGenerationsReachWrap.cfg: no two
+\* numbers are written under one name (descriptor and generation).  The
+\* wrap after GenMax breaks it, so the wrap is reached.
+NoGenerationReuse ==
+    \A w1, w2 \in wrote : (w1.d = w2.d /\ w1.g = w2.g) => w1.n = w2.n
 =============================================================================

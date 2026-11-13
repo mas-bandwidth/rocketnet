@@ -63,14 +63,28 @@ An end in error does nothing more: the object disconnects it (section 11).
   descriptor slots are not restated.
 - **The resend delay** is abstract, as in `RNWindow`: an unacked record inside the
   window may be resent at any step. `RtoAboveRtt = TRUE` (the liveness cases)
-  narrows this to the real ordering of the resend delay above the RTT: a record is due
-  again only once no copy of it is in flight and no ack of it is pending or in
-  flight back. The timing that makes this so is `RNResendTiming`'s.
+  narrows this to a record due again only once no copy of it is in flight and
+  no ack of it is pending or in flight back. **This is an assumption of the
+  liveness cases, not a proved property.** No model proves it: in
+  `RNResendTiming` a sample may set the resend delay to any value of its
+  range, every send may be lost, and nothing there relates the delay to the
+  path's round trip, so the code can resend a record whose earlier copy or
+  ack is still in flight (rn_window_ack_resend_delay and the walk of
+  rn_ordered_write resend on the delay alone). Under the assumption
+  `RNEndpoint`'s liveness cases do not explore those resends.
 - **The reliable timeout.** Under `TimeoutAnyTime = TRUE` (the safety cases)
   `Tick` may fire at any moment, so safety holds wherever the timeout lands.
   Under `FALSE` (the liveness cases) it fires only once the remote endpoint is in error
-  and silent: that a live remote endpoint's resends land before `reliable_timeout` is
-  `RNResendTiming`'s `AttemptsBeforeTimeout`.
+  and silent. **This is also an assumption of the liveness cases:** that a
+  live remote endpoint's resends land before `reliable_timeout` is not
+  proved. `RNResendTiming`'s `AttemptsBeforeTimeout` counts sends (at least
+  four before the deadline), not deliveries, and lets every send be lost;
+  with loss or a round trip near the timeout the code ends a connection
+  whose remote endpoint is live (rn_window_ack_check_timeout), which the
+  liveness cases leave out. A composed proof over a bounded network
+  (bounded loss and delay, the resend delay above the round trip, the
+  attempts landing before the timeout) is a roadmap entry
+  (`endpoint-bounded-network-liveness`), not a claim of this model.
 - **A configuration** is its `num_channels`, the field the instances vary.
   ConfigCompare compares the whole configuration value, which stands for the
   field-by-field comparison of section 13.4 (version, enabled mask,
@@ -80,9 +94,25 @@ An end in error does nothing more: the object disconnects it (section 11).
   (`ReplayWindow`), so the instances run Link with `Duplication = FALSE`.
   Resends still put several copies of one reliable record in flight in the
   safety cases, and the receiver's dedupe is what keeps them exactly once.
-- **Inside one packet** the records are processed CONFIG first, then data; a
-  data record outside the receiver's bounds refuses the packet's data as a
-  whole. The order of records inside a packet beyond that is section 9.3's.
+- **Inside one packet** a record outside the receiver's channel count
+  refuses the whole payload first, CONFIG included, as the reader's
+  whole-payload check does (`rocketnet_message_check_payload`, check 5,
+  before `rn_ordered_receive` hands out any record): VIOLATION, and nothing
+  of the packet is taken. Otherwise CONFIG is processed first, then data.
+  (Revision 1.2; before it the model compared and took CONFIG from a packet
+  it then refused.) The violations the code finds record by record, after
+  earlier records of the packet were taken (the window's, in `RNWindow`
+  `Accept`, and the dispatch's block checks, in `RNBlocks` `RefuseBlock`),
+  are not modelled here. The order
+  of records inside a packet beyond that is section 9.3's.
+- **The CONFIG wait** starts at `Reset` for both ends. The code starts each
+  end's at the first update its connection is connected at
+  (`rn_endpoint_config_tick`: the server's Observe reset, the client's first
+  update its transport reports CONNECTED), which can be later than the
+  other end's. A later start only delays that end's CONFIG timeout; `Tick`
+  in the safety cases may fire at any update once the wait is due, so the
+  code's later end is among the model's behaviours, and the model also has
+  the earlier one.
 - **Bytes, the ring, blocks, receipts and priorities below IMMEDIATE** are
   other modules' (`RNRing`, `RNSendSpans`, `RNReceipts`, `RNScheduler`).
 - `WriteAll = TRUE` makes a packet carry every due record and every waiting

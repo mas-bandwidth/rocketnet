@@ -24,8 +24,11 @@ and class bits of the same array; here the links are one flag per slot.
 
 Each message is one fragment. A block's descriptor holds its numbers until
 the last fragment's ack, which changes no name. The generation after `GenMax`
-is 1, as the allocator wraps at `UINT32_MAX`; the instance sets `GenMax`
-above the number of takes, and RNSendStoreLayout checks the wrap. The carve
+is 1, as the allocator wraps at `UINT32_MAX` (`rn_region_send_alloc`). The
+main instance sets `GenMax` above the number of takes; the wrap cases set
+`GenMax = 2`, so a descriptor's third take is generation 1 again and the
+wrap fires. RNSendStoreLayout checks the wrap's skip of 0 at the code's
+layout. The carve
 clears every link (`Init`). A link (`rn_resend_link_t`, 8 bytes) is the
 slot's `prev` and `next` and nothing else: the slot index names the number.
 
@@ -60,6 +63,8 @@ slot's `prev` and `next` and nothing else: the slot index names the number.
 - **`NoStaleNameInFlight`**: used only by the reachability case: no packet
   references a number whose slot holds a later number of the same descriptor
   at a later generation.
+- **`NoGenerationReuse`**: used only by the wrap reachability case: no two
+  numbers are written under one descriptor and generation.
 
 ## Cases
 
@@ -88,6 +93,13 @@ reuse the slots of 0 and 1), `D = 2`, `GenMax = 6`.
    slot and no ack can reach it. Checked by hand against
    `rn_window_send_admit`: with `<= W` in place of `<= W - count` the same
    write is admitted.
+5. **`MCRNResendGenerationsWrap.cfg`** (`GenMax = 2`, revision 1.1): the
+   code with the generation wrapping. Case 1's invariants hold: a name
+   (descriptor, generation) is reused, and the number comparison alone
+   keeps a stale ack off the later number.
+6. **`MCRNResendGenerationsReachWrap.cfg`** (`GenMax = 2`): violates
+   `NoGenerationReuse`: one descriptor writes two numbers at one
+   generation, so case 5 reaches the wrap. TRACE-PENDING
 
 `test_resend_stale_ack_leaves_the_later_generation`
 (`tests/test_unit_resend_generations.cpp`) replays case 3's state against the

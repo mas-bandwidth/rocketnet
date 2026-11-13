@@ -38,13 +38,25 @@ EXTENDS Naturals, Sequences, FiniteSets
 \* check no timing property, and for ReceiptProgress, which a silence end
 \* would satisfy for any stuck receipt). BrokenSilenceEarly is a reversed
 \* witness: the silence end one tick short.
+\* A type-5 record that never reaches the wire takes its LOSS at once, with
+\* no sent-map entry and no deadline: the send budget drops it before a packet
+\* is written (rn_endpoint_in_place_finish, rn_endpoint_unreliable_drop_all in
+\* sdk/rocketnet_endpoint.cpp) or the transport refuses the packet's frame or
+\* finish (rn_endpoint_in_place_failed, and the RN_ENDPOINT_PACKET_UNRELIABLE
+\* arm of rn_endpoint_packet_failed; the finish_packet refusal in
+\* rn_message_flush_unreliable, sdk/rocketnet_message_server.cpp). In both the record was never committed
+\* (rn_window_ack_commit_receipt_packet runs only for a packet the transport
+\* sent), so SweepLoss's drop arm needs the record off the wire; dropped is
+\* its ghost. BrokenDropAfterWrite is a reversed witness: the drop arm
+\* enabled for a record already committed to a packet.
 CONSTANTS MaxPid, MapCapacity, ReceiptCapacity, RTO, ReceiptDeadline, ReliableTimeout,
           BrokenLastIndexAck, BrokenTwoOutcomes, BrokenReliableLoss, BrokenEarlyLoss,
           TimeoutConfigured, BrokenTimeoutWhenOff,
-          Clocked, SilenceT, BrokenSilenceEarly
+          Clocked, SilenceT, BrokenSilenceEarly, BrokenDropAfterWrite
 
 ASSUME RTO \in Nat /\ ReceiptDeadline \in Nat /\ RTO <= ReceiptDeadline
 ASSUME Clocked \in BOOLEAN /\ BrokenSilenceEarly \in BOOLEAN /\ SilenceT \in Nat \ {0}
+ASSUME BrokenDropAfterWrite \in BOOLEAN
 
 Serials == 1..3
 ReceiptSerials == 2..3
@@ -57,11 +69,12 @@ VARIABLES receiptType, fragmentCount, nextSerial, live,
           sentNums, acked, smap, active, packetNums, opened, lost,
           openedNums, ackProof, age, evicted, outcomes, ring,
           ringDropped, writes,
-          quiet  \* Clocked: ticks since anything was heard from the other side
+          quiet,  \* Clocked: ticks since anything was heard from the other side
+          dropped \* ghost: serials whose LOSS was the off-wire drop arm of SweepLoss
 vars == <<receiptType, fragmentCount, nextSerial, live,
           sentNums, acked, smap, active, packetNums, opened, lost,
           openedNums, ackProof, age, evicted, outcomes, ring,
-          ringDropped, writes, quiet>>
+          ringDropped, writes, quiet, dropped>>
 
 SendLimit == IF fragmentCount = 1 THEN 3 ELSE 2
 PromotionSources == {0,1,5}
@@ -92,7 +105,7 @@ Init ==
  /\ opened = {} /\ lost = {} /\ openedNums = {} /\ ackProof = {}
  /\ age = [n \in Nums |-> 0] /\ evicted = {}
  /\ outcomes = [s \in Serials |-> <<>>] /\ ring = <<>> /\ ringDropped = 0
- /\ quiet = 0
+ /\ quiet = 0 /\ dropped = {}
  /\ writes = [s \in ReceiptSerials |-> 0]
 
 \* The API reserves/returns the serial before any packet is written, including
@@ -104,7 +117,7 @@ Send(t) ==
  /\ nextSerial' = nextSerial + 1
  /\ UNCHANGED <<receiptType, fragmentCount, live, sentNums, acked,
       smap, active, packetNums, opened, lost, openedNums, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes, quiet>>
+      evicted, outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 WritePacket(n,pid) ==
  LET s == n[1] IN
@@ -117,7 +130,7 @@ WritePacket(n,pid) ==
  /\ packetNums' = [packetNums EXCEPT ![pid] = {n}]
  /\ writes' = [writes EXCEPT ![s] = IF @ < 2 THEN @ + 1 ELSE @]
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, acked,
-      opened, lost, openedNums, ackProof, age, evicted, outcomes, ring, ringDropped, quiet>>
+      opened, lost, openedNums, ackProof, age, evicted, outcomes, ring, ringDropped, quiet, dropped>>
 
 OpenPacket(pid) ==
  /\ live /\ pid \in active \ (opened \cup lost)
@@ -125,7 +138,7 @@ OpenPacket(pid) ==
  /\ openedNums' = openedNums \cup packetNums[pid]
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, lost, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes, quiet>>
+      evicted, outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 ReceiveAck(pid) ==
  LET ns == UNION {smap[i].nums : i \in {j \in DOMAIN smap : smap[j].id = pid}} IN
@@ -139,7 +152,7 @@ ReceiveAck(pid) ==
  \* (last_receive_time = current_time on every accepted packet)
  /\ quiet' = 0
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
-      openedNums, age, evicted, outcomes, ring, ringDropped, writes>>
+      openedNums, age, evicted, outcomes, ring, ringDropped, writes, dropped>>
 
 \* Lost packets remain eligible for a late ACK until the transport retires them.
 \* Reliable numbers stay unacked and eligible for a new packet after loss/eviction.
@@ -148,7 +161,7 @@ PacketLost(pid) ==
  /\ lost' = lost \cup {pid}
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, openedNums, ackProof, age,
-      evicted, outcomes, ring, ringDropped, writes, quiet>>
+      evicted, outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 RetireLostPacket(pid) ==
  /\ live /\ pid \in lost
@@ -156,7 +169,7 @@ RetireLostPacket(pid) ==
  /\ active' = active \ {pid} /\ opened' = opened \ {pid} /\ lost' = lost \ {pid}
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, openedNums, ackProof, age, evicted,
-      outcomes, ring, ringDropped, writes, quiet>>
+      outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 EvictMap ==
  /\ live /\ Len(smap) > 0
@@ -164,7 +177,7 @@ EvictMap ==
  /\ smap' = Tail(smap)
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, active, packetNums, opened, lost, openedNums, ackProof, age,
-      outcomes, ring, ringDropped, writes, quiet>>
+      outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 \* One update passes. Each sent, unacked number ages (its reliable clock, from
 \* its first send). Clocked, the silence clock counts the update unless a
@@ -184,7 +197,7 @@ Tick ==
       /\ live' = (heard \/ quiet + 1 < SilenceEnd)
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      evicted, outcomes, ring, ringDropped, writes>>
+      evicted, outcomes, ring, ringDropped, writes, dropped>>
 
 EmitAck(s) ==
  /\ live /\ s \in Issued /\ Parts(s) \cap sentNums # {}
@@ -196,19 +209,29 @@ EmitAck(s) ==
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, writes, quiet>>
+      age, evicted, writes, quiet, dropped>>
 
 \* Per-update deadline sweep, one eligible descriptor at a time. Its tombstone
 \* (outcomes) suppresses a late ACK even while the map's reliable references live.
 \* LOSS waits for the fixed ReceiptDeadline, never the moving RTO estimate. The
 \* one exception is sent-map eviction: an evicted entry can never be acknowledged,
 \* so it reports LOSS at once. BrokenEarlyLoss is the old rule, a sweep at RTO.
+\* The second exception is the drop arm (header): a type-5 record dropped by
+\* the send budget, or whose packet the transport refused, before any write
+\* reaches the sent map takes its LOSS at once. The model leaves the drop's
+\* cause (budget, refusal) nondeterministic: any issued, unwritten type-5
+\* serial may take it.
 LossDue(s) == IF BrokenEarlyLoss THEN age[<<s,0>>] >= RTO ELSE age[<<s,0>>] >= ReceiptDeadline
+OffWire(s) == Parts(s) \cap sentNums = {}
 SweepLoss(s) ==
  /\ live /\ s \in Issued /\ outcomes[s] = <<>> /\ ~Complete(s)
- /\ Parts(s) \cap sentNums # {}
  /\ (EffectiveKind(s) = 5 \/ BrokenReliableLoss)
- /\ (LossDue(s) \/ s \in evicted)
+ /\ \/ /\ ~OffWire(s)
+       /\ (LossDue(s) \/ s \in evicted)
+       /\ dropped' = dropped
+    \/ /\ EffectiveKind(s) = 5
+       /\ (OffWire(s) \/ BrokenDropAfterWrite)
+       /\ dropped' = dropped \cup {s}
  /\ outcomes' = [outcomes EXCEPT ![s] = <<"LOSS">>]
  /\ ring' = AddRing(s,"LOSS")
  /\ ringDropped' = ringDropped + IF Len(ring) = ReceiptCapacity THEN 1 ELSE 0
@@ -220,7 +243,7 @@ TakeReceipt ==
  /\ Len(ring) > 0 /\ ring' = Tail(ring)
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, live, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, outcomes, ringDropped, writes, quiet>>
+      age, evicted, outcomes, ringDropped, writes, quiet, dropped>>
 
 \* CHANNELS 6.4: a reliable number reaching first-send + reliable_timeout
 \* ends the connection even if other packets/traffic still make progress,
@@ -237,7 +260,7 @@ Disconnect ==
  /\ live' = FALSE
  /\ UNCHANGED <<receiptType, fragmentCount, nextSerial, sentNums,
       acked, smap, active, packetNums, opened, lost, openedNums, ackProof,
-      age, evicted, outcomes, ring, ringDropped, writes, quiet>>
+      age, evicted, outcomes, ring, ringDropped, writes, quiet, dropped>>
 
 \* A new send/retransmit can need map room even after transport loss retires
 \* its packet ID. Only this actual pressure requires eventual eviction.
@@ -265,6 +288,7 @@ TypeOK ==
  /\ ring \in Seq(Events) /\ ringDropped \in 0..4
  /\ writes \in [ReceiptSerials -> 0..2]
  /\ quiet \in 0..SilenceT
+ /\ dropped \subseteq ReceiptSerials
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
@@ -281,9 +305,14 @@ BlockAckedOnlyWhenAllFragmentsAcked == \A s \in ReceiptSerials :
 ReceiptRingBounded == Len(ring) <= ReceiptCapacity
 UnreliableNeverResent == \A s \in ReceiptSerials : EffectiveKind(s)=5 => writes[s] <= 1
 \* A LOSS outcome means no acknowledgement arrived within the receipt deadline,
-\* except for an entry evicted from the sent map (the one named exception).
+\* except for an entry evicted from the sent map and a record dropped before
+\* the wire (the two named exceptions).
 LossOnlyAfterDeadline == \A s \in ReceiptSerials :
-    Has(s,"LOSS") => (age[<<s,0>>] >= ReceiptDeadline \/ s \in evicted)
+    Has(s,"LOSS") => (age[<<s,0>>] >= ReceiptDeadline \/ s \in evicted \/ s \in dropped)
+\* A drop LOSS is only for a record no packet carried: it never stands for a
+\* record committed to the sent map, whose outcome is its ack, its deadline
+\* or its eviction. Reversed witness MCRNReceiptsBrokenDropAfterWrite.cfg.
+DropOnlyOffWire == \A s \in dropped : OffWire(s) /\ writes[s] = 0
 ReceiptProgress == \A s \in ReceiptSerials : (s \in Issued) ~> (outcomes[s] # <<>> \/ ~live)
 \* (S) No end shorter than T. With the timeout off (the default) the only end
 \* is the transport's silence end: a reliable receipt whose packets keep being
@@ -305,6 +334,8 @@ SilenceEndsAtT == live => quiet < SilenceT
 Fairness == /\ WF_vars(Tick) /\ WF_vars(Disconnect) /\ WF_vars(EvictForSpace)
             /\ \A n \in Nums, p \in Pids : SF_vars(WritePacket(n,p))
             /\ \A p \in Pids : WF_vars(TransportStep(p))
-            /\ \A s \in ReceiptSerials : WF_vars(EmitAck(s)) /\ WF_vars(SweepLoss(s))
+            /\ \A s \in ReceiptSerials : WF_vars(EmitAck(s)) /\ WF_vars(SweepLoss(s) /\ ~OffWire(s))
+\* No fairness on the drop arm: a drop is the budget's or the transport's
+\* choice, never forced, so ReceiptProgress is not met by dropping.
 Spec == Init /\ [][Next]_vars /\ Fairness
 =============================================================================

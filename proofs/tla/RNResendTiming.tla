@@ -353,10 +353,18 @@ Other(r) == IF r = "s" THEN "c" ELSE "s"
 \* The chunk delay's cap: MinAttempts sends fit before the timeout.
 ChunkCap == Max(1, Timeout \div MinAttempts)
 
-\* The validation rule of sdk/rocketnet_config.cpp: at least MinAttempts
-\* sends of the initial resend delay fit before a configured timeout; zero
-\* (off) is accepted.
-ConfigAccepted == ~TimeoutOn \/ Timeout >= MinAttempts * RtoInitial
+\* The validation rule of sdk/rocketnet_config.cpp
+\* (rocketnet_message_validate_config_internal): a configured timeout is
+\* 1000 ms or more and at least MinAttempts sends of the initial resend delay
+\* fit before it; zero (off) is accepted.  TimeoutFloor is 1000 ms in ticks:
+\* 2 at the 500 ms tick of most instances, TimeoutFloorFine (10) at the
+\* 100 ms tick (TimeoutFloor <- TimeoutFloorFine).  At 500 ms the floor
+\* never binds (MinAttempts sends of at least one tick are 4 ticks, 2 s); at
+\* 100 ms it does, and MCRNResendTimingBelowTimeoutFloor.cfg is a config the
+\* rule without the floor accepts and the code refuses.
+TimeoutFloor == 2
+TimeoutFloorFine == 10
+ConfigAccepted == ~TimeoutOn \/ (Timeout >= TimeoutFloor /\ Timeout >= MinAttempts * RtoInitial)
 
 \* The timeout's clock runs: configured, or the reversed witness.
 Timed == TimeoutOn \/ TimeoutWhenOff
@@ -693,12 +701,27 @@ SilenceEnd ==
     /\ UNCHANGED <<t, lastSend, rto, backoff, attempts, acked, head, phase, sampled, seeded, firstSend, refused, pending, calls,
                    sinceProgress, quiet>>
 
+\* The update's acknowledgements come before its timeout check: the message
+\* update applies the received ids (rn_endpoint_on_acked_ids) before
+\* rn_endpoint_tick runs rn_window_ack_check_timeout at the same time
+\* (rocketnet_message_server.cpp), so an ack processed in the update the
+\* deadline falls in keeps the connection.  TimedOut becomes true only on
+\* the Tick into that update (Tick needs Live), so at phase "walk" with no
+\* call yet, t = Deadline(r) is the moment before the check: Ack and Sample
+\* are taken there whatever TimedOut says, and a state that stays TimedOut
+\* is the end (Done).  CheckBeforeAcks is the reversed witness: the acks
+\* gated by TimedOut, the check before them
+\* (CheckBeforeAcks <- CheckBeforeAcksOn).
+CheckBeforeAcks == FALSE
+CheckBeforeAcksOn == TRUE
+AcksOpen == ~silenced /\ (\E r \in Records : ~acked[r]) /\ (CheckBeforeAcks => ~TimedOut)
+
 \* rn_window_ack_on_ack of another packet: one RTT sample moves rto to any
 \* value of the range (the filter that may refuse it is RNRttFilter).
 Sample(x) ==
     /\ phase = "walk"
     /\ calls = 0
-    /\ Live
+    /\ AcksOpen
     /\ Heard
     /\ rto' = x
     /\ backoff' = [r \in Records |-> 1]
@@ -727,8 +750,7 @@ Ack(r) ==
     /\ phase = "walk"
     /\ calls = 0
     /\ ~acked[r]
-    /\ ~TimedOut
-    /\ ~silenced
+    /\ AcksOpen
     /\ attempts[r] > 0
     /\ acked' = [acked EXCEPT ![r] = TRUE]
     /\ sinceProgress' = IF TimeoutOn THEN sinceProgress ELSE 0
@@ -786,6 +808,15 @@ LiveSpec == Spec /\ Fairness
 \* with the timeout configured.
 AttemptsBeforeTimeout ==
     \A r \in Records : (TimeoutOn /\ ~acked[r] /\ OnWire(r) /\ t = Deadline(r)) => attempts[r] >= MinAttempts
+
+\* An ack that arrives in the update the deadline falls in is taken before
+\* the timeout check (the order of the message update): at the start of that
+\* update the record can still be acknowledged.  Reversed witness
+\* MCRNResendTimingBrokenCheckBeforeAcks.cfg (the check first).
+DeadlineUpdateTakesAcks ==
+    \A r \in Records :
+        (Timed /\ phase = "walk" /\ calls = 0 /\ ~silenced /\ ~acked[r] /\ attempts[r] > 0 /\ t = Deadline(r))
+            => ENABLED Ack(r)
 
 \* Under the rule no unacked record waits more than its delay's bound for
 \* its next send while the connection is up: RtoMax for a small record,

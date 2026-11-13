@@ -2,10 +2,14 @@
 
 `RNReceipts.tla` models receipt generation for types 5, 6 and 7. It is a
 standalone module over transport packet events, with no dependency on
-`RNChannel`. The channel draft is not on origin at staging; the interface
-names are aligned with the local draft for later composition. This is a
-model of the design in `docs/CHANNELS.md` 7.4, not a claim that the message
-layer implementation exists.
+`RNChannel`. It models the receipts of `sdk/rocketnet_window_ack.cpp`
+(`rn_window_ack_commit`, `rn_window_ack_commit_receipt_packet`,
+`rn_window_ack_receipt_emit` and the receipt list per update), with the
+issue in `sdk/rocketnet_endpoint.cpp` and the reliable receipt base in
+`sdk/rocketnet_channel_receipts.cpp` (`proofs/tla/COVERAGE.tsv` rows
+`rn-receipts`, `rn-receipts-finish`, `rn-receipts-dispatch`); the design is
+`docs/CHANNELS.md` 7.4. It is bound to the code by citation, not by a trace
+walk.
 
 ## Interface and state
 
@@ -30,7 +34,10 @@ layer implementation exists.
   delay (`message_resend_delay_max_ms`); it does not move with the adaptive
   resend delay `RTO`, and `ASSUME RTO <= ReceiptDeadline`. Map eviction is the
   one exception: an evicted entry can never be acknowledged, so it reports
-  LOSS at once. Its retained outcome suppresses a late ACK. `Disconnect` represents the documented
+  LOSS at once. Its retained outcome suppresses a late ACK. The second
+  exception is the drop arm (revision 1.2, below): a type-5 record that
+  never reached the wire, dropped by the send budget or refused by the
+  transport, takes LOSS at once with no sent-map entry. `Disconnect` represents the documented
   `RELIABLE_TIMEOUT` error when a sent, still-unacked reliable number
   reaches its first-send deadline, even if other traffic progresses.
 - `EmitAck` emits a reliable receipt only when every number of the message
@@ -98,8 +105,8 @@ that prunes transitions or hides violations.
   their index/arrival order.
 - `ReceiptRingBounded`: receipt queue length never exceeds its capacity.
 - `LossOnlyAfterDeadline`: a type-5 LOSS is generated only once its first
-  number's age has reached `ReceiptDeadline`, or after its sent-map entry
-  was evicted. The fixed configuration uses `RTO = 1` and
+  number's age has reached `ReceiptDeadline`, after its sent-map entry
+  was evicted, or when it was dropped before the wire. The fixed configuration uses `RTO = 1` and
   `ReceiptDeadline = 2`, so an ACK after the resend delay and inside the
   deadline is reachable and must report ACKED; the mid instance has
   `ReliableTimeout = 1`, which caps age at 1, so its deadline is 1.
@@ -181,8 +188,8 @@ This receipt module does not claim to validate those unrelated semantics.
 ## Reproduction
 
 Use the exact runner and JAR pin in `proofs/tla/README.md`, on a Linux bench. The
-six registered cases belong to `rnreceipts`. Run shards 0 through 5 with
-`--shards 6 --shard N --workers 2 --timeout 110s`, each in a private output
+twelve registered cases belong to `rnreceipts`. Run shards 0 through 11 with
+`--shards 12 --shard N --workers 2 --timeout 110s`, each in a private output
 directory; witnesses use one worker automatically. Merge their measured
 records with `tlacheck merge --keep proofs/tla/RUNS.tsv`, then require
 `tlacheck groups --root . --stale` to print `[]`. Keep superseded records
@@ -203,8 +210,10 @@ states in 83.357 s, exit 0, and is a required case in CASES.tsv. The larger
 packet-ID space lets an ACK, a loss notification, map eviction and a fresh
 write coexist without reusing the only ID, which the one-ID instance cannot.
 
-The deployed receipt ring and sent map are `max_clients`-sized (and bounded
-by the connection's receipt capacity), not one entry. `ReceiptRingBounded`,
+The deployed receipt ring and sent map are per connection, not one entry:
+the sent map holds `packets_in_flight` entries (`region->packets`) and the
+receipt ring `max_message_receipts` entries (`region->receipt_entries`,
+`rn_region_point` in `sdk/rocketnet_allocator.cpp`). `ReceiptRingBounded`,
 `ExactlyOneOutcomePerReceiptSerial`, the promotion table and the
 all-fragments rule are local predicates over a serial, a number and a ring
 position; a larger ring adds events and evictions but does not weaken them.

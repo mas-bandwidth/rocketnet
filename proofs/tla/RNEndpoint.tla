@@ -2,9 +2,10 @@
 (***************************************************************************)
 (* rocketnet: two message endpoints end to end over the transport, with    *)
 (* the CONFIG announcement (docs/CHANNELS.md layer 7: sections 10.1, 10.3, *)
-(* 13.4 and the RNEndpoint row of section 15).  Written before the code:  *)
-(* the model is the spec the CONFIG card and the endpoint card implement,  *)
-(* and its action names are the planned function names of 10.1.           *)
+(* 13.4 and the RNEndpoint row of section 15).  Written before the code,   *)
+(* which now exists: sdk/rocketnet_endpoint.cpp cites its actions          *)
+(* (rn_endpoint_reset, rn_endpoint_on_payload, rn_endpoint_tick, ...),     *)
+(* bound by citation, not by a trace walk.                                 *)
 (*                                                                         *)
 (* Two endpoints, "a" and "b", one per end of a connection, each sending   *)
 (* to the other over its own direction of the path: two instances of Link  *)
@@ -206,7 +207,11 @@ Writable(e) == {relQ[e][i] : i \in {j \in DOMAIN relQ[e] :
 \* RtoAboveRtt: the abstract RTO, bounded below by the RTT.  A record is
 \* due again only once no copy of it is in flight out of e and no ack of
 \* it is pending at the remote endpoint or in flight back: the resend answers a real
-\* loss.  RNResendTiming checks the timing that makes this so.
+\* loss.  An ASSUMPTION of the liveness cases, proved by no model: the code
+\* resends on the resend delay alone (RNResendTiming lets a sample set it
+\* anywhere in its range and relates it to no round trip), so it can resend
+\* while a copy or its ack is in flight.  A composed bounded-network proof
+\* is a roadmap entry (README-RNEndpoint.md).
 WireOutOf(e)  == IF e = "a" THEN abWire ELSE baWire
 InFlight(e)   == UNION {WireOutOf(e)[i].pkt.rel : i \in DOMAIN WireOutOf(e)}
 AckInFlight(e) ==
@@ -344,10 +349,11 @@ ConfigCompare(e) == ConfigCompared /\ cfg[Remote(e)] # cfg[e]
 (* OnPayload (rn_endpoint_on_payload): e opens a packet from the remote    *)
 (* endpoint.                                                               *)
 (* The transport acks its reliable records whatever follows (P2), and its  *)
-(* acks reach e (OnAcked).  CONFIG, first in the packet, is compared; a    *)
-(* mismatch is the error and parsing stops.  The data records are checked *)
-(* against e's own num_channels: one outside is a VIOLATION and parsing    *)
-(* stops (R6).  Otherwise a fresh reliable message is received once, an    *)
+(* acks reach e (OnAcked).  The records are first checked against e's own *)
+(* num_channels as a whole: one outside refuses the whole payload, a       *)
+(* VIOLATION, and nothing of it is taken (R6; the reader's check).         *)
+(* CONFIG, first in the packet, is then compared; a mismatch is the error  *)
+(* and parsing stops.  Otherwise a fresh reliable message is received once, an *)
 (* ordered one is held until its predecessors are received and then       *)
 (* delivered with every hold it releases, and an unreliable one is         *)
 (* delivered now.  An endpoint in error opens and discards.                *)
@@ -386,19 +392,26 @@ OnPayload(e, p) ==
                              IF r \in OnAcked(e, p.acks) THEN NotSent ELSE @[r]]]
                     ELSE fs
          /\ UNCHANGED cwait
-         /\ IF cfgNew /\ ConfigCompare(e)
+         \* the channel check is the reader's whole-payload check
+         \* (rocketnet_message_check_payload, check 5, in
+         \* rocketnet_message_reader_begin): a record outside e's own
+         \* num_channels refuses the whole payload before any record is handed
+         \* out, so a refused packet's CONFIG is not taken or compared and
+         \* none of its data is received (revision 1.2: before it the model
+         \* compared CONFIG first and took it from a refused packet)
+         /\ IF bad # {}
+              THEN /\ err' = [err EXCEPT ![e] = "VIOLATION"]
+                   /\ UNCHANGED <<remoteCfg, rcvd, held, deliv>>
+              ELSE IF cfgNew /\ ConfigCompare(e)
               THEN /\ err' = [err EXCEPT ![e] = "CONFIG_MISMATCH"]
                    /\ UNCHANGED <<remoteCfg, rcvd, held, deliv>>
               ELSE /\ remoteCfg' = IF cfgNew THEN [remoteCfg EXCEPT ![e] = cfg[Remote(e)]]
                                            ELSE remoteCfg
-                   /\ IF bad # {}
-                        THEN /\ err' = [err EXCEPT ![e] = "VIOLATION"]
-                             /\ UNCHANGED <<rcvd, held, deliv>>
-                        ELSE /\ rcvd' = [rcvd EXCEPT ![e] = rcvd1]
-                             /\ held' = [held EXCEPT ![e] = cand \ release]
-                             /\ deliv' = [deliv EXCEPT ![e] =
-                                            @ \o SortSeq(release) \o SortSeq(unrelNow)]
-                             /\ UNCHANGED err
+                   /\ rcvd' = [rcvd EXCEPT ![e] = rcvd1]
+                   /\ held' = [held EXCEPT ![e] = cand \ release]
+                   /\ deliv' = [deliv EXCEPT ![e] =
+                                  @ \o SortSeq(release) \o SortSeq(unrelNow)]
+                   /\ UNCHANGED err
          /\ UNCHANGED <<cfg, nextMsg, relQ, unrelQ, firstWritten>>
 
 (***************************************************************************)
@@ -408,9 +421,19 @@ OnPayload(e, p) ==
 (* marks are abstract (any unacked record may be resent at any time), so   *)
 (* Tick here is the timeout alone.  With TimeoutAnyTime the timeout may    *)
 (* fire at any moment (safety holds whenever it fires); without it, only   *)
-(* once the remote end is in error and silent: that time passes enough for *)
-(* a live remote end's resends to land first is RNResendTiming's           *)
-(* AttemptsBeforeTimeout.                                                  *)
+(* once the remote end is in error and silent.  That a live remote end's   *)
+(* resends land before the timeout is an ASSUMPTION of the liveness cases, *)
+(* proved by no model: RNResendTiming's AttemptsBeforeTimeout counts sends *)
+(* before the deadline, not deliveries, and lets every send be lost.       *)
+(*                                                                         *)
+(* The CONFIG wait starts at Reset here, for both ends.  The code starts   *)
+(* each end's at the first update its connection is connected at          *)
+(* (rn_endpoint_config_tick: the server's Observe reset, the client's      *)
+(* first update its transport reports CONNECTED), which can be later than *)
+(* the other end's.  A later start only delays that end's CONFIG timeout,  *)
+(* and Tick in Spec may fire at any update once the wait is due, so the    *)
+(* code's later end is among the model's behaviours; the model also has   *)
+(* the earlier one.                                                        *)
 (*                                                                         *)
 (* Both halves run only when the timeout is configured (MESSAGES.md m9.3   *)
 (* and m11 rule 4): with it off (zero, the default) the CONFIG wait and an *)

@@ -31,7 +31,26 @@
 (* refreshing the oldest when U moves.  The estimate moves toward each      *)
 (* sample taken: strictly, by any amount up to the sample (the direction    *)
 (* of srtt = 0.95 srtt + 0.05 rtt; its size is abstract); the first sample  *)
-(* sets it.                                                                 *)
+(* sets it.  A model sample stands for the run of code samples that moves   *)
+(* the estimate, rounded to ticks, by one tick or more: the code's 5%      *)
+(* average closes the gap geometrically and, in floating point, stops      *)
+(* within a few ulps of the sample, never exactly on it, so "the estimate  *)
+(* reaches r" below means its value rounded to the model's grain.          *)
+(*                                                                          *)
+(* Two more acknowledgements the code takes (revision 1.2):                 *)
+(*   AckNothing: an acknowledgement batch whose ids match no live sent-map  *)
+(*     entry (a packet evicted from the map, or one that carried no message *)
+(*     record): rn_window_ack_on_acks still runs the silence test and moves *)
+(*     last_ack, and rn_window_ack_on_ack finds nothing, so no sample.      *)
+(*   SendReceipt (ReceiptPkts): a packet that carries unreliable receipt     *)
+(*     serials and no reliable number (rn_window_ack_commit_receipt_packet, *)
+(*     ref_count 0).  Its acknowledgement is sampled (entry->ref_count == 0 *)
+(*     in rn_window_ack_on_ack), through the same silence filter.  With no  *)
+(*     number owed no silence ends, so one sent before an outage and        *)
+(*     acknowledged after it measures the outage: OutageNeverPoisons holds  *)
+(*     only for packets that carry a number, and                            *)
+(*     MCRNRttFilterReceiptOnlyPoisons.cfg shows the bound broken by a      *)
+(*     receipt-only packet.                                                 *)
 (*                                                                          *)
 (* What is checked, against definitions that do not read the code's state: *)
 (* owedQuiet counts the ticks in which some number was on the wire          *)
@@ -43,10 +62,11 @@
 (*     outage measures the outage).                                         *)
 (*   RefuseOnlyAfterOwedSilence: a sample is refused only for such a packet. *)
 (*   OutageNeverPoisons: the estimate stays under RttHigh + Probe: an       *)
-(*     outage of a second or more never reaches it.                         *)
+(*     outage of a second or more never reaches it (packets that carry a    *)
+(*     reliable number; not receipt-only packets, above).                   *)
 (*   SlowPathRaisesEstimate: after the path slows (and the bad intervals    *)
-(*     end), the estimate reaches the new round trip, for a sparse sender   *)
-(*     too.                                                                 *)
+(*     end), the estimate reaches the new round trip at the model's grain   *)
+(*     (rounded to ticks, above), for a sparse sender too.                  *)
 (* Rule "owed" is the code (v1.1.4); the reversed witnesses: "owedlast"     *)
 (* (v1.1.1: no silence ends before the first ack) takes the first ack of  *)
 (* a connection across an owed outage; "gap" (v1.1.0:                      *)
@@ -66,9 +86,10 @@ CONSTANTS
     Rule,       \* "owed" (the code), "owedlast" (v1.1.1), "gap" (v1.1.0) or "none" (no filter)
     FirstAck,   \* TRUE: no update has acknowledged a packet yet (has_last_ack = 0),
                 \* the estimator seeded (m9.2); FALSE: a sparse sender's previous ack
-    DupSample   \* FALSE: the code (v1.1.4) and m9.1, a sample only from a packet that
-                \* acknowledges a number; TRUE: v1.1.1, one sample per acknowledged
-                \* packet, a packet whose number was already acknowledged included
+    DupSample,  \* FALSE: the code (v1.1.4) and m9.1, no sample from a packet whose
+                \* numbers were all acknowledged already; TRUE: v1.1.1, one sample per
+                \* acknowledged packet, a packet whose number was already acknowledged included
+    ReceiptPkts \* TRUE: the sender also writes receipt-only packets (SendReceipt)
 
 ASSUME /\ Probe \in Nat \ {0}
        /\ RttLow \in Nat /\ RttHigh \in Nat /\ RttLow <= RttHigh /\ RttHigh < Probe
@@ -77,6 +98,7 @@ ASSUME /\ Probe \in Nat \ {0}
        /\ Rule \in {"owed", "owedlast", "gap", "none"}
        /\ FirstAck \in BOOLEAN
        /\ DupSample \in BOOLEAN
+       /\ ReceiptPkts \in BOOLEAN
 
 \* Ages saturate where no comparison can tell them apart: a packet is never
 \* older than RttHigh + OutageMax (outages are separated by an update that
@@ -157,6 +179,17 @@ Resend(i) ==
        /\ pkts' = Put(p)
     /\ UNCHANGED <<codeVars, ubase, nums, pathVars, ghostVars>>
 
+\* A receipt-only packet (num RO): no reliable number, so the oldest is not
+\* touched (rn_window_ack_commit with count 0 stamps no first send).
+RO == -2
+SendReceipt ==
+    /\ ReceiptPkts
+    /\ Free # {}
+    /\ LET p == [used |-> TRUE, age |-> 0, prtt |-> rttNow, num |-> RO] IN
+       /\ \A s \in InFlight : pkts[s] # p
+       /\ pkts' = Put(p)
+    /\ UNCHANGED <<codeVars, ubase, nums, pathVars, ghostVars>>
+
 \* The path loses a packet (or its acknowledgement): it is never acked.
 Lose(s) ==
     /\ ~good
@@ -186,8 +219,9 @@ EndsSilence ==
 \* in the same update finds last_ack = now (age 0), as the batch does.  A
 \* packet whose number was already acknowledged acknowledges nothing and,
 \* by m9.1 and the code, gives no sample (DupSample TRUE: v1.1.1, which
-\* sampled it).  A packet carries one reliable number here, never receipts
-\* alone.
+\* sampled it).  A packet carries one reliable number, or (SendReceipt) none:
+\* a receipt-only packet is always sampled, through the filter
+\* (entry->ref_count == 0 || acked > 0).
 Ack(s) ==
     /\ s \in InFlight
     /\ ~dark
@@ -205,7 +239,7 @@ Ack(s) ==
                         \/ i > 0 /\ NumAt(i) = p.num
            \* m9.1: the packet carries a number still unacknowledged
            fresh  == pos > 0 /\ ~nums[pos].acked
-           sampled == DupSample \/ fresh
+           sampled == DupSample \/ fresh \/ p.num = RO
            marked == IF pos > 0 THEN [nums EXCEPT ![pos].acked = TRUE] ELSE nums
            \* the acked prefix leaves the window: U moves past k numbers
            k      == CHOOSE j \in 0..Len(marked) :
@@ -243,6 +277,25 @@ Ack(s) ==
        /\ badRefusal' = (badRefusal \/ (sampled /\ hasRtt /\ ~take /\ ~across))
     /\ UNCHANGED pathVars
 
+\* An acknowledgement batch whose ids match no live entry (an id evicted from
+\* the sent map, or of a packet that carried no message record): the path
+\* delivered it, so it is not dark.  rn_window_ack_on_acks runs the silence
+\* test and moves last_ack whatever the ids (rocketnet_window_ack.cpp, before
+\* the empty-ring return); rn_window_ack_on_ack returns 0 for each id, so
+\* nothing is sampled or acknowledged.  For the definitions an arriving
+\* acknowledgement ends a quiet run as Ack's does: the path is back.
+AckNothing ==
+    /\ ~dark
+    /\ LET sEnd == IF EndsSilence THEN 0 ELSE silenceEndAge
+           rEnd == IF owedQuiet >= Probe THEN 0 ELSE realEndAge
+       IN
+       /\ silenceEndAge' = sEnd
+       /\ lastAckAge' = 0
+       /\ hasLastAck' = TRUE
+       /\ owedQuiet' = 0
+       /\ realEndAge' = rEnd
+    /\ UNCHANGED <<srtt, hasRtt, hasOldest, oldestNum, oldestFirstAge, sendVars, pathVars, badSample, badRefusal>>
+
 \* The update ends and time moves on one tick.  While the path delivers,
 \* every acknowledgement due has arrived (or was lost) first.  The path
 \* may go dark (for up to OutageMax ticks), slow once, or turn good.
@@ -267,8 +320,10 @@ Tick ==
 Next ==
     \/ Send
     \/ \E i \in 1..M : Resend(i)
+    \/ SendReceipt
     \/ \E s \in Slots : Lose(s)
     \/ \E s \in Slots : Ack(s)
+    \/ AckNothing
     \/ Tick
 
 Spec == Init /\ [][Next]_vars
@@ -292,7 +347,7 @@ TypeOK ==
     /\ silenceEndAge \in 0..Cap
     /\ hasOldest \in BOOLEAN /\ oldestNum \in 0..Mod - 1 /\ oldestFirstAge \in 0..Probe
     /\ ubase \in 0..Mod - 1 /\ Len(nums) <= M
-    /\ pkts \in [Slots -> [used : BOOLEAN, age : 0..Cap, prtt : 0..RttHigh, num : -1..Mod - 1]]
+    /\ pkts \in [Slots -> [used : BOOLEAN, age : 0..Cap, prtt : 0..RttHigh, num : -2..Mod - 1]]
     /\ owedQuiet \in 0..Probe /\ realEndAge \in 0..Cap
 
 \* m9.2: no round-trip sample from a packet sent before the end of the
@@ -306,10 +361,18 @@ RefuseOnlyAfterOwedSilence == ~badRefusal
 
 \* An outage never poisons the estimate: every sample taken is a round trip
 \* of the path plus less than Probe ticks of delay, or no more than srtt.
+\* Checked with ReceiptPkts FALSE: a receipt-only packet acknowledged across
+\* an outage in which no number was owed is sampled and breaks it
+\* (MCRNRttFilterReceiptOnlyPoisons.cfg; the code's own behaviour, its 5%
+\* average moving the estimate a twentieth of the way per such sample).
 OutageNeverPoisons == srtt < RttHigh + Probe
 
 \* After the path slows to RttHigh and the bad intervals end, the estimate
-\* reaches RttHigh and stays there: a sparse sender's estimate rises.
+\* reaches RttHigh and stays there: a sparse sender's estimate rises.  At the
+\* model's grain: the code's estimate converges on the new round trip and
+\* stops within a few ulps of it; "= RttHigh" is the estimate rounded to
+\* ticks (the header).  MCRNRttFilterLive.cfg runs RttLow 0 to RttHigh 1, a
+\* one-tick rise.
 SlowPathRaisesEstimate == (rttNow = RttHigh /\ good) ~> [](srtt = RttHigh)
 
 =============================================================================
