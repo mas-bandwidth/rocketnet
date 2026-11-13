@@ -210,6 +210,8 @@ uint64_t rocketnet_platform_socket_allocation_bytes();
 uint64_t rocketnet_platform_thread_allocation_bytes();
 uint64_t rocketnet_server_gso_allocation_bytes( int queues, int max_clients );
 uint64_t rocketnet_server_iocp_allocation_bytes( int workers, int max_clients );
+// with send_threads asked as rocketnet_server_iocp_create_threads takes it (0 the default); 0 back for a refused count
+uint64_t rocketnet_server_iocp_allocation_bytes_threads( int workers, int send_threads, int max_clients );
 uint64_t rocketnet_server_xdp_allocation_bytes( int queues, int max_clients );
 uint64_t rocketnet_server_rio_registered_region_bytes( int max_clients );
 

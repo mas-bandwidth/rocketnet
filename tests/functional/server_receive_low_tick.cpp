@@ -313,7 +313,7 @@ void rocketnet_test_server_gso_receive_buffer_request()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = server_receive_low_tick_server_clients;
-    server_config.num_xdp_queues = 2;
+    server_config.num_gso_workers = 2;
     server_config.token_epoch_unix_seconds = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
 

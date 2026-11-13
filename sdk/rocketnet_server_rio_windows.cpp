@@ -3736,7 +3736,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 #if ROCKETNET_DEV
     // development library only: ROCKETNET_TEST_RIO_LANES=N (2 .. 32) runs every
     // RIO server that leaves the lane count to the transport (no options, or 0
-    // lanes: num_xdp_queues unset) on N lanes, for a whole process, so a suite
+    // lanes: num_rio_lanes unset) on N lanes, for a whole process, so a suite
     // whose servers come from many paths runs on lanes. One lane asked for
     // explicitly stays one. A wildcard bind keeps its one lane: lanes refuse
     // the wildcard, and that refusal has its own test.

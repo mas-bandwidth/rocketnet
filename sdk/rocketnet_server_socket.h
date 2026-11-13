@@ -13,6 +13,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_send_queue.h"
+#include "rocketnet_network_threads.h"
 
 #include <stdio.h>
 
@@ -308,7 +309,7 @@ uint64_t rocketnet_server_socket_memory_required( int num_queues, int max_client
 
 // max_clients is the server's configured client count: it sizes the receive
 // view, the reply MAC table, the replay marks and the kernel replay map.
-struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * packet_filter, int max_clients, int num_xdp_queues = 7, int num_os_cpus = 1, const char * second_server_address = NULL, int * create_status = NULL );
+struct rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, const char * server_address, const uint8_t * packet_filter, int max_clients, int num_xdp_threads = ROCKETNET_XDP_DEFAULT_THREADS, int num_os_cpus = 1, const char * second_server_address = NULL, int * create_status = NULL );
 
 void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_socket );
 

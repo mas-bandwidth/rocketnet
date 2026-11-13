@@ -230,6 +230,20 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
 #endif // #if ROCKETNET_DEV
                                                         ,
                                                         int * status = NULL );
+
+// create with num_send_threads send threads: zero is the default
+// (rocketnet_server_iocp_send_threads), a count from 1 up to the send lanes is
+// that count, anything else is refused with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE
+// (rocketnet_server_iocp_send_threads_for). rocketnet_server_iocp_create is
+// this with zero.
+rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, rocketnet_address_t * bind_address, int num_workers,
+                                                                int num_send_threads, int max_clients
+#if ROCKETNET_DEV
+                                                                ,
+                                                                int fail_stage = 0, int flags = 0
+#endif // #if ROCKETNET_DEV
+                                                                ,
+                                                                int * status = NULL );
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp );
 bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp );
@@ -315,8 +329,8 @@ enum
 int rocketnet_server_iocp_worker_placement( rocketnet_server_iocp_t * iocp, int worker, uint64_t * mask, int * group, unsigned long * error );
 
 // The send threads and where each runs, as the thread found it when it pinned
-// itself. The count is ROCKETNET_IOCP_SEND_THREADS, or the lanes when there
-// are fewer. Thread t is on the core after the last completion worker's, plus
+// itself. The count is num_iocp_send_threads (default ROCKETNET_IOCP_SEND_THREADS,
+// or the lanes when there are fewer). Thread t is on the core after the last completion worker's, plus
 // t (the same in-order rule the workers follow), one logical processor of it,
 // so the core's other logical processors stay free. The placement is PINNED to
 // *mask in *group, REFUSED (SetThreadGroupAffinity failed; *error is its Win32

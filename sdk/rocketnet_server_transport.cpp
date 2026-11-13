@@ -2290,7 +2290,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     }
 
     const int clients = config->max_clients;
-    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || config->num_xdp_queues < 0 || config->num_xdp_queues > 1024 )
+    if ( clients < 1 || clients > ROCKETNET_MAX_CLIENTS || config->num_xdp_threads < 0 || config->num_xdp_threads > ROCKETNET_XDP_MAX_THREADS )
     {
         return false;
     }
