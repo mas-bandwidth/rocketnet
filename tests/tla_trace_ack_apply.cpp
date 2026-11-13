@@ -98,6 +98,17 @@ void rocketnet_server_acks_client_for_test( const struct rocketnet_server_acks_t
 #define AA_SEND_TIME     1000.0                  // the walk's two times: no step of the model is time's
 #define AA_RECEIVE_TIME  1000.5
 
+// the calls a step can make
+enum aa_call_t
+{
+    AA_BEGIN,
+    AA_RECEIVE,
+    AA_SETTLE,
+    AA_OPEN,
+    AA_TAKE,
+    AA_CLOSE,
+};
+
 // the game threads: each makes one take when the walk hands it one
 struct aa_takers_t
 {
@@ -330,7 +341,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         bool planted = false;
 
         // the call: by the code's phase and the seed
-        enum { AA_BEGIN, AA_RECEIVE, AA_SETTLE, AA_OPEN, AA_TAKE, AA_CLOSE } call = AA_TAKE;
+        aa_call_t call = AA_TAKE;
         const int phase = acks->phase;
         const int pick = random.below( 100 );
         int client = random.below( AA_CLIENTS );
