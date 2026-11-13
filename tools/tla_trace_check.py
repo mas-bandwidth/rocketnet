@@ -79,6 +79,19 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "bank": {
+        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
+                             "under MaxFlush, so it never gets there"},
+        "reach": ["LastSlot"],
+    },
+    "gather": {
+        "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
+        "untraced": {},
+        "reach": ["SegCapEdge", "ByteCapEdge"],
+        # seven steps a bank (six stages and the call): 100 calls a seed
+        "steps": 700,
+    },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
         "untraced": {
@@ -88,6 +101,10 @@ LAYERS = {
             "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
                     "so it never gets there",
         },
+        # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
+        # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
+        # steps (one look a line), so a walk much shorter than this finishes none
+        "steps": 240,
     },
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],

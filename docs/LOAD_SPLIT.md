@@ -5,7 +5,7 @@ one machine and disjoint client shards on other machines. The established
 same-process `load` executable remains the correctness gate; its pass receipt
 does not qualify dedicated-server performance. This split harness currently
 supports at most the build's `ROCKETNET_MAX_CLIENTS` (1000 by default). Use the 10, 100, 250, 500,
-1000 ladder with the SDK-default profile. A higher cap needs separate SDK
+1000 series with the SDK-default profile. A higher cap needs separate SDK
 configuration and validation work.
 
 Build the **same exact source revision** on every host with the development
@@ -299,7 +299,7 @@ phase, and exact-log allocation record. Missing or contradictory timing
 evidence is invalid evidence, not a timing-only result. Malformed logs,
 delivery errors, underload, resource imbalance, bandwidth excess, or
 allocation gaps report `non_timing_verdict=FAIL` and never authorize a
-performance-ladder continuation. A runner may continue to the next rung
+performance-series continuation. A runner may continue to the next rung
 only when `non_timing_verdict=PASS` and should retain the overall FAIL and
 timing evidence in its report.
 

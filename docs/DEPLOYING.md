@@ -20,7 +20,7 @@ and resolves the configured list before that activation. The list rides the conf
 per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
-    ./bin/functional                                # auto: the platform's recommended ladder
+    ./bin/functional                                # auto: the platform's recommended transport order
                                                 #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
@@ -39,7 +39,7 @@ clamped: the public range is 1–1024 (zero selects a transport default),
 while gso and io_uring accept at most 32. XDP also checks its memory and host
 geometry before starting. The GSO transport still probes UDP_SEGMENT and UDP_GRO at
 create and degrades to plain sendmmsg/recvmmsg batching where a kernel lacks them —
-that degradation is internal to the transport, below the ladder; likewise the Darwin
+that degradation is internal to the transport, below the transport list; likewise the Darwin
 batch pump's live-refusal pause. Select the portable server in either
 build with `ROCKETNET_SERVER_TRANSPORT=portable`; select the client's portable
 side with `ROCKETNET_CLIENT_TRANSPORT=portable` in either build.
@@ -131,7 +131,7 @@ Cold, on a fresh box, as root:
     scripts/rocketnet-provision eth0 7 verify
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
-    #    auto ladder falls to gso with the reason named where it is not.
+    #    automatic transport order falls to gso with the reason named where it is not.
 
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
@@ -231,7 +231,7 @@ BPF object, static/shared libraries, examples and XDP test executables. Run
 libraries. Jammy's liburing 2.1 lacks multishot receive, so configure prints
 `liburing found without multishot receive` and does not build the io_uring
 transport: it is absent from the transport list, as in a build without
-liburing, and the production ladder is `xdp -> gso -> portable`. XDP is
+liburing, and the production transport order is `xdp -> gso -> portable`. XDP is
 independent of it.
 
 Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and

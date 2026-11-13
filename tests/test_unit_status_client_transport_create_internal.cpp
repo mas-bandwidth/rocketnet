@@ -15,7 +15,7 @@
 //   * C3 (config validation failure) -> CONFIG_OUT_OF_RANGE
 //   * the published test packet filter in a production build ->
 //     TEST_PACKET_FILTER_IN_PRODUCTION
-//   * C5 (transport ladder parse failure) -> INVALID_TRANSPORT_LIST
+//   * C5 (transport list parse failure) -> INVALID_TRANSPORT_LIST
 //   * C6 (transport block malloc refusal) -> OUT_OF_MEMORY
 //   * C8 (invalid connect token) -> INVALID_CONNECT_TOKEN
 //   * C9 (expired connect token) -> CONNECT_TOKEN_EXPIRED
@@ -29,7 +29,7 @@
 // runs in both, over a config carrying its own packet filter.
 //
 // Not reachable without a socket or real time:
-//   * C10 (transport ladder exhausted), which needs a socket open to refuse;
+//   * C10 (no transport found), which needs a socket open to refuse;
 //   * C11 (mutex/thread create failure), which needs a platform primitive to
 //     fail.
 

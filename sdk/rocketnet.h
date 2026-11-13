@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.25"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.29"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        25
+    #define ROCKETNET_VERSION_PATCH                        29
 
 #else // !ROCKETNET_DEV
 
@@ -327,12 +327,16 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED = -17,
 
-    /// Every transport in the candidate list refused to start, including any
-    /// over the ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
-    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. Set the log level to
-    /// ROCKETNET_LOG_LEVEL_WARN to see why each one refused.
+    /// No transport found: every transport this server or client was allowed
+    /// to try failed to start, including any over the
+    /// ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget, and they failed for
+    /// different reasons. When they all failed for one reason, the status
+    /// names it instead (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT,
+    /// TRANSPORT_PORT_ZERO_UNSUPPORTED). Set the log level to
+    /// ROCKETNET_LOG_LEVEL_WARN to read why each one failed.
 
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED = -18,
+    ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
     /// live. Free memory or lower the config's sizes, then retry.
@@ -346,7 +350,7 @@ enum rocketnet_status_t
 
     /// Connect refused: the platform refused a thread. Retry after freeing
     /// system resources. Server start reports a transport that cannot start
-    /// its thread as ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED.
+    /// its thread as ROCKETNET_STATUS_NO_TRANSPORT_FOUND.
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
@@ -422,7 +426,14 @@ enum rocketnet_status_t
     /// endpoint is still registered with it. Destroy every server and client
     /// that uses the hub, then destroy the hub.
 
-    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34,
+
+    /// Start refused: the platform refused the transport's bind. Another
+    /// socket holds the address and port, or the address is not one this host
+    /// can bind. Free the port or choose another, or set a local address of
+    /// this host.
+
+    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35
 };
 
 /// The process-wide log levels, least to most verbose. A log callback may
@@ -1035,16 +1046,22 @@ struct rocketnet_client_t;
 /// rocketnet_server_start_message, rocketnet_server_finish_client_message
 /// and rocketnet_server_abort_client_message. The main thread may make them
 /// too. Every other server call is a main thread call. A thread here is an
-/// operating system thread: a server that several threads share under a lock
-/// is bound by these rules as well. The rules:
+/// operating system thread. The rules:
 ///
 /// - The game threads have returned from their calls before the main thread
 ///   makes its next call, and the main thread has returned from its call
 ///   before a game thread calls again. Join the game threads' work, or pass
 ///   a barrier, in both directions.
 /// - Between one main thread call and the next, every one of the three calls
-///   for one client index comes from one thread, so a message is finished or
-///   aborted by the thread that started it. Different clients may be sent to
+///   for one client index comes from one thread (this rule is in force from
+///   the server's first rocketnet_server_finish_client_message or
+///   rocketnet_server_abort_client_message on; a server that never makes
+///   those calls is used one thread at a time, and its threads may send to
+///   one client in turn), so a message is finished or
+///   aborted by the thread that started it. (rocketnet_server_finish_message
+///   and rocketnet_server_abort_message, the calls of a server used one
+///   thread at a time, may come from another thread: they count as a main
+///   thread call first.) Different clients may be sent to
 ///   from different threads at the same time. The thread that sends to a
 ///   client may change after a main thread call that is checked (below);
 ///   messages two threads write to one client between two
@@ -1059,7 +1076,9 @@ struct rocketnet_client_t;
 /// asserts in a debug build. A refused start returns NULL and a refused
 /// finish 0; a refused abort leaves its message for the next update to
 /// cancel; a refused main thread call returns as if it had found nothing to
-/// do, and a refused stop leaves the server running. The calls that only
+/// do (rocketnet_server_set_send_kbps returns
+/// ROCKETNET_STATUS_INVALID_ARGUMENT), and a refused stop leaves the server
+/// running. The calls that only
 /// read the server are main thread calls too and are not checked: one made
 /// while game threads send is not refused, counted or safe. Nor is
 /// rocketnet_server_destroy: join the game threads before it.
@@ -1231,11 +1250,13 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 ///   another allocator.
 /// - Update receives a non-finite time or a time that goes backwards, with or
 ///   without a connection. The last good time is kept, and the call logs.
-/// - An in-place start message stays open at update or send_packets: an
-///   unreliable message of at most ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES that
-///   start wrote in place for sending. It is aborted there. A start that
-///   took the queue instead stays pending; which path start took is not
-///   visible, so finish or abort every start before update or send_packets.
+/// - A started message stays open at update or send_packets. On the server
+///   every open message is aborted there. On the client an in-place start is
+///   aborted there (an unreliable message of at most
+///   ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES that start wrote in place for
+///   sending) and a start that took the queue instead stays pending; which
+///   path start took is not visible. Finish or abort every start before
+///   update or send_packets.
 /// - A message is still in the receive queue at update. That connection ends
 ///   with MESSAGE_NOT_RECEIVED.
 /// - Connect runs from a state other than DISCONNECTED or a connection-ended
@@ -1828,6 +1849,51 @@ struct rocketnet_server_config_t
     /// Default is 0.
 
     uint64_t token_epoch_unix_seconds;
+
+    /// ROCKETNET_SERVER_BIND_IPV4_ADDRESS is the local IPv4 address the
+    /// server binds, as "a.b.c.d" with no port: an address of one of this
+    /// machine's interfaces. The ipv4_address passed to rocketnet_server_create
+    /// is the address clients connect to, the one connect tokens name; this is
+    /// the address the server binds. Behind NAT they differ: an EC2
+    /// instance's public address reaches it at its private address, which is
+    /// the one to bind. The server binds it on the served port, so a datagram
+    /// to any other address of the machine does not reach the server. NULL or
+    /// "", the default, binds the IPv4 wildcard (0.0.0.0) on the served port,
+    /// which receives on every address.
+    ///
+    /// rocketnet_server_start refuses with ROCKETNET_STATUS_INVALID_ADDRESS,
+    /// one log line each, an address that does not parse, is not IPv4,
+    /// carries a port (":0" too), or is multicast or the broadcast address; a
+    /// bind address for a family the server does not serve; and any bind
+    /// address on a server that serves both families, whose one dual-stack
+    /// socket binds the IPv6 wildcard: to bind a specific address, serve one
+    /// family. The environment form is ambient, set once for a host or a test
+    /// run, so it applies only to a server that serves IPv4 alone: an
+    /// IPv6-only server and a server of both families ignore it, with one
+    /// log line, where they refuse the field. The xdp transport binds no
+    /// socket and does not read it: it serves the interface that holds the
+    /// served address, but a value that would be refused above still refuses
+    /// its start. rocketnet_server_create copies the string, so the caller's
+    /// pointer is not kept; a string of 256 characters or more is refused at
+    /// create with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. If the platform
+    /// refuses the bind itself (another socket holds the address and port, or
+    /// the address is not one of this machine's), start returns
+    /// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED.
+
+    const char * bind_ipv4_address;
+
+    /// ROCKETNET_SERVER_BIND_IPV6_ADDRESS is the local IPv6 address the
+    /// server binds, as "2001:db8::5" or "[2001:db8::5]" with no port. As
+    /// bind_ipv4_address, for the ipv6_address passed to create: NULL or "",
+    /// the default, binds the IPv6 wildcard ([::]) on the served port, and
+    /// start refuses the same cases, with an IPv6 multicast address
+    /// (ff00::/8), an IPv4-mapped address (::ffff:a.b.c.d: set
+    /// bind_ipv4_address instead) and a link-local address (fe80::/10, whose
+    /// bind needs an interface scope the field cannot carry) among them. Its
+    /// environment form applies only to a server that serves IPv6 alone, as
+    /// above.
+
+    const char * bind_ipv6_address;
 };
 
 /// Messages
@@ -2430,7 +2496,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 /// ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED,
 /// ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO,
 /// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION for a development token in a
-/// production build, ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no
+/// production build, ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no
 /// transport can open,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY, ROCKETNET_STATUS_MUTEX_CREATE_FAILED or
 /// ROCKETNET_STATUS_THREAD_CREATE_FAILED.
@@ -2904,7 +2970,14 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED,
 /// ROCKETNET_STATUS_TRANSPORT_NOT_BUILT,
-/// ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED when no transport can bind,
+/// ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED when the platform refused the
+/// bind of at least one transport and no other transport tried, except the
+/// xdp transport, failed for another reason (a server whose port another
+/// socket holds reads this where it read
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND, whether or not it sets
+/// bind_ipv4_address or bind_ipv6_address),
+/// ROCKETNET_STATUS_NO_TRANSPORT_FOUND when no transport can start for
+/// other reasons,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY or ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * server );
@@ -3239,7 +3312,10 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// rocketnet_server_abort_message). Game threads that each hold a message
 /// open on their own clients finish and abort by client index
 /// (rocketnet_server_finish_client_message,
-/// rocketnet_server_abort_client_message).
+/// rocketnet_server_abort_client_message). The returned memory is the
+/// caller's until finish or abort, and no later than the next
+/// rocketnet_server_update or rocketnet_server_send_packets, which aborts a
+/// message still open.
 /// To broadcast, send to each connected client index.
 ///
 /// An index at or above max_clients is refused.
@@ -3276,12 +3352,14 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 ///
 /// Needs a message opened by rocketnet_server_start_message on a running
 /// server; otherwise it asserts in a debug build and returns 0 in a release
-/// build. It names no client: it finishes the message the calling thread
-/// opened last, and only while that is the one message open on the whole
-/// server. With more than one open, or with that one already closed, it
-/// asserts in a debug build and returns 0 in a release build. Thread: not
-/// thread-safe; the caller owns the server one thread at a time. Game
-/// threads use rocketnet_server_finish_client_message.
+/// build. It names no client: it finishes the one message open on the whole
+/// server, whichever thread started it. With more than one open it cannot
+/// tell which is meant: that counts as API misuse, asserts in a debug build
+/// and returns 0 in a release build. Thread: not thread-safe; the caller owns
+/// the server one thread at a time. When the message was started on another
+/// thread the call counts as a main thread call first (see
+/// rocketnet_server_t), so no other thread may be inside a server call.
+/// Game threads use rocketnet_server_finish_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -3291,11 +3369,15 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_server_t * server, int bytes_written );
 
 /// Cancels the open message and releases its memory.
-/// Does nothing if no message is open, if more than one is, or if the one
-/// open is not the message the calling thread opened last.
+/// It names no client: it cancels the one message open on the whole server,
+/// whichever thread started it. Does nothing if no message is open; with
+/// more than one open it cannot tell which is meant, counts as API misuse
+/// and does nothing.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
-/// server one thread at a time. Game threads use
+/// server one thread at a time. When the message was started on another
+/// thread the call counts as a main thread call first, as
+/// rocketnet_server_finish_message. Game threads use
 /// rocketnet_server_abort_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
@@ -3309,11 +3391,14 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// use it too.
 ///
 /// One difference: an unreliable message small enough to fit in one packet
-/// is sent from this call, on the calling thread, rather than waiting for
-/// rocketnet_server_send_packets. If the server has no room to send it in
-/// this update, the call returns 0, the message is dropped and
+/// is sent alone from this call, on the calling thread, rather than waiting
+/// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
+/// returns 0, the message is dropped and
 /// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
-/// other message is queued as by rocketnet_server_finish_message.
+/// other message is queued as by rocketnet_server_finish_message: a larger
+/// one, a reliable one, one that must keep its order behind a message already
+/// queued, and, on the in-memory and plain socket transports, one their send
+/// ring had no slot for.
 ///
 /// Needs a message opened by rocketnet_server_start_message on client_index
 /// of a running server; otherwise it asserts in a debug build and returns 0

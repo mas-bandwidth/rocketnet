@@ -204,7 +204,7 @@ jobs:
   #
   #   unit        sodium, the unit suite (under strace on Linux), the purity
   #               and ambient config checks
-  #   functional  the functional suites (auto ladder, portable pin, and the
+  #   functional  the functional suites (automatic transport order, portable pin, and the
   #               production library's on Release), the family matrix on
   #               macOS, the lifecycle binary
   #   transport_matrix  (Linux) the transport family matrix and its libxdp
@@ -240,7 +240,7 @@ jobs:
         # functional_production is the include row below). The nightly tier
         # runs all. Both tiers exclude the plain Linux Release unit row: its
         # two shard rows replace it.
-        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
+        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
@@ -266,6 +266,15 @@ jobs:
           - { os: linux, build_type: Release, leg: unit, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Release, leg: unit, shard: 1/2, with_builds: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          # The Linux Debug unit leg runs in two shards as well (test --shard i/2):
+          # one row ran the build and fifteen sequential checks, 76 to 125 s on
+          # the fleet against the 120 s cap (runs 43374944017, 43373385606,
+          # 43372259877). Shard 0/2 keeps the purity, environment and shard
+          # partition checks; shard 1/2 keeps the development-build source audit
+          # and the counter-observed check. The plain Linux Debug unit row is
+          # excluded in both tiers; the macOS Debug unit row stays one job.
+          - { os: linux, build_type: Debug, leg: unit, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The macOS Release functional row ran both suites in one job, 1m30
           # to 1m50 against the two-minute bound. The production library's
           # suite (functional_production) runs in this row of its own, on its
@@ -595,7 +604,7 @@ jobs:
       # Per commit the Linux Release row runs functional_production only; the
       # development suite runs per commit on the Linux Debug row and on the
       # macOS Release row (the one macOS functional row per commit).
-      - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
+      - name: Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)
         if: matrix.leg == 'functional' && (inputs.full || matrix.build_type == 'Debug' || runner.os == 'macOS')
         # Nightly (full) Linux Debug only: scale 2, as nightly.yml scales its
         # TSan leg. test_loopback_transport_live_message_matrix's window takes
@@ -628,9 +637,9 @@ jobs:
 
       # functional_production links the production (ROCKETNET_DEV=OFF)
       # library, so it exists only on the Release rows; it runs the same
-      # auto ladder and the same pinned-portable pass as the DEV suite. On
+      # automatic transport order and the same pinned-portable pass as the DEV suite. On
       # macOS it is the functional_production row's, beside the functional row.
-      - name: Run functional_production suite (auto ladder, production library)
+      - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production')
         run: |
           set -euo pipefail
@@ -1014,7 +1023,7 @@ jobs:
       # it out. The Linux Debug unit leg builds DEV=ON on every commit: it runs
       # the audit there, and the case must have run.
       - name: Run the source audit in the development build (config-env names)
-        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON'
+        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/2'
         shell: bash
         run: |
           set -euo pipefail
@@ -1026,7 +1035,7 @@ jobs:
       # platform's own transport counters, judged on the development build
       # whose DEV blocks the tests read.
       - name: Every counter is observed by a test
-        if: matrix.leg == 'unit' && matrix.dev == 'ON'
+        if: matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/2'
         run: |
           python3 tools/check_counter_observed.py --self-test
           python3 tools/check_counter_observed.py --build build --platform ${{ runner.os == 'Linux' && 'linux' || 'macos' }}
@@ -1302,6 +1311,63 @@ jobs:
 
       - if: always()
         uses: ./.github/actions/ccache-stats
+
+  # The required check "linux / Debug / unit" (.github/rulesets/main.json,
+  # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
+  # leg runs as two shard rows above, and this row is green only when both
+  # shards are. needs: build-and-test only orders it after the matrix; it
+  # reads the two shards' own conclusions from the run's job list
+  # (tools/check_debug_unit_shards.py), so another leg's result never decides
+  # it. An ordinary checkout, for the script.
+  debug-unit:
+    name: linux / Debug / unit
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      # A runner's workspace outlives the job: a sparse checkout here left its
+      # patterns in it, and the next job's plain checkout got one file
+      # (tools/check_workflow_shape.py refuses sparse-checkout on self-hosted
+      # runners). A workspace already left sparse is healed first.
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Debug unit shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEBUG_UNIT_JOBS: debug-unit-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$DEBUG_UNIT_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$DEBUG_UNIT_JOBS"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
@@ -1804,7 +1870,7 @@ jobs:
           ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Run functional_production suite (auto ladder, production library)
+      - name: Run functional_production suite (automatic transport order, production library)
         if: matrix.leg == 'b'
         shell: bash
         run: |
@@ -2995,7 +3061,7 @@ jobs:
   #
   # WHAT CARRIES THE THREADS, and what does not. bin/test is the unit suite
   # and starts no driver. bin/functional is the surface that used to live in
-  # that run: on this linux runner the ladder falls to the gso rung (xdp
+  # that run: on this linux runner the transport order falls to the gso rung (xdp
   # refused for privilege, gso granted), so the server's GSO worker threads
   # run, the client receive thread runs, and the hammer tests drive the
   # concurrent path on purpose. bin/soak adds the real-UDP loopback -- a
@@ -3238,7 +3304,7 @@ jobs:
           path: unit-cases/
           if-no-files-found: error
 
-      - name: Run tests (auto ladder) against the pinned sodium
+      - name: Run tests (automatic transport order) against the pinned sodium
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: LD_LIBRARY_PATH="${SODIUM_PREFIX}/lib" ./bin/test
@@ -3791,6 +3857,7 @@ jobs:
           list="$RUNNER_TEMP/checker-selftests.txt"
           cat > "$list" <<'SUITES'
           python3 tools/check_client_frame_time.py --self-test
+          python3 tools/check_debug_unit_shards.py --self-test
           python3 tools/test_check_dll_consumer.py -v
           python3 tools/test_check_driver_extension.py -v
           python3 tools/test_check_examples.py -v
