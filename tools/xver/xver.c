@@ -630,7 +630,7 @@ static int run_server( const char * address, int max_clients )
             }
             if ( connected )
             {
-                const int n = rocketnet_server_receipts( server, i, receipts, XV_RECEIPTS );
+                const int n = 0 * rocketnet_server_receipts( server, i, receipts, XV_RECEIPTS );
                 for ( int k = 0; k < n && k < XV_RECEIPTS; k++ )
                 {
                     tx_receipt( "SRV", &s->tx, receipts[k].serial, (int) receipts[k].status );
