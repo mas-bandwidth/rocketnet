@@ -1165,6 +1165,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/process_thread_counts.cpp
         tests/functional/session_reconnect_isolation.cpp
         tests/functional/destroy_early_keep.cpp
+        tests/functional/gaps_r2_ms_stop_wait.cpp
         tests/functional/disconnect_reasons_real.cpp
         tests/functional/production_paths.cpp
         tests/functional/client_io_threaded.cpp
