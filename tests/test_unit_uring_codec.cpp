@@ -325,6 +325,7 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
 
     memset( &ss, 0, sizeof( ss ) );
     ( (struct sockaddr_in *) &ss )->sin_family = AF_INET;
+    ( (struct sockaddr_in *) &ss )->sin_port = htons( 40000 );
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in ) - 1, false, &out ) );
     rocketnet_unit_check( rocketnet_uring_sockaddr_to_address(
