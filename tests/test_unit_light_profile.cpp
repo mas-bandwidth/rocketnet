@@ -147,8 +147,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the server and nothing to the client: actual=1503911323 (aws-win-rio-1,
 // MSVC, Release, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502862747 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345580 )
+// The IOCP rebuild (IOCP_PIN_REFUSALS and the lanes of 4096 operations, the
+// receive banks sized by the rate) adds 24703364 to the server, and its
+// counter one 64-byte rounding to the client: actual=1528614687 and 15394220
+// (aws-win-iocp-1, MSVC, Release, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566111 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345644 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -211,8 +215,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // segment of acked ids a client, the pending entries and their ranges) and
 // each ack endpoint the last block it applied in full; the client gains one
 // 64-byte rounding: 34160412 and 64 above (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863099 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993098 )
+// The appended counter IOCP_PIN_REFUSALS adds 128 to the server (two of its
+// counter blocks cross a 64-byte rounding) and 64 to the client: actual=
+// 1503911803 and 15041738 (the macOS unit job, Debug, DEV ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -330,14 +337,19 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 136, and the xdp ladder candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809983ULL )
+// The appended counter IOCP_PIN_REFUSALS adds 64 to the server (one 64-byte
+// rounding): actual=5644858567 (hetzner1, gcc, Debug, DEV ON); arm64 the same
+// 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643810047ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809927ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5643809991ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141778 )
+// The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
+// 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141842 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
