@@ -16460,8 +16460,8 @@ static void rocketnet_latency_standalone_ack( bool server_to_client, int cadence
         if ( delivered_update < 0 && update % cadence == 0 )
         {
             uint8_t * out = server_to_client
-                ? rocketnet_server_start_message( pair.server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 )
-                : rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 );
+                                ? rocketnet_server_start_message( pair.server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 )
+                                : rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 );
             rocketnet_check( out != NULL );
             memset( out, 0x7A, 16 );
             if ( server_to_client )
