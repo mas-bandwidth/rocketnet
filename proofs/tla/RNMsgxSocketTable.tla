@@ -325,14 +325,18 @@ MainV == [word |-> word, deadRep |-> deadRep, state |-> state, fd |-> fd, gen |-
           coolAddr |-> coolAddr, coolUntil |-> coolUntil, counters |-> counters, kfd |-> kfd,
           kdead |-> kdead, poller |-> poller, mpc |-> mpc, ms |-> ms, mi |-> mi, mk |-> mk]
 
-\* the primed state is the record N, every variable of MainV
+\* the primed state is the record N, every variable of MainV.  TLC passes an
+\* operator's argument as an expression it evaluates at each use, so N is
+\* bound to its value once, by the singleton quantifier (M), or each of the 24
+\* fields would evaluate the whole step again
 Apply(N) ==
-    /\ word' = N.word /\ deadRep' = N.deadRep /\ state' = N.state /\ fd' = N.fd /\ gen' = N.gen
-    /\ addr' = N.addr /\ snap' = N.snap /\ deadReports' = N.deadReports /\ freeSlots' = N.freeSlots
-    /\ numFree' = N.numFree /\ retired' = N.retired /\ numRetired' = N.numRetired /\ numOpen' = N.numOpen
-    /\ index' = N.index /\ coolAddr' = N.coolAddr /\ coolUntil' = N.coolUntil /\ counters' = N.counters
-    /\ kfd' = N.kfd /\ kdead' = N.kdead /\ poller' = N.poller
-    /\ mpc' = N.mpc /\ ms' = N.ms /\ mi' = N.mi /\ mk' = N.mk
+    \E M \in {N} :
+    /\ word' = M.word /\ deadRep' = M.deadRep /\ state' = M.state /\ fd' = M.fd /\ gen' = M.gen
+    /\ addr' = M.addr /\ snap' = M.snap /\ deadReports' = M.deadReports /\ freeSlots' = M.freeSlots
+    /\ numFree' = M.numFree /\ retired' = M.retired /\ numRetired' = M.numRetired /\ numOpen' = M.numOpen
+    /\ index' = M.index /\ coolAddr' = M.coolAddr /\ coolUntil' = M.coolUntil /\ counters' = M.counters
+    /\ kfd' = M.kfd /\ kdead' = M.kdead /\ poller' = M.poller
+    /\ mpc' = M.mpc /\ ms' = M.ms /\ mi' = M.mi /\ mk' = M.mk
 
 \* the first step of a retire: the address leaves the index, the generation
 \* advances, and (in the code's order) the word loses its descriptor; or,
@@ -443,7 +447,9 @@ MainStepF(R) ==
 
 \* a call run to its end: main's steps in order until it is idle
 RECURSIVE RunF(_)
-RunF(R) == IF R.mpc = "idle" THEN R ELSE RunF(MainStepF(R))
+RunF(R) ==
+    IF R.mpc = "idle" THEN R
+    ELSE CHOOSE M \in {RunF(N) : N \in {MainStepF(R)}} : TRUE   \* N is a value, not an expression evaluated at each use
 
 \* the fine-grained actions: each one step of a call, holders free to run
 \* between them
