@@ -219,7 +219,12 @@ int main( int argc, char ** argv )
         client_config.loopback_hub = hub;
         client_config.step_driven = true;
         client_config.time_callback = ack_cost_clock;
-        clients[(size_t) i] = rocketnet_client_create( NULL, &client_config, NULL );
+        enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+        clients[(size_t) i] = rocketnet_client_create( NULL, &client_config, &client_status );
+        if ( !clients[(size_t) i] )
+        {
+            fprintf( stderr, "client create: %s\n", rocketnet_status_name( client_status ) );
+        }
         CHECK( clients[(size_t) i] );
         CHECK( rocketnet_client_connect( clients[(size_t) i], token_string ) == ROCKETNET_STATUS_OK );
     }
