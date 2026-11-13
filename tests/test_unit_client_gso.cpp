@@ -72,7 +72,8 @@ struct fake_gso_socket_t
     int gro_calls;
     int gro_result;
     int recvmmsg_calls;
-    int weather_errors;                 // recvmmsg calls that fail with ECONNREFUSED before any receive is delivered
+    int weather_errors;                 // recvmmsg calls that fail with weather_errno before any receive is delivered
+    int weather_errno;                  // 0: ECONNREFUSED
     int num_receives;
     int next_receive;
     fake_gso_receive_t receives[FAKE_GSO_MAX_RECEIVES];
@@ -175,7 +176,7 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
     if ( fake->weather_errors > 0 )
     {
         fake->weather_errors--;
-        errno = ECONNREFUSED;
+        errno = fake->weather_errno != 0 ? fake->weather_errno : ECONNREFUSED;
         return -1;
     }
 
@@ -909,6 +910,29 @@ static void test_client_gso_receive_one_read_budget()
 }
 
 REGISTER_UNIT_TEST( test_client_gso_receive_one_read_budget );
+
+// EMSGSIZE on a receive is weather: a connected client socket gets it from an
+// ICMP fragmentation-needed or packet-too-big naming its 4-tuple (sk_err,
+// returned before any datagram is dequeued), never from a long datagram, which
+// MSG_TRUNC reports by size. The drain skips it and reads the datagram behind
+// it in the same call.
+
+static void test_client_gso_receive_emsgsize_is_weather()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    test_socket.weather_errors = 1;
+    test_socket.weather_errno = EMSGSIZE;
+    fake_gso_queue_receive( 200, 0, 50, FAKE_GSO_CONTROL_NONE );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    rocketnet_unit_check( test_socket.weather_errors == 0 );
+    check_gso_receive_slot( 0, 200, 50 );
+}
+
+REGISTER_UNIT_TEST( test_client_gso_receive_emsgsize_is_weather );
 
 static void test_client_gso_receive_gro_fault_is_counted()
 {
