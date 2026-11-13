@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           persist-credentials: false
 
       - name: Configure and build client_main_thread_cost (Release)
@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           persist-credentials: false
 
       - name: Check the fleet's build dependencies are present
@@ -139,7 +139,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
-          ref: ${{ matrix.ref }}
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
           persist-credentials: false
 
       - name: Configure
