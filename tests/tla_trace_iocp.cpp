@@ -19,6 +19,11 @@
 // The bank, the tallies and the eviction flag are the walk's, as the
 // bank_datagram path keeps them from the verdict: the code under test is the
 // verdict, and the model checks it against the bank's fill and the kind.
+// Neither rocketnet_iocp_bank_datagram (num_packets++ and the drop tally) nor
+// rocketnet_server_iocp_receive_packets is called, so a bank or tally defect
+// there (an uncounted full-bank drop) would not show here: InBounds,
+// Accounted and EveryDropCounted are checked against state the walk wrote.
+// Driving the real bank and receive path is a roadmap entry.
 //
 // The plant (ROCKETNET_IOCP_RECEIVE_ADMIT_PLANT) is the capacity check
 // first, the order the blast row measured: garbage then meets the capacity

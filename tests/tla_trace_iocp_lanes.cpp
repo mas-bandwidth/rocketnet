@@ -12,17 +12,31 @@
 // - acquire: start_packet's pop from the destination's lane. The lane the
 //   hash returned and the operation the pop returned are the arguments of
 //   Start, or StartRefused when the pop returns none.
+// - abort: a staged packet left zero bytes (Abort), as abort_packet leaves
+//   it; the walk marks its own bank entry, and no code is called.
 // - post: a send thread posts one lane it owns, its bank whole, in staged
 //   order (the walk's bank, as the worker's three banks seen as one
 //   sequence). The thread and the lane it walks to are Post's arguments: the
 //   lanes of thread t come from the code's own walk,
 //   rocketnet_iocp_send_thread_lanes (lane l is thread l % threads's), and
 //   the thread count from rocketnet_server_iocp_send_threads, the functions
-//   the transport's send threads call at create.
+//   the transport's send threads call at create. Each zero-byte entry's
+//   operation is released through the code's release (to the lane its
+//   index names), as rocketnet_iocp_send_bank releases it unposted.
 // - release: a completion releases one in-flight operation to the lane its
 //   index names (Complete).
 // Every lane's free queue is read back from the code after each step; the
 // code's hash of every destination is the cfg's DestLaneAt.
+//
+// What this binds, and what it does not: the free queues, the destination
+// hash, the carve's release lane and the send threads' lane walk are the
+// code's. The banks, the in-flight set, the started and posted orders, the
+// zeroed set and postedBy are the walk's own, written from the model's
+// rules: no call of start_packet, finish_packet, abort_packet,
+// rocketnet_iocp_send_bank, the gather or a post is made, so InOrder and
+// Conserved are checked against state the walk wrote, not the transport's
+// banks or posts. Driving the real staging, bank and post path is a roadmap
+// entry.
 //
 // The plant is two defects in the transport's file, compiled only into this
 // layer's plant binary. The carve (ROCKETNET_IOCP_SEND_LANES_PLANT) is
@@ -42,6 +56,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tla_trace_record.h"
@@ -84,7 +99,20 @@ struct iocp_lanes_walk_t
     int64_t started[IOCP_LANES_DESTS + 1];
     std::vector<int64_t> posted[IOCP_LANES_DESTS + 1];
     std::vector<int> posted_by[IOCP_LANES_LANES];
+    std::vector<std::pair<int, int64_t>> zeroed;     // <<dest, seq>> of every packet left zero bytes
 };
+
+static bool iocp_lanes_zero( const iocp_lanes_walk_t & walk, const iocp_lanes_staged_t & staged )
+{
+    for ( const std::pair<int, int64_t> & z : walk.zeroed )
+    {
+        if ( z.first == staged.dest && z.second == staged.seq )
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
 {
@@ -132,6 +160,13 @@ static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
     }
     inflight += "}";
 
+    std::string zeroed = "{";
+    for ( size_t i = 0; i < walk.zeroed.size(); ++i )
+    {
+        zeroed += ( i > 0 ? ", " : "" ) + tla_sequence( { tla_int( walk.zeroed[i].first ), tla_int( walk.zeroed[i].second ) } );
+    }
+    zeroed += "}";
+
     std::vector<std::string> dest_keys;
     std::vector<std::string> started_values;
     std::vector<std::string> posted_values;
@@ -154,6 +189,7 @@ static tla_record_t iocp_lanes_record( const iocp_lanes_walk_t & walk )
     record.add( "started", tla_function( dest_keys, started_values ) );
     record.add( "posted", tla_function( dest_keys, posted_values ) );
     record.add( "postedBy", tla_function( lane_keys, posted_by_values ) );
+    record.add( "zeroed", zeroed );
     return record;
 }
 
@@ -222,8 +258,20 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
     // and the walk makes no call)
     auto post = [&]( int t, int l )
     {
+        // a zero-byte entry's operation goes back through the code's
+        // release, unposted, as rocketnet_iocp_send_bank releases it; the
+        // rest is posted in staged order
+        bool released_astray = false;
         for ( const iocp_lanes_staged_t & staged : walk.bank[l] )
         {
+            if ( iocp_lanes_zero( walk, staged ) )
+            {
+                const bool released = rocketnet_server_iocp_test_lanes_release( walk.lanes, staged.op );
+                int indexes[IOCP_LANES_OPS];
+                const int count = rocketnet_server_iocp_test_lanes_free( walk.lanes, staged.op / IOCP_LANES_SIZE, indexes, IOCP_LANES_OPS );
+                released_astray = released_astray || !released || count == 0 || indexes[count - 1] != staged.op;
+                continue;
+            }
             walk.inflight.push_back( staged.op );
             walk.posted[staged.dest].push_back( staged.seq );
         }
@@ -240,11 +288,20 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
         report.act( "Post" );
         records.push_back( tla_step( "post", "Post", tla_sequence( { tla_int( t ), tla_int( l ) } ), iocp_lanes_record( walk ) ) );
         // the planted effect, where it shows: a thread posted a lane another
-        // thread owns
-        if ( rocketnet_server_iocp_send_thread_of_lane( l, IOCP_LANES_THREADS ) != t )
+        // thread owns, or a zero-byte entry's release left its carve's queue
+        if ( rocketnet_server_iocp_send_thread_of_lane( l, IOCP_LANES_THREADS ) != t || released_astray )
         {
             report.planted( (int) records.size() );
         }
+    };
+
+    // Abort: a staged packet not yet zero is left zero bytes
+    auto abort_one = [&]( int l, size_t k )
+    {
+        const iocp_lanes_staged_t & staged = walk.bank[l][k];
+        walk.zeroed.push_back( std::make_pair( staged.dest, staged.seq ) );
+        report.act( "Abort" );
+        records.push_back( tla_step( "abort", "Abort", iocp_lanes_args( staged.op ), iocp_lanes_record( walk ) ) );
     };
 
     // The prologue, the same in the clean and the plant build: a packet to
@@ -279,10 +336,31 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
 
     while ( (int) records.size() < steps + 1 )
     {
-        const int action = random.below( 3 );
+        const int action = random.below( 4 );
         if ( action == 0 )
         {
             acquire( 1 + random.below( IOCP_LANES_DESTS ) );
+        }
+        else if ( action == 3 )
+        {
+            // Abort: one staged packet not yet zero, in any lane
+            std::vector<std::pair<int, size_t>> live;
+            for ( int l = 0; l < IOCP_LANES_LANES; ++l )
+            {
+                for ( size_t k = 0; k < walk.bank[l].size(); ++k )
+                {
+                    if ( !iocp_lanes_zero( walk, walk.bank[l][k] ) )
+                    {
+                        live.push_back( std::make_pair( l, k ) );
+                    }
+                }
+            }
+            if ( live.empty() )
+            {
+                continue;
+            }
+            const std::pair<int, size_t> pick = live[(size_t) random.below( (int) live.size() )];
+            abort_one( pick.first, pick.second );
         }
         else if ( action == 1 )
         {
@@ -345,7 +423,7 @@ static int trace_iocp_lanes( uint64_t seed, int steps, const char * out )
     char constants[512];
     snprintf( constants, sizeof( constants ),
               "    Lanes = %d\n    Size = %d\n    Dests = {1, 2, 3, 4, 5, 6}\n    DestLaneAt = %s\n    IndexBits = %d\n"
-              "    MaxStarts = %d\n    AnyLane = FALSE\n    ReleaseMod = FALSE\n    Threads = %d\n    OwnerDefect = 0\n",
+              "    MaxStarts = %d\n    AnyLane = FALSE\n    ReleaseMod = FALSE\n    Threads = %d\n    OwnerDefect = 0\n    AbortDefect = 0\n",
               IOCP_LANES_LANES, IOCP_LANES_SIZE, dest_lane_at.c_str(), IOCP_LANES_INDEX_BITS, (int) starts + 1, IOCP_LANES_THREADS );
 
     return tla_write_trace( out, "MCTraceIocpLanes", seed, "TraceRNIocpSendLanes", "", constants, records ) ? 0 : 1;

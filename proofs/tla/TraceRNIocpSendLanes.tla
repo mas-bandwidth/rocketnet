@@ -5,13 +5,19 @@
 (* sequence tests/tla_trace_iocp_lanes.cpp writes over the code's lane     *)
 (* free queues, destination hash and carve: one record per step, with the  *)
 (* operation the walk called (op: "acquire", start_packet's pop from the   *)
-(* destination's lane; "post", a lane's bank posted whole; "release", a    *)
-(* completion's release), its arguments (the destination, the lane the     *)
-(* hash returned and the operation the pop returned; the send thread and   *)
-(* the lane it posted; the operation released), the action the call's result names (act: Start or *)
-(* StartRefused by the pop's result; Post; Complete) and every model       *)
-(* variable after it (state).  The cfg's DestLaneAt is the code's hash of  *)
-(* each destination.  Record 1 is "init".                                  *)
+(* destination's lane; "abort", a staged packet left zero bytes; "post", a *)
+(* lane's bank posted whole; "release", a completion's release), its       *)
+(* arguments (the destination, the lane the hash returned and the          *)
+(* operation the pop returned; the operation aborted; the send thread and  *)
+(* the lane it posted; the operation released), the action the call's     *)
+(* result names (act: Start or StartRefused by the pop's result; Abort;    *)
+(* Post; Complete) and every model variable after it (state).  The cfg's   *)
+(* DestLaneAt is the code's hash of each destination.  Record 1 is "init". *)
+(* The free queues, the hash, the carve and the send threads' lane walk    *)
+(* are the code's; the banks, inflight, started, posted, postedBy and      *)
+(* zeroed are the walk's own (tests/tla_trace_iocp_lanes.cpp says which    *)
+(* calls it makes), so this checks the queues and the arithmetic, not the  *)
+(* transport's staging, banks or posts.                                    *)
 (*                                                                         *)
 (* A copy changes only EXTENDS, VarsRec, OpActs, Act and the row's reach   *)
 (* predicates; tools/tla_trace_check.py compares the rest with the         *)
@@ -36,15 +42,16 @@ VARIABLES ti,        \* the index of the record the state matches
 
 \* every model variable by the field name the harness writes
 VarsRec == [free |-> free, bank |-> bank, inflight |-> inflight, started |-> started,
-            posted |-> posted, postedBy |-> postedBy]
+            posted |-> posted, postedBy |-> postedBy, zeroed |-> zeroed]
 
 \* the actions each operation of the code can be
-OpActs == [acquire |-> {"Start", "StartRefused"}, post |-> {"Post"}, release |-> {"Complete"}]
+OpActs == [acquire |-> {"Start", "StartRefused"}, abort |-> {"Abort"}, post |-> {"Post"}, release |-> {"Complete"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
 Act(a, x) == CASE a = "Start" -> Start(x[1], x[2], x[3])
                [] a = "StartRefused" -> StartRefused(x[1], x[2])
+               [] a = "Abort" -> Abort(x[1])
                [] a = "Post" -> Post(x[1], x[2])
                [] a = "Complete" -> Complete(x[1])
 

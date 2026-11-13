@@ -1065,6 +1065,7 @@ MCRNRioLaneLayout.cfg	MCRNRioLaneLayout.tla	pass	-	ignore-terminal	rnriolanelayo
 MCRNRioLaneLayoutBrokenNoBound.cfg	MCRNRioLaneLayout.tla	invariant	LaneInRange	ignore-terminal	rnriolanelayout	required	-
 MCRNRioLaneLayoutBrokenModLane.cfg	MCRNRioLaneLayout.tla	invariant	FinishOwn	ignore-terminal	rnriolanelayout	required	-
 MCRNRioLaneLayoutBrokenLeastFull.cfg	MCRNRioLaneLayout.tla	invariant	OneLanePerDest	ignore-terminal	rnriolanelayout	required	-
+MCRNRioLaneLayoutBrokenReverse.cfg	MCRNRioLaneLayout.tla	invariant	InOrder	ignore-terminal	rnriolanelayout	required	-
 MCRNRioWorkerGarbage.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerBrokenBankGarbage.cfg	MCRNRioWorker.tla	invariant	NoGarbageBanked	check	rnrioworker	required	-
 MCRNRioWorkerBrokenTakeBeforeRetire.cfg	MCRNRioWorker.tla	invariant	DrainedReturnedAtPost	check	rnrioworker	required	-
@@ -1082,6 +1083,8 @@ MCRNIocpSendLanesBrokenReleaseMod.cfg	MCRNIocpSendLanes.tla	invariant	OwnLane	ig
 MCRNIocpSendLanesBrokenIndexBits.cfg	MCRNIocpSendLanes.tla	invariant	HandleUnique	ignore-terminal	rniocpsendlanes	required	-
 MCRNIocpSendLanesBrokenOwnerShift.cfg	MCRNIocpSendLanes.tla	invariant	OnlyOwnerPosts	ignore-terminal	rniocpsendlanes	required	-
 MCRNIocpSendLanesBrokenOwnerInvert.cfg	MCRNIocpSendLanes.tla	invariant	OnlyOwnerPosts	ignore-terminal	rniocpsendlanes	required	-
+MCRNIocpSendLanesBrokenAbortPosted.cfg	MCRNIocpSendLanes.tla	invariant	InOrder	ignore-terminal	rniocpsendlanes	required	-
+MCRNIocpSendLanesBrokenAbortStranded.cfg	MCRNIocpSendLanes.tla	invariant	Conserved	ignore-terminal	rniocpsendlanes	required	-
 MCRNIocpEndpoints.cfg	MCRNIocpEndpoints.tla	pass	-	check	rniocpendpoints	required	-
 MCRNIocpEndpoints3x1.cfg	MCRNIocpEndpoints.tla	pass	-	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenRepostOnPoster.cfg	MCRNIocpEndpoints.tla	invariant	OnOwnerSocket	check	rniocpendpoints	required	-
