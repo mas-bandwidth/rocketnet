@@ -39,6 +39,9 @@ examples|windows|x86_64|msvc|Release|devON|none|-~-|default	nightly-examples.yml
 frame_budget|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-frame-budget.yml	linux-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
 frame_budget|macos|arm64|appleclang|Release|devON|none|-~-|default	nightly-frame-budget.yml	macos-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
 frame_budget|windows|x86_64|msvc|Release|devON|none|-~-|default	nightly-frame-budget.yml	windows-frame-budget	*	tools/check_frame_budget.py	nightly	frame budget gate
+client_frame_time|linux|x86_64|gcc|Release|devOFF|none|-~-|default	nightly-client-frame-time.yml	linux-client-frame-time	*	tools/check_client_frame_time.py	nightly	client frame time gate (production build)
+client_frame_time|macos|arm64|appleclang|Release|devOFF|none|-~-|default	nightly-client-frame-time.yml	macos-client-frame-time	*	tools/check_client_frame_time.py	nightly	client frame time (report only)
+client_frame_time|windows|x86_64|msvc|Release|devOFF|none|-~-|default	nightly-client-frame-time.yml	windows-client-frame-time	*	tools/check_client_frame_time.py	nightly	client frame time (report only)
 framework|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	framework	owed:2026-11-19	needs FRAMEWORK_READ_TOKEN, an owner credential not yet provided
 framework|windows|x86_64|msvc|Release|devON|none|-~-|default	-	-	-	framework	owed:2026-11-19	needs FRAMEWORK_READ_TOKEN, an owner credential not yet provided
 functional_production|linux|x86_64|gcc|Debug|devOFF|none|auto~auto|default	-	-	-	functional_production	owed:2026-11-19	a Debug production build is a supported CMake combination (no refusal in CMakeLists); asserts in production-only code paths
