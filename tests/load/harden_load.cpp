@@ -163,7 +163,7 @@ typedef int harden_socket_t;
 #define HARDEN_CHANNEL_BIG 2
 #define HARDEN_MAX_SIZES 16
 #define HARDEN_MAX_THREADS 64
-#define HARDEN_INPUT_BYTES 64
+#define HARDEN_INPUT_BYTES 256 // honest input: about 100-200 kbps a client
 #define HARDEN_INPUT_RELIABLE_BYTES 200
 #define HARDEN_COUNTER_SLOTS 512
 #define HARDEN_SLOT_PACKETS_SENT HARDEN_COUNTER_SLOTS
@@ -441,6 +441,7 @@ struct harden_options_t
     double churn_rate = 0.0;
     int messages = 1;
     int input_bytes = HARDEN_INPUT_BYTES; // --input-bytes N: each player's unreliable input message a tick (honest input: about 300 B a tick, 100-200 kbps)
+    std::string load;         // --load peak|average|custom: space game's real server-to-client load (see harden_apply_load); custom keeps the flags
     int base = 1;
     int burst = 15;
     int burst_clients = 0;
@@ -478,6 +479,35 @@ struct harden_options_t
     double min_delivery = 99.9;
     uint64_t protocol_id = HARDEN_PROTOCOL_ID;
 };
+
+// space game's real load: snapshot baselines and deltas as unreliable messages
+// of about one MTU (one message = one packet), 15 a client a tick at the peak
+// (about 10 Mb/s a client, 10 Gb/s server-wide) and 8 on average (5 to 6 Mb/s);
+// no large messages; reliable only as a trickle, one small message a client
+// every 3 seconds. The input each client sends is --input-bytes (256 B a tick).
+static bool harden_apply_load( harden_options_t * o, const char * v )
+{
+    if ( strcmp( v, "peak" ) == 0 || strcmp( v, "average" ) == 0 )
+    {
+        o->load = v;
+        o->base = strcmp( v, "peak" ) == 0 ? 15 : 8;
+        o->burst = 0;
+        o->burst_clients = 0;
+        o->sizes[0] = 1200;
+        o->num_sizes = 1;
+        o->reliable_every = 180;
+        o->reliable_bytes = 100;
+        o->big_every = 0;
+        return true;
+    }
+    if ( strcmp( v, "custom" ) == 0 )
+    {
+        o->load = v;
+        return true;
+    }
+    fprintf( stderr, "harden_load: --load is peak, average or custom\n" );
+    return false;
+}
 
 static bool harden_parse_sizes( const char * text, harden_options_t * o )
 {
@@ -639,6 +669,13 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
                 return false;
             }
         }
+        else if ( strcmp( a, "--load" ) == 0 )
+        {
+            if ( !harden_apply_load( o, v ) )
+            {
+                return false;
+            }
+        }
         else if ( strcmp( a, "--space-update" ) == 0 )
         {
             o->space_update_split = strcmp( v, "split" ) == 0;
@@ -766,6 +803,10 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
             fprintf( stderr, "harden_load: unknown option %s\n", a );
             return false;
         }
+    }
+    if ( o->load.empty() && o->space_shape && !harden_apply_load( o, "peak" ) )
+    {
+        return false;
     }
     if ( o->max_clients < 1 || o->clients < 0 || o->threads < 1 || o->threads > HARDEN_MAX_THREADS || o->seconds <= 0.0 || o->hz <= 0.0 ||
          o->join_rate <= 0.0 || o->churn_clients < 0 || o->churn_clients > o->clients || o->churn_rate < 0.0 || o->messages < 0 ||
@@ -2109,8 +2150,16 @@ static int harden_server_main( const harden_options_t & o )
         printf( "harden_profile: unavailable here (Windows only; perf samples Linux)\n" );
     }
 #endif // #if defined( _WIN32 )
-    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
-            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.payload_copy ? "copy" : "pattern",
+    bool warm_touched = false;
+    // the soak's warm-up touch, before any player joins: run after the
+    // players are in, it stalled the main thread for seconds (a 0.7% loss)
+    {
+        const int64_t touched = process_resources_touch_all();
+        printf( "harden_sample: tag=touch bytes=%" PRId64 " before_join=1\n", touched );
+        warm_touched = true;
+    }
+    printf( "harden_ready: address=%s port=%d transport=%s key=%s utc=%s max_clients=%d hz=%.0f base=%d burst=%d burst_clients=%d fill_jobs=%d load=%s payload=%s reliable_every=%d reliable_bytes=%d big_every=%d big_bytes=%d sizes=",
+            o.address.c_str(), (int) rocketnet_server_port( server ), granted, key_hex, utc, o.max_clients, o.hz, o.base, o.burst, o.burst_clients, o.fill_jobs, o.load.empty() ? "blocking-default" : o.load.c_str(), o.payload_copy ? "copy" : "pattern",
             o.reliable_every, o.reliable_bytes, o.big_every, o.big_bytes );
     for ( int i = 0; i < o.num_sizes; i++ )
     {
@@ -2329,7 +2378,7 @@ static int harden_server_main( const harden_options_t & o )
         if ( t_now - started >= (double) o.warm_seconds && ( !resources_started || t_now - last_sample >= (double) o.sample_seconds ) )
         {
             process_resources_t r;
-            if ( !resources_started )
+            if ( !resources_started && !warm_touched )
             {
                 const int64_t touched = process_resources_touch_all();
                 printf( "harden_sample: tag=touch bytes=%" PRId64 "\n", touched );
