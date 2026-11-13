@@ -1328,6 +1328,33 @@ static void rocketnet_iocp_publish_receive_bank( rocketnet_iocp_worker_t * worke
     }
 }
 
+// At a worker's exit, after its last batch: the datagrams banked but never
+// handed to main, in its fill bank (a batch stop landed in, or a publish
+// that found no free bank) and in its ready banks (main's receive takes
+// nothing once stopping), are counted by name, so every datagram the socket
+// delivered is in exactly one public counter. Each was RECEIVE_COMPLETED in
+// the worker's own counters when banked; the bank EXPOSED to main is main's
+// and was delivered. The banks keep their places (RNBankFifoLayout has no
+// step after stop); each is emptied, so a count is never taken twice.
+static void rocketnet_iocp_drop_unread_banks( rocketnet_iocp_worker_t * worker, rocketnet_receive_drop_tally_t * drops )
+{
+    uint64_t datagrams = 0;
+    rocketnet_platform_mutex_acquire( &worker->mutex );
+    datagrams += (uint64_t) worker->buffers[worker->fill_index].num_packets;
+    worker->buffers[worker->fill_index].num_packets = 0;
+    for ( int k = 0; k < worker->ready_count; ++k )
+    {
+        const int index = worker->ready_banks[( worker->ready_head + k ) % ROCKETNET_IOCP_RECEIVE_BANKS];
+        datagrams += (uint64_t) worker->buffers[index].num_packets;
+        worker->buffers[index].num_packets = 0;
+    }
+    rocketnet_platform_mutex_release( &worker->mutex );
+    if ( datagrams )
+    {
+        rocketnet_receive_drop_tally_count( drops, ROCKETNET_RECEIVE_DROP_STOPPED, datagrams );
+    }
+}
+
 static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * argument )
 {
     rocketnet_iocp_worker_t * worker = (rocketnet_iocp_worker_t *) argument;
@@ -1356,6 +1383,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
             }
             if ( iocp->pending.load( std::memory_order_acquire ) == 0 )
             {
+                rocketnet_iocp_drop_unread_banks( worker, &iocp->drop_tallies[worker - iocp->workers] );
                 break;
             }
         }
@@ -1471,19 +1499,30 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 }
             }
 
-            if ( op->uro_data )
+            if ( !running )
             {
-                if ( running )
+                // stopping: a datagram that arrived is never handed to main,
+                // so it is counted by name (a URO completion as the datagrams
+                // its stride splits it into); a receive the stop cancelled
+                // carries none and counts nothing
+                if ( success && bytes > 0 )
                 {
-                    rocketnet_iocp_publish_uro( iocp, &batch, buffer, op, success, receive_error, bytes );
+                    const DWORD stride = op->uro_data ? rocketnet_iocp_coalesced_stride( &op->message ) : 0;
+                    const uint64_t datagrams = stride > 0 && stride < bytes ? ( (uint64_t) bytes + stride - 1 ) / stride : 1;
+                    batch.tally[ROCKETNET_IOCP_RECEIVE_DROPPED] += datagrams;
+                    rocketnet_receive_drop_tally_count( batch.drops, ROCKETNET_RECEIVE_DROP_STOPPED, datagrams );
                 }
             }
-            else if ( running && success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
+            else if ( op->uro_data )
+            {
+                rocketnet_iocp_publish_uro( iocp, &batch, buffer, op, success, receive_error, bytes );
+            }
+            else if ( success && bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING &&
                       rocketnet_iocp_address_read( &op->address, op->address_bytes, iocp->ipv6, &from ) )
             {
                 rocketnet_iocp_bank_datagram( &batch, buffer, from, op->frame, (int) bytes );
             }
-            else if ( running )
+            else
             {
                 ++batch.tally[ROCKETNET_IOCP_RECEIVE_DROPPED];
                 if ( success && bytes == 0 )

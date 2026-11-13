@@ -3,6 +3,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_server_iocp.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_server_rio.h"
 #include "rocketnet_memory.h"
 #include <ws2tcpip.h>
@@ -1024,6 +1025,81 @@ static void test_completion_batches_both_paths()
 {
     test_completion_batches_counted( 0 );
     test_completion_batches_counted( ROCKETNET_IOCP_DISABLE_URO );
+}
+
+static uint64_t iocp_counter( rocketnet_server_iocp_t * transport, int counter );
+
+// Every datagram the transport received is delivered to main or counted by
+// name once: datagrams banked but not taken when the transport stops (in the
+// fill bank or a ready bank) are ROCKETNET_RECEIVE_DROP_STOPPED, and the ones
+// main took before the stop are not. Five are taken, fifteen more are banked
+// and left, then stop: STOPPED is fifteen, exactly.
+static void test_stop_counts_unread_datagrams( int flags )
+{
+    rocketnet_address_t bind = address( "127.0.0.1:0" );
+    rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, flags );
+    CHECK( transport );
+
+    SOCKET client = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    CHECK( client != INVALID_SOCKET );
+
+    sockaddr_in to = {};
+    to.sin_family = AF_INET;
+    to.sin_port = htons( bind.port );
+    to.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+
+    wait_until( "IOCP receives posted", [&]()
+                { return rocketnet_server_iocp_pending( transport ) == ROCKETNET_IOCP_RECEIVES_PER_WORKER; } );
+
+    const int taken = 5;
+    const int left = 15;
+    for ( int i = 0; i < taken; ++i )
+    {
+        CHECK( sendto( client, "take", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    }
+    int received = 0;
+    wait_until( "the first datagrams delivered", [&]()
+                {
+                    rocketnet_server_iocp_receive_packets( transport );
+                    received += rocketnet_server_iocp_process_packets( transport )->num_packets;
+                    return received == taken;
+                } );
+
+    for ( int i = 0; i < left; ++i )
+    {
+        CHECK( sendto( client, "left", 4, 0, (sockaddr *) &to, sizeof( to ) ) == 4 );
+    }
+    wait_until( "the rest banked", [&]() { return iocp_counter( transport, ROCKETNET_IOCP_RECEIVE_COMPLETED ) == (uint64_t) ( taken + left ); } );
+
+    uint64_t before[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+    rocketnet_server_iocp_receive_drop_totals( transport, before );
+    CHECK( before[ROCKETNET_RECEIVE_DROP_STOPPED] == 0 );
+
+    rocketnet_server_iocp_stop( transport );
+    wait_stopped( transport );
+
+    uint64_t after[ROCKETNET_RECEIVE_NUM_DROPS] = {};
+    rocketnet_server_iocp_receive_drop_totals( transport, after );
+    printf( "stop unread: taken=%d stopped=%llu\n", received, (unsigned long long) after[ROCKETNET_RECEIVE_DROP_STOPPED] );
+    CHECK( received == taken );
+    CHECK( after[ROCKETNET_RECEIVE_DROP_STOPPED] == (uint64_t) left );
+    for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+    {
+        if ( drop != ROCKETNET_RECEIVE_DROP_STOPPED )
+        {
+            CHECK( after[drop] == before[drop] );
+        }
+    }
+
+    rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
+    closesocket( client );
+    printf( "test_iocp_transport_stop_counts_unread_datagrams flags=%d\n", flags );
+}
+
+static void test_stop_counts_unread_both_paths()
+{
+    test_stop_counts_unread_datagrams( 0 );
+    test_stop_counts_unread_datagrams( ROCKETNET_IOCP_DISABLE_URO );
 }
 
 // A receive posted while an oversized datagram already waits in the socket:
@@ -3226,6 +3302,7 @@ static const fault_case_t fault_cases[] = {
     { "test_rio_transport_stop_sends_handed_burst", test_rio_transport_stop_sends_handed_burst },
     { "test_iocp_transport_receive_boundaries", test_receive_boundaries_both_paths },
     { "test_iocp_transport_completion_batches_counted", test_completion_batches_both_paths },
+    { "test_iocp_transport_stop_counts_unread_datagrams", test_stop_counts_unread_both_paths },
     { "test_rio_transport_receive_size_drops_counted", test_rio_receive_size_drops_counted },
     { "test_rio_transport_send_waits_counted", test_rio_send_waits_counted },
     { "test_iocp_transport_socket_sets_dont_fragment", test_iocp_transport_socket_sets_dont_fragment },
