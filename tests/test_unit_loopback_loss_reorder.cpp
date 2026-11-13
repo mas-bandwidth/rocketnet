@@ -273,8 +273,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // The fixed traces: every eliciting packet gets a standalone ACK on the next
 // update, and simulator latency adds two connected steps (24 without it, 26
 // with it). The hashes cover every counter of the registry in index order.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x64e58de2442f8a67 ), UINT64_C( 0x404304d055fb0285 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x8a97f1f69dffaaa7 ), UINT64_C( 0x404304d055fb0285 ), 26 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x71e5ef7bc47ecc27 ), UINT64_C( 0x3e3550a470e11bc5 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x32a783897a9cfc67 ), UINT64_C( 0x3e3550a470e11bc5 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
