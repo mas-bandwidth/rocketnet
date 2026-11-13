@@ -200,20 +200,44 @@ class TestCheckInstructions(unittest.TestCase):
             "client_frame": {"ir": 1000000, "units": 100},
             "server_tick": {"ir": 2000000, "units": 100},
         }
-        for field, kwargs in [
-            ("toolchain_id", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": ci.UNPINNED_TOOLCHAIN_ID}),
-            ("compiler_id", {"compiler_id": "GNU-14.1.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": PINNED}),
-            ("valgrind_version", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.22.0", "build_type": "Release", "toolchain_id": PINNED}),
-            ("build_type", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Debug", "toolchain_id": PINNED}),
+        # toolchain_id, compiler_id and valgrind_version are not comparable:
+        # exit 2, as main() reports them; build_type is a plain FAIL, exit 1
+        for code_expected, needle, kwargs in [
+            (2, ci.UNPINNED_TOOLCHAIN_ID, {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": ci.UNPINNED_TOOLCHAIN_ID}),
+            (2, "GNU-14.1.0", {"compiler_id": "GNU-14.1.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Release", "toolchain_id": PINNED}),
+            (2, "valgrind-3.22.0", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.22.0", "build_type": "Release", "toolchain_id": PINNED}),
+            (1, "build_type mismatch", {"compiler_id": "GNU-13.3.0", "valgrind_version": "valgrind-3.26.0", "build_type": "Debug", "toolchain_id": PINNED}),
         ]:
             code, report = ci.evaluate_instructions(
                 baseline=baseline,
                 measured=measured,
                 **kwargs,
             )
-            self.assertEqual(code, 1, msg=report)
-            self.assertIn(field, report)
+            self.assertEqual(code, code_expected, msg=report)
+            self.assertIn(needle, report)
             self.assertIn("verdict=FAIL", report)
+            if code_expected == 2:
+                self.assertIn("not comparable: ", report)
+
+    def test_units_differing_from_the_baseline_are_not_comparable(self) -> None:
+        # half the frames at nearly double the per-frame cost lands the Ir
+        # inside the threshold; it is a different scenario, so it fails
+        baseline = make_baseline(client_ir=1000000, client_units=100)
+        measured = {
+            "client_frame": {"ir": 990000, "units": 50},
+            "server_tick": {"ir": 2000000, "units": 100},
+        }
+        code, report = ci.evaluate_instructions(
+            baseline=baseline,
+            measured=measured,
+            compiler_id="GNU-13.3.0",
+            valgrind_version="valgrind-3.26.0",
+            build_type="Release",
+            toolchain_id=PINNED,
+        )
+        self.assertEqual(code, 1, msg=report)
+        self.assertIn("region=client_frame verdict=FAIL (not comparable: measured units=50, baseline units=100", report)
+        self.assertIn("region=server_tick ir=2000000", report)
 
     def test_same_compiler_id_without_the_pinned_toolchain_is_not_comparable(self) -> None:
         baseline = make_baseline()

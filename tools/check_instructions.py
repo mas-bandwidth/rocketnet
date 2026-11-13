@@ -10,7 +10,8 @@ benchmarks/instruction_baseline.json.
 Exit codes:
   0: PASS (every region within 2.0% of the baseline, either side)
   1: FAIL (any region more than 2.0% over the baseline, or more than 2.0% under
-     it: a stale-high baseline, re-pin it; build_type mismatch; runner error;
+     it: a stale-high baseline, re-pin it; build_type mismatch; a region whose
+     measured units (frames or ticks) differ from the baseline's; runner error;
      a baseline whose recorded commit is not an ancestor of HEAD, or a
      re-pin from a tree with changes HEAD does not hold)
   2: NOT COMPARABLE (toolchain_id, compiler_id or valgrind_version differs from
@@ -228,24 +229,30 @@ def evaluate_instructions(
 ) -> Tuple[int, str]:
     """
     Compare measured region instruction counts against the loaded baseline.
-    Returns (exit_code, report_text).
+    Returns (exit_code, report_text): 2 when the toolchain is not comparable
+    (the same answer main gives), 1 on a build_type mismatch or any FAIL.
+    A region whose measured units (frames or ticks) differ from the
+    baseline's is not comparable either: its Ir measures a different
+    scenario, so it FAILs until the baseline is re-pinned.
     """
     lines: List[str] = []
 
-    mismatches: List[str] = []
-    for field, actual in (
-        ("toolchain_id", toolchain_id),
-        ("compiler_id", compiler_id),
-        ("valgrind_version", valgrind_version),
-        ("build_type", build_type),
-    ):
-        expected = str(baseline.get(field, ""))
-        if expected != actual:
-            mismatches.append(f"{field} mismatch (baseline={expected!r} actual={actual!r})")
+    not_comparable = check_toolchain_comparable(
+        baseline=baseline,
+        compiler_id=compiler_id,
+        valgrind_version=valgrind_version,
+        toolchain_id=toolchain_id,
+    )
+    if not_comparable is not None:
+        lines.append(f"{not_comparable} verdict=FAIL")
+        return 2, "\n".join(lines)
 
-    if mismatches:
-        mismatch_str = "; ".join(mismatches)
-        lines.append(f"toolchain mismatch: {mismatch_str} verdict=FAIL")
+    expected_build_type = str(baseline.get("build_type", ""))
+    if expected_build_type != build_type:
+        lines.append(
+            f"toolchain mismatch: build_type mismatch (baseline={expected_build_type!r} "
+            f"actual={build_type!r}) verdict=FAIL"
+        )
         return 1, "\n".join(lines)
 
     limit_pct = float(
@@ -288,8 +295,16 @@ def evaluate_instructions(
             lines.append(f"instructions region={region} verdict=FAIL (invalid baseline={base_ir})")
             any_fail = True
             continue
+        base_units = int(base_entry.get("units", 0))
+        if base_units != units:
+            lines.append(
+                f"instructions region={region} verdict=FAIL (not comparable: measured units={units}, "
+                f"baseline units={base_units}; the scenario changed, re-pin with --repin --reason <text>)"
+            )
+            any_fail = True
+            continue
 
-        delta_pct = ((ir - base_ir) / float(base_ir)) * 100.0
+        delta_pct =((ir - base_ir) / float(base_ir)) * 100.0
         # two-sided: a count more than the limit under the baseline leaves the
         # baseline stale-high, and later growth back up to it would pass
         # unseen, so it fails until the baseline is re-pinned
