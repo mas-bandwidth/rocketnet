@@ -58,6 +58,7 @@ set(ROCKETNET_SDK_SOURCES_COMMON
     sdk/rocketnet_server_transport.cpp
     sdk/rocketnet_token_tables.cpp
     sdk/rocketnet_uring_queue_send.cpp
+    sdk/rocketnet_uring_receive_queue.cpp
     sdk/rocketnet_uring_send_queue.cpp)
 
 set(ROCKETNET_SDK_SOURCES_LINUX
