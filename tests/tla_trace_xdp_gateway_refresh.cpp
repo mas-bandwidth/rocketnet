@@ -10,8 +10,17 @@
 // gateway, and is their environment too:
 //
 //   refresh         the receive call's refresh. Its resolve callback is the
-//                   kernel's neighbour entry (the model's resolver), always
-//                   found and usable. A call that returns no change is one
+//                   kernel's neighbour entry (the model's resolver), found
+//                   and usable. The model's resolve always answers, so the
+//                   walk fails a resolve (an error, no entry, or an unusable
+//                   MAC) only when the entry holds the table's MAC already:
+//                   the code must then keep the table, deadline moved, which
+//                   is the model's Refresh with no change, and must not lose
+//                   the gateway (the fills' lookups would find none). A
+//                   failed resolve against a changed entry is outside the
+//                   model and its unit tests' (tests/test_unit_xdp_gateway_refresh.cpp).
+//                   One family only: the model has one MAC; the two-family
+//                   slots are the unit tests'. A call that returns no change is one
 //                   Refresh. A call that returns a change is three model
 //                   steps: Refresh, with the state taken inside the resolve
 //                   callback (the code has set its next deadline and asked
@@ -56,7 +65,7 @@
 #define GATEWAY_TRACE_MAX_CHANGES   1000000         // the trace cfg's MaxChanges: no walk reaches it
 #define GATEWAY_TRACE_ENTRIES       64              // the smallest table rocketnet_xdp_reply_macs_bind takes
 
-static_assert( (int) ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS == GATEWAY_TRACE_PERIOD, "the trace's Period is the refresh period" );
+static_assert( ROCKETNET_XDP_GATEWAY_REFRESH_SECONDS == (double) GATEWAY_TRACE_PERIOD, "the trace's Period is the refresh period, in whole seconds" );
 
 // the two gateway MACs, the model's <<1, 1>> and <<2, 2>>
 static const uint8_t gateway_trace_macs[2][6] = { { 0x02, 0x11, 0x11, 0x0a, 0x0a, 0x0a }, { 0x02, 0x22, 0x22, 0x0b, 0x0b, 0x0b } };
@@ -89,6 +98,7 @@ struct gateway_trace_walk_t
 
     // the environment: the kernel's neighbour entry, the clock, the fills
     int resolver;                   // 0 or 1: the MAC the kernel's neighbour entry holds
+    int fail_resolve;               // 0: the resolve answers; 1, 2, 3: an error, no entry, an unusable MAC
     int now;
     int changed_at;
     int changes;
@@ -143,8 +153,12 @@ static bool gateway_trace_resolve( void * context, int address_type, uint8_t * m
     walk->resolved = true;
     walk->at_resolve = gateway_trace_state( *walk, "resolve", 0 );
     memcpy( mac, gateway_trace_macs[walk->resolver], 6 );
-    *found = true;
-    return true;
+    *found = walk->fail_resolve != 2;
+    if ( walk->fail_resolve == 3 )
+    {
+        mac[0] |= 1;
+    }
+    return walk->fail_resolve != 1;
 }
 
 static std::string gateway_trace_no_args()
@@ -169,6 +183,7 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
     gateway_trace_walk_t walk;
     walk.staged.clear();
     walk.resolver = 0;
+    walk.fail_resolve = 0;
     walk.now = 0;
     walk.changed_at = 0;
     walk.changes = 0;
@@ -226,11 +241,21 @@ static int trace_xdp_gateway_refresh( uint64_t seed, int steps, const char * out
             const bool due = walk.refresh.scheduled && walk.now >= walk.refresh.next_time;
             struct rocketnet_xdp_gateway_change_t changes[2];
             walk.resolved = false;
+            walk.fail_resolve = 0;
+            if ( memcmp( walk.table.gateway_mac, gateway_trace_macs[walk.resolver], 6 ) == 0 && random.below( 2 ) == 0 )
+            {
+                walk.fail_resolve = 1 + random.below( 3 );
+            }
             const int num_changes = rocketnet_xdp_gateway_refresh( &walk.refresh, &walk.table, (double) walk.now, gateway_trace_resolve, &walk, changes );
             const bool stale = due && walk.refresh.next_time <= (double) walk.now;
             walk.phase = "fill";
             if ( num_changes > 0 )
             {
+                if ( !walk.resolved || walk.fail_resolve != 0 )
+                {
+                    fprintf( stderr, "tla_trace: a refresh reported a change without a resolve that answered\n" );
+                    return 1;
+                }
                 report.act( "Refresh" );
                 records.push_back( tla_step( "refresh", "Refresh", gateway_trace_no_args(), walk.at_resolve ) );
                 if ( stale )

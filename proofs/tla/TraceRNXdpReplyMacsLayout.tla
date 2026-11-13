@@ -17,8 +17,14 @@
 (* writes it as EmptyMac, the model's own choice, only when the bytes are  *)
 (* zero.                                                                   *)
 (*                                                                         *)
+(* A learn of an unusable MAC (Ignored) and a reply that returns a MAC the *)
+(* table had or none (Skip, Refused) are calls that change no model        *)
+(* variable; they are traced, so a change they made is caught at their own *)
+(* record.                                                                 *)
+(*                                                                         *)
 (* TraceStep allows only the recorded action, and only when the operation  *)
-(* can be that action (OpActs).  A record whose state is <<>> is a step    *)
+(* can be that action (OpActs), into a state that keeps the model's        *)
+(* invariants (TraceInvariant).  A record whose state is <<>> is a step    *)
 (* inside one call the walk cannot observe (Matches); this layer writes    *)
 (* none.  When no step matches, TraceReject sets rejected and              *)
 (* TraceConsistent fails; record ti + 1 is the first code step that is not *)
@@ -50,14 +56,34 @@ VarsRec == [home |-> home, st |-> st, addr |-> addr, mac |-> mac, stamp |-> stam
             count |-> count, abs |-> abs, badEviction |-> badEviction]
 
 \* the actions each operation of the code can be
-OpActs == [learn |-> {"Learn"}, reply |-> {"Answer"}, forget |-> {"Forget"}, reset |-> {"Reset"}]
+\* (a learn of an unusable MAC is ignored, and a reply that returns a
+\* learned MAC, an ANSWERED entry's MAC or none changes nothing: Unchanged)
+OpActs == [learn |-> {"Learn", "Ignored"}, reply |-> {"Answer", "Skip", "Refused"},
+           forget |-> {"Forget"}, reset |-> {"Reset"}]
+
+\* a call that changes no model variable
+Unchanged == UNCHANGED vars
 
 \* the action a record names, with the walk's arguments; a name this CASE
-\* lacks stops TLC with an error
+\* lacks stops TLC with an error. A reply's third argument is how many
+\* refusals the call counted: one exactly when it returned no MAC
 Act(a, x) == CASE a = "Learn" -> Learn(x[1], x[2])
-               [] a = "Answer" -> Answer(x[1], x[2])
+               [] a = "Ignored" -> Unchanged
+               [] a = "Answer" -> Answer(x[1], x[2]) /\ x[3] = 0
+               [] a = "Skip" -> Unchanged /\ x[3] = 0
+               [] a = "Refused" -> Unchanged /\ x[3] = 1
                [] a = "Forget" -> Forget(x[1])
                [] a = "Reset" -> Reset
+
+\* the invariants MCRNXdpReplyMacsLayout.cfg checks, on every state the code
+\* reaches
+TraceInvariant == TypeOK /\ TableIsMap /\ OneEntryPerAddress /\ NoEntryPastEmpty /\ EvictOnlyOldest
+
+\* record 1's homes when they are slots; anything else is a mismatch for
+\* rejected below, never an empty set of initial states
+FirstHome == IF Records[1].state.home \in [Addrs -> Slots]
+             THEN Records[1].state.home
+             ELSE [a \in Addrs |-> 0]
 
 \* the record's state, or a step the walk could not observe
 Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
@@ -65,7 +91,7 @@ Matches(r) == DOMAIN r.state = {} \/ VarsRec' = r.state
 \* home is the code's hash of each address: taken from record 1 before Init
 \* checks it, so TLC never enumerates every map of addresses to slots
 TraceInit ==
-    /\ home = Records[1].state.home
+    /\ home = FirstHome
     /\ Init
     /\ ti = 1
     /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
@@ -78,6 +104,7 @@ TraceStep ==
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
           /\ Matches(r)
+          /\ TraceInvariant'
     /\ ti' = ti + 1
     /\ UNCHANGED rejected
 

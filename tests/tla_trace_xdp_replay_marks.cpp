@@ -267,6 +267,7 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
             walk.done_forget[k] = true;
             std::vector<std::string> args;
             args.push_back( marks_key_arg( k ) );
+            args.push_back( tla_bool( queued ) );
             records.push_back( tla_step( "forget", "Forget", tla_sequence( args ), marks_state( walk, walk.marks ) ) );
             if ( queued && walk.marks.forget_count > walk.marks.capacity )
             {
@@ -277,12 +278,13 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
         {
             const int k = can_mark[(size_t) random.below( (int) can_mark.size() )];
             const uint32_t value = (uint32_t) random.below( MARKS_VALUES );
-            rocketnet_xdp_replay_marks_mark( &walk.marks, &walk.address[k], value );
+            const bool marked = rocketnet_xdp_replay_marks_mark( &walk.marks, &walk.address[k], value );
             walk.done_mark[k] = true;
             walk.phase = "mark";
             std::vector<std::string> args;
             args.push_back( marks_key_arg( k ) );
             args.push_back( tla_int( value ) );
+            args.push_back( tla_bool( marked ) );
             records.push_back( tla_step( "mark", "Mark", tla_sequence( args ), marks_state( walk, walk.marks ) ) );
         }
         else
@@ -325,7 +327,7 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
             walk.lk = 0;
             marks_walk_t before = walk;
 
-            rocketnet_xdp_replay_marks_reset_keeping( &walk.marks, walk.forget_failed, walk.mark_applied );
+            const uint32_t refusals = rocketnet_xdp_replay_marks_reset_keeping( &walk.marks, walk.forget_failed, walk.mark_applied );
 
             // before's arrays are its own copies; its ghosts come from the
             // code's lists after the call
@@ -340,6 +342,7 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
             std::vector<std::string> args;
             args.push_back( marks_set( walk.failed ) );
             args.push_back( marks_set( walk.applied ) );
+            args.push_back( tla_int( refusals ) );
             records.push_back( tla_step( "commit", "Commit", tla_sequence( args ), marks_state( before, after ) ) );
 
             for ( uint32_t i = 0; i < forget_steps; i++ )
@@ -372,9 +375,15 @@ static int trace_xdp_replay_marks( uint64_t seed, int steps, const char * out )
     tla_report_t report;
     for ( size_t i = 1; i < records.size(); i++ )
     {
-        // the act field is the second; its text is the quoted name
-        const std::string & quoted = records[i].values[1];
-        report.act( quoted.substr( 1, quoted.size() - 2 ).c_str() );
+        // the act field's text is the quoted name
+        for ( size_t f = 0; f < records[i].fields.size(); f++ )
+        {
+            if ( records[i].fields[f] == "act" )
+            {
+                const std::string & quoted = records[i].values[f];
+                report.act( quoted.substr( 1, quoted.size() - 2 ).c_str() );
+            }
+        }
     }
     for ( size_t i = 0; i < planted.size(); i++ )
     {
