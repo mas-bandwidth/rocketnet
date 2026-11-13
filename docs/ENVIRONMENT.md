@@ -14,12 +14,14 @@ so a variable changed after create has no effect on that endpoint. The
 variables below are read the same way, at create, except
 `ROCKETNET_DEV_SESSION_SEQUENCE_START`, which is read once per process. Each is
 either an environment form of a public config field (`token_epoch_unix_seconds`,
-`step_driven`) or has no field at all:
+`step_driven`, `bind_ipv4_address`, `bind_ipv6_address`) or has no field at all:
 
 | Variable | Meaning |
 | --- | --- |
 | `ROCKETNET_SERVER_IPV4_ADDRESS` | Overrides the `ipv4_address` argument of `rocketnet_server_create`, read at create. Form `a.b.c.d:port`. |
 | `ROCKETNET_SERVER_IPV6_ADDRESS` | Overrides the `ipv6_address` argument of `rocketnet_server_create`, read at create. Form `[v6]:port`. |
+| `ROCKETNET_SERVER_BIND_IPV4_ADDRESS` | Sets `bind_ipv4_address`: the local IPv4 address the server binds, `a.b.c.d` with no port (behind NAT, the private address). Applies only to a server that serves IPv4 alone; a server of IPv6 or of both families ignores it with one log line. An address start cannot use is refused at start with `INVALID_ADDRESS`. Unset is the wildcard. |
+| `ROCKETNET_SERVER_BIND_IPV6_ADDRESS` | Sets `bind_ipv6_address`: the local IPv6 address the server binds, with no port. Applies only to a server that serves IPv6 alone; otherwise ignored with one log line. Refused at start as the IPv4 form is. Unset is the wildcard. |
 | `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the client's game clock zero, for the connect token's expire check at connect, which reads this epoch plus the time of the client's most recent update (zero if it has never been updated, so a connect before the first update is checked against the epoch alone); 0 reads the wall clock once at connect. |
 | `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once at the first update after start and subtracts that update's time to establish the epoch. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
@@ -64,6 +66,8 @@ Process-wide and platform-specific controls:
 | `ROCKETNET_TEST_RIO_LANES_PLANT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: set to anything, every RIO transport makes one lane whatever was asked. The plant control of a hand run of the RIO server cases on four lanes: every check of the lanes actually made must fail under it (no CI step runs it). A production build does not recognize this variable. |
 | `ROCKETNET_TEST_RIO_PIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: places a RIO lane's worker for a measurement: `rss` on the RSS processor, `core` on the whole core, `none` unpinned; unset is the default (the core's other logical processors). A production build does not recognize this variable. |
 | `ROCKETNET_TEST_RIO_LAYOUT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_rio_windows.cpp`: `R0,R1,..` `/` `W0,W1,..` places RIO lane i's socket on processor Ri (SIO_CPU_AFFINITY) and its worker on processor Wi alone, processor group 0, with more than one lane, for a measurement in the layout a game runs; a shorter list or a processor past group 0 keeps the default placement and says so. A production build does not recognize this variable. |
+| `ROCKETNET_TEST_IOCP_PIN` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_iocp_windows.cpp`, with more than one completion worker: places the workers for a measurement: `sibling` on the core's other logical processors (the RSS processor keeps the receive work), `core` on the whole core, `none` unpinned; unset is the RSS processor. A production build does not recognize this variable. |
+| `ROCKETNET_TEST_IOCP_LAYOUT` | Read only under `ROCKETNET_DEV` at `sdk/rocketnet_server_iocp_windows.cpp`, with more than one completion worker: `R0,R1,..` `/` `W0,W1,..` places worker i's socket on processor Ri (SIO_CPU_AFFINITY) and the worker on processor Wi alone, processor group 0, for a measurement in the layout a game runs; a shorter list or a processor past group 0 keeps the default placement and says so. A production build does not recognize this variable. |
 | `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). Only a whole-string decimal integer is accepted; names such as `info` and values outside that range are ignored with a warning. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP only: overrides gateway MAC discovery in `xx:xx:xx:xx:xx:xx` form. A malformed value refuses socket creation. |
 
@@ -77,8 +81,11 @@ development key must not be used for production.
 Each server transport that has a thread count to choose has its own config
 field and its own variable; no setting is shared between transports, and a
 transport reads only its own. Zero, or the variable unset, is the transport's
-default: the count that passed 1000 players and 10 Gb/s on a good machine (the
-rows are named beside each default in `sdk/rocketnet_network_threads.h`). The
+default: a count that held the measured peak workload, 1000 players at 60 Hz
+and about 900,000 packets a second from the server (an estimated 9.39 Gb/s,
+not a byte count), on the machine it was measured on.
+[PERFORMANCE.md](PERFORMANCE.md) has the rows for `xdp`, `gso`, `io_uring`,
+`iocp` and `rio`. The
 variable wins over the field, with an `INFO` line, like every other override.
 A value outside the range, or a variable that is not a number, is refused at
 create (`CONFIG_OUT_OF_RANGE` or `CONFIG_ENV_INVALID`), never clamped.
@@ -128,8 +135,9 @@ thread q runs on cpu `num_os_cpus + q`. Not reserved
 `num_os_cpus` to that transport; a server create with `num_os_cpus` set logs an
 info line saying so. Any other value is refused with
 `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. A pin the machine refuses never stops
-the server: the thread is warned about, counted in that transport's
-`*_PIN_REFUSALS` row, and asks for no real-time priority.
+the server: the thread is warned about in the log, counted in that
+transport's `*_PIN_REFUSALS` row (an SDK-internal counter no public call
+reads), and asks for no real-time priority.
 
 `xdp` has no such setting: its provisioning keeps cpu 0 as the housekeeping and
 interrupt cpu and isolates the cpus its threads run on. `rio` and `iocp`
@@ -214,7 +222,8 @@ For full workload sizing formulas and deterministic memory tables, see
 include:
 
 - **Pinning or narrowing the transport list per host**: set
-  `ROCKETNET_SERVER_TRANSPORT=gso` or `ROCKETNET_SERVER_TRANSPORT=portable` on
+  `ROCKETNET_SERVER_TRANSPORT=gso` (or `portable`, the fallback, not a
+  production server transport) on
   machines or containers that do not use `xdp` or `io_uring`, so both
   `rocketnet_server_required_memory` and `rocketnet_server_create` size for the
   intended transport rather than reserving worst-case `xdp` allocator headroom.

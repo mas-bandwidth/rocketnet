@@ -98,5 +98,6 @@ XDP additionally requires the provisioned CPU-isolation boot tier, IRQ
 placement, SMT and channel configuration, interface access, and memlock
 headroom. Follow the provision-and-verify procedure in [DEPLOYING.md](DEPLOYING.md).
 A managed-fleet permission to install software does not establish those
-requirements. Size the workload with [MEMORY.md](MEMORY.md), including the
-current GSO/io_uring staging limitations, and qualify it on the target fleet.
+requirements. Size the workload with [MEMORY.md](MEMORY.md) and qualify it on
+the target fleet. GSO and io_uring stage sends per queue, so more workers add
+send room; see [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds).

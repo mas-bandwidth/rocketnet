@@ -59,7 +59,8 @@ cmake --build build --target example_hello --parallel 4
 ./bin/example_hello
 ```
 
-`PASS` means connection, message delivery, reconnect, and cleanup completed.
+`PASS` means a client connected, its message arrived and it disconnected, a
+second client then connected and disconnected, and cleanup completed.
 Continue with [Getting started](GETTING-STARTED.md) for separate UDP processes.
 To build everything, use `cmake --build build --parallel 4`; the repository
 also provides `make` as a Linux/macOS convenience entry point.
@@ -316,8 +317,9 @@ libraries:
     cmake --install build-client --prefix /your/sdk/prefix
 
 The shared library then carries no `liburing`, `libbpf` or `libxdp` link
-(`readelf -d` shows no such `NEEDED` entry), a transport list naming `xdp`
-is refused at server start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` and
+(`readelf -d` shows no such `NEEDED` entry), a transport list naming only `xdp`
+is refused at server start with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (in a
+longer list `xdp` refuses and the next name is tried) and
 an unavailable `io_uring` name is skipped. A list containing only that skipped
 name uses `auto` with a warning, so check `rocketnet_server_transport_name`
 after start when a specific transport matters. The installed CMake package
@@ -372,9 +374,12 @@ allocator bytes, host resources, and transport geometry before startup.
 [Configuration](USAGE.md#configuration) explains precedence and field rules.
 
 <details>
-<summary>Complete SDK variable names checked by the source audit</summary>
+<summary>SDK configuration variable names checked by the source audit</summary>
 
-These are the environment variables read by the SDK. Each setting has one name;
+These are the configuration and deployment environment variables read by the
+SDK. The development test seams (`ROCKETNET_TEST_*`) are not in this list:
+[Environment](ENVIRONMENT.md) lists the SDK's, and
+[Test scaffolding](TEST-SCAFFOLDING.md) the test suites'. Each setting has one name;
 the client and server forms are separate settings. Entries marked development
 only are absent from a production library. The unit inventory checks this list
 in both directions against the SDK reads and the public header.

@@ -5,20 +5,20 @@
 # RocketNet. Copyright 2026 Más Bandwidth LLC.
 # Licensed under the GNU Affero General Public License v3.0
 #
-# The library never mutates machine state (#106, ruled on the #110 review):
+# The library never mutates machine state:
 # rocketnet_server_transport_create() with the xdp transport is VERIFY AND BIND
 # only -- a non-mutating pre-flight checks the machine is provisioned and
 # refuses by name when it is not, and the library's own acts stay per-socket
-# (build+load of its BPF program, attach, AF_XDP bind, memlock rlimit).
+# (load of its embedded BPF program, attach, AF_XDP bind, memlock rlimit).
 # Everything that changes the MACHINE lives here, run deliberately by the
-# operator. The setup was hand-run once; no application that
-# uses rocketnet with XDP reconstructs it -- this script IS the setup.
+# operator. No application that uses rocketnet with XDP reconstructs it --
+# this script IS the setup.
 # Idempotent: run it twice and the second run changes nothing.
 #
 # THE CONDITION LIST -- the authoritative statement of "provisioned", in two
 # tiers. rocketnet_server_socket_preflight() in
 # sdk/rocketnet_server_socket_linux.cpp verifies these conditions read-only
-# and names this script in every refusal; BUILDING.md's deployment section
+# and names this script in every refusal; docs/DEPLOYING.md's XDP section
 # walks an operator through them cold. Change a condition anywhere and you
 # must change it everywhere; this header is the single documented list.
 #
@@ -32,11 +32,11 @@
 #                             ROCKETNET_SERVER_NUM_OS_CPUS is 2): edit GRUB_CMDLINE_LINUX in
 #                             /etc/default/grub, update-grub, reboot. The
 #                             range is a PARAMETER of this script, default
-#                             1-15 -- the verified 10 Gbps point ("this is
-#                             enough for 10gbps"), not a constant: the
-#                             isolated-core mask, the queue count and the
-#                             IRQ pinning scale TOGETHER with NIC bandwidth
-#                             ("higher bandwidth nics may need more cores").
+#                             1-15 (the 16-core example layout in
+#                             docs/LINUX.md section 6), not a
+#                             constant: the isolated-core mask, the queue
+#                             count and the IRQ pinning scale TOGETHER with
+#                             NIC bandwidth (faster NICs may need more cores).
 #   B2. isolated cpu set      /sys/devices/system/cpu/isolated is a non-empty cpu list
 #                             (the observable effect of B1's isolcpus).
 #   B3. NIC driver            one with AF_XDP zero copy. Measured on an X710:
@@ -168,7 +168,7 @@
 #                          (1). xdp thread k pins to cpu num_os_cpus + k, so
 #                          R4 and repin pin queue k's IRQ there
 #     isolated-range:      the isolcpus/nohz_full range this box should boot
-#                          with, default 1-15 (the 10 Gbps point) -- used in
+#                          with, default 1-15 (the example layout) -- used in
 #                          the B1 guidance and the scaling check below
 #
 # scaling: one NIC queue wants one isolated core; higher-bandwidth NICs need

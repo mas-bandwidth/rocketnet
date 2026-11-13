@@ -7,6 +7,13 @@ memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Each claim names the file that backs it; find the code by the symbol or message
 the text quotes.
 
+Names in capitals such as `GSO_PIN_REFUSALS`, `SEND_FAILED` or
+`ROCKETNET_COUNTER_GSO_SEND_DROPPED` are the SDK's internal counter rows
+(`sdk/rocketnet_counters.h`). No public call reads them; they say where the
+library counts an event. What a game reads is `rocketnet_server_stats` and
+`rocketnet_client_stats` ([Errors and logging](ERRORS-AND-LOGGING.md#4-counters))
+and the log lines quoted beside each event.
+
 ## 1. Build
 
 The build needs CMake 3.20 or later (`CMakeLists.txt`, `BUILDING.md`)
@@ -38,7 +45,7 @@ The installed package retains the provider used for its build.
 liburing is optional; without suitable headers and the library, io_uring is
 omitted from the available transports and its name is skipped in a list.
 Jammy's liburing 2.1 also lacks the multishot receive headers needed by that
-transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
+transport. Neither case prevents building XDP. See DEPLOYING.md, "Ubuntu
 22.04 build compatibility", for build checks and the separate kernel/NIC
 runtime qualification boundary.
 
@@ -343,7 +350,7 @@ completions on overflow would lose receives and sends without a count.
 
 `xdp` (AF_XDP, `sdk/rocketnet_server_socket_linux.cpp`) is verify-and-bind
 only: the library does not provision host settings, and a read-only pre-flight
-refuses by name on any unmet condition (`BUILDING.md`,
+refuses by name on any unmet condition (`DEPLOYING.md`,
 `sdk/rocketnet_server_socket_linux.cpp`). Provisioning is
 `scripts/rocketnet-provision`, whose header is the authoritative condition list
 (`scripts/rocketnet-provision:18-23`):
@@ -363,11 +370,13 @@ refuses by name on any unmet condition (`BUILDING.md`,
 | R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12, or a later one built with `CONFIG_RT_GROUP_SCHED` (read from `/boot/config-<release>`) (below) | `:107-119` |
 | K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:121-125` |
 
-The script's modes are `provision` (the default), `verify`, `sweep` and
-`selftest` (`scripts/rocketnet-provision:103-127`, parsed at `:135-156`). The
+The script's modes are `provision` (the default), `verify`, `repin`, `sweep`
+and `selftest` (the usage in the script's header, `scripts/rocketnet-provision:127-172`). The
 boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
-`BUILDING.md` walks a fresh box: boot tier, then
-`scripts/rocketnet-provision eth0`, then `... verify`, then the server, and
+[DEPLOYING.md](DEPLOYING.md#deploying-the-xdp-transport-provision-then-verify-and-bind)
+walks a fresh box: boot tier, then
+`scripts/rocketnet-provision eth0`, then `... verify`, then the server (and
+`... repin` on a NIC whose attach moves the queue interrupts), and
 `scripts/rocketnet-provision sweep` after a crash.
 
 **Threads.** `xdp` runs one thread per NIC queue: `num_xdp_threads`
@@ -379,7 +388,11 @@ machine must match: the NIC's combined queue count must equal
 `num_xdp_threads` (R7). Given no count, the script takes
 `ROCKETNET_SERVER_NUM_XDP_THREADS` from its own environment, or the library's
 default of 1 when that is unset, and refuses a count that differs from the
-variable:
+variable. `sudo` drops an exported variable by default, so give the count as
+an argument, or set the variable on the `sudo` line
+(`sudo ROCKETNET_SERVER_NUM_XDP_THREADS=2 scripts/rocketnet-provision eth0`);
+the same holds for `ROCKETNET_SERVER_NUM_OS_CPUS`, which the script reads for
+R4:
 
 ```sh
 sudo scripts/rocketnet-provision eth0 2         # num_xdp_threads 2: 2 combined queues, then R3 to R8
@@ -564,8 +577,9 @@ older than 7.0.0-43.
 **An ixgbe attach takes the link down.** On an 82599 (`ixgbe`, kernel
 7.0.0-42-generic), attaching an XDP program resets the port: the link came
 back 7 to 19 seconds later in every attach recorded on 2026-11-12. Clients whose
-connect starts in that window time out, because a client stops requesting a
-cookie after 10 seconds. Attach before you announce the server.
+connect starts in that window can time out: a client gives up once its connect
+token's `timeout_seconds` (default 10) passes without an answer. Attach before
+you announce the server.
 
 Start qualification with Ubuntu's supplied `i40e` module on the GA
 `linux-generic` 5.15 track. The
@@ -850,8 +864,11 @@ describes larger builds and their qualification limits.
 
 **File descriptors.** A server opens a fixed set of sockets, independent of
 `max_clients`: the plan's `sockets` field (`benchmarks/transport_memory.cpp`).
-For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
-(the plan output in section 10). The default soft limit of 1024 is ample; the
+It follows the transport's network thread count: `portable` 1; `gso` and
+`io_uring` one socket a worker (1 and 2 at their defaults), and `io_uring`
+one ring a worker beside it; `xdp` one AF_XDP socket a queue (1 at the
+default). The section 10 plans print 4 for `io_uring` at 4 workers and 7 for
+`xdp` at 7 queues. The default soft limit of 1024 is ample; the
 section 10 commands create 1000-client `gso` and four-queue `io_uring` servers
 under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 (`sdk/rocketnet_driver_builtin.cpp`,
@@ -912,18 +929,16 @@ limit is too small. See [systemd's resource-limit documentation](https://www.fre
 Apply a user-manager restart only during a maintenance window: it stops the
 user's other services too. Preserve an existing higher limit.
 `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
-`server could not setrlimit` if it cannot (`BUILDING.md`,
+`server could not setrlimit` if it cannot (`DEPLOYING.md`,
 `sdk/rocketnet_server_socket_linux.cpp`); as root on a host that
 succeeds.
 
 **Memory.** `./bin/transport_memory <clients> <payload> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients and
-1416-byte payloads the plans are 495,178,594 bytes (`portable`), 536,022,330
-(`gso`), 1,511,867,072 (`io_uring`) and 3,544,766,128 (`xdp`, 7 queues, of which
-1,409,286,144 UMEM). Use the exact-build probe below for current capacity
-planning. The plan excludes OS stacks,
+(`benchmarks/transport_memory.cpp`, `BUILDING.md`). The plan figures for each
+transport are in [Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans);
+plan with the section 10 commands run on the exact build you ship. The plan excludes OS stacks,
 kernel queues, loader and application memory
 (`sdk/rocketnet_server_transport.cpp`, `BUILDING.md`).
 
@@ -942,9 +957,9 @@ What each transport needs, from the requirements above:
   socket and a BPF program load (K1), permission to raise `RLIMIT_MEMLOCK`
   to unlimited (section 8), the NIC itself in the container's network
   namespace, and bpffs at `/sys/fs/bpf` for the instance's pin root
-  (`BUILDING.md`). The boot tier belongs to the host. Where bpffs is
+  (`DEPLOYING.md`). The boot tier belongs to the host. Where bpffs is
   shared across pid namespaces, run `sweep` from the namespace that owns the
-  servers (`BUILDING.md`, `scripts/rocketnet-provision:60-64`).
+  servers (`DEPLOYING.md`, `scripts/rocketnet-provision:60-79`).
 
 No CI leg runs a transport inside a container; these needs are read from the
 code and not measured.
