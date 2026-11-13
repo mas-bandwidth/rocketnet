@@ -13881,7 +13881,15 @@ extern void rocketnet_test_server_receive_buffer_sized_from_max_clients();
 extern void rocketnet_test_server_gso_receive_buffer_request();
 extern void rocketnet_test_server_receive_1000_clients_256kbps_10hz();
 extern bool rocketnet_test_server_receive_low_tick_measurement_requested();
+// receive latency (tests/functional/receive_latency.cpp): a message sent well
+// inside a frame is returned by the first update after its send, one case per
+// transport row
+extern void rocketnet_test_receive_latency_server_gso();
+extern void rocketnet_test_receive_latency_server_io_uring();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_receive_latency_server_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (tests/functional/windows_socket_errors.cpp)
@@ -15384,6 +15392,7 @@ void rocketnet_test_posix_client_drops_foreign_sources();
 void rocketnet_test_posix_platform_send_seam();
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 void rocketnet_test_posix_msgx_retired_socket_counted();
+void rocketnet_test_posix_msgx_finish_refused_counted();
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open();
 void rocketnet_test_posix_msgx_shared_receive_buffer_granted();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -16321,6 +16330,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_gso_receive_buffer_request", rocketnet_test_server_gso_receive_buffer_request, rocketnet_test_server_pin_allows_gso },
     { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
+    { "test_receive_latency_server_gso", rocketnet_test_receive_latency_server_gso, rocketnet_test_server_pin_allows_gso },
+    { "test_receive_latency_server_io_uring", rocketnet_test_receive_latency_server_io_uring, rocketnet_test_server_pin_allows_io_uring },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
@@ -16429,6 +16440,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_msgx_retired_socket_counted", rocketnet_test_posix_msgx_retired_socket_counted, NULL },
+    { "test_posix_msgx_finish_refused_counted", rocketnet_test_posix_msgx_finish_refused_counted, NULL },
     { "test_posix_msgx_dual_stack_client_sockets_open", rocketnet_test_posix_msgx_dual_stack_client_sockets_open, NULL },
     { "test_posix_msgx_shared_receive_buffer_granted", rocketnet_test_posix_msgx_shared_receive_buffer_granted, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
@@ -16574,6 +16586,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_msgx_transport_server_io_pin", rocketnet_test_server_transport_io_pin_msgx, rocketnet_test_server_pin_allows_msgx },
+    { "test_receive_latency_server_msgx", rocketnet_test_receive_latency_server_msgx, rocketnet_test_server_pin_allows_msgx },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
     { "test_msgx_client_pin_selects_batch_pump", rocketnet_test_msgx_client_pin_selects_batch_pump, NULL },

@@ -112,8 +112,11 @@ LAYERS = {
     },
     "msgxreceivefill": {
         "modules": ["RNMsgxReceiveFill.tla", "TraceRNMsgxReceiveFill.tla"],
-        "untraced": {},
-        "reach": ["ShortRoom", "Held"],
+        "untraced": {"Done": "the model's end once the stop is counted and the arrivals bound is spent, a stutter; "
+                             "the walk's bound is one past its own arrivals, so it never gets there",
+                    "RoundKeep": "a round that read nothing (kevent reports no ready socket); the model's Poll visits "
+                                 "every socket and every visit reads or holds, so neither the model nor the walk takes it"},
+        "reach": ["ShortRoom", "Held", "BudgetCaps", "ReadsShared", "CallCut"],
     },
     "iocp-admit": {
         "modules": ["RNIocpReceiveAdmit.tla", "TraceRNIocpReceiveAdmit.tla"],
@@ -143,6 +146,13 @@ LAYERS = {
         "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
                              "gets there, and Done is no call of the code"},
         "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
+    },
+    "receive-handoff": {
+        "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],
+        "untraced": {},
+        "ghost": {"late": "history for DeliveredByNextCall: a call that returned less than was committed before it; the code "
+                          "keeps no such word"},
+        "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
     },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
@@ -281,7 +291,7 @@ SHARDS = [
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
     ["ackapply", "bank", "receive", "msgxreceivefill"],
-    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
+    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
 ]
 
 STEPS = 400
