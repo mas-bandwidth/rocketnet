@@ -1655,6 +1655,45 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
 
+static inline void rocketnet_server_prefetch( const void * address )
+{
+#if defined( __GNUC__ ) || defined( __clang__ )
+    __builtin_prefetch( address );
+#else
+    (void) address;
+#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+}
+
+void rocketnet_server_protocol_prefetch_received( struct rocketnet_server_protocol_t * server,
+                                                  const struct rocketnet_address_t * from,
+                                                  const uint8_t * packet_data,
+                                                  int packet_bytes )
+{
+    if ( packet_bytes < ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES )
+    {
+        return;
+    }
+
+    const int mapping_index = rocketnet_encryption_map_find( server->encryption_map, from );
+    if ( mapping_index < 0 )
+    {
+        return;
+    }
+
+    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    rocketnet_server_prefetch( &mapping->keys );
+    rocketnet_server_prefetch( &mapping->replay_session );
+
+    const int client_index = rocketnet_encryption_map_control( server->encryption_map, mapping_index )->client_index;
+    if ( !server->acks || client_index < 0 || client_index >= server->acks->max_clients )
+    {
+        return;
+    }
+
+    const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_ack_endpoint_prefetch_receive( &server->acks->endpoints[client_index], rocketnet_read_uint32( &p ) );
+}
+
 int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
                                                 const struct rocketnet_address_t * from,
                                                 int known_mapping_index,

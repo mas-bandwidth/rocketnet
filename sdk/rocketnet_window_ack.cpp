@@ -310,11 +310,40 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
 //       Open-addressed sent_index (2P entries, O(1) lookup)
 // ----------------------------------------------------------------
 
+// a read hint for one line; no effect on any value
+
+#define RN_ACK_PREFETCH_AHEAD 8u
+
+static inline void rn_window_ack_prefetch( const void * address )
+{
+#if defined( __GNUC__ ) || defined( __clang__ )
+    __builtin_prefetch( address );
+#elif defined( _MSC_VER ) && ( defined( _M_X64 ) || defined( _M_IX86 ) )
+    _mm_prefetch( (const char *) address, _MM_HINT_T0 );
+#else
+    (void) address;
+#endif // #if defined( __GNUC__ ) || defined( __clang__ )
+}
+
+// the home cell: h % cap, taken as a mask when cap is a power of two (the
+// default index, 2 * 1024 cells), where the two are equal and the mask
+// avoids a 64-bit division per lookup
 static uint32_t rn_sent_index_hash( uint64_t packet_id, uint32_t cap )
 {
     uint64_t h = packet_id * 0x9E3779B97F4A7C15ULL;
     h ^= h >> 32;
+    if ( ( cap & ( cap - 1 ) ) == 0 )
+    {
+        return (uint32_t) ( h & ( cap - 1 ) );
+    }
     return (uint32_t) ( h % cap );
+}
+
+// the next cell of a probe, wrapping at the end: ( slot + 1 ) % cap for any
+// slot < cap, without the division
+static inline uint32_t rn_sent_index_next( uint32_t slot, uint32_t cap )
+{
+    return slot + 1 == cap ? 0 : slot + 1;
 }
 
 static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, uint32_t * out_slot )
@@ -340,7 +369,7 @@ static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, 
             return true;
         }
 
-        slot = ( slot + 1 ) % cap;
+        slot = rn_sent_index_next( slot, cap );
     }
 
     return false;
@@ -365,7 +394,7 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
             return;
         }
 
-        slot = ( slot + 1 ) % cap;
+        slot = rn_sent_index_next( slot, cap );
     }
 
     rocketnet_assert( false && "sent_index 2P table exhausted" );
@@ -382,7 +411,7 @@ static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
     rn_region_t * region = ack->region;
     const uint32_t cap = region->sent_index_entries;
     uint32_t empty = slot;
-    uint32_t j = ( empty + 1 ) % cap;
+    uint32_t j = rn_sent_index_next( empty, cap );
     uint32_t steps = 0;
     while ( region->sent_index[j].used )
     {
@@ -403,7 +432,7 @@ static void rn_sent_index_remove_at( rn_window_ack_t * ack, uint32_t slot )
             empty = j;
         }
 
-        j = ( j + 1 ) % cap;
+        j = rn_sent_index_next( j, cap );
     }
 
     region->sent_index[empty].packet_id = 0;
@@ -1059,9 +1088,28 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
     ack->last_ack = now;
     ack->has_last_ack = 1;
 
+    // each id's index cell is wherever the hash puts it, and on a server it
+    // is a line the filling thread wrote at commit: fetching the cells
+    // RN_ACK_PREFETCH_AHEAD ids ahead overlaps those misses instead of
+    // taking them one id at a time. A hint only: nothing is read through it.
+
+    const uint32_t cap = ack->region->sent_index_entries;
+    if ( cap != 0 )
+    {
+        for ( uint32_t i = 0; i < count && i < RN_ACK_PREFETCH_AHEAD; i++ )
+        {
+            rn_window_ack_prefetch( &ack->region->sent_index[rn_sent_index_hash( packet_ids[i], cap )] );
+        }
+    }
+
     uint32_t matched = 0;
     for ( uint32_t i = 0; i < count; i++ )
     {
+        if ( cap != 0 && i + RN_ACK_PREFETCH_AHEAD < count )
+        {
+            rn_window_ack_prefetch( &ack->region->sent_index[rn_sent_index_hash( packet_ids[i + RN_ACK_PREFETCH_AHEAD], cap )] );
+        }
+
         if ( rn_window_ack_on_ack( ack, packet_ids[i], now ) )
         {
             matched++;

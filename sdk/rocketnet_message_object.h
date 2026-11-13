@@ -92,6 +92,13 @@ struct rn_message_link_t
     uint64_t ( *payload_connection )( void * transport, int k );
     uint64_t ( *acked_connection )( void * transport, int k );
 
+    // the whole acked batch's connection ids at once, parallel to the acked
+    // client index array (the count it returns bounds it): the same ids
+    // acked_connection answers entry by entry, read once per update. NULL
+    // (the client's link, the unit suite's fakes): acked_connection, or the
+    // fallback above, entry by entry.
+    int ( *acked_connection_ids )( void * transport, const uint64_t ** connection_ids );
+
     // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );

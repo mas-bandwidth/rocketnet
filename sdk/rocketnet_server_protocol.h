@@ -247,6 +247,21 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
 
 #define ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP -2
 
+// how many packets ahead of the one being received the receive loop issues
+// rocketnet_server_protocol_prefetch_received
+#define ROCKETNET_SERVER_RECEIVE_PREFETCH_AHEAD 3
+
+// Read hints for a received packet a few ahead of the one being processed:
+// its mapping's keys and replay state, and the lines of its client's ack
+// endpoint that the receive touches (rocketnet_ack_endpoint_prefetch_receive).
+// It looks the mapping up but keeps nothing: the packet's own receive looks it
+// up again. No value it reads is used and nothing is written.
+
+void rocketnet_server_protocol_prefetch_received( struct rocketnet_server_protocol_t * server,
+                                                  const struct rocketnet_address_t * from,
+                                                  const uint8_t * packet_data,
+                                                  int packet_bytes );
+
 int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
                                                 const struct rocketnet_address_t * from,
                                                 int known_mapping_index,
