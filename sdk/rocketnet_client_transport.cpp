@@ -3888,9 +3888,14 @@ void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * cli
     // When the debt that acceptance raised is still owed after the frame's
     // payloads (any of them carried the block and cleared it), the standalone
     // ack goes now rather than at the next update: at most one an update.
+    // The protocol step left the owed ack to this pass (it pays the debt
+    // raised at receive too). With the I/O core, a full ring would drop the
+    // ack after its debt was cleared: the debt stays owed instead.
 
     uint8_t owed_ack[ROCKETNET_RECEIVE_CEILING];
-    const int owed_ack_bytes = client_transport->protocol.defer_payload_acks
+    const bool owed_ack_room = !rocketnet_client_io_core( client_transport ) ||
+                               rocketnet_platform_atomic_load_u64( &rocketnet_client_fill_ring( client_transport )->num_packets ) < ROCKETNET_CLIENT_PAYLOAD_RING_SIZE;
+    const int owed_ack_bytes = client_transport->protocol.defer_payload_acks && owed_ack_room
                                    ? rocketnet_client_protocol_write_owed_ack( &client_transport->protocol, client_transport->time, owed_ack )
                                    : 0;
 

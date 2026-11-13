@@ -16414,9 +16414,10 @@ void rocketnet_test_handshake_send_follows_reply()
 // acknowledged by a standalone ack in that same update when nothing else
 // carries the block. One direction per call: the sender sends one reliable
 // message at a time, the receiver sends nothing of its own, and the case
-// counts updates from the one whose receive handed the receiver the message
-// to the one in which the receiver next sends. Before the fix it was one.
-static void rocketnet_latency_standalone_ack( bool server_to_client )
+// requires the receiver to send in the send pass of the very update whose
+// receive handed it the message. Before the fix the ack left with the next
+// update's sweep: 16.7 ms later at 60 Hz (one update).
+static void rocketnet_latency_standalone_ack( bool server_to_client, int cadence )
 {
     struct rocketnet_latency_pair_t pair;
     rocketnet_latency_pair_server( &pair );
@@ -16451,20 +16452,12 @@ static void rocketnet_latency_standalone_ack( bool server_to_client )
         {
             got += server_to_client ? 0 : batch->num_messages;
         }
-        const uint64_t receiver_sent = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
-        if ( got > 0 && delivered_update < 0 )
+        if ( got > 0 )
         {
             delivered_update = update;
-            sent_at_delivery = receiver_sent;
+            sent_at_delivery = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
         }
-        else if ( delivered_update >= 0 && receiver_sent > sent_at_delivery )
-        {
-            printf( "standalone ack %s: delivered at update %d, receiver sent at update %d\n", server_to_client ? "s2c" : "c2s", delivered_update, update - 1 );
-            rocketnet_check( update - 1 == delivered_update );
-            measured++;
-            delivered_update = -1;
-        }
-        if ( delivered_update < 0 && update % 6 == 0 )
+        if ( delivered_update < 0 && update % cadence == 0 )
         {
             uint8_t * out = server_to_client
                 ? rocketnet_server_start_message( pair.server, (uint64_t) client_index, 0, ROCKETNET_RELIABILITY_RELIABLE, 16 )
@@ -16484,12 +16477,16 @@ static void rocketnet_latency_standalone_ack( bool server_to_client )
         rocketnet_server_send_packets( pair.server );
         if ( delivered_update == update )
         {
+            // the update's own sends (keep-alives) left before the snapshot,
+            // so a send here is the standalone ack of the send pass
             const uint64_t after_send = server_to_client ? rocketnet_latency_client_sent( pair.client ) : rocketnet_latency_server_sent( pair.server, client_index );
-            if ( after_send > sent_at_delivery )
+            if ( after_send == sent_at_delivery )
             {
-                measured++;
-                delivered_update = -1;
+                printf( "standalone ack %s: delivered at update %d, no ack in its send pass\n", server_to_client ? "s2c" : "c2s", update );
             }
+            rocketnet_check( after_send > sent_at_delivery );
+            measured++;
+            delivered_update = -1;
         }
         now = rocketnet_latency_step( now );
     }
@@ -16500,8 +16497,10 @@ static void rocketnet_latency_standalone_ack( bool server_to_client )
 
 void rocketnet_test_standalone_ack_same_update_both_directions()
 {
-    rocketnet_latency_standalone_ack( false );
-    rocketnet_latency_standalone_ack( true );
+    rocketnet_latency_standalone_ack( false, 6 );
+    rocketnet_latency_standalone_ack( true, 6 );
+    rocketnet_latency_standalone_ack( false, 7 );
+    rocketnet_latency_standalone_ack( true, 7 );
 }
 
 #endif // ROCKETNET_DEV

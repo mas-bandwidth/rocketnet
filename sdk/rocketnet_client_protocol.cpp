@@ -509,9 +509,18 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     // scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
+    // With the message layer linked (defer_payload_acks) the owed ack waits
+    // for the transport's send pass of this update, after the accept: one
+    // standalone ack then pays the debt raised at receive and the debt the
+    // accept raises (proofs/tla/SessionAcks.tla Sweep, LatePass). Spent here,
+    // it would be the update's one, and the accept's debt would wait an update.
+
     if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
     {
-        *out_packet_bytes = rocketnet_client_protocol_write_owed_ack( client, current_time, out_packet );
+        if ( !client->defer_payload_acks )
+        {
+            *out_packet_bytes = rocketnet_client_protocol_write_owed_ack( client, current_time, out_packet );
+        }
 
         return;
     }

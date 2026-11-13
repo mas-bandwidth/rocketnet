@@ -4619,6 +4619,27 @@ static void rocketnet_server_transport_update_finish_body( struct rocketnet_serv
     int held = -1;          // the first slot a full send queue held after the sweep's first frame, while another queue had room
     bool served = false;    // the sweep has committed a frame (a slot held before it would pin the cursor on a queue full for many updates)
 
+    // proofs/tla/SessionAcks.tla Sweep: with the message layer linked, a
+    // client with a payload in this update's batch gets its standalone ack
+    // from the send pass (rocketnet_server_transport_write_accepted_acks),
+    // after the accept: one standalone ack then pays the debt its keep-alives
+    // raised at receive and the debt the accept raises. Spent here, it would
+    // be the update's one, and the accept's debt would wait an update.
+
+    uint64_t batched[( ROCKETNET_MAX_CLIENTS + 63 ) / 64] = {};
+    const bool acks_to_send_pass = server_transport->protocol.defer_payload_acks != 0 && server_transport->payloads.num_payloads > 0;
+    if ( acks_to_send_pass )
+    {
+        for ( int k = 0; k < server_transport->payloads.num_payloads; k++ )
+        {
+            const int c = server_transport->payloads.client_index[k];
+            if ( c >= 0 && c < ROCKETNET_MAX_CLIENTS )
+            {
+                batched[c >> 6] |= (uint64_t) 1 << ( c & 63 );
+            }
+        }
+    }
+
     for ( int offset = 0; offset < max_clients; offset++ )
     {
         const int i = ( first_client + offset ) % max_clients;
@@ -4707,7 +4728,7 @@ static void rocketnet_server_transport_update_finish_body( struct rocketnet_serv
         frame.client_index = i;
 
         int send_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
-        if ( send_bytes == 0 )
+        if ( send_bytes == 0 && !( acks_to_send_pass && i < ROCKETNET_MAX_CLIENTS && ( batched[i >> 6] >> ( i & 63 ) ) & 1 ) )
         {
             send_bytes = rocketnet_server_protocol_write_ack_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
         }
@@ -5469,10 +5490,15 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 // resend delay. Here, after the frame's payloads were written (any of them
 // carried the block and cleared the debt), the clients of this update's
 // payload batch whose debt is still owed get their standalone ack now. The
-// walk is the batch the accept already walked; the sweep and every other
-// client are untouched, and a client the sweep already sent a standalone ack
-// this update waits for the next one (at most one per client per update).
-// A full staging leaves the rest owed for the next sweep, as today.
+// walk is the batch the accept already walked; every other client is
+// untouched. The sweep left these clients' acks to this pass (it skips a
+// client with a payload in the batch), so the one standalone ack an update
+// pays the debt their keep-alives and their payloads raised alike.
+// The pass runs after the message layer wrote this update's game frames and
+// takes only the room they left: a client whose own send queue has no room,
+// or whose capacity the update spent, keeps its debt for the next sweep, and
+// the pass goes on to the clients of the queues with room
+// (rocketnet_server_transport_send_capacity_to, as the send pass).
 
 static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_server_transport_t * server_transport )
 {
@@ -5491,7 +5517,7 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
     for ( int k = 0; k < batch->num_payloads; k++ )
     {
         const int i = batch->client_index[k];
-        if ( i < 0 || i >= max_clients || acks->endpoints[i].ack_debt == 0 )
+        if ( i < 0 || i >= max_clients || acks->endpoints[i].ack_debt == 0 || acks->endpoints[i].standalone_ack_time == current_time )
         {
             continue;
         }
@@ -5502,9 +5528,13 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
             continue;
         }
 
-        if ( rocketnet_server_transport_io_send_room( server_transport ) <= 0 )
+        if ( rocketnet_server_transport_send_capacity_to( server_transport, i ) <= 0 )
         {
-            break;
+            if ( server_transport->send_queues <= 1 )
+            {
+                break;
+            }
+            continue;
         }
 
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
@@ -5512,7 +5542,8 @@ static void rocketnet_server_transport_write_accepted_acks( struct rocketnet_ser
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
         {
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, client_address ) &&
+                 ( server_transport->send_queues <= 1 || rocketnet_server_transport_io_send_room_total( server_transport ) <= 0 ) )
             {
                 break;
             }
