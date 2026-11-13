@@ -483,6 +483,16 @@ static int fz_seed_frame( bool ipv6, const uint8_t * payload, int payload_bytes,
 
 static bool fz_seed_write( const char * dir, const char * name, const uint8_t * data, int bytes )
 {
+    // ROCKETNET_FUZZ_WITHHOLD=<seed name> skips that seed and reports it
+    // unwritten, so the generator ends INCOMPLETE: tools/check_fuzz_seeds.sh
+    // runs this control to prove the completeness check is live
+    char withheld[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_WITHHOLD", withheld, sizeof( withheld ) ) && strcmp( withheld, name ) == 0 )
+    {
+        fprintf( stderr, "seed generator: withholding %s\n", name );
+        return false;
+    }
+
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
     {
