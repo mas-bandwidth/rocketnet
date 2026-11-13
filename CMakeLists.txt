@@ -1334,12 +1334,13 @@ if(ROCKETNET_BUILD_TOOLS)
     # enkiTS (tests/load/enkiTS/README.md) runs the space frame shape's jobs:
     # tests only, never linked into the SDK. It is vendored unmodified, so it is
     # a system include and its one source is built without rocketnet's strict
-    # conversion set (its sign conversions are upstream's, in a test tool)
+    # conversion set (its sign conversions are upstream's, in a test tool), and
+    # without gcc's refusal of atomic_thread_fence under -fsanitize=thread
     add_executable(harden_load tests/load/harden_load.cpp tests/load/enkiTS/TaskScheduler.cpp)
     target_compile_features(harden_load PRIVATE cxx_std_11)
     target_include_directories(harden_load SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/load/enkiTS")
     if(NOT MSVC)
-        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion")
+        set_source_files_properties(tests/load/enkiTS/TaskScheduler.cpp PROPERTIES COMPILE_OPTIONS "-Wno-sign-conversion;-Wno-conversion;-Wno-tsan")
     endif()
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
