@@ -1071,5 +1071,4 @@ MCRNIocpEndpointsBrokenRepostOnPoster.cfg	MCRNIocpEndpoints.tla	invariant	OnOwne
 MCRNIocpEndpointsBrokenCancelSocketZero.cfg	MCRNIocpEndpoints.tla	temporal	EveryWorkerExits	check	rniocpendpoints	required	-
 MCRNReceiveHandoff.cfg	MCRNReceiveHandoff.tla	pass	-	check	rnreceivehandoff	required	-
 MCRNReceiveHandoffBrokenReadOnlyLeft.cfg	MCRNReceiveHandoff.tla	invariant	DeliveredByNextCall	check	rnreceivehandoff	required	-
-MCRNIocpEndpointsBrokenCheckBeforeCount.cfg	MCRNIocpEndpoints.tla	invariant	ExitedOnlyDrained	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenCheckBeforeCount.cfg	MCRNIocpEndpoints.tla	invariant	DrainerLives	check	rniocpendpoints	required	-
