@@ -238,8 +238,11 @@ static void bind_refused_ipv6_for( const char * transport )
 
     bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
 
+    // the control: the same transport starts on a port the kernel picks at the
+    // start (port 0), so no port is released and taken again. A freed port
+    // could be taken by another process before the start binds it.
     close( holder );
-    bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_OK );
+    bind_check( bind_refused_start( transport, "[::1]:0", NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void bind_refused_for( const char * transport )
@@ -266,8 +269,10 @@ static void bind_refused_for( const char * transport )
     close( holder );
     bind_check( bind_refused_start( transport, held_address, "192.0.2.1" ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
 
-    // the control: the same port with the holder gone starts
-    bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_OK );
+    // the control: the same transport starts on a port the kernel picks at the
+    // start (port 0). A port released by the holder is not rebound: another
+    // process could take it between the close and the start.
+    bind_check( bind_refused_start( transport, "127.0.0.1:0", NULL ) == ROCKETNET_STATUS_OK );
 }
 
 void rocketnet_test_server_bind_refused_portable()
@@ -365,7 +370,18 @@ static void bind_refused_for( const char * transport )
     WSADATA data;
     bind_check( WSAStartup( MAKEWORD( 2, 2 ), &data ) == 0 );
 
-    // a free port, found by binding and closing a socket
+    // the control first: the transport starts on a port the kernel picks at the
+    // start (port 0), or the host cannot run it. No released port is rebound:
+    // another process could take it between the close and the start.
+    if ( bind_refused_start( transport, "127.0.0.1:0", NULL ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "  skipped: the %s transport does not start on this host\n", transport );
+        fflush( stdout );
+        WSACleanup();
+        return;
+    }
+
+    // a port held by another socket for the rest of the test
     SOCKET holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     bind_check( holder != INVALID_SOCKET );
     struct sockaddr_in held;
@@ -377,29 +393,13 @@ static void bind_refused_for( const char * transport )
     bind_check( getsockname( holder, (struct sockaddr *) &held, &held_bytes ) == 0 );
     char held_address[64];
     snprintf( held_address, sizeof( held_address ), "127.0.0.1:%u", (unsigned) ntohs( held.sin_port ) );
-    closesocket( holder );
 
-    // the control: the transport starts on the free port, or the host cannot run it
-    if ( bind_refused_start( transport, held_address, NULL ) != ROCKETNET_STATUS_OK )
-    {
-        printf( "  skipped: the %s transport does not start on this host\n", transport );
-        fflush( stdout );
-        WSACleanup();
-        return;
-    }
-
-    // the port held by another socket: refused
-    holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
-    bind_check( holder != INVALID_SOCKET );
-    bind_check( bind( holder, (const struct sockaddr *) &held, sizeof( held ) ) == 0 );
+    // the held port: refused
     bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
     closesocket( holder );
 
     // an address that is not this host's: refused
     bind_check( bind_refused_start( transport, held_address, "192.0.2.1" ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
-
-    // the holder gone, the same start runs
-    bind_check( bind_refused_start( transport, held_address, NULL ) == ROCKETNET_STATUS_OK );
     WSACleanup();
 }
 
