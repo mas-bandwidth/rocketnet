@@ -268,8 +268,14 @@ hand-written traces:
   seed's first over the whole run (a plant whose violation TLC reports without
   printing a behaviour is run again, up to five times; each seed's log says
   `PLANT-ATTEMPTS` when it was).
-- **A shard with no layer is an error:** `--shard I/N` with I at or past the layer
-  count exits 2 and checks nothing; it never prints `TRACE-CHECK OK`.
+- **Shards are (layer, seed) pairs:** `--shard I/9` runs row I of `SHARDS` in
+  `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
+  layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
+  predicates run in the shard holding its first seed, which walks its other seeds again
+  (the walk alone; TLC checks each of them in its own shard). The table is checked on
+  every run: a pair in two shards, a pair in none, or an empty shard is red. Any other
+  shard count but 1 exits 2; `--shard 0/1` (the default, and the nightly run) checks every
+  seed of every layer in one run.
 
 ## Measured cost
 
@@ -288,9 +294,8 @@ The check grows about 2.6 s per example-sized layer: each costs four seeds of tw
 walks twice over, two TLC runs and its reach runs, each TLC run about 2.5 s of JVM
 start. With build and tlacheck at about 30 s, the 2-minute budget holds about 30
 example-sized layers; a real layer's longer walk and larger state cost more, measured
-when its row lands. When the check step passes 60 s, CI splits it with `--shard I/N`
-into parallel jobs over the same build, and the layers of one shard are the sorted
-list's every Nth.
+when its row lands. When a shard's check step passes 45 s, its pairs move to another
+shard of `SHARDS`, or a shard is added (see the `tla-trace` job's comment in `ci.yml`).
 
 ## MIGRATION: a layer written against v1 (dc60a6b09 or 0c583957e)
 
