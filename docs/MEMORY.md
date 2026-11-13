@@ -332,10 +332,12 @@ GSO and io_uring stage sends per queue: a destination always stages in its
 own queue. Each GSO queue has three send banks of 16384 slots, one of them
 taking sends at a time. Each io_uring queue has three send banks, one of them
 taking sends at a time; a bank's slots are sized at create from the client
-count and the queue count (twice the queue's share of 18 packets a client an
-update), at least 4096 and at most 32768. Adding GSO queues adds send room;
-adding io_uring queues splits the same total between them until a queue
-reaches the 4096 floor. One queue's room bounds what one update stages to the
+count and the queue count as `clamp(ceil(36 * max_clients / queues), 4096,
+32768)` (twice the queue's share of 18 packets a client an update). Adding
+GSO queues adds send room. Adding io_uring queues splits about the same total
+between them (each queue's share is rounded up), except at the clamps: while
+a queue is held at the 32768 ceiling, more queues add room, and once a queue
+is held at the 4096 floor, more queues add room too. One queue's room bounds what one update stages to the
 destinations that hash to it. Each staged transport reports its remaining room
 (`rocketnet_server_transport_send_capacity_available`), so the message
 layer's send pass stops where the next unserved client waits and resumes

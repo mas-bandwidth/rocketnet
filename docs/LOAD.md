@@ -102,8 +102,11 @@ lifecycle allocator peak: an upper bound on the bytes requested, most of
 which is never touched, since UMEM, rings and pools are allocated whole and
 filled only by traffic. Two things must fit the guest:
 
-- the server's plan, `server_public_required_bytes`, requested as one block:
-  the guest kernel's overcommit admits it only if the guest holds it;
+- the server's lifecycle allocator plan, `server_public_required_bytes`: not
+  one allocation, but a bound on what create (the message block) and start
+  (the transport) request together, with allocator overhead and 1 MiB of
+  slack; the guest kernel's overcommit admits those requests only if the
+  guest holds them;
 - the memory the run touches, its peak RSS.
 
 The plan, with the cell's environment (`ROCKETNET_SERVER_TRANSPORT=xdp
@@ -114,17 +117,17 @@ ROCKETNET_SERVER_NUM_OS_CPUS=1`), on the build in
 | Plan | Bytes |
 |---|---|
 | `total_public_required_bytes` | 42,130,217,245 |
-| `server_public_required_bytes` (one block) | 20,057,063,245 |
+| `server_public_required_bytes` (server lifecycle allocator plan) | 20,057,063,245 |
 
 The touched memory is a measurement of an earlier source, whose plan
 differed: peak RSS 1,687,416 kB in a 64G guest and 1,701,968 kB in a 24G
 guest, and a 16G guest refused the server create with `OUT_OF_MEMORY`.
 
-The step sizes the guest as `need = server plan + 1000 * touched_per_client_bytes`
+The step's sizing policy is `need = server plan + 1000 * touched_per_client_bytes`
 (1,742,815, the larger peak over 1,000 clients) and `need * 5 / 4 + 1 GiB`
 (the 1 GiB is the guest kernel's own), rounded up to whole GiB: 27G for the
 plan above. It
-writes the plan, the server block, the need, the guest and the runner's
+writes the plan, the server plan, the need, the guest and the runner's
 `MemAvailable` to the job summary, and prints `LOAD cell=xdp FAIL runner has
 ... MiB available` when the runner holds less than the guest. The guest's
 load exit status, peak RSS, `/proc/meminfo` totals and `dmesg | tail -n 50`
@@ -544,7 +547,11 @@ requirements to each configuration group:
     checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB).
   - GSO and io_uring have their own counts, `num_gso_workers` (default 1)
     and `num_io_uring_workers` (default 2), each at most 32, and stage sends
-    per queue, so more workers add send room; sends past it, disconnect
+    per queue in three banks. A GSO bank has 16384 slots, so more GSO workers
+    add send room. An io_uring bank has
+    `clamp(ceil(36 * max_clients / queues), 4096, 32768)` slots, so more
+    io_uring workers split about the same room, except where a queue is held
+    at the 4096 floor or the 32768 ceiling. Sends past the room, disconnect
     bursts included, spread across updates as the
     [send room](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
     reports.
