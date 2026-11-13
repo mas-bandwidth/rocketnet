@@ -24,11 +24,16 @@ set(compile_lines 0)
 set(failures "")
 
 foreach(line IN LISTS build_lines)
-    # a $CC or $CXX compilation is one that passes -c; a link line does not
+    # a shell comment is not code: a flag in a trailing "# ..." does not count,
+    # and a commented-out command is no compile line
+    string(REGEX REPLACE "(^|[ \t])#.*$" "" code "${line}")
+    # a $CC or $CXX compilation is one that passes -c, or one that names a C or
+    # C++ source (a one-step compile-and-link); a link of objects alone does not
     # compile and needs no codegen flag.
-    if(line MATCHES "\\$(CC|CXX) " AND line MATCHES "[-]c ")
+    if(code MATCHES "\\$(CC|CXX) " AND
+       (code MATCHES "[-]c " OR code MATCHES "\\.(c|cc|cpp|cxx)([ \t\"']|$)"))
         math(EXPR compile_lines "${compile_lines} + 1")
-        if(NOT line MATCHES "[-]ffp-contract=off")
+        if(NOT code MATCHES "[-]ffp-contract=off")
             list(APPEND failures "${line}")
         endif()
     endif()

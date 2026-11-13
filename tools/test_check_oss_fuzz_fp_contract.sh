@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Self-test for tools/check_oss_fuzz_fp_contract.cmake: a $CC/$CXX compile
-# line without -ffp-contract=off exits nonzero, a script whose every compile
-# line carries it exits 0, and an empty build script (zero compile lines)
+# line without -ffp-contract=off exits nonzero (the flag in a trailing comment
+# does not count, and a one-step compile-and-link is a compile line), a script
+# whose every compile line carries it exits 0 (a commented-out command is no
+# compile line), and an empty build script (zero compile lines)
 # exits nonzero naming the count. Runs cmake -P on fixtures in a temporary
 # directory; nothing is built.
 set -u
@@ -29,10 +31,22 @@ expect()
 printf '#!/bin/bash\n$CC $CFLAGS -ffp-contract=off -c a.c -o a.o\n$CXX $CXXFLAGS -ffp-contract=off -c b.cpp -o b.o\n$CXX a.o b.o -o fuzz\n' > "$tmp/clean.sh"
 # shellcheck disable=SC2016
 printf '#!/bin/bash\n$CC $CFLAGS -ffp-contract=off -c a.c -o a.o\n$CXX $CXXFLAGS -c b.cpp -o b.o\n$CXX a.o b.o -o fuzz\n' > "$tmp/bad.sh"
+# the flag only in a trailing shell comment
+# shellcheck disable=SC2016
+printf '#!/bin/bash\n$CC $CFLAGS -c a.c -o a.o # -ffp-contract=off\n' > "$tmp/comment.sh"
+# a one-step compile-and-link names its source and passes no -c
+# shellcheck disable=SC2016
+printf '#!/bin/bash\n$CC $CFLAGS -ffp-contract=off -c a.c -o a.o\n$CXX $CXXFLAGS fuzz.cpp a.o -o fuzz\n' > "$tmp/onestep.sh"
+# a commented-out command is no compile line, and a link of objects needs no flag
+# shellcheck disable=SC2016
+printf '#!/bin/bash\n$CC $CFLAGS -ffp-contract=off -c a.c -o a.o\n# $CXX $CXXFLAGS -c old.cpp -o old.o\n$CXX a.o -o fuzz\n' > "$tmp/commented.sh"
 : > "$tmp/empty.sh"
 
 expect clean zero 'builds every compile line (2) with -ffp-contract=off' "$tmp/clean.sh"
 expect missing-flag nonzero 'does not build with -ffp-contract=off' "$tmp/bad.sh"
+expect comment-only nonzero 'does not build with -ffp-contract=off' "$tmp/comment.sh"
+expect one-step nonzero 'compile line lacks -ffp-contract=off: $CXX $CXXFLAGS fuzz.cpp a.o -o fuzz' "$tmp/onestep.sh"
+expect commented-out zero 'builds every compile line (1) with -ffp-contract=off' "$tmp/commented.sh"
 expect zero nonzero '0 compile lines' "$tmp/empty.sh"
 
-echo 'check_oss_fuzz_fp_contract self-test passed: clean, missing flag, and zero compile lines.'
+echo 'check_oss_fuzz_fp_contract self-test passed: clean, missing flag, flag only in a comment, a one-step compile-and-link, a commented-out command, and zero compile lines.'
