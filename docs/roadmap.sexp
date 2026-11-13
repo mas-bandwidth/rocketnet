@@ -276,4 +276,9 @@
    :title "Start order of one client's packets when its sending thread changes between flushes"
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
    :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
+
+  (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
+   :title "RNSendReserveCalls: a Capacity per send queue"
+   :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on."
+   :date "2026-11-13" :origin "Piece M follow-on, cold reader")
  ))
