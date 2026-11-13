@@ -979,10 +979,18 @@ uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data
 //                     acks, payloads, tick
 // ---------------------------------------------------------------
 
-void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now )
+void rn_endpoint_on_acked( struct rn_endpoint_t * endpoint, uint64_t packet_id, double now )
 {
     // proofs/tla/RNEndpoint.tla OnAcked (RNChannel ReceiveAck): the transport's
-    // acked packet ids are the only ack (R1), each one OnAcked in order
+    // acked packet id is the only ack (R1)
+
+    rn_ordered_acks( &endpoint->ordered, &packet_id, 1, now );
+}
+
+void rn_endpoint_on_acked_ids( struct rn_endpoint_t * endpoint, const uint64_t * packet_ids, uint32_t count, double now )
+{
+    // proofs/tla/RNEndpoint.tla OnAcked, once per id in order: rn_window_ack_on_acks
+    // with count ids leaves the state count calls with one id leave
 
     rn_ordered_acks( &endpoint->ordered, packet_ids, count, now );
 }
