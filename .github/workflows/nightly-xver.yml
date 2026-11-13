@@ -11,7 +11,8 @@
 # the server of the newest client, and the newest against itself, all on the
 # portable server transport; then every client version against every server
 # version on the gso and io_uring server transports. The client is portable
-# throughout.
+# throughout. A runner whose kernel disables io_uring fails the run by name
+# (scripts/io-uring-gate), unless tools/io_uring_absent_runners.txt lists it.
 #
 # The cases (tools/xver/xver.c): basic (connect; every reliability mode both
 # ways, lengths up to the largest message so the big ones fragment, with
@@ -106,16 +107,16 @@ jobs:
       - name: Check the fleet's Go is on PATH
         run: |
           set -euo pipefail
-          # tools/xver/go.mod says go 1.22: any Go at or above 1.23 builds it (the fleet pins 1.26 on Linux and macOS)
+          # tools/xver/go.mod says go 1.22, and the tool uses nothing newer (go vet's stdversion check passes): any Go at or above 1.22 builds it (the fleet pins 1.26 on Linux and macOS)
           if ! command -v go >/dev/null 2>&1; then
-            echo "TOOL-MISSING go >= 1.23 (missing) on $RUNNER_NAME"
+            echo "TOOL-MISSING go >= 1.22 (missing) on $RUNNER_NAME"
             exit 1
           fi
           got="$(go version)"
           echo "$got"
           minor="$(echo "$got" | sed -n 's/.* go1\.\([0-9][0-9]*\).*/\1/p')"
-          if [ -z "$minor" ] || [ "$minor" -lt 23 ]; then
-            echo "TOOL-MISSING go >= 1.23 $got on $RUNNER_NAME"; exit 1
+          if [ -z "$minor" ] || [ "$minor" -lt 22 ]; then
+            echo "TOOL-MISSING go >= 1.22 $got on $RUNNER_NAME"; exit 1
           fi
 
       # xver.c shares the directory with the Go tool, so name the .go files.
@@ -176,13 +177,15 @@ jobs:
         run: |
           set -euo pipefail
           work="${RUNNER_TEMP:-/tmp}/xver"
-          transports="gso"
-          disabled="$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)"
-          if [ "$disabled" = 0 ]; then
-            transports="gso,io_uring"
-          else
-            echo "SKIP transport=io_uring: kernel.io_uring_disabled=$disabled on $RUNNER_NAME"
-          fi
+          # a fleet runner without io_uring fails by name unless tools/io_uring_absent_runners.txt lists it
+          transports="gso,io_uring"
+          gate=0
+          scripts/io-uring-gate "XVER transport=io_uring" || gate=$?
+          case "$gate" in
+            0) ;;
+            3) transports="gso" ;;
+            *) exit 1 ;;
+          esac
           cd tools/xver
           # XVER_BINS holds only -bin flags and paths under RUNNER_TEMP, split on spaces
           # shellcheck disable=SC2086
