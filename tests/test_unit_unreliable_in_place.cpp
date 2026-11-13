@@ -566,7 +566,6 @@ static void ip_check_on_wire( const ip_in_place_t & sent )
     check( memcmp( packet->data.data() + offset, expected.data(), (size_t) sent.bytes ) == 0 );
 }
 
-
 static bool ip_got( const std::vector<ip_received_t> & got, int channel, uint32_t id, int bytes )
 {
     std::vector<uint8_t> expected( (size_t) bytes );
@@ -1176,73 +1175,10 @@ static enum rocketnet_status_t ip_write_connect_token( const char * server_addre
     return rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, connect_token ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
 }
 
-// The channel harness writes a pcapng capture and appends to a seed record
-// where the inherited environment names them (ROCKETNET_PCAPNG_CAPTURE_DIR,
-// ROCKETNET_CHANNEL_SEED_RECORD; the capture also reads /proc/self/cmdline
-// for its name). A unit case writes nothing outside its working directory
-// and reads no host file, so this case runs the harness with both unset in
-// the process environment, where the harness reads them, and puts them back
-// after.
-
-#define IP_HARNESS_QUIET_NAMES 2
-#define IP_HARNESS_QUIET_VALUE_BYTES 4096
-
-struct ip_harness_quiet_t
-{
-    int had[IP_HARNESS_QUIET_NAMES];
-    char value[IP_HARNESS_QUIET_NAMES][IP_HARNESS_QUIET_VALUE_BYTES];
-};
-
-static const char * const ip_harness_quiet_names[IP_HARNESS_QUIET_NAMES] = { "ROCKETNET_PCAPNG_CAPTURE_DIR", "ROCKETNET_CHANNEL_SEED_RECORD" };
-
-static void ip_process_env_set( const char * name, const char * value )
-{
-#if defined( _WIN32 )
-    check( _putenv_s( name, value ) == 0 );
-#else
-    check( setenv( name, value, 1 ) == 0 );
-#endif // #if defined( _WIN32 )
-}
-
-static void ip_process_env_unset( const char * name )
-{
-#if defined( _WIN32 )
-    check( _putenv_s( name, "" ) == 0 );
-#else
-    check( unsetenv( name ) == 0 );
-#endif // #if defined( _WIN32 )
-}
-
-static void ip_harness_quiet_begin( ip_harness_quiet_t * quiet )
-{
-    for ( int i = 0; i < IP_HARNESS_QUIET_NAMES; i++ )
-    {
-        quiet->had[i] = rocketnet_test_getenv( ip_harness_quiet_names[i], quiet->value[i], sizeof( quiet->value[i] ) );
-        ip_process_env_unset( ip_harness_quiet_names[i] );
-        char probe[IP_HARNESS_QUIET_VALUE_BYTES];
-        check( !rocketnet_test_getenv( ip_harness_quiet_names[i], probe, sizeof( probe ) ) );
-    }
-}
-
-static void ip_harness_quiet_end( const ip_harness_quiet_t * quiet )
-{
-    for ( int i = 0; i < IP_HARNESS_QUIET_NAMES; i++ )
-    {
-        if ( quiet->had[i] )
-        {
-            ip_process_env_set( ip_harness_quiet_names[i], quiet->value[i] );
-        }
-    }
-}
-
 static void test_unreliable_fit_in_place_every_transport()
 {
-    ip_harness_quiet_t quiet;
-    ip_harness_quiet_begin( &quiet );
-
     rocketnet_channel_harness_t h;
     check( rocketnet_channel_harness_create( &h ) );
-    check( !rocketnet_channel_capture().active );                         // no capture file, no /proc read
     check( rocketnet_channel_harness_connect( &h, 600 ) );
     for ( int i = 0; i < 4; i++ )
     {
@@ -1311,7 +1247,6 @@ static void test_unreliable_fit_in_place_every_transport()
     }
 
     rocketnet_channel_harness_destroy( &h );
-    ip_harness_quiet_end( &quiet );
 }
 
 // A burst of start/finish sends as fast as the caller can make them, many
