@@ -168,9 +168,10 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
     worker->in_kernel--;
     worker->last_send_class = rocketnet_uring_queue_send_class( res, packets );
 
-    if ( result == ROCKETNET_URING_QUEUE_SEND_OK && packets > 1 )
+    if ( result == ROCKETNET_URING_QUEUE_SEND_OK && packets > 1 && !worker->refused.accepted )
     {
         worker->refused.accepted = true;
+        send->segment_accepted.store( true, std::memory_order_relaxed );
     }
 
     // ReapOk: complete has made a refused one-packet run failed, so a run
@@ -186,6 +187,12 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
         const int b = (int) ( tag / (uint32_t) slots );
         const int slot = (int) ( tag % (uint32_t) slots );
         const struct rocketnet_address_t * to = &send->queues->queue[q].bank[b].slot[slot].to;
+        // another queue's accepted segmented send counts as this queue's:
+        // the transport can segment
+        if ( send->segment_accepted.load( std::memory_order_relaxed ) )
+        {
+            worker->refused.accepted = true;
+        }
         if ( rocketnet_segment_refused_add( &worker->refused, to ) && worker->config.segment )
         {
             worker->config.segment = false;

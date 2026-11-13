@@ -26,11 +26,14 @@ every other client for the server's life.
 
 | Model | Code |
 |---|---|
-| `segOn` | `ROCKETNET_SERVER_URING_FEATURE_SEGMENT` in `features`; the gso tier while `disable_gso` has not been set |
-| `table`, `Slot` | `rocketnet_segment_refused_t.destination` at its layout and `rocketnet_segment_refused_entry`; `Remembered(d)` is `rocketnet_segment_refused_contains` |
-| `count` | `segment_refused.destinations`: refusals of a destination the table did not hold, saturating at `Threshold` |
+| `Queue` | each destination's queue (`rocketnet_send_queue_of`): the io_uring worker, or the gso lane, its sends go through |
+| `segOn` | each queue's segment flag: the io_uring worker's `config.segment`; the gso tier while `disable_gso` has not been set (one flag for every lane) |
+| `table`, `Slot` | each queue's `rocketnet_segment_refused_t.destination` at its layout and `rocketnet_segment_refused_entry`; `Remembered(d)` is `rocketnet_segment_refused_contains` |
+| `count` | each queue's `segment_refused.destinations`: refusals of a destination the table did not hold, saturating at `Threshold` |
 | `everRefused` | not code state: the distinct destinations that refused, the measure `KernelFallback` reads |
-| `accepted` | `segment_refused.accepted`: a segmented send was accepted since create |
+| `accepted` | the transport's `segment_accepted` (`rocketnet_uring_queue_send_t`; `rocketnet_server_gso_t`): a segmented send was accepted since create, on any queue; a refusal reads it |
+| `qAccepted` | each queue's own `segment_refused.accepted`, all a refusal read before (`AcceptedRule = "queue"` only) |
+| `offAccepted` | not code state: a queue turned segmentation off after a segmented send was accepted, the measure `NoFallbackAfterAccepted` reads |
 | `Threshold` | `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` |
 | `Refusing`, `KernelSegments` | the routes, outside the code |
 | `streak` | the old gso count of refusals since the last accepted segmented send (`Mode = "consecutive"` only) |
@@ -56,6 +59,11 @@ addresses, so a destination that never refused is never in it.
 
 - `OtherDestinationUnaffected`: once a segmented send was accepted, no
   destination whose route accepts segmentation sends a run plain.
+- `NoFallbackAfterAccepted`: once a segmented send was accepted on any queue,
+  no queue's refusals turn its segmentation off (t2.4 rule 7 is the
+  transport's: "none was ever accepted"). A fallback taken before any was
+  accepted stays, as the rule allows, which is why the two-queue control
+  does not check `OtherDestinationUnaffected`.
 - `NothingDropped`: a refused run is resent, never dropped.
 - `RefusedOnce`: each destination pays at most one refusal (no two
   destinations sharing an entry).
@@ -77,8 +85,8 @@ two workers). Every case has `Threshold = 2` and six runs.
 | `MCRNSegmentRefusalBrokenConsecutive.cfg` | `Mode = "consecutive"`: the gso code before | `OtherDestinationUnaffected` | 12 | 19 | 1.4 |
 | `MCRNSegmentRefusalShared.cfg` | the code on a kernel that refuses both destinations, which share one entry | pass | 0 | 23 | 1.0 |
 | `MCRNSegmentRefusalBrokenFillCount.cfg` | `Mode = "fillcount"`: the table before, counting only a refusal that filled an empty entry | `KernelFallback` | 12 | 5 | 1.0 |
-| `MCRNSegmentRefusalShared.cfg` | the code on a kernel that refuses both destinations, which share one entry | pass | | | |
-| `MCRNSegmentRefusalBrokenFillCount.cfg` | `Mode = "fillcount"`: the table before, counting only a refusal that filled an empty entry | `KernelFallback` | | | |
+| `MCRNSegmentRefusalQueues.cfg` | the code on two queues: `d1` (queue 0) accepts; on queue 1 `d2` and `d3` refuse and `d4` accepts | pass | 0 | 81 | 0.7 |
+| `MCRNSegmentRefusalBrokenQueueAccepted.cfg` | `AcceptedRule = "queue"`: the io_uring code before, the accepted flag each queue's alone | `NoFallbackAfterAccepted` | 12 | 22 | 0.6 |
 
 ## Counterexamples, checked by hand against the code
 
@@ -106,3 +114,11 @@ count moved only when `entry->type == ROCKETNET_ADDRESS_NONE`; with eight
 refusers, two of them in one entry, the count stayed at seven and the
 fallback never fired (`test_segment_refused_shared_entry_still_reaches_the_fallback`
 in `tests/test_unit_uring_codec.cpp` is that case on the code).
+
+**BrokenQueueAccepted**: `d1`'s segmented run is accepted on queue 0;
+`d2` and `d3`, on queue 1, refuse, and queue 1's own flag says none was
+accepted, so with two refusers (the threshold) queue 1 stops segmenting
+after the transport had shown it can segment. In the io_uring code before,
+`rocketnet_segment_refused_add` read only the worker's `refused.accepted`;
+`test_uring_queue_worker_accepted_on_one_queue_keeps_every_queue_segmenting`
+is that case on the code, red there (`GSO_FALLBACKS` 1).

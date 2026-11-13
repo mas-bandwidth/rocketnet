@@ -141,6 +141,11 @@ struct rocketnet_uring_queue_send_t
     int max_bytes;
     struct rocketnet_uring_queue_send_queue_t * queue;
     void * memory;
+    // some queue's segmented send was accepted: the transport can segment,
+    // so no queue's refusals turn segmentation off (standard/TRANSPORT.md
+    // t2.4 rule 7; each worker's table of refusers stays its own). Any
+    // worker sets it; no lock
+    std::atomic<bool> segment_accepted{ false };
 };
 
 // NULL when max_segments or max_bytes is under 1, or a mutex or the

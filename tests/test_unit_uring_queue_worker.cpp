@@ -187,26 +187,43 @@ struct worker_test_t
     worker_test_receive_t receive;
     struct rocketnet_uring_queue_worker_t worker;
     bool ok = false;
+    int q = 0;              // the worker's queue
+    bool owner = true;      // the banks and the send are this fixture's
 
-    worker_test_t( int slots, int max_in_kernel, int max_retry, bool segment = true, bool ipv6 = false )
+    worker_test_t( int slots, int max_in_kernel, int max_retry, bool segment = true, bool ipv6 = false, int queues = 1 )
     {
-        banks = rocketnet_uring_send_queues_create( NULL, 1, slots );
+        banks = rocketnet_uring_send_queues_create( NULL, queues, slots );
         send = banks ? rocketnet_uring_queue_send_create( NULL, banks, 4, 1 << 16 ) : NULL;
         struct rocketnet_uring_queue_worker_config_t config = config_for( max_in_kernel, max_retry, segment, ipv6 );
         ok = send && rocketnet_uring_queue_worker_init( &worker, &config );
     }
 
+    // a worker on queue `queue` of another fixture's transport (its banks and
+    // send), with a fake kernel of its own; destroyed before that fixture
+    worker_test_t( worker_test_t & transport, int queue, int max_in_kernel, int max_retry )
+    {
+        banks = transport.banks;
+        send = transport.send;
+        q = queue;
+        owner = false;
+        struct rocketnet_uring_queue_worker_config_t config = config_for( max_in_kernel, max_retry, true, false );
+        ok = send && rocketnet_uring_queue_worker_init( &worker, &config );
+    }
+
     ~worker_test_t()
     {
-        rocketnet_uring_queue_send_destroy( send );
-        rocketnet_uring_send_queues_destroy( banks );
+        if ( owner )
+        {
+            rocketnet_uring_queue_send_destroy( send );
+            rocketnet_uring_send_queues_destroy( banks );
+        }
     }
 
     struct rocketnet_uring_queue_worker_config_t config_for( int max_in_kernel, int max_retry, bool segment, bool ipv6 )
     {
         struct rocketnet_uring_queue_worker_config_t config;
         memset( &config, 0, sizeof( config ) );
-        config.queue_index = 0;
+        config.queue_index = q;
         config.fd = 7;
         config.ipv6 = ipv6;
         config.wake_fd = -1;
@@ -247,8 +264,8 @@ struct worker_test_t
     // read completes
     void publish()
     {
-        check( rocketnet_uring_queue_send_publish( send, 0 ) );
-        post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, 0, 0 ), 8, 0 );
+        check( rocketnet_uring_queue_send_publish( send, q ) );
+        post( rocketnet_uring_tag( ROCKETNET_URING_TAG_WAKE, q, 0 ), 8, 0 );
     }
 
     void post( uint64_t user_data, int32_t res, uint32_t flags )
@@ -313,7 +330,7 @@ struct worker_test_t
 
     uint64_t send_counter( int c ) const
     {
-        return rocketnet_uring_queue_send_counter( send, 0, c );
+        return rocketnet_uring_queue_send_counter( send, q, c );
     }
 };
 
@@ -1489,6 +1506,82 @@ static void test_uring_queue_worker_refusals_turn_segmentation_off()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_refusals_turn_segmentation_off );
+
+// standard/TRANSPORT.md t2.4 rule 7: segmentation turns off only when the
+// threshold of destinations refused and none was ever accepted, for the
+// transport. A segmented send accepted on one queue keeps another queue
+// segmenting however many of its destinations refuse (as the gso transport's
+// segment_accepted does); each queue's table of refusers stays its own
+
+static void test_uring_queue_worker_accepted_on_one_queue_keeps_every_queue_segmenting()
+{
+    const int destinations = ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD;
+    int dest[ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD];
+    bool taken[ROCKETNET_SEGMENT_REFUSED_ENTRIES] = {};
+    int found = 0;
+    int accepting = -1;
+    for ( int d = 1; d < 1000 && ( found < destinations || accepting < 0 ); d++ )
+    {
+        const struct rocketnet_address_t to = worker_test_client( d );
+        if ( rocketnet_send_queue_of( &to, 2 ) == 0 )
+        {
+            if ( accepting < 0 )
+            {
+                accepting = d;
+            }
+            continue;
+        }
+        const int e = rocketnet_segment_refused_entry( &to );
+        if ( found < destinations && !taken[e] )
+        {
+            taken[e] = true;
+            dest[found++] = d;
+        }
+    }
+    check( found == destinations );
+    check( accepting > 0 );
+
+    worker_test_t a( 4 * destinations, 4 * destinations, 2, true, false, 2 );
+    check( a.ok );
+    worker_test_t b( a, 1, 4 * destinations, 2 );
+    check( b.ok );
+    check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( b.settle() == ROCKETNET_URING_WORKER_SLEEP );
+
+    // queue 0: one segmented send accepted
+    a.stage( accepting, 100 );
+    a.stage( accepting, 100 );
+    a.publish();
+    check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( a.sends().size() == 1 );
+    check( worker_test_segmented( a.sends()[0] ) );
+    a.post( a.sends()[0].user_data, 200, 0 );
+    check( a.settle() == ROCKETNET_URING_WORKER_SLEEP );
+
+    // queue 1: the threshold of its destinations refuse, and it keeps
+    // segmenting; the refused runs go out again plain
+    for ( int i = 0; i < destinations; i++ )
+    {
+        b.stage( dest[i], 100 );
+        b.stage( dest[i], 100 );
+    }
+    b.publish();
+    check( b.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    std::vector<struct io_uring_sqe> runs = b.sends();
+    check( (int) runs.size() == destinations );
+    for ( size_t i = 0; i < runs.size(); i++ )
+    {
+        check( worker_test_segmented( runs[i] ) );
+        b.post( runs[i].user_data, -EINVAL, 0 );
+    }
+    check( b.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( b.counter( ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS ) == 0 );
+    check( b.worker.config.segment );
+    check( a.worker.config.segment );
+    check( (int) b.sends().size() == 3 * destinations );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_accepted_on_one_queue_keeps_every_queue_segmenting );
 
 // a destination the socket's family cannot name is dropped without a send,
 // and a worker created without segmentation cuts every run plain
