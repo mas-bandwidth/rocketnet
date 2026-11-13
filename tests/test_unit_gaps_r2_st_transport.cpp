@@ -30,6 +30,7 @@
 #include "rocketnet_read_write.h"
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_replay.h"
+#include "test_env_source.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -1210,6 +1211,298 @@ static void test_gaps_r2_st_reflush_fixtures_refuse()
     st_ring_expect( simulator_flush == -1, "the staged simulator flush fixture did not answer -1 when its transport could not be allocated" );
 }
 
+// ----------------------------------------------------------------
+// The transport's finish, the link's direct send and the finish refusals
+// ----------------------------------------------------------------
+
+alignas( 16 ) static uint8_t g_r2_st_frame[ROCKETNET_FRAME_STRIDE];
+
+// The finish handed to the transport refuses a frame with no bytes, one past
+// the ceiling, an unreachable id and a NULL frame in every build: the debug
+// assert fires, and the transport is never handed the frame.
+// mutation gap: hunt 2/4565 (io_finish_packet refusal: return deleted)
+static void test_gaps_r2_st_io_finish_refuses_a_bad_frame()
+{
+    st_ring_fake_t * f = new st_ring_fake_t();
+    f->capacity = 8;
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = st_ring_server( f, &operations, ST_RING_STAGED, 2, 0 );
+    memset( g_r2_st_frame, 0, sizeof( g_r2_st_frame ) );
+
+    {
+        r2_st_asserts_counted_t counted;
+        rocketnet_server_transport_io_finish_packet( server, 7, g_r2_st_frame, 0 );
+        rocketnet_server_transport_io_finish_packet( server, 7, g_r2_st_frame, ROCKETNET_RECEIVE_CEILING + 1 );
+        rocketnet_server_transport_io_finish_packet( server, ROCKETNET_TRANSPORT_PACKET_UNREACHABLE, g_r2_st_frame, 64 );
+        st_ring_expect( f->finishes == 0, "a frame with no bytes, past the ceiling or with an unreachable id was handed to the transport's finish" );
+        rocketnet_server_transport_io_finish_packet( server, 7, NULL, 64 );
+        st_ring_expect( f->finishes == 0, "a NULL frame was handed to the transport's finish" );
+        st_ring_expect( g_st_ring_asserts == 4, "a bad frame at the transport's finish did not fire its debug assert once" );
+    }
+
+    rocketnet_server_transport_io_finish_packet( server, 7, g_r2_st_frame, ROCKETNET_RECEIVE_CEILING );
+    st_ring_expect( f->finishes == 1, "a frame of exactly the ceiling was not handed to the transport's finish" );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// With the simulator inactive the link's send hands the transport exactly
+// the one datagram it was given: its destination, its bytes and its length.
+// The callers test the link first, so this branch is reached through them
+// only when another thread applies an inactive setting between the two
+// tests; the case calls the send directly.
+// mutation gap: hunt 2/4573 (send.to deleted)
+// mutation gap: hunt 2/4574 (send.packet_data deleted)
+// mutation gap: hunt 2/4575 (send.packet_bytes deleted)
+// mutation gap: hunt 2/4576 (send_batch count 1 to 2)
+// mutation gap: hunt 2/4577 (send_batch count 1 to 0)
+static void test_gaps_r2_st_link_send_without_simulator_sends_the_datagram()
+{
+    st_ring_fake_t * f = new st_ring_fake_t();
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = st_ring_server( f, &operations, ST_RING_BUFFERED, 2, 0 );
+    rocketnet_unit_check( server->link_simulator );
+    rocketnet_unit_check( !rocketnet_server_link_active( server ) );
+
+    rocketnet_address_t to;
+    rocketnet_unit_check( rocketnet_address_parse( &to, "127.0.0.1:2001" ) );
+    uint8_t packet[40];
+    for ( int i = 0; i < (int) sizeof( packet ); i++ )
+    {
+        packet[i] = (uint8_t) ( 0x30 + i );
+    }
+
+    st_ring_fill_stack_call( 0x00 );
+    const bool sent = rocketnet_server_link_send( server, &to, packet, (int) sizeof( packet ) );
+
+    st_ring_expect( sent, "the link's send with no simulator active did not report the datagram sent" );
+    st_ring_expect( f->num_datagrams == 1, "the link's send with no simulator active did not hand the transport exactly one datagram" );
+    st_ring_expect( rocketnet_address_equal( &f->datagrams[0].to, &to ), "the link's send handed the transport another destination" );
+    st_ring_expect( f->datagrams[0].bytes == (int) sizeof( packet ), "the link's send handed the transport another length" );
+    st_ring_expect( memcmp( f->datagrams[0].head, packet, sizeof( f->datagrams[0].head ) ) == 0, "the link's send handed the transport other bytes" );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// A finish whose session sequence cannot be sealed (sequence 0 is never
+// sealed), or whose slot ended after its start, writes nothing: it returns
+// 0 and gives the reserved frame back to the staged transport.
+// mutation gap: hunt 2/5807 (start_payload refused: 0 to 1)
+// mutation gap: hunt 2/5811 (seal refused: abort deleted)
+// mutation gap: hunt 2/5812 (seal refused: 0 to 1)
+static void test_gaps_r2_st_refused_finish_gives_the_frame_back()
+{
+    st_ring_fake_t * f = new st_ring_fake_t();
+    f->capacity = 64;
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = st_ring_server( f, &operations, ST_RING_STAGED, 2, 1 );
+
+    const int mapping_index = rocketnet_client_slots_mapping_index( server->protocol.client_slots, 0 );
+    rocketnet_unit_check( mapping_index >= 0 );
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->protocol.encryption_map, mapping_index );
+
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
+    rocketnet_unit_check( frame );
+    memset( frame + context.payload_index, 0x44, 16 );
+    const uint64_t next_sequence = mapping->send_sequence_session;
+    mapping->send_sequence_session = 0;
+    int finished = -1;
+    {
+        r2_st_asserts_counted_t counted;
+        finished = rocketnet_server_transport_finish_packet( server, &context, 16 );
+    }
+    mapping->send_sequence_session = next_sequence;
+    st_ring_expect( finished == 0, "a finish whose frame could not be sealed did not return 0" );
+    st_ring_expect( f->aborts == 1, "a finish whose frame could not be sealed did not give the frame back to the staged transport" );
+    st_ring_expect( f->finishes == 0, "a frame that could not be sealed was finished" );
+
+    frame = rocketnet_server_transport_start_packet( server, 0, 16, &context );
+    rocketnet_unit_check( frame );
+    memset( frame + context.payload_index, 0x45, 16 );
+    rocketnet_server_transport_disconnect_client( server, 0 );
+    const int aborts = f->aborts;
+    const int finishes = f->finishes;
+    st_ring_expect( rocketnet_server_transport_finish_packet( server, &context, 16 ) == 0, "a finish for a slot that ended after its start did not return 0" );
+    st_ring_expect( f->aborts == aborts + 1, "a finish for a slot that ended after its start did not give the frame back" );
+    st_ring_expect( f->finishes == finishes, "a frame for a slot that ended after its start was finished" );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+
+// ----------------------------------------------------------------
+// The create's refusal statuses
+// ----------------------------------------------------------------
+
+static void r2_st_create_config( rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_default_config_current( config );
+    config->max_clients = 2;
+    config->protocol_id = 1;
+    config->token_epoch_unix_seconds = 1700000000ULL;
+    snprintf( config->transport, sizeof( config->transport ), "%s", "loopback" );
+    config->loopback_hub = rocketnet_test_loopback_hub();
+    memset( config->backend_public_key, 0xAB, 32 );
+    memset( config->server_public_key, 0xCD, 32 );
+    memset( config->server_secret_key, 0xEF, 32 );
+}
+
+// Every refusal of a create writes its own status through the caller's
+// status pointer: none is left unwritten.
+// mutation gap: hunt 2/4920 (CONFIG_ENV_INVALID: if ( status ) negated)
+// mutation gap: hunt 2/4921 (CONFIG_ENV_INVALID write deleted)
+// mutation gap: hunt 2/4924 (CONFIG_OUT_OF_RANGE write deleted)
+// mutation gap: hunt 2/4947 (INVALID_TRANSPORT_LIST write deleted)
+// mutation gap: hunt 2/5098 (TRANSPORT_PORT_ZERO_UNSUPPORTED write deleted)
+// mutation gap: hunt 2/5119 (INVALID_ARGUMENT write deleted)
+// mutation gap: hunt 2/5122 (NOT_INITIALIZED write deleted)
+static void test_gaps_r2_st_create_writes_each_refusal_status()
+{
+    rocketnet_server_transport_config_t config;
+    int status = -1;
+
+    r2_st_create_config( &config );
+    rocketnet_unit_check( rocketnet_test_env_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "not-a-number", 1 ) == 0 );
+    const rocketnet_server_transport_t * refused = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
+    rocketnet_unit_check( rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    st_ring_expect( refused == NULL, "a create under an unparsable environment override was not refused" );
+    st_ring_expect( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID, "a create refused for an unparsable environment override did not report CONFIG_ENV_INVALID" );
+
+    r2_st_create_config( &config );
+    config.max_clients = 50000;
+    status = -1;
+    st_ring_expect( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL, "a create with max_clients out of range was not refused" );
+    st_ring_expect( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, "a create refused for a value out of range did not report CONFIG_OUT_OF_RANGE" );
+
+    r2_st_create_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "bogus" );
+    status = -1;
+    st_ring_expect( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL, "a create with a transport list typo was not refused" );
+    st_ring_expect( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST, "a create refused for a transport list typo did not report INVALID_TRANSPORT_LIST" );
+
+    // the xdp rung binds the port it is given and discovers none: a port-zero
+    // address is refused before anything is opened
+    r2_st_create_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "xdp" );
+    status = -1;
+    st_ring_expect( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL, "a port-zero create pinned to xdp was not refused" );
+    st_ring_expect( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED, "a port-zero create pinned to xdp did not report TRANSPORT_PORT_ZERO_UNSUPPORTED" );
+
+    r2_st_create_config( &config );
+    {
+        r2_st_asserts_counted_t counted;
+        status = -1;
+        st_ring_expect( rocketnet_server_transport_create_current_internal( NULL, NULL, &config, 1000.0, &status ) == NULL, "a create with a NULL address was not refused" );
+    }
+    st_ring_expect( status == ROCKETNET_STATUS_INVALID_ARGUMENT, "a create refused for a NULL address did not report INVALID_ARGUMENT" );
+
+    rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    status = -1;
+    const rocketnet_server_transport_t * uninitialized = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
+    int init_status = -1;
+    rocketnet_unit_check( rocketnet_init_internal( NULL, NULL, NULL, &init_status ) );
+    st_ring_expect( uninitialized == NULL, "a create before init was not refused" );
+    st_ring_expect( status == ROCKETNET_STATUS_NOT_INITIALIZED, "a create before init did not report NOT_INITIALIZED" );
+}
+
+static int g_r2_st_alloc_calls = 0;
+static int g_r2_st_alloc_fail_at = 0;
+static void * r2_st_counting_malloc( void *, size_t bytes )
+{
+    g_r2_st_alloc_calls++;
+    if ( g_r2_st_alloc_fail_at > 0 && g_r2_st_alloc_calls == g_r2_st_alloc_fail_at )
+    {
+        return NULL;
+    }
+    return malloc( bytes );
+}
+
+// A development create that fails any one allocation, the link simulator's
+// patterns among them, reports OUT_OF_MEMORY; with every allocation granted
+// it starts.
+// mutation gap: hunt 2/5190 (patterns failure: if ( status ) negated)
+// mutation gap: hunt 2/5191 (patterns failure: OUT_OF_MEMORY write deleted)
+static void test_gaps_r2_st_development_create_reports_each_allocation_failure()
+{
+    rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    int init_status = -1;
+    g_r2_st_alloc_fail_at = 0;
+    rocketnet_unit_check( rocketnet_init_internal( NULL, r2_st_counting_malloc, r2_st_alloc_failure_free, &init_status ) );
+
+    rocketnet_server_transport_config_t config;
+    r2_st_create_config( &config );
+    config.simulated_drop_every_nth = 3;
+    config.simulated_reverse_window = 2;
+
+    int failures = 0;
+    int unreported = 0;
+    bool started = false;
+    for ( int k = 1; k <= 256 && !started; k++ )
+    {
+        g_r2_st_alloc_fail_at = g_r2_st_alloc_calls + k;
+        int status = -1;
+        rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
+        g_r2_st_alloc_fail_at = 0;
+        if ( server )
+        {
+            st_ring_expect( status == ROCKETNET_STATUS_OK, "a development create that started did not report OK" );
+            rn_test_server_transport_stop_and_destroy( server );
+            started = true;
+        }
+        else
+        {
+            failures++;
+            if ( status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
+                unreported++;
+                printf( "allocation %d failed: create returned status %d\n", k, status );
+            }
+        }
+    }
+
+    rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init_internal( NULL, NULL, NULL, &init_status ) );
+
+    st_ring_expect( started, "the development create never started with every allocation granted" );
+    st_ring_expect( failures > 0, "no allocation of the development create was failed" );
+    st_ring_expect( unreported == 0, "a development create that failed an allocation did not report OUT_OF_MEMORY" );
+}
+
+// A server that serves both families advertises each at its own address:
+// created at an IPv6 public address with an IPv4 second, the IPv6 address is
+// the public one and the IPv4 the second.
+// mutation gap: hunt 2/5210 (advertised_ipv6 = public deleted)
+// mutation gap: hunt 2/5211 (advertised_ipv4 = second deleted)
+static void test_gaps_r2_st_both_families_advertise_their_own_address()
+{
+    rocketnet_server_transport_config_t config;
+    r2_st_create_config( &config );
+    snprintf( config.second_public_address, sizeof( config.second_public_address ), "%s", "127.0.0.1:40000" );
+
+    int status = -1;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_internal( NULL, "[::1]:40000", &config, 1000.0, &status );
+    rocketnet_unit_check( server );
+
+    rocketnet_address_t ipv6;
+    rocketnet_address_t ipv4;
+    rocketnet_address_t expected_ipv6;
+    rocketnet_address_t expected_ipv4;
+    rocketnet_unit_check( rocketnet_address_parse( &expected_ipv6, "[::1]:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &expected_ipv4, "127.0.0.1:40000" ) );
+    st_ring_expect( rocketnet_server_transport_advertised_address( server, ROCKETNET_ADDRESS_IPV6, &ipv6 ), "a server serving both families advertised no IPv6 address" );
+    st_ring_expect( rocketnet_address_equal( &ipv6, &expected_ipv6 ), "a server serving both families advertised another IPv6 address than its public one" );
+    st_ring_expect( rocketnet_server_transport_advertised_address( server, ROCKETNET_ADDRESS_IPV4, &ipv4 ), "a server serving both families advertised no IPv4 address" );
+    st_ring_expect( rocketnet_address_equal( &ipv4, &expected_ipv4 ), "a server serving both families advertised another IPv4 address than its second one" );
+
+    rn_test_server_transport_stop_and_destroy( server );
+}
+
 REGISTER_UNIT_TEST( test_gaps_r2_st_payload_reads_refuse_null_outs );
 REGISTER_UNIT_TEST( test_gaps_r2_st_packet_calls_refuse_null_arguments );
 REGISTER_UNIT_TEST( test_gaps_r2_st_reads_refuse_null_arguments );
@@ -1237,3 +1530,9 @@ REGISTER_UNIT_TEST( test_gaps_r2_st_burst_key_seam_refuses_out_of_range );
 REGISTER_UNIT_TEST( test_gaps_r2_st_seat_seam_refuses_what_it_cannot_seat );
 REGISTER_UNIT_TEST( test_gaps_r2_st_slot_clean_seam_names_the_member );
 REGISTER_UNIT_TEST( test_gaps_r2_st_reflush_fixtures_refuse );
+REGISTER_UNIT_TEST( test_gaps_r2_st_io_finish_refuses_a_bad_frame );
+REGISTER_UNIT_TEST( test_gaps_r2_st_link_send_without_simulator_sends_the_datagram );
+REGISTER_UNIT_TEST( test_gaps_r2_st_refused_finish_gives_the_frame_back );
+REGISTER_UNIT_TEST( test_gaps_r2_st_create_writes_each_refusal_status );
+REGISTER_UNIT_TEST( test_gaps_r2_st_development_create_reports_each_allocation_failure );
+REGISTER_UNIT_TEST( test_gaps_r2_st_both_families_advertise_their_own_address );
