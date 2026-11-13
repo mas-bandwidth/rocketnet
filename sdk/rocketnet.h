@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.8"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.9"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        8
+    #define ROCKETNET_VERSION_PATCH                        9
 
 #else // !ROCKETNET_DEV
 
@@ -406,7 +406,7 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO = -31,
 
-    /// Create refused. The transport list names loopback and the config's
+    /// Create refused. The transport list is the loopback pin and the config's
     /// loopback_hub is NULL. Create a hub with rocketnet_loopback_hub_create
     /// and set loopback_hub in the server and client configs.
 
@@ -1313,8 +1313,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 /// iocp,rio,portable on Windows, keeping native server transports first.
 /// io_uring requires build support. Linux clients try gso,portable; macOS
 /// clients try msgx,portable; and Windows clients try iocp,portable.
-/// Loopback is selected by name, never by auto, and needs the config's
-/// loopback_hub: a list naming loopback with a NULL hub refuses create with
+/// Loopback is selected only as the sole name of a list, never by auto, and
+/// is skipped with a log in a longer list. It needs the config's
+/// loopback_hub: a loopback pin with a NULL hub refuses create with
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING. An
 /// explicit server pin of "portable" is available in either build.
 /// A known name that this build does not offer for this endpoint on this
@@ -1491,7 +1492,7 @@ struct rocketnet_client_config_t
     int reliable_message_timeout_ms;
 
     /// The loopback hub the loopback transport connects through. Required
-    /// when the transport list names loopback; otherwise unused. It has no
+    /// when the transport list is the loopback pin; otherwise unused. It has no
     /// environment form. Default is NULL.
 
     struct rocketnet_loopback_hub_t * loopback_hub;
@@ -1751,12 +1752,14 @@ struct rocketnet_server_config_t
     /// the key exchange. Range is 1 .. 1024. Default is 16. A request past it
     /// is dropped unanswered and counted in handshakes_dropped_over_budget;
     /// the client sends it again and a later update processes it, so a mass
-    /// join or a flood of requests spreads across updates.
+    /// join or a flood of requests spreads across updates. The game backend
+    /// is expected to spread connect token issue over time when many clients
+    /// join at once (the production guide, "Spread joins over time").
 
     int handshakes_per_update;
 
     /// The loopback hub the loopback transport serves through. Required when
-    /// the transport list names loopback; otherwise unused. It has no
+    /// the transport list is the loopback pin; otherwise unused. It has no
     /// environment form. Default is NULL.
 
     struct rocketnet_loopback_hub_t * loopback_hub;
@@ -1958,7 +1961,9 @@ struct rocketnet_connect_token_config_t
 
     /// The longest silence the connection allows, in seconds. Must be
     /// positive. Default is 10. The client uses it as given; the server
-    /// caps it at its max_timeout_seconds.
+    /// caps it at its max_timeout_seconds. When many clients join one server
+    /// at once, spread their tokens' issue over time so each handshake ends
+    /// inside this timeout (the production guide, "Spread joins over time").
 
     int timeout_seconds;
 
@@ -2340,7 +2345,7 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_ARGUMENT for
 /// a negative send_kbps, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
-/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a loopback pin,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION or
 /// ROCKETNET_STATUS_OUT_OF_MEMORY.
 
@@ -2827,7 +2832,7 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// per_client_send_kbps, ROCKETNET_STATUS_INVALID_ADDRESS,
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
-/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a loopback pin,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
 /// ROCKETNET_STATUS_OUT_OF_MEMORY, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED when
 /// the server keypair cannot be made or derived.

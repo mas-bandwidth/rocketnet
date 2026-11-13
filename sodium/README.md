@@ -102,6 +102,19 @@ follow each write with `SODIUM_MSAN_UNPOISON` of exactly the bytes it wrote
 `__has_feature(memory_sanitizer)`, and `((void) 0)` in every other build, so
 no production build changes.
 
+## Windows lock
+
+The baseline's Windows lock (`sodium_crit_enter`, `sodium_crit_leave`) is a
+`CRITICAL_SECTION` initialised on first use and never deleted, as in libsodium
+1.0.22. Unloading a DLL that holds it leaves the section on the process-wide
+critical-section list (Application Verifier stop Locks 0x201). The SDK takes
+the lock outside `rocketnet_init`..`rocketnet_term` (the key generators), so no
+term can delete it safely. The generator's `LIFECYCLE_ADAPTATIONS` make it a
+statically initialised `SRWLOCK` (`SRWLOCK_INIT`): no init, nothing to delete,
+and safe on first use from any thread. sodium never takes the lock
+recursively (enter asserts it is not held), which an `SRWLOCK` requires. The
+POSIX and other branches are unchanged.
+
 ## Reproduce
 
 From the repository root:

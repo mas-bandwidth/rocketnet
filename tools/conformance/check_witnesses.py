@@ -38,9 +38,21 @@ the SDK does not implement; it does not claim that mode's rule is satisfied.
 Both categories are printed separately, so zero unclassified gaps cannot be
 read as complete executable coverage.
 
+What it does not check: that every MUST of the standard has a row. It holds
+the rows the ledger has, and holds the ledger to docs/WITNESSES.floor.tsv,
+one line per row (section, tier, a hash of the rule text): a row deleted, a
+row whose tier changed (a unit witness downgraded to none), or a row added
+fails until the floor says the same, so each is a diff someone makes on
+purpose (VERIFY-3 A-2). `--write-floor` rewrites the floor from the ledger.
+A ledger with no rows fails. A unit or deferred test anchor must be a
+registered unit case (tools/check_unit_case_coverage.py's registry) of the
+file it names: a name left in a comment after its test was renamed, which
+resolved before, does not.
+
 Run from anywhere:  python3 tools/conformance/check_witnesses.py
 """
 
+import hashlib
 import os
 import re
 import sys
@@ -51,11 +63,78 @@ sys.path.insert(0, HERE)
 
 import check_rn_standard as rn_standard  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(HERE))
+import check_unit_case_coverage as unit_cases  # noqa: E402
+
 TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
 TLA_DIR = os.path.join(ROOT, "proofs", "tla")
 
 COLUMNS = ["section", "rule", "tla_invariant", "code_function", "test", "tier"]
 TIERS = ("unit", "none", "model", "review", "deferred")
+FLOOR_COLUMNS = ["section", "tier", "rule_sha256"]
+FLOOR_HEADER = ("# docs/WITNESSES.floor.tsv: one line per docs/WITNESSES.tsv row. A row deleted,\n"
+                "# a tier changed or a row added fails check_witnesses.py until this file says the\n"
+                "# same: python3 tools/conformance/check_witnesses.py --write-floor\n")
+
+
+def rule_key(rule):
+    return hashlib.sha256(normalize(rule).encode("utf-8")).hexdigest()[:16]
+
+
+def floor_lines(rows):
+    lines = ["\t".join(FLOOR_COLUMNS)]
+    for cells in rows:
+        lines.append("\t".join([cells[0], cells[5], rule_key(cells[1])]))
+    return lines
+
+
+def write_floor(path, rows):
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(FLOOR_HEADER + "\n".join(floor_lines(rows)) + "\n")
+
+
+def floor_failures(path, rows):
+    """The ledger against its floor, row by row, by (section, rule hash)."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle
+                     if line.strip() and not line.startswith("#")]
+    except OSError as error:
+        return ["docs/WITNESSES.floor.tsv could not be read: %s" % error]
+    if not lines or lines[0].split("\t") != FLOOR_COLUMNS:
+        return ["docs/WITNESSES.floor.tsv header is not %r" % ("\t".join(FLOOR_COLUMNS),)]
+    # (section, rule hash) -> tiers, as multisets: the ledger repeats a rule
+    # in a section when two witnesses carry it, and each row counts.
+    floor = {}
+    for line in lines[1:]:
+        cells = line.split("\t")
+        if len(cells) != len(FLOOR_COLUMNS):
+            return ["docs/WITNESSES.floor.tsv row %r has %d cells" % (line, len(cells))]
+        floor.setdefault((cells[0], cells[2]), []).append(cells[1])
+    ledger = {}
+    rules = {}
+    for cells in rows:
+        key = (cells[0], rule_key(cells[1]))
+        ledger.setdefault(key, []).append(cells[5])
+        rules[key] = cells[1]
+    failures = []
+    for key in sorted(set(floor) | set(ledger)):
+        want = sorted(floor.get(key, []))
+        have = sorted(ledger.get(key, []))
+        if want == have:
+            continue
+        if not have:
+            failures.append("floor: section %s row %s (tier %s) is gone from WITNESSES.tsv; a deleted "
+                            "or reworded row changes the floor in the same commit"
+                            % (key[0], key[1], ", ".join(want)))
+        elif not want:
+            failures.append("floor: section %s %r is not in docs/WITNESSES.floor.tsv; add it "
+                            "(--write-floor)" % (key[0], rules[key][:60]))
+        else:
+            failures.append("floor: section %s %r has tiers %s, the floor %s; a row deleted or a tier "
+                            "changed changes the floor in the same commit"
+                            % (key[0], rules[key][:60], "/".join(have), "/".join(want)))
+    return failures
 
 
 def read_tsv(path):
@@ -279,6 +358,15 @@ def load_documents(root):
     return docs, rationale
 
 
+def registered_test_failure(root, where, test, registry):
+    """A unit or deferred witness names a registered unit case of its file."""
+    path, _, name = test.partition(":")
+    if registry.get(name) != path:
+        return ("%s: test anchor %r is not a registered unit case of %s (registered: %s)"
+                % (where, test, path, registry.get(name) or "nowhere"))
+    return None
+
+
 def run(root=None):
     """Verify every anchor. Return (exit_code, report_text)."""
     if root is None:
@@ -300,6 +388,11 @@ def run(root=None):
     dispositions = {"review": [], "deferred": []}
     checked = 0
     cases = runs = None
+    registry = None
+
+    if not rows:
+        return 1, "WITNESSES.tsv has no rows: a ledger with only its header witnesses nothing"
+    failures.extend(floor_failures(os.path.join(root, "docs", "WITNESSES.floor.tsv"), rows))
 
     for index, cells in enumerate(rows, start=2):
         section_id, rule, invariant, code, test, tier = cells
@@ -354,6 +447,15 @@ def run(root=None):
                 failures.append("%s: a tier %s row names no test" % (where, tier))
             elif anchor_name_exists(root, test) is None:
                 failures.append("%s: test anchor %r does not resolve" % (where, test))
+            elif tier in ("unit", "deferred"):
+                if registry is None:
+                    try:
+                        registry = unit_cases.registered_cases(__import__("pathlib").Path(root))
+                    except (OSError, ValueError) as error:
+                        return 1, "the unit case registry could not be read: %s" % error
+                failure = registered_test_failure(root, where, test, registry)
+                if failure:
+                    failures.append(failure)
             if tier == "review":
                 path, separator, anchor = test.partition(":")
                 if not path.startswith("docs/audits/") or not path.endswith(".md") or not separator or not anchor:
@@ -372,7 +474,11 @@ def run(root=None):
                      "rule; do not delete the row.")
         return 1, "\n".join(lines)
 
-    lines.append("WITNESSES conformance: %d rules, every named anchor resolves." % checked)
+    lines.append("WITNESSES conformance: %d rules, every named anchor resolves, the floor holds." % checked)
+    tiers = {}
+    for cells in rows:
+        tiers[cells[5]] = tiers.get(cells[5], 0) + 1
+    lines.append("TIERS: " + ", ".join("%s %d" % (tier, tiers.get(tier, 0)) for tier in TIERS))
     lines.append("GAPS (tier none): %d" % len(gaps))
     for section_id, rule in gaps:
         lines.append("  - %s %s" % (section_id, rule))
@@ -385,6 +491,14 @@ def run(root=None):
 
 
 def main():
+    if sys.argv[1:] == ["--write-floor"]:
+        rows = read_tsv(TSV)
+        write_floor(os.path.join(ROOT, "docs", "WITNESSES.floor.tsv"), rows)
+        print("wrote docs/WITNESSES.floor.tsv: %d rows" % len(rows))
+        return 0
+    if sys.argv[1:]:
+        print("usage: check_witnesses.py [--write-floor]")
+        return 2
     code, report = run()
     print(report)
     return code

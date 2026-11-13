@@ -12,7 +12,10 @@
 # cell of nightly-soak run 43187852822 (2026-11-12, main) cut to the lines the
 # verdict reads: SEND_RING_FULL = 1560 on a clean run, the main loop's largest
 # gap 544.3 ms at t=1313, 1557194 iterations by t=1794 (868 iterations/s, so
-# the bound is a tenth of 4096 / 868 s = 472 ms). Each leg edits a copy.
+# the bound is a tenth of 4096 / 868 s = 472 ms). That night every cell ran
+# the portable client; the cells now pin the gso client (all but the portable
+# control), so the legs read a copy whose client_transport_io line says gso.
+# Each leg edits a copy.
 #
 # Prints one line per leg and nothing else on success; a leg that misbehaves
 # prints why and the script exits nonzero.
@@ -29,6 +32,10 @@
 #   7  no iteration count    -- the bound cannot be derived: FAIL
 #   8  bound scales          -- half the iterations, so the bound is ~944 ms
 #                               and 544.3 ms is under it: FAIL
+#   9  wrong client          -- leg 6's passing run, but the client granted
+#                               portable where the gso cell pins gso: FAIL
+#  10  portable control      -- leg 6's passing run with portable at both
+#                               ends, judged as the portable cell: PASS
 
 set -u
 
@@ -41,6 +48,11 @@ BASE=tests/soak/fixtures/soak-gso-stalled-refusal.log
 
 WORK="$( mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX" )"
 trap 'rm -rf "$WORK"' EXIT
+
+# the recorded night ran the portable client; the gso cell now pins gso
+sed 's/^soak summary: client_transport_io portable$/soak summary: client_transport_io gso/' "$BASE" > "$WORK/base.log"
+grep -qx 'soak summary: client_transport_io gso' "$WORK/base.log" || { echo "$NAME: $BASE has no client_transport_io portable line" >&2; exit 1; }
+BASE="$WORK/base.log"
 
 failures=0
 
@@ -142,6 +154,19 @@ grep -q '^soak: 778597 iterations,' "$WORK/8.log" || fail 8 "the base log's last
 status=$(judge "$WORK/8.out" gso "$WORK/8.log" 1)
 expect 8 "$WORK/8.out" "$status" 1 '^SOAK cell=gso FAIL ' ! 'UNMEASURED'
 echo "leg 8 half the iteration rate, bound ~944 ms: FAIL"
+
+# 9 the client transport the cell does not pin
+grep -v '^soak: REFUSAL' "$BASE" | sed 's/^soak summary: client_transport_io gso$/soak summary: client_transport_io portable/' > "$WORK/9.log"
+status=$(judge "$WORK/9.out" gso "$WORK/9.log" 0)
+expect 9 "$WORK/9.out" "$status" 1 "^SOAK cell=gso FAIL client transport granted 'portable', the cell pins gso" ! 'PASS'
+echo "leg 9 the gso cell granted the portable client: FAIL"
+
+# 10 the portable control: portable at both ends
+grep -v '^soak: REFUSAL' "$BASE" | sed -e 's/^soak summary: client_transport_io gso$/soak summary: client_transport_io portable/' \
+    -e 's/^soak summary: server_transport_io gso$/soak summary: server_transport_io portable/' > "$WORK/10.log"
+status=$(judge "$WORK/10.out" portable "$WORK/10.log" 0)
+expect 10 "$WORK/10.out" "$status" 0 '^SOAK cell=portable PASS server=portable client=portable ' ! 'FAIL'
+echo "leg 10 the portable control, portable at both ends: PASS"
 
 if [ "$failures" -ne 0 ]; then
     echo "$NAME: $failures leg(s) failed"

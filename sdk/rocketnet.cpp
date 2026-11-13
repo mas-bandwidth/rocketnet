@@ -975,6 +975,14 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
 
     (void) context;
 
+    // the level first, so init's own lines obey it, a failure line included
+
+    char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
+    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
+    {
+        rocketnet_log_level_override_apply( log_level_override );
+    }
+
     const bool platform_ready = rocketnet_platform_init();
 
     // before rocketnet_crypto_open_source, whose sodium_init and stir are the
@@ -1008,14 +1016,6 @@ bool rocketnet_init_internal( void * context, void * ( *malloc_function )( void 
 
         rocketnet_error( platform_ready ? "failed to initialize sodium" : "failed to initialize platform" );
         return false;
-    }
-
-    // the level first, so init's own lines obey it
-
-    char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
-    {
-        rocketnet_log_level_override_apply( log_level_override );
     }
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );

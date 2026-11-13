@@ -701,6 +701,16 @@ static void fuzz_netlink_seed_build( const fuzz_netlink_seed_t * seed, fuzz_data
 
 static bool fuzz_seed_write( const char * dir, const char * name, const uint8_t * data, size_t bytes )
 {
+    // ROCKETNET_FUZZ_WITHHOLD=<seed name> skips that seed and reports it
+    // unwritten, so the generator ends INCOMPLETE: tools/check_fuzz_seeds.sh
+    // runs this control for every generator (VERIFY-5 W4)
+    char withheld[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_WITHHOLD", withheld, sizeof( withheld ) ) && strcmp( withheld, name ) == 0 )
+    {
+        fprintf( stderr, "seed generator: withholding %s\n", name );
+        return false;
+    }
+
     char path[1024];
     if ( snprintf( path, sizeof( path ), "%s/%s", dir, name ) >= (int) sizeof( path ) )
     {

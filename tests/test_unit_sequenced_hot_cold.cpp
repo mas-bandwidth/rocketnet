@@ -225,7 +225,11 @@ static void test_sequenced_hold_pool_constant_time()
     // message of its epoch delivers it; the delivered view stays live until
     // the end of the update, so the rounds accumulate delivered holds.
 
-    for ( uint32_t round = 0; round < 128; ++round )
+    // the rounds fill the pool whatever the build's channel count: one hold per channel per round
+    const uint32_t rounds = region->holds / region->num_channels;
+    rocketnet_unit_check( rounds * region->num_channels == region->holds );
+
+    for ( uint32_t round = 0; round < rounds; ++round )
     {
         for ( uint32_t channel = 0; channel < region->num_channels; ++channel )
         {
@@ -242,13 +246,13 @@ static void test_sequenced_hold_pool_constant_time()
         }
     }
 
-    rocketnet_unit_check( channels.deliveries == 8192 );
+    rocketnet_unit_check( channels.deliveries == 2 * region->holds );
 
     // the pool is full: one more future message is refused and counted
 
     const uint64_t full_before = counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL];
     rocketnet_message_record_t record = hot_cold_record(
-        ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 129, 128, &held_byte, 1 );
+        ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, rounds + 1, rounds, &held_byte, 1 );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == full_before + 1 );
 
@@ -271,10 +275,10 @@ static void test_sequenced_hold_pool_constant_time()
 
     // A returned hold is reusable, and its delivered view returns in turn
 
-    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 129, 128, &held_byte, 1 );
+    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, rounds + 1, rounds, &held_byte, 1 );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
 
-    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 128, 0, &ordered_byte, 1 );
+    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, rounds, 0, &ordered_byte, 1 );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
 
     rn_channels_end_update( &channels );
@@ -293,7 +297,7 @@ static void test_sequenced_hold_pool_constant_time()
 #if ROCKETNET_DEV
     rocketnet_unit_check( g_sequenced_hold_visit_count == 0 );
 
-    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 130, 129, &held_byte, 1 );
+    record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, rounds + 2, rounds + 1, &held_byte, 1 );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     rocketnet_unit_check( g_sequenced_hold_visit_count == 0 );
 #endif // #if ROCKETNET_DEV
@@ -303,4 +307,6 @@ static void test_sequenced_hold_pool_constant_time()
 REGISTER_UNIT_TEST( test_sequenced_hold_pool_constant_time );
 REGISTER_UNIT_TEST( test_sequenced_hot_cold_layout_and_reset );
 REGISTER_UNIT_TEST( test_sequenced_hot_cold_view_lifetime );
+UNIT_TEST_SKIPPED_UNLESS( test_sequenced_hot_cold_view_lifetime, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_sequenced_hot_cold_payload_slots_are_independent );
+UNIT_TEST_SKIPPED_UNLESS( test_sequenced_hot_cold_payload_slots_are_independent, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2

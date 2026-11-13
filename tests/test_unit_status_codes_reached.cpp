@@ -127,6 +127,55 @@ static void test_platform_init_failed_reached()
 
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
 
+// rocketnet.h: ROCKETNET_LOG_LEVEL sets the maximum level before init logs,
+// init's own failure line included. At 0 (NONE) a refused platform start
+// logs nothing; the caller's level is ERROR, which would pass that line.
+
+static int log_level_before_init_lines = 0;
+
+static void log_level_before_init_count( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) message;
+    (void) length;
+    log_level_before_init_lines++;
+}
+
+static void test_log_level_override_applies_before_init_logs()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_quiet( false );
+    rocketnet_log_function( log_level_before_init_count, NULL );
+    rocketnet_platform_test_environment_set( "ROCKETNET_LOG_LEVEL", "0" );
+
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
+    struct rocketnet_platform_priority_calls_t fake;
+    fake = *saved;
+    fake.platform_start = refuse_platform_start;
+    rocketnet_platform_set_priority_calls_for_testing( &fake );
+
+    log_level_before_init_lines = 0;
+    int status = -1;
+    check( !rocketnet_init_internal( NULL, NULL, NULL, &status ) );
+    check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
+    const int lines = log_level_before_init_lines;
+
+    rocketnet_platform_set_priority_calls_for_testing( saved );
+    rocketnet_platform_test_environment_unset( "ROCKETNET_LOG_LEVEL" );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+
+    check( lines == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_log_level_override_applies_before_init_logs );
+
 // a refused mutex create fails client connect with MUTEX_CREATE_FAILED
 static void test_client_mutex_create_failed_reached()
 {

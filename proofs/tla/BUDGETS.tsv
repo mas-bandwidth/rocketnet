@@ -3,5 +3,6 @@ MCRNSecurityTables.cfg	360	71.833	154.2	bench-nyc-3
 MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
 MCRNXdpReplayHeldReply.cfg	220	107.349	107.349	record
-MCServerSessionTwoClients.cfg	240	98.451	110.0	vision
+MCServerSessionTwoClients.cfg	240	77.598	110.0	vision
 MCServerStopSpreadLive.cfg	200	66.166	97.145	hetzner2
+MCServerConnectionTwoSlots.cfg	180	84.285	84.285	record

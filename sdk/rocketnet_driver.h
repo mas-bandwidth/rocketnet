@@ -228,8 +228,11 @@ struct rocketnet_client_transport_io_operations_t
     // operating-system handles (socket, wake, completion port) and frees
     // nothing: destroy, on the caller's thread, frees the memory later and
     // closes nothing more. The family race closes its losing family here
-    // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla). NULL for a
-    // transport with nothing to close before destroy.
+    // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla), and
+    // the I/O thread closes its transport here at its exit, after reading and
+    // counting what is still queued (sdk/rocketnet_client_io.h,
+    // rocketnet_client_io_discard_at_stop). NULL for a transport with nothing
+    // to close before destroy.
     void ( *close )( void * transport );
 
     // optional, with send_batch; I/O thread only, instead of it while running.
@@ -302,5 +305,9 @@ inline bool rocketnet_server_transport_io_has( const rocketnet_server_transport_
 {
     return ( transport.operations->flags & flag ) != 0;
 }
+
+// the allocation the portable client's I/O record is, as the client memory
+// plan counts it (built where the platform has a wake)
+uint64_t rocketnet_portable_io_client_allocation_bytes();
 
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_H

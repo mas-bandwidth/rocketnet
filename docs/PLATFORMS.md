@@ -14,9 +14,9 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite |
+| Ubuntu 26.04 (Linux, CI) | x86_64 | GCC 15 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite (auto ladder — the fall, on Linux; RSS enforced) |
 | Ubuntu 26.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | build only: portable, gso, io_uring, xdp; run: no transport (byte cases, XDP filter as host C) | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check; Run the byte vectors and the XDP filter cases on big-endian |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite (auto ladder — the fall, on Linux; RSS enforced) |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Run happy_path |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
 | Ubuntu 26.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
@@ -35,8 +35,9 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 The last column says which functional coverage each supported row runs on
 every commit. `full: <step>` names the step that runs the whole functional
-suite; the checker accepts a step-name prefix, used here where a full name
-contains a semicolon. `subset: <step>; <step>` names the steps that run the platform-specific
+suite by its whole name (the rest of the cell is that one name, so a
+semicolon in it is part of the name). `subset: <step>; <step>` names, each by
+its whole name, the steps that run the platform-specific
 subset, and the rest of the suite for that row runs in the nightly tier. The
 Windows 11 row is a subset: the whole functional suite takes about 223 s on
 the Windows runner, which is over the two-minute per-commit law and the
@@ -116,7 +117,7 @@ What is built and tested on big-endian (s390x), and what is not.
 | The embedded XDP object is big-endian (`cmake/CheckXdpObjectByteOrder.cmake`) | `ci.yml`, `big-endian` (any big-endian build with XDP) | every commit | a cross build embedding the build machine's object |
 | The XDP program compiles for `bpfeb` against the s390x kernel headers | `ci.yml`, `big-endian` | every commit | a header or macro only one byte order has |
 | `tools/bigendian/wire_check.cpp` and `test_sodium` under qemu-user | `ci.yml`, `big-endian` | every commit | the endian helpers, address parses, a same-host seal and open |
-| The standard's byte vectors, 59 cases, and 30 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
+| The standard's byte vectors, 59 cases, and 31 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
 | The XDP filter compiled as host C for s390x, 30 cases | `ci.yml`, `big-endian`, qemu-user; and `./bin/test` in the guest | every commit; nightly | a conversion in the XDP program that swaps whatever the byte order is |
 | `./bin/test`, `./bin/functional` (auto ladder, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
 | Cross-endian interoperability, three clients each way (`tools/bigendian/run_interop.sh`) | nightly guest against the x86-64 runner | nightly | a wire field in host order that has no vector |
@@ -173,8 +174,10 @@ unsupported rows in the table record architectures for which no leg exists.
 
 A supported or nightly row must name both a workflow file and runner
 operating-system and architecture tokens.
-An empty value, `-`, or a label that does not occur in the named workflow is a
-failed check, not a documentation note. `tools/check_platform_policy.py` exits
+An empty value, `-`, or a label that no job of the named workflow runs on
+(every token in one `runs-on:` or matrix `runner:` label set, not tokens
+gathered from several runners or from comments) is a failed check, not a
+documentation note. `tools/check_platform_policy.py` exits
 1 and names the row. This is deliberate: a support claim without a leg is the
 one thing the policy exists to prevent.
 
@@ -195,9 +198,16 @@ python3 tools/check_platform_policy.py
 
 The checker is standard-library Python. It parses the markdown table, then for
 every supported or nightly row reads the named workflow file and checks that
-the listed operating-system and architecture tokens occur in it. For every
-supported row it also requires the per-commit functional column to name, as
-`full` or `subset`, steps whose names occur in a job of that workflow that
-holds the row's runner tokens; a supported row with no such declaration fails.
-It does not
-parse YAML; the workflow files are searched as text.
+one job runs on a runner whose label set (one `runs-on:` value, or one matrix
+`runner:` value) holds every listed operating-system and architecture token.
+For every supported row it also requires the per-commit functional column to
+name, as `full` or `subset`, steps whose whole names are steps of such a job,
+and refuses a named step whose `if:`, or whose job's `if:`, is false on every
+per-commit run (`false`, or `inputs.full`, which only the nightly caller
+sets); a supported row with no such declaration fails. Every transport a
+supported row names outside a `build only:` clause must be a server or client
+transport of a `TRANSPORT_MATRIX_<OS>` cell in such a job. It does not parse
+YAML; the workflow files are read as text, and the `if:` expressions with a
+small reader of GitHub's expression syntax that refuses what it cannot read.
+`python3 tools/check_platform_policy.py --self-check` plants each refused case
+in a scratch tree and fails if any is let through.

@@ -2053,6 +2053,13 @@ struct portable_io_client_t
     void * context;
 };
 
+// the bytes portable_io_client_create allocates for its record, so the client
+// memory plan counts the record itself, never a copy of its layout
+uint64_t rocketnet_portable_io_client_allocation_bytes()
+{
+    return rocketnet_memory_allocations( { sizeof( portable_io_client_t ) } );
+}
+
 static void * portable_io_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     // proofs/tla/RNClientIo.tla Init, Stop, Join, Free (portable_io_client_create): create owns
@@ -2285,6 +2292,8 @@ void rocketnet_server_gso_begin_shutdown( struct rocketnet_server_gso_t * gso );
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
 uint64_t rocketnet_server_socket_receive_dropped( struct rocketnet_server_socket_t * server_socket );
+uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket );
+uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_socket_t * server_socket );
 #endif // #if ROCKETNET_XDP
 
 static void * gso_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -2799,6 +2808,30 @@ bool rocketnet_server_transport_io_receive_frames_dropped( const rocketnet_serve
     (void) operations;
     (void) transport;
     (void) dropped;
+
+    return false;
+}
+
+bool rocketnet_server_transport_io_replay_counts( const rocketnet_server_transport_io_operations_t * operations, void * transport, uint64_t * commit_failed,
+                                                  uint64_t * greetings_held )
+{
+    // builtin-only, matched on the operations table as receive_frames_dropped
+    // is: the xdp transport's replay writer, the forgets and marks its commit
+    // could not apply (XDP_REPLAY_COMMIT_FAILED) and the keep-alives held for
+    // a first mark not yet applied (XDP_REPLAY_GREETING_HELD)
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    if ( operations == &xdp_operations )
+    {
+        *commit_failed = rocketnet_server_socket_replay_commit_failures( (rocketnet_server_socket_t *) transport );
+        *greetings_held = rocketnet_server_socket_replay_greetings_held( (rocketnet_server_socket_t *) transport );
+        return true;
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    (void) operations;
+    (void) transport;
+    (void) commit_failed;
+    (void) greetings_held;
 
     return false;
 }

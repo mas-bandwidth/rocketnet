@@ -64,6 +64,7 @@
 #include <sodium.h>
 
 #include "../portable_crt.h"
+#include "rocketnet_fuzz_quiet.h"
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
@@ -500,7 +501,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
         abort();
     }
 
-    rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    rocketnet_fuzz_quiet_log();
 
     char verbose[8];
     fuzz_verbose = rocketnet_test_getenv( "ROCKETNET_FUZZ_VERBOSE", verbose, sizeof( verbose ) ) && verbose[0] == '1';

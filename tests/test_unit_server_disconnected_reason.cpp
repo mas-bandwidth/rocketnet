@@ -763,9 +763,9 @@ REGISTER_UNIT_TEST( test_server_reused_slot_inherits_nothing_from_a_timeout );
 
 // A client message object over a link that is not a client transport (the
 // unit suites' in-memory links, the functional channel harness): the link
-// leaves end_reason NULL (sdk/rocketnet_message_object.h:80), and the
+// leaves end_reason NULL (sdk/rocketnet_message_object.h), and the
 // terminal check in rn_message_object_update
-// (sdk/rocketnet_message_server.cpp:518) calls end_reason only when it is
+// (sdk/rocketnet_message_server.cpp) calls end_reason only when it is
 // set, so a link whose transport ends reads NONE and nothing reads the
 // transport as a client transport. A link that names an end reason has it
 // recorded, and the reset keeps it.

@@ -1,0 +1,26 @@
+# The nightly proof targets, exactly (VERIFY-6 A21). nightly-proofs.yml builds
+# its matrix from `make print-nightly-readers` (a wildcard over */proof.mk) and
+# `make print-replay-near-partitions`; check_nightly_targets.sh requires both
+# lists to equal this file, so a reader or partition that drops out of the
+# wildcard or the partition list fails the plan job, and a new one is added
+# here in the same change.
+#
+# reader <make target>
+reader proofs-connect_token
+reader proofs-esbmc_r_ok
+reader proofs-message_read_max
+# partition <make target>
+partition replay-near-4096-completeness
+partition replay-near-4096-nw_empty_clear
+partition replay-near-4096-nw_single_partial_cleared_set
+partition replay-near-4096-nw_single_partial_cleared_only
+partition replay-near-4096-nw_single_partial_set_only
+partition replay-near-4096-nw_single_partial_untouched
+partition replay-near-4096-nw_multi_first_word
+partition replay-near-4096-nw_multi_interior_word
+partition replay-near-4096-nw_multi_last_word
+partition replay-near-4096-nw_multi_outside_word
+partition replay-near-4096-wrap_coincident_word
+partition replay-near-4096-wrap_high_span_only
+partition replay-near-4096-wrap_low_span_only
+partition replay-near-4096-wrap_outside_spans

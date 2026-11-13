@@ -25,8 +25,13 @@ starts, refuses a job that:
 
 A job whose `if:` is `inputs.full` (or starts with `inputs.full &&`) runs only
 in the nightly tier, and a job whose `if:` requires a tag push runs only on a
-release; neither is bounded here. Text only, no YAML library: the workflows
-are read as lines, two-space job keys under `jobs:` and four-space job keys.
+release; neither is bounded here. A condition holding `||` is never exempt:
+`inputs.full && false || true` runs on every commit (VERIFY-3 A-1). A
+workflow chained off a per-commit run (workflow_run), and one started by
+pull_request_target or merge_group, is per-commit too. Text only, no YAML
+library: the workflows are read as lines, two-space job keys under `jobs:`
+and four-space job keys, the shape tools/check_workflow_shape.py holds every
+workflow to. Zero workflow files is a failure.
 
 Usage: check_ci_budget.py [--self-test] [workflow files...]
 """
@@ -44,7 +49,8 @@ JOB_KEY = re.compile(r"^  ([A-Za-z0-9_][\w-]*):\s*(#.*)?$")
 JOB_PROP = re.compile(r"^    ([A-Za-z_][\w-]*):\s*(.*?)\s*$")
 TIER_EXPR = re.compile(r"^\$\{\{\s*inputs\.full\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$")
 NIGHTLY_IF = re.compile(r"^(\$\{\{\s*)?inputs\.full(\s*&&.*)?(\s*\}\})?$")
-TRIGGER = re.compile(r"\b(push|pull_request)\b")
+PER_COMMIT = ("push", "pull_request", "pull_request_target", "merge_group", "workflow_run")
+TRIGGER = re.compile(r"\b(" + "|".join(PER_COMMIT) + r")\b")
 
 
 def strip_comment(value):
@@ -85,10 +91,10 @@ def per_commit(blocks):
         return bool(TRIGGER.search(inline))
     for line in body:
         m = re.match(r"^  ([A-Za-z_][\w-]*):", line)
-        if m and m.group(1) in ("push", "pull_request"):
+        if m and m.group(1) in PER_COMMIT:
             return True
         m = re.match(r"^  - ([A-Za-z_][\w-]*)\s*$", line)
-        if m and m.group(1) in ("push", "pull_request"):
+        if m and m.group(1) in PER_COMMIT:
             return True
     return False
 
@@ -115,6 +121,8 @@ def jobs(blocks):
 def exempt(props):
     """The job runs only in the nightly tier or only on a release tag push."""
     cond = props.get("if", "")
+    if "||" in cond:
+        return False
     if NIGHTLY_IF.match(cond):
         return True
     return "github.event_name == 'push'" in cond and "startsWith(github.ref, 'refs/tags/" in cond
@@ -217,6 +225,14 @@ BAD = [
     ("other if is not exempt", "on:\n  push:\njobs:\n  a:\n    if: github.ref == 'refs/heads/main'\n    timeout-minutes: 5\n"),
     ("list trigger", "on:\n  - pull_request\njobs:\n  a:\n    timeout-minutes: 4\n"),
     ("bound in a step only", "on:\n  push:\njobs:\n  a:\n    steps:\n      - run: x\n        timeout-minutes: 1\n"),
+    # VERIFY-3 A-1
+    ("nightly if with an or", "on:\n  push:\njobs:\n  a:\n    if: inputs.full && false || true\n"
+                              "    runs-on: [self-hosted]\n"),
+    ("release if with an or", "on:\n  push:\njobs:\n  a:\n    if: github.event_name == 'push' && "
+                              "startsWith(github.ref, 'refs/tags/v') || true\n"),
+    ("chained off a per-commit run", "on:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\n"
+                                     "jobs:\n  a:\n    runs-on: [self-hosted]\n"),
+    ("pull_request_target", "on: [pull_request_target]\njobs:\n  a:\n    runs-on: [self-hosted]\n"),
 ]
 
 
@@ -244,6 +260,9 @@ def self_test():
         if main(["check_ci_budget.py", str(empty)]) != 1:
             print("self-test FAILED: zero per-commit jobs was accepted")
             failed = 1
+        if main(["check_ci_budget.py", "--root", d]) != 1:
+            print("self-test FAILED: a tree with no workflow files was accepted")
+            failed = 1
     if failed:
         return 1
     print(f"check_ci_budget self-test: {len(BAD) + 3} cases pass")
@@ -253,7 +272,13 @@ def self_test():
 def main(argv):
     if argv[1:] == ["--self-test"]:
         return self_test()
-    paths = [Path(p) for p in argv[1:]] or sorted((ROOT / ".github" / "workflows").glob("*.y*ml"))
+    root = ROOT
+    if argv[1:2] == ["--root"]:
+        root, argv = Path(argv[2]), argv[:1] + argv[3:]
+    paths = [Path(p) for p in argv[1:]] or sorted((root / ".github" / "workflows").glob("*.y*ml"))
+    if not paths:
+        print("check_ci_budget: no workflows found under .github/workflows: nothing was checked")
+        return 1
     held = held_jobs(paths)
     if held == 0:
         print(f"check_ci_budget: 0 per-commit jobs in {len(paths)} workflow files: nothing was checked")

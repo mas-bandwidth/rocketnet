@@ -231,9 +231,19 @@ static void test_transport_pin_only()
     CHECK( rocketnet_transport_ladder_parse( "loopback", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_LOOPBACK );
 
+    // a pin-only transport is applicable only as the sole name of a list
+    // (standard/TRANSPORT.md t2.4): inside a longer list it is skipped, and a
+    // list of nothing else falls to the auto order (rule 4)
+
+    CHECK( rocketnet_transport_ladder_parse( "portable,loopback", servers, num, &ladder ) );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
+    CHECK( ladder.num_skipped == 1 && ladder.skipped[0] == ROCKETNET_TRANSPORT_LOOPBACK );
+    CHECK( rocketnet_transport_ladder_parse( "loopback,loopback", servers, num, &ladder ) );
+    CHECK( ladder.num_candidates == auto_count );
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     CHECK( rocketnet_transport_ladder_parse( "gso,loopback", servers, num, &ladder ) );
-    CHECK( ladder.num_candidates == 2 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO && ladder.candidates[1] == ROCKETNET_TRANSPORT_LOOPBACK );
+    CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
     CHECK( rocketnet_transport_ladder_parse( "iocp", servers, num, &ladder ) );
     CHECK( ladder.num_candidates == auto_count );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
