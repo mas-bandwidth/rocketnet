@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/resource.h> // PLANT
 #include <string.h>
 
 int rocketnet_functional_test_count();
@@ -83,6 +84,9 @@ static int rocketnet_functional_worker( const char * name )
     if ( result == 0 && rocketnet_library_initialized() && rocketnet_allocator_installed( plan_rss_malloc, plan_rss_free ) )
     {
         plan_rss_report();
+        struct rusage usage; // PLANT
+        getrusage( RUSAGE_SELF, &usage ); // PLANT
+        printf( "RUN_RSS peak_mb=%ld bound_mb=%ld\n", (long) ( usage.ru_maxrss / 1024 ), plan_rss_bound_mb() ); // PLANT
     }
     rocketnet_term();
     fflush( stdout );

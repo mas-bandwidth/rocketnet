@@ -23,6 +23,7 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_memory.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@
 #include <time.h>
 
 #include "../kernel_drops.h"
+#include "../plan_rss.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
@@ -3235,6 +3237,11 @@ static struct rocketnet_server_transport_t * posix_xdp_server = NULL;
 static struct rocketnet_client_transport_t * posix_xdp_client = NULL;
 static bool posix_xdp_made = false;
 
+// the server's UMEM is in its memory plan but is taken outside the allocator
+// (tests/plan_rss.h), so the case counts it while the server lives: counted
+// bytes, 0 while none are counted
+static uint64_t posix_xdp_umem_counted = 0;
+
 static void posix_xdp_teardown()
 {
     if ( posix_xdp_client )
@@ -3247,6 +3254,12 @@ static void posix_xdp_teardown()
     {
         rn_native_server_transport_stop_and_destroy( posix_xdp_server );
         posix_xdp_server = NULL;
+    }
+
+    if ( posix_xdp_umem_counted )
+    {
+        plan_rss_uncount_outside_allocator( posix_xdp_umem_counted );
+        posix_xdp_umem_counted = 0;
     }
 
     if ( posix_xdp_made )
@@ -3559,6 +3572,9 @@ static void posix_xdp_weather( int ipv6 )
 
     posix_check( server != NULL );
     posix_check( strcmp( rocketnet_server_transport_io_name( server ), "xdp" ) == 0 );
+
+    posix_xdp_umem_counted = rocketnet_xdp_umem_bytes( server_config.num_xdp_queues );
+    plan_rss_count_outside_allocator( posix_xdp_umem_counted );
 
     // a kernel UDP socket on another port of the near end, in this
     // namespace: the fragmented datagram to it must arrive whole
