@@ -5625,7 +5625,9 @@ int rocketnet_channels_run_named( const char * name )
 // Allocator cases replace this process's allocation functions. The hooks go
 // to rocketnet_init, which takes the allocator. rocketnet_unit_prepare then installs the suite's log
 // capture; the allocator cases want their own, which counts refusals, so that
-// one is installed again after prepare. Other cases are left alone.
+// one is installed again after prepare. Every case that arms the allocation
+// trap is listed, so a rocketnet_malloc under the trap fires on every leg (not
+// only where the libc net exists). Other cases are left alone.
 
 static int rocketnet_channels_is_allocator_test( const char * name )
 {
@@ -5642,7 +5644,9 @@ static int rocketnet_channels_is_allocator_test( const char * name )
         }
         return strncmp( channels_tests[i].name, "test_channels_allocator_", 24 ) == 0 ||
                strcmp( channels_tests[i].name, "test_channels_window_send_and_receive_over_the_lossy_simulator" ) == 0 ||
-               strcmp( channels_tests[i].name, "test_channels_window_lossy_soak" ) == 0;
+               strcmp( channels_tests[i].name, "test_channels_window_lossy_soak" ) == 0 ||
+               strcmp( channels_tests[i].name, "test_channels_window_receive_over_the_lossy_simulator" ) == 0 ||
+               strcmp( channels_tests[i].name, "test_channels_window_lossy_soak_opted_in" ) == 0;
     }
 
     return 0;
