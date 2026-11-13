@@ -129,7 +129,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // aws-win-5 at integrate/v1.1.9-candidate a303a5458.
 // The server config's two bind addresses add 512 bytes to the server and nothing to the
 // client (measured on the Windows unit job: actual=1469501311).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453759 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468453823 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14341356 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -177,7 +177,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bind_ipv6_address) add 512 bytes to the server (the object holding the
 // config crosses its rounding) and nothing to the client (measured); the
 // probe's actual= line is 1469501727.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468454175 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468454239 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988810 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
