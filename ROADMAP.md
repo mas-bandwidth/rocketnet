@@ -13,7 +13,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (5)
 - [Decisions for Glenn](#decisions-for-glenn) (5)
 - [Found while landing and re-measuring the v1.1.x pieces](#found-while-landing-and-re-measuring-the-v11x-pieces) (8)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (17)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (18)
 
 ## Audit items not yet fixed
 
@@ -472,6 +472,12 @@ From: Re-measure on main, 2026-11-13
 ## Found by the review before v1.2.0, not fixed for it
 
 Findings of the review that started on 2026-11-13 (main 5488a5443) that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.
+
+### macOS msgx: keep the server's port from other local sockets
+
+The msgx shared socket sets SO_REUSEPORT so its per-client connected sockets can join the port, and so any later local socket that sets SO_REUSEPORT can bind the port too; a more specific one (the server's own address, or AF_INET beside a dual-stack [::] server) then receives every datagram meant for the shared socket, handshakes included, uncounted (measured, one user; docs/MACOS.md, Who else can bind a server's port). Darwin has no exclusive option that still lets the server's own sockets share the port. A real fix: drop the per-client connected sockets and demultiplex every client on the shared socket, so the shared socket needs no SO_REUSEPORT; with a specific bind address no later socket then receives its datagrams, as measured for a plain socket on a specific address. Costs: the per-client sockets' receive split and send path, to be measured against the load test row before it is taken. Also owed: run the intruder cases as a second user on a bench Mac (not measured).
+
+From: Review before v1.2.0, macOS reader, finding P2 (run, one user)
 
 ### XDP: the gateway refresh blocks the main thread every 5 seconds
 

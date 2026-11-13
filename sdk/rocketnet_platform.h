@@ -1010,4 +1010,17 @@ int rocketnet_platform_socket_error();
 bool rocketnet_platform_bind_refused( int error );
 struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int error );
 
+#if defined( __APPLE__ )
+// binds handle (an AF_INET6 socket with IPV6_V6ONLY cleared, for an IPv6
+// address) to address. Darwin does not check the IPv4 namespace when it binds
+// a dual-stack IPv6 wildcard, so the IPv6 wildcard binds while an IPv4
+// reservation of the same port is held: a port another socket holds in IPv4 is
+// refused (EADDRINUSE), and port 0 never lands on one. Every other address
+// binds plainly. 0 when bound, with *bound_port the port bound (the kernel's
+// choice for port 0 on the IPv6 wildcard, else address->port); otherwise the
+// error, a value from rocketnet_platform_socket_error. No reservation outlives
+// the call.
+int rocketnet_platform_bind_dual_stack( int handle, const struct rocketnet_address_t * address, uint16_t * bound_port );
+#endif // #if defined( __APPLE__ )
+
 #endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

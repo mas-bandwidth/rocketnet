@@ -283,6 +283,13 @@ void rocketnet_test_server_bind_refused_portable()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#include "../../examples/shutdown.h"
+#include "rocketnet_connect_token.h"
+
+#include <sys/resource.h>
+
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
+
 // msgx's shared socket binds with neither SO_REUSEADDR nor SO_REUSEPORT and
 // sets them after the bind, so a port another process holds is refused like
 // every transport's; its client sockets still join the port. With the options
@@ -351,6 +358,299 @@ void rocketnet_test_server_bind_refused_msgx()
     bind_refused_held_by_msgx( false );
     bind_refused_held_by_msgx( true );
 }
+
+// A server that serves both families binds the IPv6 wildcard [::] with
+// IPV6_V6ONLY off. Darwin binds a dual-stack IPv6 wildcard without checking
+// the IPv4 port space: without an IPv4 reservation of the port first, the
+// bind succeeds over a port a plain IPv4 socket holds, and that socket then
+// receives every IPv4 datagram (the server starts, and no IPv4 client ever
+// reaches it). Both macOS transports reserve; these cases hold portable to it
+// as well as msgx. Real sockets: functional tests. Skipped where the host has
+// no IPv6.
+
+// these cases name their transports: an outer suite pin is set aside for the
+// case and put back after it
+struct bind_pins_t
+{
+    char server[64];
+    char client[64];
+    bool server_set;
+    bool client_set;
+};
+
+static void bind_pin_save( const char * name, char * value, size_t bytes, bool * set )
+{
+    const char * now = getenv( name );
+    *set = now != NULL;
+    snprintf( value, bytes, "%s", now ? now : "" );
+    unsetenv( name );
+}
+
+static void bind_pins_clear( struct bind_pins_t * pins )
+{
+    bind_pin_save( "ROCKETNET_SERVER_TRANSPORT", pins->server, sizeof( pins->server ), &pins->server_set );
+    bind_pin_save( "ROCKETNET_CLIENT_TRANSPORT", pins->client, sizeof( pins->client ), &pins->client_set );
+}
+
+static void bind_pins_restore( const struct bind_pins_t * pins )
+{
+    if ( pins->server_set )
+    {
+        setenv( "ROCKETNET_SERVER_TRANSPORT", pins->server, 1 );
+    }
+    if ( pins->client_set )
+    {
+        setenv( "ROCKETNET_CLIENT_TRANSPORT", pins->client, 1 );
+    }
+}
+
+static enum rocketnet_status_t bind_dual_stack_start( const char * transport, unsigned port, struct rocketnet_server_t ** started )
+{
+    struct rocketnet_server_config_t config;
+    bind_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+#if ROCKETNET_DEV
+    // the both-families case connects with development tokens
+    config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, sizeof( config.backend_public_key ) );
+#else // #if ROCKETNET_DEV
+    // a production library refuses the published development keys
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    bind_check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+    memcpy( config.backend_public_key, backend_public, sizeof( config.backend_public_key ) );
+    config.protocol_id = 0x6475616c73746b31ULL;
+    config.packet_filter[0] = 0x64;
+    config.packet_filter[1] = 0x75;
+    config.packet_filter[2] = 0x61;
+    config.packet_filter[3] = 0x6c;
+#endif // #if ROCKETNET_DEV
+    config.max_clients = 2;
+    config.transport = transport;
+
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%u", port );
+    snprintf( ipv6_address, sizeof( ipv6_address ), "[::1]:%u", port );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4_address, ipv6_address, &config, &status );
+    bind_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    const enum rocketnet_status_t start_status = rocketnet_server_start( server );
+    if ( start_status == ROCKETNET_STATUS_OK && started )
+    {
+        *started = server;
+        return start_status;
+    }
+    if ( start_status == ROCKETNET_STATUS_OK )
+    {
+        bind_stopped_msgx( server );
+    }
+    else
+    {
+        rocketnet_server_destroy( server );
+    }
+    return start_status;
+}
+
+static bool bind_host_has_ipv6()
+{
+    const int probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
+    if ( probe < 0 )
+    {
+        return false;
+    }
+    struct sockaddr_in6 any;
+    memset( &any, 0, sizeof( any ) );
+    any.sin6_family = AF_INET6;
+    any.sin6_addr = in6addr_loopback;
+    const bool bound = bind( probe, (const struct sockaddr *) &any, sizeof( any ) ) == 0;
+    close( probe );
+    return bound;
+}
+
+// a plain IPv4 socket on 0.0.0.0 at a kernel-chosen port; returns the socket
+static int bind_hold_ipv4_wildcard( unsigned * port )
+{
+    const int holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    bind_check( holder >= 0 );
+    struct sockaddr_in held;
+    memset( &held, 0, sizeof( held ) );
+    held.sin_family = AF_INET;
+    held.sin_addr.s_addr = htonl( INADDR_ANY );
+    bind_check( bind( holder, (const struct sockaddr *) &held, sizeof( held ) ) == 0 );
+    socklen_t held_bytes = sizeof( held );
+    bind_check( getsockname( holder, (struct sockaddr *) &held, &held_bytes ) == 0 );
+    *port = ntohs( held.sin_port );
+    return holder;
+}
+
+// an explicit port: a plain IPv4 socket holds 0.0.0.0:P, and a server asked
+// for [::]:P is refused with TRANSPORT_BIND_REFUSED
+static void bind_dual_stack_ipv4_held_for( const char * transport )
+{
+    unsigned port = 0;
+    const int holder = bind_hold_ipv4_wildcard( &port );
+    const enum rocketnet_status_t status = bind_dual_stack_start( transport, port, NULL );
+    printf( "  %s: [::]:%u with 0.0.0.0:%u held -> %s\n", transport, port, port, rocketnet_status_name( status ) );
+    fflush( stdout );
+    close( holder );
+    bind_check( status == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+}
+
+void rocketnet_test_server_bind_dual_stack_ipv4_held()
+{
+    if ( !bind_host_has_ipv6() )
+    {
+        printf( "  no IPv6 on this host: nothing to check\n" );
+        return;
+    }
+    struct bind_pins_t pins;
+    bind_pins_clear( &pins );
+    bind_dual_stack_ipv4_held_for( "portable" );
+    bind_dual_stack_ipv4_held_for( "msgx" );
+    bind_pins_restore( &pins );
+}
+
+// port 0: with many IPv4 ports held on 0.0.0.0, a dual-stack start never
+// returns one of them. Measured without the reservation on the studio: about
+// one start in six took a held port (69 of 400 with 3000 held), so 40 starts
+// with 2000 held are red with near certainty when the reservation is missing.
+#define BIND_HELD_IPV4_PORTS 2000
+#define BIND_PORT_ZERO_STARTS 40
+
+static void bind_dual_stack_port_zero_for( const char * transport, const unsigned char * held_port )
+{
+    int landed = 0;
+    for ( int i = 0; i < BIND_PORT_ZERO_STARTS; i++ )
+    {
+        struct rocketnet_server_t * server = NULL;
+        bind_check( bind_dual_stack_start( transport, 0, &server ) == ROCKETNET_STATUS_OK );
+        const uint16_t port = rocketnet_server_port( server );
+        bind_check( port != 0 );
+        if ( held_port[port] )
+        {
+            landed++;
+        }
+        bind_stopped_msgx( server );
+    }
+    printf( "  %s: %d dual-stack [::]:0 starts, %d on a held IPv4 port\n", transport, BIND_PORT_ZERO_STARTS, landed );
+    fflush( stdout );
+    bind_check( landed == 0 );
+}
+
+void rocketnet_test_server_bind_dual_stack_port_zero()
+{
+    if ( !bind_host_has_ipv6() )
+    {
+        printf( "  no IPv6 on this host: nothing to check\n" );
+        return;
+    }
+
+    struct rlimit limit;
+    bind_check( getrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    const rlim_t wanted = (rlim_t) BIND_HELD_IPV4_PORTS + 1024;
+    if ( limit.rlim_cur < wanted )
+    {
+        limit.rlim_cur = limit.rlim_max < wanted ? limit.rlim_max : wanted;
+        bind_check( setrlimit( RLIMIT_NOFILE, &limit ) == 0 );
+    }
+
+    static int holders[BIND_HELD_IPV4_PORTS];
+    static unsigned char held_port[65536];
+    memset( held_port, 0, sizeof( held_port ) );
+    for ( int i = 0; i < BIND_HELD_IPV4_PORTS; i++ )
+    {
+        unsigned port = 0;
+        holders[i] = bind_hold_ipv4_wildcard( &port );
+        held_port[port] = 1;
+    }
+
+    struct bind_pins_t pins;
+    bind_pins_clear( &pins );
+    bind_dual_stack_port_zero_for( "portable", held_port );
+    bind_dual_stack_port_zero_for( "msgx", held_port );
+    bind_pins_restore( &pins );
+
+    for ( int i = 0; i < BIND_HELD_IPV4_PORTS; i++ )
+    {
+        close( holders[i] );
+    }
+}
+
+// the control: an IPv4 client and an IPv6 client both connect to one msgx
+// server that serves both families (bound [::] under its reservation), so the
+// reservation leaves the port to the server and its client sockets join it.
+// Development tokens: not in functional_production.
+#if ROCKETNET_DEV
+void rocketnet_test_server_msgx_dual_stack_both_families_connect()
+{
+    if ( !bind_host_has_ipv6() )
+    {
+        printf( "  no IPv6 on this host: nothing to check\n" );
+        return;
+    }
+
+    struct bind_pins_t pins;
+    bind_pins_clear( &pins );
+    struct rocketnet_server_t * server = NULL;
+    bind_check( bind_dual_stack_start( "msgx", 0, &server ) == ROCKETNET_STATUS_OK );
+    bind_check( strcmp( rocketnet_server_transport_name( server ), "msgx" ) == 0 );
+    const unsigned port = rocketnet_server_port( server );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+
+    char ipv4_address[64];
+    char ipv6_address[64];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%u", port );
+    snprintf( ipv6_address, sizeof( ipv6_address ), "[::1]:%u", port );
+
+    struct rocketnet_client_t * clients[2];
+    const double case_start = rocketnet_platform_time();
+    for ( int family = 0; family < 2; family++ )
+    {
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        bind_check( rocketnet_create_dev_connect_token( family == 0 ? ipv4_address : NULL, family == 0 ? NULL : ipv6_address, server_key, 300, 10,
+                                                        0x6475616c00ULL + (uint64_t) family, ROCKETNET_DEV_PROTOCOL_ID,
+                                                        rocketnet_functional_token_timestamp( 0, case_start ), NULL, token ) == ROCKETNET_STATUS_OK );
+        struct rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = "portable";
+        enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+        clients[family] = rocketnet_client_create( NULL, &client_config, &status );
+        bind_check( clients[family] && status == ROCKETNET_STATUS_OK );
+        bind_check( rocketnet_client_connect( clients[family], token ) == ROCKETNET_STATUS_OK );
+    }
+
+    const double deadline = rocketnet_platform_time() + 10.0;
+    bool connected = false;
+    while ( !connected && rocketnet_platform_time() < deadline )
+    {
+        const double now = 1000.0 + ( rocketnet_platform_time() - case_start );
+        rocketnet_server_update( server, now );
+        connected = true;
+        for ( int family = 0; family < 2; family++ )
+        {
+            rocketnet_client_update( clients[family], now );
+            rocketnet_client_send_packets( clients[family] );
+            connected = connected && rocketnet_client_state( clients[family] ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+        }
+        rocketnet_server_send_packets( server );
+        connected = connected && rocketnet_server_num_connected_clients( server ) == 2;
+        rocketnet_platform_sleep( 0.001 );
+    }
+    printf( "  msgx [::]:%u: IPv4 client %d, IPv6 client %d, server connected %d\n", port, rocketnet_client_state( clients[0] ),
+            rocketnet_client_state( clients[1] ), rocketnet_server_num_connected_clients( server ) );
+    fflush( stdout );
+    bind_check( connected );
+
+    const double now = 1000.0 + ( rocketnet_platform_time() - case_start );
+    for ( int family = 0; family < 2; family++ )
+    {
+        rn_cli_client_stop_and_destroy( clients[family], now );
+    }
+    rn_cli_server_stop_and_destroy( server );
+    bind_pins_restore( &pins );
+}
+#endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 

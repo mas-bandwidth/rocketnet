@@ -296,8 +296,19 @@ static void rocketnet_server_msgx_set_socket_option( void * user, int level, int
 // the wildcard check, so an ephemeral port could be one another process holds
 // on another address or family, and an explicit port could join another
 // process's group; either way the more specific socket takes the datagrams.
-// Set after the bind, the port is this server's alone and its client sockets
-// still join it.
+// Set after the bind, the bind itself never lands on a port another socket
+// holds (the IPv6 wildcard under an IPv4 reservation, as portable binds it),
+// and the client sockets still join it.
+//
+// The port is NOT this server's alone once it is bound. Measured on macOS for
+// one user: a later socket that sets SO_REUSEPORT binds the same port, and
+// unicast goes to the most specific match, so a socket on the server's own
+// address, or an AF_INET socket beside a dual-stack shared socket, takes every
+// datagram meant for the shared socket (handshakes included). A socket on a
+// specific address with SO_REUSEADDR does the same to any wildcard UDP socket
+// on macOS, this transport's or not. A socket with neither option is refused.
+// Whether another user's process can join was not measured; docs/MACOS.md
+// says what this means for a server on a shared machine.
 static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_address, bool ipv6, int buffer_bytes, bool shared )
 {
     const int fd = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
@@ -322,13 +333,30 @@ static int rocketnet_server_msgx_open_bound( const rocketnet_address_t * bind_ad
         return -error;
     }
 
-    struct sockaddr_storage sockaddr;
-    const socklen_t socklen = rocketnet_server_msgx_address_to_sockaddr( bind_address, ipv6, &sockaddr );
-    if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, socklen ) != 0 )
+    if ( shared && ipv6 )
     {
-        const int error = socklen == 0 ? EAFNOSUPPORT : errno;
-        close( fd );
-        return -error;
+        // the IPv6 wildcard binds under an IPv4 reservation of its port, as
+        // the portable socket does: Darwin would otherwise bind it over a port
+        // another socket holds in IPv4, and that socket keeps every IPv4
+        // datagram. A client socket joins the port the shared socket owns.
+        uint16_t bound_port = 0;
+        const int error = rocketnet_platform_bind_dual_stack( fd, bind_address, &bound_port );
+        if ( error != 0 )
+        {
+            close( fd );
+            return -error;
+        }
+    }
+    else
+    {
+        struct sockaddr_storage sockaddr;
+        const socklen_t socklen = rocketnet_server_msgx_address_to_sockaddr( bind_address, ipv6, &sockaddr );
+        if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, socklen ) != 0 )
+        {
+            const int error = socklen == 0 ? EAFNOSUPPORT : errno;
+            close( fd );
+            return -error;
+        }
     }
 
     if ( shared && ( setsockopt( fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof( one ) ) != 0 ||

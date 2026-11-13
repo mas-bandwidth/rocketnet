@@ -401,6 +401,50 @@ the hard limit and `kern.maxfilesperproc`. An app launched from Finder or the
 Dock gets the launchd limit that `launchctl limit maxfiles` prints. Many
 clients in one process on macOS, measured: **pending.**
 
+## Who else can bind a server's port
+
+Both server transports bind with no reuse option set, so a port another
+socket holds is refused with `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED`
+(`tests/functional/server_bind_address.cpp`). A server that serves both
+families binds the dual-stack `[::]` wildcard, and Darwin binds that without
+checking the IPv4 port space, so it first takes an IPv4 reservation of its
+port (`rocketnet_platform_bind_dual_stack`): a port held in IPv4 is refused,
+and a kernel-chosen port (port 0) is never one an IPv4 socket holds.
+
+After the bind, the port is not the server's alone. Measured on macOS with
+every process run by one user:
+
+- **msgx.** Its per-client sockets join the server's port with
+  `SO_REUSEPORT`, so the shared socket sets `SO_REUSEPORT` too. Any later
+  socket that sets `SO_REUSEPORT` can then bind the same port. Unicast goes to
+  the most specific match: a socket on the server's own address, or an IPv4
+  wildcard socket beside a dual-stack `[::]` server, receives every datagram
+  meant for the shared socket, handshakes included, and the server sees
+  nothing. The server does not notice, and nothing is counted.
+- **Any wildcard server, either transport.** A socket bound to one of the
+  host's specific addresses with `SO_REUSEADDR` or `SO_REUSEPORT` takes the
+  datagrams sent to that address from a wildcard-bound UDP socket. This is how
+  Darwin binds UDP, not something a transport sets.
+- A socket with neither option is refused in both cases.
+
+Whether a process run by **another user** can do the same was not measured.
+The SDK's `sys/socket.h` defines `SO_REUSESHAREUID`, "Allow reuse of
+port/socket by different userids", which suggests that by default a
+different user is held back in some of these cases, but Darwin's man pages do
+not say which, and macOS offers no option that makes a port exclusive while
+still letting a server's own sockets share it.
+
+On a machine where other programs you do not trust run (as you or, until
+measured, as another user), they can take a macOS server's traffic. For such
+a machine pin the `portable` server transport, serve one family, and set
+`bind_ipv4_address` (or `bind_ipv6_address`) to the host's address (a server
+that serves both families binds the wildcard and refuses a specific address):
+a socket on a specific address
+with no reuse option refuses a later socket on that address with either option,
+and a later wildcard socket that does bind receives none of its datagrams
+(measured, same user). A server on a machine only you run programs on is
+unaffected.
+
 ## The application firewall prompt
 
 A server binds the wildcard address on its port, whatever host its public
