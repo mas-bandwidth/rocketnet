@@ -143,12 +143,19 @@ struct rocketnet_server_transport_io_operations_t
 
     void ( *send_batch_shutdown )( void *, const rocketnet_platform_send_t *, int );
 
-    // optional; main thread only. The frames the transport accepts before
-    // its next flush without a refusal for room: start_packet on the staged
-    // path, or the frames send_batch takes without dropping one on the
-    // buffered path. A frame the transport still holds from an earlier flush
-    // is not room. Producers on other threads only lower it, so with none
-    // running it is exact; a transport without it is treated as unbounded
+    // optional; main thread, and fill threads during the fill phase (the
+    // reserve's budget refresh and a refused start's judgment run on the
+    // thread that called start_packet), never waits. The frames the
+    // transport accepts before its next flush without a refusal for room:
+    // start_packet on the staged path, or the frames send_batch takes
+    // without dropping one on the buffered path. A frame the transport still
+    // holds from an earlier flush is not room. From a fill thread it reads
+    // only atomics, or values main writes outside the fill phase and so are
+    // frozen for it; it takes no lock main holds and writes nothing. Each
+    // read is one whole value, never torn; fills staging on other threads
+    // only lower it and frames retiring only raise it, so with no fill
+    // running and nothing retiring it is exact (proofs/tla/RNSendReserve.tla
+    // Read1-3). A transport without it is treated as unbounded
     // (proofs/tla/ServerStopSpread.tla Room).
     int ( *send_room )( void * transport );
 
@@ -193,7 +200,9 @@ struct rocketnet_server_transport_io_operations_t
     //     1 .. ROCKETNET_SERVER_MAX_SEND_QUEUES.
     //   send_queue_of: any thread, pure; the queue start_packet stages a
     //     frame to this address in (the destination hash).
-    //   send_room_queue: main thread only; send_room for one queue.
+    //   send_room_queue: main thread, and fill threads during the fill
+    //     phase, under send_room's rules for what it may read; send_room
+    //     for one queue.
     int ( *send_queues )( void * transport );
     int ( *send_queue_of )( void * transport, const rocketnet_address_t * to );
     int ( *send_room_queue )( void * transport, int queue );
