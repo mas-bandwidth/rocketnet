@@ -233,14 +233,16 @@ jobs:
         os: [linux, macos]
         build_type: [Debug, Release]
         leg: [unit, functional, checks, builds]
-        # The per-commit tier runs eleven of the twenty rows: eight Linux rows
-        # (the Release unit leg is two shard rows below, the second carrying
-        # the builds leg's steps; the two transport_matrix rows are include
-        # rows below) and three macOS rows (macOS Release
-        # functional_production is the include row below). The nightly tier
-        # runs all. Both tiers exclude the plain Linux Release unit row: its
-        # two shard rows replace it.
-        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
+        # Of the twenty original rows the per-commit tier keeps two (Linux
+        # Release checks, macOS Release functional); every other per-commit
+        # job is an include row below: the shard rows of the Linux unit,
+        # functional and transport_matrix legs and of the macOS Debug unit
+        # leg, the Linux Release source_checks row and macOS Release
+        # functional_production. The nightly tier runs every original row
+        # except the plain Linux Release and Debug unit, both Linux
+        # functional and the macOS Debug unit rows, which both tiers exclude:
+        # their shard rows replace them.
+        exclude: ${{ fromJSON(inputs.full && '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"unit"}]' || '[{"os":"linux","build_type":"Release","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Release","leg":"functional"},{"os":"linux","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"unit"},{"os":"linux","build_type":"Debug","leg":"checks"},{"os":"linux","build_type":"Debug","leg":"builds"},{"os":"linux","build_type":"Release","leg":"builds"},{"os":"macos","build_type":"Debug","leg":"functional"},{"os":"macos","build_type":"Debug","leg":"checks"},{"os":"macos","build_type":"Debug","leg":"builds"},{"os":"macos","build_type":"Release","leg":"unit"},{"os":"macos","build_type":"Release","leg":"checks"},{"os":"macos","build_type":"Release","leg":"builds"}]') }}
         # dev: the ROCKETNET_DEV setting. Debug rows build the default
         # development library (ON); Release rows build the production library
         # (OFF), so every OS runs the suite both ways and the production
@@ -248,8 +250,15 @@ jobs:
         # runs-on uses. Every Linux fleet runner carries the VM tier the xdp
         # matrix cell needs (docs/TESTING.md, "The VM tier"), so the
         # functional rows select the fleet like every other row.
+        # A Debug row with no dev field builds ON: the steps read
+        # `matrix.dev || 'ON'` and test `matrix.dev != 'OFF'`. There is no
+        # `{ build_type: Debug, dev: 'ON' }` include row: the per-commit tier
+        # has no original Debug row (each is excluded or replaced by shard
+        # rows), and an include row that merges into no original row becomes
+        # a job of its own (no os, no runner). Every Debug include row below
+        # gives dev: 'ON' itself; the nightly tier's original Debug rows take
+        # the default.
         include:
-          - { build_type: Debug, dev: 'ON' }
           - { build_type: Release, dev: 'OFF' }
           - { os: linux, runner: '["self-hosted","Linux","X64","fleet"]' }
           # The Linux Release unit leg runs in two shards (test --shard i/2,
@@ -263,9 +272,20 @@ jobs:
           # not cores, are what a per-commit run waits for). The nightly tier
           # runs the builds row on its own. A row added by include gets no
           # field from the include rows above, so each gives every field.
-          - { os: linux, build_type: Release, leg: unit, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # The once-per-leg checks are named by field (first, purity, audit,
+          # counters, ambient_shard; the note above "Sodium known answers").
+          - { os: linux, build_type: Release, leg: unit, shard: 0/2, first: true, purity: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Release, leg: unit, shard: 1/2, with_builds: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos, runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          # The macOS Debug unit leg runs in two shards (2026-11-13): one row
+          # ran the build (12-36 s), the suite (19-25 s), the environment check
+          # over the whole suite again (21-27 s) and counter-observed (13-17 s)
+          # in series, 84-104 s on every one of eight main runs. Each shard
+          # row runs its shard of the suite and of the environment check; 0/2
+          # the sodium answers, the partition check and purity, 1/2
+          # counter-observed. The summary job carries "macos / Debug / unit".
+          - { os: macos, build_type: Debug, leg: unit, shard: 0/2, first: true, purity: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","macOS","ARM64","fleet"]' }
+          - { os: macos, build_type: Debug, leg: unit, shard: 1/2, counters: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","macOS","ARM64","fleet"]' }
           # The Linux Debug unit leg runs in three shards (test --shard i/3): one
           # row ran the build and fifteen sequential checks, 76 to 125 s on the
           # fleet against the 120 s cap (runs 43374944017, 43373385606,
@@ -278,10 +298,17 @@ jobs:
           # development-build source audit and the counter-observed check;
           # shard 2/3 keeps the purity check (it also draws the longest cases,
           # by the name hash). The plain Linux Debug unit row is excluded in
-          # both tiers; the macOS Debug unit row stays one job.
-          - { os: linux, build_type: Debug, leg: unit, shard: 0/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: unit, shard: 1/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: unit, shard: 2/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # both tiers. Then four (2026-11-13): 0/3 was cancelled at the cap
+          # twice in eight main runs inside the environment check (18-64 s,
+          # the whole suite again) and 1/3 twice (suite 13-56 s, counter-
+          # observed 14-38 s). Each of the four shard rows runs its shard of
+          # the suite and of the environment check (ambient_shard); 0/4 the
+          # sodium answers and the partition check, 1/4 the development source
+          # audit, 2/4 counter-observed, 3/4 purity.
+          - { os: linux, build_type: Debug, leg: unit, shard: 0/4, first: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 1/4, audit: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 2/4, counters: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: unit, shard: 3/4, purity: true, ambient_shard: true, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The Linux Release checks leg runs as two rows split by what each
           # builds: one row ran the Release build and some forty checks, 61 to
           # 120 s on main (about 98 s on a quiet runner, 117 to 127 s on a
@@ -309,13 +336,20 @@ jobs:
           # plain Linux functional rows are excluded in both tiers; summary jobs
           # carry their names. Shard 2/3 also runs the small steps (wide fill,
           # pinned-portable pass, platform primitives, load census, lifecycle
-          # binary, production client lifecycle); the memlock check runs in both.
-          - { os: linux, build_type: Debug, leg: functional, shard: 0/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: functional, shard: 1/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Debug, leg: functional, shard: 2/3, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Release, leg: functional, shard: 0/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # binary, production client lifecycle); the memlock check runs in all.
+          # Debug then four (2026-11-13): its suite step took 16-64 s a shard
+          # (shard 0/3 112 and 120 s whole on main). The row marked small runs
+          # the small steps (Debug 3/4, Release 2/3). Release functional 0/3
+          # (contract) also runs the native driver contract and the external
+          # backend over its production build, moved from the Linux Release
+          # checks row (13-17 s; that row ran 67-128 s).
+          - { os: linux, build_type: Debug, leg: functional, shard: 0/4, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 1/4, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 2/4, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: functional, shard: 3/4, small: true, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 0/3, contract: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: linux, build_type: Release, leg: functional, shard: 1/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Release, leg: functional, shard: 2/3, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: functional, shard: 2/3, small: true, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           # The macOS Release functional row ran both suites in one job, 1m30
           # to 1m50 against the two-minute bound. The production library's
           # suite (functional_production) runs in this row of its own, on its
@@ -328,9 +362,16 @@ jobs:
           # took 43 to 46 s (twelve, with the gateway change case, 62 s on a
           # loaded vision), which with the functional suite took Linux Debug
           # functional to the two-minute bound. The macOS matrix stays in its
-          # functional row (about a second).
-          - { os: linux, build_type: Debug, leg: transport_matrix, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: linux, build_type: Release, leg: transport_matrix, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          # functional row (about a second). Each Linux transport_matrix row
+          # runs in two shards (2026-11-13): the step took 42-64 s after its
+          # build, and the Debug row was cancelled at the cap four times in
+          # eight main runs. Shard I/2 runs the xdp cases at positions I, I+2,
+          # ... of the cell's case list in its own three guests; shard 0/2 also
+          # runs the socket cells. Summary jobs carry the unsharded names.
+          - { os: linux, build_type: Debug, leg: transport_matrix, shard: 0/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Debug, leg: transport_matrix, shard: 1/2, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: transport_matrix, shard: 0/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: linux, build_type: Release, leg: transport_matrix, shard: 1/2, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -407,7 +448,7 @@ jobs:
         timeout-minutes: 4
         if: matrix.build_type == 'Debug'
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev || 'ON' }}
           cmake --build build --parallel 8
 
       # The XDP packet blaster's manifest and oracle rules
@@ -511,11 +552,22 @@ jobs:
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
 
-      # The sodium, purity and environment checks below run once per unit
-      # leg: on the Linux Release leg, in shard 0/2 only; on the Linux Debug
-      # leg, sodium and the environment check in shard 0/3, purity in 2/3.
+      # The once-per-leg checks below run in every unsharded unit row and, in
+      # a sharded leg, in the shard row whose field names them: first (the
+      # sodium checks, the shard partition, the registered case list, and the
+      # whole-suite environment check where the leg has no ambient_shard
+      # rows: Linux Release), purity, audit (the development source audit),
+      # counters (counter-observed). ambient_shard: each shard row runs the
+      # environment check over its own shard of the suite (Linux and macOS
+      # Debug), so the shards together check every case once; what a
+      # whole-suite run in one process adds, a case leaking ambient state
+      # into a case of another shard, is still run per commit by the Linux
+      # Release unit leg's whole-suite check.
+      # Linux Release: first and purity in 0/2. Linux Debug: first 0/4, audit
+      # 1/4, counters 2/4, purity 3/4. macOS Debug: first and purity 0/2,
+      # counters 1/2.
       - name: Sodium known answers
-        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
+        if: matrix.leg == 'unit' && (!matrix.shard || matrix.first)
         run: ./bin/test_sodium
 
       # The committed sodium pair from its SHA-256 pinned inputs, byte for
@@ -523,11 +575,11 @@ jobs:
       # Windows (b) leg runs the same step (sodium/README.md, "Reproducing
       # the vendored inputs").
       - name: Reproduce the committed sodium pair
-        if: matrix.build_type == 'Release' && matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: matrix.build_type == 'Release' && matrix.leg == 'unit' && (!matrix.shard || matrix.first)
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
-        if: matrix.build_type == 'Release' && matrix.leg == 'unit' && matrix.shard != '1/2'
+        if: matrix.build_type == 'Release' && matrix.leg == 'unit' && (!matrix.shard || matrix.first)
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel 8
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
@@ -578,37 +630,38 @@ jobs:
       # ROCKETNET_TEST_NIGHTLY from the tier: the nightly tier's unit cases
       # (the 1000-client per-client isolation case) run here, Debug included.
       - name: Save the registered unit cases
-        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
+        if: inputs.full && matrix.leg == 'unit' && (!matrix.shard || matrix.first)
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/${{ runner.os }}-${{ matrix.build_type }}.txt"
 
       - name: Upload the registered unit cases
-        if: inputs.full && matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
+        if: inputs.full && matrix.leg == 'unit' && (!matrix.shard || matrix.first)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: unit-cases-${{ runner.os }}-${{ matrix.build_type }}
           path: unit-cases/
           if-no-files-found: error
 
-      # On Linux the strace run below is this run: one suite run, not two.
+      # On Linux the strace run below is this run: one suite run, not two. A
+      # shard row (macOS Debug) runs its shard of the suite.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
-        run: ./bin/test
+        run: ./bin/test ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }}
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
       # check fails, naming the first opener, on any socket() call
       # (tools/check_unit_no_sockets.sh). The suite's output and verdict print
       # as in the plain run.
       - name: The shards partition the unit suite
-        if: matrix.leg == 'unit' && (matrix.shard == '0/2' || matrix.shard == '0/3')
+        if: matrix.leg == 'unit' && matrix.shard && matrix.first
         shell: bash
         run: |
           set -euo pipefail
           python3 tools/check_test_shards.py --self-test
-          python3 tools/check_test_shards.py ./bin/test ${{ matrix.shard == '0/3' && '3' || '2' }}
+          python3 tools/check_test_shards.py ./bin/test ${{ matrix.shard == '0/4' && '4' || '2' }}
 
       # On the Linux Release leg each shard row runs its shard of the suite.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
@@ -625,14 +678,17 @@ jobs:
       # fixtures they call (tools/check_unit_purity.py); its self-test plants
       # each in a fixture tree.
       - name: Unit suite uses no real time, sleep, thread or resolver
-        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'unit' && (!matrix.shard || matrix.purity)
         run: |
           python3 tools/check_unit_purity.py --self-test
           python3 tools/check_unit_purity.py .
 
+      # Linux Release: the whole suite once, in shard 0/2 (about 8 s). Linux and
+      # macOS Debug: each shard row runs its own shard here (the whole suite took
+      # 18-64 s in one Linux Debug shard row, which was cut at the cap twice).
       - name: Ambient config isolation and passing output
-        if: matrix.leg == 'unit' && matrix.shard != '1/2' && matrix.shard != '1/3' && matrix.shard != '2/3'
-        run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
+        if: matrix.leg == 'unit' && (!matrix.shard || matrix.first || matrix.ambient_shard)
+        run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }} ${{ matrix.ambient_shard && format('--shard {0}', matrix.shard) || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
       # on the host at once: the check prints the limit, the per-server need
@@ -671,14 +727,14 @@ jobs:
       # threads at once and the fill-phase check's refusals, on the
       # development library (bin/test_wide_fill exists only there).
       - name: Run the wide fill cases (job threads)
-        if: matrix.leg == 'functional' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'functional' && matrix.dev != 'OFF' && (!matrix.shard || matrix.small)
         run: ./bin/test_wide_fill
 
       # The pinned pass per commit proves the pin is honoured; the whole
       # suite under the portable pin runs in the nightly tier (nightly.yml),
       # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
-        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'functional' && (!matrix.shard || matrix.small)
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -697,7 +753,7 @@ jobs:
           bash tools/run_functional.sh prod --log functional-production-auto.log ${{ matrix.shard && format('--shard {0}', matrix.shard) || '' }} ./bin/functional_production
 
       - name: Run functional_production suite (portable rung pinned by env)
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && (!matrix.shard || matrix.small)
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -708,7 +764,7 @@ jobs:
       # (docs/BUILD-REFERENCE.md lists it as a production gate); built on
       # ROCKETNET_DEV=OFF only, under a second here.
       - name: "Functional: production client lifecycle"
-        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.build_type == 'Release' && ((matrix.leg == 'functional' && runner.os != 'macOS') || matrix.leg == 'functional_production') && (!matrix.shard || matrix.small)
         run: ./bin/test_production_client_lifecycle
 
       # tests/functional/platform_primitives.cpp built standalone: the real
@@ -719,15 +775,15 @@ jobs:
       # Release rows OFF, and the line it prints must name the DEV setting
       # this row built.
       - name: "Functional: platform primitives (standalone, both DEV settings)"
-        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'functional' && (!matrix.shard || matrix.small)
         shell: bash
         run: |
           set -euo pipefail
           ./bin/test_platform_primitives | tee platform-primitives.log
           want=0
-          if [ "${{ matrix.dev }}" = ON ]; then want=1; fi
+          if [ "${{ matrix.dev || 'ON' }}" = ON ]; then want=1; fi
           if ! grep -q "^platform primitives OK: DEV=$want," platform-primitives.log; then
-            echo "test_platform_primitives did not report DEV=$want (this row builds ROCKETNET_DEV=${{ matrix.dev }})"
+            echo "test_platform_primitives did not report DEV=$want (this row builds ROCKETNET_DEV=${{ matrix.dev || 'ON' }})"
             exit 1
           fi
 
@@ -736,7 +792,7 @@ jobs:
       # self-test plants a file left open, a reused descriptor number, the
       # random device and a thread left running.
       - name: "Functional: load harness census self-test"
-        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'functional' && (!matrix.shard || matrix.small)
         shell: bash
         run: |
           set -euo pipefail
@@ -769,7 +825,8 @@ jobs:
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
         if: (matrix.leg == 'functional' && runner.os != 'Linux') || matrix.leg == 'transport_matrix'
         env:
-          XDP_DEV: ${{ matrix.dev }}
+          XDP_DEV: ${{ matrix.dev || 'ON' }}
+          MATRIX_SHARD: ${{ matrix.shard }}
           TRANSPORT_MATRIX_LINUX: |
             portable portable
             portable auto
@@ -824,6 +881,26 @@ jobs:
               case " $xdp_dev_only " in *" $case "*) ;; *) xdp_cases_run="$xdp_cases_run prod:$case" ;; esac
             done
           fi
+          # A shard row (Linux, "I/N") runs the xdp cases at positions I, I+N,
+          # ... of the list above, and shard 0 alone runs the socket cells;
+          # shards 0 to N-1 together run every cell and every case once.
+          shard_index=0
+          shard_count=1
+          if [ -n "${MATRIX_SHARD:-}" ]; then
+            shard_index=${MATRIX_SHARD%/*}
+            shard_count=${MATRIX_SHARD#*/}
+          fi
+          sharded=""
+          n=0
+          for case in $xdp_cases_run; do
+            if [ $((n % shard_count)) = "$shard_index" ]; then sharded="$sharded $case"; fi
+            n=$((n + 1))
+          done
+          xdp_cases_run=$sharded
+          if [ "$shard_index" != 0 ]; then
+            matrix=$(printf '%s\n' "$matrix" | grep '^xdp ')
+          fi
+          echo "TRANSPORT-MATRIX shard $shard_index/$shard_count: xdp cases:$xdp_cases_run"
           # every rocketnet_test_xdp_veth_runs_here row must be named in xdp_cases
           if [ -f scripts/transport-cells-repeat ]; then
             scripts/transport-cells-repeat --list --os linux > /dev/null || exit 1
@@ -967,7 +1044,7 @@ jobs:
           exit "$failed"
 
       - name: "Functional: lifecycle binary"
-        if: matrix.leg == 'functional' && matrix.shard != '0/3' && matrix.shard != '1/3'
+        if: matrix.leg == 'functional' && (!matrix.shard || matrix.small)
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
@@ -1074,7 +1151,7 @@ jobs:
       # it out. The Linux Debug unit leg builds DEV=ON on every commit: it runs
       # the audit there, and the case must have run.
       - name: Run the source audit in the development build (config-env names)
-        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '2/3'
+        if: runner.os == 'Linux' && matrix.leg == 'unit' && matrix.dev != 'OFF' && (!matrix.shard || matrix.audit)
         shell: bash
         run: |
           set -euo pipefail
@@ -1086,7 +1163,7 @@ jobs:
       # platform's own transport counters, judged on the development build
       # whose DEV blocks the tests read.
       - name: Every counter is observed by a test
-        if: matrix.leg == 'unit' && matrix.dev == 'ON' && matrix.shard != '0/3' && matrix.shard != '2/3'
+        if: matrix.leg == 'unit' && matrix.dev != 'OFF' && (!matrix.shard || matrix.counters)
         run: |
           python3 tools/check_counter_observed.py --self-test
           python3 tools/check_counter_observed.py --build build --platform ${{ runner.os == 'Linux' && 'linux' || 'macos' }}
@@ -1275,9 +1352,11 @@ jobs:
         run: ./bin/server --matrix --seed 7 --self-test-result "$RUNNER_TEMP/matrix-server-self-test.tsv"
 
       # The contract and the extension's build share nothing and run at once
-      # (tools/run_parallel.py).
+      # (tools/run_parallel.py). On Linux Release it runs in the functional
+      # shard row marked contract (0/3), over the same production build, not in
+      # the split checks row (13-17 s of that row's 67-128 s, 2026-11-13).
       - name: "Functional: native driver contract and external backend"
-        if: matrix.leg == 'checks'
+        if: (matrix.leg == 'checks' && !matrix.split_checks) || (matrix.leg == 'functional' && matrix.contract)
         run: python3 tools/run_parallel.py ./bin/test_transport 'python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}'
 
       - name: Enforce combined unit and functional timing
@@ -1365,9 +1444,9 @@ jobs:
 
   # The required check "linux / Debug / unit" (.github/rulesets/main.json,
   # tools/land.py, tools/release_gates.py) is this job: the Linux Debug unit
-  # leg runs as three shard rows above, and this row is green only when all
-  # three are. needs: build-and-test only orders it after the matrix; it
-  # reads the three shards' own conclusions from the run's job list
+  # leg runs as four shard rows above, and this row is green only when all
+  # four are. needs: build-and-test only orders it after the matrix; it
+  # reads the four shards' own conclusions from the run's job list
   # (tools/check_debug_unit_shards.py), so another leg's result never decides
   # it. An ordinary checkout, for the script.
   debug-unit:
@@ -1408,7 +1487,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: All three Linux Debug unit shards succeeded
+      - name: All four Linux Debug unit shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           DEBUG_UNIT_JOBS: debug-unit-jobs.json
@@ -1458,7 +1537,7 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: Both Linux Debug functional shards succeeded
+      - name: All four Linux Debug functional shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: debug-functional-shard-jobs.json
@@ -1468,7 +1547,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/3)" "linux / Debug / functional (1/3)" "linux / Debug / functional (2/3)"
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / functional (0/4)" "linux / Debug / functional (1/4)" "linux / Debug / functional (2/4)" "linux / Debug / functional (3/4)"
 
   release-functional:
     name: linux / Release / functional
@@ -1515,6 +1594,151 @@ jobs:
             exit 1
           fi
           python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / functional (0/3)" "linux / Release / functional (1/3)" "linux / Release / functional (2/3)"
+
+  # The required checks "linux / Debug / transport_matrix", "linux / Release /
+  # transport_matrix" and "macos / Debug / unit" are the summary jobs below:
+  # each leg runs as two shard rows of build-and-test (2026-11-13), and its
+  # summary is green only when both shards are (tools/check_debug_unit_shards.py,
+  # the shard names as arguments).
+  debug-transport-matrix:
+    name: linux / Debug / transport_matrix
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Debug transport matrix shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: debug-transport-matrix-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Debug / transport_matrix (0/2)" "linux / Debug / transport_matrix (1/2)"
+
+  release-transport-matrix:
+    name: linux / Release / transport_matrix
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both Linux Release transport matrix shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: release-transport-matrix-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "linux / Release / transport_matrix (0/2)" "linux / Release / transport_matrix (1/2)"
+
+  # Runs on the Linux fleet: it reads the job list only, and per commit the
+  # macOS runners hold the macOS build-and-test rows.
+  macos-debug-unit:
+    name: macos / Debug / unit
+    needs: build-and-test
+    if: always()
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    # A job-level permissions block replaces the workflow's: contents: read stays for the checkout.
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Both macOS Debug unit shards succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_JOBS: macos-debug-unit-shard-jobs.json
+        run: |
+          set -euo pipefail
+          if ! curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -o "$SHARD_JOBS" "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100"; then
+            echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
+            exit 1
+          fi
+          python3 tools/check_debug_unit_shards.py "$SHARD_JOBS" "macos / Debug / unit (0/2)" "macos / Debug / unit (1/2)"
 
   # The TLA+ trace check (proofs/tla/README-TraceCheck.md): tests/tla_trace.cpp
   # walks every layer's code at fixed seeds and the pinned tlacheck checks every
@@ -2615,14 +2839,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # the unit leg in two shards (test --shard i/2, tests/suite_runner.h):
+        # the unit leg in four shards (test --shard i/4, tests/suite_runner.h):
         # build 47 s plus 68 s of cases met the two-minute cap under fleet load
-        # (v1.1.5's PR); shard 0/2 also lists the whole suite on full runs
+        # (v1.1.5's PR), so two; then the run step took 21 to 71 s a shard and
+        # the two shards were cancelled at the cap five times in eight main runs
+        # (2026-11-13, runs 43453335026 to 43457991785), so four; shard 0/4
+        # also lists the whole suite on full runs
         include:
-          - leg: unit suite 0/2
-            shard: 0/2
-          - leg: unit suite 1/2
-            shard: 1/2
+          - leg: unit suite 0/4
+            shard: 0/4
+          - leg: unit suite 1/4
+            shard: 1/4
+          - leg: unit suite 2/4
+            shard: 2/4
+          - leg: unit suite 3/4
+            shard: 3/4
           - leg: functional suite
             shard: none
     steps:
@@ -2671,13 +2902,13 @@ jobs:
         run: *start_unit_functional_timing
 
       - name: Save the registered unit cases
-        if: inputs.full && matrix.shard == '0/2'
+        if: inputs.full && matrix.shard == '0/4'
         env:
           ROCKETNET_TEST_NIGHTLY: ${{ inputs.full && '1' || '0' }}
         run: mkdir -p unit-cases && ./bin/test --list > "unit-cases/Linux-asan.txt"
 
       - name: Upload the registered unit cases
-        if: inputs.full && matrix.shard == '0/2'
+        if: inputs.full && matrix.shard == '0/4'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: unit-cases-Linux-asan
@@ -2760,10 +2991,32 @@ jobs:
   # fuzz-nightly.yml: a per-commit gate is the deterministic replay, and
   # mutation belongs to the nightly's duration budget.
 
+  #
+  # THREE LEGS (2026-11-13): one job built the drivers (9-62 s), replayed the
+  # corpora, ran the exact-field oracle and judged the mutants (22-68 s) in
+  # series, 88-128 s, and was cancelled at the cap twice in eight main runs.
+  # The corpus replay leg keeps the replay and the oracle; the two mutants
+  # legs each build the same drivers and judge half the mutant table
+  # (tools/check_fuzz_mutants.py --shard I/2, by table position).
+
   fuzz-smoke:
-    name: fuzz smoke (corpus replay)
+    name: fuzz smoke (${{ matrix.leg }})
     runs-on: [self-hosted, Linux, X64, fleet]   # was ubuntu-24.04, then one host's rocketnet label; the fleet's org runners (see build-and-test's note)
     timeout-minutes: ${{ inputs.full && 7200 || 2 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # slot names the leg's crash reproducers artifact (no '/' allowed)
+          - leg: corpus replay
+            shard: none
+            slot: replay
+          - leg: corpus mutants 0/2
+            shard: 0/2
+            slot: mutants-0
+          - leg: corpus mutants 1/2
+            shard: 1/2
+            slot: mutants-1
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -2838,6 +3091,7 @@ jobs:
           cmake --build build-fuzz --target $targets --parallel 8
 
       - name: Replay every committed fuzz corpus
+        if: matrix.leg == 'corpus replay'
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
@@ -2857,6 +3111,7 @@ jobs:
           exit $failed
 
       - name: Exact-field oracle rejects memory-safe truncation
+        if: matrix.leg == 'corpus replay'
         run: python3 tools/check_fuzz_oracle.py build-fuzz
 
       # The replay and AEAD checks against the committed corpora
@@ -2864,15 +3119,17 @@ jobs:
       # packet-open path, is linked ahead of the library and replayed; a
       # mutant no input tells from the library is a red, unless the tool
       # marks it EQUIVALENT or UNCOVERED with its reason (and a mark an
-      # input now kills is red too). About 17 s at four jobs.
+      # input now kills is red too). 22-68 s at four jobs for the whole table
+      # (main, 2026-11-13); each mutants leg judges half.
       - name: The committed corpora kill the replay and AEAD mutants
-        run: python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4
+        if: startsWith(matrix.leg, 'corpus mutants')
+        run: python3 tools/check_fuzz_mutants.py --build build-fuzz --jobs 4 --shard ${{ matrix.shard }}
 
       - name: Upload crash reproducers
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: fuzz-smoke-crashes
+          name: fuzz-smoke-crashes-${{ matrix.slot }}
           path: |
             crash-*
             oom-*
@@ -3323,6 +3580,12 @@ jobs:
   # code, when the suite ran beside it. Per commit, tsan runs the loopback
   # soak and the lifecycle harness below; each night it runs the threaded
   # transports.
+  #
+  # THE WIDE FILL IN A LEG OF ITS OWN (2026-11-13), unchanged: the loopback
+  # soak leg ran the soak (30-43 s), the lifecycle harness (4-13 s) and the
+  # wide fill (24-55 s) in series and was cancelled at the cap three times in
+  # eight main runs, each time inside the wide fill. The wide fill leg builds
+  # and runs test_wide_fill alone, under the same TSAN_OPTIONS.
 
   tsan:
     name: tsan (${{ matrix.leg }})
@@ -3331,7 +3594,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [loopback soak]
+        leg: [loopback soak, wide fill]
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -3379,10 +3642,14 @@ jobs:
       - name: Build the soak and the lifecycle harness
         timeout-minutes: 1
         if: matrix.leg == 'loopback soak'
-        run: cmake --build build --target soak test_lifecycle test_wide_fill --parallel 8
+        run: cmake --build build --target soak test_lifecycle --parallel 8
+
+      - name: Build the wide fill
+        timeout-minutes: 1
+        if: matrix.leg == 'wide fill'
+        run: cmake --build build --target test_wide_fill --parallel 8
 
       - name: Start combined unit and functional timing
-        if: matrix.leg == 'loopback soak'
         run: *start_unit_functional_timing
 
       - name: Run the bounded loopback soak under tsan (real transport threads)
@@ -3400,7 +3667,7 @@ jobs:
         run: setarch "$(uname -m)" -R ./bin/test_lifecycle
 
       - name: "The wide fill under tsan: job threads filling clients at once"
-        if: matrix.leg == 'loopback soak'
+        if: matrix.leg == 'wide fill'
         env:
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
         run: setarch "$(uname -m)" -R ./bin/test_wide_fill
@@ -4499,6 +4766,11 @@ jobs:
           output="$(python3 tools/check_fuzz_coverage.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^check_fuzz_coverage self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
+          # check_fuzz_mutants.py --shard (fuzz smoke's mutants legs): bad specs
+          # refused, the shards cover the mutant table once each
+          output="$(python3 tools/check_fuzz_mutants.py --self-test 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^check_fuzz_mutants self-test: [1-9][0-9]* cases, 0 failed$' <<<"$output"
 
       # scripts/transport-cells-repeat drives nightly.yml's fifty-times cells:
       # a case list of blanks, a skipped io_uring cell and a failing case must

@@ -183,5 +183,43 @@ class SelfNamePrintTests(unittest.TestCase):
         self.assertEqual(checker.unit_sources_printing_names(), [])
 
 
+class UnitShardTests(unittest.TestCase):
+    """--shard I/N on the unit suite: ci.yml's Debug unit rows each check their shard."""
+
+    def test_absent_is_the_whole_suite(self):
+        self.assertEqual(checker.parse_unit_shard(["bin/test", "--production"]), (None, ["bin/test", "--production"]))
+
+    def test_shard_is_parsed_and_removed(self):
+        self.assertEqual(checker.parse_unit_shard(["bin/test", "--shard", "2/4"]), ((2, 4), ["bin/test"]))
+
+    def test_bad_shards_are_refused(self):
+        for bad in (["--shard"], ["--shard", "4/4"], ["--shard", "1/0"], ["--shard", "a/2"], ["--shard", "1"]):
+            with self.assertRaises(SystemExit):
+                checker.parse_unit_shard(["bin/test"] + bad)
+
+    def test_shards_partition_the_registered_names(self):
+        names, _ = checker.registered_unit_names(False)
+        self.assertTrue(names)
+        for shards in (2, 4):
+            seen = []
+            for index in range(shards):
+                seen += [n for n in names if checker.in_unit_shard(n, (index, shards))]
+            self.assertEqual(sorted(seen), sorted(names))
+        self.assertTrue(all(checker.in_unit_shard(n, None) for n in names))
+
+    def test_the_shard_line_is_held_and_dropped(self):
+        lines = ["shard 1/4: 3 of 12 cases", "test_a", "test_b", "PASSED"]
+        self.assertEqual(checker.strip_unit_shard_line(lines, (1, 4), "x"), lines[1:])
+        self.assertEqual(checker.strip_unit_shard_line(lines[1:], None, "x"), lines[1:])
+
+    def test_a_missing_wrong_or_repeated_shard_line_is_refused(self):
+        for lines in (["test_a", "PASSED"],
+                      ["shard 0/4: 3 of 12 cases", "test_a", "PASSED"],
+                      ["shard 1/2: 6 of 12 cases", "test_a", "PASSED"],
+                      ["shard 1/4: 3 of 12 cases", "shard 1/4: 3 of 12 cases", "test_a", "PASSED"]):
+            with self.assertRaises(SystemExit):
+                checker.strip_unit_shard_line(lines, (1, 4), "x")
+
+
 if __name__ == "__main__":
     unittest.main()
