@@ -1198,6 +1198,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         tests/functional/corpus_consistency.cpp
         tests/functional/shared_library_tokens.cpp
         tests/functional/loopback_hub_shared_objects.cpp
+        tests/functional/loopback_latency.cpp
         tests/functional/process_thread_counts.cpp
         tests/functional/session_reconnect_isolation.cpp
         tests/functional/destroy_early_keep.cpp
