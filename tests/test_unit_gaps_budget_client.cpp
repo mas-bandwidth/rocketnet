@@ -619,11 +619,16 @@ static void test_gaps_budget_client_portable_plan_is_the_real_allocation()
     check( plan == allocated );
 }
 
+// the card the case still fails for on this platform; NULL registers an
+// ordinary case (one registration line: a name is registered once)
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-REGISTER_UNIT_TEST_EXPECTED_FAIL( test_gaps_budget_client_portable_plan_is_the_real_allocation, "budget-6783 (library fix worker a54007afeee832af3)" );
+#define GC_BUDGET_6783_CARD "budget-6783 (library fix worker a54007afeee832af3)"
 #else  // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-REGISTER_UNIT_TEST( test_gaps_budget_client_portable_plan_is_the_real_allocation );
+#define GC_BUDGET_6783_CARD NULL
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+REGISTER_UNIT_TEST_EXPECTED_FAIL( test_gaps_budget_client_portable_plan_is_the_real_allocation, GC_BUDGET_6783_CARD );
 
 // ---------------------------------------------------------------------------
 // The budget
