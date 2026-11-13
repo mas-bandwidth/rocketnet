@@ -282,17 +282,16 @@ bank to the worker and never waits on the kernel
 
 - liburing at build time (section 1). A build without it keeps the row with no
   platform, so the name is skipped (`TRANSPORTS.md`).
-- A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL` and a
-  provided buffer ring. `rocketnet_server_uring_available()` probes this once
+- A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL`, a
+  provided buffer ring and a multishot `RECVMSG` over it (Linux 6.0 or later).
+  `rocketnet_server_uring_available()` probes this once, arming a multishot
+  receive on an unbound socket and cancelling it
   (`sdk/rocketnet_server_uring_linux.cpp`); on no, create logs
-  `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs`
+  `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs`
   and the next transport is tried (`sdk/rocketnet_server_uring_linux.cpp`).
-  Multishot receive must be in the liburing headers the build used
-  (`sdk/rocketnet_server_uring_linux.cpp`), and the running kernel must
-  accept a multishot `RECVMSG` (Linux 6.0 or later). The create probe does
-  not test that: on a kernel with provided buffer rings but no multishot
-  receive (5.19) the transport is created and receives nothing, so pin
-  another transport there.
+  A kernel with provided buffer rings but no multishot receive (5.19) is
+  refused this way. Multishot receive must also be in the liburing headers
+  the build used (`sdk/rocketnet_server_uring_linux.cpp`).
 - Kernel policy that permits this process to create rings. Where
   `/proc/sys/kernel/io_uring_disabled` exists, 0 permits all users, 1 permits
   processes with `CAP_SYS_ADMIN` or membership in `io_uring_group`, and 2

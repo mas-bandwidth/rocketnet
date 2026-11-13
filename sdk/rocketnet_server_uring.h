@@ -180,10 +180,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 #define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
 // true when the library was built with liburing and this kernel accepts the
-// ring, the opcodes and the provided buffer ring. it does not cover multishot
-// receive (Linux 6.0), which the transport also needs and create cannot
-// detect: an older kernel refuses each arm, logged once. the probe runs once
-// and its answer is kept.
+// ring, the opcodes, the provided buffer ring and a multishot receive over it
+// (Linux 6.0): the probe arms one on an unbound socket and cancels it, so a
+// kernel with buffer rings but no multishot receive (5.19) is refused here,
+// and create with it, rather than giving a server that receives nothing. the
+// probe runs once and its answer is kept.
 
 bool rocketnet_server_uring_available();
 
@@ -293,6 +294,12 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
 // main thread: no staged slot waiting and no bank published and not retired
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
+// development library only: the next rocketnet_server_uring_available probes
+// again, and its multishot receive ends with res (a negative errno, -EINVAL
+// as a kernel without multishot receive answers) in place of the kernel's
+// answer; 0 gives the kernel's answer back (and probes again too). Not for a
+// process with a transport running.
+void rocketnet_server_uring_test_probe_multishot( int res );
 // Test seam: one worker's placement (pin, confine off cpu 0, SCHED_RR) as the
 // worker runs it, on queue 0 of a synthetic transport, with fake affinity and
 // priority calls: only the refusals are injected, the transport's own code
