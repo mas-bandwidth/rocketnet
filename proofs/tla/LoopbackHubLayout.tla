@@ -31,12 +31,16 @@
 (* The block's bytes.  rocketnet_loopback_hub_create walks the queues,    *)
 (* each taking loopback_carve(bytes) = the bytes plus the red zone        *)
 (* (ROCKETNET_RED_ZONE_BYTES, poisoned in ASan builds) rounded up to the   *)
-(* alignment, and rocketnet_loopback_hub_bytes sizes the block with the    *)
-(* same carves, the server's plus Clients times a client's.  StaysInRegion *)
+(* alignment, and rocketnet_loopback_hub_bytes sizes the block separately, *)
+(* the server's carve plus Clients times a client's.  StaysInRegion        *)
 (* checks that arithmetic, relative to the first queue, in every state:   *)
 (* the slots head and tail name lie in their queue's carve before the red *)
 (* zone, the red zone lies in the carve, the carves are disjoint and the  *)
-(* block holds them all.                                                   *)
+(* block holds them all.  The slot spans and the disjointness follow from *)
+(* the walk by construction; what a defect can break is the red zone in   *)
+(* the carve (RedZoneInCarve) and the block size, which comes from its own *)
+(* formula (HubBytesRedZone).  The instance gives the server and a client *)
+(* the same capacity, so a mix-up of the two carves is not visible here.  *)
 (*                                                                         *)
 (* Reversed witnesses: FullSlack = 1 is the off-by-one at capacity (the   *)
 (* full test count > capacity), and CounterMod = 8 at capacity 3 is a     *)
@@ -46,6 +50,8 @@
 (* so the next send writes at tail and the receive reads a stale cell at   *)
 (* head (RingIsQueue).  RedZoneInCarve = FALSE carves the bytes without    *)
 (* the red zone, which then lies on the next queue (StaysInRegion).        *)
+(* HubBytesRedZone = FALSE sizes the block without the red zones, so the  *)
+(* walk's last carve runs past its end (StaysInRegion).                   *)
 (*                                                                         *)
 (* The code cites Send, Receive and Reset where they happen.  Done is the *)
 (* terminal stutter once every datagram is sent and every queue is empty. *)
@@ -63,7 +69,8 @@ CONSTANTS
     SlotBytes,          \* bytes of one datagram slot
     RedZoneBytes,       \* ROCKETNET_RED_ZONE_BYTES
     AlignBytes,         \* ROCKETNET_ALLOCATION_ALIGNMENT
-    RedZoneInCarve      \* TRUE is the code: a carve holds the bytes and the red zone
+    RedZoneInCarve,     \* TRUE is the code: create's carve holds the bytes and the red zone
+    HubBytesRedZone     \* TRUE is the code: rocketnet_loopback_hub_bytes carves the same way
 
 VARIABLES
     head, tail, count,  \* each queue's ring indices
@@ -89,8 +96,10 @@ Carve(b) == IF RedZoneInCarve THEN Align(b + RedZoneBytes) ELSE Align(b)
 RECURSIVE ByteBase(_)
 ByteBase(q) == IF q = 0 THEN 0 ELSE ByteBase(q - 1) + Carve(Cap(q - 1) * SlotBytes)
 
-\* rocketnet_loopback_hub_bytes' queue part: the server's carve and Clients client carves
-BlockBytes == Carve(ServerCapacity * SlotBytes) + Clients * Carve(Capacity * SlotBytes)
+\* rocketnet_loopback_hub_bytes' queue part: the server's carve and Clients
+\* client carves, by its own call of loopback_carve
+HubCarve(b) == IF HubBytesRedZone THEN Align(b + RedZoneBytes) ELSE Align(b)
+BlockBytes == HubCarve(ServerCapacity * SlotBytes) + Clients * HubCarve(Capacity * SlotBytes)
 
 CarveOf(q) == ByteBase(q) .. ByteBase(q) + Carve(Cap(q) * SlotBytes) - 1
 RedZone(q) == ByteBase(q) + Cap(q) * SlotBytes .. ByteBase(q) + Cap(q) * SlotBytes + RedZoneBytes - 1
@@ -105,7 +114,7 @@ Init ==
     /\ nextId = 1
 
 \* loopback_queue_tail and the send that fills it: write at tail when the
-\* queue has room, else drop and count
+\* queue has room, else drop (the code counts it; LoopbackQueue models the counter)
 Send(q) ==
     /\ nextId <= MaxSent
     /\ nextId' = nextId + 1

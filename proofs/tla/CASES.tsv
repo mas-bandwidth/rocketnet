@@ -575,6 +575,7 @@ MCLoopbackHubLayoutBrokenFullOffByOne.cfg	MCLoopbackHubLayout.tla	invariant	Ring
 MCLoopbackHubLayoutBrokenWrapNotMultiple.cfg	MCLoopbackHubLayout.tla	invariant	RingIsQueue	check	loopbackhublayout	required	-
 MCLoopbackHubLayoutBrokenResetKeepsIndices.cfg	MCLoopbackHubLayout.tla	invariant	RingIsQueue	check	loopbackhublayout	required	-
 MCLoopbackHubLayoutBrokenCarveNoRedZone.cfg	MCLoopbackHubLayout.tla	invariant	StaysInRegion	check	loopbackhublayout	required	-
+MCLoopbackHubLayoutBrokenHubBytesNoRedZone.cfg	MCLoopbackHubLayout.tla	invariant	StaysInRegion	check	loopbackhublayout	required	-
 MCSessionSendSequence.cfg	MCSessionSendSequence.tla	pass	-	check	sessionsendsequence	required	-
 MCSessionSendSequenceBrokenReadIncrement.cfg	MCSessionSendSequence.tla	invariant	SequencesUnique	check	sessionsendsequence	required	-
 MCSessionSendSequenceBrokenBaseline.cfg	MCSessionSendSequence.tla	invariant	BaselineIsHighestSealed	check	sessionsendsequence	required	-

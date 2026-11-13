@@ -36,8 +36,9 @@ No new roadmap entries: no row of this package was a missing model or binding.
 ## docs/TLA-INVENTORY.md
 
 - Line 72 (link simulator store), append to the guarantees cell: "; the packets due at a receive
-  leave in slot order, not send order (MCLinkSlotStoreReorders), so the simulator is Link with
-  Reordering = TRUE; a send to a full store is dropped and counted (StoreAccounts)".
+  leave in slot order, not send order (MCLinkSlotStoreReorders), so a model over the simulator
+  needs Reordering = TRUE; a send to a full store is dropped and counted (StoreAccounts), which
+  Link covers only under the arbitrary pattern or a store that never fills".
 - Line 69 (loopback bind table), append: "; each endpoint ring FIFO with the full drop counted,
   the slots written bounded by the longest run of sends between empties, a record reset never
   leaving a stale cell readable, and the queues' carves with red zones disjoint inside the block".
@@ -45,8 +46,8 @@ No new roadmap entries: no row of this package was a missing model or binding.
 ## Cross-family text held here (needs a serial R step)
 
 - `proofs/tla/Link.tla` (header, lines 37-40) still say the simulator's store-full drop "is a harness
-  artefact at 4096 slots and is not modelled", and lines 42-47 do not say that the simulator
-  is only Link with Reordering = TRUE. Editing Link.tla stales every group that instantiates
+  artefact at 4096 slots and is not modelled", and lines 42-47 do not say that a model over
+  the simulator needs Reordering = TRUE. Editing Link.tla stales every group that instantiates
   Link (clientconnection, rnblocks, rnchannel, rnendpoint, rnslots, rnwindow, serverconnection,
   sessionacks, with their own packages' records), so it was not edited here; README-Link.md
   says the truth meanwhile. Text for the next serial records pass:
@@ -72,16 +73,12 @@ No new roadmap entries: no row of this package was a missing model or binding.
 
 ## For package C: comment-only re-citations in sdk/
 
-This branch edited one sdk file, because check_tla_coverage --actions-strict needs the new
-LoopbackHubLayout action Reset cited: sdk/rocketnet_driver_loopback.cpp, two comments
+This branch edited one sdk file, comments only: sdk/rocketnet_driver_loopback.cpp, two comments
 "proofs/tla/LoopbackHubLayout.tla Reset: ..." in loopback_create (before `ep->head = 0`) and in
-loopback_destroy. The rest is C's:
+loopback_destroy, because check_tla_coverage --actions-strict needs the new action Reset cited,
+and the loopback_queue_pop comment, whose "only the slots its deepest backlog reached" was wrong
+(MM192): it now cites LoopbackQueue.tla TouchedWithinRun. The rest is C's:
 
-- sdk/rocketnet_driver_loopback.cpp (loopback_queue_pop, lines 364-369 at this head): "A queue that empties
-  therefore writes only the slots its deepest backlog reached" is wrong (MM192). New text:
-  "A queue that empties therefore writes only the slots below the longest run of sends it took
-  between two empties (proofs/tla/LoopbackQueue.tla TouchedWithinRun); FIFO cannot change
-  because an empty queue has nothing to reorder. A popped slot keeps its bytes."
 - sdk/rocketnet_network_simulator.cpp (rocketnet_network_simulator_reconfigure, lines 439-441): cites
   "MCSend", which does not exist, and says the setting in force at the send holds the packet.
   New text: "proofs/tla/MCLinkReconfigure.tla models the change: MCReconfigure writes the pending

@@ -13,7 +13,8 @@
 (* MCLoopbackHubLayoutBrokenResetKeepsIndices.cfg resets a record's count *)
 (* but not its head and tail; all three must violate RingIsQueue.         *)
 (* MCLoopbackHubLayoutBrokenCarveNoRedZone.cfg carves without the red     *)
-(* zone and must violate StaysInRegion.                                   *)
+(* zone and MCLoopbackHubLayoutBrokenHubBytesNoRedZone.cfg sizes the      *)
+(* block without the red zones; both must violate StaysInRegion.          *)
 (***************************************************************************)
 EXTENDS LoopbackHubLayout
 

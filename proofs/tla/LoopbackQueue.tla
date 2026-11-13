@@ -30,6 +30,9 @@
 (*                     (FifoOrder)                                         *)
 (*   "uncounted_drop"  the oversize Drop does not count (DropsCounted)     *)
 (*                                                                         *)
+(* DropsCounted holds within one endpoint's life, which is all the model  *)
+(* has: a destroy discards what is still queued without counting it.      *)
+(*                                                                         *)
 (* The code cites this module's Send, Receive and Drop where they happen. *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences
@@ -167,7 +170,9 @@ EmptyIsRestarted ==
 TouchedWithinRun ==
     written \subseteq 0..maxRun-1
 
-\* Every send attempt is queued, delivered or counted dropped.
+\* Every send attempt is queued, delivered or counted dropped, within one
+\* endpoint's life: the model has one life, and the code's loopback_destroy
+\* discards what is still queued without counting it (LoopbackHubLayout Reset).
 DropsCounted ==
     nextMessage - 1 = count + Len(delivered) + dropped
 

@@ -130,7 +130,9 @@ Unregister(e) ==
 \* check: a mismatch, or registered read under the mutex above zero, refuses
 \* and keeps the hub; otherwise the mutex is released and the hub retires.
 \* The free: the mutex destroyed, the header zeroed, the block freed,
-\* whatever registered later.
+\* whatever registered later.  The free is the same call's second step, so
+\* it takes the build of the call that passed the check (either value of
+\* foreign enables it; the hub state alone gates it).
 Destroy(foreign) ==
     /\ \/ /\ hub = "live"
           /\ IF foreign /\ UseChecksHeader
@@ -142,7 +144,6 @@ Destroy(foreign) ==
                  ELSE /\ lastDestroy' = "ok"
                       /\ hub' = "retiring"
        \/ /\ hub = "retiring"
-          /\ ~foreign
           /\ hub' = "freed"
           /\ UNCHANGED lastDestroy
     /\ UNCHANGED <<record, at, registered, foreignUse>>

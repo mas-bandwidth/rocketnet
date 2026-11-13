@@ -364,8 +364,10 @@ static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
     // every dequeue goes through here, under the hub mutex the caller holds:
     // advance head and shrink count, and when the queue empties restart both
     // indices at slot zero. A queue that empties therefore writes only the slots
-    // its deepest backlog reached; FIFO cannot change because an empty queue has
-    // nothing to reorder. proofs/tla/LoopbackQueue.tla Receive and Drop;
+    // below the longest run of sends it took between two empties
+    // (proofs/tla/LoopbackQueue.tla TouchedWithinRun); FIFO cannot change because
+    // an empty queue has nothing to reorder. A popped slot keeps its bytes.
+    // proofs/tla/LoopbackQueue.tla Receive and Drop;
     // proofs/tla/LoopbackHubLayout.tla Receive.
 
     ++ep->head;

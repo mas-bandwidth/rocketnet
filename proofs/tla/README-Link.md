@@ -51,9 +51,11 @@ hands out the lowest held slot that is due (`rocketnet_network_simulator_receive
 `_receive_any`), not the oldest packet and not the one due first. A slot freed by a
 receive is taken by the next send, below packets sent earlier and still held, so two
 packets due together can leave in the reverse of their send order (sends 1 and 2,
-receive 1, send 3: the next receive returns 3 before 2). The simulator is therefore
-`Link` with `Reordering = TRUE`; a model that runs over the simulator must not rely on
-`Reordering = FALSE`, which is an in-order path the simulator does not give.
+receive 1, send 3: the next receive returns 3 before 2). A model that runs over the
+simulator therefore needs `Reordering = TRUE`; `Reordering = FALSE` is an in-order path
+the simulator does not give. That is not the whole match: the simulator also has the
+store-full drop below, which `Link` covers only under the `arbitrary` pattern or with a
+store that never fills.
 `SpecSlotStore` in `MCLinkPatterns` shows the slot order (`MCLinkSlotStoreReorders.cfg`
 fails `SurvivorsInOrder`, as the code does).
 
@@ -163,7 +165,10 @@ in force when it gets it (`Take`). A busy mutex is no `Take`: the old setting st
 force and the record waits, so a send may act on the old setting after the change
 (`test_network_simulator_take_setting_does_not_wait`). `SendUsesForce` holds that every
 send acts on the setting last asked for unless a change was still waiting at that send;
-`NoInFlightDrop` that a change removes nothing already in flight.
+`NoInFlightDrop` that a change removes nothing already in flight. Both are safety only:
+`Take` has no fairness, so the model does not check that a waiting change is ever put in
+force (the code puts it in force at the first uncontended pass, which no model here
+promises).
 
 | Invariant | Pass case | Reversed witness (`Defect`) |
 |---|---|---|
