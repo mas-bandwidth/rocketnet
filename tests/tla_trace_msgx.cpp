@@ -100,6 +100,7 @@ struct msgx_walk_t
     bool on_closed;
     int attempts;
     int early_closes;           // closes of a slot still open: the plant firing
+    int registrations;          // sockets the walk registered or had refused
 };
 
 static int msgx_address_id( const msgx_walk_t & walk, const struct rocketnet_address_t * address )
@@ -419,10 +420,21 @@ static std::string msgx_do( msgx_walk_t & walk, const msgx_op_t & op, tla_random
         (void) rocketnet_msgx_socket_table_mark( table, &walk.address[op.a] );
         if ( table->counts.opened != opened )
         {
-            // the caller registers the new socket with its receive poller
+            // the caller registers the new socket with its receive poller;
+            // every eighth the poller refuses it and main reports it dead
+            // (rocketnet_server_msgx_mark; RNMsgxSocketTable Mark). A count,
+            // not a draw, so the walk's draws are not shifted by it
             const int s = rocketnet_msgx_socket_table_lookup( table, &walk.address[op.a] );
-            const msgx_event_t e = { table->slots[s].fd, s, rocketnet_msgx_word_generation( table->slots[s].word.load() ), op.a };
-            walk.poller.push_back( e );
+            const uint32_t g = rocketnet_msgx_word_generation( table->slots[s].word.load() );
+            if ( ( ++walk.registrations % 8 ) == 0 )
+            {
+                rocketnet_msgx_socket_table_report_dead( table, s, g );
+            }
+            else
+            {
+                const msgx_event_t e = { table->slots[s].fd, s, g, op.a };
+                walk.poller.push_back( e );
+            }
         }
         return tla_sequence( { tla_int( op.a ) } );
     }
@@ -694,6 +706,7 @@ static int trace_msgx( uint64_t seed, int steps, const char * out )
     walk.on_closed = false;
     walk.attempts = 0;
     walk.early_closes = 0;
+    walk.registrations = 0;
     if ( !msgx_pick_addresses( walk ) )
     {
         fprintf( stderr, "tla_trace msgx: no addresses with the wanted homes\n" );

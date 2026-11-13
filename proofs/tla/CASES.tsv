@@ -985,6 +985,7 @@ MCRNMsgxSocketTableBrokenPassCopyBeforeWord.cfg	MCRNMsgxSocketTable.tla	invarian
 MCRNMsgxSocketTableBrokenExhaustionTakesSlot.cfg	MCRNMsgxSocketTable.tla	invariant	NoLeak	check	rnmsgxsockettable	required	-
 MCRNMsgxSocketTableBrokenExhaustionTakesSlotAccounting.cfg	MCRNMsgxSocketTable.tla	invariant	Accounting	check	rnmsgxsockettable	required	-
 MCRNMsgxSocketTableBrokenGenWrap2.cfg	MCRNMsgxSocketTable.tla	invariant	NoCrossClient	check	rnmsgxsockettable	required	-
+MCRNMsgxSocketTableBrokenStaleReport.cfg	MCRNMsgxSocketTable.tla	invariant	OpenWatched	check	rnmsgxsockettable	required	-
 MCRNMsgxAddressIndex.cfg	MCRNMsgxAddressIndex.tla	pass	-	check	rnmsgxsockettable	required	-
 MCRNMsgxAddressIndexBrokenDeleteWithoutShift.cfg	MCRNMsgxAddressIndex.tla	invariant	LookupFindsOpen	check	rnmsgxsockettable	required	-
 MCTraceRNMsgxSocketTableSelf.cfg	MCTraceRNMsgxSocketTableSelf.tla	pass	-	check	rnmsgxsockettable	required	-

@@ -99,7 +99,7 @@ LAYERS = {
             "RetireDead": "one slot of a sweep call's dead-report loop, taken whole as SweepCall",
             "Close": "one entry of a sweep call's close loop, taken whole as SweepCall",
         },
-        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired"],
+        "reach": ["IndexProbed", "IndexWrapped", "Held", "DeadRetired", "RegisterRefused"],
         "steps": 500,
     },
     "msgxsendruns": {
