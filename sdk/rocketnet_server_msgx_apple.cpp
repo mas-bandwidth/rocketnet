@@ -168,7 +168,7 @@ struct rocketnet_server_msgx_receiver_t
     uint8_t padding_1[4096];
 
     // the receive_mutex guards ownership only (the gso transport's receive
-    // triple buffer, proofs/tla/RNGsoHandoff.tla RxPublish and RxClaim)
+    // triple buffer, proofs/tla/RNGsoHandoff.tla RxPublish and RxClaim at 5a2dbf403)
     rocketnet_platform_mutex_t mutex = {};
     struct rocketnet_server_msgx_recv_bank_t * worker_bank;
     struct rocketnet_server_msgx_recv_bank_t * ready_bank;
@@ -945,7 +945,7 @@ static void rocketnet_server_msgx_worker( rocketnet_platform_thread_t *, void * 
 // receive
 // ---------------------------------------------------------------------------
 
-// proofs/tla/RNGsoHandoff.tla RxPublish: the filled bank becomes ready only
+// proofs/tla/RNGsoHandoff.tla RxPublish (at 5a2dbf403): the filled bank becomes ready only
 // when none waits and a free bank exists; otherwise the worker keeps it
 static bool rocketnet_server_msgx_publish_receive( struct rocketnet_server_msgx_receiver_t * receiver )
 {
@@ -1139,7 +1139,7 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     msgx->process_packets.num_packets = 0;
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
 
-    // proofs/tla/RNGsoHandoff.tla RxClaim and RxConsume: a retained tail is
+    // proofs/tla/RNGsoHandoff.tla RxClaim and RxConsume (at 5a2dbf403): a retained tail is
     // consumed before a newer ready bank is claimed
     if ( receiver->main_cursor >= receiver->main_bank->num_packets )
     {

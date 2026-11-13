@@ -139,6 +139,13 @@ LAYERS = {
                              "gets there, and Done is no call of the code"},
         "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
     },
+    "receive-handoff": {
+        "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],
+        "untraced": {},
+        "ghost": {"late": "history for DeliveredByNextCall: a call that returned less than was committed before it; the code "
+                          "keeps no such word"},
+        "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
+    },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
         "untraced": {
@@ -270,7 +277,7 @@ SHARDS = [
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
     ["ackapply", "bank", "receive"],
-    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks"],
+    ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
 ]
 
 STEPS = 400

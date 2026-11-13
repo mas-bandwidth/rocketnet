@@ -505,4 +505,9 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "load-delivery-delay-column" :group "after-v1-1-landing" :area "tools"
+   :title "A delivery-delay column in the load report, per transport"
+   :text "The receive handoffs of gso, xdp and portable held every datagram for one more server update than io_uring (measured 2026-11-13 at a steady mean of 1.49 updates against 0.52), and no load run showed it: bin/load reports update times, drops and counters, never how many server updates a message waited. Add a column to the load report: for each message, the updates between its send and the receive_messages call that returned it, as mean, p99 and max per transport, so a handoff that adds an update shows in every load run as well as in tests/functional/receive_latency.cpp."
+   :date "2026-11-13" :origin "Receive handoff latency fix, the owner's ask for input checks that do not regress")
  ))

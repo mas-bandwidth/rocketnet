@@ -7,7 +7,9 @@ its three receive buffers, its three transmit banks, its worker's send step
 sends, then drains) with a full socket and the shutdown retry bound, and
 stop, join and free. Every queue has its own banks, lane mutex and worker,
 so the model holds for each; the worker's poll and main's eventfd wake are
-folded. The per-queue staging layout is `RNGsoQueueBankLayout.tla`. The
+folded. The per-queue staging layout is `RNGsoQueueBankLayout.tla`; the
+receive handoff alone, with its delivery property `DeliveredByNextCall`, is
+`RNReceiveHandoff.tla` (`README-RNReceiveHandoff.md`). The
 module header gives the actions and the code each one stands for;
 `proofs/tla/COVERAGE.tsv` (row `server-gso-handoff`) maps them to the
 functions.
@@ -15,8 +17,12 @@ functions.
 ## What it checks
 
 - `RxOneOwner`, `TxOneOwner`, `TxQueuesDistinct`, `FreeIsEmpty`: every
-  buffer and bank has one owner, and a free one is empty.
-- `NoPublishWhileHeld`: the buffer main holds never changes under it.
+  buffer and bank has one owner (main and the receive worker may share
+  one, and a buffer is free exactly while they do), and a free one is
+  empty.
+- `NoPublishWhileHeld`: main reads only below a committed count, the
+  worker writes only at or past it, and a buffer the worker has left (main's,
+  or the unread tail) keeps the final count main was given.
 - `RxBacksOff`: after a stalled pass the receive worker sleeps.
 - `SentOrHeld`, `ExitSentAll`: every staged packet is sent, still held, or
   dropped and counted in `SEND_DROPPED`, for lack of socket room after
@@ -29,8 +35,8 @@ functions.
   below a sent packet is a counted drop.
 - `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
 - `RxAccounted`: every datagram the receive worker staged was consumed by
-  main or is still banked (main's unread tail, the ready buffer, the
-  worker's buffer), and after `Join` every one not consumed is in
+  main or is still banked (the tail's unread part, main's buffer past its
+  cursor, the worker's buffer when it is another), and after `Join` every one not consumed is in
   `rxStopped`, the `RECEIVE_DROP_STOPPED` count. `StopCount` is that count,
   made in the code by the first `rocketnet_server_gso_stopped` call that
   finds the worker exited (`rocketnet_server_gso_count_stopped`); destroy
@@ -39,7 +45,7 @@ functions.
   the same value, without the interleavings of a separate step against
   `SocketFills` and `SocketDrains` (a separate step took the main case past
   the 110-second budget). Main claims and consumes nothing once stop is
-  asked (`RxClaim`, `RxConsume`; `rocketnet_server_gso_receive_packets`
+  asked (`RxCall`; `rocketnet_server_gso_receive_packets`
   returns at `stopping`), so nothing is counted twice.
 - `RefusalsBounded`, `StopJoinsBeforeFree`, and the liveness properties
   `StopCompletes` and `ShutdownCompletes`.
@@ -73,25 +79,47 @@ every place a hard error can land.
 
 ## Cases
 
-The 2026-11-13 run on amd-1 (native Linux, shared with other work), the
-pinned `tlacheck` and TLC jar, one shard per case, two workers.
+The 2026-11-13 run on amd-2 (native Linux, the fourteen cases of the two
+stale groups at once), the pinned `tlacheck` and TLC jar, one shard per
+case, two workers; the records in `RUNS.tsv`. The receive half changed that
+day (the worker commits its count at the end of each pass and main reads
+the worker's buffer in place), which took the main case from 4762152
+distinct states to 4056648.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 4762152 | 77.7 | Every invariant, five datagrams, four staged packets. |
-| `MCRNGsoHandoffLive.cfg` | pass | 12430 | 17.2 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
-| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 3 | 0.8 | `PublishWhileHeld = TRUE`. |
-| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 2502 | 1.9 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
-| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 45970 | 7.8 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
-| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 413 | 1.2 | `NoBackoff <- TRUE`. |
-| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 5302 | 1.1 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
-| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 12600 | 4.1 | `BoundOnQuitOnly <- TRUE`. |
-| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.9 | `MainBlocks = TRUE`: main waits on the lane mutex. |
-| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 571 | 0.8 | Reachability: a counted hard-error drop before shutdown. |
-| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 571 | 1.3 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
-| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 1572 | 1.4 | `CountTail <- FALSE`: the stop count forgets the unread tail of main's buffer. |
+| `MCRNGsoHandoff.cfg` | pass | 4056648 | 45.4 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoffLive.cfg` | pass | 9944 | 10.6 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
+| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 2.1 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
+| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 3952 | 4.2 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
+| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 61578 | 11.5 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
+| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 181 | 2.5 | `NoBackoff <- TRUE`. |
+| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 7699 | 3.2 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
+| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 5.3 | `BoundOnQuitOnly <- TRUE`. |
+| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 1.8 | `MainBlocks = TRUE`: main waits on the lane mutex. |
+| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 2.5 | Reachability: a counted hard-error drop before shutdown. |
+| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 2.1 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5140 | 3.4 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
 
 ## Counterexamples checked against the code (2026-11-11)
+
+- **PublishWhileHeld (2026-11-13).** The worker stages one datagram in
+  the buffer it shares with main and, at the pass's end, commits it and
+  moves to the free buffer (main has started on the shared one); with
+  the switch it then appends a second datagram to main's buffer, past
+  the committed count. In the code the worker stages only into
+  `rocketnet_server_gso_worker_buffer( queue )`, the buffer
+  `handoff.worker` names, and that index changes only in
+  `rocketnet_receive_handoff_commit` under the mutex, to the free
+  buffer, so the step the switch adds has no code.
+- **StopTail (2026-11-13).** Three datagrams arrive over three passes
+  and main takes one per call (`RxCall(1)`, a budget that cuts the
+  call), so the second call makes the buffer holding datagrams 2 and 3
+  the tail with datagram 3 unread; stop is asked, both workers exit, and
+  `Join` makes the stop count without the tail, one short of `arrived`.
+  In the code `rocketnet_server_gso_count_stopped` adds
+  `tail_end - tail_cursor` to `receive_dropped_stopped`; dropping that
+  term is the reversal.
 
 - **ReachErrorDropRunning.** One packet is staged, main publishes it, the
   worker takes the bank and sends it; the kernel refuses the one message

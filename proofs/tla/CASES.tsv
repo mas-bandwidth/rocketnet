@@ -1066,3 +1066,5 @@ MCRNIocpSendLanesBrokenOwnerInvert.cfg	MCRNIocpSendLanes.tla	invariant	OnlyOwner
 MCRNIocpEndpoints.cfg	MCRNIocpEndpoints.tla	pass	-	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenRepostOnPoster.cfg	MCRNIocpEndpoints.tla	invariant	OnOwnerSocket	check	rniocpendpoints	required	-
 MCRNIocpEndpointsBrokenCancelSocketZero.cfg	MCRNIocpEndpoints.tla	temporal	EveryWorkerExits	check	rniocpendpoints	required	-
+MCRNReceiveHandoff.cfg	MCRNReceiveHandoff.tla	pass	-	check	rnreceivehandoff	required	-
+MCRNReceiveHandoffBrokenReadOnlyLeft.cfg	MCRNReceiveHandoff.tla	invariant	DeliveredByNextCall	check	rnreceivehandoff	required	-

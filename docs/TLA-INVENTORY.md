@@ -53,7 +53,7 @@ revision under review.
 | rtt minimum tree layout | `RNRttTreeLayout` | every tree node the minimum of its children, the root the minimum positive sample |
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
-| transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNGsoRecvFill`, `RNGsoRecvWalk`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives, and no GSO receive queue starved by the queues before it |
+| transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNReceiveHandoff`, `RNGsoRecvFill`, `RNGsoRecvWalk`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives, and no GSO receive queue starved by the queues before it |
 `RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
 recorded results are historical, and the shipped worker is modeled by
 `RNRioWorker`.

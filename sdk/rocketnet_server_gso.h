@@ -397,6 +397,9 @@ bool rocketnet_server_gso_test_worker_handoff();
 // StopCount: what is still banked at stop is counted RECEIVE_DROP_STOPPED
 // once every worker has exited, and main takes nothing after stop.
 bool rocketnet_server_gso_test_stop_counts_unreceived();
+// The receive delivery check (sdk/rocketnet_receive_delivery_check.h): every
+// receive call returns every datagram a worker pass banked before it began.
+bool rocketnet_server_gso_test_receive_delivery();
 // A refused sendmmsg: an errno other than a full socket's drops the one
 // refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();
@@ -455,6 +458,41 @@ struct rocketnet_server_gso_test_send_lane_t
     size_t bank_bytes;                                  // the bytes of each bank's slots
 };
 struct rocketnet_server_gso_t * rocketnet_server_gso_test_open_slots( int num_queues, int send_slots );
+
+// The receive handoff's trace seams (tests/tla_trace_receive_handoff.cpp,
+// proofs/tla/RNReceiveHandoff.tla), on queue 0 of a test_open fixture.
+// test_receive_bank appends count datagrams to the worker's buffer, each
+// carrying its id (first, first + 1, ...) in its first four bytes, as a
+// worker pass stages them; false when the buffer has no room for them all.
+// test_receive_end_pass ends the pass as the worker does (it commits a buffer
+// with results); true when the worker moved or had nothing to commit.
+// test_receive_call is one rocketnet_server_gso_receive_packets with the
+// per-update budget cut to budget, and with the receive mutex held by the
+// caller's side when busy, so main's try-acquire fails; it returns how many
+// datagrams the call gave and their first id in *first, or -1 when their ids
+// are not consecutive. test_receive_state reads the handoff as the queue
+// holds it.
+struct rocketnet_server_gso_test_receive_state_t
+{
+    int worker;
+    int main;
+    int tail;
+    int free;
+    uint32_t committed[3];
+    uint32_t main_cursor;
+    uint32_t main_limit;
+    uint32_t tail_cursor;
+    uint32_t tail_end;
+    uint32_t count[3];  // each buffer's num_packets
+    uint32_t first[3];  // the id of each buffer's first datagram, 0 when it holds none
+    bool consecutive;   // every buffer's ids run on from its first
+    uint64_t lock_busy; // the queue's receive_lock_busy
+    int capacity;       // the per-update budget of a call that cuts none
+};
+bool rocketnet_server_gso_test_receive_bank( struct rocketnet_server_gso_t * gso, uint32_t first, int count );
+bool rocketnet_server_gso_test_receive_end_pass( struct rocketnet_server_gso_t * gso );
+int rocketnet_server_gso_test_receive_call( struct rocketnet_server_gso_t * gso, int budget, bool busy, uint32_t * first );
+void rocketnet_server_gso_test_receive_state( struct rocketnet_server_gso_t * gso, struct rocketnet_server_gso_test_receive_state_t * state );
 
 // The bytes rocketnet_server_gso_test_open holds for num_queues queues (the
 // transport and each queue's send banks and receive buffers), for the
