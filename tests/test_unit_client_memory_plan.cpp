@@ -34,7 +34,9 @@
 #define check rocketnet_unit_check
 
 // the plan cases need the development-only memory plan seam; the msgx case
-// at the end is pure and runs in every build
+// at the end needs no seam and compiles in a production build too (the
+// build lists this file as development-only today; tests review row TM167's
+// CMake half decides whether it joins the production suite)
 
 #if ROCKETNET_DEV
 struct plan_counting_allocator_t
@@ -101,7 +103,8 @@ static void plan_make_token( uint8_t * token )
 extern void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable );
 
 // a one-family create allocates exactly the plan less the race, and the full
-// plan is strictly more: a plan that over-counts any part fails the first
+// plan is strictly more: a plan that over-counts any part but the race block
+// fails the first (the race is checked only by the second)
 static void client_memory_plan_check( const struct rocketnet_client_transport_config_t * config, uint64_t plan_bytes, uint64_t allocated )
 {
     const uint64_t one_family = rocketnet_client_transport_required_memory_one_family( config, "portable" );

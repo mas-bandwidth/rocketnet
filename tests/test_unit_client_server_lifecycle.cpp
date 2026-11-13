@@ -2471,6 +2471,7 @@ static void test_message_receive_pumped_in_order()
 
     lifecycle_world_t world;
     lifecycle_world_create( &world, NUM_SENDERS, NUM_SENDERS );
+    lifecycle_unreliable_messages_per_update = 0;
 
     int index[NUM_SENDERS];
     for ( int c = 0; c < NUM_SENDERS; c++ )

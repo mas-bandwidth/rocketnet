@@ -246,7 +246,8 @@ static rocketnet_server_transport_t * mass_disconnect_server_transport( rocketne
 
 // the datagrams the hub refused at the server's loopback endpoint for want of
 // room (rocketnet_loopback_endpoint_dropped): the endpoint is read by swapping
-// the transport's I/O out and straight back
+// the transport's I/O out and straight back, so call it only between server
+// updates (no send or receive is running then)
 static uint64_t mass_disconnect_server_endpoint_dropped( rocketnet_server_t * server )
 {
     rocketnet_server_transport_t * transport = mass_disconnect_server_transport( server );

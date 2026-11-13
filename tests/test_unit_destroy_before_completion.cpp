@@ -15,12 +15,15 @@
 // clients: no socket and no thread; the endpoints' time is an argument
 // starting at 1000.0. An early destroy is the one reader of a clock here: it
 // reads rocketnet_platform_time once for its bounded wait's deadline
-// (sdk/rocketnet_api.cpp) and returns on its first poll, because the loopback
-// stop is always complete; a poll that did not complete would wait on that
-// clock and then log the "kept" error the cases count. On Linux development
-// builds the suite links that clock to a synthetic tick
-// (tests/test_unit_endpoint.cpp, -Wl,--wrap); elsewhere it is the platform's
-// monotonic clock. Each early destroy also fires its one assert
+// (sdk/rocketnet_api.cpp) and, where the stop takes at once, returns on its
+// first poll, because the loopback stop is then complete; a poll that did not
+// complete would wait on that clock and then log the "kept" error the cases
+// count. The refused-stop case is the exception: server destroy asks for the
+// stop again a tenth of a second (on that clock) after the refusal, polling
+// with a 1 ms platform sleep in between. On Linux development builds the
+// suite links that clock to a synthetic tick (tests/test_unit_endpoint.cpp,
+// -Wl,--wrap); elsewhere it is the platform's monotonic clock, so there that
+// case waits about 0.1 s of real time (no clock seam reaches destroy's wait). Each early destroy also fires its one assert
 // (ROCKETNET_ASSERTS builds), counted by the recorder below; a destroy after
 // completion fires none. This file covers the loopback/step-driven path. The
 // threaded path, where an early destroy normally keeps the object and a
