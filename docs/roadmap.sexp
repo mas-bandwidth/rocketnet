@@ -463,7 +463,7 @@
 
   (item "xdp-martian-sources" :group "review-v1-2" :area "rocketnet"
    :title "XDP accepts sources the kernel stack drops as martian, and does not verify checksums on receive"
-   :text "sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537), and the kernel fast path does not check the version nibble (server_xdp.c about 552). The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums."
+   :text "sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537). (The version nibble half is closed: the kernel program passes an IPv4 or IPv6 header whose version is not the ethertype's own, as the reader refuses it.) The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums."
    :date "2026-11-13" :origin "Review before v1.2.0, XDP reader, finding X3")
 
   (item "xdp-receive-stopped-uncounted" :group "review-v1-2" :area "rocketnet"
