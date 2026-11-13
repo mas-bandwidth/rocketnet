@@ -660,7 +660,10 @@ bool rocketnet_platform_send_errnos_count( rocketnet_platform_send_errnos_t * er
     const bool first = rocketnet_platform_atomic_add_u64( &errnos->counts[call][kind], 1 ) == 0;
     if ( first && kind == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER )
     {
-        rocketnet_platform_atomic_add_u64( &errnos->other_error, (uint64_t) (unsigned int) error );
+        // the first OTHER errno recorded across every call is kept: stored
+        // only while the field is still 0, so a later call's first OTHER
+        // failure leaves it (two at once: whichever stores first)
+        (void) rocketnet_platform_atomic_cas_u64( &errnos->other_error, 0, (uint64_t) (unsigned int) error );
     }
     return first;
 }

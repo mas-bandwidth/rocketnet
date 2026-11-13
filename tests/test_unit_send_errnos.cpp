@@ -64,3 +64,27 @@ static void test_send_errnos_counted_by_call()
 }
 
 REGISTER_UNIT_TEST( test_send_errnos_counted_by_call );
+
+// other_error holds the errno of the first OTHER failure on the socket,
+// across every call: two calls that each fail first with an OTHER errno keep
+// the first one's errno. Before, each call's first OTHER failure added its
+// errno, so sendto ENOTSUP then sendmsg_x EBADF left their sum, naming
+// neither.
+static void test_send_errnos_keep_the_first_other_errno_across_calls()
+{
+    rocketnet_platform_send_errnos_t errnos;
+    memset( &errnos, 0, sizeof( errnos ) );
+
+    rocketnet_unit_check( rocketnet_platform_send_errno_kind( ENOTSUP ) == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER );
+    rocketnet_unit_check( rocketnet_platform_send_errno_kind( EBADF ) == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER );
+
+    rocketnet_unit_check( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ENOTSUP ) );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EBADF ) );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, EBADF ) );
+
+    rocketnet_unit_check( rocketnet_platform_atomic_load_u64( &errnos.other_error ) == (uint64_t) ENOTSUP );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_read( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ROCKETNET_PLATFORM_SEND_ERRNO_OTHER ) == 1 );
+    rocketnet_unit_check( rocketnet_platform_send_errnos_read( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, ROCKETNET_PLATFORM_SEND_ERRNO_OTHER ) == 1 );
+}
+
+REGISTER_UNIT_TEST( test_send_errnos_keep_the_first_other_errno_across_calls );
