@@ -32,6 +32,7 @@ static const char * const source_audit_cases[] = {
     "test_tools_never_cast_public_client_to_internal",
     "test_xdp_transport_host_every_counter_has_a_case",
     "test_example_send_safety_every_example_and_snippet",
+    "test_example_send_safety_game_thread_start_is_held_to_its_null_test",
     "test_functional_cases_have_no_empty_bodies",
     "test_sequence_buffers_manifest_matches_source",
     "test_platform_spin_lock_backoff_source",

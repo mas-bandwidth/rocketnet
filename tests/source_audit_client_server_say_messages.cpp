@@ -222,6 +222,7 @@ static const allowlist_row_t allowlist[] = {
     { F_S, "rocketnet_message_server_send_packets", "SEND PACKETS" },
     { F_S, "rn_message_object_send_packets", "SEND PACKETS" },
     { F_S, "send_packets", "SEND PACKETS" },
+    { F_S, "RNWriterFinish.tla SendPackets", "SEND PACKETS" },
     { F_O, "rn_message_object_send_packets", "SEND PACKETS" },
 };
 

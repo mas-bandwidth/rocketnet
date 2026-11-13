@@ -4134,6 +4134,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     g_lifecycle_delayed_link = &delayed_link;
     server_msg_obj->link.acked = lifecycle_delayed_link_acked;
     server_msg_obj->link.acked_connection = lifecycle_delayed_link_acked_connection;
+    server_msg_obj->link.acked_connection_ids = NULL;   // the wrapper reshapes the acked batch, so it tags it entry by entry
     server_msg_obj->link.finish_packet = lifecycle_delayed_link_finish_packet;
 
     // --- Generation 1 on slot 0 (client_id 0x5101, tag 0xD1) ---

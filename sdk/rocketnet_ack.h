@@ -127,6 +127,25 @@ static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
 // the named run, so acknowledged and never-written sequences cost nothing.
 
 #define ROCKETNET_SENT_BITMAP_WORDS ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 64 )
+
+// the most extra ranges a block may carry and still be remembered as the
+// last applied (block_memo); a block with more is always applied in full
+#define ROCKETNET_ACK_BLOCK_MEMO_RANGES 4
+
+// the last block applied in full (rocketnet_ack_endpoint_t block_memo): the
+// block's fields, the high-water mark it was applied at, and the unknown
+// count it added
+struct rocketnet_ack_block_memo_t
+{
+    uint64_t largest;
+    uint64_t highest_sequence;
+    uint64_t unknown;
+    uint32_t first_range_length;
+    uint8_t valid;
+    uint8_t num_ranges;
+    uint16_t range_gap[ROCKETNET_ACK_BLOCK_MEMO_RANGES];
+    uint16_t range_length[ROCKETNET_ACK_BLOCK_MEMO_RANGES];
+};
 #define ROCKETNET_RECEIVED_WRITTEN_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
@@ -352,6 +371,16 @@ struct rocketnet_ack_endpoint_t
     // the history entry it names (an empty or non-positive entry reads as
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
+
+    // update thread only: the last block process_block applied in full, when
+    // that apply deferred nothing (batch full) and nothing has been sent
+    // since. Applying it again would visit no record (every unacknowledged
+    // slot it names was cleared) and add only the same unknown count, so
+    // process_block adds that count and skips the walk
+    // (proofs/tla/SessionAcks.tla RecvAckRepeat). A cache, not state: after
+    // the record rings, so state_equal and the reset's span never read it;
+    // the reset and every recorded send clear valid.
+    struct rocketnet_ack_block_memo_t block_memo;
 };
 
 #if ROCKETNET_HISTORY_PACKETS == 4096
@@ -446,6 +475,10 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // record stays unacknowledged, counted on batch_full, and a later block --
 // every block restates the recent interval -- surfaces it into a drained
 // batch. Returns the number of newly-acknowledged packets.
+//
+// A block equal to the last one applied in full, with nothing sent since and
+// nothing deferred by that apply, only adds that apply's unknown count: the
+// state it leaves is the state the full apply would (block_memo).
 
 int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
                                           const struct rocketnet_ack_block_t * block,
@@ -453,6 +486,16 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
                                           uint64_t * unknown_sequence_counter,
                                           uint64_t * batch_full_counter );
+
+// process_block without the block memo: always the full apply, and the memo
+// neither read nor written. The reference the memo is tested against.
+
+int rocketnet_ack_endpoint_process_block_full( struct rocketnet_ack_endpoint_t * endpoint,
+                                               const struct rocketnet_ack_block_t * block,
+                                               double time,
+                                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                               uint64_t * unknown_sequence_counter,
+                                               uint64_t * batch_full_counter );
 
 // The per-connection statistics recompute, the reference's shape: rtt
 // is the minimum over positive rtt history, jitter their mean deviation from it,
@@ -493,6 +536,64 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
 // game once per update. Storage is allocated once at create, to the
 // deployment's own max_clients.
 
+// The deferred apply (proofs/tla/RNAckApplyPhase.tla). A server transport
+// turns it on (rocketnet_server_acks_defer); a bare protocol keeps the
+// inline apply. Deferred, the receive loop queues each packet's validated
+// block on its client's pending chain instead of applying it, and the apply
+// runs per client: on the game's job threads between the receive and the
+// rest of update (rocketnet_server_acks_apply_client), or on main for every
+// client nobody took (rocketnet_server_acks_close). Why the result is the
+// inline apply's, exactly:
+//
+//   - a block touches only its own client's sent side (the endpoint's sent
+//     records, bitmaps, stats and rtt), its client's id segment and its
+//     client's two counters; record_received touches only the received side,
+//     so splitting a packet's two halves across the phases changes nothing;
+//   - a client's blocks apply in arrival order, and anything the receive
+//     loop does to a client's sent side (a recorded send, a slot reset)
+//     first settles that client's queued blocks on main
+//     (rocketnet_server_acks_settle), so each endpoint sees blocks and sends
+//     in the order the inline apply did;
+//   - the counters are sums, and the batch is gathered in arrival order with
+//     each entry's connection id read when its packet arrived.
+//
+// Ownership, by phase (acks->phase):
+//
+//   CLOSED     main owns every endpoint (the fill's start/finish own their
+//              own client's send side, as before). Nothing is queued.
+//   RECEIVING  main owns everything; blocks queue; settle applies in place.
+//   OPEN       the client's sent side, pending chain, id segment and
+//              counters belong to whichever thread took the client's claim
+//              (one atomic exchange, so one taker however many ask); main
+//              touches no endpoint and nothing else may run on the server.
+//   then close (main, after the game's join): CLOSED again.
+
+enum
+{
+    ROCKETNET_SERVER_ACKS_CLOSED = 0,
+    ROCKETNET_SERVER_ACKS_RECEIVING = 1,
+    ROCKETNET_SERVER_ACKS_OPEN = 2
+};
+
+// one received block, in arrival order: the block's fields (its ranges in
+// the shared range store), the client and connection it arrived for, and
+// where its newly acked ids landed in that client's segment
+
+struct rocketnet_server_ack_pending_t
+{
+    uint64_t largest;
+    uint64_t connection_id;
+    uint32_t first_range_length;
+    int num_ranges;
+    int range_offset;
+    int client_index;
+    int next;                                   // the client's next entry, -1 at its tail
+    int ids_offset;
+    int ids_count;
+};
+
+struct rocketnet_server_ack_client_t;
+
 struct rocketnet_server_acks_t
 {
     void * context;
@@ -503,6 +604,19 @@ struct rocketnet_server_acks_t
     int * acked_client_index;
     uint64_t * acked_packet_ids;
     struct rocketnet_ack_endpoint_t * endpoints;
+
+    // the deferred apply, NULL and 0 while the apply is inline
+    int deferred;
+    int phase;
+    double pending_time;                        // this update's time, every queued block's
+    int num_pending;
+    int pending_capacity;
+    struct rocketnet_server_ack_pending_t * pending;
+    int num_ranges;
+    int ranges_capacity;
+    uint16_t * ranges;                          // gap, length pairs
+    struct rocketnet_server_ack_client_t * clients;
+    uint64_t * segments;                        // max_clients x ROCKETNET_SENT_PACKET_BUFFER_SIZE ids
 };
 
 struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, int max_clients );
@@ -512,5 +626,51 @@ void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks );
 // resets one slot's endpoint when a client connects into it
 
 void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, int client_index );
+
+// the deferred apply's storage, beside rocketnet_server_acks_allocation_bytes;
+// 0 for a count out of range
+
+uint64_t rocketnet_server_acks_defer_allocation_bytes( int clients );
+
+// turns the deferred apply on, allocating its storage; false (nothing
+// allocated, the apply stays inline) when an allocation fails
+
+bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks );
+
+// main, at the receive loop's start: the batch empties and blocks queue
+
+void rocketnet_server_acks_begin_receive( struct rocketnet_server_acks_t * acks, double time );
+
+// one received packet's validated block for client_index, tagged with
+// connection_id. Inline: applied now into the batch, each new entry tagged
+// (acked_connection_ids may be NULL). Deferred: queued; when the queue is
+// full, everything queued is applied and gathered first, on main.
+
+void rocketnet_server_acks_receive_block( struct rocketnet_server_acks_t * acks, int client_index,
+                                          const struct rocketnet_ack_block_t * block, double time,
+                                          uint64_t connection_id, uint64_t * acked_connection_ids,
+                                          uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter );
+
+// main, never while OPEN: applies client_index's queued blocks now. Called
+// before anything the receive loop does to that client's sent side.
+
+void rocketnet_server_acks_settle( struct rocketnet_server_acks_t * acks, int client_index );
+
+// main, at the receive loop's end: OPEN. Every queued client's claim is set.
+
+void rocketnet_server_acks_open( struct rocketnet_server_acks_t * acks );
+
+// any thread while OPEN: takes client_index's claim and applies its queued
+// blocks. Returns the blocks applied (0 when there were none or another
+// caller took them).
+
+int rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, int client_index );
+
+// main, after the game's join: applies every client still claimed, gathers
+// the ids into the batch in arrival order with their tags, adds the
+// per-client counters, and CLOSED.
+
+void rocketnet_server_acks_close( struct rocketnet_server_acks_t * acks, uint64_t * acked_connection_ids,
+                                  uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter );
 
 #endif // ROCKETNET_SDK_ROCKETNET_ACK_H

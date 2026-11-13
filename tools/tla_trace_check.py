@@ -79,6 +79,92 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "bank": {
+        "modules": ["RNUringQueueBankLayout.tla", "TraceRNUringQueueBankLayout.tla"],
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; the walk's length is "
+                             "under MaxFlush, so it never gets there"},
+        "reach": ["LastSlot"],
+    },
+    "gather": {
+        "modules": ["RNSendGatherCall.tla", "TraceRNSendGatherCall.tla"],
+        "untraced": {},
+        "reach": ["SegCapEdge", "ByteCapEdge"],
+        # seven steps a bank (six stages and the call): 100 calls a seed
+        "steps": 700,
+    },
+    "fillphase": {
+        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+        "untraced": {
+            "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
+            "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
+            "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
+                    "so it never gets there",
+        },
+        # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
+        # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
+        # steps (one look a line), so a walk much shorter than this finishes none
+        "steps": 240,
+    },
+    "sendreserve": {
+        "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
+        "untraced": {},
+        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
+    },
+    "writerfinish": {
+        "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
+        "untraced": {},
+        # the walk's odd seeds are a staged transport (the first three predicates), its even seeds a buffered one
+        # (the last three): a seed set must hold both kinds
+        "reach": ["SealedAtFinish", "RefusedAtFinish", "NothingForWalk", "RingOpen", "RingQueued", "WalkCarried"],
+    },
+    "ackapply": {
+        "modules": ["RNAckApplyPhase.tla", "TraceRNAckApplyPhase.tla"],
+        "untraced": {},
+        "reach": ["TakenByGameThread", "LeftForFinish", "Chained", "QueuedBehindSettled", "GatheredQueueFull",
+                  "GatheredRangesFull"],
+    },
+    "xdp-gateway-refresh": {
+        "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
+        "untraced": {
+            "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
+        },
+        "reach": ["StagedNewMac"],
+    },
+    "xdp-reply-macs": {
+        "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
+        "untraced": {},
+        "reach": ["Wrapped", "WindowLive"],
+        "steps": 250,
+    },
+    "xdp-replay-marks": {
+        "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
+        "untraced": {
+            "Commit": "the start of reset_keeping, inside the one call the walk makes; the walk takes ResetKeeping, "
+                      "the call whole",
+            "CompactForgetStep": "one iteration of reset_keeping's forget loop, inside the call; ResetKeeping runs it "
+                                 "with the same arithmetic",
+            "CompactMarkStep": "one iteration of reset_keeping's mark loop, inside the call; ResetKeeping runs it "
+                               "with the same arithmetic",
+        },
+        "reach": ["ForgetsFull", "MarksFull", "SomeRefused", "ForgetsKept", "MarksKept"],
+        # an update is up to five forgets, five marks and a commit
+        "steps": 400,
+    },
+    "xdp-receive-ring": {
+        "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
+        "untraced": {},
+        # the staging buffer full, the RX ring full, and a refused flush
+        # (even seeds: a fill ring of exactly the frames)
+        "reach": ["StagingFull", "RxRingFull", "HeldBetweenPasses"],
+    },
+    "xdp-replay": {
+        "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
+        "untraced": {},
+        # a kernel mark for the filter's drop rule to read, a forget the kernel refused, a held greeting
+        "reach": ["KernelMarked", "ForgetRefused", "GreetingHeld"],
+    },
 }
 
 STEPS = 400

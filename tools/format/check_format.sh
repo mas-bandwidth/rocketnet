@@ -36,7 +36,7 @@ if [ $# -eq 0 ]; then
         exit 1
     fi
     list="$(printf '%s\n' "$tracked" \
-        | grep -vE '^(sodium|tests/xdp_host/linux|tests/xdp_host/bpf|tools/format/testdata)/')" || [ $? -eq 1 ]
+        | grep -vE '^(sodium|tests/load/enkiTS|tests/xdp_host/linux|tests/xdp_host/bpf|tools/format/testdata)/')" || [ $? -eq 1 ]
     unlisted=""
     IFS='
 '

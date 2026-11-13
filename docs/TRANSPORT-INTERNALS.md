@@ -26,12 +26,12 @@ Factories, resources and platform decisions stay in the transport layer. The
 transport branches on generic capabilities, never a specific backend identity.
 
 The `transport` config value is an ordered candidate list
-(`rocketnet_transport_ladder_parse`, `sdk/rocketnet_config.cpp`).
+(`rocketnet_transport_order_parse`, `sdk/rocketnet_config.cpp`).
 A known name absent from this build's availability list for the endpoint on
 this platform (`gso` or `io_uring` on macOS, `io_uring` on a client or built without
 liburing) is skipped with one info line. A list with at least
 one name left after skipping is a strict pin: only those candidates are tried,
-in order, and if every one refuses, the ladder is exhausted and connect or
+in order, and if every one refuses, no transport is found and connect or
 start fails. A list whose every name is skipped falls back to the endpoint's
 `auto` order with a warning: one
 fleet-wide line such as `ROCKETNET_SERVER_TRANSPORT=gso` deploys unchanged to
@@ -95,17 +95,17 @@ every OS; `portable` is the fallback:
 
 `loopback` is pin-only on the client too. A native client whose create refuses
 is logged once (`client transport gso refused. trying the next candidate`) and
-the ladder falls to `portable`, logging the grant with the refusals it passed;
+the start falls back to `portable`, logging the grant with the refusals it passed;
 a backend allocation failure ends candidate selection with
 `ROCKETNET_STATUS_OUT_OF_MEMORY`. These backend factories run during public
 `rocketnet_client_connect`, after the token supplies the server address.
 A pin is honoured exactly: a pinned client whose backend refuses makes connect
-return `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, without adding another
+return `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`, without adding another
 candidate to the configured list. A token naming both families selects its
 IPv6 server on a host with IPv6; when a candidate's IPv6 socket is refused,
 at open or at connect (no route to the address is the common case), the same
 candidate is opened again, bound IPv4, for the token's IPv4 server before the
-ladder falls to the next candidate (`client transport portable refused the
+the next candidate is tried (`client transport portable refused the
 IPv6 server ... trying the IPv4 server ...`), and a client granted that way
 races nothing. A refusal for want of memory on either family ends the create
 with `ROCKETNET_STATUS_OUT_OF_MEMORY` (TRANSPORT.md t11 rule 3,
@@ -294,7 +294,7 @@ the create log line names each feature as yes or no.
   pending when the next run posts keeps the stride it was posted with. Every
   frame of a run stays owned until that one completion retires the run. A live
   USO send refused with `WSAEINVAL` or `WSAEOPNOTSUPP` clears the feature and
-  resends the run frame by frame, counted in `ROCKETNET_IOCP_USO_FALLBACKS`.
+  resends the run frame by frame, counted in `ROCKETNET_COUNTER_IOCP_USO_FALLBACKS`.
   `ROCKETNET_SERVER_NUM_XDP_QUEUES` (a Linux AF_XDP setting) is ignored here
   and by RIO: IOCP runs one completion worker plus one send worker and RIO one
   I/O worker, so a client's datagrams are not reordered by several workers
@@ -339,7 +339,7 @@ before they set `SO_REUSEPORT` on it, whether the port is explicit or
 discovered, so a port held by another socket (another server, or any socket
 with `SO_REUSEPORT` set) fails that bind with `EADDRINUSE`, as the `portable`
 bind does: the create logs `failed to bind socket` and returns NULL, a refusal
-the ladder treats like any other. The server's own later sockets set
+the transport list treats like any other. The server's own later sockets set
 `SO_REUSEPORT` before they bind and join its group on the same port. The
 functional cases `test_gso_server_refuses_explicit_port_in_use` and
 `test_uring_server_refuses_explicit_port_in_use`
@@ -357,7 +357,7 @@ creates take the status for the allocations they make, and the xdp umem
 `rocketnet_malloc`, writes it the same way. Every built-in transport (portable,
 msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it so; a native
 extension's create does the same. Any other NULL leaves the status OK and is a
-refusal. The transport ladder falls to the next
+refusal. The transport list falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
 `rocketnet_server_transport_create_internal` (`sdk/rocketnet_server_transport.cpp`)
 and `rocketnet_client_transport_create_internal`
@@ -495,7 +495,7 @@ hands deferred sends to one of three phases; a phase stays worker-owned until
 its sends complete, and four receive banks cross the same bounded ownership seam.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
-`ROCKETNET_RIO_COUNTER_*` counters report sent and received packets, full send
+`ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 three send phases and four receive banks are implemented in
@@ -607,12 +607,12 @@ later call reaps it. A queue count past
 The transport needs liburing at build time (`ROCKETNET_IO_URING`, on by default
 and used when liburing is found). A build without it keeps the registry row with
 no platform: the row is absent from the availability lists and a pin of
-`io_uring` is skipped by the ladder. At run time `rocketnet_server_uring_available()`
+`io_uring` is skipped in the transport list. At run time `rocketnet_server_uring_available()`
 probes once that the kernel accepts the ring, the opcodes and the provided
 buffer ring. Its server rank is 25, after `gso` (20) and before `portable` (30 in development, 50 in production)
 in the Linux `auto` order; it has no client side.
 
-Its counters (`ROCKETNET_SERVER_URING_COUNTER_*`) are packets sent and received,
+Its counters (the public `ROCKETNET_COUNTER_URING_*` rows) are packets sent and received,
 submit syscalls, send drops, receive drops for size, bank overflow and
 unconvertible source, receives ended for want of buffers, multishot
 re-arms, calls that left completions for the next call (`REAP_DEFERRED`), and
@@ -688,7 +688,7 @@ IPv4 does.
 
 The AF_XDP transport serves IPv4 and IPv6 end to end. A server serves one
 family, or both when `rocketnet_server_create` is given an IPv4 and an IPv6
-address on the same port (`ServedFamilies`). The ladder offers `xdp` for one family, and for
+address on the same port (`ServedFamilies`). The transport list offers `xdp` for one family, and for
 both when the two addresses are on one interface. The receive loop dispatches
 each frame on its ethertype through `rocketnet_xdp_frame_receive`
 (`sdk/rocketnet_xdp_frame.h`): IPv4 at its offsets, IPv6 at the 40-byte fixed
@@ -752,7 +752,7 @@ server's port on every local address of the family.
 
 `portable` on OpenBSD cannot clear `IPV6_V6ONLY` and refuses both families
 with `TRANSPORT_FAMILIES_UNSUPPORTED` (`sdk/rocketnet_driver_builtin.cpp`).
-The ladder falls through. Start returns that status when every candidate that
+The next transport is tried. Start returns that status when every candidate that
 opened refused for that reason (`sdk/rocketnet_server_transport.cpp`).
 
 `xdp` serves both from one program when both addresses are on one interface.

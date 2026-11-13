@@ -12,6 +12,7 @@
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
+#include "rocketnet_send_queue.h"
 
 #include <stdio.h>
 
@@ -21,20 +22,42 @@ struct rocketnet_server_socket_t;
 #include <atomic>
 #include <errno.h>
 
-// Claims the next staging slot of an XDP send buffer. A claim at or past limit
-// is refused and counted in refused. The count is 64 bits: a buffer never takes
-// 2^64 claims without a flush, so it never wraps back onto a slot it handed
-// out. Returns the slot index or -1.
+// Claims the next staging slot of an XDP send buffer: the per-queue claim
+// every per-queue send shares (rocketnet_send_queue_claim). A claim at or
+// past limit is refused and counted in refused. Returns the slot index or -1.
 inline int rocketnet_xdp_send_claim( std::atomic<uint64_t> & num_packets, int limit, std::atomic<uint64_t> & refused )
 {
-    const uint64_t index = num_packets.fetch_add( 1 );
-    if ( index >= (uint64_t) limit )
-    {
-        refused.fetch_add( 1, std::memory_order_relaxed );
-        return -1;
-    }
+    return rocketnet_send_queue_claim( num_packets, limit, refused );
+}
 
-    return (int) index;
+// The id of an XDP packet start: unique per queue for the life of the server
+// and naming its queue, ( turn * slots + slot ) * queues + queue, where turn
+// counts the queue's published producer buffers and slot is the claim's slot
+// in the current one. finish and abort recover the queue as id % queues. A
+// fill computes it from its own queue's state, so no counter is shared
+// across queues on the fill path.
+inline uint64_t rocketnet_xdp_send_packet_id( uint64_t turn, int slot, int slots, int queues, int queue )
+{
+    return rocketnet_send_queue_packet_id( turn * (uint64_t) slots + (uint64_t) slot, queues, queue );
+}
+
+// How many times main tries a queue's handoff lock before it puts that
+// queue's publish or drain off to its next call. The xdp thread holds the
+// lock only to move buffer indices, and takes it to claim only when a buffer
+// is ready, so a few tries find it free; main never waits on a worker.
+#define ROCKETNET_XDP_HANDOFF_TRIES 64
+
+// Tries a handoff lock up to tries times; true when try_lock succeeded.
+template <typename TryLock> inline bool rocketnet_xdp_handoff_lock( TryLock try_lock, int tries )
+{
+    for ( int i = 0; i < tries; i++ )
+    {
+        if ( try_lock() )
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // An AF_XDP TX wakeup (sendto on the socket fd) fails hard when no retry can
@@ -219,7 +242,7 @@ inline uint64_t rocketnet_xdp_socket_dropped( uint64_t rx_dropped, uint64_t rx_r
 // condition list both this check and that script derive from. Read-only by
 // contract: it may create and close probe descriptors (an AF_XDP socket
 // never bound, a BPF program never attached) but never changes machine
-// state. create() runs it first and refuses without it; the transport ladder
+// state. create() runs it first and refuses without it; the transport list
 // and the test suite call it directly so a refusal is named without ever
 // touching the committing path.
 
