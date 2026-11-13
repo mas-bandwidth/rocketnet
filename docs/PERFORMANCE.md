@@ -35,8 +35,8 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 | RIO / IOCP | AWS m7i.16xlarge, Windows Server 2025 | Pending | Pending |
 | macOS | Owned Macs; exact models pending | Pending | Pending |
 
-For io_uring, CPU 0 also handles NIC interrupts. The load tool pins the network
-threads in this build; library-managed pinning is a separate pending run.
+For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
+thread to the number of OS CPUs plus its queue index: CPUs 1–2 in these runs.
 The client machine runs 32 unpinned client threads.
 
 ## Results
@@ -50,7 +50,8 @@ It is not the percentage of players that connected. The rows below report
 | --- | --- | ---: | ---: | ---: | ---: |
 | XDP | Peak | 895,000 | 60.5 | 100% | 100% |
 | XDP | Average | 480,000 | 60.5 | 100% | 100% |
-| io_uring | Peak | 900,318 | 60.60 | 100% | 100% |
+| io_uring | Peak | 900,316 | 60.60 | 100% | 100% |
+| io_uring | Average | 480,317 | 60.56 | 100% | 100% |
 
 Network work is reported in milliseconds per frame. The main-thread average
 is elapsed time in its network calls, including waits inside those calls.
@@ -63,15 +64,21 @@ dedicated network threads and do not describe the whole frame's duration.
 | --- | --- | ---: | ---: | ---: | --- | ---: |
 | XDP | Peak | 0.42 | 0.48 | 1.06 | 3.14 / 3.37 / 4.24 | 0.12 |
 | XDP | Average | 0.40 | 0.47 | 0.61 | 1.72 / 1.94 / 2.81 | 0.21 |
-| io_uring | Peak | 0.153 | 0.177 | 0.205 | 2.99 / 3.15 / 4.88 | 0.05 |
+| io_uring | Peak | 0.157 | 0.176 | 0.210 | 3.04 / 3.20 / 4.80 | 0.05 |
+| io_uring | Average | 0.147 | 0.164 | 0.237 | 1.65 / 1.81 / 3.35 | ≈0.08 (derived) |
+
+The io_uring average-load ratio is calculated from the reported rounded means:
+0.147 / 1.81. The other ratios were supplied with their measurement rows.
 
 | Rows | Build | Steady window | Simulated game work |
 | --- | --- | --- | --- |
 | XDP peak / average | Exact measurement commit pending | t=25–55 s | Exact command settings pending |
-| io_uring peak | [d9ff832e5](https://github.com/mas-bandwidth/rocketnet/commit/d9ff832e5), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
+| io_uring peak / average | [6db162421](https://github.com/mas-bandwidth/rocketnet/commit/6db1624212079133de226fe08cb8111bd70e352d), `tests/v1.2/goal-uring`, both machines | t=25–75 s, after joining and warm-up | `--world-ms 0 --game-load 0` |
 
-The io_uring row uses the earlier frame order. A row with game work in the
-corrected order is pending. Raw result logs are pending; the timing percentiles
+The io_uring rows use the earlier frame order with no simulated game work.
+Game-load rows for every transport are pending a rerun: the test's simulated
+world update was serial, corrected in `4fc1ae05b`. Raw result logs are pending;
+the timing percentiles
 are reported values, not recomputed here. Different machines, builds, and
 sampling windows make these workload results unsuitable for ranking transports
 against one another.
@@ -79,7 +86,7 @@ against one another.
 | Measurement still pending | Status |
 | --- | --- |
 | XDP with game threads half busy with game work | Pending |
-| io_uring average load and game threads half busy with game work | Pending |
+| io_uring with game threads half busy with game work | Pending |
 | GSO peak and average | Pending |
 | RIO peak and average | Pending |
 | IOCP peak and average | Pending |
@@ -97,7 +104,8 @@ on the main thread; `--game-load 0.5` requests game work equal to half a frame
 per game thread. Neither is a network timing measurement.
 
 The following direct invocations preserve the io_uring peak row's recorded
-workload arguments at [d9ff832e5](https://github.com/mas-bandwidth/rocketnet/blob/d9ff832e5/tests/load/harden_load.cpp).
+workload arguments at [6db162421](https://github.com/mas-bandwidth/rocketnet/blob/6db1624212079133de226fe08cb8111bd70e352d/tests/load/harden_load.cpp).
+For the average row, change `--load peak` to `--load average`.
 Substitute addresses and interface names. Supply the same Unix timestamp
 `END_AT` to both roles, allowing about 25 seconds for joining and warm-up
 before the 60-second load. Start the server first:
@@ -108,7 +116,7 @@ before the 60-second load. Start the server first:
   --seconds 60 --end-at "$END_AT" --dev "$SERVER_DEV" \
   --warm-seconds 20 --sample-seconds 60 --payload copy --num-xdp-queues 2 \
   --frame-shape space --load peak --game-threads 29 \
-  --pin-first-cpu 3 --pin-net-first-cpu 1 --world-ms 0 --game-load 0 \
+  --pin-first-cpu 3 --world-ms 0 --game-load 0 \
   --space-send wide --space-update split --space-net task > server.log 2>&1
 ```
 
@@ -136,9 +144,9 @@ steady-window samples and the final delivery report. These runs used
 `scripts/harden-pair` with a bench-local wrapper that appended `SF_SERVER_ARGS`;
 the checked-in script alone does not accept the frame and game-thread flags.
 The commands above invoke the binary directly. Exact XDP commands and the
-archived launcher are pending. Later corrected-order runs use
-`--space-split top` on `tests/v1.2/space-frame-load-measure`; that flag is not
-present in the io_uring build above.
+archived launcher are pending. Corrected-order runs select `--space-split top`;
+that option is available in this build but is absent from the recorded
+arguments above. Do not substitute a different frame order when repeating a row.
 
 ## Profiles
 
