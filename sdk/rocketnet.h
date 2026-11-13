@@ -1298,6 +1298,38 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 
 /// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
 /// the first rocketnet_init has set up the clock.
+///
+/// The clock is CLOCK_BOOTTIME on Linux (required: a build whose headers lack
+/// it fails), CLOCK_MONOTONIC on macOS and the other POSIX systems, and
+/// QueryPerformanceCounter on Windows. On Linux and macOS it runs at the rate
+/// the host's time sync (NTP, chrony, timesyncd) sets, the boot-calibrated
+/// rate without one, and counts time the machine was suspended or asleep.
+/// Windows' counter also counts sleep, standby and hibernate (Microsoft,
+/// "Acquiring high-resolution time stamps") but runs at the hardware
+/// oscillator's rate, calibrated at boot and not synchronized to any time
+/// reference. No clock here follows a wall-clock step.
+///
+/// A server whose token_epoch_unix_seconds is 0 checks connect tokens against
+/// the wall clock read once, at its first update, plus the time elapsed on
+/// the clock passed to update since that first update
+/// (ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS).
+/// Passing this clock keeps that check on the wall clock's rate and
+/// across a suspend. What stays the operator's: a wall-clock step after
+/// the first update (the server started before time sync set the clock, or
+/// the clock was set by hand) is not followed until the server restarts; on
+/// Windows the oscillator's rate error accumulates over the server's life
+/// (at 50 ppm, the token checks' 30-second margin, the creation skew or a
+/// default 30-second token lifetime, is used up in about a week: restart
+/// within that); and a game that passes its own clock owns that clock's drift.
+///
+/// After a suspend the clock jumps forward by the time slept. The update
+/// functions take any forward step as elapsed time: it behaves as an outage
+/// of that length. A connection whose other end went silent meanwhile times
+/// out within one timeout of resume (packets already queued for this end are
+/// still taken first). A connect attempt still requesting a cookie or sending
+/// connection requests whose token lifetime has passed ends as expired; from
+/// sending the connection response on, the timeout alone ends it (TRANSPORT.md
+/// t11 rule 6).
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 
