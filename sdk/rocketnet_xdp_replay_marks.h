@@ -133,8 +133,8 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
 // counted since the last reset and zeroes them, so the caller adds them to
 // its own count.
 
-// proofs/tla/RNXdpReplayMarksLayout.tla Commit, CompactForgetStep and
-// CompactMarkStep: each loop writes at kept, never above the index it reads, so
+// proofs/tla/RNXdpReplayMarksLayout.tla ResetKeeping (the call whole), Commit,
+// CompactForgetStep and CompactMarkStep: each loop writes at kept, never above the index it reads, so
 // no entry is overwritten before it is read (LayoutIsQueue)
 static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketnet_xdp_replay_marks_t * marks, const bool * forget_failed, const bool * mark_applied )
 {
@@ -239,7 +239,13 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
 
     if ( !pending )
     {
+        // the trace check's plant (tests/tla_trace_xdp_replay_marks.cpp): the
+        // full test one late, so a new key is written one past the end
+#if defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT )
+        if ( marks->forget_count > marks->capacity )
+#else  // #if defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT )
         if ( marks->forget_count >= marks->capacity )
+#endif // #if defined( ROCKETNET_XDP_REPLAY_MARKS_PLANT )
         {
             marks->refused++;
             return false;
