@@ -245,10 +245,26 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         struct rocketnet_server_replay_slot_mark_t * slot = &marks->slots[i];
 
         // A refused forget for an old mapping must be retried before the
-        // current mapping replaces its seen or marked identity.
+        // current mapping replaces its seen or marked identity. The new
+        // address is still marked at its highest_opened, without taking the
+        // record (proofs/tla/RNServerReplaySlots.tla MarkWhileSkipped,
+        // GreetedSlotHasEntry): its session is greeted after this update's
+        // commit, and a session packet from a source with no entry drops in
+        // the kernel (DROPPED_NO_SESSION) while an older session's stale entry
+        // drops it as replayed. A zero mark the sink refuses holds the
+        // greeting as any other does (rocketnet_xdp_replay_sink_mark). The
+        // record names the old address until its forget is queued, so the
+        // mark is asked for again each walk until then; a queued one
+        // supersedes another slot's record of the address as below.
 
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
         {
+            // the skip follows this slot's own forget refused in this walk,
+            // so a queued mark always supersedes
+            if ( sink->mark( sink->context, address, (uint32_t) highest_opened ) )
+            {
+                rocketnet_server_replay_marks_supersede( marks, i, address );
+            }
             continue;
         }
 

@@ -332,17 +332,21 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 9 );
     rocketnet_unit_check( client_b.slot == client_a.slot );
 
-    // the buffer refuses the forget: only the forget is asked for, the new
-    // address is not marked while the old one is still owed
+    // the buffer refuses the forget: the slot keeps the old address, and the
+    // new address is marked without taking the record, so its session is
+    // greeted with an entry (proofs/tla/RNServerReplaySlots.tla
+    // MarkWhileSkipped, GreetedSlotHasEntry)
 
     memset( &recording, 0, sizeof( recording ) );
     recording.forget_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
-    rocketnet_unit_check( recording.count == 1 );
+    rocketnet_unit_check( recording.count == 2 );
 
     server_replay_marks_check_forget( &recording.calls[0], &a );
+    server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
 
-    // the retry lands the old forget and only then marks the new address
+    // the retry lands the old forget and the slot takes the new address,
+    // first seen, so it is marked again
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
@@ -354,6 +358,50 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 0 );
+
+    server_replay_marks_fixture_destroy( &fixture );
+}
+
+// A slot reused while its old address's forget is owed (the forget refused
+// in this walk) at a new session that has opened nothing: the new address
+// is marked at zero in the same walk, so the commit before its first
+// keep-alive gives it an entry, and the kernel, which drops a session packet
+// from a source with no entry (DROPPED_NO_SESSION), passes its traffic; a
+// stale entry of an older session at the new address is replaced the same
+// way. While the forget stays refused the slot keeps the old address and
+// the mark is asked for each walk.
+
+static void test_server_replay_marks_reused_slot_with_owed_forget_marks_at_zero()
+{
+    struct server_replay_marks_fixture_t fixture;
+    server_replay_marks_fixture_init( &fixture, 2 );
+
+    const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
+    const struct rocketnet_address_t b = server_replay_marks_address( "198.51.100.8:50000" );
+
+    const struct server_replay_marks_client_t client_a = server_replay_marks_add_client( &fixture, &a, 100, 5 );
+
+    struct server_replay_marks_recording_t recording;
+    memset( &recording, 0, sizeof( recording ) );
+    server_replay_marks_walk( &fixture, &recording );
+    rocketnet_unit_check( recording.count == 1 );
+
+    rocketnet_client_slots_release( fixture.slots, client_a.slot );
+    rocketnet_encryption_map_remove_current( fixture.map, client_a.mapping );
+
+    const struct server_replay_marks_client_t client_b = server_replay_marks_add_client( &fixture, &b, 200, 0 );
+    rocketnet_unit_check( client_b.slot == client_a.slot );
+
+    for ( int walk = 0; walk < 2; walk++ )
+    {
+        memset( &recording, 0, sizeof( recording ) );
+        recording.forget_refusals = 1;
+        server_replay_marks_walk( &fixture, &recording );
+        rocketnet_unit_check( recording.count == 2 );
+        server_replay_marks_check_forget( &recording.calls[0], &a );
+        rocketnet_unit_check( !recording.calls[0].queued );
+        server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
+    }
 
     server_replay_marks_fixture_destroy( &fixture );
 }
@@ -1001,6 +1049,7 @@ REGISTER_UNIT_TEST( test_server_replay_marks_refused_mark_is_owed );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_released_slots_first );
 REGISTER_UNIT_TEST( test_server_replay_marks_follow_an_address_change );
 REGISTER_UNIT_TEST( test_server_replay_marks_refused_forget_keeps_the_slot );
+REGISTER_UNIT_TEST( test_server_replay_marks_reused_slot_with_owed_forget_marks_at_zero );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_connected_slot_without_a_mapping );
 REGISTER_UNIT_TEST( test_server_replay_marks_forget_a_released_slot_without_a_mark );
 REGISTER_UNIT_TEST( test_server_replay_marks_queued_mark_supersedes_an_owed_forget );

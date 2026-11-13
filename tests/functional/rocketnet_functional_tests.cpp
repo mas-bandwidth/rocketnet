@@ -12300,6 +12300,7 @@ static void rocketnet_xdp_max_size_both_ways( bool ipv6, const char * case_name 
         { ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_INVALID_TYPE, "xdp dropped_invalid_type" },
         { ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH, "xdp dropped_wrong_epoch" },
         { ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED, "xdp dropped_replayed" },
+        { ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SESSION, "xdp dropped_no_session" },
         { ROCKETNET_COUNTER_XDP_KERNEL_PASSED_IPV6_EXTENSION, "xdp passed_ipv6_extension" },
         { ROCKETNET_COUNTER_PACKETS_RECEIVED, "transport packets_received" },
     };

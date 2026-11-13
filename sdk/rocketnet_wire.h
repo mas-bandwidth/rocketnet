@@ -252,7 +252,7 @@ ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_replay_value_t
 // and read back by userspace -- the same counter discipline as the rest of
 // the library, running through the kernel. The map is per-CPU; userspace
 // sums across CPUs. For packets on the server's port,
-// received == redirected + the nine drop reasons. DROPPED_REPLAYED counts
+// received == redirected + the ten drop reasons. DROPPED_REPLAYED counts
 // the session packets dropped because their sequence is
 // ROCKETNET_XDP_REPLAY_WINDOW or more behind the replay map's high-water for
 // their source address and port. PASSED_IPV6_EXTENSION
@@ -284,6 +284,20 @@ ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_replay_value_t
 // The program walks an IPv6 extension chain a bounded number of headers to
 // find the UDP header; an extension-header frame it does not drop is counted
 // in PASSED_IPV6_EXTENSION as before, on any port.
+// DROPPED_NO_SESSION counts the session packets (keep-alive, payload,
+// disconnect, ack) whose source address and port has no replay map entry:
+// no session the server has greeted, so main would refuse them unopened.
+// A client sends none of these before the server's first keep-alive, which
+// is held until the session's entry is in the map
+// (rocketnet_server_socket_hold_greetings). Main would have acted on two
+// kinds of packet this drops, and in each case the session ends at its
+// timeout or resumes, as when a packet is lost:
+// - a disconnect burst from a client that gives up after the server took its
+//   response and before that update's commit;
+// - in one error path, a greeted session's packets while its entry is gone.
+//   A superseding forget deleted the entry and the buffer or the map refused
+//   the re-mark, which a later walk retries (proofs/tla/RNServerReplaySlots.tla
+//   GreetedSlotHasEntry).
 
 #define ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED                 0
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL          1
@@ -297,7 +311,8 @@ ROCKETNET_WIRE_STATIC_ASSERT( sizeof( struct rocketnet_server_xdp_replay_value_t
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT     9
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET          10
 #define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_IP_OPTIONS_OR_EXTENSION 11
-#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       12
+#define ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION         12
+#define ROCKETNET_SERVER_XDP_NUM_COUNTERS                       13
 
 struct rocketnet_server_xdp_stats_t
 {

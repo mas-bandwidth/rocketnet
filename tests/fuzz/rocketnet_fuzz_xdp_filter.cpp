@@ -38,9 +38,10 @@
 //     are ROCKETNET_WIRE_SERVER_PACKET_VALID, and its size is within
 //     [ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES, ROCKETNET_RECEIVE_CEILING];
 //     and the converse: a well-formed frame (no tweak) to the configured
-//     address and port, whose payload passes those checks, with a socket and
-//     no replay entry, untagged or tagged with the server's VLAN, is
-//     redirected. The frame reader is the server's: rocketnet_xdp_frame_parse_vlan
+//     address and port, whose payload passes those checks, with a socket,
+//     untagged or tagged with the server's VLAN, is redirected when it is a
+//     handshake type, and dropped when it is a session type with no replay
+//     entry for its source (DROPPED_NO_SESSION). The frame reader is the server's: rocketnet_xdp_frame_parse_vlan
 //     with the config's VLAN ID.
 //
 // WHERE IT RUNS: the filter is GNU C, built as host C only by GCC or Clang on
@@ -59,12 +60,21 @@
 // frame raw. Each is replayed and must reach the verdict the userspace rungs
 // name for its payload: REDIRECT when the payload passes
 // rocketnet_prefilter_check, ROCKETNET_WIRE_SERVER_PACKET_VALID and the size
-// bounds, DROP otherwise; and each family must have seeds of both verdicts.
+// bounds and is a handshake type or holds a replay entry (r_), DROP
+// otherwise; and each family must have seeds of both verdicts.
 // It exits 1 printing INCOMPLETE otherwise.
 
 #include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
+
+// the session types the filter checks against the replay map: from a source
+// with no entry they drop (DROPPED_NO_SESSION)
+static inline bool fz_session_type( uint8_t type )
+{
+    return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
+           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || type == ROCKETNET_CONNECTION_ACK_PACKET;
+}
 
 #if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
 #define ROCKETNET_FUZZ_XDP_FILTER_ACTIVE 1
@@ -379,13 +389,23 @@ static int fz_xdp_run( const uint8_t * data, size_t size )
         fz_require( verdict == FZ_XDP_PASS, "a frame tagged for another VLAN, or any tag on an untagged server, passes" );
     }
 
-    if ( clean && socket && !replay && user_accepts && tag_ours )
+    // a session type from a source with no replay entry is no session the
+    // server has greeted, and drops (DROPPED_NO_SESSION); a handshake type is
+    // not checked against the map, so its replay entry does not matter
+    const bool session_type = user_accepts && fz_session_type( payload[0] );
+
+    if ( clean && socket && user_accepts && tag_ours && session_type && !replay )
+    {
+        fz_require( verdict == FZ_XDP_DROP, "DIFFERENTIAL: a clean session packet from a source with no replay entry drops" );
+    }
+
+    if ( clean && socket && user_accepts && tag_ours && !session_type )
     {
         if ( verdict != FZ_XDP_REDIRECT )
         {
             fprintf( stderr, "verdict %d payload_bytes %d type %d\n", verdict, payload_bytes, payload[0] );
         }
-        fz_require( verdict == FZ_XDP_REDIRECT, "DIFFERENTIAL: a clean frame the userspace prefilter accepts is redirected" );
+        fz_require( verdict == FZ_XDP_REDIRECT, "DIFFERENTIAL: a clean handshake frame the userspace prefilter accepts is redirected" );
     }
 
     return verdict;
@@ -563,14 +583,17 @@ static bool fz_generate( const char * dir )
 
 #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
                 const int verdict = fz_xdp_run( seed, (size_t) bytes );
-                const int want = redirect ? FZ_XDP_REDIRECT : FZ_XDP_DROP;
+                // only the r_ form holds a replay entry: a session type in
+                // the s_ and w_ forms is from no greeted session and drops
+                const bool redirected = redirect && ( form == 1 || !fz_session_type( payload[0] ) );
+                const int want = redirected ? FZ_XDP_REDIRECT : FZ_XDP_DROP;
                 if ( verdict != want )
                 {
                     fprintf( stderr, "seed generator: the %s seed's verdict is %d, not %d\n", name, verdict, want );
                     complete = false;
                     continue;
                 }
-                reached[family][redirect ? 1 : 0]++;
+                reached[family][redirected ? 1 : 0]++;
 #else // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
                 (void) redirect;
                 reached[family][0] = reached[family][1] = 1;

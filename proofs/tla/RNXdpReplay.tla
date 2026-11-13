@@ -5,7 +5,8 @@
 (* The XDP program (sdk/xdp/server_xdp.c) holds a BPF hash map,         *)
 (* server_xdp_replay_map, keyed by the source address and port.  For the   *)
 (* session packet types (keep-alive, payload, disconnect, ack)            *)
-(* it looks the source up and, with an entry, drops a packet whose         *)
+(* it looks the source up, drops the packet when there is no entry, and,   *)
+(* with an entry, drops a packet whose                                     *)
 (* sequence is KernelWindow or more behind the entry's high_water; the     *)
 (* design's KernelWindow is W, the userspace replay window.  The kernel    *)
 (* never writes the map.  Userspace writes it once per server update: the  *)
@@ -32,8 +33,12 @@
 (* before the update's send flush): greeted[a].  That commit carries the   *)
 (* new session's first mark, zero when nothing has opened, which replaces  *)
 (* whatever the kernel held for the address; a high_water of 0 drops       *)
-(* nothing.  A disconnect burst a client sends before its first keep-alive *)
-(* is left out: a dropped one costs the server a timeout, not the session. *)
+(* nothing.  With no entry at all the kernel drops a session packet        *)
+(* (DROPPED_NO_SESSION): a source with no live session has nothing a       *)
+(* session packet could open.  A disconnect burst a client sends before    *)
+(* its first keep-alive is left out: it can meet no entry and be dropped,  *)
+(* which is accepted, the same outcome as a lost disconnect: the server    *)
+(* times the slot out instead.                                             *)
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
 (* sequence) is left out, as are the byte layout of the key and value and  *)
@@ -332,11 +337,15 @@ Duplicate(p) ==
     /\ UNCHANGED replyVars
 
 (***************************************************************************)
-(* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
-(* when (high_water - sequence) >= KernelWindow, counting                  *)
-(* DROPPED_REPLAYED; a genuine drop is recorded with the session of the    *)
-(* mark it was dropped against.                                            *)
-(* With no entry, or a sequence inside or ahead of the window, the packet  *)
+(* KernelFilter(p): THE KERNEL RULE.  With no entry for the source, drop,  *)
+(* counting DROPPED_NO_SESSION: every packet here is a session packet, and *)
+(* in this model a live greeted session has an entry (its first mark is   *)
+(* applied before its greeting leaves; RNServerReplaySlots names the one   *)
+(* error-path gap of the slot walk).  With an entry, drop when             *)
+(* (high_water - sequence) >= KernelWindow, counting DROPPED_REPLAYED.  A  *)
+(* genuine drop is recorded with the session of the mark it was dropped   *)
+(* against, NoSession for no entry.                                        *)
+(* With an entry and a sequence inside or ahead of the window, the packet  *)
 (* goes on to userspace.  The kernel runs beside the update, so it is      *)
 (* enabled in every phase.  The design never writes kmap here; the broken  *)
 (* shape KernelAdvances writes kmap[a] := seq on every pass.               *)
@@ -344,7 +353,7 @@ Duplicate(p) ==
 KernelFilter(p) ==
     /\ p.stage = "wire"
     /\ LET e == kmap[p.addr]
-       IN  IF e.hw # 0 /\ e.hw - p.seq >= KernelWindow
+       IN  IF e = NoEntry \/ (e.hw # 0 /\ e.hw - p.seq >= KernelWindow)
              THEN /\ net' = net \ {p}
                   /\ dropped' = IF p.genuine
                                   THEN dropped \cup {[addr |-> p.addr,
@@ -407,7 +416,10 @@ Release(a) ==
 (* the walk saw the release still has the old session's marked[a], and    *)
 (* its highest_opened is 0 until it is greeted, so it is marked at 0.  The *)
 (* broken shape WalkForgets = FALSE never forgets a released slot; the     *)
-(* broken shape MarkNewSessions = FALSE marks only a nonzero value.        *)
+(* broken shape MarkNewSessions = FALSE marks a reconnect only at a        *)
+(* nonzero value: a slot the walk never saw still takes its zero mark (a   *)
+(* first session with no entry at all would lose every packet as           *)
+(* DROPPED_NO_SESSION, which is GreetBeforeEntry's harm, not this one).    *)
 (***************************************************************************)
 Forgets == IF WalkForgets
              THEN IF WalkForgetsUnmarked
@@ -418,7 +430,7 @@ Forgets == IF WalkForgets
 MarkTaken(b) ==
     IF MarkNewSessions
       THEN opened[b] # marked[b] \/ ~seen[b] \/ markOwed[b]
-      ELSE opened[b] # 0 /\ opened[b] # marked[b]
+      ELSE (opened[b] # 0 /\ opened[b] # marked[b]) \/ ~seen[b]
 
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
             a \in {b \in Addresses : /\ session[b] # NoSession
@@ -675,6 +687,13 @@ FreshGenuineNeverDropped ==
         (d.session # NoSession /\ d.session = session[d.addr]
                                /\ d.against = d.session)
             => d.seq <= opened[d.addr] - W
+
+(* LiveSessionNeverDroppedForNoEntry: no genuine packet of a live session  *)
+(* is dropped for want of an entry.  Session ids are never reused, so a    *)
+(* drop of a session that has since ended never matches session[a].       *)
+LiveSessionNeverDroppedForNoEntry ==
+    \A d \in dropped :
+        d.against = NoSession => d.session # session[d.addr]
 
 (* NewSessionNeverDroppedByOldMark: no genuine packet of a session is      *)
 (* dropped against a mark taken in an earlier session, whether or not the  *)

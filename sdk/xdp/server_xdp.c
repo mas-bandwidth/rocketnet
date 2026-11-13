@@ -400,7 +400,8 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    // replay: a session packet from a source with a replay map entry is
+    // replay: a session packet from a source with no replay map entry is
+    // dropped, and one from a source with an entry is
     // dropped when its sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind
     // the entry's high-water (proofs/tla/RNXdpReplay.tla, KernelFilter). The window
     // is the userspace replay window, so nothing dropped here would have
@@ -431,23 +432,36 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         }
 
         const struct rocketnet_server_xdp_replay_value_t * entry = (const struct rocketnet_server_xdp_replay_value_t *) bpf_map_lookup_elem( &server_xdp_replay_map, &key );
-        if ( entry )
+
+        // no entry: no session the server has greeted, so main would refuse
+        // the packet unopened (proofs/tla/RNXdpReplay.tla KernelFilter). A
+        // client sends no session packet before its first keep-alive, which
+        // is held until the entry is in the map
+        // (rocketnet_server_socket_hold_greetings); see
+        // ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION in rocketnet_wire.h
+        // for the error path where a greeted session's entry is gone
+
+        if ( !entry )
         {
-            // the 32-bit sequence, little endian, right after the prefilter
-            // header: inside the ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES bound
-            // proven above
+            debug_printf( "no session for this source" );
+            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION );
+            return XDP_DROP;
+        }
 
-            const __u32 sequence = ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES] ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 1] << 8 ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 2] << 16 ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 3] << 24 );
+        // the 32-bit sequence, little endian, right after the prefilter
+        // header: inside the ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES bound
+        // proven above
 
-            if ( (int32_t) ( entry->high_water - sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW )
-            {
-                debug_printf( "replayed: behind the high-water window" );
-                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
-                return XDP_DROP;
-            }
+        const __u32 sequence = ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES] ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 1] << 8 ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 2] << 16 ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 3] << 24 );
+
+        if ( (int32_t) ( entry->high_water - sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW )
+        {
+            debug_printf( "replayed: behind the high-water window" );
+            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
+            return XDP_DROP;
         }
     }
 

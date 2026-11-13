@@ -39,7 +39,21 @@ or another slot's queued forget or mark of the address supersedes it.
   only after such a walk (`DistinctUnlessOwed`), so every other walk's queued
   forgets have nothing to clear, and a mass disconnect reads each slot once
   instead of every slot for every forget. The mark pass, for every connected slot, skips a slot
-  whose record still names another address; otherwise it sets `seen` and
+  whose record still names another address, keeping the record, but asks the
+  sink to mark the slot's new address at its `highest_opened` all the same
+  (`MarkWhileSkipped`): the kernel drops a session packet from a source with
+  no entry, so a session greeted with no entry would lose every packet until
+  the old forget lands. A refused zero mark of a skipped slot holds the
+  session's greeting, as any refused zero mark does (`Open` needs `greeted`:
+  a client sends no session packet before its first keep-alive, so an
+  ungreeted slot's mark is always zero, and `Held` is exactly the code's
+  hold). Because the record keeps the old address, a mark of the new address
+  queued in the skip is not the record's. If that session ends before the old
+  forget lands, the walk forgets only the old address, and the new address's
+  entry stays in the kernel map until a session from that address and port
+  replaces it. That is a second accepted error-path window: it costs one map
+  entry, and needs the forget buffer full across two walks and the new
+  session to end inside them. Otherwise the walk sets `seen` and
   `seen_address`, and asks the sink to mark a slot first seen, owing a mark,
   or whose `highest_opened` differs from its last mark; a refused mark sets
   `mark_owed`, and an accepted one clears every other slot's record of the
@@ -64,6 +78,21 @@ here the commit applies everything.
   owing nothing, has that mark in the kernel map.
 - **`DistinctUnlessOwed`**: unless `supOwed` is set, no two slots' records
   name one address. This is what the forget pass's skipped scan rests on.
+- **`GreetedSlotHasEntry`**: a connected slot whose session has been greeted
+  (`greeted[i]`, a ghost: the walk's commit released its held greeting
+  because no mark the session needs was refused) has a kernel entry at its
+  address. The kernel drops a session packet from a source with no entry
+  (`XDP_KERNEL_DROPPED_NO_SESSION`), so this is what keeps a greeted
+  session's traffic flowing. The one exception is a slot whose own record
+  owes its mark: another slot's stale record of the address had its forget
+  queued, the forget's supersede cleared this slot's record, and the sink
+  refused the re-mark the same walk asked for (the mark buffer or kernel map
+  full, an error path). The commit deletes the entry, and the session's
+  packets drop as no-session until a later walk's mark lands; before the
+  kernel dropped for no entry they passed without the kernel's replay check.
+  TLC found this window in the control (`MCRNServerReplaySlots.cfg`) before
+  the exception was written; it is accepted, as the disconnect burst of
+  [RNXdpReplay](README-RNXdpReplay.md) is.
 
 ## The instance
 
@@ -153,6 +182,19 @@ counterexample below was checked against the C by hand.
    slots, none); `test_server_replay_marks_mass_disconnect_is_linear` holds
    the cost (no record read at `ROCKETNET_MAX_CLIENTS` disconnects, where
    scanning for every forget reads 1,000,000 at 1000 clients).
+7. **`MCRNServerReplaySlotsBrokenSkipUnmarked.cfg`**
+   (`MarkWhileSkipped = FALSE`): the mark pass's skip as it was, a bare
+   `continue`. Violates `GreetedSlotHasEntry`: slot 0 is seen at `a1` and
+   released; slot 0 is taken again at `a2` with `highest_opened` 0. The walk's
+   forget of `a1` is refused, the mark pass skips slot 0, no mark of `a2` is
+   asked for and so none is refused, and the commit releases the greeting with
+   no entry at `a2`: every session packet from `a2` is dropped as no-session
+   until a later walk lands the forget. In the C: `forget` returns false,
+   `continue` passes `rocketnet_xdp_replay_sink_mark`, which is where a refused
+   zero mark sets the greeting hold. With the fix the skip calls
+   `sink->mark( address, highest_opened )` and the hold follows from its
+   answer. `test_server_replay_marks_reused_slot_with_owed_forget_marks_at_zero`
+   drives the sequence through the sink.
 
 ## Runs
 

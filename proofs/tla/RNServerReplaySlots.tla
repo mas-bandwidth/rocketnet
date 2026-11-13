@@ -21,7 +21,8 @@
 (*                    name one address: DistinctUnlessOwed)                *)
 (*   the mark pass    every connected slot: a slot whose record still      *)
 (*                    names another address is skipped (its forget is      *)
-(*                    owed first); otherwise the record is seen at the     *)
+(*                    owed first), its own address still marked without    *)
+(*                    taking the record; otherwise the record is seen at the *)
 (*                    address, and a slot first seen, owing a mark or      *)
 (*                    whose highest_opened differs from its last mark asks *)
 (*                    the sink to mark it; a refused mark is owed, and an  *)
@@ -59,6 +60,10 @@
 (*                  supersede_owed, so the next walk's forget pass skips   *)
 (*                  the scan although two records name one address         *)
 (*                                                                         *)
+(*   MarkWhileSkipped (a definition, overridden by its witness) the skipped *)
+(*                  slot's address is not marked: its session is greeted   *)
+(*                  with no kernel entry (GreetedSlotHasEntry)              *)
+(*                                                                         *)
 (* ScanWhenOwedOnly FALSE is not a bug: it is the v1.0.0 forget pass, which *)
 (* scanned for every queued forget.  Its control reaches the same states,  *)
 (* since the scan the code skips clears nothing (DistinctUnlessOwed).      *)
@@ -84,14 +89,25 @@ ASSUME \A f \in {SkipWhileOwed, ClearOnAccept, ForgetRefusable, MarkSupersedes, 
 Highs == 0..MaxHigh
 Clear == [ seen |-> FALSE, at |-> NONE, has |-> FALSE, marked |-> 0, owes |-> FALSE ]
 
+(* MarkWhileSkipped: a connected slot the mark pass skips, its record      *)
+(* naming the address whose forget is owed, is still marked at its own     *)
+(* address and highest_opened, without taking the record (the design:      *)
+(* TRUE).  FALSE is the walk before it: the slot's session was greeted with *)
+(* no entry for its address, and a kernel that drops a session packet with  *)
+(* no entry (DROPPED_NO_SESSION, RNXdpReplay.tla KernelFilter) dropped its  *)
+(* traffic; MCRNServerReplaySlotsBrokenSkipUnmarked.cfg must fail           *)
+(* GreetedSlotHasEntry.                                                     *)
+MarkWhileSkipped == TRUE
+
 VARIABLES
     conn,           \* conn[i]: the slot's connection, [on, at, high]
     rec,            \* rec[i]: the slot's record, [seen, at (seen_address), has (has_mark), marked (marked_value), owes (mark_owed)]
     kernel,         \* kernel[a]: the replay map's entry for a, NONE for none
     supOwed,        \* supersede_owed: the last walk left a refused forget
-    owed            \* ghost: the <<slot, address>> pairs whose forget is owed
+    owed,           \* ghost: the <<slot, address>> pairs whose forget is owed
+    greeted         \* greeted[i]: the slot's session has had its first keep-alive (the publish after a walk's commit)
 
-vars == <<conn, rec, kernel, supOwed, owed>>
+vars == <<conn, rec, kernel, supOwed, owed, greeted>>
 
 Init ==
     /\ conn = [ i \in Slots |-> [ on |-> FALSE, at |-> NONE, high |-> 0 ] ]
@@ -99,6 +115,7 @@ Init ==
     /\ kernel = [ a \in Addrs |-> NONE ]
     /\ supOwed = FALSE
     /\ owed = {}
+    /\ greeted = [ i \in Slots |-> FALSE ]
 
 \* a client connects in a free slot, at an address no connected slot holds,
 \* its session's highest_opened at zero
@@ -106,19 +123,25 @@ Connect(i, a) ==
     /\ ~conn[i].on
     /\ \A j \in Slots : conn[j].on => conn[j].at # a
     /\ conn' = [ conn EXCEPT ![i] = [ on |-> TRUE, at |-> a, high |-> 0 ] ]
+    /\ greeted' = [ greeted EXCEPT ![i] = FALSE ]
     /\ UNCHANGED <<rec, kernel, supOwed, owed>>
 
 \* a genuine session packet raises highest_opened
 Open(i) ==
     /\ conn[i].on
+    \* a client sends no session packet before its first keep-alive (the
+    \* greeting), so nothing opens before it; the hold then covers exactly
+    \* the zero marks, as rocketnet_xdp_replay_sink_mark does
+    /\ greeted[i]
     /\ conn[i].high < MaxHigh
     /\ conn' = [ conn EXCEPT ![i].high = @ + 1 ]
-    /\ UNCHANGED <<rec, kernel, supOwed, owed>>
+    /\ UNCHANGED <<rec, kernel, supOwed, owed, greeted>>
 
 \* the slot is released
 Release(i) ==
     /\ conn[i].on
     /\ conn' = [ conn EXCEPT ![i] = [ on |-> FALSE, at |-> NONE, high |-> 0 ] ]
+    /\ greeted' = [ greeted EXCEPT ![i] = FALSE ]
     /\ UNCHANGED <<rec, kernel, supOwed, owed>>
 
 \* rocketnet_server_replay_marks_walk, then the transport's commit
@@ -138,12 +161,20 @@ Walk ==
            Cand == { i \in Slots : conn[i].on /\ ~(SkipWhileOwed /\ r1[i].seen /\ r1[i].at # conn[i].at) }
            last(i) == IF r1[i].has THEN r1[i].marked ELSE 0
            Wants == { i \in Cand : ~r1[i].seen \/ r1[i].owes \/ conn[i].high # last(i) }
-       IN \E mAcc \in SUBSET Wants :
+           \* the skipped connected slots, marked at their own address
+           \* without taking the record (MarkWhileSkipped)
+           SkipWants == IF MarkWhileSkipped THEN { i \in Slots : conn[i].on /\ i \notin Cand } ELSE {}
+       IN \E mAcc \in SUBSET Wants, sAcc \in SUBSET SkipWants :
           LET \* the other slots whose record names an address marked now:
               \* each owes a forget of it, which the queued mark supersedes;
               \* the code scans for them only when a forget of this walk was refused
               Sup == { k \in Slots : MarkSupersedes /\ refusedAny /\ k \notin Cand /\ r1[k].seen /\
-                                     \E i \in mAcc : i # k /\ r1[k].at = conn[i].at }
+                                     \E i \in mAcc \cup sAcc : i # k /\ r1[k].at = conn[i].at }
+              \* the greetings the publish after this commit holds: a slot
+              \* not yet greeted whose mark the sink refused (its mark is
+              \* the zero of a session that has sent nothing; the code holds
+              \* every keep-alive then, rocketnet_xdp_replay_sink_mark)
+              Held == { i \in (Wants \ mAcc) \cup (SkipWants \ sAcc) : ~greeted[i] }
               r2 == [ i \in Slots |->
                         IF i \in Sup THEN Clear
                         ELSE IF i \notin Cand THEN r1[i]
@@ -152,7 +183,7 @@ Walk ==
                              THEN [ seen |-> TRUE, at |-> conn[i].at, has |-> TRUE,
                                     marked |-> conn[i].high, owes |-> FALSE ]
                              ELSE [ r1[i] EXCEPT !.seen = TRUE, !.at = conn[i].at, !.owes = TRUE ] ]
-              marks == { <<conn[i].at, conn[i].high>> : i \in mAcc }
+              marks == { <<conn[i].at, conn[i].high>> : i \in mAcc \cup sAcc }
           IN /\ rec' = r2
              /\ kernel' = [ a \in Addrs |->
                               IF \E m \in marks : m[1] = a THEN (CHOOSE m \in marks : m[1] = a)[2]
@@ -161,6 +192,7 @@ Walk ==
              /\ owed' = ((owed \ { <<i, rec[i].at>> : i \in fAcc \cup FSup }) \ { <<k, r1[k].at>> : k \in Sup })
                           \cup { <<i, conn[i].at>> : i \in Cand }
              /\ supOwed' = (OweOnRefusal /\ refusedAny)
+             /\ greeted' = [ i \in Slots |-> conn[i].on /\ (greeted[i] \/ i \notin Held) ]
     /\ UNCHANGED conn
 
 Next ==
@@ -177,6 +209,21 @@ TypeOK ==
     /\ rec \in [ Slots -> [ seen : BOOLEAN, at : Addrs \cup {NONE}, has : BOOLEAN, marked : Highs, owes : BOOLEAN ] ]
     /\ kernel \in [ Addrs -> Highs \cup {NONE} ]
     /\ supOwed \in BOOLEAN
+    /\ greeted \in [ Slots -> BOOLEAN ]
+
+\* a greeted connected slot's address has an entry in the kernel map: its
+\* client sends session packets, and the kernel drops a session packet from
+\* a source with no entry (RNXdpReplay.tla KernelFilter, DROPPED_NO_SESSION).
+\* The one exception is a slot whose own record owes its mark: a forget of
+\* the address another slot's stale record asked for deleted the entry and
+\* the sink refused the re-mark the same walk asked for (the mark buffer or
+\* the kernel map full, an error path). Its session packets drop as
+\* no-session until the owed mark lands, at the next walk the sink takes
+\* it; before the kernel dropped for no entry they passed unchecked.
+GreetedSlotHasEntry ==
+    \A i \in Slots : (conn[i].on /\ greeted[i]) =>
+                        \/ kernel[conn[i].at] # NONE
+                        \/ (rec[i].seen /\ rec[i].at = conn[i].at /\ rec[i].owes)
 
 \* what the forget pass's skipped scan rests on: unless the last walk left a
 \* refused forget, no two slots' records name one address, so a queued
