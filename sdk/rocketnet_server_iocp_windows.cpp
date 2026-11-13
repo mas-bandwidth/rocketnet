@@ -4435,8 +4435,17 @@ bool rocketnet_server_iocp_test_receive_delivery( int workers )
     memset( &test, 0, sizeof( test ) );
     test.workers = workers;
     const struct rocketnet_receive_delivery_rig_t rig = { &test, rocketnet_iocp_delivery_test_pass, rocketnet_iocp_delivery_test_call };
-    const bool valid = rocketnet_receive_delivery_check_all( &rig, workers == 1 ? "iocp server" : "iocp server, several workers",
-                                                             rocketnet_iocp_delivery_test_reset );
+    const char * name = workers == 1 ? "iocp server" : "iocp server, several workers";
+    bool valid = rocketnet_receive_delivery_check_all( &rig, name, rocketnet_iocp_delivery_test_reset );
+
+    // with the passes dealt in turn, each worker meets a shared script's run
+    // of passes between calls only in part: this run deals sixteen passes
+    // before a call, four or more to every worker
+    if ( workers > 1 )
+    {
+        valid = rocketnet_iocp_delivery_test_reset( &test ) &&
+                rocketnet_receive_delivery_check( &rig, name, "w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 w1 m w2 w2 m" ) && valid;
+    }
     rocketnet_iocp_receive_fixture_free( &test.fixture );
     return valid;
 }
