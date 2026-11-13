@@ -161,8 +161,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // receive banks sized by the rate) adds 24703364 to the server, and its
 // counter one 64-byte rounding to the client: actual=1528614687 and 15394220
 // (aws-win-iocp-1, MSVC, Release, DEV=ON), measured.
+// The appended counter XDP_PIN_REFUSALS adds one 64-byte rounding to the
+// client: actual=15394284 (the Windows unit job, MSVC, Release, DEV=ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1527566111 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345644 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14345708 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server

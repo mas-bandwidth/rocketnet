@@ -1098,6 +1098,26 @@ static int rocketnet_server_transport_queue_room( const struct rocketnet_server_
     return INT_MAX;
 }
 
+// The frames the drains may hand the transport this update: with several
+// send queues, the sum of each queue's room (send_room is the fewest, so one
+// full queue would stop bursts bound for queues with room); else the whole
+// room. A burst whose own queue is full is refused for a full staging and
+// waits (drain_disconnect_bursts).
+static int rocketnet_server_transport_io_send_room_total( const struct rocketnet_server_transport_t * server_transport )
+{
+    if ( server_transport->send_queues <= 1 )
+    {
+        return rocketnet_server_transport_io_send_room( server_transport );
+    }
+    int64_t total = 0;
+    for ( int queue = 0; queue < server_transport->send_queues; ++queue )
+    {
+        const int room = rocketnet_server_transport_queue_room( server_transport, queue );
+        total += room > 0 ? room : 0;
+    }
+    return total >= INT_MAX ? INT_MAX : (int) total;
+}
+
 static uint64_t rocketnet_server_transport_load_u64( const uint64_t * value )
 {
     return rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( value ) );
@@ -1550,16 +1570,24 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // cannot carry), which the transport counts in its own send_failures,
 // SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
 // receive path's response frame) is counted by its caller.
-static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t id )
+// The judged form counts a refusal whose room was read once by its caller,
+// who acts on the same reading (the disconnect drain); returns full.
+static bool rocketnet_server_transport_io_count_refused_judged( rocketnet_server_transport_t * transport, uint64_t id, bool full )
 {
     if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
+        return false;
     }
-    else if ( rocketnet_server_transport_io_refused_full( transport, to ) )
+    if ( full )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
     }
+    return full;
+}
+static bool rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t id )
+{
+    return rocketnet_server_transport_io_count_refused_judged( transport, id, id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( transport, to ) );
 }
 static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id, bool counted = true )
 {
@@ -3779,7 +3807,7 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
 
     if ( server_transport->disconnect_burst_count > 0 )
     {
-        rocketnet_server_transport_drain_disconnect_bursts( server_transport, rocketnet_server_transport_io_send_room( server_transport ), true );
+        rocketnet_server_transport_drain_disconnect_bursts( server_transport, rocketnet_server_transport_io_send_room_total( server_transport ), true );
     }
 
     rocketnet_server_transport_flush( server_transport, true );
@@ -3791,15 +3819,17 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
     // is abandoned as an unreachable one is (popped, head on by count) and
     // counted as a start refused for a full staging (a complete one leaves
     // uncounted); the cursor is reset. The room is read again after
-    // send_idle, which may publish what was staged and so free room.
-    if ( server_transport->disconnect_burst_count > 0 && rocketnet_server_transport_io_send_room( server_transport ) == 0 &&
-         rocketnet_server_transport_io_send_idle( server_transport ) && rocketnet_server_transport_io_send_room( server_transport ) == 0 )
+    // send_idle, which may publish what was staged and so free room. With
+    // several send queues the room is every queue's (io_send_room_total):
+    // no burst is abandoned while any queue could take a frame.
+    if ( server_transport->disconnect_burst_count > 0 && rocketnet_server_transport_io_send_room_total( server_transport ) == 0 &&
+         rocketnet_server_transport_io_send_idle( server_transport ) && rocketnet_server_transport_io_send_room_total( server_transport ) == 0 )
     {
         while ( server_transport->disconnect_burst_count > 0 )
         {
             if ( server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
             {
-                rocketnet_server_transport_io_count_refused( server_transport, &server_transport->disconnect_bursts[server_transport->disconnect_burst_head].to, 0 );
+                rocketnet_server_transport_io_count_refused_judged( server_transport, 0, true );
             }
             sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
             server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % server_transport->disconnect_burst_capacity;
@@ -4556,7 +4586,7 @@ static void rocketnet_server_transport_update_finish_body( struct rocketnet_serv
     if ( server_transport->disconnect_burst_count > 0 && server_transport->disconnect_seals_left > 0 )
     {
         const uint64_t before = server_transport->disconnect_seals;
-        const int room = rocketnet_server_transport_io_send_room( server_transport );
+        const int room = rocketnet_server_transport_io_send_room_total( server_transport );
         const int max_seals = room < server_transport->disconnect_seals_left ? room : server_transport->disconnect_seals_left;
         rocketnet_server_transport_drain_disconnect_bursts( server_transport, max_seals, false );
         server_transport->disconnect_seals_left -= (int) ( server_transport->disconnect_seals - before );
@@ -5384,7 +5414,8 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // disconnect packets are sealed into send frames, one per waiting burst per
 // pass in ring order, so a burst's packets leave at consecutive sequences as
 // the immediate burst's do. The caller's max_seals is within the transport's
-// send room, so no start is refused for room. A burst whose last packet is
+// send room, summed over its queues; with several queues a burst whose own
+// queue is full is refused for room, and the drain ends there. A burst whose last packet is
 // sealed leaves the ring and its key is wiped. A start refused for its
 // destination (no link-layer address, or one the socket cannot carry) with
 // room left abandons that burst: it is marked complete, and the
@@ -5417,12 +5448,15 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         }
 
         struct rocketnet_server_frame_t frame;
-        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown );
+        uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, &burst->to, &frame, shutdown, false );
         if ( !frame_data )
         {
-            // a full staging: the burst waits for the next update or stop step
+            // a full staging (the destination's queue, with several): the
+            // burst waits for the next update or stop step. The room is read
+            // once, and the count and the choice both follow that reading.
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, &burst->to ) )
+            const bool full = frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, &burst->to );
+            if ( rocketnet_server_transport_io_count_refused_judged( server_transport, frame.packet_id, full ) )
             {
                 break;
             }
@@ -5858,9 +5892,10 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     }
 
     // the gso, io_uring, iocp and rio transports' own counts are the public
-    // rows GSO_PACKETS_SENT .. RIO_COMMITS, cumulative, assigned on read; a
-    // transport writes its own rows and the rest of the range reads 0, so
-    // every platform has every row
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, and the rio, iocp, gso and xdp
+    // transports' refused pins *_PIN_REFUSALS, cumulative, assigned on read;
+    // a transport writes its own rows and the rest reads 0, so every platform
+    // has every row
 
     uint64_t transport_rows[ROCKETNET_NUM_COUNTERS] = {};
     if ( rocketnet_server_transport_io_transport_counters( server_transport->io.operations, server_transport->io.instance, transport_rows ) )
@@ -5869,9 +5904,11 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         {
             server_transport->counters.values[i] = transport_rows[i];
         }
-        // the rio transport's pin refusals, the row after the shared ones
+        // each transport's pin refusals, the rows after the shared ones
         server_transport->counters.values[ROCKETNET_COUNTER_RIO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_RIO_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_IOCP_PIN_REFUSALS];
+        server_transport->counters.values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_GSO_PIN_REFUSALS];
+        server_transport->counters.values[ROCKETNET_COUNTER_XDP_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_XDP_PIN_REFUSALS];
     }
 
     return &server_transport->counters;
