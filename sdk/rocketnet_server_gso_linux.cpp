@@ -866,7 +866,7 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
     else if ( input->ss_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
-        return true;
+        return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
 
     return false;
@@ -3630,6 +3630,7 @@ enum rocketnet_server_gso_test_kind_t
 {
     ROCKETNET_SERVER_GSO_TEST_EMPTY,
     ROCKETNET_SERVER_GSO_TEST_REFUSED,
+    ROCKETNET_SERVER_GSO_TEST_PORT_ZERO,        // a valid datagram from source port 0, which no reply can reach
     ROCKETNET_SERVER_GSO_TEST_SHORT,
     ROCKETNET_SERVER_GSO_TEST_VALID,
     ROCKETNET_SERVER_GSO_TEST_GRO,              // a GRO run of ROCKETNET_GSO_RECV_MAX_SEGMENTS valid segments
@@ -3675,7 +3676,7 @@ static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso
         {
             struct sockaddr_in * in4 = (struct sockaddr_in *) &queue->names[i];
             in4->sin_family = AF_INET;
-            in4->sin_port = htons( 40000 );
+            in4->sin_port = htons( source->kind == ROCKETNET_SERVER_GSO_TEST_PORT_ZERO ? 0 : 40000 );
             in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         }
 
@@ -3825,8 +3826,14 @@ bool rocketnet_server_gso_test_drain_budget()
     bool valid = true;
     bool full = false;
 
+    // a source port of 0 is refused by rocketnet's return-endpoint policy
+    // (legal UDP, but a reply to it cannot be addressed): the kernel refuses
+    // a send to destination port 0 with EINVAL, segmented or plain, so a
+    // reply would read as a segmentation refusal
+    // (rocketnet_address_accept_received_source)
+
     const rocketnet_server_gso_test_kind_t discards[] = { ROCKETNET_SERVER_GSO_TEST_EMPTY, ROCKETNET_SERVER_GSO_TEST_REFUSED,
-                                                          ROCKETNET_SERVER_GSO_TEST_SHORT };
+                                                          ROCKETNET_SERVER_GSO_TEST_PORT_ZERO, ROCKETNET_SERVER_GSO_TEST_SHORT };
 
     for ( rocketnet_server_gso_test_kind_t kind : discards )
     {
@@ -3838,7 +3845,7 @@ bool rocketnet_server_gso_test_drain_budget()
         gso->test_receive_user = &source;
         rocketnet_server_gso_drain( queue, &full );
 
-        const uint64_t dropped = kind == ROCKETNET_SERVER_GSO_TEST_REFUSED ? buffer->dropped_source : buffer->dropped_size;
+        const uint64_t dropped = ( kind == ROCKETNET_SERVER_GSO_TEST_REFUSED || kind == ROCKETNET_SERVER_GSO_TEST_PORT_ZERO ) ? buffer->dropped_source : buffer->dropped_size;
         valid = valid && source.delivered == ROCKETNET_GSO_RECV_QUEUE_SIZE && buffer->num_packets == 0 &&
                 dropped == (uint64_t) ROCKETNET_GSO_RECV_QUEUE_SIZE;
     }

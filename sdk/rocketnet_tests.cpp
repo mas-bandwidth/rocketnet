@@ -930,6 +930,30 @@ void rocketnet_test_received_native_sources_untouched()
     }
 }
 
+void rocketnet_test_received_source_port_zero_dropped()
+{
+    // the receive rule refuses a source port of 0 in every family and socket
+    // mode: legal UDP, but rocketnet's return-endpoint policy, since a reply
+    // to it cannot be addressed (the kernel refuses a send to destination
+    // port 0 with EINVAL, which a segmented send would read as the
+    // destination refusing segmentation). Whether each transport's adapter
+    // calls the rule is its own case's to show.
+
+    const char * sources[] = { "1.2.3.4:0", "[2001:db8::1]:0", "[::ffff:1.2.3.4]:0" };
+
+    for ( int i = 0; i < (int) ( sizeof( sources ) / sizeof( sources[0] ) ); i++ )
+    {
+        for ( int dual_stack = 0; dual_stack <= 1; dual_stack++ )
+        {
+            struct rocketnet_address_t from;
+            memset( &from, 0, sizeof( from ) );
+            rocketnet_check( rocketnet_address_parse( &from, sources[i] ) );
+            rocketnet_check( from.port == 0 );
+            rocketnet_check( !rocketnet_address_accept_received_source( &from, dual_stack != 0 ) );
+        }
+    }
+}
+
 void rocketnet_test_random_bytes()
 {
     const int BufferSize = 999;
@@ -14734,6 +14758,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_v4_mapped_source_canonicalised_on_dual_stack", rocketnet_test_v4_mapped_source_canonicalised_on_dual_stack },
     { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
     { "test_received_native_sources_untouched", rocketnet_test_received_native_sources_untouched },
+    { "test_received_source_port_zero_dropped", rocketnet_test_received_source_port_zero_dropped },
     { "test_random_bytes", rocketnet_test_random_bytes },
     { "test_crypto_sizes", rocketnet_test_crypto_sizes },
     { "test_crypto_test_keys", rocketnet_test_crypto_test_keys },

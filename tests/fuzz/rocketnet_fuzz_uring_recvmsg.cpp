@@ -190,7 +190,9 @@ static fuzz_uring_result_t fuzz_uring_run( const uint8_t * data, size_t size )
     const bool source_ok = rocketnet_uring_sockaddr_to_address( &source, name_bytes, socket_ipv6, &from );
     if ( source.ss_family == AF_INET && name_bytes >= FUZZ_SOCKADDR_IN_BYTES )
     {
-        rocketnet_fuzz_require( source_ok && from.type == ROCKETNET_ADDRESS_IPV4, "a full IPv4 name converts to an IPv4 address" );
+        // a source port of 0 is refused (rocketnet_address_accept_received_source)
+        const bool port_zero = ( (const struct sockaddr_in *) &source )->sin_port == 0;
+        rocketnet_fuzz_require( source_ok == !port_zero && from.type == ROCKETNET_ADDRESS_IPV4, "a full IPv4 name converts to an IPv4 address unless its port is 0" );
     }
 
     if ( source.ss_family == AF_INET6 && name_bytes < FUZZ_SOCKADDR_IN6_BYTES )
