@@ -215,9 +215,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // segment of acked ids a client, the pending entries and their ranges) and
 // each ack endpoint the last block it applied in full; the client gains one
 // 64-byte rounding: 34160412 and 64 above (studio, AppleClang, Debug, DEV=ON).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863099 )
-// The appended counter IOCP_PIN_REFUSALS adds 64 to the client (one 64-byte
-// rounding): actual=15041738 (the macOS unit job, Debug, DEV ON).
+// The appended counter IOCP_PIN_REFUSALS adds 128 to the server (two of its
+// counter blocks cross a 64-byte rounding) and 64 to the client: actual=
+// 1503911803 and 15041738 (the macOS unit job, Debug, DEV ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1502863227 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993162 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
