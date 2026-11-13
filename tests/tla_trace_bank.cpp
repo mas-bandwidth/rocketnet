@@ -77,6 +77,10 @@ struct bank_walk_t
     bool shared;
     bool foreign;
     bool route_bad;
+    int lw_q;          // the slot the last call wrote (the model's lw), -1 for none
+    int lw_b;
+    int lw_s;
+    bool lw_nonzero;   // its packet_bytes after the call is non-zero
 };
 
 // the byte offset of a pointer past the first bank: the model's address
@@ -127,7 +131,6 @@ static tla_record_t bank_record( const bank_walk_t & walk )
 
     std::vector<std::string> slot_keys;
     std::vector<std::string> owner;
-    std::vector<std::string> fin;
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
         for ( int b = 0; b < ROCKETNET_URING_SEND_BANKS; b++ )
@@ -136,8 +139,6 @@ static tla_record_t bank_record( const bank_walk_t & walk )
             {
                 slot_keys.push_back( "<<" + tla_int( q ) + ", " + tla_int( b ) + ", " + tla_int( s ) + ">>" );
                 owner.push_back( tla_int( walk.owner[q][b][s] ) );
-                // fin: a slot claimed in this fill whose packet_bytes the code left non-zero
-                fin.push_back( tla_bool( s < BANK_SLOTS && walk.owner[q][b][s] != -1 && queues->queue[q].bank[b].slot[s].packet_bytes != 0 ) );
             }
         }
     }
@@ -155,7 +156,9 @@ static tla_record_t bank_record( const bank_walk_t & walk )
     record.add( "gid", tla_int( (int64_t) queues->packet_id.load() ) );
     record.add( "held", tla_function( thread_keys, held ) );
     record.add( "owner", tla_function( slot_keys, owner ) );
-    record.add( "fin", tla_function( slot_keys, fin ) );
+    record.add( "lw", walk.lw_q < 0 ? std::string( "[none |-> TRUE]" )
+                                    : "[slot |-> <<" + tla_int( walk.lw_q ) + ", " + tla_int( walk.lw_b ) + ", " + tla_int( walk.lw_s ) +
+                                          ">>, nz |-> " + tla_bool( walk.lw_nonzero ) + "]" );
     record.add( "stg", tla_function( queue_keys, staged ) );
     record.add( "demand", tla_function( thread_keys, demand ) );
     record.add( "flushes", tla_int( walk.flushes ) );
@@ -175,6 +178,7 @@ static const char * bank_start( bank_walk_t & walk, int t, int d, std::string & 
     uint64_t pid = 0;
     uint8_t * frame = rocketnet_uring_send_queues_start( walk.queues, &walk.dest[d], &pid );
     walk.demand[t]++;
+    walk.lw_q = -1;
     if ( !frame )
     {
         args = tla_sequence( { tla_int( t ), tla_int( d ), tla_int( (int64_t) pid ) } );
@@ -230,6 +234,7 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
     }
 
     uint8_t * pointer = queues->queue[0].bank[0].data + c.ptr + k;
+    walk.lw_q = -1;
     bool ok = false;
     if ( abort )
     {
@@ -266,6 +271,13 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
             for ( int s = 0; s < BANK_SLOTS; s++ )
             {
                 const bool written = queues->queue[q].bank[b].slot[s].packet_bytes != before[index].packet_bytes;
+                if ( written )
+                {
+                    walk.lw_q = q;
+                    walk.lw_b = b;
+                    walk.lw_s = s;
+                    walk.lw_nonzero = queues->queue[q].bank[b].slot[s].packet_bytes != 0;
+                }
                 if ( written && ( walk.owner[q][b][s] != t || q != c.q || b != c.b || s != c.slot ) )
                 {
                     walk.foreign = true;
@@ -296,6 +308,7 @@ static bool bank_flush( bank_walk_t & walk, int * turned )
         before[q] = walk.queues->queue[q].producer;
     }
     *turned = rocketnet_uring_send_queues_turn( walk.queues );
+    walk.lw_q = -1;
     bool stale = false;
     for ( int q = 0; q < BANK_QUEUES; q++ )
     {
@@ -327,6 +340,7 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
 {
     bank_walk_t walk;
     memset( &walk, 0, sizeof( walk ) );
+    walk.lw_q = -1;
     walk.queues = rocketnet_uring_send_queues_create( NULL, BANK_QUEUES, BANK_SLOTS );
     if ( !walk.queues )
     {

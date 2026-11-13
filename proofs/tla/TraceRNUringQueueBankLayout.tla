@@ -32,7 +32,7 @@ VARIABLES ti,        \* the index of the record the state matches
 \* every model variable by the field name the harness writes
 VarsRec ==
     [prod |-> prod, cnt |-> cnt, gid |-> gid, held |-> held, owner |-> owner,
-     fin |-> fin, stg |-> stg, demand |-> demand, flushes |-> flushes, oob |-> oob, shared |-> shared,
+     lw |-> lw, stg |-> stg, demand |-> demand, flushes |-> flushes, oob |-> oob, shared |-> shared,
      foreign |-> foreign, routeBad |-> routeBad]
 
 \* the actions each operation of the code can be
