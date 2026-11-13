@@ -529,6 +529,13 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
     // code after the last opening, on either transport, not taken from
     // WF_CAPACITY
 
+    // the walk drives the message layer below rocketnet_server_finish_client_message,
+    // whose first call is what turns the one-thread-a-client check on
+    // (sdk/rocketnet_api.cpp): turn it on here, as that call would, so the
+    // owner read from the code is the check's from the first record
+
+    rocketnet_fill_phase_arm( walk.object->fill_phase, true );
+
     memset( &wf_fake, 0, sizeof( wf_fake ) );
     wf_fake.max_room = 4 * WF_FRAMES;
     wf_fake.room = wf_fake.max_room;
