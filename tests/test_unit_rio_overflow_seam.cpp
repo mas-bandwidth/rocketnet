@@ -6,6 +6,7 @@
 #include "test_unit_registry.h"
 
 #include "../sdk/rocketnet_server_rio.h"
+#include "../sdk/rocketnet_driver.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +25,10 @@ bool rocketnet_server_rio_test_send_accounting();
 bool rocketnet_server_rio_test_create_failure_drain( int late_waits, bool refuse_close, bool * stopped_out, int * closes_out,
                                                      int * waits_out, int * longest_wait_milliseconds_out );
 bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int * closes_out, uint64_t * abandoned_out );
+bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out, void ( *driver_totals )( void * transport, uint64_t * values ), uint64_t * driver_stopped_out );
+extern const rocketnet_transport_backend_t rocketnet_rio_transport;
+bool rocketnet_server_rio_test_corrupt_queue( bool * stopped_out, uint64_t * corrupt_out );
+bool rocketnet_server_rio_test_pin_refusal( uint64_t * not_asked_out, uint64_t * refused_out, int * placement_out );
 
 static void test_rio_transport_overflow_seam()
 {
@@ -164,8 +169,8 @@ REGISTER_UNIT_TEST( test_rio_transport_create_failure_drain_counts_only_stalled_
 // A create that fails before any receive is posted, with closesocket refused
 // on every pass: nothing is kernel owned, so the drain stops after its eleven
 // bounded passes and abandons only the socket handle (counted by name); the
-// transport is freed, not leaked whole.
-static void test_rio_transport_create_failure_unposted_frees_the_transport()
+// lane is freed, not leaked whole, and no create leak is counted.
+static void test_rio_transport_create_failure_unposted_frees_the_lane()
 {
     bool stopped = false;
     int closes = 0;
@@ -176,6 +181,50 @@ static void test_rio_transport_create_failure_unposted_frees_the_transport()
     check( abandoned == 1 );
 }
 
-REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_transport );
+REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_lane );
+
+// At stop, three datagrams completed after the close, three in the fill
+// bank and two in a ready bank main never took: all eight are counted as
+// RECEIVE_DROP_STOPPED and no other reason moves (a fake kernel, no socket,
+// no worker thread, no clock).
+static void test_rio_transport_stop_counts_stranded_datagrams()
+{
+    uint64_t stopped = 0;
+    uint64_t driver_stopped = 0;
+    // the tally read through the rio transport's own receive_drop_totals, as the server reads it
+    check( rocketnet_server_rio_test_stop_counts_stranded( &stopped, rocketnet_rio_transport.server->receive_drop_totals, &driver_stopped ) );
+    check( stopped == 8 );
+    check( driver_stopped == 8 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_stop_counts_stranded_datagrams );
+
+// A corrupt receive completion queue at stop: the lane never reports
+// stopped, and the corruption is named and counted once over three passes.
+static void test_rio_transport_corrupt_queue_is_named_once()
+{
+    bool stopped = true;
+    uint64_t corrupt = 0;
+    check( rocketnet_server_rio_test_corrupt_queue( &stopped, &corrupt ) );
+    check( !stopped );
+    check( corrupt == 1 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_corrupt_queue_is_named_once );
+
+// A lane worker whose pin the platform refuses counts it in RIO_PIN_REFUSALS
+// (read by value), and a lane that asked for no placement counts none.
+static void test_rio_transport_pin_refusal_is_counted()
+{
+    uint64_t not_asked = 99;
+    uint64_t refused = 0;
+    int placement = -1;
+    check( rocketnet_server_rio_test_pin_refusal( &not_asked, &refused, &placement ) );
+    check( not_asked == 0 );
+    check( refused == 1 );
+    check( placement == ROCKETNET_RIO_PLACEMENT_REFUSED );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_pin_refusal_is_counted );
 
 #endif // #if defined( _WIN32 )

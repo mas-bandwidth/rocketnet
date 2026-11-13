@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.44"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.45"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        44
+    #define ROCKETNET_VERSION_PATCH                        45
 
 #else // !ROCKETNET_DEV
 
@@ -1648,12 +1648,21 @@ struct rocketnet_server_config_t
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
-    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso and io_uring.
+    /// ROCKETNET_SERVER_NUM_XDP_QUEUES applies to xdp, gso, io_uring and the
+    /// Windows rio and iocp transports.
     /// Zero, the default, selects the transport's own. Range is 1 .. 1024;
-    /// gso and io_uring refuse a value above 32.
-    /// The Windows iocp transport ignores it and always runs one completion
-    /// worker plus one send worker; the Windows rio transport ignores it and
-    /// runs one I/O worker.
+    /// gso and io_uring refuse a value above 32, and so do rio and iocp.
+    /// On Windows it is the number of sockets on the server's port, each with
+    /// its own worker thread: rio runs that many lanes, iocp that many
+    /// completion workers. Zero or 1 is one socket, bound to the port
+    /// exclusively. More than one needs a specific local address, set in
+    /// bind_ipv4_address or bind_ipv6_address: start refuses the wildcard
+    /// (0.0.0.0 or ::). The sockets then share the port, one per processor,
+    /// and Windows has no exclusive form of that sharing: a plain bind of
+    /// that address and port is refused while the server runs, but a process
+    /// that asks for the same sharing can join the port and receive the
+    /// datagrams steered to its processor. Use one socket where nothing else on
+    /// the machine can be trusted with the port.
 
     int num_xdp_queues;
 
