@@ -395,7 +395,9 @@ teardown()
     ssh_run "$server_ssh" sudo -n "$remote_path" restore "$commit" "$server_nic" >/dev/null 2>&1
 }
 
-trap 'teardown; cleanup; exit 1' EXIT INT TERM HUP
+# the heartbeat stops on every exit, teardown allowed or not: a heartbeat
+# outliving this script would keep the watchdog from ever firing
+trap 'stop_heartbeat; teardown; cleanup; exit 1' EXIT INT TERM HUP
 
 # 2. build on every machine in parallel; compare the commit each reports.
 # the build and copy logs are kept in the run directory, beside the results
@@ -460,6 +462,16 @@ ssh_run "$server_ssh" sudo -n true || fail "sudo -n true failed on $server_ssh; 
 ssh_run "$server_ssh" "$remote_path" preflight "$commit" "$server_nic" "$server_queues" "$server_address" || fail "server pre-flight refused"
 teardown_allowed=1
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" arm "$server_nic" || fail "cannot arm the dead-man timer"
+
+# the heartbeat loop the watchdog reads (section 9, step 3). It starts as
+# soon as the watchdog is armed: the watchdog fires at a heartbeat 30 s old,
+# and the start, the listen polls and the client starts can take longer.
+( while [ ! -f "$tmp/stop-heartbeat" ]; do
+      ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
+      sleep 5
+  done ) &
+heartbeat_pid=$!
+
 ssh_run "$server_ssh" sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS "$remote_path" start server "$commit" "$server_label" "$server_address" "$seed" "$min_each" 1000 1000 60 "$server_queues" "$server_results" "$server_status" || fail "cannot start the server"
 
 # the fresh ssh connection within 10 s of the load
@@ -480,13 +492,6 @@ while IFS=$'\t' read -r label ssh_name shape site path cap each stagger; do
     ssh_run "$ssh_name" "$remote_path" start client "$commit" "$label" "$server_address" "$window_seconds" "$cycles" "$stagger" "$seed" "$each" 1000 60 "$results" || fail "cannot start client $label"
     started_clients=1
 done < "$tmp/sorted.tsv"
-
-# the heartbeat loop the watchdog reads (section 9, step 3)
-( while [ ! -f "$tmp/stop-heartbeat" ]; do
-      ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$server_ssh" touch "~/rocketnet-live/heartbeat" >/dev/null 2>&1
-      sleep 5
-  done ) &
-heartbeat_pid=$!
 
 # 6. watch every 30 s until every client is done; a fail line, the server
 # gone, or the clients outliving the worst-case run (plus one teardown's

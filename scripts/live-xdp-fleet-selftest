@@ -45,6 +45,8 @@ shift
 # a real ssh forwards its stdin to the remote command unless given -n
 [ "$nflag" -eq 1 ] || cat > /dev/null
 if [ "${1:-}" = "touch" ]; then
+    # the heartbeat: not logged (the loop repeats it), only marked as seen
+    : > "$FAKE_HEARTBEAT"
     exit 0
 fi
 echo "$host $*" >> "$FAKE_LOG"
@@ -78,7 +80,21 @@ case "$sub" in
             echo "live-xdp-fleet-remote: preflight: an XDP program is already attached to eth0" >&2
             exit 1
         fi ;;
-    arm|start|stop|restore) : ;;
+    start)
+        # the watchdog is armed by now and fires at a stale heartbeat: the
+        # orchestrator's heartbeat must already be running. The bound only
+        # lets its background loop be scheduled; nothing is timed.
+        if [ "$3" = "server" ]; then
+            for _ in $( seq 1 200 ); do
+                [ -f "$FAKE_HEARTBEAT" ] && break
+                /bin/sleep 0.05
+            done
+            if [ ! -f "$FAKE_HEARTBEAT" ]; then
+                echo "fake host: no heartbeat between arm and start server" >&2
+                exit 1
+            fi
+        fi ;;
+    arm|stop|restore) : ;;
     alive)
         if [ "$3" = "server" ]; then
             [ -z "${FAKE_SERVER_GONE:-}" ] || exit 1
@@ -148,7 +164,8 @@ run_fleet()
     local name=$1
     shift
     : > "$tmp/$name.log"
-    timeout 120 env "$@" PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/$name.log" FAKE_COMMIT="$commit" TMPDIR="$tmp" \
+    rm -f "$tmp/$name.heartbeat"
+    timeout 120 env "$@" PATH="$tmp/bin:$PATH" FAKE_LOG="$tmp/$name.log" FAKE_HEARTBEAT="$tmp/$name.heartbeat" FAKE_COMMIT="$commit" TMPDIR="$tmp" \
         bash "$fleet" --inventory "$tmp/inventory" --commit "$commit" --run-dir "$tmp/$name.run" \
         > "$tmp/$name.out" 2>&1 < /dev/null
     echo $? > "$tmp/$name.rc"
@@ -174,7 +191,7 @@ fi
 for label in alpha bravo charlie; do
     for step in build "start client" collect; do
         if ! grep -q "^$label-host .*live-xdp-fleet-remote $step" "$tmp/clean.log"; then
-            fail_case "client $label: no '$step' step (an ssh in a read loop ate the client list)"
+            fail_case "client $label: no '$step' step (the run stopped early, or an ssh in a read loop ate the client list)"
         fi
     done
 done
