@@ -1081,6 +1081,11 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     rocketnet_server_rio_t * rio = new ( storage ) rocketnet_server_rio_t();
     rio->context = context;
     rio->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
+    // the address the caller asked for: the bound port is written into
+    // bind_address once the socket is bound, and a create that fails after
+    // that hands the caller back what it asked for, so the next transport of
+    // the ladder never inherits this one's ephemeral port
+    const rocketnet_address_t requested_address = *bind_address;
 
     SOCKADDR_INET address;
     int address_bytes = 0;
@@ -1364,6 +1369,7 @@ failed:
 #else
     rocketnet_warn( "rio transport create failed (%s, Win32 %lu)", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text, GetLastError() );
 #endif
+    *bind_address = requested_address;
     // Partial construction remains private to this synchronous create call.
     if ( !rocketnet_rio_create_failed_drain( rio ) )
     {
