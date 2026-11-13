@@ -49,6 +49,11 @@ void rocketnet_xdp_host_set_socket_slot( uint32_t index, int populated );
 
 void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key, uint32_t high_water );
 
+// removes the replay table entry for the key: 1 when it was present, 0 when
+// it was not (the kernel's delete of a missing key, ENOENT)
+
+int rocketnet_xdp_host_delete_replay_entry( const struct rocketnet_server_xdp_replay_key_t * key );
+
 // 1 with *high_water set when the key is present, 0 with *high_water
 // untouched when it is not
 

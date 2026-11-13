@@ -94,25 +94,27 @@ LAYERS = {
     },
     "xdp-gateway-refresh": {
         "modules": ["RNXdpGatewayRefresh.tla", "TraceRNXdpGatewayRefresh.tla"],
-        "kind": "steps",
         "untraced": {
             "ReceiveWithoutRefresh": "enabled only under RefreshInFill, the reversed witness's rule; the code refreshes inside the receive call",
         },
     },
     "xdp-reply-macs": {
         "modules": ["RNXdpReplyMacsLayout.tla", "TraceRNXdpReplyMacsLayout.tla"],
-        "kind": "steps",
         "untraced": {},
     },
     "xdp-replay-marks": {
         "modules": ["RNXdpReplayMarksLayout.tla", "TraceRNXdpReplayMarksLayout.tla"],
-        "kind": "steps",
         "untraced": {},
     },
     "xdp-receive-ring": {
         "modules": ["RNXdpReceiveRing.tla", "TraceRNXdpReceiveRing.tla"],
-        "kind": "steps",
         "untraced": {},
+    },
+    "xdp-replay": {
+        "modules": ["RNXdpReplay.tla", "TraceRNXdpReplay.tla"],
+        "untraced": {
+            "Seqs": "not an action: the set of sequences Next's Forge ranges over",
+        },
     },
 }
 
