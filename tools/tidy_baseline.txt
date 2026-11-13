@@ -156,7 +156,6 @@ clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-mult
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-implicit-widening-of-multiplication-result	c2998355ba4f6d30
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	57b112052d010108
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	996deb03ebfe5e3b
-clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	a9f0727008c383e8
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-misplaced-widening-cast	b7ca439d51463355
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-multi-level-implicit-pointer-conversion	04db4c1d8b55b0d6
 clang-tidy	sdk/rocketnet_server_transport.cpp	bugprone-multi-level-implicit-pointer-conversion	5bebdf7298f8aa05

@@ -69,6 +69,8 @@ sdk/rocketnet_driver_builtin.cpp	built-in transport drivers
 sdk/rocketnet_driver_loopback.cpp	in-process loopback transport
 sdk/rocketnet_driver_loopback.h	in-process loopback transport
 sdk/rocketnet_drivers.inc	the driver rows each build mode compiles
+sdk/rocketnet_fill_phase.cpp	the check of the thread rules for server calls: process state, nothing on the wire
+sdk/rocketnet_fill_phase.h	the check of the thread rules for server calls: process state, nothing on the wire
 sdk/rocketnet_gateway_netlink.h	XDP gateway discovery through rtnetlink
 sdk/rocketnet_gateway_netlink_linux.cpp	XDP gateway discovery through rtnetlink
 sdk/rocketnet_hash.cpp	FNV-1a for in-process tables

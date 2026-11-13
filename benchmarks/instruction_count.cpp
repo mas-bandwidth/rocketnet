@@ -242,7 +242,7 @@ namespace
                 uint8_t * payload =
                     rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
-                memset( payload + context.payload_index, (uint8_t) i, PAYLOAD_BYTES );
+                memset( payload, (uint8_t) i, PAYLOAD_BYTES );
                 CHECK( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) >
                        PAYLOAD_BYTES );
             }
@@ -278,7 +278,7 @@ namespace
                 uint8_t * payload = rocketnet_server_transport_start_packet(
                     server, reply_client_index[i], PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
-                memset( payload + context.payload_index, 0x72, PAYLOAD_BYTES );
+                memset( payload, 0x72, PAYLOAD_BYTES );
                 CHECK( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) >
                        PAYLOAD_BYTES );
             }
@@ -400,7 +400,7 @@ namespace
                     uint8_t * payload = rocketnet_client_transport_start_packet(
                         clients[c], PAYLOAD_BYTES, &context );
                     CHECK( payload != NULL );
-                    memset( payload + context.payload_index, (uint8_t) ( c + p ), PAYLOAD_BYTES );
+                    memset( payload, (uint8_t) ( c + p ), PAYLOAD_BYTES );
                     CHECK( rocketnet_client_transport_finish_packet(
                                clients[c], &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
                 }
@@ -430,7 +430,7 @@ namespace
                 uint8_t * payload = rocketnet_server_transport_start_packet(
                     server, reply_client_index[i], PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
-                memset( payload + context.payload_index, 0x73, PAYLOAD_BYTES );
+                memset( payload, 0x73, PAYLOAD_BYTES );
                 CHECK( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) >
                        PAYLOAD_BYTES );
             }

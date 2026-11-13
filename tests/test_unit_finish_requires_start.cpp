@@ -602,25 +602,25 @@ static void test_finish_requires_start_message_objects_and_endpoint()
         // finish clears in_place, asserts in Debug, and returns 0 in Release
         c0 = rocketnet_message_client_start( msg_client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
         check( c0 != NULL );
-        check( msg_client->object.in_place > 0 );
+        check( msg_client->object.connections[0].open.in_place > 0 );
         rocketnet_message_client_send_packets( msg_client );
-        check( msg_client->object.in_place == -1 );
+        check( msg_client->object.connections[0].open.in_place == -1 );
         check_not_asserted();
         check( rocketnet_message_client_finish( msg_client, 6 ) == 0 );
         check_asserted_once();
-        check( msg_client->object.in_place == 0 );
+        check( msg_client->object.connections[0].open.in_place == 0 );
         check( rocketnet_message_client_finish( msg_client, 6 ) == 0 );
         check_asserted_once();
 
         s0 = rocketnet_message_server_start( msg_server, slot0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 6 );
         check( s0 != NULL );
-        check( server_obj->in_place > 0 );
+        check( server_obj->connections[slot0].open.in_place > 0 );
         rocketnet_message_server_send_packets( msg_server );
-        check( server_obj->in_place == -1 - slot0 );
+        check( server_obj->connections[slot0].open.in_place == -1 );
         check_not_asserted();
         check( rocketnet_message_server_finish( msg_server, slot0, 6 ) == 0 );
         check_asserted_once();
-        check( server_obj->in_place == 0 );
+        check( server_obj->connections[slot0].open.in_place == 0 );
         check( rocketnet_message_server_finish( msg_server, slot0, 6 ) == 0 );
         check_asserted_once();
 
@@ -858,7 +858,7 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_packet_context_t c_ctx;
         uint8_t * c_frame = rocketnet_client_transport_start_packet( client_a, 16, &c_ctx );
         check( c_frame != NULL );
-        memset( c_frame + c_ctx.payload_index, 0x11, 16 );
+        memset( c_frame, 0x11, 16 );
         rocketnet_packet_context_t c_copy = c_ctx;
         check( rocketnet_client_transport_finish_packet( client_a, &c_ctx, 16 ) > 0 );
         check_no_lease_assert();
@@ -872,7 +872,7 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_packet_context_t s_ctx;
         uint8_t * s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
-        memset( s_frame + s_ctx.payload_index, 0x22, 16 );
+        memset( s_frame, 0x22, 16 );
         rocketnet_packet_context_t s_copy = s_ctx;
         check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
         check_no_lease_assert();
@@ -1055,7 +1055,7 @@ static void test_finish_requires_start_transport_packets()
         // saved copy, not take the retired() path; it is counted either way.
         s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
-        memset( s_frame + s_ctx.payload_index, 0x23, 16 );
+        memset( s_frame, 0x23, 16 );
         s_copy = s_ctx;
         check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
         check_no_lease_assert();
