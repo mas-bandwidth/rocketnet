@@ -12,15 +12,13 @@
 #include "rocketnet_wire.h"
 
 // Windows server transport. The public transport API is unchanged. The send
-// side is lanes, the XDP shape: each lane owns its staging and its pool of
-// send operations, and a client's packets always stage in the lane its
-// address hashes to (rocketnet_server_iocp_send_lane), so one lane carries
-// every packet of a client, in order. Fill threads acquire and seal directly
-// into the lane's transport-owned cold frames. Flush try-publishes one of
-// each lane's three compact generation-tagged index banks to the lane's
-// completion worker (lane l is worker l % workers's; the network runs on the
-// configured workers and no other thread), which alone cuts the bank into
-// runs of one destination
+// side is lanes, the XDP shape: each lane owns its staging, its pool of send
+// operations and its TX worker, and a client's packets always stage in the
+// lane its address hashes to (rocketnet_server_iocp_send_lane), so one lane
+// carries every packet of a client, in order. Fill threads acquire and seal
+// directly into the lane's transport-owned cold frames. Flush try-publishes
+// one of each lane's three compact generation-tagged index banks to that
+// lane's TX worker, which alone cuts the bank into runs of one destination
 // (grouped by the send gather, sdk/rocketnet_send_gather.h), coalesces and posts its
 // UDP sends; only completions return frames to the lane's bounded
 // free-reference queue.
@@ -193,7 +191,7 @@ int rocketnet_server_iocp_send_lane_count( rocketnet_server_iocp_t * iocp );
 int rocketnet_server_iocp_send_lane( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to );
 int rocketnet_server_iocp_send_lane_room( rocketnet_server_iocp_t * iocp, int lane );
 // true once nothing is staged in any lane and every send operation is back in
-// its lane's free queue: no bank waits for its worker and no posted send
+// its lane's free queue: no bank waits for a send worker and no posted send
 // waits for its completion. Main thread.
 bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp );
