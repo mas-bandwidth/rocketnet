@@ -274,10 +274,14 @@ static tla_record_t msgx_state( const msgx_walk_t & walk )
     }
 
     std::vector<std::string> counter_keys, counters;
-    for ( int c = 0; c < ROCKETNET_MSGX_TABLE_NUM_COUNTERS; c++ )
+    // the model's counters, indexed in this order (RNMsgxSocketTable.tla)
+    const uint64_t counts[] = { table->counts.opened,        table->counts.closed,         table->counts.open_failed,
+                                table->counts.open_deferred, table->counts.table_full,     table->counts.retired_forget,
+                                table->counts.retired_dead,  table->counts.cooldown };
+    for ( int c = 0; c < (int) ( sizeof( counts ) / sizeof( counts[0] ) ); c++ )
     {
         counter_keys.push_back( tla_int( c ) );
-        counters.push_back( tla_int( (int64_t) table->counters[c] ) );
+        counters.push_back( tla_int( (int64_t) counts[c] ) );
     }
 
     std::vector<std::string> fd_keys, kfd, kdead;
@@ -411,9 +415,9 @@ static std::string msgx_do( msgx_walk_t & walk, const msgx_op_t & op, tla_random
     struct rocketnet_msgx_socket_table_t * table = walk.table;
     if ( strcmp( op.n, "mark" ) == 0 )
     {
-        const uint64_t opened = table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPENED];
+        const uint64_t opened = table->counts.opened;
         (void) rocketnet_msgx_socket_table_mark( table, &walk.address[op.a] );
-        if ( table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPENED] != opened )
+        if ( table->counts.opened != opened )
         {
             // the caller registers the new socket with its receive poller
             const int s = rocketnet_msgx_socket_table_lookup( table, &walk.address[op.a] );

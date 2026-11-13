@@ -74,16 +74,20 @@ static_assert( ( ROCKETNET_MSGX_TABLE_INDEX_SIZE & ( ROCKETNET_MSGX_TABLE_INDEX_
 #define ROCKETNET_MSGX_SLOT_OPEN                             1
 #define ROCKETNET_MSGX_SLOT_RETIRED                          2
 
-// counters, main-owned unless named otherwise
-#define ROCKETNET_MSGX_TABLE_COUNTER_OPENED                  0  // sockets opened and connected
-#define ROCKETNET_MSGX_TABLE_COUNTER_CLOSED                  1  // sockets closed after their quarantine
-#define ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED             2  // an open the kernel refused (descriptor exhaustion, EADDRINUSE, ...): the client stays on the shared socket
-#define ROCKETNET_MSGX_TABLE_COUNTER_OPEN_DEFERRED           3  // a mark past this update's open budget: the walk owes it and takes it again next update
-#define ROCKETNET_MSGX_TABLE_COUNTER_TABLE_FULL              4  // a mark with every slot open or still in quarantine
-#define ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_FORGET          5  // retired on the walk's forget
-#define ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_DEAD            6  // retired on a holder's dead report
-#define ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN                7  // a mark refused inside a dead address's cooldown
-#define ROCKETNET_MSGX_TABLE_NUM_COUNTERS                    8
+// what the table did, main only: plain fields the transport's stats and the
+// tests read; none of them is a public counter row (the transport's public
+// rows come from its send failures and receive drop totals)
+struct rocketnet_msgx_table_counts_t
+{
+    uint64_t opened;                    // sockets opened and connected
+    uint64_t closed;                    // sockets closed after their quarantine
+    uint64_t open_failed;               // an open the kernel refused (descriptor exhaustion, EADDRINUSE, ...): the client stays on the shared socket
+    uint64_t open_deferred;             // a mark past this update's open budget: the walk owes it and takes it again next update
+    uint64_t table_full;                // a mark with every slot open or still in quarantine
+    uint64_t retired_forget;            // retired on the walk's forget
+    uint64_t retired_dead;              // retired on a holder's dead report
+    uint64_t cooldown;                  // a mark refused inside a dead address's cooldown
+};
 
 struct rocketnet_msgx_socket_slot_t
 {
@@ -136,7 +140,7 @@ struct rocketnet_msgx_socket_table_t
     struct rocketnet_address_t cooldown_address[ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES];
     uint64_t cooldown_until[ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES];
 
-    uint64_t counters[ROCKETNET_MSGX_TABLE_NUM_COUNTERS];
+    struct rocketnet_msgx_table_counts_t counts;
 
     struct rocketnet_msgx_socket_slot_t slots[ROCKETNET_MSGX_TABLE_MAX_SLOTS];
 };
@@ -204,7 +208,7 @@ inline void rocketnet_msgx_socket_table_init( struct rocketnet_msgx_socket_table
     }
     memset( table->cooldown_address, 0, sizeof( table->cooldown_address ) );
     memset( table->cooldown_until, 0, sizeof( table->cooldown_until ) );
-    memset( table->counters, 0, sizeof( table->counters ) );
+    memset( &table->counts, 0, sizeof( table->counts ) );
     for ( int i = 0; i < ROCKETNET_MSGX_TABLE_MAX_SLOTS; i++ )
     {
         struct rocketnet_msgx_socket_slot_t * slot = &table->slots[i];
@@ -399,19 +403,19 @@ inline bool rocketnet_msgx_socket_table_mark( struct rocketnet_msgx_socket_table
     const int cooldown = rocketnet_msgx_socket_table_cooldown_entry( address );
     if ( table->cooldown_until[cooldown] > table->update && rocketnet_address_equal( &table->cooldown_address[cooldown], address ) )
     {
-        table->counters[ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN]++;
+        table->counts.cooldown++;
         return true;
     }
 
     if ( table->num_free == 0 )
     {
-        table->counters[ROCKETNET_MSGX_TABLE_COUNTER_TABLE_FULL]++;
+        table->counts.table_full++;
         return true;
     }
 
     if ( table->opens_left <= 0 )
     {
-        table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPEN_DEFERRED]++;
+        table->counts.open_deferred++;
         return false;
     }
     table->opens_left--;
@@ -419,7 +423,7 @@ inline bool rocketnet_msgx_socket_table_mark( struct rocketnet_msgx_socket_table
     const int fd = table->open( table->user, address );
     if ( fd < 0 )
     {
-        table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED]++;
+        table->counts.open_failed++;
         return true;
     }
 
@@ -432,7 +436,7 @@ inline bool rocketnet_msgx_socket_table_mark( struct rocketnet_msgx_socket_table
     entry->word.store( rocketnet_msgx_word( entry->generation, fd ), std::memory_order_seq_cst );
     rocketnet_msgx_socket_table_index_insert( table, slot );
     table->num_open++;
-    table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPENED]++;
+    table->counts.opened++;
     return true;
 }
 
@@ -448,7 +452,7 @@ inline bool rocketnet_msgx_socket_table_forget( struct rocketnet_msgx_socket_tab
     }
     *retired_fd = table->slots[slot].fd;
     rocketnet_msgx_socket_table_retire( table, slot );
-    table->counters[ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_FORGET]++;
+    table->counts.retired_forget++;
     return true;
 }
 
@@ -498,7 +502,7 @@ inline int rocketnet_msgx_socket_table_sweep( struct rocketnet_msgx_socket_table
                 retire_hook( hook_user, entry->fd );
             }
             rocketnet_msgx_socket_table_retire( table, slot );
-            table->counters[ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_DEAD]++;
+            table->counts.retired_dead++;
         }
     }
 
@@ -517,7 +521,7 @@ inline int rocketnet_msgx_socket_table_sweep( struct rocketnet_msgx_socket_table
         entry->fd = -1;
         entry->state = ROCKETNET_MSGX_SLOT_FREE;
         table->free_slots[table->num_free++] = slot;
-        table->counters[ROCKETNET_MSGX_TABLE_COUNTER_CLOSED]++;
+        table->counts.closed++;
         closed++;
     }
     table->num_retired = kept;
@@ -534,7 +538,7 @@ inline void rocketnet_msgx_socket_table_close_all( struct rocketnet_msgx_socket_
         if ( entry->state != ROCKETNET_MSGX_SLOT_FREE && entry->fd >= 0 )
         {
             table->close( table->user, entry->fd );
-            table->counters[ROCKETNET_MSGX_TABLE_COUNTER_CLOSED]++;
+            table->counts.closed++;
         }
         entry->fd = -1;
         entry->state = ROCKETNET_MSGX_SLOT_FREE;

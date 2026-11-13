@@ -91,30 +91,34 @@ struct rocketnet_server_msgx_t;
 #define ROCKETNET_MSGX_SEND_RETRY_SECONDS                            0.001
 #define ROCKETNET_MSGX_SEND_RETRIES_AFTER_QUIT                         100
 
-// counters, rocketnet_server_msgx_counters
-#define ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_SENT                       0  // datagrams the kernel took
-#define ROCKETNET_SERVER_MSGX_COUNTER_SENT_CONNECTED                     1  // of those, on a client's connected socket
-#define ROCKETNET_SERVER_MSGX_COUNTER_SENT_SHARED                        2  // of those, on the shared socket
-#define ROCKETNET_SERVER_MSGX_COUNTER_SEND_CALLS                         3  // sendmsg_x and sendto calls
-#define ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED                       4  // refused by the kernel for good, or a full socket's tail after shutdown
-#define ROCKETNET_SERVER_MSGX_COUNTER_SEND_REFUSED                       5  // ECONNREFUSED on a connected socket (an ICMP from the client): the run is sent again once
-#define ROCKETNET_SERVER_MSGX_COUNTER_SEND_RETIRED                       6  // stamped for a socket retired before the send: sent on the shared socket
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_DEAD                        7  // a connected socket answered ENOTCONN or EPIPE and was reported dead
-#define ROCKETNET_SERVER_MSGX_COUNTER_STAGING_FULL                       8  // starts refused: the worker's producer bank was full
-#define ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_RECEIVED                   9  // datagrams banked for main
-#define ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_CALLS                     10
-#define ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_REFUSED                   11  // ECONNREFUSED on a read of a connected socket
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPENED                    12
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_CLOSED                    13
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPEN                      14  // now
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_FAILED                15
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_DEFERRED              16
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_TABLE_FULL                 17
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_FORGET            18
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_DEAD              19
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_COOLDOWN                   20
-#define ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_IN_QUARANTINE             21  // now
-#define ROCKETNET_SERVER_MSGX_NUM_COUNTERS                              22
+// what the transport did, rocketnet_server_msgx_stats: plain fields the log at
+// destroy and the tests read; none of them is a public counter row (the
+// transport's public rows come from its send failures and receive drop totals)
+struct rocketnet_server_msgx_stats_t
+{
+    uint64_t packets_sent;                    // datagrams the kernel took
+    uint64_t sent_connected;                  // of those, on a client's connected socket
+    uint64_t sent_shared;                     // of those, on the shared socket
+    uint64_t send_calls;                      // sendmsg_x and sendto calls
+    uint64_t send_dropped;                    // refused by the kernel for good, or a full socket's tail after shutdown
+    uint64_t send_refused;                    // ECONNREFUSED on a connected socket (an ICMP from the client): the run is sent again once
+    uint64_t send_retired;                    // stamped for a socket retired before the send: sent on the shared socket
+    uint64_t socket_dead;                     // a connected socket answered ENOTCONN or EPIPE and was reported dead
+    uint64_t staging_full;                    // starts refused: the worker's producer bank was full
+    uint64_t packets_received;                // datagrams banked for main
+    uint64_t receive_calls;
+    uint64_t receive_refused;                 // ECONNREFUSED on a read of a connected socket
+    uint64_t sockets_opened;
+    uint64_t sockets_closed;
+    uint64_t sockets_open;                    // now
+    uint64_t socket_open_failed;
+    uint64_t socket_open_deferred;
+    uint64_t socket_table_full;
+    uint64_t sockets_retired_forget;
+    uint64_t sockets_retired_dead;
+    uint64_t socket_cooldown;
+    uint64_t sockets_in_quarantine;           // now
+};
 
 // bind_address as rocketnet_platform_socket_create's: written back with the
 // bound port. num_workers <= 0 selects the default. NULL with status left OK
@@ -133,7 +137,7 @@ uint64_t rocketnet_server_msgx_allocation_bytes( int num_workers, int max_client
 // requires stopped; joins and frees
 void rocketnet_server_msgx_destroy( struct rocketnet_server_msgx_t * msgx );
 
-void rocketnet_server_msgx_counters( struct rocketnet_server_msgx_t * msgx, uint64_t * counters );
+void rocketnet_server_msgx_stats( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_stats_t * stats );
 
 // the staged send path: start, finish and abort on any number of fill
 // threads strictly between flushes, one client's packets from one thread

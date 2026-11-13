@@ -38,7 +38,7 @@ void rocketnet_msgx_socket_table_retire( struct rocketnet_msgx_socket_table_t * 
     entry->fd = -1;
     entry->state = ROCKETNET_MSGX_SLOT_FREE;
     table->free_slots[table->num_free++] = slot;
-    table->counters[ROCKETNET_MSGX_TABLE_COUNTER_CLOSED]++;
+    table->counts.closed++;
     table->num_open--;
 #else  // #if defined( ROCKETNET_MSGX_SOCKET_TABLE_PLANT )
     entry->state = ROCKETNET_MSGX_SLOT_RETIRED;

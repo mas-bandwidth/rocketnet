@@ -120,9 +120,9 @@ static void msgx_test_destroy( struct msgx_test_t * test )
     delete test->kernel;
 }
 
-static uint64_t msgx_test_counter( const struct msgx_test_t & test, int counter )
+static const struct rocketnet_msgx_table_counts_t & msgx_test_counts( const struct msgx_test_t & test )
 {
-    return test.table->counters[counter];
+    return test.table->counts;
 }
 
 // open, stamp, resolve, forget, close after the sweep, and the slot reused
@@ -139,7 +139,7 @@ static void test_rocketnet_msgx_socket_table_lifecycle()
     rocketnet_unit_check( test.table->slots[slot].fd == 0 );
     rocketnet_unit_check( test.kernel->open[0] );
     rocketnet_unit_check( test.table->num_open == 1 && test.table->num_free == 2 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).opened == 1 );
 
     // a second mark of an open address changes nothing
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
@@ -160,7 +160,7 @@ static void test_rocketnet_msgx_socket_table_lifecycle()
     rocketnet_unit_check( rocketnet_msgx_word_fd( test.table->slots[slot].word.load() ) == -1 );
     rocketnet_unit_check( rocketnet_msgx_word_generation( test.table->slots[slot].word.load() ) == 1 );
     rocketnet_unit_check( test.table->num_retired == 1 && test.table->num_open == 0 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_FORGET ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).retired_forget == 1 );
     rocketnet_unit_check( test.kernel->open[0] );
 
     // a forget of an address with no socket retires nothing
@@ -173,7 +173,7 @@ static void test_rocketnet_msgx_socket_table_lifecycle()
     rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_FREE );
     rocketnet_unit_check( test.table->slots[slot].fd == -1 );
     rocketnet_unit_check( test.table->num_free == 3 && test.table->num_retired == 0 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_CLOSED ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).closed == 1 );
     rocketnet_unit_check( test.kernel->hooks == 0 );
 
     // reopened: the same slot and descriptor, the next generation
@@ -316,7 +316,7 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     rocketnet_unit_check( test.table->slots[slot].dead_report.load() == 0 );
     rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_OPEN );
     rocketnet_unit_check( test.kernel->hooks == 0 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_DEAD ) == 0 );
+    rocketnet_unit_check( msgx_test_counts( test ).retired_dead == 0 );
 
     // reports out of range are ignored
     rocketnet_msgx_socket_table_report_dead( test.table, -1, generation );
@@ -337,7 +337,7 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     rocketnet_unit_check( test.table->slots[slot].state == ROCKETNET_MSGX_SLOT_RETIRED );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &a ) == -1 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_resolve( test.table, slot, generation ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_DEAD ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).retired_dead == 1 );
     rocketnet_unit_check( test.kernel->open[fd] );
     rocketnet_msgx_socket_table_holder_end( test.table, 0 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, msgx_test_hook, test.kernel ) == 1 );
@@ -346,11 +346,11 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     // the cooldown: refused and counted for the updates it lasts, then open
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &a ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).cooldown == 1 );
     rocketnet_msgx_socket_table_begin_update( test.table, 100 + ROCKETNET_MSGX_TABLE_DEAD_COOLDOWN_UPDATES - 1 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &a ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN ) == 2 );
+    rocketnet_unit_check( msgx_test_counts( test ).cooldown == 2 );
 
     // another address is not cooled down
     const struct rocketnet_address_t b = msgx_test_address( 2 );
@@ -362,7 +362,7 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     const int reopened = rocketnet_msgx_socket_table_lookup( test.table, &a );
     rocketnet_unit_check( reopened >= 0 );
     rocketnet_unit_check( test.table->slots[reopened].generation == ( reopened == slot ? generation + 1 : 0 ) );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN ) == 2 );
+    rocketnet_unit_check( msgx_test_counts( test ).cooldown == 2 );
 
     msgx_test_destroy( &test );
 }
@@ -382,7 +382,7 @@ static void test_rocketnet_msgx_socket_table_open_budget()
     rocketnet_unit_check( test.table->opens_left == 0 );
     rocketnet_unit_check( !rocketnet_msgx_socket_table_mark( test.table, &c ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &c ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_DEFERRED ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).open_deferred == 1 );
     rocketnet_unit_check( test.kernel->opens == 2 );
 
     // an open address costs no budget
@@ -393,7 +393,7 @@ static void test_rocketnet_msgx_socket_table_open_budget()
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &c ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &c ) >= 0 );
     rocketnet_unit_check( test.table->opens_left == 1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) == 3 );
+    rocketnet_unit_check( msgx_test_counts( test ).opened == 3 );
 
     msgx_test_destroy( &test );
 }
@@ -412,7 +412,7 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     // one descriptor in the kernel: exhausted
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &b ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &b ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).open_failed == 1 );
     rocketnet_unit_check( test.table->num_free == 1 && test.table->num_open == 1 );
     rocketnet_unit_check( test.table->opens_left == 6 );
 
@@ -424,7 +424,7 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     rocketnet_unit_check( rocketnet_msgx_socket_table_sweep( test.table, NULL, NULL ) == 0 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &a ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &a ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) == 2 );
+    rocketnet_unit_check( msgx_test_counts( test ).open_failed == 2 );
     rocketnet_unit_check( test.table->num_free == 1 && test.table->num_retired == 1 );
 
     // b takes the last slot; with the other in quarantine, c finds it full
@@ -432,12 +432,12 @@ static void test_rocketnet_msgx_socket_table_refused_and_full()
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &b ) >= 0 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &c ) );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &c ) == -1 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_TABLE_FULL ) == 1 );
+    rocketnet_unit_check( msgx_test_counts( test ).table_full == 1 );
 
     // every open call is opened or counted refused
     rocketnet_unit_check( (uint64_t) ( test.kernel->opens + test.kernel->refused ) ==
-                          msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) +
-                              msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED ) );
+                          msgx_test_counts( test ).opened +
+                              msgx_test_counts( test ).open_failed );
 
     // the quarantine ends: a's socket is closed and its slot free again
     rocketnet_msgx_socket_table_holder_end( test.table, 0 );
@@ -531,10 +531,10 @@ static void test_rocketnet_msgx_socket_table_index_reference()
         }
     }
     // the walk filled the table and its deletes moved runs
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_TABLE_FULL ) > 0 );
+    rocketnet_unit_check( msgx_test_counts( test ).table_full > 0 );
     rocketnet_unit_check( removes_with_shift > 1000 );
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_OPENED ) ==
-                          msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_CLOSED ) + (uint64_t) num_open );
+    rocketnet_unit_check( msgx_test_counts( test ).opened ==
+                          msgx_test_counts( test ).closed + (uint64_t) num_open );
 
     msgx_test_destroy( &test );
 }
@@ -569,7 +569,7 @@ static void test_rocketnet_msgx_socket_table_close_all()
     {
         rocketnet_unit_check( !test.kernel->open[f] );
     }
-    rocketnet_unit_check( msgx_test_counter( test, ROCKETNET_MSGX_TABLE_COUNTER_CLOSED ) == 3 );
+    rocketnet_unit_check( msgx_test_counts( test ).closed == 3 );
     rocketnet_unit_check( test.table->num_free == 3 && test.table->num_open == 0 && test.table->num_retired == 0 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &a ) == -1 );
     rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &b ) == -1 );

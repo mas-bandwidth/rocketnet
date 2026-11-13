@@ -2038,11 +2038,13 @@ static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int
 // sends the run on the shared socket; any other errno drops the run counted
 // in SEND_FAILED. Every case ends with the connection up and traffic flowing.
 
-static uint64_t posix_msgx_counter( struct posix_pair_t * pair, int index )
+typedef uint64_t rocketnet_server_msgx_stats_t::*posix_msgx_stat_t;
+
+static uint64_t posix_msgx_stat( struct posix_pair_t * pair, posix_msgx_stat_t field )
 {
-    uint64_t counters[ROCKETNET_SERVER_MSGX_NUM_COUNTERS];
-    rocketnet_server_msgx_counters( (struct rocketnet_server_msgx_t *) pair->transport, counters );
-    return counters[index];
+    struct rocketnet_server_msgx_stats_t stats;
+    rocketnet_server_msgx_stats( (struct rocketnet_server_msgx_t *) pair->transport, &stats );
+    return stats.*field;
 }
 
 static void posix_msgx_wait_send_idle( struct posix_pair_t * pair )
@@ -2124,15 +2126,15 @@ static void posix_msgx_send_seam_cell( int ipv6 )
         int error;
         int count;
         bool delivered;
-        int counter;            // the counter the errno moves, or -1
+        posix_msgx_stat_t counter; // the stat the errno moves, or nullptr
     };
 
     const struct posix_msgx_seam_t seams[] = {
-        { ENOBUFS, 3, true, -1 },
-        { EAGAIN, 3, true, -1 },
-        { ECONNREFUSED, 1, true, ROCKETNET_SERVER_MSGX_COUNTER_SEND_REFUSED },
-        { EHOSTUNREACH, 1000, false, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED },
-        { ENOTCONN, 1, true, ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_DEAD },
+        { ENOBUFS, 3, true, nullptr },
+        { EAGAIN, 3, true, nullptr },
+        { ECONNREFUSED, 1, true, &rocketnet_server_msgx_stats_t::send_refused },
+        { EHOSTUNREACH, 1000, false, &rocketnet_server_msgx_stats_t::send_dropped },
+        { ENOTCONN, 1, true, &rocketnet_server_msgx_stats_t::socket_dead },
     };
 
     for ( size_t s = 0; s < sizeof( seams ) / sizeof( seams[0] ); s++ )
@@ -2142,8 +2144,8 @@ static void posix_msgx_send_seam_cell( int ipv6 )
         posix_pair_update( &pair );
         posix_msgx_wait_send_idle( &pair );
 
-        const uint64_t dropped_before = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED );
-        const uint64_t counter_before = seam->counter >= 0 ? posix_msgx_counter( &pair, seam->counter ) : 0;
+        const uint64_t dropped_before = posix_msgx_stat( &pair, &rocketnet_server_msgx_stats_t::send_dropped );
+        const uint64_t counter_before = seam->counter ? posix_msgx_stat( &pair, seam->counter ) : 0;
         const uint64_t failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
 
         rocketnet_server_msgx_test_fail_sends( msgx, seam->count, seam->error );
@@ -2162,8 +2164,8 @@ static void posix_msgx_send_seam_cell( int ipv6 )
             arrived = posix_msgx_tagged_arrivals( &pair, 0.05 );
         }
 
-        const uint64_t dropped = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED ) - dropped_before;
-        const uint64_t moved = seam->counter >= 0 ? posix_msgx_counter( &pair, seam->counter ) - counter_before : 0;
+        const uint64_t dropped = posix_msgx_stat( &pair, &rocketnet_server_msgx_stats_t::send_dropped ) - dropped_before;
+        const uint64_t moved = seam->counter ? posix_msgx_stat( &pair, seam->counter ) - counter_before : 0;
         const uint64_t failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
 
         printf( "  msgx send seam ipv%d errno=%d (%s) x%d: arrived %d/8, dropped %llu, counter +%llu, SEND_FAILED +%llu\n", ipv6 ? 6 : 4,
@@ -2182,7 +2184,7 @@ static void posix_msgx_send_seam_cell( int ipv6 )
             posix_check( arrived == 0 );
             posix_check( dropped == 8 );
         }
-        if ( seam->counter >= 0 )
+        if ( seam->counter )
         {
             posix_check( moved >= 1 );
         }
@@ -2196,7 +2198,7 @@ static void posix_msgx_send_seam_cell( int ipv6 )
 
     // the dead socket was retired: the client is served on the shared socket
     // until its cooldown ends, then its socket opens again
-    posix_check( posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_DEAD ) >= 1 );
+    posix_check( posix_msgx_stat( &pair, &rocketnet_server_msgx_stats_t::sockets_retired_dead ) >= 1 );
 
     // a socket that stays full through stop: the worker retries a bounded
     // number of times after shutdown begins, then drops the tail counted,
@@ -2204,14 +2206,14 @@ static void posix_msgx_send_seam_cell( int ipv6 )
 
     posix_pair_update( &pair );
     posix_msgx_wait_send_idle( &pair );
-    const uint64_t dropped_before = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED );
+    const uint64_t dropped_before = posix_msgx_stat( &pair, &rocketnet_server_msgx_stats_t::send_dropped );
     const uint64_t failed_before = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED];
     rocketnet_server_msgx_test_fail_sends( msgx, 1000000, ENOBUFS );
     posix_msgx_stage_tagged( &pair );
     rocketnet_server_transport_send_packets( pair.server );
     rocketnet_server_transport_stop( pair.server );
     rn_native_server_transport_wait_stopped( pair.server );
-    const uint64_t dropped = posix_msgx_counter( &pair, ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED ) - dropped_before;
+    const uint64_t dropped = posix_msgx_stat( &pair, &rocketnet_server_msgx_stats_t::send_dropped ) - dropped_before;
     const uint64_t failed = rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_FAILED] - failed_before;
     printf( "  msgx stop ipv%d errno=ENOBUFS: dropped %llu, SEND_FAILED +%llu, stopped with the refusal armed\n", ipv6 ? 6 : 4,
             (unsigned long long) dropped, (unsigned long long) failed );

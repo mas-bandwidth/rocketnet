@@ -1163,9 +1163,9 @@ bool rocketnet_server_msgx_mark( struct rocketnet_server_msgx_t * msgx, const st
     {
         return true;
     }
-    const uint64_t opened = msgx->table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPENED];
+    const uint64_t opened = msgx->table->counts.opened;
     const bool done = rocketnet_msgx_socket_table_mark( msgx->table, address );
-    if ( msgx->table->counters[ROCKETNET_MSGX_TABLE_COUNTER_OPENED] != opened )
+    if ( msgx->table->counts.opened != opened )
     {
         const int slot = rocketnet_msgx_socket_table_lookup( msgx->table, address );
         rocketnet_assert( slot >= 0 );
@@ -1605,35 +1605,35 @@ bool rocketnet_server_msgx_stopped( struct rocketnet_server_msgx_t * msgx )
     return !msgx->receiver || msgx->receiver->stopped.load( std::memory_order_acquire );
 }
 
-static void rocketnet_server_msgx_log_counters( struct rocketnet_server_msgx_t * msgx )
+static void rocketnet_server_msgx_log_stats( struct rocketnet_server_msgx_t * msgx )
 {
-    uint64_t counters[ROCKETNET_SERVER_MSGX_NUM_COUNTERS];
-    rocketnet_server_msgx_counters( msgx, counters );
-    rocketnet_info( "msgx transport counters: sent %llu (connected %llu, shared %llu) calls %llu dropped %llu refused %llu retired %llu dead %llu "
+    struct rocketnet_server_msgx_stats_t counters;
+    rocketnet_server_msgx_stats( msgx, &counters );
+    rocketnet_info( "msgx transport stats: sent %llu (connected %llu, shared %llu) calls %llu dropped %llu refused %llu retired %llu dead %llu "
                     "staging_full %llu received %llu receive_calls %llu receive_refused %llu sockets opened %llu closed %llu open %llu "
                     "open_failed %llu deferred %llu table_full %llu retired_forget %llu retired_dead %llu cooldown %llu quarantine %llu",
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_SENT],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_CONNECTED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_SHARED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_CALLS],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_REFUSED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_RETIRED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_DEAD],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_STAGING_FULL],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_RECEIVED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_CALLS],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_REFUSED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPENED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_CLOSED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPEN],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_FAILED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_DEFERRED],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_TABLE_FULL],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_FORGET],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_DEAD],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_COOLDOWN],
-                    (unsigned long long) counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_IN_QUARANTINE] );
+                    (unsigned long long) counters.packets_sent,
+                    (unsigned long long) counters.sent_connected,
+                    (unsigned long long) counters.sent_shared,
+                    (unsigned long long) counters.send_calls,
+                    (unsigned long long) counters.send_dropped,
+                    (unsigned long long) counters.send_refused,
+                    (unsigned long long) counters.send_retired,
+                    (unsigned long long) counters.socket_dead,
+                    (unsigned long long) counters.staging_full,
+                    (unsigned long long) counters.packets_received,
+                    (unsigned long long) counters.receive_calls,
+                    (unsigned long long) counters.receive_refused,
+                    (unsigned long long) counters.sockets_opened,
+                    (unsigned long long) counters.sockets_closed,
+                    (unsigned long long) counters.sockets_open,
+                    (unsigned long long) counters.socket_open_failed,
+                    (unsigned long long) counters.socket_open_deferred,
+                    (unsigned long long) counters.socket_table_full,
+                    (unsigned long long) counters.sockets_retired_forget,
+                    (unsigned long long) counters.sockets_retired_dead,
+                    (unsigned long long) counters.socket_cooldown,
+                    (unsigned long long) counters.sockets_in_quarantine );
 }
 
 // proofs/tla/RNGsoHandoff.tla Join and Free: every worker joined before any
@@ -1665,16 +1665,16 @@ void rocketnet_server_msgx_destroy( struct rocketnet_server_msgx_t * msgx )
     }
     if ( msgx->table && msgx->receiver )
     {
-        rocketnet_server_msgx_log_counters( msgx );
+        rocketnet_server_msgx_log_stats( msgx );
     }
     rocketnet_server_msgx_free( msgx );
 }
 
-void rocketnet_server_msgx_counters( struct rocketnet_server_msgx_t * msgx, uint64_t * counters )
+void rocketnet_server_msgx_stats( struct rocketnet_server_msgx_t * msgx, struct rocketnet_server_msgx_stats_t * stats )
 {
     rocketnet_assert( msgx );
-    rocketnet_assert( counters );
-    memset( counters, 0, sizeof( uint64_t ) * ROCKETNET_SERVER_MSGX_NUM_COUNTERS );
+    rocketnet_assert( stats );
+    memset( stats, 0, sizeof( *stats ) );
     for ( int w = 0; w < msgx->num_workers; w++ )
     {
         const struct rocketnet_server_msgx_worker_t * worker = msgx->workers[w];
@@ -1682,31 +1682,30 @@ void rocketnet_server_msgx_counters( struct rocketnet_server_msgx_t * msgx, uint
         {
             continue;
         }
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_CONNECTED] += worker->sent_connected.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_SHARED] += worker->sent_shared.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_CALLS] += worker->send_calls.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_DROPPED] += worker->dropped.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_REFUSED] += worker->refused.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SEND_RETIRED] += worker->retired.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_DEAD] += worker->dead.load( std::memory_order_relaxed );
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_STAGING_FULL] += worker->staging_full.load( std::memory_order_relaxed );
+        stats->sent_connected += worker->sent_connected.load( std::memory_order_relaxed );
+        stats->sent_shared += worker->sent_shared.load( std::memory_order_relaxed );
+        stats->send_calls += worker->send_calls.load( std::memory_order_relaxed );
+        stats->send_dropped += worker->dropped.load( std::memory_order_relaxed );
+        stats->send_refused += worker->refused.load( std::memory_order_relaxed );
+        stats->send_retired += worker->retired.load( std::memory_order_relaxed );
+        stats->socket_dead += worker->dead.load( std::memory_order_relaxed );
+        stats->staging_full += worker->staging_full.load( std::memory_order_relaxed );
     }
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_SENT] =
-        counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_CONNECTED] + counters[ROCKETNET_SERVER_MSGX_COUNTER_SENT_SHARED];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_PACKETS_RECEIVED] = msgx->packets_received;
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_CALLS] = msgx->receive_calls;
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_RECEIVE_REFUSED] = msgx->receive_refused;
-    const uint64_t * table = msgx->table->counters;
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPENED] = table[ROCKETNET_MSGX_TABLE_COUNTER_OPENED];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_CLOSED] = table[ROCKETNET_MSGX_TABLE_COUNTER_CLOSED];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_OPEN] = (uint64_t) msgx->table->num_open;
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_FAILED] = table[ROCKETNET_MSGX_TABLE_COUNTER_OPEN_FAILED];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_OPEN_DEFERRED] = table[ROCKETNET_MSGX_TABLE_COUNTER_OPEN_DEFERRED];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_TABLE_FULL] = table[ROCKETNET_MSGX_TABLE_COUNTER_TABLE_FULL];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_FORGET] = table[ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_FORGET];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_RETIRED_DEAD] = table[ROCKETNET_MSGX_TABLE_COUNTER_RETIRED_DEAD];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKET_COOLDOWN] = table[ROCKETNET_MSGX_TABLE_COUNTER_COOLDOWN];
-    counters[ROCKETNET_SERVER_MSGX_COUNTER_SOCKETS_IN_QUARANTINE] = (uint64_t) msgx->table->num_retired;
+    stats->packets_sent = stats->sent_connected + stats->sent_shared;
+    stats->packets_received = msgx->packets_received;
+    stats->receive_calls = msgx->receive_calls;
+    stats->receive_refused = msgx->receive_refused;
+    const struct rocketnet_msgx_table_counts_t * table = &msgx->table->counts;
+    stats->sockets_opened = table->opened;
+    stats->sockets_closed = table->closed;
+    stats->sockets_open = (uint64_t) msgx->table->num_open;
+    stats->socket_open_failed = table->open_failed;
+    stats->socket_open_deferred = table->open_deferred;
+    stats->socket_table_full = table->table_full;
+    stats->sockets_retired_forget = table->retired_forget;
+    stats->sockets_retired_dead = table->retired_dead;
+    stats->socket_cooldown = table->cooldown;
+    stats->sockets_in_quarantine = (uint64_t) msgx->table->num_retired;
 }
 
 uint64_t rocketnet_server_msgx_send_failures( struct rocketnet_server_msgx_t * msgx )
