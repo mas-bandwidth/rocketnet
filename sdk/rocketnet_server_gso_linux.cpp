@@ -3286,7 +3286,6 @@ bool rocketnet_server_gso_test_gro_cmsg_faults()
     gso->test_receive_user = NULL;
     rocketnet_server_gso_stop( gso );
     queue->stopped.store( true, std::memory_order_release );
-    gso->send_stopped.store( true, std::memory_order_release );
     valid = valid && rocketnet_server_gso_stopped( gso );
     rocketnet_server_gso_test_destroy( gso );
 
