@@ -35,11 +35,47 @@ in `rocketnet_layers.h`:
 - Each message is written in place as one SINGLE payload: transport `start_packet`, then
   `rocketnet_message_single_finish`, then `finish_packet`. The message goes at `frame + payload_index`, because
   `start_packet` returns the frame.
-- Main joins the jobs, then begins the next fill phase with a main-thread call (receive_messages, which has nothing
-  left to return), then writes the reliable and big messages through the message server, then calls send_packets. A
-  client has one filler per fill phase: the job that wrote its unreliable messages, then main in the next phase.
+- Main joins the jobs, then writes the reliable and big messages through the message server, then calls send_packets.
 
 N = 0 (the default) keeps every write on main. N is at most 64.
+
+## The frame shape: `--frame-shape space|blocking`
+
+The server role has two frame shapes. `blocking` (the default) is the frame above, with the main thread blocked
+through all of networking. It is kept for comparison: a row measured in it is a comparison, never a result.
+
+`space` is the frame of space game's server, run on a thread pool of `--game-threads N` threads in all (N at least 2):
+the main thread first and special, the rest game threads. The pool is space's `ThreadPool` API
+(`tests/load/thread_pool.h`) over enkiTS, vendored in `tests/load/enkiTS` for this tool only and never linked into the
+SDK. The frame is the first half on the main thread (send_packets, update, receive), the world update, then the second
+half split off as a task on the game threads that writes every player's messages as jobs and stages them through the
+public API while the main thread runs to the end of its frame; the main thread joins the task at the top of the next
+frame, and the packets leave at that frame's send_packets. Messages are written and staged per client by the jobs, and
+committed in one walk at the end of the task.
+
+| flag | meaning |
+|---|---|
+| `--game-threads N` | The pool, N threads in all. The game threads are made before the main thread pins itself. |
+| `--pin-first-cpu C` | The main thread on cpu C and thread i on C + i (advisory on macOS, a group affinity on Windows). A setting the system refused is printed as `harden_pool_refused:`. |
+| `--world-ms MS` | The main thread's own share of a stand-in world update. |
+| `--game-load F` | Stand-in game jobs that keep each game thread F (0 to 1) of the frame busy. The main thread does its own share while they run. |
+| `--space-split bottom\|top` | Where the network task is split off: after the world update (space's order, the default) or before it, so that it runs beside the world update. |
+| `--load peak\|average\|custom` | Space game's real load: 15 (peak) or 8 (average) unreliable 1200-byte messages per client per tick, written by the game threads, one small reliable message per client every 3 seconds, no large messages. Under `--frame-shape space` the default is peak; `custom` keeps `--base`, `--burst` and the rest. |
+| `--input-bytes B` | The message each player sends each tick (256 by default, about 100 to 200 kbps a player). |
+
+With the space shape each second also prints three lines. `harden_frame:` leads with what rocketnet takes from the
+main thread (`main_rn_ms` p99 and max), then the join, the task (its wall time and the core time it takes from the
+game threads), the world update, the stand-in game's core time, rocketnet's whole core time, the core time left over
+for the game (`leftover_core_ms`: the frame on every thread less rocketnet, the game jobs and the main thread's world
+share), and the latency a frame's packets add (from the game state they were built from to the send_packets that
+sends them). `harden_threads:` is one line per thread class: the main thread's network milliseconds a frame, its part
+done in jobs, the game threads' minimum, mean and maximum, their ratio, and what each game thread has left of the
+frame (`leftover_ms`: the frame less its share of the game jobs less its mean network work). `harden_thread_net_ms:`
+lists each thread's network milliseconds a frame by thread index, to see how even the split is.
+
+`scripts/space-frame-row` runs one such row on the XDP transport in the layout the game runs, over two machines, and
+can profile the server with perf (`--profile`).
+
 
 ## The verdict
 
@@ -99,7 +135,5 @@ Host-wide kernel counters include traffic that is not the cell's. Run cells on h
   - the tool is `<checkout>/bin/Release/harden_load.exe`;
   - netem goes on the client machine only;
   - the chain stands on library terms, since the tool reads no kernel counters on Windows.
-
-  A RIO server with more than one lane needs `--server-env ROCKETNET_SERVER_BIND_IPV4_ADDRESS=<private address>`.
 
 Both scripts exit 0 only on PASS.

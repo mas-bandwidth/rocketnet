@@ -2593,8 +2593,7 @@ static int harden_server_main( const harden_options_t & o )
                 if ( o.fill_jobs > 0 )
                 {
                     // the jobs write the unreliable messages; this client's
-                    // reliable and big ones follow the join, in the next
-                    // fill phase
+                    // reliable and big ones follow the join
                     plan.push_back( harden_fill_item_t{ i, count, id, connection } );
                     continue;
                 }
@@ -2623,18 +2622,6 @@ static int harden_server_main( const harden_options_t & o )
                     w.start_refused += job.start_refused + job.finish_refused;
                     w.jobs_busy_sum += job.busy;
                     job = harden_fill_job_t();
-                }
-                // the fill phase ends here. A client has one filler per fill
-                // phase (rocketnet_layers.h's threading contract, checked by
-                // rocketnet_fill_phase in asserting builds): the job wrote
-                // this client's unreliable messages, so main may write its
-                // reliable and big ones only in the next phase. A main-thread
-                // operation begins it; receive_messages is the one with
-                // nothing to do, since update has not run since the receive
-                // drained every batch
-                if ( rocketnet_server_receive_messages( server ) != NULL )
-                {
-                    verify.errors++; // a batch after the drain: nothing should have arrived
                 }
                 for ( const harden_fill_item_t & item : plan )
                 {
