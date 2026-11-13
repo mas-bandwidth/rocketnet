@@ -175,7 +175,8 @@ endforeach()
 # tools) and enters no target's INTERFACE, so neither the installed package
 # nor a parent project that adds this directory receives them: the strict
 # floating-point floor (docs/BUILDING.md, "Floating point") and the memory budgets
-# the internal headers read (sdk/rocketnet_history.h:13, sdk/rocketnet_memory.h:7-11).
+# the internal headers read (ROCKETNET_HISTORY_PACKETS in sdk/rocketnet_history.h,
+# ROCKETNET_XDP_MEMORY_MIB in sdk/rocketnet_memory.h).
 # clang-cl (Clang with the MSVC command line) maps /fp:precise to
 # -ffp-contract=on, which fuses a*b+c within an expression wherever the target
 # has FMA (the aarch64 baseline, or x64 with /arch:AVX2), so it also takes
@@ -796,10 +797,14 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)
     endif()
-    # The counter audit (test_unit_counter_classes.cpp) reads source files: the
-    # tests that must name every counter, and the sdk files that count them.
-    # Both lists reach it as compile definitions, relative to the source
-    # directory, so the audit never walks a directory itself.
+    # The counter audit (tests/source_audit_counter_classes.cpp) reads source
+    # files: the tests that must name every counter, and the sdk files that
+    # count them. Both lists reach it as compile definitions, relative to the
+    # source directory, so the audit never walks a directory itself. The test
+    # list is every tests/test_*.cpp and tests/functional/*.cpp in the tree,
+    # less the one file a ROCKETNET_DEV=OFF build drops below; it is not the
+    # set this configuration compiles (other DEV-only and platform-only files
+    # stay in it).
     file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" )
     if(NOT ROCKETNET_DEV)
@@ -907,8 +912,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_channels_stress.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
         set_target_properties(${rocketnet_stress_target} PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
         add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
-        # server stats: rocketnet_server_update_stats runs on the caller
-        # inside rocketnet_server_transport_update, as in test_wide
         target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
             $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
         target_include_directories(${rocketnet_stress_target} PRIVATE
@@ -1207,6 +1210,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     #   tests/functional/posix_hard_killed_client.cpp (platform test seams)
     #   tests/functional/windows_socket_errors.cpp (server/client transport test seams)
     #   tests/functional/windows_lifecycle_stress.cpp (Windows SDK resource ledger, ROCKETNET_DEV on Windows)
+    #   tests/functional/unit_case_memory.cpp (the unit-binary RSS row; the production main runs no exec rows)
+    #   tests/functional/loopback_hub_shared_objects.cpp (two shared objects linking rocketnet_dev)
+    #   tests/functional/destroy_early_keep.cpp (see its two cases below)
     # The four Windows connreset iocp_plain cases also require development-only
     # USO/URO force flags; production retains the ordinary IOCP cases instead.
     # and, in tests/functional/rocketnet_functional_tests.cpp, the registry entries
@@ -1242,7 +1248,12 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # compile). The stall-destroy tail of test_server_uring_probe is omitted
     # here because it calls rocketnet_server_uring_test_stall_destroy and
     # rocketnet_server_uring_test_resume_stop; the rest of that case runs.
-    # Every other functional case runs here through the production
+    # The names above are examples, not the whole list: the authority is the
+    # ROCKETNET_DEV guards in the registry of rocketnet_functional_tests.cpp,
+    # which also leave out, for example, test_loopback_hub_two_shared_objects,
+    # test_server_stats_creates_no_thread and
+    # test_public_step_driven_client_connects_without_a_thread.
+    # Every case registered outside those guards runs here through the production
     # shim in tests/functional/harness.inc (test-owned production keys minted with
     # rocketnet_write_production_connect_token), so the portable transport
     # and each native transport the OS builds (gso/io_uring on Linux, msgx
