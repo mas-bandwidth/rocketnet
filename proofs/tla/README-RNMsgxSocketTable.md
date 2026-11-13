@@ -39,7 +39,8 @@ model's kernel maps each descriptor to its peer, so that send is the event
 | `deadReports` | `dead_reports` |
 | `freeSlots`, `numFree` | `free_slots[]`, `num_free` (a stack) |
 | `retired`, `numRetired` | `retired[]`, `num_retired` (compacted in place by the sweep) |
-| `numOpen`, `index` | `num_open`, `index[]` |
+| `numOpen` | `num_open` |
+| `index[e]` | `index[e]`, for the entries in use: the model's index is a function on the entries holding a slot, where the code holds -1 in an empty entry (a record of the table names the entries in use, not all 2048) |
 | `coolAddr`, `coolUntil` | `cooldown_address[]`, `cooldown_until[]` |
 | `counters`, `update`, `opensLeft` | `counters[]`, `update`, `opens_left` |
 | `mpc`, `ms`, `mi`, `mk` | main's place inside a call; `"idle"` between calls |
@@ -84,6 +85,25 @@ answers ENOTCONN), `RxPoll` (the poller hands out a registered event),
 `ForgetDereg` (the caller's deregistration after forget returns
 `retired_fd`), `EnvOpen` and `EnvClose` (other descriptors of the process)
 and `Disconnect` (ICMP).
+
+- **`ForgetCall(a)`**, **`SweepCall`**: a whole call of main's with no holder
+  step inside it: `rocketnet_msgx_socket_table_forget` with the caller's
+  deregistration, and `rocketnet_msgx_socket_table_sweep`. The model splits
+  those calls into steps so holders interleave inside them (the reversed
+  witness `SnapshotBeforeWord` fails only because a holder runs between the
+  word store and the snapshot); the trace check sees the table between calls.
+  Each step is a function of a record of main's state (`ForgetF`, `RetireF`,
+  `RetireWordLateF`, `DeregF`, `SweepBeginF`, `RetireDeadF`, `CloseF`); the
+  fine-grained actions apply one of them and the call-level actions apply
+  them in the code's order (`RunF`) with no holder step between, so each
+  step has one definition. The fine-grained actions are listed untraced in
+  `tools/tla_trace_check.py` with that reason, and liveness (`SpecFair`) is
+  checked over `NextFine`, the fine-grained actions alone.
+
+The index's empty entries are outside its domain here (the code holds -1), so
+the walk's records name the entries in use. `Home` and `CoolOf` are read from
+the constants `HomeAt` and `CoolAt`, the sets of `a * IS + home` and
+`a * CoolEntries + entry` (a cfg carries a set of integers, not a function).
 
 The retire's snapshot loop is one step in the model. Each holder's snapshot
 only decides that holder's quiescence, and the code reads each pass after the
@@ -135,7 +155,7 @@ the snapshot again). The liveness configs run without the VIEW and override
 `RefusedMarks` to FALSE: a refused mark changes only its counter, which no
 guard reads, and leaving it out makes the state space finite.
 
-Generations wrap at `GenWrap` (8 in the passing configs; 2^32 in the code).
+Generations wrap at `GenWrap` (8 in the passing configs; 2^32 in the code, 2^30 in the trace cfgs: TLC's integers stop at 2^31 and the walk's generations stay far below its steps).
 
 ## Reversed witnesses
 
