@@ -9,6 +9,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_receive_prefilter.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_encryption_map.h"
@@ -1690,6 +1691,9 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
     if ( packet_type < 0 )
     {
         rocketnet_spam( "server dropped packet. failed prefilter" );
+#if ROCKETNET_DEV
+        rocketnet_receive_drop_sample_record( packet_type, from, packet_data, packet_bytes );
+#endif // #if ROCKETNET_DEV
         counters[rocketnet_prefilter_counter( packet_type )]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }

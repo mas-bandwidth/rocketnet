@@ -2373,7 +2373,9 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, config->status );
+    const int os_cpus = config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1; // the XDP transport's default
+    return rocketnet_server_uring_create_pinned( context, bind, config->transport->num_xdp_queues, config->transport->max_clients, 0, os_cpus, config->status,
+                                                 config->transport->packet_filter );
 }
 
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t *) transport ); }
@@ -2394,23 +2396,24 @@ static uint64_t io_uring_send_failures( void * transport )
     return counters[ROCKETNET_COUNTER_URING_SEND_DROPPED];
 }
 
+// what the workers' prefilter and bank refused, by reason (rocketnet_driver.h)
 static void io_uring_receive_drop_totals( void * transport, uint64_t * values )
 {
-    // read from the io_uring rows the reap already counts, at the same sites,
-    // so each pair agrees: a full fill bank or segments past one receive's
-    // staging (BANK_FULL is URING_RECEIVE_DROPPED_OVERFLOW), and a completed
-    // receive it cannot read (RECEIVE_FAILED is URING_RECEIVE_DROPPED_SOURCE,
-    // a truncated or unreadable source, plus URING_RECEIVE_DROPPED_NO_BUFFER,
-    // a completion naming no buffer of the ring). URING_RECEIVE_NO_BUFFERS is
-    // the kernel's ENOBUFS, a datagram the transport never read, and is not
-    // one of them.
+    rocketnet_server_uring_receive_drop_totals( (rocketnet_server_uring_t *) transport, values );
+}
 
-    uint64_t counters[ROCKETNET_NUM_COUNTERS];
-    rocketnet_server_uring_counters( (rocketnet_server_uring_t *) transport, counters );
-    memset( values, 0, ROCKETNET_RECEIVE_NUM_DROPS * sizeof( uint64_t ) );
-    values[ROCKETNET_RECEIVE_DROP_BANK_FULL] = counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW];
-    values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] =
-        counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE] + counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER];
+// per-queue staging: the queue a destination's frames are staged in is the
+// one rocketnet_server_uring_start_packet uses
+static int io_uring_send_queues( void * transport ) { return rocketnet_server_uring_send_queues( (rocketnet_server_uring_t *) transport ); }
+
+static int io_uring_send_queue_of( void * transport, const rocketnet_address_t * to )
+{
+    return rocketnet_server_uring_send_queue_of( (rocketnet_server_uring_t *) transport, to );
+}
+
+static int io_uring_send_room_queue( void * transport, int queue )
+{
+    return rocketnet_server_uring_send_room_queue( (rocketnet_server_uring_t *) transport, queue );
 }
 
 static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint64_t * too_large )
@@ -2422,7 +2425,8 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle, NULL, io_uring_receive_drop_totals,
+    io_uring_send_queues, io_uring_send_queue_of, io_uring_send_room_queue
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -2827,7 +2831,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         const int queues = config->num_xdp_queues > 0 ? config->num_xdp_queues : ROCKETNET_URING_DEFAULT_QUEUES;
         plan.transport_io_bytes = rocketnet_server_uring_allocation_bytes( queues, config->max_clients );
         plan.mapped_ring_bytes = rocketnet_server_uring_mapped_bytes( queues );
-        plan.worker_threads = 0;
+        plan.worker_threads = queues; // a worker per queue owns its ring
         plan.sockets = queues;
     }
 #if ROCKETNET_XDP

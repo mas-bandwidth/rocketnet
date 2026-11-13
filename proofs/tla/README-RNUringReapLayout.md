@@ -23,7 +23,7 @@ The `io-uring-reap-layout` row in `COVERAGE.tsv` tracks the coverage.
 | `MustHold(q)` | the hold test in `rocketnet_server_uring_receive_or_hold`: the queue holds a receive already, or the bank has no room |
 | `turn`, `CopyFrom` | `held_turn`, and the scan from it to the first queue that holds a receive in `rocketnet_server_uring_copy_held` |
 | `ring`, `Buffers` | the provided buffers the kernel may fill; a held receive keeps its buffer |
-| `Budget`, `work` | `ROCKETNET_URING_SEND_BUDGET` and the bank size, one constant here |
+| `Budget`, `work` | `ROCKETNET_URING_RECEIVE_BANK_FLOOR` and the bank size, one constant here |
 
 ## Actions
 

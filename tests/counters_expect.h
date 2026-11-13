@@ -40,6 +40,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_receive_prefilter.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -270,6 +271,14 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
 
     if ( report && report_bytes > 0 )
     {
+#if ROCKETNET_DEV
+        // the first refused datagrams (sdk/rocketnet_receive_prefilter.h), so a
+        // refusal that should not have moved names its source in the log
+        if ( moved )
+        {
+            lines += rocketnet_receive_drop_samples_text();
+        }
+#endif // #if ROCKETNET_DEV
         snprintf( report, (size_t) report_bytes, "%s", moved ? ( std::string( "refusals moved on a run that should be clean:\n" ) + lines ).c_str() : "" );
     }
 

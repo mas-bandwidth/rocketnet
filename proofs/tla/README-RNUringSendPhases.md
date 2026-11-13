@@ -16,7 +16,7 @@ the coverage.
 ## Why two phases
 
 `send_packets` resets a phase's index only when every send of it has its
-completion. Under an inbound flood more than `ROCKETNET_URING_SEND_BUDGET`
+completion. Under an inbound flood more than `ROCKETNET_URING_RECEIVE_BANK_FLOOR`
 completions can arrive ahead of an update's sends, so `send_packets` spends
 its budget on receives and the sends are reaped one call late, by
 `receive_packets`. With one phase the index was still up when the next
