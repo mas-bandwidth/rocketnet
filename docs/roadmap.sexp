@@ -505,4 +505,24 @@
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
    :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+
+  (item "loopback-hub-destroy-check-and-free" :group "review-v1-2" :area "sdk"
+   :title "Loopback hub destroy checks for endpoints, then frees the hub outside the lock"
+   :text "rocketnet_loopback_hub_destroy (sdk/rocketnet_driver_loopback.cpp about 521-559) reads registered under the hub mutex, releases it, then destroys the mutex and frees the block. A create on another thread in that window registers into memory about to be freed. Creating while destroying is misuse, but the in-use guard reads as if it catches it. Make the check and the retirement one step under the mutex (a create after it refused with the hub's in-use or mismatch status), show it red with two threads through a deterministic seam, and make LoopbackHub.tla's Destroy (atomic today) two steps with a reversed witness. A create that is already waiting on the mutex when the hub is freed stays misuse that no flag can catch: say so in rocketnet.h."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-11 (read, not run)")
+
+  (item "loopback-port-zero-bind-walk" :group "review-v1-2" :area "sdk"
+   :title "A loopback port-0 bind walks every endpoint for each candidate port under the hub mutex"
+   :text "loopback_create (sdk/rocketnet_driver_loopback.cpp about 588-668) checks each candidate port of the ephemeral range against every live endpoint record, O(range x endpoints) with the hub mutex held, although hub->bound[family][port] already answers each port in one lookup (RNLoopbackBindLayout.tla LookupIsWalk). Use the table for both the explicit-port conflict check and the search; show it with a counted bound on a nearly full hub."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-12 (read, not run)")
+
+  (item "loopback-server-drain-budget" :group "review-v1-2" :area "sdk"
+   :title "The server's loopback queue is sized by the hub's clients, its receive budget by the server's"
+   :text "rocketnet_loopback_server_queue_packets sizes the server endpoint's queue from the hub's max_clients, and the server transport's loopback receive drains up to a budget from the server's own max_clients (server_transport loopback receive about 4340-4430). With a hub larger than the server, a full queue holds more than one update drains: an update of added latency. Size the drain so one update empties the queue, or say why not."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-20 (read, not run)")
+
+  (item "loopback-queue-model-full-drop" :group "review-v1-2" :area "proofs"
+   :title "LoopbackQueue cannot reach its full drop, and its Drop does not count"
+   :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
  ))
