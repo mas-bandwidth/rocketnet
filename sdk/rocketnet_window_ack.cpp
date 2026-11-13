@@ -818,6 +818,19 @@ int rn_window_ack_seed_rtt( rn_window_ack_t * ack, double rtt )
     return 1;
 }
 
+int rn_window_ack_seed_rtt_from( rn_window_ack_t * ack, double ( *rtt )( void * transport, int client_index ), void * transport, int client_index )
+{
+    rocketnet_assert( ack );
+    rocketnet_assert( rtt );
+
+    if ( ack->has_rtt )
+    {
+        return 0;
+    }
+
+    return rn_window_ack_seed_rtt( ack, rtt( transport, client_index ) );
+}
+
 // Processes one acked transport sequence `packet_id` at time `now`
 // (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNRttFilter.tla Ack).
@@ -1059,12 +1072,32 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
     ack->last_ack = now;
     ack->has_last_ack = 1;
 
+    // sent_index holds exactly the live entries of the sent-packet ring
+    // (rn_window_ack_commit inserts at pkt_tail, an ack or an eviction removes
+    // the entry's cell), so an empty ring means every id below is absent and
+    // rn_window_ack_on_ack would return 0 for each without writing anything:
+    // the probes of a 2P-cell index for nothing are skipped
+    // (proofs/tla/RNSentMap.tla Ack: an id the ring no longer holds is ignored)
+
+    if ( ack->pkt_head == ack->pkt_tail )
+    {
+        return 0;
+    }
+
     uint32_t matched = 0;
     for ( uint32_t i = 0; i < count; i++ )
     {
         if ( rn_window_ack_on_ack( ack, packet_ids[i], now ) )
         {
             matched++;
+
+            // the last live entry retired: nothing inserts during this call,
+            // so the ids after it are all absent (as above)
+
+            if ( ack->pkt_head == ack->pkt_tail )
+            {
+                break;
+            }
         }
     }
 
