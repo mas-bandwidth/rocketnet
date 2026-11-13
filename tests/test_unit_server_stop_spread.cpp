@@ -1143,6 +1143,39 @@ static void test_server_transport_misuse_refused_without_asserts()
 }
 REGISTER_UNIT_TEST( test_server_transport_misuse_refused_without_asserts );
 
+// the xdp replay writer's counts are assigned only when the transport's io
+// table answers them: on every other table, on every platform, a read leaves
+// both rows as they were
+
+// sdk/rocketnet_driver_builtin.cpp, declared by its one reader
+// (sdk/rocketnet_server_transport.cpp) and here
+bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
+                                                  uint64_t * commit_failed, uint64_t * greetings_held );
+
+static void test_server_transport_replay_counts_left_on_other_tables()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, 1, true );
+
+    server->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] = 5;
+    server->counters.values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] = 9;
+    const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_REPLAY_COMMIT_FAILED] == 5 );
+    rocketnet_unit_check( counters->values[ROCKETNET_COUNTER_XDP_REPLAY_GREETING_HELD] == 9 );
+
+    uint64_t commit_failed = 1;
+    uint64_t greetings_held = 1;
+    rocketnet_unit_check( !rocketnet_server_transport_io_replay_counts( server->io.operations, server->io.instance, &commit_failed, &greetings_held ) );
+    rocketnet_unit_check( commit_failed == 1 && greetings_held == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+}
+REGISTER_UNIT_TEST( test_server_transport_replay_counts_left_on_other_tables );
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
 // The transport's own read of XDP_RECEIVE_FRAME_DROPPED
@@ -1161,8 +1194,6 @@ typedef bool rocketnet_server_socket_test_frames_dropped_t( const struct rocketn
                                                             uint64_t * dropped );
 typedef bool rocketnet_server_socket_test_replay_counts_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                            uint64_t * commit_failed, uint64_t * greetings_held );
-bool rocketnet_server_transport_io_replay_counts( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
-                                                  uint64_t * commit_failed, uint64_t * greetings_held );
 bool rocketnet_server_socket_test_receive_dropped( rocketnet_server_socket_test_frames_dropped_t * dispatch,
                                                    rocketnet_server_socket_test_replay_counts_t * replay_dispatch,
                                                    const struct rocketnet_server_transport_io_operations_t * xdp );
