@@ -209,9 +209,15 @@ Each GSO queue has its own three send banks (`ROCKETNET_GSO_TX_BANKS`). Only
 a queue's current producer bank can be filled; that queue's worker consumes its
 published banks. Each io_uring queue likewise has its own three send banks
 (`ROCKETNET_URING_SEND_BANKS`), and an incomplete send continues to occupy its
-bank. `num_gso_workers` and `num_io_uring_workers` each add queues, and with
-them send staging (`sdk/rocketnet_server_gso_linux.cpp`,
-`sdk/rocketnet_server_uring_linux.cpp`).
+bank. `num_gso_workers` and `num_io_uring_workers` each add queues, and a
+destination always stages in its own queue. A GSO queue has a fixed size
+(`ROCKETNET_GSO_SEND_QUEUE_SIZE`), so more GSO workers add send staging
+(`sdk/rocketnet_server_gso_linux.cpp`). io_uring sizes each queue's banks at
+create from `max_clients`: twice the queue's share of 18 packets a client, at
+least 4096 and at most 32768 slots (`rocketnet_server_uring_send_slots`,
+`sdk/rocketnet_server_uring.h`). So at 1000 clients its total stays about the
+same from 2 to 8 workers and each queue, the room behind any one destination,
+gets smaller; more io_uring workers add send work in parallel, not room.
 
 Every built-in server transport but loopback reports the frames it takes before its next
 flush through the optional `send_room` operation (`sdk/rocketnet_driver.h`):
@@ -679,8 +685,8 @@ waits for a send to complete or a bank to drain, but it publishes each
 queue's bank under that queue's send mutex
 (`rocketnet_uring_queue_send_publish`, `sdk/rocketnet_uring_queue_send.cpp`),
 which the queue's worker also takes to claim and retire banks; each holder
-keeps it only to move the bank indices, so main can wait on a worker for
-that short step, longer only if the worker is descheduled while holding it.
+keeps it only to move the bank indices, a short hold, but main can wait for
+it, and the library sets no bound on that wait.
 A bank of sends goes back to the game threads only after the last
 completion of its sends. A queue count past
 `ROCKETNET_URING_MAX_QUEUES` refuses the create; zero selects
@@ -702,15 +708,22 @@ re-arms, worker passes that left completions for the next pass
 (`-EAGAIN`, `-EINTR`, `-ENOBUFS` or `-ENOMEM`), counted at the completion,
 before any retry (`SEND_DEFERRED`): it counts those answers, not sends made
 again. Such a completion leaves its run for the worker to retry after its
-wait; during a stop, a run whose retries reach the bound is abandoned instead
-(see below), so a counted answer need not be followed by a resend. Then
+wait; during a stop the worker may instead abandon the bank's unsubmitted
+runs (see below), so a counted answer need not be followed by a resend. Then
 receive completions that named no provided buffer
 (`RECEIVE_DROPPED_NO_BUFFER`), segmented sends (`GSO_SENDS`) and queues that
 turned live segmentation off (`GSO_FALLBACKS`), datagrams the kernel dropped at a queue socket (`RECEIVE_DROPPED_SOCKET`, read through `SO_RXQ_OVFL`) and receive completions the kernel refused (the server's `RECEIVE_FAILED`). Stop tells
 every queue's worker to stop: it cancels its receive, keeps sending what was
-published (a socket that stays full gets a bounded number of retries, and
-what it never takes is counted in `SEND_DROPPED`) and exits once none of its
-operations is in the kernel. Stopped is true once every worker has exited;
+published and exits once none of its
+operations is in the kernel. A socket that stays full is retried a bounded
+number of times: once the stop has begun, the worker counts the retryable
+answers to the bank it holds, one count per wait, in one count shared by that
+bank's runs and reset by a successful send or a new bank; when the count
+reaches the bound, the worker abandons every run of that bank not yet
+submitted, all at once, and counts them in `SEND_DROPPED`
+(`sdk/rocketnet_uring_queue_worker.cpp`, `proofs/tla/RNUringQueueWorker.tla`
+`Abandoning`).
+Stopped is true once every worker has exited;
 neither call waits. Destroy requires stopped, joins the workers, then frees.
 Existing leak counters remain diagnostic compatibility surfaces;
 completion, not a timeout, authorizes reclamation.
