@@ -378,8 +378,8 @@ struct rocketnet_server_transport_t
 
     struct rocketnet_server_payloads_t payloads;
     // payloads.capacity slots of ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES, plus 8:
-    // serialize's BitReader loads 8-byte windows at byte granularity, so any
-    // buffer a ReadStream is bound over must extend at least 8 bytes past the
+    // a caller's bit reader may load 8-byte windows at byte granularity, so a
+    // payload it reads in place must have at least 8 readable bytes past the
     // end of its data -- the storage is the last carve, so the slack is real.
     uint8_t * payload_storage;
 };
@@ -1093,9 +1093,16 @@ static void rocketnet_server_transport_fill_refused( struct rocketnet_server_tra
 }
 
 // A refused start with room left refused that one frame; without room, or
-// from a transport that does not report it, it is a full staging.
-static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport )
+// from a transport that does not report it, it is a full staging. With
+// several send queues the room that matters is the destination's queue: a
+// start refused because its queue is full while another has room is a full
+// staging, not a refusal of the frame. NULL to asks the whole room.
+static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport, const rocketnet_address_t * to )
 {
+    if ( to && server_transport->send_queues > 1 )
+    {
+        return rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, to ) ) <= 0;
+    }
     return !server_transport->io.operations || !server_transport->io.operations->send_room ||
            server_transport->io.operations->send_room( server_transport->io.instance ) <= 0;
 }
@@ -1152,13 +1159,13 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 // cannot carry), which the transport counts in its own send_failures,
 // SEND_FAILED. None is ever sent or counted as sent. An uncounted start (the
 // receive path's response frame) is counted by its caller.
-static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, uint64_t id )
+static void rocketnet_server_transport_io_count_refused( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t id )
 {
     if ( id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
     }
-    else if ( rocketnet_server_transport_io_refused_full( transport ) )
+    else if ( rocketnet_server_transport_io_refused_full( transport, to ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
     }
@@ -1170,7 +1177,7 @@ static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_tr
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
     if ( !frame && counted )
     {
-        rocketnet_server_transport_io_count_refused( transport, *id );
+        rocketnet_server_transport_io_count_refused( transport, to, *id );
     }
     return frame;
 }
@@ -2062,6 +2069,149 @@ struct rocketnet_server_transport_resolved_t
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
 };
 
+// The local address the server binds. Unset, the served family's wildcard on
+// the served port (both families share the IPv6 wildcard). Set
+// (bind_ipv4_address or bind_ipv6_address), that address on the served port:
+// the address clients connect to and the address the server binds differ
+// behind NAT. Refused with INVALID_ADDRESS, one log line each: an address
+// that does not parse, of the other family, with a port (":0" included),
+// multicast, the IPv4 broadcast, IPv4-mapped IPv6 or IPv6 link-local (no
+// scope to carry); a bind address for a family the server does not serve; and
+// any bind address on a server that serves both families, whose one
+// dual-stack socket cannot bind two specific addresses.
+// The environment is ambient: set once for a host or a test run, it cannot
+// know each server's families, so a bind address it sets for a family the
+// server cannot bind specifically (a family it does not serve, or either
+// family on a server that serves both on one dual-stack socket) is dropped
+// with one log line, never refused: the environment never makes a server
+// fail to start for its families. A config field is a statement about this
+// server, so the resolve below still refuses those.
+void rocketnet_server_transport_ignore_ambient_bind( struct rocketnet_server_transport_config_t * config, const char * ipv4_before, const char * ipv6_before, int binds_ipv4,
+                                                     int binds_ipv6 )
+{
+    rocketnet_assert( config && ipv4_before && ipv6_before );
+    if ( !binds_ipv4 && strcmp( config->bind_ipv4_address, ipv4_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=%s: the server binds no specific IPv4 address (it serves IPv6 only, or both families)",
+                        config->bind_ipv4_address );
+        rocketnet_copy_string( config->bind_ipv4_address, ipv4_before, sizeof( config->bind_ipv4_address ) );
+    }
+    if ( !binds_ipv6 && strcmp( config->bind_ipv6_address, ipv6_before ) != 0 )
+    {
+        rocketnet_info( "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=%s: the server binds no specific IPv6 address (it serves IPv4 only, or both families)",
+                        config->bind_ipv6_address );
+        rocketnet_copy_string( config->bind_ipv6_address, ipv6_before, sizeof( config->bind_ipv6_address ) );
+    }
+}
+
+bool rocketnet_server_transport_resolve_bind_address( const struct rocketnet_server_transport_config_t * config, const rocketnet_address_t * public_address,
+                                                      int serves_both, rocketnet_address_t * bind_address, int * status )
+{
+    rocketnet_assert( config );
+    rocketnet_assert( public_address );
+    rocketnet_assert( bind_address );
+
+    const bool ipv4_set = config->bind_ipv4_address[0] != '\0';
+    const bool ipv6_set = config->bind_ipv6_address[0] != '\0';
+
+    memset( bind_address, 0, sizeof( *bind_address ) );
+
+    if ( serves_both )
+    {
+        if ( ipv4_set || ipv6_set )
+        {
+            if ( status )
+            {
+                *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+            }
+            rocketnet_error( "server bind address refused: a server that serves both families binds the IPv6 wildcard; serve one family to bind a specific address" );
+            return false;
+        }
+
+        // Both families share the IPv6 wildcard on the one port, with
+        // IPV6_V6ONLY off: the bind a "[::]" server takes.
+        bind_address->type = ROCKETNET_ADDRESS_IPV6;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds [::]:%d, both families", (int) public_address->port );
+        return true;
+    }
+
+    const bool ipv4 = public_address->type == ROCKETNET_ADDRESS_IPV4;
+    const char * field = ipv4 ? "bind_ipv4_address" : "bind_ipv6_address";
+    const char * text = ipv4 ? config->bind_ipv4_address : config->bind_ipv6_address;
+
+    if ( ( ipv4 && ipv6_set ) || ( !ipv4 && ipv4_set ) )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s is set, but the server serves only %s", ipv4 ? "bind_ipv6_address" : "bind_ipv4_address", ipv4 ? "IPv4" : "IPv6" );
+        return false;
+    }
+
+    if ( text[0] == '\0' )
+    {
+        bind_address->type = public_address->type;
+        bind_address->port = public_address->port;
+        rocketnet_info( "server transport binds the %s wildcard, port %d", ipv4 ? "IPv4" : "IPv6", (int) public_address->port );
+        return true;
+    }
+
+    rocketnet_address_t parsed;
+    const char * refusal = NULL;
+    if ( !rocketnet_address_parse( &parsed, text ) )
+    {
+        refusal = "does not parse";
+    }
+    else if ( parsed.type != public_address->type )
+    {
+        refusal = ipv4 ? "is not an IPv4 address" : "is not an IPv6 address";
+    }
+    else if ( parsed.port != 0 || ( ipv4 ? strchr( text, ':' ) != NULL : strstr( text, "]:" ) != NULL ) )
+    {
+        refusal = "carries a port; the port is the served address's";
+    }
+    else if ( ipv4 && parsed.data.ipv4[0] >= 224 && parsed.data.ipv4[0] <= 239 )
+    {
+        refusal = "is a multicast address";
+    }
+    else if ( ipv4 && parsed.data.ipv4[0] == 255 && parsed.data.ipv4[1] == 255 && parsed.data.ipv4[2] == 255 && parsed.data.ipv4[3] == 255 )
+    {
+        refusal = "is the broadcast address";
+    }
+    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xff00 ) == 0xff00 )
+    {
+        refusal = "is a multicast address";
+    }
+    else if ( !ipv4 && parsed.data.ipv6[0] == 0 && parsed.data.ipv6[1] == 0 && parsed.data.ipv6[2] == 0 && parsed.data.ipv6[3] == 0 && parsed.data.ipv6[4] == 0 &&
+              parsed.data.ipv6[5] == 0xffff )
+    {
+        refusal = "is an IPv4-mapped address; set bind_ipv4_address and serve IPv4";
+    }
+    else if ( !ipv4 && ( parsed.data.ipv6[0] & 0xffc0 ) == 0xfe80 )
+    {
+        refusal = "is link-local; its bind needs an interface scope, which the field cannot carry";
+    }
+
+    if ( refusal )
+    {
+        if ( status )
+        {
+            *status = ROCKETNET_STATUS_INVALID_ADDRESS;
+        }
+        rocketnet_error( "server bind address refused: %s \"%s\" %s", field, text, refusal );
+        return false;
+    }
+
+    *bind_address = parsed;
+    bind_address->port = public_address->port;
+
+    char bound[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_info( "server transport binds %s (%s)", rocketnet_address_to_string( bind_address, bound ), field );
+    return true;
+}
+
 static bool rocketnet_server_transport_resolve_staged( const char * public_address_string,
                                                        const struct rocketnet_server_transport_config_t * config,
                                                        const uint64_t * resolved_memory_budget,
@@ -2093,7 +2243,15 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    // the bind addresses before the environment pass: one the environment
+    // sets for a family this server does not serve is dropped below, once
+    // the served families are known (rocketnet_server_transport_ignore_ambient_bind)
+    const bool env_pass = !resolved_memory_budget;
+    char bind_before[2][ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_copy_string( bind_before[0], effective_config.bind_ipv4_address, sizeof( bind_before[0] ) );
+    rocketnet_copy_string( bind_before[1], effective_config.bind_ipv6_address, sizeof( bind_before[1] ) );
+
+    if ( env_pass && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
         {
@@ -2252,27 +2410,16 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         serves_both = 1;
     }
 
-    rocketnet_address_t bind_address;
-
-    if ( serves_both )
+    if ( env_pass )
     {
-        // Both families share the IPv6 wildcard on the one port, with
-        // IPV6_V6ONLY off: the bind a "[::]" server takes.
-        memset( &bind_address, 0, sizeof( bind_address ) );
-        bind_address.type = ROCKETNET_ADDRESS_IPV6;
-        bind_address.port = public_address.port;
+        const bool ipv4 = public_address.type == ROCKETNET_ADDRESS_IPV4;
+        rocketnet_server_transport_ignore_ambient_bind( &effective_config, bind_before[0], bind_before[1], !serves_both && ipv4, !serves_both && !ipv4 );
     }
-    else
+
+    rocketnet_address_t bind_address;
+    if ( !rocketnet_server_transport_resolve_bind_address( &effective_config, &public_address, serves_both, &bind_address, status ) )
     {
-        bind_address = public_address;
-        if ( bind_address.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            memset( bind_address.data.ipv4, 0, sizeof( bind_address.data.ipv4 ) );
-        }
-        else
-        {
-            memset( bind_address.data.ipv6, 0, sizeof( bind_address.data.ipv6 ) );
-        }
+        return false;
     }
 
     // the operator memory budget: each candidate's pre-allocation plan
@@ -3078,7 +3225,7 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
         {
             if ( server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
             {
-                rocketnet_server_transport_io_count_refused( server_transport, 0 );
+                rocketnet_server_transport_io_count_refused( server_transport, &server_transport->disconnect_bursts[server_transport->disconnect_burst_head].to, 0 );
             }
             sodium_memzero( server_transport->disconnect_burst_keys[server_transport->disconnect_burst_head], ROCKETNET_KEY_BYTES );
             server_transport->disconnect_burst_head = ( server_transport->disconnect_burst_head + 1 ) % server_transport->disconnect_burst_capacity;
@@ -3396,7 +3543,7 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     }
     else if ( response_bytes > 0 )
     {
-        rocketnet_server_transport_io_count_refused( server_transport, frame.packet_id );
+        rocketnet_server_transport_io_count_refused( server_transport, from, frame.packet_id );
     }
 
     if ( payload_slot_free && payload && payload_bytes > 0 )
@@ -4444,7 +4591,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         {
             // a full staging: the burst waits for the next update or stop step
 
-            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport ) )
+            if ( frame.packet_id != ROCKETNET_TRANSPORT_PACKET_UNREACHABLE && rocketnet_server_transport_io_refused_full( server_transport, &burst->to ) )
             {
                 break;
             }
@@ -4588,14 +4735,19 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // proofs/tla/ServerSession.tla DisconnectAll and SealWaiting, and
     // proofs/tla/ServerStopSpread.tla Kick and Stop: the slot ends now; its
     // burst is sealed now only while this update's allowance and the
-    // transport's send room hold the whole burst and no earlier burst waits,
+    // transport's send room (with several send queues, the room of the
+    // queue its address stages in too) hold the whole burst and no earlier
+    // burst waits,
     // else it waits in the ring for the following updates. A running server
     // keeps at most max_clients waiting; the stop's bursts always
     // wait, in the half of the ring kept for them, for the stop steps.
 
     if ( shutdown || server_transport->disconnect_burst_count > 0 ||
          server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
-         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
+         rocketnet_server_transport_io_send_room( server_transport ) < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ||
+         ( server_transport->send_queues > 1 &&
+           rocketnet_server_transport_queue_room( server_transport, rocketnet_server_transport_send_queue_of( server_transport, &client_address ) ) <
+               ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) )
     {
         if ( shutdown || server_transport->disconnect_burst_count < server_transport->disconnect_burst_steady_cap )
         {

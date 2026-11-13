@@ -38,8 +38,7 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - One active token is bound to one source address and one live connection. One
   client id occupies at most one live server slot.
 - Session traffic is authenticated and encrypted with per-connection keys,
-  includes replay protection, and provides no property weaker than netcode
-  1.02's security baseline.
+  and includes replay protection.
 - Development builds accept the published development keys, which a program
   sets into its server config explicitly, and provide a development token
   helper. A production start requires an application-supplied backend public

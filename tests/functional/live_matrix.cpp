@@ -25,7 +25,8 @@
     Time is an argument: the clock the objects see is 1000.0 plus the wall
     time elapsed. The case prints its finish time as wall-clock duration;
     the target is 60 s and the hard completion bound is 120 s (times
-    ROCKETNET_TEST_CASE_TIME_SCALE when the environment sets it). Timing is
+    ROCKETNET_TEST_CASE_TIME_SCALE when the environment sets it, and times
+    5 in a ROCKETNET_TEST_EMULATED build). Timing is
     reported separately from message correctness; this is not a load test.
 */
 
@@ -72,9 +73,17 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
 #define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
-// Fixed functional-case budget, independent of build mode; the case multiplies
-// it by the environment's case time scale (tests/time_scale.h), 1 when unset.
+// Fixed functional-case budget, independent of Debug or sanitizer mode; the
+// case multiplies it by the environment's case time scale (tests/time_scale.h),
+// 1 when unset. A full-system emulated build (ROCKETNET_TEST_EMULATED, the
+// s390x nightly) opts in to the suites' 5x scale as well: there the matrix
+// window takes about 130 times its native 2 s, and 120 s cut it at 61% of
+// its messages with none lost (s390x guest, 2026-11-12).
+#if defined( ROCKETNET_TEST_EMULATED )
+#define LIVE_MATRIX_WALL_BOUND              ( ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS * ROCKETNET_TEST_CASE_TIME_SCALE )
+#else
 #define LIVE_MATRIX_WALL_BOUND              ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS
+#endif // #if defined( ROCKETNET_TEST_EMULATED )
 #define LIVE_MATRIX_TARGET_SECONDS          ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS
 #define LIVE_MATRIX_MAX_FAIL_LINES          24
 

@@ -283,6 +283,9 @@ static const char * const counters_appended_names[] = {
     "RECEIVE_DROPPED_FULL",
     "SEND_RESERVE_REFUSED",
     "RECEIVE_FAILED",
+    "FILL_PHASE_OVERLAP",
+    "FILL_TWO_FILLERS",
+    "RECEIVE_DROPPED_STOPPED",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -403,6 +406,9 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_RESERVE_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_FAILED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_FILL_PHASE_OVERLAP ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_FILL_TWO_FILLERS ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
+    check( rocketnet_counter_class( ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_RESENT ) == ROCKETNET_COUNTER_CLASS_PATH_LOSS );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY ) == ROCKETNET_COUNTER_CLASS_EXPECTED );

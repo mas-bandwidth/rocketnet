@@ -3761,6 +3761,9 @@ The registry of counters, in index order, is:
 | `RECEIVE_DROPPED_FULL` | `refusal` | `none` |
 | `SEND_RESERVE_REFUSED` | `refusal` | `none` |
 | `RECEIVE_FAILED` | `refusal` | `none` |
+| `FILL_PHASE_OVERLAP` | `refusal` | `none` |
+| `FILL_TWO_FILLERS` | `refusal` | `none` |
+| `RECEIVE_DROPPED_STOPPED` | `refusal` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -3874,7 +3877,8 @@ dd 1a 04 77 00 00 00 ee 4e 50 1b 00 00 00 37 af
 00 98 21 4f fa 00 20 00 49 b0 ba 62 00 08 00 3a
 68 d4 24 00 00 00 da 28 8a a6 00 00 00 d3 5c c1
 a1 00 00 00 51 8b 57 c4 00 00 00 83 0e ee 6b 00
-00 00 b2 57 b6 3d 00 00 00
+00 00 b2 57 b6 3d 00 00 00 b8 28 ec 42 00 00 00
+d5 28 0b 6d 00 00 00 ad 33 2a 98 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4035,26 +4039,6 @@ the counter list and the test list MUST be the same list.
 The vectors of RN-1 appear in their defining sections. Each vector has a
 unique section-qualified identifier, declared inputs and expected output bytes.
 The vector identifier stays with the case when surrounding prose changes.
-
-<a id="tb"></a>
-## tb. Appendix B: changes from netcode 1.02
-
-This appendix lists, as facts, the differences of RN-1 from netcode 1.02 in
-the bytes on the wire and in the decisions a receiver makes. It states no
-requirements; each difference is specified by the section named in its row.
-
-| Area | netcode 1.02 | RN-1 |
-|---|---|---|
-| Backend trust | The backend and every server share a secret that authenticates connect tokens. | The backend holds an Ed25519 signing keypair and every server holds its public key; a server holds no secret shared with the backend ([t2.2 Key inventory](#t2.2)). |
-| Token authenticity | A connect token carries an AEAD authenticator computed under the shared secret. | The token carries an Ed25519 signature over its signed connect data, and its private block is sealed to the server's X25519 public key ([t6 Connect token](#t6)). |
-| Token scope | A token names a list of candidate servers. | A token names one server at one IPv4 address and one IPv6 address, each optional ([t2 Architecture and key inventory](#t2)). |
-| Token binding | A token is bound to a server address and an expiry. | A token is also bound to the first source address that presents a valid request, until the handshake deadline, and then to the source address whose connection response first opened under it; it admits one live connection ([t12 Handshake: server](#t12)). |
-| Packet keys | The session keys minted into the token are the packet keys. | The token keys key a derivation only; each attempt derives separate handshake and session keys from a client salt, a server session nonce and an ephemeral X25519 exchange ([t7 Key schedule](#t7)). |
-| Forward secrecy | Recovering a token recovers the traffic sealed with its keys. | Recovering a token after a connection has ended does not recover that connection's traffic ([t7 Key schedule](#t7)). |
-| IPv6 | Added after the first release. | Dual stack from the first release, with one address normalization rule ([t2 Architecture and key inventory](#t2)). |
-| Packet prefix | No prefilter header precedes a packet. | Every packet begins with the prefilter header ([t5 Prefilter header](#t5)). |
-| Payload to an unconfirmed client | A keep-alive prefixes every payload until the client is confirmed. | Session keys exist from the challenge, so payloads are delivered from that point with no prefix ([t13 Session: keep-alive, timeout, disconnect, slot reset](#t13)). |
-| A zero timeout | A timeout of zero is accepted. | A timeout outside the field's valid range is refused, and zero is outside it ([t2.3 Configuration surface](#t2.3)). |
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes

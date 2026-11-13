@@ -123,8 +123,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // ROCKETNET_TEST_VERBOSE=1) on the tree with session_nonce removed:
 // actual=1469504511 for the server, 3776 above, and actual=15258812 for the
 // client, two 64-byte roundings above (the object's rounding moved with the
-// removed field).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468455935 )
+// removed field). The two fill-phase counters and the two bind addresses
+// add 512 bytes to the server (actual=1469505023, measured on aws-win-5)
+// and nothing to the client.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456447 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -165,7 +167,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // and two 64-byte roundings to the client (measured on the studio, Apple
 // clang, Release, DEV=ON); the probe's actual= lines are 1469504927 and
 // 15036554.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456351 )
+// The two fill-phase counters and the server config's two bind addresses
+// (bind_ipv4_address, bind_ipv6_address) add 512 bytes to the server and
+// nothing to the client (measured); the probe's actual= line is 1469505439.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456863 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -240,9 +245,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (gcc, Debug, ROCKETNET_TEST_VERBOSE=1): actual=3111680499 for the server,
 // 3776 above the last reading with the object's alignment, and
 // actual=15186146 for the client, 64 above it (the counters cross its
-// object's 64-byte rounding).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110631923ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137570 )
+// object's 64-byte rounding). The two fill-phase counters move the client
+// another 64 (actual=15186210, bench-nyc-6), and they and the two bind
+// addresses move the server 576 (actual=3111681075).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

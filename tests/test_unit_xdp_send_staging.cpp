@@ -449,6 +449,18 @@ static void test_xdp_send_wakeup_success_clears_the_hard_error()
 
 REGISTER_UNIT_TEST( test_xdp_send_wakeup_success_clears_the_hard_error );
 
+// rx_ring_full is the fourth field of struct xdp_statistics, bytes 24 to 31:
+// an answer that does not hold all eight of its bytes does not count it
+static void test_xdp_socket_dropped_counts_ring_full_only_when_answered_whole()
+{
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 24 ) == 5 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 31 ) == 5 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 32 ) == 12 );
+    rocketnet_unit_check( rocketnet_xdp_socket_dropped( 5, 7, 48 ) == 12 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_socket_dropped_counts_ring_full_only_when_answered_whole );
+
 // The fixture calls the actual transport send_packets twice with a fake
 // staged backend carrying the given flags, after one commit: a transport that
 // declares ROCKETNET_TRANSPORT_REFLUSHES flushes at both boundaries, any other

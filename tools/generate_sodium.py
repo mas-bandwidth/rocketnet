@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Extend a checksum-verified netcode baseline with pinned upstream sources.
+"""Extend the checksum-pinned baseline pair with pinned upstream sources.
 
-This deliberately does not claim to reconstruct netcode's historical local
-patches from upstream. Ordinary builds consume the committed pair offline.
+The baseline pair lives in this repository (sodium/baseline/, SHA-256 pinned
+in sodium/manifest.json); only the libsodium release archive is an outside
+input. This deliberately does not claim to reconstruct the baseline's
+historical local patches from upstream. Ordinary builds consume the committed
+pair offline.
 """
 import argparse
 import hashlib
@@ -275,16 +278,16 @@ UPSTREAM_CONVERSIONS = {
 BASELINE_CONVERSIONS = {
     'sodium.h': [
         # -Wundef: an unset override macro reads as 0, as #if already evaluates it.
-        (None, r'^(     )NETCODE_X64 \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
-         r'\1(defined(NETCODE_X64) && NETCODE_X64) || (defined(NETCODE_AVX) && NETCODE_AVX) || \\\n'
-         r'\1(defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
-        (None, r'^# if defined\(__AVX__\) \|\| NETCODE_AVX \|\| NETCODE_AVX2$',
-         '# if defined(__AVX__) || (defined(NETCODE_AVX) && NETCODE_AVX) || (defined(NETCODE_AVX2) && NETCODE_AVX2)', 1),
-        (None, r'^# if \(defined\(__AVX2__\) \|\| NETCODE_AVX2\) ',
-         '# if (defined(__AVX2__) || (defined(NETCODE_AVX2) && NETCODE_AVX2)) ', 1),
+        (None, r'^(     )ROCKETNET_X64 \|\| ROCKETNET_AVX \|\| ROCKETNET_AVX2$',
+         r'\1(defined(ROCKETNET_X64) && ROCKETNET_X64) || (defined(ROCKETNET_AVX) && ROCKETNET_AVX) || \\\n'
+         r'\1(defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)', 1),
+        (None, r'^# if defined\(__AVX__\) \|\| ROCKETNET_AVX \|\| ROCKETNET_AVX2$',
+         '# if defined(__AVX__) || (defined(ROCKETNET_AVX) && ROCKETNET_AVX) || (defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)', 1),
+        (None, r'^# if \(defined\(__AVX2__\) \|\| ROCKETNET_AVX2\) ',
+         '# if (defined(__AVX2__) || (defined(ROCKETNET_AVX2) && ROCKETNET_AVX2)) ', 1),
     ],
     'sodium.c': [
-        (None, r'^(\s*)#(if|elif) (HAVE_WEAK_SYMBOLS|HAVE_ALLOCA|NETCODE_CRYPTO_LOGS)$', r'\1#\2 defined(\3) && \3', 11),
+        (None, r'^(\s*)#(if|elif) (HAVE_WEAK_SYMBOLS|HAVE_ALLOCA|ROCKETNET_CRYPTO_LOGS)$', r'\1#\2 defined(\3) && \3', 11),
         # The 0/1 flags of the constant-time comparison are unsigned char.
         ('sodium_compare(', r'^(\s+)gt \|= (\(\(x2 - x1\) >> 8\) & eq);$', r'\1gt = (unsigned char) (gt | (\2));', 1),
         ('sodium_compare(', r'^(\s+)eq &= (\(\(x2 \^ x1\) - 1\) >> 8);$', r'\1eq = (unsigned char) (eq & (\2));', 1),
@@ -350,16 +353,14 @@ def checked(path, digest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--inputs', type=Path, required=True,
-                        help='directory containing netcode/sodium.{c,h} and libsodium-1.0.22.tar.gz')
+                        help='directory containing libsodium-1.0.22.tar.gz')
     parser.add_argument('--output', type=Path, default=ROOT / 'sodium')
     parser.add_argument('--check', action='store_true')
-    parser.add_argument('--fetch', action='store_true', help='fetch missing pinned inputs over HTTPS')
+    parser.add_argument('--fetch', action='store_true', help='fetch the pinned release archive over HTTPS when missing')
     args = parser.parse_args()
     manifest = json.loads((ROOT / 'sodium/manifest.json').read_bytes().decode('utf-8'))
     if args.fetch:
         downloads = {
-            **{f'netcode/{name}': (f"https://raw.githubusercontent.com/mas-bandwidth/netcode/{manifest['baseline_commit']}/sodium/{name}", digest)
-               for name, digest in manifest['baseline_sha256'].items()},
             f"libsodium-{manifest['upstream_version']}.tar.gz":
                 (f"https://github.com/jedisct1/libsodium/releases/download/{manifest['upstream_version']}-RELEASE/libsodium-{manifest['upstream_version']}.tar.gz", manifest['archive_sha256'])}
         for name, (url, digest) in downloads.items():
@@ -371,7 +372,8 @@ def main():
                     raise SystemExit(f"download SHA256 mismatch: {name}")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
-    baseline = {name: checked(args.inputs / 'netcode' / name, digest).decode('utf-8')
+    # The baseline pair is committed beside the bundle, never downloaded.
+    baseline = {name: checked(ROOT / 'sodium/baseline' / (name + '.in'), digest).decode('utf-8')
                 for name, digest in manifest['baseline_sha256'].items()}
     archive = checked(args.inputs / f"libsodium-{manifest['upstream_version']}.tar.gz",
                       manifest['archive_sha256'])
@@ -420,7 +422,7 @@ def main():
 
         return f'\n/* ===== upstream {path} ===== */\n' + INCLUDE.sub(inline, source)
 
-    # netcode's baseline predates upstream's precise nullable/zero-length
+    # The baseline predates upstream's precise nullable/zero-length
     # annotations. Refresh only existing nonnull attributes from the pinned
     # declarations; do not suppress sanitizer diagnostics for valid calls.
     prototype = re.compile(r'^\w[^;{}]*?\b((?:crypto_|sodium_|randombytes_)\w+)\s*\([^;{}]*;', re.M)

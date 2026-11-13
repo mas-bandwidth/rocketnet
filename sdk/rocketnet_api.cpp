@@ -403,9 +403,16 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     return true;
 }
 
+// served is the families create serves (RN_SERVES_IPV4 | RN_SERVES_IPV6).
+// A resolve that has no addresses passes 0 and keeps every environment bind
+// address for start to judge; create's resolve passes what it serves
+
+#define RN_SERVES_IPV4 1
+#define RN_SERVES_IPV6 2
+
 static bool rn_server_split( const struct rocketnet_server_config_t * config, bool read_env,
                              struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
-                             uint64_t * memory_budget = NULL )
+                             uint64_t * memory_budget = NULL, int served = 0 )
 {
     struct rocketnet_server_config_t defaults;
 
@@ -451,6 +458,17 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
         return false;
     }
 
+    if ( !rn_copy_config_string( transport->bind_ipv4_address, sizeof( transport->bind_ipv4_address ), config->bind_ipv4_address, "", "server", "bind_ipv4_address" ) ||
+         !rn_copy_config_string( transport->bind_ipv6_address, sizeof( transport->bind_ipv6_address ), config->bind_ipv6_address, "", "server", "bind_ipv6_address" ) )
+    {
+        if ( failure )
+        {
+            *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        }
+
+        return false;
+    }
+
     // the served addresses come from create's arguments (rn_server_addresses)
 
     transport->public_address[0] = '\0';
@@ -474,11 +492,21 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
 
     if ( read_env )
     {
+        char bind_before[2][ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+        rocketnet_copy_string( bind_before[0], transport->bind_ipv4_address, sizeof( bind_before[0] ) );
+        rocketnet_copy_string( bind_before[1], transport->bind_ipv6_address, sizeof( bind_before[1] ) );
+
         int num_fields = 0;
         const struct rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
         if ( !rn_transport_env( "server", transport, fields, num_fields, memory_budget, failure ) )
         {
             return false;
+        }
+
+        // a specific bind applies only to a server of one family
+        if ( served != 0 )
+        {
+            rocketnet_server_transport_ignore_ambient_bind( transport, bind_before[0], bind_before[1], served == RN_SERVES_IPV4, served == RN_SERVES_IPV6 );
         }
     }
 
@@ -770,6 +798,8 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, server_secret_key ),
     ROCKETNET_SERVER_CONFIG_BYTES_4,
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, token_epoch_unix_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv4_address ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, bind_ipv6_address ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -2762,7 +2792,20 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     uint32_t kbps = 0;
     uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_server_split( config, true, &transport, &message, &kbps, &failure, &memory_budget ) )
+    // the families create serves, for the bind environment's rule
+    // (rocketnet_server_transport_ignore_ambient_bind)
+    int served = 0;
+    struct rocketnet_address_t served_address;
+    if ( rocketnet_address_parse( &served_address, address ) )
+    {
+        served |= served_address.type == ROCKETNET_ADDRESS_IPV4 ? RN_SERVES_IPV4 : RN_SERVES_IPV6;
+    }
+    if ( second_address[0] != '\0' && rocketnet_address_parse( &served_address, second_address ) )
+    {
+        served |= served_address.type == ROCKETNET_ADDRESS_IPV4 ? RN_SERVES_IPV4 : RN_SERVES_IPV6;
+    }
+
+    if ( !rn_server_split( config, true, &transport, &message, &kbps, &failure, &memory_budget, served ) )
     {
         sodium_memzero( &transport, sizeof( transport ) );
 

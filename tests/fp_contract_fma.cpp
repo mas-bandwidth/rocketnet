@@ -8,10 +8,21 @@
 // in its baseline). Without the floor, a*b+c compiles to one fused
 // multiply-add and the canary fails. It runs only on a CPU with FMA.
 
+#include <stdio.h>
 #include "fp_contract_canary.h"
 
-int main()
+int main( int argc, char ** argv )
 {
+    // every case runs, always: an argument (a case name, a flag) is refused,
+    // never ignored, so a caller that believes it selected something learns
+    // it did not
+
+    if ( argc != 1 )
+    {
+        fprintf( stderr, "usage: %s (no arguments: it runs every case)\n", argv[0] );
+        return 2;
+    }
+
     if ( test_fp_contract_off() )
     {
         return 1;
