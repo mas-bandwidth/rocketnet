@@ -17,14 +17,14 @@ The new text, rewrapped to the file's 77-column comment box:
     around an action [...] hold for the arguments Next passes as bound
     variables.
 
-The sentence is at:
-- proofs/tla/TraceRNAckApplyPhase.tla:13-15
-- proofs/tla/TraceRNFillPhase.tla:18-19
-- proofs/tla/TraceRNGsoQueueBankLayout.tla:14
-- proofs/tla/TraceRNRioLaneLayout.tla:13
-- proofs/tla/TraceRNSendReserveCalls.tla:13
-- proofs/tla/TraceRNWriterFinish.tla:13
-- proofs/tla/TraceRNXdpGatewayRefresh.tla:17
+The sentence is in the header comment of each of these files:
+- proofs/tla/TraceRNAckApplyPhase.tla (the header comment)
+- proofs/tla/TraceRNFillPhase.tla (the header comment)
+- proofs/tla/TraceRNGsoQueueBankLayout.tla (the header comment)
+- proofs/tla/TraceRNRioLaneLayout.tla (the header comment)
+- proofs/tla/TraceRNSendReserveCalls.tla (the header comment)
+- proofs/tla/TraceRNWriterFinish.tla (the header comment)
+- proofs/tla/TraceRNXdpGatewayRefresh.tla (the header comment)
 
 These are comments only. The checker compares only the module text below the
 header with the template, so no trace check changes.
@@ -33,5 +33,5 @@ header with the template, so no trace check changes.
 
   (item "trace-check-arity" :group "proof-debt" :area "proofs"
    :title "The trace check does not count a record's arguments"
-   :text "MM203's held half. The checker ties each recorded argument Next passes as a bound variable, but does not check how many arguments a record carries: tests/tla_trace_bank.cpp:452 records three for FinishRefused(t, k). Record <<t, k>> for FinishRefused there, then add Len(traceArgs) = n to each bound arm in tools/tla_trace_check.py occurrences() and restore the ArgsTooLong domain control (a Drain record with two arguments, rejected bound)."
+   :text "MM203's held half. The checker ties each recorded argument Next passes as a bound variable, but does not check how many arguments a record carries: tests/tla_trace_bank.cpp (tla_sequence of the Finish and FinishRefused records) records three for FinishRefused(t, k). Record <<t, k>> for FinishRefused there, then add Len(traceArgs) = n to each bound arm in tools/tla_trace_check.py occurrences() and restore the ArgsTooLong domain control (a Drain record with two arguments, rejected bound)."
    :date "2026-11-13" :origin "MODELS-MERGED.md MM203; models/v1.1.x/trace-framework")
