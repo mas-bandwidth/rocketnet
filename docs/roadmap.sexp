@@ -605,4 +605,34 @@
    :title "The any-queue capacity can be above 0 while no queue has both room and budget"
    :text "rocketnet_server_transport_send_capacity_to( -1 ) answers the room summed over the queues, within the whole budget left. With room on one queue and budget only on another, it is above 0 while no start can be granted, so the send pass holds every connection to the end instead of cutting: bounded (one walk, two capacity reads a connection), never a hang. Answer it per queue (the sum of each queue's room within its own budget, and the own frames), with RNSendReserveCalls CapacityAll and RNServerSendFair's cut changed alongside."
    :date "2026-11-13" :origin "Review before v1.2.0, send queue capacity fix, cold read")
+
+  (item "zero-pad-refusal-reasons" :group "review-v1-2" :area "rocketnet"
+   :title "Give the two zero-pad refusals their own counters"
+   :text "A server counts a signed connect data zero pad that is not all zero as CONNECTION_REQUEST_WRONG_VERSION (sdk/rocketnet_server_protocol.cpp about 563-587), and a private block zero pad that is not all zero as CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK, which also records a failed-signature budget failure (about 848-853). TRANSPORT.md t6.4 now states where each check sits and states both as exceptions to t18 rule 2. Counters are ABI and the counter set is frozen for the point release, so the reasons get their own counters in a release that may add counters; then t6.4 drops the exception."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-80")
+
+  (item "response-no-slots-own-counter" :group "review-v1-2" :area "rocketnet"
+   :title "Count a response ignored for just-freed slots apart from a denial"
+   :text "A connection response that finds only slots freed in the same update is ignored, not denied, and counts CONNECTION_RESPONSE_NO_SLOTS, the counter of a real denial (sdk/rocketnet_server_protocol.cpp about 1176-1186); connections_denied_full sums both. TRANSPORT.md t12 rule 13 and t13.4 now state the ignore. Give it its own reason in a release that may add counters, and update t12, t18 and the stats doc with it."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-105")
+
+  (item "half-open-idle-own-counter" :group "review-v1-2" :area "rocketnet"
+   :title "Count a half-open idle removal apart from a connected timeout"
+   :text "A half-open mapping removed at its idle deadline and a connected slot removed at its idle timeout both count MAPPING_IDLE_TIMEOUT; the connected one also counts CLIENT_TIMED_OUT, so the half-open count is the difference. TRANSPORT.md t12 rule 14 and t18 rule 2 now state this as an exception. Give the half-open removal its own counter in a release that may add counters, and update t12, t18 and the stats doc with it."
+   :date "2026-11-13" :origin "Standard review, merged table row SM052")
+
+  (item "client-denied-counter-class" :group "review-v1-2" :area "rocketnet"
+   :title "Decide the class of the client's denied WRONG_STATE and ACCEPTED counters"
+   :text "CLIENT_DENIED_WRONG_STATE and CLIENT_DENIED_ACCEPTED are of class refusal, where every other client WRONG_STATE and ACCEPTED counter is expected. The class is part of the counter registry and its vector, so TRANSPORT.md t18 keeps them as registered and says so. A release that may change counter classes decides whether they become expected."
+   :date "2026-11-13" :origin "Standard review, merged table row SM040")
+
+  (item "promotion-enabled-mask" :group "review-v1-2" :area "rocketnet"
+   :title "Decide what admits a promoted send, and count its refusal once"
+   :text "A sender promotes an UNRELIABLE or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to RELIABLE, and an UNRELIABLE_SEQUENCED one to RELIABLE_SEQUENCED, then checks that exact reliability against the enabled mask; RELIABLE_WITH_ACK_RECEIPT does not admit it, although it sends under the same wire code. The refusal counts both MESSAGE_SEND_TYPE_NOT_ENABLED and MESSAGE_SEND_REFUSED, where an unpromoted unreliable send outside the mask counts only the first. The public interface enables all eight reliabilities and has no mask setting, so only a restricted internal mask or another implementation reaches this. MESSAGES.md m2.1 states this behaviour. A later release decides whether the receipt twin admits a promoted UNRELIABLE_WITH_ACK_RECEIPT send, whether config validation warns when an enabled unreliable reliability lacks its promoted one, and whether the refusal counts one counter."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-114")
+
+  (item "go-backend-protocol-id-parse" :group "review-v1-2" :area "rocketnet"
+   :title "The Go and C# example backends parse the protocol id differently"
+   :text "examples/backend/go/main.go (about 344-350) parses the protocol id with base auto-detect, so 010 is octal 8 there, while the C# backend parses it as decimal 10; make both parse one way and say which in the examples' docs."
+   :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-119")
  ))
