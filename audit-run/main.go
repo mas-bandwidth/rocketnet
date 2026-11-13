@@ -270,11 +270,14 @@ func planH2(p *plan) {
 			"cmake", "-B", "build", "-DCMAKE_BUILD_TYPE=Debug", "-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx(cc),
 			"-DCMAKE_C_FLAGS=" + tsanFlags, "-DCMAKE_CXX_FLAGS=" + tsanFlags, "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"}})
 		// clang's static tsan_cxx runtime and tests/test_channels.cpp both define the
-		// global operator new/delete, so bin/test does not link under clang TSan on Linux
-		targets := []string{"cmake", "--build", "build", "--target", "functional", "soak", "test_lifecycle", "test_wide_fill"}
-		if cc == "gcc" {
-			targets = append(targets, "test")
+		// global operator new/delete, so bin/test (and functional, which needs it) does
+		// not link under clang TSan on Linux; the clang leg links with
+		// --allow-multiple-definition (the runtime's operator new wins: the channels
+		// allocator trap witness is expected to fail there, as under MSan)
+		if cc == "clang" {
+			cfg.argv = append(cfg.argv, "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread -Wl,--allow-multiple-definition")
 		}
+		targets := []string{"cmake", "--build", "build", "--target", "test", "functional", "soak", "test_lifecycle", "test_wide_fill"}
 		b := p.add(&job{name: n + "-build", after: []string{cfg.name}, dir: n, cores: 4, reserve: true, argv: append(targets, "--parallel", "6")})
 		sa := []string{"setarch", "x86_64", "-R"}
 		last := ""
@@ -288,9 +291,6 @@ func planH2(p *plan) {
 			{name: n + "-functional-io_uring", env: with(tsanEnv, "ROCKETNET_SERVER_TRANSPORT=io_uring"), cores: 4, argv: with(sa, "./bin/functional")},
 		}
 		for _, s := range steps {
-			if cc != "gcc" && s.name == n+"-unit" {
-				continue
-			}
 			s.after = []string{b.name}
 			s.dir = n
 			s.reserve = true
