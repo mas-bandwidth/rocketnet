@@ -520,16 +520,23 @@ Dispatch measurements and their limits are recorded in
 is a Windows staged server transport with one registered memory region and one
 I/O worker that polls the send and receive completion queues. The frame thread
 hands deferred sends to one of three phases; a phase stays worker-owned until
-its sends complete, and four receive banks cross the same bounded ownership seam.
+its sends complete, and its received datagrams reach main through the shared
+receive handoff (`sdk/rocketnet_receive_handoff.h`, three banks): main reads
+the bank the worker is filling up to its committed count, so a datagram the
+worker banked and committed before a receive call is returned by that call
+when the call's one try of the mutex succeeds, it began with no backlog left
+by a cut call, and the process view has room (the exceptions
+`sdk/rocketnet_receive_handoff.h` states); otherwise a later call returns it.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
-three send phases and four receive banks are implemented in
-`rocketnet_rio_worker_pass` and `rocketnet_server_rio_receive_packets` in
+three send phases and its receive banks are implemented in
+`rocketnet_rio_worker_pass` and `rocketnet_rio_lane_receive_packets` in
 `sdk/rocketnet_server_rio_windows.cpp`; their ownership is modelled in
-`proofs/tla/RNRioWorker.tla`.
+`proofs/tla/RNRioWorker.tla` (the handoff itself in
+`proofs/tla/RNReceiveHandoff.tla`).
 
 ## Windows connection reset
 

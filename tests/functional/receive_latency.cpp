@@ -112,6 +112,8 @@ static const struct receive_latency_row_t receive_latency_rows[] = {
     { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER, false },
     { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER, false },
     { "server_xdp", "xdp", "portable", RECEIVE_LATENCY_SERVER, true },
+    { "server_rio", "rio", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_iocp", "iocp", "portable", RECEIVE_LATENCY_SERVER, false },
     { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT, false },
     { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT, false },
     { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT, false },
@@ -553,8 +555,8 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
     // wait is in updates; reported in milliseconds at the rate run, updates after
     const double mean = total > lost ? sum / ( total - lost ) : 0.0;
-    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name, total,
-            late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
+    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name,
+            total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
     fflush( stdout );
 
     for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
@@ -636,4 +638,17 @@ void rocketnet_test_receive_latency_client_msgx()
 void rocketnet_test_receive_latency_client_iocp()
 {
     receive_latency_run_named( "client_iocp" );
+}
+
+void rocketnet_test_receive_latency_server_rio();
+void rocketnet_test_receive_latency_server_iocp();
+
+void rocketnet_test_receive_latency_server_rio()
+{
+    receive_latency_run_named( "server_rio" );
+}
+
+void rocketnet_test_receive_latency_server_iocp()
+{
+    receive_latency_run_named( "server_iocp" );
 }

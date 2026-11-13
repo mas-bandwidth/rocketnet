@@ -18,7 +18,7 @@ One parameterized module covers every shape the code uses:
 | `MCRNBankFifoLayoutHandoff.cfg` | `rocketnet_buffer_handoff_publish` with `max_ready` 1 | FIFO of 3 | FIFO of 3, at most 1 | one buffer | loop |
 | `MCRNBankFifoLayoutHandoffMaxReadyAll.cfg` | the same with `max_ready` = N, which its assert refuses | FIFO of 3 | FIFO of 3 | one buffer | loop |
 | `MCRNBankFifoLayoutLifoSend.cfg` | `rocketnet_server_iocp_send_packets`, `rocketnet_iocp_send_worker` (`sdk/rocketnet_server_iocp_windows.cpp`) | stack of 3 | FIFO of 3 | one bank | literal `{ 1, 2, 0 }` |
-| `MCRNBankFifoLayoutLifoExposed.cfg` | `rocketnet_iocp_publish_receive_bank`, `rocketnet_server_iocp_receive_packets`; `rocketnet_rio_worker_pass`, `rocketnet_server_rio_receive_packets` (`sdk/rocketnet_server_rio_windows.cpp`) | stack of 4 | FIFO of 4 | up to 4 exposed | loop |
+| `MCRNBankFifoLayoutLifoExposed.cfg` | none now: the iocp and rio server receive banks it modelled moved to the shared receive handoff (`RNReceiveHandoff.tla`) on 2026-11-13; kept as a checked shape | stack of 4 | FIFO of 4 | up to 4 exposed | loop |
 | `MCRNBankFifoLayoutPosted.cfg` | `rocketnet_client_iocp_dequeue`, `rocketnet_client_iocp_receive_batch` (`sdk/rocketnet_client_iocp_windows.cpp`) | none: posted to the kernel | FIFO of `num_receives` = 3 in an array of 4 | up to 3 | every buffer posted |
 
 ## State
@@ -48,27 +48,23 @@ producer it is given; the model's producer is 0, where it is the loop.
   bank goes to the ready tail and the free head (or the stack's top) becomes
   the producer. `portable_rx_publish`, `portable_tx_publish`,
   `rocketnet_server_gso_publish_send`, `rocketnet_xdp_buffer_exchange_t::publish`,
-  `rocketnet_buffer_handoff_publish`, `rocketnet_server_iocp_send_packets`,
-  `rocketnet_iocp_publish_receive_bank` and the WPublish step of
-  `rocketnet_rio_worker_pass`.
+  `rocketnet_buffer_handoff_publish` and `rocketnet_server_iocp_send_packets`.
 - **`Complete(b)`**: the iocp client's kernel completes posted buffer `b` with
   a datagram, in any order, and `rocketnet_client_iocp_dequeue` puts it at
   the ready tail `( ready_head + ready_count ) % num_receives`.
 - **`Take`**: the consumer takes the ready head onto its list, the head
   advancing modulo N. `portable_rx_acquire`, `portable_tx_worker`,
   `rocketnet_server_gso_take_send`, `claim`, `rocketnet_buffer_handoff_take`,
-  `rocketnet_iocp_send_worker`, `rocketnet_server_iocp_receive_packets`,
-  `rocketnet_server_rio_receive_packets` and `rocketnet_client_iocp_receive_batch`.
+  `rocketnet_iocp_send_worker` and `rocketnet_client_iocp_receive_batch`.
 - **`Release`**: the consumer returns every bank it holds, in order, to the
   free tail (or the stack), or for the iocp client posts it again.
   `portable_rx_acquire`, `portable_tx_worker`, `rocketnet_server_gso_return_send`,
   `recycle`, `rocketnet_buffer_handoff_release`, `rocketnet_iocp_send_worker`
-  and the receive calls above.
+  and `rocketnet_client_iocp_receive_batch`.
 
 The code runs some of these together under one lock (`portable_rx_acquire`
-releases then takes; the iocp and rio receive calls return every exposed bank,
-then take the ready banks that fit). The model lets every action interleave,
-which includes those orders.
+releases then takes). The model lets every action interleave, which includes
+those orders.
 
 ## Invariants
 
