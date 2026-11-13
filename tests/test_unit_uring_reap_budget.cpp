@@ -720,9 +720,9 @@ static void test_io_uring_transport_reap_holds_past_bank_room()
 // an inbound flood that fills the fill bank every update never holds a send's
 // completion: a receive the bank has no room for is held, not left at the
 // head of the completion queue, so the CQEs behind it are reaped in the
-// same call. each update here is one send_packets after half the bank plus
-// 1000 receives and one receive_packets after as many more, 2000 datagrams
-// more than the bank holds per swap: a reap that stopped at the first receive without room
+// same call. each update here is one send_packets after 9000 receives and
+// one receive_packets after 9000 more, 18000 datagrams against a bank of
+// 16000 per swap: a reap that stopped at the first receive without room
 // would leave the excess ahead of the next update's sends, the send budget
 // would end before their CQEs, and the reservation index would never go
 // back to 0. the receives are spread over four queues, as a held receive
@@ -741,11 +741,7 @@ static void test_io_uring_transport_send_completions_pass_a_full_fill_bank()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, queues, &source );
     rocketnet_unit_check( uring );
 
-    // the two halves of an update overfill the bank by 2000: 9000 each at a
-    // bank of 16000 (16 a client), 33000 at 64000 (64 a client). The excess,
-    // not the bank, is what the queues' provided buffers hold, so it stays
-    // fixed while the flood scales with the bank.
-    const int receives = ( URING_TEST_BANK_SIZE + 2000 ) / 2;
+    const int receives = URING_TEST_BANK_SIZE * 9 / 16;      // 9000 at the default 1000 clients; the flood scales with the bank
     const int sends = 256;
     const int updates = 7;
 

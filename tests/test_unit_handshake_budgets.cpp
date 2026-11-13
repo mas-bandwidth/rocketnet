@@ -1577,17 +1577,16 @@ REGISTER_UNIT_TEST( test_handshake_cookie_reply_edge_bits_answer_once );
 // the bitmap's size: the next power of two at or above 16 times the most
 // connection requests one update can process (io_uring's receive bank, never
 // below the receive budget), so a full update sets at most 1 in 16 bits.
-// 8192 words (524288 bits, 64 KiB) at max_clients 4 and 64, 16384 words
-// (1048576 bits, 128 KiB) at 1000.
+// 4096 words (262144 bits, 32 KiB) at max_clients 4, 64 and 1000.
 
 static void test_handshake_cookie_reply_bitmap_sized_from_receive_bound()
 {
     check( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR == 16 );
-    check( rocketnet_server_cookie_reply_source_words( 4 ) == 8192 );
-    check( rocketnet_server_cookie_reply_source_words( 64 ) == 8192 );
+    check( rocketnet_server_cookie_reply_source_words( 4 ) == 4096 );
+    check( rocketnet_server_cookie_reply_source_words( 64 ) == 4096 );
     if ( ROCKETNET_MAX_CLIENTS >= 1000 )
     {
-        check( rocketnet_server_cookie_reply_source_words( 1000 ) == 16384 );
+        check( rocketnet_server_cookie_reply_source_words( 1000 ) == 4096 );
     }
 
     const int sizes[] = { 1, 4, 64, 512, 640, 641, 1000, ROCKETNET_MAX_CLIENTS };
