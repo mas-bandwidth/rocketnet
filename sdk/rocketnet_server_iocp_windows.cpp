@@ -1855,20 +1855,22 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
     layout->num_lanes = rocketnet_server_iocp_send_lanes( max_clients );
 #if ROCKETNET_DEV
     // MEASUREMENT AID, not a product setting: ROCKETNET_TEST_IOCP_SEND_LANES=N
-    // runs N send lanes (so N send threads) of the same total capacity, lane
-    // size = lanes * size / N (N a power of two, the lane at most 16384 so
-    // the packet handle's sixteen index bits hold every operation)
+    // runs N send lanes (so N send threads), each lane the smallest power of
+    // two that holds the total capacity / N, N lanes at most 65536 operations
     {
         char knob[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
         if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_LANES", knob, sizeof( knob ) ) > 0 )
         {
             const int lanes = atoi( knob );
             const int capacity = layout->num_lanes * layout->send_queue_size;
-            if ( lanes >= 1 && lanes <= ROCKETNET_IOCP_MAX_LANES && ( lanes & ( lanes - 1 ) ) == 0 && capacity % lanes == 0 &&
-                 capacity <= (int) ROCKETNET_IOCP_MAX_OPERATIONS )
+            if ( lanes >= 1 && lanes <= ROCKETNET_IOCP_MAX_LANES )
             {
-                layout->num_lanes = lanes;
-                layout->send_queue_size = capacity / lanes;
+                const int size = rocketnet_power_of_two_at_least( ( capacity + lanes - 1 ) / lanes );
+                if ( (int64_t) lanes * size <= (int64_t) ROCKETNET_IOCP_MAX_OPERATIONS )
+                {
+                    layout->num_lanes = lanes;
+                    layout->send_queue_size = size;
+                }
             }
         }
     }
@@ -3299,17 +3301,19 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
 
 #if ROCKETNET_DEV
     // MEASUREMENT AID: ROCKETNET_TEST_IOCP_SEND_CPUS="first,count" pins send
-    // thread (lane) l to processor first + l % count, group 0
+    // thread (lane) l to processor first + ( l % count ) * stride, group 0
+    // ("first,count" or "first,count,stride")
     {
         char knob[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-        int first = 0, count = 0;
+        int first = 0, count = 0, stride = 1;
         char * comma = NULL;
         if ( rocketnet_platform_getenv( "ROCKETNET_TEST_IOCP_SEND_CPUS", knob, sizeof( knob ) ) > 0 )
         {
             first = (int) strtol( knob, &comma, 10 );
-            count = comma && *comma == ',' ? (int) strtol( comma + 1, NULL, 10 ) : 0;
+            count = comma && *comma == ',' ? (int) strtol( comma + 1, &comma, 10 ) : 0;
+            stride = comma && *comma == ',' ? (int) strtol( comma + 1, NULL, 10 ) : 1;
         }
-        if ( first >= 0 && count >= 1 && first + count <= 64 )
+        if ( first >= 0 && count >= 1 && stride >= 1 && first + ( count - 1 ) * stride < 64 )
         {
             int l = 0;
             while ( l < iocp->num_lanes && iocp->lanes[l] != lane )
@@ -3318,10 +3322,10 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
             }
             GROUP_AFFINITY affinity = {};
             affinity.Group = 0;
-            affinity.Mask = (KAFFINITY) 1 << ( first + l % count );
+            affinity.Mask = (KAFFINITY) 1 << ( first + ( l % count ) * stride );
             if ( !SetThreadGroupAffinity( GetCurrentThread(), &affinity, NULL ) )
             {
-                rocketnet_warn( "iocp transport: send thread %d could not be pinned to processor %d: %lu", l, first + l % count, GetLastError() );
+                rocketnet_warn( "iocp transport: send thread %d could not be pinned to processor %d: %lu", l, first + ( l % count ) * stride, GetLastError() );
             }
         }
     }
