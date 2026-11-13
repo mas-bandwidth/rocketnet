@@ -153,6 +153,14 @@ class FunctionalLogTests(unittest.TestCase):
         line = "keep going: 0 failed; 2 of 2 collected cases ran"
         self.assertTrue(self.check(line, line))
 
+    def test_windows_commit_lines_are_reports(self):
+        self.assertEqual(self.check("commit available 320759 MiB of a 325500 MiB limit, physical available 123419 MiB",
+                                    "commit lock: test_a waited 3.5 s for another run's full-capacity case",
+                                    "commit state unreadable"), [])
+
+    def test_a_commit_line_with_more_text_is_refused(self):
+        self.assertTrue(self.check("commit available 1 MiB of a 2 MiB limit, physical available 3 MiB and then some"))
+
 
 
 class SelfNamePrintTests(unittest.TestCase):
