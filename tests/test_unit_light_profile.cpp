@@ -117,6 +117,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (read on aws-win-1, MSVC 19.52.37029, x64, DEV=ON, Release: 15258748 at the
 // tree before that merge, 15258684 after it, same toolset). The server's
 // reading did not move.
+<<<<<<< HEAD
 // The protocol send reserve, the worker receive drop totals and three
 // appended counters (the Linux note below) then move both figures, measured
 // on aws-win-5 (MSVC 19.52.37029, x64, DEV=ON, Release and Debug,
@@ -126,8 +127,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // removed field). The two fill-phase counters and the two bind addresses
 // add 512 bytes to the server (actual=1469505023, measured on aws-win-5)
 // and nothing to the client.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456447 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210236 )
+// Each ack endpoint keeps the last block it applied in full (sdk/rocketnet_ack.h,
+// rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
+// clients, and one 64-byte rounding to the client: computed, not measured
+// on Windows, from the 48000 and the 64 Linux measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468504447 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14210300 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -162,6 +167,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (sdk/rocketnet_message_server.cpp, send_writers), adding 8000 bytes at 1000
 // clients and nothing to the client (one connection keeps its two entries on
 // the stack) (measured); the probe's actual= line is 1469501151.
+<<<<<<< HEAD
 // The protocol send reserve, the worker receive drop totals and three
 // appended counters (the Linux note below) add 3776 bytes to the server
 // and two 64-byte roundings to the client (measured on the studio, Apple
@@ -170,8 +176,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The two fill-phase counters and the server config's two bind addresses
 // (bind_ipv4_address, bind_ipv6_address) add 512 bytes to the server and
 // nothing to the client (measured); the probe's actual= line is 1469505439.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468456863 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13987978 )
+// Each ack endpoint keeps the last block it applied in full (sdk/rocketnet_ack.h,
+// rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
+// clients, and one 64-byte rounding to the client: computed, not measured
+// on macOS, from the 48000 and the 64 Linux measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468504863 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988042 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -236,6 +246,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // reads (sdk/rocketnet_xdp_replay_marks.h, comparisons, a uint64_t; the
 // kept forget count beside it fills existing padding), adding 8 bytes
 // (measured with the writer list: the probe's actual= line is 3111676723).
+<<<<<<< HEAD
 // The protocol send reserve keeps, per send queue, a fill budget, its claims,
 // the grants staged, the own frames used and the reserve (five uint64_t by
 // ROCKETNET_SERVER_MAX_SEND_QUEUES, 2560 bytes), and one own-frame flag a
@@ -248,8 +259,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // object's 64-byte rounding). The two fill-phase counters move the client
 // another 64 (actual=15186210, bench-nyc-6), and they and the two bind
 // addresses move the server 576 (actual=3111681075).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110632499ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137634 )
+// Each ack endpoint keeps the last block it applied in full (sdk/rocketnet_ack.h,
+// rocketnet_ack_block_memo_t), adding 48 bytes a connection, 48000 at 1000
+// clients, and one 64-byte rounding to the client: computed on this branch
+// from the figures above, not measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110680499ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14137698 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
