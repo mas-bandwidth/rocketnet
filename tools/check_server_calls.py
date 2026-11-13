@@ -72,7 +72,10 @@ def parse_log(text):
             raise ValueError(f"{call}: wrong budget or scope")
         if fields.get("load") not in ("full", "rate_1hz"):
             raise ValueError(f"{call}: missing or unknown load")
-        key = (fields.get("run_id"), integer(fields, "total"), fields.get("transport"), fields.get("load"))
+        for name in ("run_id", "transport"):
+            if not fields.get(name):
+                raise ValueError(f"{call}: missing {name}")
+        key =(fields.get("run_id"), integer(fields, "total"), fields.get("transport"), fields.get("load"))
         if identity is None:
             identity = key
         elif key != identity:

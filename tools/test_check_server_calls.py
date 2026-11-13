@@ -63,6 +63,19 @@ class ServerCallsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown load"):
             check.report([("a", log(load="idle"))], io.StringIO())
 
+    def test_missing_run_id_or_transport_is_invalid(self):
+        # the docstring requires one run ID, population and transport: a log
+        # whose lines all lack one would otherwise agree with itself
+        for name in ("run_id", "transport"):
+            with self.subTest(name):
+                text = "\n".join(" ".join(field for field in line.split(" ") if not field.startswith(name + "="))
+                                 for line in log().splitlines())
+                with self.assertRaisesRegex(ValueError, f"server_update: missing {name}"):
+                    check.report([("a", text)], io.StringIO())
+                empty = log(**{name: ""})
+                with self.assertRaisesRegex(ValueError, f"missing {name}"):
+                    check.report([("a", empty)], io.StringIO())
+
     def test_missing_call_is_invalid(self):
         with self.assertRaisesRegex(ValueError, "missing calls: server_finish_message"):
             check.report([("a", log(drop="server_finish_message"))], io.StringIO())
