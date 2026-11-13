@@ -15,8 +15,9 @@
 (* MCRNClientIoDecryptBrokenCountOnIo.cfg,                                 *)
 (* MCRNClientIoDecryptBrokenPayloadGate.cfg and                            *)
 (* MCRNClientIoDecryptBrokenPayloadMark.cfg each restore one defect and    *)
-(* must fail.  README-RNClientIoDecrypt.md gives the traces TLC printed    *)
-(* and the check of each against the design by hand.                      *)
+(* must fail.  MCRNClientIoDecryptReachLateView.cfg is a reach witness: *)
+(* a payload passed raw after the store.  README-RNClientIoDecrypt.md     *)
+(* gives the traces TLC printed and the check of each by hand.             *)
 (***************************************************************************)
 EXTENDS RNClientIoDecrypt
 =============================================================================

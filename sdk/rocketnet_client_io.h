@@ -523,8 +523,11 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
         return;
     }
 
-    // proofs/tla/RNClientIoDecrypt.tla IoCheck: a payload before the client is
-    // connected passes raw, unopened and unmarked (rocketnet_client_io_open_payloads)
+    // proofs/tla/RNClientIoDecrypt.tla IoSeePayloads then IoCheck: a payload before
+    // the client is connected passes raw, unopened and unmarked
+    // (rocketnet_client_io_open_payloads). The relaxed load may still read 0 for
+    // a while after main stored 1; such a payload passes raw too and update
+    // opens it.
 
     if ( type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && io->open.payloads.load( std::memory_order_relaxed ) == 0 )
     {

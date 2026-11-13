@@ -32,7 +32,9 @@
 (* rocketnet_client_io_open_payloads): TRANSPORT.md t11.3 counts a payload *)
 (* received in sending connection response WRONG_STATE before it is        *)
 (* opened, and an early open would mark the I/O thread's window with a     *)
-(* sequence update refused.                                                *)
+(* sequence update refused; and only once its own view of the word       *)
+(* (ioPayloads) has caught up with the store (IoSeePayloads): until then a *)
+(* payload passes raw and update opens it, as at BASE.                     *)
 (*                                                                         *)
 (* Five switches restore the defects the reversed witnesses must catch:    *)
 (* OpenBeforeReplay (the I/O thread opens before its replay check),        *)
@@ -111,12 +113,14 @@ VARIABLES socket,        \* datagrams readable on the socket, in read order
           openNoKeys,    \* ghost: an IoOpen ran without a live copy
           ackMark,       \* the mark a fill thread last read from mainWin
           payloadsOpen,  \* update has entered connected (rocketnet_client_io_open_payloads)
+          ioPayloads,    \* the value of the payloads word the I/O thread last read
+          lateRaw,       \* ghost: a payload passed raw after update stored payloadsOpen
           earlyPayload,  \* ghost: an IoOpen opened a payload before connected
           rawAccepted,   \* ghost: sequences update accepted from a raw record
           wMain, wCount, wSession, wIo \* ghost: the last writer of each
 
 ghostVars == <<crypto, cheapRefused, accepted, acceptedTwice, earlyRefused,
-               openNoKeys, ackMark, earlyPayload, rawAccepted>>
+               openNoKeys, ackMark, earlyPayload, rawAccepted, lateRaw>>
 netVars   == <<nArrived, nextSeq, nReplay, nForged, challengeSent>>
 writerVars == <<wMain, wCount, wSession, wIo>>
 
@@ -124,7 +128,8 @@ vars == <<socket, rec, buf, snap, cur, owed, wake, waiting, waitReadable,
           fresh, ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
           integrity, nArrived, nextSeq, nReplay, nForged, challengeSent,
           crypto, cheapRefused, accepted, acceptedTwice, earlyRefused,
-          openNoKeys, ackMark, payloadsOpen, earlyPayload, rawAccepted,
+          openNoKeys, ackMark, payloadsOpen, ioPayloads, earlyPayload, rawAccepted,
+          lateRaw,
           wMain, wCount, wSession, wIo>>
 
 \* everything but the writer ghosts, which Next sets after the step: the
@@ -133,7 +138,8 @@ modelVars == <<socket, rec, buf, snap, cur, owed, wake, waiting, waitReadable,
                fresh, ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                integrity, nArrived, nextSeq, nReplay, nForged, challengeSent,
                crypto, cheapRefused, accepted, acceptedTwice, earlyRefused,
-               openNoKeys, ackMark, payloadsOpen, earlyPayload, rawAccepted>>
+               openNoKeys, ackMark, payloadsOpen, ioPayloads, earlyPayload,
+               rawAccepted, lateRaw>>
 
 Max(a, b) == IF a >= b THEN a ELSE b
 
@@ -177,6 +183,7 @@ TypeOK ==
     /\ openNoKeys \in BOOLEAN
     /\ ackMark \in 0..MaxSeq
     /\ payloadsOpen \in BOOLEAN /\ earlyPayload \in BOOLEAN
+    /\ ioPayloads \in BOOLEAN /\ lateRaw \in BOOLEAN
     /\ rawAccepted \subseteq Seqs
     /\ {wMain, wCount, wSession, wIo} \subseteq Writers
 
@@ -197,6 +204,7 @@ Init ==
     /\ acceptedTwice = FALSE /\ earlyRefused = {}
     /\ openNoKeys = FALSE /\ ackMark = 0
     /\ payloadsOpen = FALSE /\ earlyPayload = FALSE /\ rawAccepted = {}
+    /\ ioPayloads = FALSE /\ lateRaw = FALSE
     /\ wMain = "none" /\ wCount = "none" /\ wSession = "none" /\ wIo = "none"
 
 FillBuffer    == CHOOSE b \in Buffers : buf[b] = "Fill"
@@ -295,7 +303,7 @@ Arrive ==
     /\ \/ ArriveChallenge \/ ArriveGenuine \/ ArriveReplay \/ ArriveForged
     /\ UNCHANGED <<rec, buf, snap, cur, owed, wake, waiting, waitReadable,
                    fresh, ioWin, mainWin, epoch, ioKeys, ioSeen, session,
-                   nCounted, integrity, payloadsOpen>>
+                   nCounted, integrity, payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 (* ---- update: the keys ---- *)
@@ -328,7 +336,7 @@ PublishKeys ==
     /\ wake' = TRUE
     /\ UNCHANGED <<socket, rec, buf, snap, owed, waiting, waitReadable,
                    fresh, ioWin, mainWin, ioKeys, ioSeen, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* disconnect, destroy or a timeout (rocketnet_client_protocol_disconnect,
@@ -339,7 +347,7 @@ RetireKeys ==
     /\ Retire
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, waiting, waitReadable,
                    fresh, ioWin, mainWin, ioKeys, ioSeen, nCounted, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 (* ---- update: the records ---- *)
@@ -438,7 +446,8 @@ UpdateConsume ==
                                   /\ UNCHANGED <<mainWin, accepted, acceptedTwice>>
                         /\ UNCHANGED earlyRefused
     /\ UNCHANGED <<socket, rec, buf, snap, owed, waiting, waitReadable, fresh,
-                   ioWin, ioKeys, ioSeen, openNoKeys, ackMark, earlyPayload>>
+                   ioWin, ioKeys, ioSeen, openNoKeys, ackMark, earlyPayload,
+                   lateRaw, ioPayloads>>
     /\ UNCHANGED netVars
     /\ OpenPayloads
 
@@ -454,9 +463,9 @@ FillAckBuild ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, waiting,
                    waitReadable, fresh, ioWin, mainWin, epoch, ioKeys, ioSeen,
                    session, nCounted, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED <<crypto, cheapRefused, accepted, acceptedTwice, earlyRefused,
-                   openNoKeys, earlyPayload, rawAccepted>>
+                   openNoKeys, earlyPayload, rawAccepted, lateRaw>>
 
 (* ---- update: the receive handshake, restated from RNClientIo ---- *)
 
@@ -470,7 +479,7 @@ Expose ==
     /\ UNCHANGED <<socket, rec, owed, wake, waiting, waitReadable, fresh,
                    ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo Return: at the end of update, once every record is consumed,
@@ -484,7 +493,7 @@ Return ==
     /\ UNCHANGED <<socket, rec, snap, cur, owed, waiting, waitReadable, fresh,
                    ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 (* ---- the I/O thread ---- *)
@@ -501,7 +510,7 @@ IoTakeKeys ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, waiting,
                    waitReadable, ioWin, mainWin, epoch, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* the top of a drain: the epoch reads retired and the copy is zeroed.
@@ -515,7 +524,7 @@ IoDropKeys ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, waiting,
                    waitReadable, ioWin, mainWin, epoch, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* the top of a drain: the epoch has not changed since the last read
@@ -526,7 +535,7 @@ IoKeepKeys ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, waiting,
                    waitReadable, ioWin, mainWin, epoch, ioKeys, ioSeen,
                    session, nCounted, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo IoReceive: read one datagram into the Fill buffer while it
@@ -547,14 +556,30 @@ IoReceive ==
     /\ UNCHANGED <<buf, snap, cur, owed, wake, waiting, waitReadable, fresh,
                    ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
+    /\ UNCHANGED ghostVars
+
+\* the store of the payloads word becomes visible to the I/O thread: its
+\* relaxed load in rocketnet_client_io_decrypt_datagram may read 0 for a
+\* while after update stored 1 (nothing orders the two), and reads 1 from
+\* then on.  Only the visibility is modelled, not the thread state when it
+\* happens; its weak fairness is the eventual visibility of a store.
+IoSeePayloads ==
+    /\ payloadsOpen /\ ~ioPayloads
+    /\ ioPayloads' = TRUE
+    /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, waiting,
+                   waitReadable, fresh, ioWin, mainWin, epoch, ioKeys, ioSeen,
+                   session, nCounted, integrity, payloadsOpen>>
+    /\ UNCHANGED netVars
     /\ UNCHANGED ghostVars
 
 \* the cheap rungs in the reading order, the ioWin replay check last: the
 \* type's wire floor (short), the zero sequence, then the I/O thread's own
 \* replay check.  A handshake datagram, any datagram while the I/O thread
-\* holds no live copy, or a payload before update has stored payloadsOpen
-\* (rocketnet_client_io_open_payloads), passes through raw.  Under
+\* holds no live copy, or a payload while the I/O thread's view of the
+\* payloads word (ioPayloads, IoSeePayloads) is still 0, passes through raw.
+\* The view may lag the word update stored; lateRaw records a payload passed
+\* raw after the store.  Under
 \* NoPayloadGate the payload check is skipped.  Under OpenBeforeReplay the
 \* replay check is skipped here and runs after the open.  Under CountOnIo the
 \* I/O thread counts its own refusal.
@@ -563,7 +588,7 @@ IoCheck ==
     /\ FillRecs # <<>>
     /\ Last.v = "new"
     /\ IF \/ Last.kind = "handshake" \/ ~ioKeys
-          \/ (Last.kind = "payload" /\ ~payloadsOpen /\ ~NoPayloadGate)
+          \/ (Last.kind = "payload" /\ ~ioPayloads /\ ~NoPayloadGate)
          THEN /\ SetLast([Last EXCEPT !.v = "raw"])
               /\ UNCHANGED <<cheapRefused, nCounted>>
          ELSE IF Last.short
@@ -583,7 +608,9 @@ IoCheck ==
     /\ UNCHANGED <<socket, buf, snap, cur, owed, wake, waiting, waitReadable,
                    fresh, ioWin, mainWin, epoch, ioKeys, ioSeen, session,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
+    /\ lateRaw' = (lateRaw \/ (Last.kind = "payload" /\ ~ioPayloads /\ payloadsOpen
+                               /\ ioKeys /\ ~NoPayloadGate))
     /\ UNCHANGED <<crypto, accepted, acceptedTwice, earlyRefused, openNoKeys,
                    ackMark, earlyPayload, rawAccepted>>
 
@@ -613,8 +640,8 @@ IoOpen ==
               /\ UNCHANGED <<ioWin, mainWin, cheapRefused>>
     /\ UNCHANGED <<socket, buf, snap, cur, owed, wake, waiting, waitReadable,
                    fresh, epoch, ioKeys, ioSeen, session, nCounted, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
-    /\ UNCHANGED <<accepted, acceptedTwice, earlyRefused, ackMark, rawAccepted>>
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
+    /\ UNCHANGED <<accepted, acceptedTwice, earlyRefused, ackMark, rawAccepted, lateRaw>>
 
 \* RNClientIo IoPublish: at a batch end, between datagrams, publish the Fill
 \* buffer (release) when a Free one is there to fill next: the plaintext,
@@ -631,7 +658,7 @@ IoPublish ==
     /\ UNCHANGED <<socket, snap, cur, wake, waiting, waitReadable, fresh,
                    ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo IoOwe: a batch with no Free buffer records the owed publish
@@ -644,7 +671,7 @@ IoOwe ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, wake, waiting, waitReadable,
                    fresh, ioWin, mainWin, epoch, ioKeys, ioSeen, session,
                    nCounted, integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo IoWait: the end of a drain.  Blocks only between datagrams,
@@ -662,7 +689,7 @@ IoWait ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, wake, fresh, ioWin,
                    mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo IoWake: the wait returns; the next drain starts at its top
@@ -675,7 +702,7 @@ IoWake ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, waitReadable, ioWin,
                    mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* RNClientIo IoClearWake: a running thread's wait returns at once on a set
@@ -688,7 +715,7 @@ IoClearWake ==
     /\ UNCHANGED <<socket, rec, buf, snap, cur, owed, waiting, waitReadable,
                    ioWin, mainWin, epoch, ioKeys, ioSeen, session, nCounted,
                    integrity>>
-    /\ UNCHANGED netVars /\ UNCHANGED payloadsOpen
+    /\ UNCHANGED netVars /\ UNCHANGED <<payloadsOpen, ioPayloads>>
     /\ UNCHANGED ghostVars
 
 \* the end of a behaviour: every datagram consumed, the socket empty and the
@@ -703,7 +730,7 @@ Done ==
 UpdateNext == PublishKeys \/ RetireKeys \/ UpdateConsume \/ FillAckBuild
               \/ Expose \/ Return
 
-IoNext == IoTakeKeys \/ IoDropKeys \/ IoKeepKeys \/ IoReceive \/ IoCheck
+IoNext == IoTakeKeys \/ IoDropKeys \/ IoKeepKeys \/ IoReceive \/ IoSeePayloads \/ IoCheck
           \/ IoOpen \/ IoPublish \/ IoOwe \/ IoWait \/ IoWake \/ IoClearWake
 
 \* each step is one thread's, and Tag records it as the writer of what it
@@ -717,8 +744,8 @@ Spec == Init /\ [][Next]_vars
 
 \* RNClientIo's fairness on the receive half (IoReceive, IoPublish, IoOwe,
 \* IoWake, Expose, Return), and the same for the new steps of the two
-\* threads: the I/O thread's epoch read, check, open and the consumption of
-\* a set wake; update's consumption of each record.  The game calls update
+\* threads: the I/O thread's epoch read, its view of the payloads word,
+\* check, open and the consumption of a set wake; update's consumption of each record.  The game calls update
 \* every frame.  RetireKeys, Arrive and FillAckBuild carry no fairness.
 SpecFair ==
     /\ Spec
@@ -726,6 +753,7 @@ SpecFair ==
     /\ WF_modelVars(IoWake) /\ WF_modelVars(IoClearWake)
     /\ WF_modelVars(IoTakeKeys) /\ WF_modelVars(IoDropKeys) /\ WF_modelVars(IoKeepKeys)
     /\ WF_modelVars(IoCheck) /\ WF_modelVars(IoOpen)
+    /\ WF_modelVars(IoSeePayloads)
     /\ WF_modelVars(Expose) /\ WF_modelVars(Return)
     /\ WF_modelVars(UpdateConsume) /\ WF_modelVars(PublishKeys)
 
@@ -795,6 +823,14 @@ GenuineEventuallyAccepted ==
     \A s \in Seqs :
         (nextSeq > s) ~> (s \in accepted \/ s \in earlyRefused
                           \/ session = "ended")
+
+\* once update has stored the payloads word, the I/O thread eventually reads it
+PayloadsEventuallySeen == payloadsOpen ~> ioPayloads
+
+\* a reach witness only (MCRNClientIoDecryptReachLateView.cfg): no payload
+\* passes raw after update stored the word.  It is reachable: the lagging
+\* view is a real behaviour, and update opens such a payload as at BASE.
+NoLateRawPayload == ~lateRaw
 
 \* after the retire the I/O thread's copy is eventually dropped
 RetiredEventuallyZeroed ==

@@ -305,6 +305,7 @@ MCRNClientIoDecryptBrokenNoRetire.cfg	MCRNClientIoDecrypt.tla	invariant	NoOpenWi
 MCRNClientIoDecryptBrokenCountOnIo.cfg	MCRNClientIoDecrypt.tla	invariant	SingleWriter	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenPayloadGate.cfg	MCRNClientIoDecrypt.tla	invariant	PayloadOpenedOnlyConnected	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenPayloadMark.cfg	MCRNClientIoDecrypt.tla	invariant	IoWindowWithinMain	check	rnclientiodecrypt	required	-
+MCRNClientIoDecryptReachLateView.cfg	MCRNClientIoDecrypt.tla	invariant	NoLateRawPayload	check	rnclientiodecrypt	required	-
 MCRNLiveFleetRun.cfg	MCRNLiveFleetRun.tla	pass	-	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenXdpLeftAttached.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenServerOrphaned.cfg	MCRNLiveFleetRun.tla	invariant	XdpNeverOrphaned	check	rnlivefleetrun	required	-
