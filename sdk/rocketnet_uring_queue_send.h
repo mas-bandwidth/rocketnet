@@ -62,7 +62,7 @@ struct rocketnet_uring_queue_send_message_t;
 
 #define ROCKETNET_URING_QUEUE_SEND_OK                                        0      // sent: res >= 0
 #define ROCKETNET_URING_QUEUE_SEND_FAILED                                    1      // dropped: any other negative res
-#define ROCKETNET_URING_QUEUE_SEND_AGAIN                                     2      // -EAGAIN: the socket was full; the run is submitted again
+#define ROCKETNET_URING_QUEUE_SEND_AGAIN                                     2      // -EAGAIN, -EINTR, -ENOBUFS, -ENOMEM: no room now; the run is submitted again
 #define ROCKETNET_URING_QUEUE_SEND_REFUSED                                   3      // a segmented run its destination refused: resent one packet a run
 
 // a queue's counters, cumulative; one writer, the queue's worker
@@ -184,9 +184,11 @@ bool rocketnet_uring_queue_send_next( struct rocketnet_uring_queue_send_t * send
 // again.
 int rocketnet_uring_queue_send_complete( struct rocketnet_uring_queue_send_t * send, int queue, uint32_t tag, int result );
 
-// what a completion's res says: >= 0 OK, -EAGAIN AGAIN, -EINVAL, -EIO and
-// -EOPNOTSUPP on a segmented run REFUSED (rocketnet_server_gso.h), any other
-// FAILED
+// what a completion's res says: >= 0 OK; -EAGAIN, -EINTR, -ENOBUFS and
+// -ENOMEM AGAIN (no room now: the socket full, the device queue behind it
+// full, an interrupted send; retried as the gso and portable transports
+// retry them); -EINVAL, -EIO and -EOPNOTSUPP on a segmented run REFUSED
+// (rocketnet_server_gso.h); any other FAILED
 int rocketnet_uring_queue_send_result( int res, bool segmented );
 
 // the model's name for a send completion (RNUringQueueWorker.tla ReapOk,

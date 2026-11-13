@@ -393,8 +393,13 @@
 
   (item "uring-send-deferred-row-text" :group "after-v1-1-landing" :area "sdk"
    :title "URING_SEND_DEFERRED: the row text says something other than what is counted"
-   :text "sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back -EAGAIN (send buffer full; the run is sent again after POLLOUT); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says."
+   :text "sdk/rocketnet_counters.h says the row counts send calls that returned with sends not yet completed or staged slots not yet submitted. The code adds the worker's SOCKET_FULL to it (sdk/rocketnet_uring_counters.h), which sdk/rocketnet_uring_queue_worker.cpp counts once per send completion that came back full (-EAGAIN, -EINTR, -ENOBUFS or -ENOMEM; the run is sent again after its retry wait); in every re-measure row it equals the kernel's SndbufErrors exactly. Make the text say what is counted, or count what the text says."
    :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed")
+
+  (item "uring-retry-probe-first" :group "after-v1-1-landing" :area "sdk"
+   :title "io_uring full-socket retry: probe with one run before sending the rest"
+   :text "The io_uring worker waits on a 1 ms timer after a full answer (the gso worker's wait; never POLLOUT, which would spin on -ENOBUFS). When the timer fires it sends every held run again, and on a socket that is still full most come back refused. Measured on amd-3 at 1 Gbit tbf, 4096 packets a frame: URING_SEND_DEFERRED 191.9k/s and 0.29 worker cores, against 41.6k/s and 0.16 cores with the old POLLOUT wait, for the same packets sent (86.0k/s against 82.0k/s). Send one run first after the timer, and the rest only once it is sent, so a socket still full refuses one run a wait, not all of them. Model it in RNUringQueueWorker.tla with the change."
+   :date "2026-11-13" :origin "io_uring review fixes (E1, E6, L1, L3), the after-fix repro")
 
   (item "uring-prefilter-wrong-value-once" :group "after-v1-1-landing" :area "sdk"
    :title "PREFILTER_WRONG_VALUE seen once on io_uring under heavy bench load"
