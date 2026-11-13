@@ -299,6 +299,33 @@ static void test_gaps_r2_hs_seal_payload_frame_refusals()
 
 REGISTER_UNIT_TEST( test_gaps_r2_hs_seal_payload_frame_refusals );
 
+// mutation gap: hunt 2/1944
+//
+// A payload sequence is accepted once: the second accept of the same
+// sequence (a duplicate the window already holds) owes no second ack.
+
+static void test_gaps_r2_hs_accept_payload_once_per_sequence()
+{
+    struct r2hs_server_t test;
+    r2hs_server_setup( &test );
+    struct rocketnet_ack_endpoint_t * endpoint = &test.server.acks->endpoints[0];
+    check( endpoint->ack_debt == 0 );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0, 5 );
+    check( endpoint->ack_debt == 1 );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0, 5 );
+    r2hs_server_fault_if( endpoint->ack_debt != 1, "an already-accepted payload sequence added ack debt again" );
+    r2hs_server_no_asserts( "a second accept of one payload sequence" );
+
+    rocketnet_server_protocol_accept_payload( &test.server, 0, 0, 6 );
+    check( endpoint->ack_debt == 2 );
+
+    r2hs_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_gaps_r2_hs_accept_payload_once_per_sequence );
+
 #if ROCKETNET_DEV
 
 // mutation gap: hunt 2/1893
