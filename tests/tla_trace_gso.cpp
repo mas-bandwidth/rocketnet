@@ -137,6 +137,7 @@ struct gso_walk_t
     int steps_turn;
     int steps_kept;
     int steps_return;
+    int max_records;        // the trace length: a contested claim adds three records and must fit
     int steps_lost;         // claims whose library compare-and-swap lost to a second claimer the walk ran inside start_packet
     int own_missed;         // exact finishes that did not write their own slot
     std::vector<tla_record_t> * records;    // the walk's records, so a contested claim can add the steps inside its call
@@ -439,7 +440,7 @@ static std::string gso_claim( gso_walk_t & walk, int t, const char ** op, const 
     // (no loss) takes the same slot, and the state it records no model step reaches
     gso_hook_t hook = {};
     int loss_before = 0;
-    if ( walk.records && l.i >= 0 && l.i + 1 < GSO_SLOTS && lane.num_packets[l.b] == l.i )
+    if ( walk.records && (int) walk.records->size() + 3 <= walk.max_records && l.i >= 0 && l.i + 1 < GSO_SLOTS && lane.num_packets[l.b] == l.i )
     {
         for ( size_t k = 0; k < others.size(); k++ )
         {
@@ -694,11 +695,12 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     tla_report_t report;
     std::vector<tla_record_t> records;
     walk.records = &records;
+    walk.max_records = steps + 1;
     walk.report = &report;
     walk.random = &random;
     records.push_back( tla_step( "init", "init", "<<>>", gso_state( walk ) ) );
 
-    for ( int step = 0; step < steps; step++ )
+    for ( int step = 0; (int) records.size() < steps + 1; step++ )
     {
         // the enabled actions, as the model's guards say
         std::vector<int> can_load;

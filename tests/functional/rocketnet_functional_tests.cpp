@@ -7692,7 +7692,7 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
     server_config.max_clients = 16;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "gso" );
     server_config.num_xdp_queues = 2;
-    server_config.num_os_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN ) + 1000;
+    server_config.num_os_cpus = 256; // the config's largest: no machine here has that many cpus online, so every pin is refused
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
