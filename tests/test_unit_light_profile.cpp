@@ -50,13 +50,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
 // required_memory is the lifecycle peak the caller's allocator sees (create,
 // connect or start, stop or disconnect, again, destroy) for the largest
-// transport the default ladder can grant, so it differs by platform and by
+// transport the default check sequence can grant, so it differs by platform and by
 // ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
 // bound is the figure this test read, Release, for
 // rocketnet_server_required_memory at max_clients 1000 and
 // rocketnet_client_required_memory under the profile: on Linux x86-64 with
 // io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC.
-// The ladder is the build's (sdk/rocketnet_driver.cpp: the transports
+// The check sequence is the build's (sdk/rocketnet_driver.cpp: the transports
 // compiled for the platform), not the host's, so a development build in one
 // of those three configurations reads exactly the pin and the check is
 // equality: a figure that falls leaves the pin stale-high, and growth back up
@@ -252,7 +252,7 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Linux arm64 adds 56 bytes to the server: glibc's pthread_mutex_t is 48
 // bytes on aarch64 and 40 on x86-64, so the thread record each worker
 // allocates (sdk/rocketnet_platform.cpp thread_record_t) is 144 bytes, not
-// 136, and the xdp ladder candidate starts one thread for each of its 7
+// 136, and the xdp check sequence candidate starts one thread for each of its 7
 // default queues (7 * 8 = 56). Computed from the x86-64 figure, not read on
 // a Graviton; not the pinned configuration, so the check is at most.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 5609399531ULL )

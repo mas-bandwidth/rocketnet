@@ -342,7 +342,7 @@ pass.
   recorded here; this preview uses manual qualification as preview-2 did.
 - **Windows server under LAN load**: the iocp and rio LAN cells were not made.
 - **Windows clients against Linux servers**: 1000 Windows clients against an
-  AF_XDP server were not retested; the gso server ladder with Windows clients
+  AF_XDP server were not retested; the gso server transport order with Windows clients
   is incomplete.
 - **Transport cells not yet repeated fifty times**: the Linux AF_XDP cell and
   a Windows iocp client cell.

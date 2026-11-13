@@ -1096,11 +1096,11 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
 // build (rocketnet_loopback_hub_check). Any other list never reads the hub:
 // loopback in a longer list is skipped at the parse.
 
-static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_order_t & ladder, const struct rocketnet_loopback_hub_t * hub )
+static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_order_t & transport_order, const struct rocketnet_loopback_hub_t * hub )
 {
-    for ( int i = 0; i < ladder.num_candidates; i++ )
+    for ( int i = 0; i < transport_order.num_candidates; i++ )
     {
-        if ( ladder.candidates[i] != ROCKETNET_TRANSPORT_LOOPBACK )
+        if ( transport_order.candidates[i] != ROCKETNET_TRANSPORT_LOOPBACK )
         {
             continue;
         }
@@ -1146,13 +1146,13 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
 
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &ladder, false ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &transport_order, false ) )
     {
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     }
 
-    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "client", ladder, transport->loopback_hub );
+    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "client", transport_order, transport->loopback_hub );
     if ( hub != ROCKETNET_STATUS_OK )
     {
         return hub;
@@ -2548,13 +2548,13 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
 
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
-    struct rocketnet_transport_order_t ladder;
-    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &ladder ) )
+    struct rocketnet_transport_order_t transport_order;
+    if ( !rocketnet_transport_order_parse( transport->transport, available, num_available, &transport_order ) )
     {
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
     }
 
-    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "server", ladder, transport->loopback_hub );
+    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "server", transport_order, transport->loopback_hub );
     if ( hub != ROCKETNET_STATUS_OK )
     {
         return hub;

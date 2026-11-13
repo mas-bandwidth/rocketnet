@@ -12,9 +12,9 @@ Sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfbd`
 
 ### 2. risk — `sdk/rocketnet_config.cpp:875`
 
-- Defect: The two auto-expansion loops of `rocketnet_transport_ladder_parse` (lines 902 and 1007) append every non-pin-only available transport to `candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES]` (8, `sdk/rocketnet_config.h:226`), and the only bound on that count is `rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES )`; the pinned path has a real check (line 953), the auto paths do not, and no `static_assert` ties `ROCKETNET_NUM_TRANSPORTS` to the array size.
+- Defect: The two auto-expansion loops of `rocketnet_transport_order_parse` (lines 902 and 1007) append every non-pin-only available transport to `candidates[ROCKETNET_MAX_TRANSPORT_CANDIDATES]` (8, `sdk/rocketnet_config.h:226`), and the only bound on that count is `rocketnet_assert( num_available <= ROCKETNET_MAX_TRANSPORT_CANDIDATES )`; the pinned path has a real check (line 953), the auto paths do not, and no `static_assert` ties `ROCKETNET_NUM_TRANSPORTS` to the array size.
 - Failure or cost: A build that adds transports through `ROCKETNET_TRANSPORT_REGISTRY_HEADER` until one platform has nine or more auto-eligible transports writes past `candidates` in a release build whenever an endpoint is created with the transport unset or `auto`; the built-in registry has at most four auto-eligible transports per platform, so nothing reaches it today.
-- Smallest fix: `static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, ... )` beside the array, or add `ladder->num_candidates < ROCKETNET_MAX_TRANSPORT_CANDIDATES` to both auto loops.
+- Smallest fix: `static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, ... )` beside the array, or add `transport order->num_candidates < ROCKETNET_MAX_TRANSPORT_CANDIDATES` to both auto loops.
 
 ### 3. risk — `sdk/rocketnet_server_iocp_windows.cpp:800`
 
@@ -910,8 +910,8 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_config.cpp:811` | guarded | config is &effective_config or validated transport struct at the same callers |
 | `sdk/rocketnet_config.cpp:812` | guarded | fields are static field tables at the same callers |
 | `sdk/rocketnet_config.cpp:873` | guarded | available is the static lists array returned by rocketnet_*_transport_io_availability (driver.cpp:129-138), never NULL |
-| `sdk/rocketnet_config.cpp:874` | guarded | num_available is only a loop bound (config.cpp:900, 942, 1005); zero yields an empty ladder, no index or divisor |
-| `sdk/rocketnet_config.cpp:876` | guarded | ladder is &local at every caller (api.cpp:627, api.cpp:1485, client_transport.cpp:1174, server_transport.cpp:1264) |
+| `sdk/rocketnet_config.cpp:874` | guarded | num_available is only a loop bound (config.cpp:900, 942, 1005); zero yields an empty transport order, no index or divisor |
+| `sdk/rocketnet_config.cpp:876` | guarded | transport order is &local at every caller (api.cpp:627, api.cpp:1485, client_transport.cpp:1174, server_transport.cpp:1264) |
 | `sdk/rocketnet_message.cpp:106` | guarded | only caller passes &local sequenced_shape (channel.cpp:981-986) |
 | `sdk/rocketnet_message.cpp:167` | guarded | writer is &local or embedded build->writer at every caller (packet_builder.cpp:352, endpoint.cpp:552/1083, message_server.cpp:843) |
 | `sdk/rocketnet_message.cpp:168` | guarded | payload null-checked on the in-place path (endpoint.cpp:513); other callers pass transport frame/payload buffers (packet_builder.cpp:352, message_server.cpp:843, endpoint.cpp:1083) |

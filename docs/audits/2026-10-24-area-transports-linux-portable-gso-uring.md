@@ -7,7 +7,7 @@ and its shared tail (from line 5176), `sdk/rocketnet_platform.h`, `sdk/rocketnet
 `sdk/rocketnet_client_gso_linux.cpp`, `sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_uring_codec.h`, `sdk/rocketnet_coalesce.h`,
 the portable, gso and io_uring adapters in `sdk/rocketnet_driver_builtin.cpp`, the transport
-ladders and receive loops of `sdk/rocketnet_server_transport.cpp` and
+transport orders and receive loops of `sdk/rocketnet_server_transport.cpp` and
 `sdk/rocketnet_client_transport.cpp`, the client I/O step in `sdk/rocketnet_client_io.h`,
 `docs/LINUX.md` and `TRANSPORTS.md`, with the unit and functional tests that pin them. AF_XDP is
 out of scope. Method: each candidate was traced to the input or call sequence that reaches it;

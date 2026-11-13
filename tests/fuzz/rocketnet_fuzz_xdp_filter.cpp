@@ -33,7 +33,7 @@
 //   - the verdict is XDP_DROP, XDP_PASS or XDP_REDIRECT (never ABORTED or TX);
 //   - a REDIRECT calls bpf_redirect_map exactly once more;
 //   - DIFFERENTIAL, structured frames at epoch 0: a REDIRECT is a datagram the
-//     userspace ladder's first rungs accept: the UDP payload passes
+//     userspace check sequence's first rungs accept: the UDP payload passes
 //     rocketnet_prefilter_check with the same filter value, its type and size
 //     are ROCKETNET_WIRE_SERVER_PACKET_VALID, and its size is within
 //     [ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES, ROCKETNET_RECEIVE_CEILING];

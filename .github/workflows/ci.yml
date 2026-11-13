@@ -2455,7 +2455,7 @@ jobs:
   # fuzz_replay_ harness under asan+ubsan, seconds, no randomness anywhere in
   # it. Each file in tests/fuzz/corpus* is a shape the wire can carry or a
   # shape a defect once had, and the harnesses carry oracles beyond memory
-  # safety (base64 round-trip, the ladder's output range),
+  # safety (base64 round-trip, the check sequence's output range),
   # so a wrong ANSWER fails them too, not only a wrong access.
   #
   # The bounded fixed-seed mutation pass that used to run here is in

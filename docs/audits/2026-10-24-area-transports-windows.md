@@ -41,7 +41,7 @@ one-sentence defect, a one-sentence concrete failure or cost, and the smallest f
 ### 4. risk — `sdk/rocketnet_server_iocp_windows.cpp:684`
 
 - Defect: The IOCP socket options (lines 677–685) and the RIO socket options (`sdk/rocketnet_server_rio_windows.cpp:631`–639) set exclusive use, dual stack and buffer sizes but never the don't-fragment option, which the portable Windows socket (`sdk/rocketnet_platform.cpp:4726`), the `gso` and `io_uring` sockets and the XDP frames all set.
-- Failure or cost: On a path whose MTU is below a packet's size, the two native Windows server transports send IP fragments where every other transport, including the portable transport on the same Windows host, sends a DF datagram that the path drops, so loss and path-MTU behaviour depend on which Windows rung the ladder granted (unconfirmed by run).
+- Failure or cost: On a path whose MTU is below a packet's size, the two native Windows server transports send IP fragments where every other transport, including the portable transport on the same Windows host, sends a DF datagram that the path drops, so loss and path-MTU behaviour depend on which Windows rung the transport order granted (unconfirmed by run).
 - Smallest fix: Set `IPV6_DONTFRAG` (IPv6 socket) or `IP_DONTFRAGMENT` (IPv4 socket) in both creates before `bind`, tolerating refusal as the portable socket does.
 
 ### 5. risk — `sdk/rocketnet_platform.cpp:4713`

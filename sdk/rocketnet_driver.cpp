@@ -7,7 +7,7 @@
 
 // the io_uring row exists only in a build configured with liburing; without
 // it the row has no platform, so no availability entry and no reference to
-// the backend, and a pin of it is skipped by the ladder
+// the backend, and a pin of it is skipped by the transport order
 #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #define ROCKETNET_TRANSPORT_IO_URING_PLATFORMS ROCKETNET_TRANSPORT_LINUX
 #else

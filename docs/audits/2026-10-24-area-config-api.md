@@ -57,7 +57,7 @@ failure or cost, and the smallest fix.
 ### 6. quality — `sdk/rocketnet_config.cpp:513`
 
 - Defect: `rocketnet_config_apply_env_uint64`, the reader of `ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES` and `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`, assigns a parsed value without the override line every other environment override writes (`rocketnet_config_apply_env_value`, line 626), and ignores an empty value without the "ignores empty" line.
-- Failure or cost: An operator who sets a memory budget gets no line saying it took effect (the probe saw one override line for `ROCKETNET_CLIENT_NUM_CHANNELS` and none for the budget), so a later `TRANSPORT_LADDER_EXHAUSTED` at connect or start has no logged cause, against the engine's own rule that every override logs with the value it displaced (`sdk/rocketnet_config.h:21`).
+- Failure or cost: An operator who sets a memory budget gets no line saying it took effect (the probe saw one override line for `ROCKETNET_CLIENT_NUM_CHANNELS` and none for the budget), so a later `NO_TRANSPORT_FOUND` at connect or start has no logged cause, against the engine's own rule that every override logs with the value it displaced (`sdk/rocketnet_config.h:21`).
 - Smallest fix: Log `"%s config override %s=%s (displaces %" PRIu64 ")"` after a successful parse, and the empty-value info line, as `rocketnet_config_apply_env` does.
 
 ### 7. quality — `sdk/rocketnet_config.h:108`

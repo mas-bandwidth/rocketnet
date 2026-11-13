@@ -13,7 +13,7 @@
 # sdk per target, exactly as ci.yml's fuzz-smoke does. The targets are every
 # harness under tests/fuzz/ (tests/fuzz/README.md's table): the one-binary stateless
 # parser sweep (the smoke's own binary, run long here), the message decoder,
-# the connect token ladder and its private layouts, the stateful receive
+# the connect token check sequence and its private layouts, the stateful receive
 # path, the wire round trip, the env config overlay, the three pair
 # targets (server transport, client transport, scripted session), the
 # endpoint, the XDP frame

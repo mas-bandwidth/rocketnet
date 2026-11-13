@@ -155,7 +155,7 @@ void rocketnet_server_transport_default_config_current( struct rocketnet_server_
 // validate a config struct against the descriptors: numeric ranges (zero
 // admitted where the field declares ZERO_MEANS_DEFAULT), string
 // termination. refuses loudly, never clamps. transport list content is
-// validated by the ladder parse below, at create.
+// validated by the transport order parse below, at create.
 
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
@@ -213,7 +213,7 @@ const char * rocketnet_transport_name( int transport );
 // Does this transport's create discover the port the kernel granted and
 // hand it back? a port-zero public address asks the kernel for an
 // ephemeral port, so it is only meaningful to a transport that answers yes --
-// the transport's ladder refuses a port-zero address on any rung that
+// the transport's transport order refuses a port-zero address on any rung that
 // answers no, before that rung's create runs, and falls to one that
 // answers yes. an unclassified transport reads false, which fails safe.
 
@@ -231,7 +231,7 @@ struct rocketnet_transport_order_t
     int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
-// the ladder must hold every transport the registry can put in an auto order
+// the transport order must hold every transport the registry can put in an auto order
 static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "ROCKETNET_MAX_TRANSPORT_CANDIDATES is smaller than the transport registry" );
 
 // parse a candidate list against an explicit availability order --
@@ -244,7 +244,7 @@ static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "
 // list longer than ROCKETNET_MAX_TRANSPORT_CANDIDATES.
 
 // server: the endpoint whose registry column decides pin-only (auto skips it)
-bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * ladder, bool server = true );
+bool rocketnet_transport_order_parse( const char * value, const int * available, int num_available, struct rocketnet_transport_order_t * transport_order, bool server = true );
 
 // the per-platform, per-endpoint availability tables, in recommended
 // order -- the single table "auto" expands from. The ranks in

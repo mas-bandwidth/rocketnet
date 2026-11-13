@@ -163,7 +163,7 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
 // their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
 // and everything from 9 up is reserved -- a conforming server refuses them
 // all, so the kernel filter drops them before they cost a ring slot. This
-// mirrors the refusal ladder in rocketnet_server_protocol.cpp; the
+// mirrors the refusal check sequence in rocketnet_server_protocol.cpp; the
 // equivalence test in rocketnet_tests.cpp holds the two together.
 
 #define ROCKETNET_WIRE_SERVER_PACKET_VALID( packet_type, packet_bytes )                                                 \

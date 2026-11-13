@@ -187,7 +187,7 @@ corrections change what a receiver does:
 - **Receipts and statuses.** Receipts stay readable after an explicit
   disconnect until the next update. `THREAD_CREATE_FAILED` comes from connect,
   and a server start that finds no usable transport reports
-  `TRANSPORT_LADDER_EXHAUSTED`.
+  `NO_TRANSPORT_FOUND`.
 - **Message layer.** Every send queue costs a fixed amount per operation, so
   queueing does not slow as the queues fill.
 - **macOS.** Network threads run at the highest real-time round-robin

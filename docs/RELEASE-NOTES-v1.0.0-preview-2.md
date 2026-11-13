@@ -166,7 +166,7 @@ See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
   clients, with XDP detached after each rung. Their server-update p99 upper
   bounds were 39, 58, 497, 1003 and 2282 microseconds respectively, so the
   timing verdict failed from 100 clients onward.
-- The same input-equivalent ladder passed non-timing correctness at every rung
+- The same input-equivalent transport order passed non-timing correctness at every rung
   for portable, GSO and io_uring Linux servers with a Linux portable client.
   At 1000 clients their server-update p99 upper bounds were 935, 1146 and 1846
   microseconds respectively. On exact `ba09993b`, a Windows portable client
@@ -174,7 +174,7 @@ See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
   deliveries each way; its server-update p99 upper bound there was 1223
   microseconds. The AF_XDP 1000-client Windows-client rung failed after eight
   server connections hit reliable timeouts; lower rungs passed non-timing
-  correctness. These ladders are not throughput qualification.
+  correctness. These transport orders are not throughput qualification.
 - The release TLA inputs are identical to the qualified `b4c0a109` tree.
   All 287 required cases across 44 groups passed with pinned tool checksums
   and unchanged input hashes. Eighteen separate bench cases remain explicit

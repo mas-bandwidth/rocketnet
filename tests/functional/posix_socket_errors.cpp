@@ -404,7 +404,7 @@ static void posix_pair_create( struct posix_pair_t * pair, int ipv6, const char 
     // environment (ROCKETNET_SERVER_TRANSPORT, ROCKETNET_CLIENT_TRANSPORT)
     // is lifted for the two creates below and restored after them, as
     // posix_cell_begin (tests/functional/posix_lifecycle_stress.cpp) does.
-    // under a pin the ladder grants the pinned transport, and a gso or io_uring
+    // under a pin the transport order grants the pinned transport, and a gso or io_uring
     // cell casts pair->transport to its own transport type
     // (posix_native_counter and posix_linux_uring_fail_sends, both in this file)
 

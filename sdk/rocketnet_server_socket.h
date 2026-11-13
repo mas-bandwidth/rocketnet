@@ -240,7 +240,7 @@ void rocketnet_server_socket_allow_commit();
 #endif // #if ROCKETNET_DEV
 
 // Development-only, non-mutating pre-flight result control. The functional
-// suite uses it to drive the production pin and ladder decisions through
+// suite uses it to drive the production pin and transport order decisions through
 // both pre-flight answers on a host that cannot provision either way; the
 // control changes only the answer, never an attachment. Not declared in a
 // production build, and absent from its archive.

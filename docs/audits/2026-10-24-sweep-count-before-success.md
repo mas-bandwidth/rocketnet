@@ -439,8 +439,8 @@ One row per grep hit judged safe (1363), plus one instance found by reading (`re
 | `sdk/rocketnet_client_transport.cpp:425` | C | declaration; the definition acquires and releases on every path |
 | `sdk/rocketnet_client_transport.cpp:430` | C | production stub, no reservation |
 | `sdk/rocketnet_client_transport.cpp:470` | C | take_setting applies a pending setting under a released mutex |
-| `sdk/rocketnet_client_transport.cpp:1213` | H | local ladder budget tallies; create refused before any allocation |
-| `sdk/rocketnet_client_transport.cpp:1216` | H | local ladder budget tallies; create refused before any allocation |
+| `sdk/rocketnet_client_transport.cpp:1213` | H | local transport order budget tallies; create refused before any allocation |
+| `sdk/rocketnet_client_transport.cpp:1216` | H | local transport order budget tallies; create refused before any allocation |
 | `sdk/rocketnet_client_transport.cpp:2018` | A | counts the failure on its own refusal path |
 | `sdk/rocketnet_client_transport.cpp:2067` | A | process_record zeroes received_session_sequence each call; nonzero only when accepted |
 | `sdk/rocketnet_client_transport.cpp:2076` | A | charged after the payload was opened into its slot; no failure follows |
@@ -509,11 +509,11 @@ One row per grep hit judged safe (1363), plus one instance found by reading (`re
 | `sdk/rocketnet_config.cpp:400` | H | local string cursor; no stored state, does not outlive the call |
 | `sdk/rocketnet_config.cpp:889` | H | local string cursor; no stored state, does not outlive the call |
 | `sdk/rocketnet_config.cpp:892` | H | local string cursor; no stored state, does not outlive the call |
-| `sdk/rocketnet_config.cpp:902` | A | ladder memset at entry; caller discards it on a false return |
+| `sdk/rocketnet_config.cpp:902` | A | transport order memset at entry; caller discards it on a false return |
 | `sdk/rocketnet_config.cpp:915` | H | local string cursor; no stored state, does not outlive the call |
 | `sdk/rocketnet_config.cpp:918` | H | local string cursor; no stored state, does not outlive the call |
-| `sdk/rocketnet_config.cpp:958` | A | ladder memset at entry; caller discards it on a false return |
-| `sdk/rocketnet_config.cpp:972` | A | ladder memset at entry; caller discards it on a false return |
+| `sdk/rocketnet_config.cpp:958` | A | transport order memset at entry; caller discards it on a false return |
+| `sdk/rocketnet_config.cpp:972` | A | transport order memset at entry; caller discards it on a false return |
 | `sdk/rocketnet_config.cpp:1007` | A | fallback fill on the success path; bound by num_available |
 | `sdk/rocketnet_connect_token.cpp:147` | H | local write cursor into the caller's token |
 | `sdk/rocketnet_connect_token.cpp:314` | A | tallies the verify work attempted, which happens either way |

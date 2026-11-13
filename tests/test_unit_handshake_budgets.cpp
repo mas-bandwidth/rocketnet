@@ -335,7 +335,7 @@ static void budgets_forged_address( struct rocketnet_address_t * address, int i 
 }
 
 // one forged request from this address: a valid cookie for it, a signature
-// that does not verify. returns the ladder's result; it is never answered.
+// that does not verify. returns the check sequence's result; it is never answered.
 
 static int budgets_send_forged( struct budgets_server_t * test, const struct rocketnet_address_t * address, int index )
 {
@@ -768,7 +768,7 @@ REGISTER_UNIT_TEST( test_handshake_full_server_denial_never_limits );
 // a valid cookie and a valid signature, and an honest request in that same
 // update is still verified and challenged.
 
-// one request from this address, at this time. returns the ladder's result;
+// one request from this address, at this time. returns the check sequence's result;
 // a refused request is never answered.
 
 static int budgets_send_request( struct budgets_server_t * test, const struct rocketnet_address_t * address,
@@ -1267,7 +1267,7 @@ REGISTER_UNIT_TEST( test_handshake_burst_spreads_across_updates );
 // budget does not touch it.
 
 // a first-contact request from this address: a fresh token and an all-zero
-// return cookie. returns the ladder's result; only a cookie is answered.
+// return cookie. returns the check sequence's result; only a cookie is answered.
 
 static int budgets_send_cookieless( struct budgets_server_t * test, const struct rocketnet_address_t * address,
                                     int index, double current_time )

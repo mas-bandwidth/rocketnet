@@ -1187,7 +1187,7 @@ void rocketnet_test_posix_client_create_destroy_1000()
 // and any sibling test's client or scratch socket binding port 0 can take it
 // before the next rebind. On Linux a failing run saw the io_uring rung refuse
 // a discovered 127.0.0.1:44960 with errno 98 (EADDRINUSE), then exhaust the
-// ladder, because the port had gone to a socket that does not share the
+// transport order, because the port had gone to a socket that does not share the
 // transport's SO_REUSEPORT. Take a port below the kernel's ephemeral range
 // instead, in a slice this cell alone scans.
 static unsigned posix_reserved_restart_port( int cell_index )

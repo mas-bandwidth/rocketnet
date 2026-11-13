@@ -74,7 +74,7 @@ and the standard ([TRANSPORT.md](../standard/TRANSPORT.md),
 - **Receipts and statuses.** Receipts stay readable after an explicit
   disconnect until the next update. `THREAD_CREATE_FAILED` comes from connect,
   and a server start that finds no usable transport reports
-  `TRANSPORT_LADDER_EXHAUSTED`.
+  `NO_TRANSPORT_FOUND`.
 - **Documentation.** The header, the guides and the TLA+ models were checked
   against the code, and every place where they differed is corrected. The
   shutdown helpers in the examples take the caller's last update time.

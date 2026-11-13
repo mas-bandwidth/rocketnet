@@ -3,14 +3,14 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The connect token fuzz target (nightly): the server-side token ladder --
+// The connect token fuzz target (nightly): the server-side token check sequence --
 // layout split, Ed25519 verification, sealed-block open, inner consistency,
 // the identifier -- and the client-side connect parse, on two kinds of input.
 //
 // TWO HALVES, selected by the input's first byte, because they find different
 // bugs. The RAW half feeds arbitrary bytes as a 768-byte token: it hunts
 // parser crashes, and it can never pass verification, so it exercises the
-// refusal ladder only. The STRUCTURED half starts from a VALID token -- built
+// refusal check sequence only. The STRUCTURED half starts from a VALID token -- built
 // once with the real minting path and the published development keys -- and
 // applies fuzz-chosen byte flips: the mutants keep enough structure to reach
 // past the cheap checks, which is where the deeper bugs live, and the valid
@@ -129,11 +129,11 @@ static void rocketnet_fuzz_build_base_token()
     }
 }
 
-// the server-side ladder over one 768-byte buffer, with the oracle switches
+// the server-side check sequence over one 768-byte buffer, with the oracle switches
 // the caller derives from what it knows it changed. touched_covered means an
 // effective flip landed in [0,640); touched_any means one landed anywhere.
 
-static void rocketnet_fuzz_token_ladder( const uint8_t * token_data, int touched_covered, int touched_any, int is_mutant )
+static void rocketnet_fuzz_token_checks( const uint8_t * token_data, int touched_covered, int touched_any, int is_mutant )
 {
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
@@ -308,9 +308,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     rocketnet_fuzz_build_base_token();
 
     // the harness's own premise, checked where it is created: the baseline
-    // must walk the whole ladder clean before anything is mutated
+    // must walk the whole check sequence clean before anything is mutated
 
-    rocketnet_fuzz_token_ladder( rocketnet_fuzz_base_token, 0, 0, 0 );
+    rocketnet_fuzz_token_checks( rocketnet_fuzz_base_token, 0, 0, 0 );
 
     // the seed generator, driven by the environment: writes one named seed per
     // type into the directory, replaying each before it is written, and fails
@@ -361,7 +361,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         memset( token_data, 0, sizeof( token_data ) );
         memcpy( token_data, body, body_size );
 
-        rocketnet_fuzz_token_ladder( token_data, 0, 0, 0 );
+        rocketnet_fuzz_token_checks( token_data, 0, 0, 0 );
         rocketnet_fuzz_client_connect( token_data, current_timestamp );
         return 0;
     }
@@ -402,7 +402,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLEAR_MUTATION;
     }
 
-    rocketnet_fuzz_token_ladder( token_data, touched_covered, touched_any, 1 );
+    rocketnet_fuzz_token_checks( token_data, touched_covered, touched_any, 1 );
     rocketnet_fuzz_client_connect( token_data, current_timestamp );
 
     return 0;

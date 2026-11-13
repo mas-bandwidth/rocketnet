@@ -39,7 +39,7 @@ do                                                                              
 // The pcapng corpus replay (tests/pcapng/README.md). Every file under
 // tests/pcapng/ and tests/pcapng/regress/ is read with tests/pcapng.h and every
 // packet in it is handed to the reader the transport hands it to before any
-// key: interface-0 datagrams to the prefilter and the receive ladder of the
+// key: interface-0 datagrams to the prefilter and the receive check sequence of the
 // end they were addressed to (the connect request on into the connect-token
 // readers, under the published test keys), interface-1 records to the ack
 // block reader and the message reader. Each packet
@@ -307,7 +307,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     return pcapng_read_as( "server REQUEST token" );
 }
 
-// interface 0: the datagram through the ladder of the end it was sent to, up
+// interface 0: the datagram through the check sequence of the end it was sent to, up
 // to the first rung that needs a key or connection state
 static pcapng_outcome_t pcapng_wire( const uint8_t * packet, int bytes, int to_server )
 {

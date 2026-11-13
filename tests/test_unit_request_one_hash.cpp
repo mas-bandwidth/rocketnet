@@ -5,7 +5,7 @@
 
 // A connection request pays one keyed address hash on the receive path: the
 // transport looks the source up once and hands the answer to
-// rocketnet_server_protocol_process_received, and the request ladder's
+// rocketnet_server_protocol_process_received, and the request check sequence's
 // existing-mapping rung takes that answer instead of looking the address up
 // again. Counted through the encryption map's DEV hash count, for three
 // shapes: a first-contact request with no cookie, a cookie-valid request

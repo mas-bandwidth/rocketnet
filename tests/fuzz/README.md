@@ -13,7 +13,7 @@ connect tokens use only the published development keys from
 |---|---|---|---|
 | `rocketnet_fuzz` | the stateless wire parsers: prefilter, base64, config values (`input[0]` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
 | `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
-| `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
+| `rocketnet_fuzz_connect_token` | the server's token check sequence and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
 | `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
 | `rocketnet_fuzz_round_trip` | every wire form encoded then decoded; the values read must equal the values written | `corpus_round_trip/` | `dict/rocketnet_fuzz_round_trip.dict` |
@@ -249,7 +249,7 @@ seeds. The two stateless generators turn the types their own parsers read
 into seeds: `rocketnet_fuzz` writes one seed per packet type the prefilter
 returns, and per base64 and config shape, and `rocketnet_fuzz_message` writes one seed per violation
 the decoder names and per code a record carries. `rocketnet_fuzz_connect_token`
-writes one seed per branch the connect-token ladder and the client's
+writes one seed per branch the connect-token check sequence and the client's
 pre-send checks take (raw and structured halves, the signature verdicts, the
 client's flags, window, version, expiry and address-family refusals), and
 `rocketnet_fuzz_receive_structured` writes one seed per packet type the stateful

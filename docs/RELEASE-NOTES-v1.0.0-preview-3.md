@@ -214,7 +214,7 @@ See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
   recorded 1,000-client LAN cell.
 - A Windows server under LAN load is not qualified: the iocp and rio LAN cells
   were not made. 1,000 Windows clients against an AF_XDP server were not
-  retested, and the gso server ladder with Windows clients is incomplete.
+  retested, and the gso server transport order with Windows clients is incomplete.
 - AF_XDP is recorded in copy mode only; zero copy and line rate are not
   measured.
 - The Linux AF_XDP impaired soak cell passed but lost about twice the

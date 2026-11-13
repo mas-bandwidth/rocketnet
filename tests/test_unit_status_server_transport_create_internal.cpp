@@ -226,7 +226,7 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // S12: a port-zero address refused by a non-discovering transport (XDP) is
     // TRANSPORT_PORT_ZERO_UNSUPPORTED. The xdp row exists only on Linux:
-    // elsewhere the ladder skips "xdp" for the platform and falls to the
+    // elsewhere the transport order skips "xdp" for the platform and falls to the
     // auto order (sdk/rocketnet_tests.cpp checks that fall), whose transports
     // open a real socket, so the step runs on Linux only
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

@@ -74,7 +74,7 @@ The evidence establishes copy mode, not zero-copy or line-rate throughput.
 
 - **XDP with 1,000 Windows clients:** eight connections reached the reliable
   message timeout during startup. The exact cause is unresolved. The passing
-  Linux-client ladder and portable-server control do not qualify this failing
+  Linux-client transport order and portable-server control do not qualify this failing
   combination.
 - **GSO/io_uring send retry repaired for this recut:** ordinary server send
   calls retry retained native work even without a new message. This keeps
