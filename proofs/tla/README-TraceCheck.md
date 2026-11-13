@@ -287,7 +287,15 @@ list's every Nth.
 ## MIGRATION: a layer written against v1 (dc60a6b09 or 0c583957e)
 
 v1's record was the state alone, and a step passed if any action of `Next` could
-produce it. A v1 layer changes in exactly these places:
+produce it.
+
+First, the base. Migrate against v2 on `v1.2/trace-check-infra`, which sits on main at
+v1.1.8's release (bff9bb18b). Your branch must carry main's checkout fix before any CI
+run: v1's branch point still has `filter: tree:0` in the workflows, and that damages
+the runners' clones. Rebase or merge onto `v1.2/trace-check-infra`, and check that
+`grep -n 'filter: tree:0' .github/workflows/*.yml` finds only a comment.
+
+A v1 layer then changes in exactly these places:
 
 1. **`tests/tla_trace_<layer>.cpp`, records.** Every `records.push_back( record )`
    becomes `records.push_back( tla_step( op, act, args, record ) )`:
