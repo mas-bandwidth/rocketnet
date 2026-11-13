@@ -1444,6 +1444,12 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
+    # The server's update with the bar's ack shape (benchmarks/server_update_ack_cost.cpp):
+    # public API, loopback, simulated time; counts update's instructions and cycles.
+    add_executable(server_update_ack_cost benchmarks/server_update_ack_cost.cpp)
+    target_link_libraries(server_update_ack_cost PRIVATE rocketnet)
+    target_compile_features(server_update_ack_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(server_update_ack_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
     # One client's per-frame cost on the game thread against a real server
     # (benchmarks/client_frame_time.md). It links the library a game ships,

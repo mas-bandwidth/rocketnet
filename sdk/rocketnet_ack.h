@@ -127,6 +127,25 @@ static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
 // the named run, so acknowledged and never-written sequences cost nothing.
 
 #define ROCKETNET_SENT_BITMAP_WORDS ( ROCKETNET_SENT_PACKET_BUFFER_SIZE / 64 )
+
+// the most extra ranges a block may carry and still be remembered as the
+// last applied (block_memo); a block with more is always applied in full
+#define ROCKETNET_ACK_BLOCK_MEMO_RANGES 4
+
+// the last block applied in full (rocketnet_ack_endpoint_t block_memo): the
+// block's fields, the high-water mark it was applied at, and the unknown
+// count it added
+struct rocketnet_ack_block_memo_t
+{
+    uint64_t largest;
+    uint64_t highest_sequence;
+    uint64_t unknown;
+    uint32_t first_range_length;
+    uint8_t valid;
+    uint8_t num_ranges;
+    uint16_t range_gap[ROCKETNET_ACK_BLOCK_MEMO_RANGES];
+    uint16_t range_length[ROCKETNET_ACK_BLOCK_MEMO_RANGES];
+};
 #define ROCKETNET_RECEIVED_WRITTEN_WORDS ( ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
@@ -352,6 +371,16 @@ struct rocketnet_ack_endpoint_t
     // the history entry it names (an empty or non-positive entry reads as
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
+
+    // update thread only: the last block process_block applied in full, when
+    // that apply deferred nothing (batch full) and nothing has been sent
+    // since. Applying it again would visit no record (every unacknowledged
+    // slot it names was cleared) and add only the same unknown count, so
+    // process_block adds that count and skips the walk
+    // (proofs/tla/SessionAcks.tla RecvAckRepeat). A cache, not state: after
+    // the record rings, so state_equal and the reset's span never read it;
+    // the reset and every recorded send clear valid.
+    struct rocketnet_ack_block_memo_t block_memo;
 };
 
 #if ROCKETNET_HISTORY_PACKETS == 4096
@@ -446,6 +475,10 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // record stays unacknowledged, counted on batch_full, and a later block --
 // every block restates the recent interval -- surfaces it into a drained
 // batch. Returns the number of newly-acknowledged packets.
+//
+// A block equal to the last one applied in full, with nothing sent since and
+// nothing deferred by that apply, only adds that apply's unknown count: the
+// state it leaves is the state the full apply would (block_memo).
 
 int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endpoint,
                                           const struct rocketnet_ack_block_t * block,
@@ -453,6 +486,16 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
                                           uint64_t * unknown_sequence_counter,
                                           uint64_t * batch_full_counter );
+
+// process_block without the block memo: always the full apply, and the memo
+// neither read nor written. The reference the memo is tested against.
+
+int rocketnet_ack_endpoint_process_block_full( struct rocketnet_ack_endpoint_t * endpoint,
+                                               const struct rocketnet_ack_block_t * block,
+                                               double time,
+                                               uint64_t * acked_packet_ids, int acked_capacity, int * acked_count,
+                                               uint64_t * unknown_sequence_counter,
+                                               uint64_t * batch_full_counter );
 
 // The per-connection statistics recompute, the reference's shape: rtt
 // is the minimum over positive rtt history, jitter their mean deviation from it,
