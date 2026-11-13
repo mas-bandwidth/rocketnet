@@ -27,6 +27,7 @@
 #   --frame-p99-us U, --quiet-seconds Q, --warm-seconds W, --xdp-queues Q
 #                                     as scripts/harden-cell
 #   --fill-jobs J                     the server writes its unreliable messages on J job threads
+#   --fill-api public|internal        what the jobs call: the public API (the default) or the transport
 #   --payload pattern|copy            the message body: verified pattern, or a pre-built body copied in
 #   --port P                          the server's UDP port (default 40000)
 #   --client-remote DIR               the client machine's checkout (default --remote)
@@ -103,6 +104,7 @@ while [ $# -gt 0 ]; do
         --threads) threads="$2"; shift 2 ;;
         --burst-clients) burst_clients="$2"; shift 2 ;;
         --fill-jobs) fill_jobs="$2"; shift 2 ;;
+        --fill-api) fill_api="$2"; shift 2 ;;
         --payload) payload="$2"; shift 2 ;;
         --hostile-pps) hostile_pps="$2"; shift 2 ;;
         --frame-p99-us) frame_p99_us="$2"; shift 2 ;;

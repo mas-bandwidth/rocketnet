@@ -64,5 +64,8 @@ harden_row()
             ;;
     esac
     server_shape+=(--fill-jobs "${fill_jobs:-0}" --payload "${payload:-$row_payload}")
+    if [ -n "${fill_api:-}" ]; then
+        server_shape+=(--fill-api "$fill_api")
+    fi
     client_shape+=(--payload "${payload:-$row_payload}")
 }
