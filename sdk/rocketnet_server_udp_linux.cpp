@@ -43,7 +43,7 @@ static void rocketnet_server_udp_set_socket_option( void * user, int level, int 
 }
 
 int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t * bind_address, int queue_index,
-                               int max_clients, uint16_t * bound_port )
+                               int max_clients, uint16_t * bound_port, int * status )
 {
     rocketnet_assert( transport );
     rocketnet_assert( bind_address );
@@ -151,9 +151,15 @@ int rocketnet_server_udp_open( const char * transport, const rocketnet_address_t
     struct sockaddr_storage sockaddr;
     const int socklen = rocketnet_platform_sockaddr_for( ipv6, &addr, &sockaddr );
 
+    int bind_error = 0;
     if ( socklen == 0 || bind( fd, (struct sockaddr *) &sockaddr, (socklen_t) socklen ) < 0 )
     {
-        rocketnet_error( "%s transport: failed to bind socket (%s): %s", transport, ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
+        bind_error = rocketnet_platform_socket_error();
+        if ( socklen != 0 && rocketnet_platform_bind_refused( bind_error ) )
+        {
+            rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
+        }
+        rocketnet_error( "%s transport: failed to bind socket (%s): %s", transport, ipv6 ? "ipv6" : "ipv4", rocketnet_platform_socket_error_text( bind_error ).text );
         close( fd );
         return -1;
     }
