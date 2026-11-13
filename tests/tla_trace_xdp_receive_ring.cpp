@@ -59,7 +59,7 @@ namespace
 {
     const uint32_t RING_FRAMES = 4;             // the receive frames: Frames
     const uint32_t RING_SEND_FRAMES = 2;        // the send region below them
-    const uint32_t RING_RX_SIZE = 2;            // the RX ring's entries: RingSize
+    const uint32_t RING_RX_SIZE = 4;            // the RX ring's entries: RingSize
     const uint32_t RING_STAGE_CAPACITY = 4;     // the staging buffer's packets: StageCap
     const uint32_t RING_FILL_SIZE = 8;          // the fill ring's most entries: twice the frames, as the server sizes it
     const uint32_t RING_STAGE_SLOTS = 8;        // the staging arrays: room for the planted peek's overrun
