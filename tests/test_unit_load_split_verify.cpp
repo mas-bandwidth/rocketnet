@@ -165,6 +165,21 @@ static void test_split_verify_sequenced_never_older()
     check( split_verify_test_deliver( &stream, 5 ) == 0 );
     check( split_verify_stream_final( &stream, 5, &result ) );
     check( result.skipped == 2 && result.missing == 0 && result.lost == 0 );
+    check( result.final_missing == 0 );
+
+    // planted: the newest sent (6) never delivered. Nothing superseded it, so
+    // it is no skip: the stream fails
+
+    check( !split_verify_stream_final( &stream, 6, &result ) );
+    check( result.final_missing == 1 && result.skipped == 2 );
+
+    // one send, never delivered, fails; no send at all is clean
+
+    split_verify_stream_init( &stream, 7, SPLIT_VERIFY_CLIENT_TO_SERVER, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, SPLIT_VERIFY_SMALL );
+    check( !split_verify_stream_final( &stream, 1, &result ) );
+    check( result.final_missing == 1 && result.skipped == 0 );
+    check( split_verify_stream_final( &stream, 0, &result ) );
+    check( result.final_missing == 0 );
 
     // planted: a duplicate on RELIABLE_SEQUENCED (the newest delivered again)
 
