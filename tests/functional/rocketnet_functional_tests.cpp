@@ -8856,6 +8856,17 @@ void rocketnet_test_server_uring_send_overflow()
 // pthread_setaffinity_np succeeded), or, on a machine without the cpus, the
 // refusal path as above.
 
+// the pin refusals, read from the public row the transport writes
+// (ROCKETNET_COUNTER_URING_PIN_REFUSALS), and the same count the accessor gives
+
+static uint64_t rocketnet_test_uring_pin_refusals( struct rocketnet_server_uring_t * uring )
+{
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    rocketnet_server_uring_counters( uring, counters );
+    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS] == (uint64_t) rocketnet_server_uring_pin_refusals( uring ) );
+    return counters[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
+}
+
 static bool rocketnet_test_uring_wait_pins( struct rocketnet_server_uring_t * uring, int queues )
 {
     const double start = rocketnet_platform_time();
@@ -8894,7 +8905,7 @@ void rocketnet_test_server_uring_worker_pin()
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
         }
-        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) == 0 );
+        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
     }
 
@@ -8909,7 +8920,7 @@ void rocketnet_test_server_uring_worker_pin()
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == ROCKETNET_URING_PIN_NONE );
         }
-        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) >= queues );
+        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) >= (uint64_t) queues );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
     }
 
@@ -8925,7 +8936,7 @@ void rocketnet_test_server_uring_worker_pin()
         {
             rocketnet_check( rocketnet_server_uring_worker_cpu( uring, q ) == 1 + q );
         }
-        rocketnet_check( rocketnet_server_uring_pin_refusals( uring ) == 0 );
+        rocketnet_check( rocketnet_test_uring_pin_refusals( uring ) == 0 );
         rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
     }
     else
@@ -8933,6 +8944,74 @@ void rocketnet_test_server_uring_worker_pin()
         printf( "test_io_uring_transport_worker_pin: %d cpus online, the placement needs %d; refusal paths only\n", online, 1 + queues );
         fflush( stdout );
     }
+}
+
+// a datagram the workers banked and main never took is counted when the
+// transport stops: the drop total ROCKETNET_RECEIVE_DROP_STOPPED, which the
+// server adds to RECEIVE_DROPPED_STOPPED alone (rocketnet_receive_drop_counters)
+
+void rocketnet_test_server_uring_receive_left_at_stop_counted()
+{
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_check( uring );
+
+    rocketnet_address_t client_address;
+    rocketnet_check( rocketnet_address_parse( &client_address, "127.0.0.1" ) );
+    struct rocketnet_platform_socket_t * client_socket = rocketnet_platform_socket_create( NULL, &client_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
+                                                                                           ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    rocketnet_check( client_socket );
+
+    rocketnet_address_t server_address;
+    rocketnet_check( rocketnet_address_parse( &server_address, "127.0.0.1" ) );
+    server_address.port = bind_address.port;
+
+    const int datagrams = 20;
+    uint8_t packet[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 16];
+    memset( packet, 0x5A, sizeof( packet ) );
+    for ( int i = 0; i < datagrams; i++ )
+    {
+        packet[0] = (uint8_t) i;
+        rocketnet_platform_socket_send_packet( client_socket, &server_address, packet, (int) sizeof( packet ) );
+    }
+
+    // the workers bank every datagram; main takes none
+
+    uint64_t counters[ROCKETNET_NUM_COUNTERS];
+    const double start = rocketnet_platform_time();
+    for ( ;; )
+    {
+        rocketnet_server_uring_counters( uring, counters );
+        if ( counters[ROCKETNET_COUNTER_URING_PACKETS_RECEIVED] >= (uint64_t) datagrams || rocketnet_platform_time() - start > 5.0 )
+        {
+            break;
+        }
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PACKETS_RECEIVED] == (uint64_t) datagrams );
+
+    uint64_t drops[ROCKETNET_RECEIVE_NUM_DROPS];
+    rocketnet_server_uring_receive_drop_totals( uring, drops );
+    rocketnet_check( drops[ROCKETNET_RECEIVE_DROP_STOPPED] == 0 );
+
+    rocketnet_server_uring_stop( uring );
+    const double stop_start = rocketnet_platform_time();
+    while ( !rocketnet_server_uring_stopped( uring ) && rocketnet_platform_time() - stop_start < 5.0 )
+    {
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rocketnet_check( rocketnet_server_uring_stopped( uring ) );
+
+    rocketnet_server_uring_receive_drop_totals( uring, drops );
+    int named[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+    rocketnet_check( rocketnet_receive_drop_counters( ROCKETNET_RECEIVE_DROP_STOPPED, named ) == 1 );
+    rocketnet_check( named[0] == ROCKETNET_COUNTER_RECEIVE_DROPPED_STOPPED );
+    rocketnet_check( drops[ROCKETNET_RECEIVE_DROP_STOPPED] == (uint64_t) datagrams );
+
+    rocketnet_platform_socket_destroy( client_socket );
+    rocketnet_server_uring_destroy( uring );
 }
 
 void rocketnet_test_server_uring_send_wrong_family()
@@ -15788,6 +15867,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_server_send_overflow", rocketnet_test_server_uring_send_overflow, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_send_wrong_family", rocketnet_test_server_uring_send_wrong_family, rocketnet_server_uring_available },
     { "test_io_uring_transport_worker_pin", rocketnet_test_server_uring_worker_pin, rocketnet_server_uring_available },
+    { "test_io_uring_transport_receive_left_at_stop_counted", rocketnet_test_server_uring_receive_left_at_stop_counted, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_receive_rearms_after_no_buffers", rocketnet_test_server_uring_receive_rearms_after_no_buffers, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
