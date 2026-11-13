@@ -11,9 +11,12 @@
 
 // The Windows server transports' receive delivery
 // (sdk/rocketnet_receive_delivery_check.h, proofs/tla/RNReceiveHandoff.tla
-// DeliveredByNextCall): every receive call returns every datagram a worker
-// banked before the call began, so no client input waits an extra server
-// update. The workers' banking and main's calls are stepped on this thread in
+// DeliveredByNextCall): in these scripted cases, uncontended and with room
+// in the view, a receive call returns every datagram a worker committed
+// before the call began, so no client input waits an extra server update. A
+// failed try of the mutex, a backlog left by a cut call and a full view are
+// the exceptions the handoff header states, and these scripts do not claim
+// more. The workers' banking and main's calls are stepped on this thread in
 // a fixed order with a fake kernel: no socket, no worker thread, no clock.
 
 #if defined( _WIN32 ) && ROCKETNET_DEV

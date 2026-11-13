@@ -522,8 +522,11 @@ I/O worker that polls the send and receive completion queues. The frame thread
 hands deferred sends to one of three phases; a phase stays worker-owned until
 its sends complete, and its received datagrams reach main through the shared
 receive handoff (`sdk/rocketnet_receive_handoff.h`, three banks): main reads
-the bank the worker is filling up to its committed count, so a datagram banked
-before a receive call is returned by that call.
+the bank the worker is filling up to its committed count, so a datagram the
+worker banked and committed before a receive call is returned by that call
+when the call's one try of the mutex succeeds, it began with no backlog left
+by a cut call, and the process view has room (the exceptions
+`sdk/rocketnet_receive_handoff.h` states); otherwise a later call returns it.
 Its server rank is 45, after IOCP's 40, so automatic selection
 never chooses it ahead of IOCP; pin `rio` to select it directly. Its
 `ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
