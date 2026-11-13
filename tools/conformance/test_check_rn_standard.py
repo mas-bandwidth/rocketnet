@@ -211,6 +211,18 @@ class RulePinTests(unittest.TestCase):
         for index, pin in enumerate(limits):
             self.assertEqual(values[index], standard.parse_value(pin["value"]))
 
+    def test_unsigned_64_bit_pins_keep_bit_63(self):
+        # a uint64 value with bit 63 set is that unsigned number: never printed
+        # or stored as a negative one (Argon F14)
+        includes = ["RN_PIN_S_UINT64( planted_top_bit, 0x8000000000000001ull, 0 )"]
+        pins = [{"expr": "0xFFFFFFFFFFFFFFFFull"},
+                {"expr": "(uint64_t) 0x8000000000000000ull"},
+                {"expr": "rn_pin_server_default_planted_top_bit"},
+                {"expr": "(int64_t) -1"}]
+        self.assertEqual(standard.compile_pins(pins, includes),
+                         {0: ("n", 18446744073709551615), 1: ("n", 9223372036854775808),
+                          2: ("n", 9223372036854775809), 3: ("n", -1)})
+
     def test_unreliable_record_rule_is_over_exactly_above_the_limit(self):
         _, includes = self.pins()
         expression = ("rn_endpoint_unreliable_over_record_capacity( "
