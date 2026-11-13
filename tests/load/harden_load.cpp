@@ -785,7 +785,12 @@ static bool harden_parse( int argc, char ** argv, harden_options_t * o )
         }
         else if ( strcmp( a, "--delay-window" ) == 0 )
         {
-            if ( sscanf( v, "%lf,%lf", &o->delay_from, &o->delay_to ) != 2 || o->delay_from < 0.0 || o->delay_to < o->delay_from )
+            // strtod, not sscanf: MSVC deprecates sscanf (C4996, an error under /WX)
+            char * comma = NULL;
+            o->delay_from = strtod( v, &comma );
+            char * rest = NULL;
+            o->delay_to = comma && *comma == ',' ? strtod( comma + 1, &rest ) : -1.0;
+            if ( !comma || *comma != ',' || !rest || *rest != '\0' || o->delay_from < 0.0 || o->delay_to < o->delay_from )
             {
                 fprintf( stderr, "harden_load: --delay-window takes FROM,TO seconds\n" );
                 return false;
