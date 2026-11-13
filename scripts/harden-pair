@@ -31,6 +31,14 @@
 #   --port P                          the server's UDP port (default 40000)
 #   --client-remote DIR               the client machine's checkout (default --remote)
 #   --server-env K=V                  an environment setting for the server (repeatable)
+#   --server-os linux|windows         the server machine's system (default linux). On Windows
+#                                     each server command runs in Git for Windows' bash
+#                                     (C:/Program Files/Git/bin/bash.exe), the tool is
+#                                     DIR/bin/Release/harden_load.exe, the server role runs
+#                                     in the foreground of its ssh session (Windows ends a
+#                                     detached child with the session), netem goes on the
+#                                     client machine only, and the tool reads no kernel
+#                                     counters there, so the chain stands on library terms
 #   --local-bin DIR                   this machine's harden_load (default ./bin)
 #   --ssh "CMD"                       the ssh command (default "ssh -o BatchMode=yes")
 #
@@ -44,6 +52,7 @@ server_ip=""
 remote=""
 client_remote=""
 server_env=""
+server_os=linux
 transport=""
 row="control"
 out=""
@@ -76,6 +85,7 @@ while [ $# -gt 0 ]; do
         --remote) remote="$2"; shift 2 ;;
         --client-remote) client_remote="$2"; shift 2 ;;
         --server-env) server_env="$server_env $(printf '%q' "$2")"; shift 2 ;;
+        --server-os) server_os="$2"; shift 2 ;;
         --transport) transport="$2"; shift 2 ;;
         --row) row="$2"; shift 2 ;;
         --out) out="$2"; shift 2 ;;
@@ -98,6 +108,7 @@ while [ $# -gt 0 ]; do
         *) usage ;;
     esac
 done
+[ "$server_os" = linux ] || [ "$server_os" = windows ] || usage
 [ -n "$server_host" ] && [ -n "$client_host" ] && [ -n "$server_ip" ] && [ -n "$remote" ] && [ -n "$transport" ] && [ -n "$out" ] || usage
 [ -x "$local_bin/harden_load" ] || { echo "harden-pair: no $local_bin/harden_load here for the reconcile" >&2; exit 2; }
 mkdir -p "$out"
@@ -113,19 +124,38 @@ on()
 {
     local dest=$1
     shift
-    # shellcheck disable=SC2086
-    $ssh_command "$dest" "$(printf '%q ' "$@")"
+    on_shell "$dest" "$(printf '%q ' "$@")"
 }
 
-# on_shell <dest> <shell text>: a remote shell line, for redirection and &
+# on_shell <dest> <shell text>: a remote shell line, for redirection and &.
+# A Windows server's line goes to its Git bash on stdin, past PowerShell's
+# quoting
 on_shell()
 {
-    # shellcheck disable=SC2086
-    $ssh_command "$1" "$2"
+    if [ "$server_os" = windows ] && [ "$1" = "$server_host" ]; then
+        # shellcheck disable=SC2086
+        $ssh_command "$1" "& 'C:\\Program Files\\Git\\bin\\bash.exe' -s" <<< "$2"
+    else
+        # shellcheck disable=SC2086
+        $ssh_command "$1" "$2"
+    fi
+}
+
+# server_running: how many harden_load processes the server machine runs
+server_running()
+{
+    if [ "$server_os" = windows ]; then
+        on_shell "$server_host" "tasklist //NH //FI 'IMAGENAME eq harden_load.exe' | grep -c harden_load || true"
+    else
+        on_shell "$server_host" "pgrep -x harden_load | wc -l"
+    fi
 }
 
 run_dir="$remote/harden-pair-run"
 tool="$remote/bin/harden_load"
+if [ "$server_os" = windows ]; then
+    tool="$remote/bin/Release/harden_load.exe"
+fi
 client_run_dir="${client_remote:-$remote}/harden-pair-run"
 client_tool="${client_remote:-$remote}/bin/harden_load"
 address="$server_ip:$port"
@@ -134,9 +164,13 @@ netem_on=0
 # shellcheck disable=SC2329  # run by the EXIT trap
 cleanup()
 {
-    on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
+    if [ "$server_os" = windows ]; then
+        on_shell "$server_host" "taskkill //F //IM harden_load.exe > /dev/null 2>&1; true" || true
+    else
+        on_shell "$server_host" "pkill -f '$tool server' 2>/dev/null; true" || true
+    fi
     on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
-    if [ "$netem_on" = 1 ]; then
+    if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then
         on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
@@ -155,7 +189,11 @@ if [ -n "$netem" ]; then
     # that drives the cell rides the other bands untouched, and the root's drop
     # count (netem's losses) is the cell's alone
     netem_on=1
-    for end in server client; do
+    ends="server client"
+    if [ "$server_os" = windows ]; then
+        ends="client"
+    fi
+    for end in $ends; do
         if [ "$end" = server ]; then
             dest=$server_host; dev=$server_dev; match="sport"
         else
@@ -183,9 +221,15 @@ fi
 join_seconds=$(( clients / 100 + 5 ))
 end_at=$(( $(date +%s) + join_seconds + seconds + 8 ))
 
-on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup env $server_env $(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
+server_args=$(printf '%q ' "$tool" server --address "$address" --transport "$transport" \
     --max-clients "$clients" --end-at "$end_at" --quiet-seconds "$quiet" --dev "$server_dev" --warm-seconds "$warm_seconds" --sample-seconds 60 \
-    "${server_shape[@]}") $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
+    "${server_shape[@]}")
+if [ "$server_os" = windows ]; then
+    # in the foreground of a session this machine holds open in the background
+    on_shell "$server_host" "cd $(printf '%q' "$run_dir") && env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null" > "$out/ssh-server.txt" 2>&1 &
+else
+    on_shell "$server_host" "ulimit -n 65536; cd $(printf '%q' "$run_dir") && nohup env $server_env $server_args $xdp_args > server.log 2>&1 < /dev/null &" < /dev/null > "$out/ssh-server.txt" 2>&1 &
+fi
 key=""
 # one remote wait (10 s) for the ready line, not one ssh round trip per look
 key=$(on_shell "$server_host" "for i in \$(seq 1 100); do k=\$(sed -n 's/^harden_ready: .* key=\\([0-9a-f]*\\) .*/\\1/p' $(printf '%q' "$run_dir/server.log") | head -n 1); [ -n \"\$k\" ] && { echo \"\$k\"; break; }; sleep 0.1; done")
@@ -210,7 +254,7 @@ fi
 # running pgrep, which carries the same words
 deadline=$(( end_at + 60 ))
 while :; do
-    running=$(on_shell "$server_host" "pgrep -x harden_load | wc -l")
+    running=$(server_running)
     running=$(( running + $(on_shell "$client_host" "pgrep -x harden_load | wc -l") ))
     [ "$running" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
