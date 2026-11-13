@@ -179,6 +179,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * ROCKETNET_DEFAUL
 #define ROCKETNET_SERVER_URING_DISABLE_SEGMENT                          (1<<0)
 #define ROCKETNET_SERVER_URING_DISABLE_GRO                              (1<<1)
 
+// a placement flag, not a probe: cpu 0 is not reserved for the OS, so worker
+// q pins to cpu q and num_os_cpus is not applied (the server's
+// io_uring_reserve_cpu_0 set to ROCKETNET_CPU_0_NOT_RESERVED)
+
+#define ROCKETNET_SERVER_URING_CPU_0_NOT_RESERVED                       (1<<2)
+
 // true when the library was built with liburing and this kernel accepts the
 // ring, the opcodes and the provided buffer ring. it does not cover multishot
 // receive (Linux 6.0), which the transport also needs and create cannot
@@ -211,13 +217,16 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
                                                                        const uint8_t * packet_filter = NULL );
 
 // create with flags and the placement of the queue workers: queue q's worker
-// pins itself to cpu num_os_cpus + q and sets SCHED_RR at the minimum, as the
-// XDP transport's thread does (rocketnet_uring_pin.h); num_os_cpus below 1
-// reads as 1 (cpu 0 is the OS's), which is what create and create_flags use.
-// A worker whose pin is refused is confined to the cpus past the OS's where
-// the machine has any (never cpu 0 on a machine with more than one cpu). The
-// server's config num_os_cpus (default 1) reaches this through the builtin
-// driver.
+// pins itself to cpu num_os_cpus + q and, when that pin is granted, sets
+// SCHED_RR at the minimum, as the XDP transport's thread does
+// (rocketnet_uring_pin.h); num_os_cpus below 1 reads as 1 (cpu 0 is the
+// OS's), which is what create and create_flags use. A worker whose pin is
+// refused asks for no SCHED_RR, and is confined to the cpus past the OS's
+// where the machine has any (never cpu 0 on a machine with more than one cpu
+// that lets it leave). With ROCKETNET_SERVER_URING_CPU_0_NOT_RESERVED in
+// flags queue q's worker pins to cpu q instead, num_os_cpus is not read, and
+// a refused worker stays on the mask it inherited. The server's config
+// num_os_cpus (default 1) reaches this through the builtin driver.
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
                                                                         int * status = NULL, const uint8_t * packet_filter = NULL );
@@ -303,16 +312,18 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
 // the pin reads. The priority switch is on for the call and restored. The
 // public row URING_PIN_REFUSALS is then asked of dispatch, given the io_uring
 // io table (uring) and the synthetic transport (its queues hidden from the
-// read, so only the transport's own rows answer). Writes that row, whether the
-// queue is left on cpu 0 and the SCHED_RR requests made; false when the
+// read, so only the transport's own rows answer). reserve_cpu_0 false is the
+// ROCKETNET_SERVER_URING_CPU_0_NOT_RESERVED placement. Writes that row, whether
+// the queue is left on cpu 0, the SCHED_RR requests made and the queue's pin
+// state (rocketnet_server_uring_worker_cpu's value); false when the
 // synthetic transport cannot be made or dispatch does not answer, and in a
 // build without the transport.
 struct rocketnet_server_transport_io_operations_t;
 typedef bool rocketnet_server_uring_test_transport_counters_t( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,
                                                                uint64_t * values );
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t * dispatch, const struct rocketnet_server_transport_io_operations_t * uring,
-                                               int num_os_cpus, int online, int cpus, bool without_cpu_zero, bool refuse_pin, bool refuse_all, uint64_t * row,
-                                               bool * left_on_core_zero, int * round_robin_requests );
+                                               int num_os_cpus, bool reserve_cpu_0, int online, int cpus, bool without_cpu_zero, bool refuse_pin, bool refuse_all,
+                                               uint64_t * row, bool * left_on_core_zero, int * round_robin_requests, int * pinned_cpu );
 #endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );

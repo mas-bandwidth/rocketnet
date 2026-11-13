@@ -367,6 +367,7 @@ struct rocketnet_server_gso_t
     struct rocketnet_server_socket_process_packets_t process_packets;
     int max_clients;                    // the server's configured client count: sizes the view and the socket receive buffers
     int num_os_cpus = 0;                // the server's num_os_cpus: the workers pin to num_os_cpus + queue; below 1 reads as 1 (the OS keeps cpu 0)
+    bool reserve_cpu_0 = true;          // false (ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED): worker q pins to cpu q, num_os_cpus not applied
     std::atomic<int> pin_refusals{ 0 }; // pins the workers asked for and the system refused
 
 #if ROCKETNET_DEV
@@ -1463,35 +1464,50 @@ static bool rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
     return true;
 }
 
+// after a refused pin (already counted and warned): with cpu 0 reserved the
+// worker is confined off it (rocketnet_server_gso_confine_refused) and flagged
+// when that fails; not reserved it stays on the mask it inherited, unflagged
+static void rocketnet_server_gso_pin_refused( struct rocketnet_server_gso_queue_t * queue, int online, const struct rocketnet_gso_affinity_calls_t * calls )
+{
+    struct rocketnet_server_gso_t * gso = queue->gso;
+    bool left_on_core_zero = false;
+    if ( gso->reserve_cpu_0 )
+    {
+        left_on_core_zero = !rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
+    }
+    queue->left_on_core_zero.store( left_on_core_zero, std::memory_order_relaxed );
+    queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
+}
+
 // the worker pins itself the way the XDP transport's thread does
-// (rocketnet_server_socket_xdp_thread_function): affinity to cpu num_os_cpus +
-// queue. A refusal is a warning naming the queue and the cpu, counted in
-// pin_refusals (rocketnet_server_gso_pin_refusals), and the queue's pin_cpu
-// stays NONE: a worker is reported pinned only when pthread_setaffinity_np
-// said so. num_os_cpus below 1 reads as 1 (the OS keeps cpu 0). true when the
-// worker is kept off cpu 0 (pinned, or confined after a refused pin).
+// (rocketnet_server_socket_xdp_thread_function): affinity to
+// rocketnet_network_thread_cpu, cpu num_os_cpus + queue (num_os_cpus below 1
+// reads as 1: the OS keeps cpu 0), or cpu queue when cpu 0 is not reserved. A
+// refusal is a warning naming the queue and the cpu, counted in pin_refusals
+// (rocketnet_server_gso_pin_refusals), and the queue's pin_cpu stays NONE: a
+// worker is reported pinned only when pthread_setaffinity_np said so. true
+// only when the pin was granted.
 
 static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t * queue, int online, const struct rocketnet_gso_affinity_calls_t * calls )
 {
     struct rocketnet_server_gso_t * gso = queue->gso;
 
-    const int cpu = rocketnet_gso_pin_cpu( queue->index, gso->num_os_cpus );
+    const int cpu = rocketnet_network_thread_cpu( queue->index, gso->num_os_cpus, gso->reserve_cpu_0 );
+    const char * fallback = gso->reserve_cpu_0 ? "it falls back to the cpus from num_os_cpus up" : "it stays on the cpus it inherited";
     const int check = rocketnet_gso_pin_check( cpu, CPU_SETSIZE, online );
     if ( check != ROCKETNET_GSO_PIN_OK )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         if ( check == ROCKETNET_GSO_PIN_OUTSIDE_SET )
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; it falls back to the cpus from num_os_cpus up", queue->index, cpu, CPU_SETSIZE - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is outside 0 .. %d; %s and asks for no real-time scheduling", queue->index, cpu, CPU_SETSIZE - 1, fallback );
         }
         else
         {
-            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); it falls back to the cpus from num_os_cpus up", queue->index, cpu, online - 1 );
+            rocketnet_warn( "gso worker %d not pinned: cpu %d is not online (0 .. %d); %s and asks for no real-time scheduling", queue->index, cpu, online - 1, fallback );
         }
-        const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
-        queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
-        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
-        return off_core_zero;
+        rocketnet_server_gso_pin_refused( queue, online, calls );
+        return false;
     }
 
     cpu_set_t cpuset;
@@ -1501,11 +1517,10 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
     if ( result != 0 )
     {
         gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
-        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); it falls back to the cpus from num_os_cpus up", queue->index, cpu, rocketnet_platform_socket_error_text( result ).text );
-        const bool off_core_zero = rocketnet_server_gso_confine_refused( gso, queue->index, online, calls );
-        queue->left_on_core_zero.store( !off_core_zero, std::memory_order_relaxed );
-        queue->pin_cpu.store( ROCKETNET_GSO_PIN_NONE, std::memory_order_release );
-        return off_core_zero;
+        rocketnet_warn( "gso worker %d not pinned: pthread_setaffinity_np cpu %d refused (%s); %s and asks for no real-time scheduling", queue->index, cpu,
+                        rocketnet_platform_socket_error_text( result ).text, fallback );
+        rocketnet_server_gso_pin_refused( queue, online, calls );
+        return false;
     }
 
     rocketnet_info( "gso worker %d pinned to cpu %d", queue->index, cpu );
@@ -1516,15 +1531,15 @@ static bool rocketnet_server_gso_pin_worker( struct rocketnet_server_gso_queue_t
 
 // The worker's placement at start: the pin, then SCHED_RR at the network
 // threads' priority (rocketnet_platform_network_thread_rr_priority) on itself
-// when the priority switch is on, and only when it is kept off cpu 0. The
-// worker sets its own priority after its pin, so a worker left on cpu 0 never
-// asks for real-time scheduling; it is flagged (left_on_core_zero) and
+// when the priority switch is on, and only when the pin was granted. A worker
+// whose pin was refused runs on cpus it shares with other threads (the game's,
+// or the OS's on cpu 0), so it never asks for real-time scheduling there; it
 // carries on: a one cpu host still runs.
 
 static void rocketnet_server_gso_place_worker( struct rocketnet_server_gso_queue_t * queue, int online, const struct rocketnet_gso_affinity_calls_t * calls )
 {
-    const bool off_core_zero = rocketnet_server_gso_pin_worker( queue, online, calls );
-    if ( off_core_zero && rocketnet_platform_thread_priority_enabled() )
+    const bool pinned = rocketnet_server_gso_pin_worker( queue, online, calls );
+    if ( pinned && rocketnet_platform_thread_priority_enabled() )
     {
         const int priority = rocketnet_platform_network_thread_rr_priority();
         const int result = calls->set_round_robin( priority );
@@ -1701,9 +1716,11 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
 
     gso->context = context;
     gso->num_queues = num_queues;
-    // the OS keeps cpu 0 on Linux: a count below 1 is read as 1, here and not
-    // only in the builtin driver, so no worker is ever left free to run on cpu 0
+    // the OS keeps cpu 0 on Linux by default: a count below 1 is read as 1,
+    // here and not only in the builtin driver, so no worker is left free to
+    // run on cpu 0 unless ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED gives it to them
     gso->num_os_cpus = num_os_cpus < 1 ? 1 : num_os_cpus;
+    gso->reserve_cpu_0 = ( flags & ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED ) == 0;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     if ( packet_filter )
     {
@@ -1876,8 +1893,8 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
             return NULL;
         }
 
-        // the worker sets its own priority after its pin
-        // (rocketnet_server_gso_place_worker): never on cpu 0
+        // the worker sets its own priority after its pin, and only when the
+        // pin was granted (rocketnet_server_gso_place_worker)
     }
 
     return gso;
@@ -3132,6 +3149,12 @@ static int gso_fake_set_round_robin( int priority )
     (void) priority;
     gso_fake_round_robin++;
     return 0;
+}
+
+void rocketnet_server_gso_test_set_reserve_cpu_0( struct rocketnet_server_gso_t * gso, bool reserve_cpu_0 )
+{
+    rocketnet_assert( gso );
+    gso->reserve_cpu_0 = reserve_cpu_0;
 }
 
 bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool without_cpu_zero,

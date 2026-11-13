@@ -108,6 +108,34 @@ queue, and refuses to start when the NIC's combined queue count is not
 `num_xdp_threads` (`scripts/rocketnet-provision` sets it; see
 [`docs/DEPLOYING.md`](DEPLOYING.md)). The others need no machine setting.
 
+### Cpu 0, per Linux transport
+
+The recommended layout keeps cpu 0 for the operating system, puts the network
+threads on the cpus after it (from `ROCKETNET_SERVER_NUM_OS_CPUS`, default 1),
+and leaves the rest to the game, its main thread first. Each Linux transport
+whose threads the library places from cpu 0 up can give cpu 0 to its threads
+instead:
+
+| Variable | Config field | Transport | Default | Values |
+| --- | --- | --- | --- | --- |
+| `ROCKETNET_SERVER_GSO_RESERVE_CPU_0` | `gso_reserve_cpu_0` | `gso` (Linux) | reserved | 1 reserved, 2 not reserved |
+| `ROCKETNET_SERVER_IO_URING_RESERVE_CPU_0` | `io_uring_reserve_cpu_0` | `io_uring` (Linux) | reserved | 1 reserved, 2 not reserved |
+| `ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0` | `portable_reserve_cpu_0` | `portable` on Linux (and `msgx` there) | reserved | 1 reserved, 2 not reserved |
+
+Zero is the default and reads as reserved (`ROCKETNET_CPU_0_RESERVED`): network
+thread q runs on cpu `num_os_cpus + q`. Not reserved
+(`ROCKETNET_CPU_0_NOT_RESERVED`) puts thread q on cpu q and does not apply
+`num_os_cpus` to that transport; a server create with `num_os_cpus` set logs an
+info line saying so. Any other value is refused with
+`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. A pin the machine refuses never stops
+the server: the thread is warned about, counted in that transport's
+`*_PIN_REFUSALS` row, and asks for no real-time priority.
+
+`xdp` has no such setting: its provisioning keeps cpu 0 as the housekeeping and
+interrupt cpu and isolates the cpus its threads run on. `rio` and `iocp`
+(Windows) put lane or worker i on core i to match the NIC's receive-side
+scaling, and `msgx` on macOS leaves placement to the OS.
+
 On Windows, more than one RIO lane or IOCP completion worker needs a specific
 bind address. With nothing asked and a wildcard bind (no
 `ROCKETNET_SERVER_BIND_IPV4_ADDRESS` or `ROCKETNET_SERVER_BIND_IPV6_ADDRESS`),
