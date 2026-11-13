@@ -9,8 +9,9 @@
 (* model variable after it (state).  A worker step is the action           *)
 (* rocketnet_uring_queue_worker_step returned (a reap by the kind of the   *)
 (* completion it took, the oldest); a publish is Publish when it returned  *)
-(* true; a stop is Stop; each of the fake kernel's answers is the Kernel   *)
-(* action it is.  Everything but EXTENDS, VarsRec, OpActs and Act is the   *)
+(* true; a begin_shutdown is BeginStop and a stop Stop; each of the fake   *)
+(* kernel's answers is the Kernel action it is.  Everything but EXTENDS,   *)
+(* VarsRec, OpActs and Act is the                                          *)
 (* template's text.                                                        *)
 (***************************************************************************)
 EXTENDS RNUringQueueWorker, Sequences
@@ -32,34 +33,35 @@ VARIABLES ti,        \* the index of the record the state matches
 
 \* every model variable by the field name the harness writes
 VarsRec ==
-    [quit |-> quit, seen |-> seen, st |-> st, handed |-> handed, ready |-> ready,
+    [stopping |-> stopping, shutdown |-> shutdown, quit |-> quit, seen |-> seen, st |-> st, handed |-> handed, ready |-> ready,
      held |-> held, u |-> u, k |-> k, cOk |-> cOk, cAgain |-> cAgain, cRef |-> cRef,
-     blocked |-> blocked, poll |-> poll, recv |-> recv, wakeRead |-> wakeRead,
+     blocked |-> blocked, timer |-> timer, recv |-> recv, wakeRead |-> wakeRead,
      wakeCount |-> wakeCount, agains |-> agains, againsBefore |-> againsBefore,
      refusals |-> refusals, recvEnds |-> recvEnds, p |-> p]
 
 \* the actions each operation of the code can be
-OpActs == [publish |-> {"Publish"}, stop |-> {"Stop"},
-           step |-> {"Observe", "ReapOk", "ReapAgain", "ReapRefused", "ReapPoll",
+OpActs == [publish |-> {"Publish"}, begin |-> {"BeginStop"}, stop |-> {"Stop"},
+           step |-> {"Observe", "ReapOk", "ReapAgain", "ReapRefused", "ReapTimer",
                     "ReapRecvEnd", "ReapWake", "ReapCancel",
                     "Retire", "Claim", "Submit", "Split", "Drop",
-                    "Abandon", "ArmPoll", "ArmRecv", "ArmWake",
-                    "CancelRecv", "CancelWake", "CancelPoll", "Exit",
+                    "Abandon", "ArmTimer", "ArmRecv", "ArmWake",
+                    "CancelRecv", "CancelWake", "Exit",
                     "Sleep", "Done"},
            wakes |-> {"KernelWakesWorker"}, answer |-> {"KernelOk", "KernelAgain", "KernelRefuse"},
-           pollFires |-> {"KernelPoll"}, recvEnds |-> {"KernelRecvEnd"},
+           timerFires |-> {"KernelTimer"}, recvEnds |-> {"KernelRecvEnd"},
            recvEndsItself |-> {"KernelRecvEndsItself"}, wakeReads |-> {"KernelWakeRead"},
            wakeEnds |-> {"KernelWakeEnd"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
 Act(a, x) == CASE a = "Publish" -> Publish
+               [] a = "BeginStop" -> BeginStop
                [] a = "Stop" -> Stop
                [] a = "Observe" -> Observe
                [] a = "ReapOk" -> ReapOk
                [] a = "ReapAgain" -> ReapAgain
                [] a = "ReapRefused" -> ReapRefused
-               [] a = "ReapPoll" -> ReapPoll
+               [] a = "ReapTimer" -> ReapTimer
                [] a = "ReapRecvEnd" -> ReapRecvEnd
                [] a = "ReapWake" -> ReapWake
                [] a = "ReapCancel" -> ReapCancel
@@ -69,19 +71,18 @@ Act(a, x) == CASE a = "Publish" -> Publish
                [] a = "Split" -> Split
                [] a = "Drop" -> Drop
                [] a = "Abandon" -> Abandon
-               [] a = "ArmPoll" -> ArmPoll
+               [] a = "ArmTimer" -> ArmTimer
                [] a = "ArmRecv" -> ArmRecv
                [] a = "ArmWake" -> ArmWake
                [] a = "CancelRecv" -> CancelRecv
                [] a = "CancelWake" -> CancelWake
-               [] a = "CancelPoll" -> CancelPoll
                [] a = "Exit" -> Exit
                [] a = "Sleep" -> Sleep
                [] a = "Done" -> Done
                [] a = "KernelOk" -> KernelOk
                [] a = "KernelAgain" -> KernelAgain
                [] a = "KernelRefuse" -> KernelRefuse
-               [] a = "KernelPoll" -> KernelPoll
+               [] a = "KernelTimer" -> KernelTimer
                [] a = "KernelRecvEnd" -> KernelRecvEnd
                [] a = "KernelRecvEndsItself" -> KernelRecvEndsItself
                [] a = "KernelWakeRead" -> KernelWakeRead

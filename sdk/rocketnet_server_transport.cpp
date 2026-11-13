@@ -2389,9 +2389,14 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     return plan.total_bytes <= SIZE_MAX;
 }
 
-uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config )
+uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_server_transport_config_t * config, bool * unplannable )
 {
     rocketnet_server_transport_config_t defaults;
+
+    if ( unplannable )
+    {
+        *unplannable = false;
+    }
 
     if ( !config )
     {
@@ -2407,14 +2412,32 @@ uint64_t rocketnet_server_transport_order_allocator_bytes( const rocketnet_serve
         return 0;
     }
     uint64_t most = 0;
+    bool planned_or_custom = false;
 
     for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
+        // the built-in rows come first in the registry (sdk/rocketnet_drivers.inc),
+        // so a candidate past the last of them is a custom transport, whose
+        // resource policy is its own
+        const int candidate = transport_order.candidates[i];
         rocketnet_server_memory_plan_t plan;
-        if ( rocketnet_server_transport_memory_plan( config, rocketnet_transport_name( transport_order.candidates[i] ), plan ) && plan.allocator_bytes > most )
+        if ( rocketnet_server_transport_memory_plan( config, rocketnet_transport_name( candidate ), plan ) )
         {
-            most = plan.allocator_bytes;
+            planned_or_custom = true;
+            if ( plan.allocator_bytes > most )
+            {
+                most = plan.allocator_bytes;
+            }
         }
+        else if ( candidate > ROCKETNET_TRANSPORT_RIO )
+        {
+            planned_or_custom = true;
+        }
+    }
+
+    if ( unplannable )
+    {
+        *unplannable = !planned_or_custom;
     }
 
     return most;
@@ -2433,7 +2456,10 @@ uint64_t rocketnet_server_transport_required_memory( const rocketnet_server_tran
 // rocketnet_server_transport_receive_buffer_request, the function each create
 // calls (rocketnet_driver_builtin.cpp, rocketnet_server_gso_linux.cpp,
 // rocketnet_server_uring_linux.cpp, rocketnet_server_iocp_windows.cpp,
-// rocketnet_server_rio_windows.cpp); each xdp queue's AF_XDP socket asks for
+// rocketnet_server_rio_windows.cpp). msgx's sockets differ (one shared socket
+// asks for those, each client's connected socket for
+// ROCKETNET_MSGX_CLIENT_SOCKET_BUFFER each way), so its plan carries its own
+// sums (socket_buffers_planned); each xdp queue's AF_XDP socket asks for
 // ROCKETNET_XDP_RECV_QUEUE_SIZE RX and ROCKETNET_XDP_SEND_QUEUE_SIZE TX
 // descriptors and sets no socket buffer (rocketnet_server_socket_linux.cpp).
 bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_server_transport_config_t * config,
@@ -2472,6 +2498,12 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
 #else
         return false;
 #endif // #if ROCKETNET_XDP
+    }
+    else if ( plan.socket_buffers_planned )
+    {
+        // sockets that ask for different buffers: the plan's own sums
+        e.socket_send_buffer_bytes = plan.socket_send_buffer_bytes;
+        e.socket_receive_buffer_bytes = plan.socket_receive_buffer_bytes;
     }
     else
     {
@@ -3885,14 +3917,25 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
 // was handed over and the workers have exited. While bursts wait, the poll
 // is the next stop step, as the I/O's own stopped may service ready
 // completions; the transport is never a const object, only this view of it.
+// The step is a main-thread operation like the stop it continues: it seals
+// bursts, folds the fill lines and flushes, so it runs inside the check
+// (sdk/rocketnet_fill_phase.h). A poll made while a fill call or another
+// main-thread operation runs is refused, counted and does nothing: it reports
+// not stopped, and the next poll is the step.
 bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state == ROCKETNET_SERVER_TRANSPORT_RUNNING )
     {
         return false;
     }
-    rocketnet_server_transport_stop_step( const_cast<struct rocketnet_server_transport_t *>( server_transport ) );
-    return server_transport->io_stop_requested && rocketnet_server_transport_io_stopped( &server_transport->io );
+    struct rocketnet_server_transport_t * transport = const_cast<struct rocketnet_server_transport_t *>( server_transport );
+    rocketnet_fill_phase_main_scope_t phase( &transport->fill_phase );
+    if ( !phase.entered )
+    {
+        return false;
+    }
+    rocketnet_server_transport_stop_step( transport );
+    return transport->io_stop_requested && rocketnet_server_transport_io_stopped( &transport->io );
 }
 
 // A failed create cannot return a live partially constructed object. This

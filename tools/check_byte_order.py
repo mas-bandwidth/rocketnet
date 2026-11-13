@@ -69,6 +69,8 @@ NETLINK = "sdk/rocketnet_gateway_netlink_linux.cpp"
 # because the other party is the local kernel or this process.
 
 ALLOWED = [
+    ("sdk/rocketnet_server_gso_linux.cpp", "memcpy( CMSG_DATA( cmsg ), &drops, sizeof( drops ) );",
+     "the test receive seam writes a SO_RXQ_OVFL cmsg, which the kernel ABI defines in host order"),
     ("sdk/rocketnet_platform.cpp", "( (uint16_t *) &out->sin6_addr )[i] = rocketnet_platform_htons(",
      "the kernel's sockaddr_in6 holds network-order groups; the endian-aware helper converts each"),
     ("sdk/rocketnet_platform.cpp", "rocketnet_platform_ntohs( ( (const uint16_t *) &in->sin6_addr )[i] )",

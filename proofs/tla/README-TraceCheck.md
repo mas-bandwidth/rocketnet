@@ -272,8 +272,13 @@ hand-written traces:
   `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
   layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
   predicates run in the shard holding its first seed, which walks its other seeds again
-  (the walk alone; TLC checks each of them in its own shard). The table is checked on
-  every run: a pair in two shards, a pair in none, or an empty shard is red. Any other
+  (the walk alone; TLC checks each of them in its own shard). An entry `layer:reach`
+  moves the layer's reach predicates to that shard, which walks the layer's seeds the
+  same way and tries the predicates on them; coverage stays at the first seed's shard
+  (msgx's reach is in shard 3: at its home it doubled the check step). The OK line names
+  the shard's `homes=` and `reach=` layers. The table is checked on every run: a pair in
+  two shards, a pair in none, an empty shard, a layer's reach moved twice, or moved for a
+  layer with no reach predicate is red. Any other
   shard count but 1 exits 2; `--shard 0/1` (the default, and the nightly run) checks every
   seed of every layer in one run.
 

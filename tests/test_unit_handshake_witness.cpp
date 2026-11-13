@@ -987,11 +987,11 @@ static void test_claim_written_only_after_signature_verifies()
     // claim still stands, so the claim rung refuses it before any signature
 
     const uint64_t already_used = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
     rocketnet_unit_check( rocketnet_handshake_request_past_cookie( &test, &test.second_address, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == already_used + 1 );
-    rocketnet_unit_check( rocketnet_crypto_tally.signature_verify == 0 );
+    rocketnet_unit_check( rocketnet_crypto_tally_get().signature_verify == 0 );
 
     rocketnet_handshake_server_teardown( &test );
 }

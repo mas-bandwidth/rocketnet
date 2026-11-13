@@ -26,7 +26,8 @@
 (*                                                                         *)
 (* The code has Quarantine, GenCheck and RefusedOpenFree TRUE and          *)
 (* PassCopyFirst FALSE; each broken config flips one and must fail its     *)
-(* named invariant (README-RNMsgxSocketTable.md).                          *)
+(* named invariant (README-RNMsgxSocketTable.md).  ClearReportAtFree and   *)
+(* RegisterMayFail are TRUE in the code; a cfg overrides them.             *)
 (***************************************************************************)
 EXTENDS Integers, Sequences, FiniteSets
 
@@ -212,6 +213,16 @@ Idle == mpc = "idle"
 \* the VIEW, and every other configuration keeps them
 RefusedMarks == TRUE
 
+\* the receive poller may refuse to register a new socket (kevent fails), and
+\* main then reports it dead (rocketnet_server_msgx_mark)
+RegisterMayFail == TRUE
+
+\* the sweep's close loop clears a dead report left in the slot it frees (a
+\* holder's report about the retired generation that landed after the dead
+\* scan); the broken configuration MCRNMsgxSocketTableBrokenStaleReport.cfg
+\* keeps it, and the slot's next socket's report is then lost
+ClearReportAtFree == TRUE
+
 -----------------------------------------------------------------------------
 Init ==
     /\ word = [s \in Slots |-> <<0, 0>>]
@@ -309,8 +320,19 @@ Mark(a) ==
                     /\ counters' = [counters EXCEPT ![C_OPENED] = @ + 1]
                     /\ kfd' = [kfd EXCEPT ![f] = a]
                     /\ kdead' = [kdead EXCEPT ![f] = FALSE]
-                    /\ poller' = poller \cup {<<f, s, gen[s], a>>}
-                    /\ UNCHANGED <<deadRep, gen, snap, deadReports, freeSlots, retired, numRetired,
+                    \* the caller registers the socket with its receive poller;
+                    \* when the poller refuses it, main reports it dead at its
+                    \* generation (report_dead: taken only by an empty slot)
+                    /\ \E registered \in IF RegisterMayFail THEN BOOLEAN ELSE {TRUE} :
+                          IF registered
+                             THEN /\ poller' = poller \cup {<<f, s, gen[s], a>>}
+                                  /\ UNCHANGED <<deadRep, deadReports>>
+                             ELSE /\ UNCHANGED poller
+                                  /\ IF deadRep[s] = 0
+                                        THEN /\ deadRep' = [deadRep EXCEPT ![s] = gen[s] + 1]
+                                             /\ deadReports' = deadReports + 1
+                                        ELSE UNCHANGED <<deadRep, deadReports>>
+                    /\ UNCHANGED <<gen, snap, freeSlots, retired, numRetired,
                                    coolAddr, coolUntil, update, mainv, holdv, crossed, onClosed>>
 
 \* Main's steps inside a call, as functions of a record of the state main's
@@ -430,6 +452,7 @@ CloseF(R) ==
                                !.kdead = KUndead(R.kdead, R.fd[s]),
                                !.fd = [R.fd EXCEPT ![s] = -1],
                                !.state = [R.state EXCEPT ![s] = FREE],
+                               !.deadRep = IF ClearReportAtFree THEN [R.deadRep EXCEPT ![s] = 0] ELSE R.deadRep,
                                !.freeSlots = [R.freeSlots EXCEPT ![R.numFree] = s],
                                !.numFree = R.numFree + 1,
                                !.counters = [R.counters EXCEPT ![C_CLOSED] = @ + 1]]
@@ -774,6 +797,19 @@ WordMatchesSlot ==
     Idle =>
     \A s \in Slots :
         word[s] = <<gen[s], IF state[s] = OPEN THEN fd[s] + 1 ELSE 0>>
+
+\* between main's calls every open socket is watched by the receive poller,
+\* or reported dead at its own generation (the next sweep retires it): a
+\* socket is never left open and unread
+OpenWatched ==
+    Idle =>
+    \A s \in Slots :
+        state[s] = OPEN =>
+            \/ <<fd[s], s, gen[s], addr[s]>> \in poller
+            \/ deadRep[s] = gen[s] + 1
+
+\* between main's calls a free slot holds no dead report
+FreeHasNoReport == Idle => \A s \in Slots : state[s] = FREE => deadRep[s] = 0
 
 \* a socket in quarantine is closed and its slot freed
 RetiredClosed == \A s \in Slots : state[s] = RETIRED ~> state[s] = FREE

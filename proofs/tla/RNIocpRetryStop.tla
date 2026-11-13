@@ -10,9 +10,16 @@
 (*                                                                         *)
 (* A receive operation is posted, completes on whichever worker dequeues   *)
 (* it, and is reposted by that worker.  rocketnet_iocp_post_receive        *)
-(* retires the operation once stopping is stored; otherwise it increments  *)
-(* the generation, marks the operation posted and counts it pending, then  *)
-(* issues the receive.  A refused post has no completion (a queued         *)
+(* first counts the post pending (PostCount), then tests stopping          *)
+(* (PostStart): once stopping is stored it takes the count back and        *)
+(* retires the operation; otherwise it increments the generation and      *)
+(* marks the operation posted, then issues the receive.  The count, the    *)
+(* test, stop's store and the exit's loads are seq_cst in the code, one    *)
+(* total order, which this interleaving abstracts (Exit reads stopping     *)
+(* and pending in one step; the code reads pending last, and stopping      *)
+(* never returns to false): a post that tests stopping false was counted   *)
+(* before stop was stored, so no worker exits while it is admitted         *)
+(* (AdmittedPostHoldsExit).  A refused post has no completion (a queued    *)
 (* datagram longer than the buffer is not one: Windows 11 reports it       *)
 (* WSA_IO_PENDING and completes it once, PostAccepted; tests/test_iocp.cpp *)
 (* test_windows_oversize_receive_at_post measures it): pending drops,      *)
@@ -41,8 +48,10 @@
 (* test); Exit here is stopping and pending = 0 alone, so it over-         *)
 (* approximates exit.  The TX-exit dependency is RNBufferHandoff's         *)
 (* (WorkerExit), not StopCompletes'.  post_receive's own generation guard  *)
-(* (generation == UINT64_MAX retires the operation) is not modelled: one   *)
-(* operation cannot be posted 2^64 times, so it is unreachable.            *)
+(* (generation == UINT64_MAX takes the count back and retires the         *)
+(* operation, as a stop does) is not modelled: one operation cannot be     *)
+(* posted 2^64 times, so it is unreachable; the unit suite drives it       *)
+(* (test_iocp_refused_receive_posts_leave_nothing_pending).                *)
 (*                                                                         *)
 (* Positions are uint64_t in the code and wrap at PosMod here; the passing *)
 (* controls take PosMod beyond every position the exploration reaches.     *)
@@ -61,7 +70,13 @@
 (* rocketnet_iocp_post_receive did before the retry: one worker holds a    *)
 (* claimed cell, the other is refused a repost and pushes onto that cell,  *)
 (* and a receive is gone for the life of the server with no stop           *)
-(* (RetiredOnlyByStop).                                                    *)
+(* (RetiredOnlyByStop).  CheckBeforeCount = TRUE is the post's order       *)
+(* before the count came first: stopping tested, then the post counted.    *)
+(* A worker tests stopping false and is admitted, stop is stored, and the  *)
+(* other worker sees nothing pending and exits before the admitted post is *)
+(* counted (AdmittedPostHoldsExit).  With an endpoint per worker that post *)
+(* lands on the exited worker's port and is never drained                  *)
+(* (RNIocpEndpoints, CountFirst).                                          *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -74,11 +89,12 @@ CONSTANTS
     MaxComplete,      \* exploration bound: completions while running
     StopSlack,        \* 0 is the code's stop test; 1 is the off-by-one
     ClaimBeforeStop,  \* defect: the stop test after the claim
-    RefuseRetires     \* defect: a refused push retires the operation
+    RefuseRetires,    \* defect: a refused push retires the operation
+    CheckBeforeCount  \* defect: the post tests stopping before it counts
 
 ASSUME NumOps >= 1 /\ Cap >= NumOps /\ PosMod >= 2 * Cap /\ PosMod % Cap = 0
 ASSUME MaxFail >= 1 /\ MaxComplete >= 0 /\ StopSlack \in 0 .. 1 /\ ClaimBeforeStop \in BOOLEAN
-ASSUME RefuseRetires \in BOOLEAN
+ASSUME RefuseRetires \in BOOLEAN /\ CheckBeforeCount \in BOOLEAN
 
 Ops == 0 .. NumOps - 1
 Cells == 0 .. Cap - 1
@@ -98,7 +114,7 @@ VARIABLES
     stopping,   \* stop stored
     seq, ref,   \* retry_receives cells
     enqueue, dequeue,
-    wpc,        \* each worker: "loop", "post", "issue", "push", "publish", "pass", "take", "exited"
+    wpc,        \* each worker: "loop", "post", "check", "count", "issue", "push", "publish", "pass", "take", "exited"
     cur,        \* the operation a worker is reposting, or NONE
     ret,        \* where a worker's post returns: "loop" or "pass"
     pos,        \* a worker's claimed queue position (push or pop)
@@ -129,7 +145,10 @@ Init ==
     /\ absStop = [ w \in Workers |-> 0 ]
     /\ fails = 0 /\ completes = 0
 
-Issuing(o) == \E w \in Workers : wpc[w] = "issue" /\ cur[w] = o
+\* a post admitted past its stop test and not yet issued: CheckBeforeCount's
+\* "count" (posted, not yet counted) and "issue"
+Admitted == { "count", "issue" }
+Issuing(o) == \E w \in Workers : wpc[w] \in Admitted /\ cur[w] = o
 
 (* a worker dequeues one posted receive's completion (a datagram while    *)
 (* running, the cancellation once stopping) and reposts the operation     *)
@@ -146,21 +165,31 @@ Complete(w, o) ==
     /\ UNCHANGED << gen, stopping, seq, ref, enqueue, dequeue, pos, stop, absEnq, absDeq,
                     absPos, absStop, fails >>
 
-(* rocketnet_iocp_post_receive up to the issue: retire once stopping is  *)
-(* stored, else a new generation, posted and pending                      *)
+(* rocketnet_iocp_post_receive's pending.fetch_add: first in the code,   *)
+(* after the stop test under CheckBeforeCount                             *)
+PostCount(w) ==
+    /\ wpc[w] = IF CheckBeforeCount THEN "count" ELSE "post"
+    /\ pending' = pending + 1
+    /\ wpc' = [ wpc EXCEPT ![w] = IF CheckBeforeCount THEN "issue" ELSE "check" ]
+    /\ UNCHANGED << state, gen, stopping, seq, ref, enqueue, dequeue, cur, ret, pos, stop,
+                    absEnq, absDeq, absPos, absStop, fails, completes >>
+
+(* rocketnet_iocp_post_receive's stop test: once stopping is stored the  *)
+(* count is taken back and the operation retired, else a new generation   *)
+(* and posted                                                             *)
 PostStart(w) ==
-    /\ wpc[w] = "post"
+    /\ wpc[w] = IF CheckBeforeCount THEN "post" ELSE "check"
     /\ LET o == cur[w] IN
          IF stopping
          THEN /\ state' = [ state EXCEPT ![o] = "retired" ]
               /\ wpc' = [ wpc EXCEPT ![w] = ret[w] ]
               /\ cur' = [ cur EXCEPT ![w] = NONE ]
-              /\ UNCHANGED << gen, pending >>
+              /\ pending' = IF CheckBeforeCount THEN pending ELSE pending - 1
+              /\ UNCHANGED gen
          ELSE /\ gen' = [ gen EXCEPT ![o] = @ + 1 ]
               /\ state' = [ state EXCEPT ![o] = "posted" ]
-              /\ pending' = pending + 1
-              /\ wpc' = [ wpc EXCEPT ![w] = "issue" ]
-              /\ UNCHANGED cur
+              /\ wpc' = [ wpc EXCEPT ![w] = IF CheckBeforeCount THEN "count" ELSE "issue" ]
+              /\ UNCHANGED << cur, pending >>
     /\ UNCHANGED << stopping, seq, ref, enqueue, dequeue, ret, pos, stop, absEnq, absDeq,
                     absPos, absStop, fails, completes >>
 
@@ -285,7 +314,7 @@ Done ==
 Next ==
     \/ \E w \in Workers :
           \/ \E o \in Ops : Complete(w, o)
-          \/ PostStart(w) \/ PostAccepted(w) \/ PostRefused(w)
+          \/ PostCount(w) \/ PostStart(w) \/ PostAccepted(w) \/ PostRefused(w)
           \/ PushClaim(w) \/ PushPublish(w)
           \/ PassStart(w) \/ PassClaim(w) \/ PassTake(w)
           \/ Exit(w)
@@ -297,7 +326,7 @@ Spec == Init /\ [][Next]_vars
 (* workers keep looping, cancelled receives complete, posts finish *)
 Fairness ==
     \A w \in Workers :
-        /\ WF_vars(PostStart(w)) /\ WF_vars(PostAccepted(w))
+        /\ WF_vars(PostCount(w)) /\ WF_vars(PostStart(w)) /\ WF_vars(PostAccepted(w))
         /\ WF_vars(PushClaim(w)) /\ WF_vars(PushPublish(w))
         /\ WF_vars(PassClaim(w)) /\ WF_vars(PassTake(w))
         /\ SF_vars(PassStart(w)) /\ SF_vars(Exit(w))
@@ -311,7 +340,8 @@ TypeOK ==
     /\ state \in [ Ops -> { "posted", "idle", "retry", "retired" } ]
     /\ pending \in 0 .. NumOps
     /\ enqueue \in 0 .. PosMod - 1 /\ dequeue \in 0 .. PosMod - 1
-    /\ wpc \in [ Workers -> { "loop", "post", "issue", "push", "publish", "pass", "take", "exited" } ]
+    /\ wpc \in [ Workers -> { "loop", "post", "check", "count", "issue", "push", "publish", "pass", "take",
+                              "exited" } ]
 
 (* a pass never claims a position at or beyond the stop it captured *)
 PassBounded ==
@@ -322,15 +352,25 @@ PassBounded ==
 (* its cell                                                               *)
 RetryOwned ==
     \A o \in Ops : state[o] = "retry" =>
-        \/ \E w \in Workers : cur[w] = o /\ wpc[w] \in { "post", "push", "publish" }
+        \/ \E w \in Workers : cur[w] = o /\ wpc[w] \in { "post", "check", "push", "publish" }
         \/ \E k \in absDeq .. absEnq - 1 :
                /\ ref[Index(Wrap(k))] = [ op |-> o, g |-> gen[o] ]
                /\ seq[Index(Wrap(k))] = Wrap(k + 1)
         \/ \E w \in Workers : wpc[w] = "take" /\ ref[Index(pos[w])] = [ op |-> o, g |-> gen[o] ]
 
-(* pending counts exactly the posted receives *)
+(* pending counts exactly the posted receives, with a post counted and   *)
+(* not yet past its stop test ("check"), less a post past its stop test  *)
+(* and not yet counted (CheckBeforeCount's "count")                       *)
 PendingIsPosted ==
     pending = Cardinality({ o \in Ops : state[o] = "posted" })
+              + Cardinality({ w \in Workers : wpc[w] = "check" })
+              - Cardinality({ w \in Workers : wpc[w] = "count" })
+
+(* no worker exits while a post is admitted past its stop test and not   *)
+(* yet issued: that post is counted pending before any exit can see       *)
+(* nothing pending, and its completion is drained before the last exit    *)
+AdmittedPostHoldsExit ==
+    ( \E w \in Workers : wpc[w] = "exited" ) => \A v \in Workers : wpc[v] \notin Admitted
 
 (* Single-state occupancy is bounded. This does not constrain queue_count's *)
 (* separate atomic reads: their sampled difference can need clamping.  *)

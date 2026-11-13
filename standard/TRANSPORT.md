@@ -4002,7 +4002,7 @@ frames. These rows alias, one event moving each named row once:
 | Shared row | Transport rows counting the same events |
 |---|---|
 | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
-| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` |
+| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` (which also counts the kernel's drops at a full gso queue socket, SO_RXQ_OVFL, which no shared row counts, as `URING_RECEIVE_DROPPED_SOCKET` does for io_uring) |
 | `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
@@ -4023,7 +4023,10 @@ so they alias no shared row.
 
 To count distinct events, sum the shared rows and leave out the aliasing
 transport rows and `IOCP_RECEIVE_DROPPED`; every other transport row aliases
-no shared row.
+no shared row. That sum leaves out the kernel's drops at the gso queue
+sockets, which only `GSO_RECEIVE_DROPPED_OVERFLOW` counts, together with the
+drops its shared row also counts, so this revision gives no exact count of
+them alone.
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte

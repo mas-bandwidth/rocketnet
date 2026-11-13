@@ -668,8 +668,8 @@ struct rocketnet_client_transport_stats_t
     float packet_loss;                              // percent
     int packets_sent_per_second;
     int packets_received_per_second;
-    int bandwidth_sent_kbps;
-    int bandwidth_received_kbps;
+    float bandwidth_sent_kbps;
+    float bandwidth_received_kbps;
     uint64_t packets_sent;                          // wire datagrams sent on this connection
     uint64_t packets_received;                      // wire datagrams received on this connection
     uint64_t bytes_sent;                            // wire bytes sent on this connection

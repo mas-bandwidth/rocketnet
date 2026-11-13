@@ -603,8 +603,9 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
 }
 
 // the family race's losing family, on the reading thread (proofs/tla/RNClientRace.tla
-// ReaderStep): the wake's handle, then the socket's; the memory stays for
-// destroy on the caller's thread
+// ReaderStep), and at the I/O thread's exit the transport, or every race
+// family still open (ReaderExit): the wake's handle, then the socket's; the
+// memory stays for destroy on the caller's thread
 
 static void rocketnet_client_gso_close( void * transport )
 {

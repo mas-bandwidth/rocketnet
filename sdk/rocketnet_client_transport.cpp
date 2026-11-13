@@ -224,8 +224,8 @@ struct rocketnet_client_transport_counters_t
 {
     int packets_sent_per_second;
     int packets_received_per_second;
-    int bandwidth_sent_kbps;
-    int bandwidth_received_kbps;
+    float bandwidth_sent_kbps;
+    float bandwidth_received_kbps;
     uint64_t packets_sent;
     uint64_t packets_received;
     uint64_t bytes_sent;
@@ -624,7 +624,7 @@ struct rocketnet_client_race_t
     rocketnet_client_transport_io_t family[2];              // [0] the token's selected family, [1] the other
     rocketnet_address_t server_address[2];                  // the server of each family, from the token
     std::atomic<int> committed;                             // -1 while both are in flight, else the family kept
-    bool closed;                                            // the losing family's socket is closed (the reading thread)
+    bool closed;                                            // the losing family's socket is closed, or every family's at the exit (the reading thread)
     bool send_pending;                                     // I/O thread only: one partially consumed fanout head
     const uint8_t * send_pending_data;
     int send_pending_bytes;
@@ -674,6 +674,31 @@ static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
     }
 
     return committed;
+}
+
+// proofs/tla/RNClientRace.tla ReaderExit; the I/O thread at its exit, after its
+// last send and its discard (rocketnet_client_io_discard_at_stop): the losing
+// family closes as at any step that sees the commit, then every family still
+// open closes, both while the race is uncommitted, so a datagram that arrives
+// later meets a closed port and none waits unread until destroy frees it
+// (standard/TRANSPORT.md t13.3). The caller sends and commits nothing after
+// stop, so no family closed here is used again.
+
+static void rocketnet_client_race_close( void * instance )
+{
+    rocketnet_client_race_t * race = (rocketnet_client_race_t *) instance;
+    const int committed = rocketnet_client_race_kept( race );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_client_transport_io_t * family = &race->family[i];
+        if ( ( committed < 0 || committed == i ) && family->operations->close )
+        {
+            family->operations->close( family->instance );
+        }
+    }
+
+    race->closed = true;
 }
 
 // the caller's thread, after the reading thread is joined (proofs/tla/RNClientRace.tla
@@ -2505,7 +2530,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
             race->operations.wake = inner->wake ? rocketnet_client_race_wake : NULL;
             race->operations.send_failures = inner->send_failures ? rocketnet_client_race_send_failures : NULL;
             race->operations.connect = NULL;    // both sockets are connected above
-            race->operations.close = NULL;      // the race closes its losing family itself
+            race->operations.close = inner->close ? rocketnet_client_race_close : NULL;
             race->family[0] = client_transport->io;
             race->family[1] = race_io;
             race->server_address[0] = client_transport->protocol.server_address;
@@ -3334,8 +3359,8 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
         client_transport->client_stats.packets_sent_per_second = (int) total_packets_sent;
         client_transport->client_stats.packets_received_per_second = (int) total_packets_received;
 
-        client_transport->client_stats.bandwidth_sent_kbps = (int) ( ( (double) total_bytes_sent * 8.0 ) / 1000.0 );
-        client_transport->client_stats.bandwidth_received_kbps = (int) ( ( (double) total_bytes_received * 8.0 ) / 1000.0 );
+        client_transport->client_stats.bandwidth_sent_kbps = (float) ( ( (double) total_bytes_sent * 8.0 ) / 1000.0 );
+        client_transport->client_stats.bandwidth_received_kbps = (float) ( ( (double) total_bytes_received * 8.0 ) / 1000.0 );
     }
 
     // setup next stats frame
@@ -3604,7 +3629,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// proofs/tla/SessionAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring or the lease refuses the frame.
+// proofs/tla/SessionAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the lease refuses the frame; the ring refuses before the sequence is taken.
 // The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
@@ -3644,14 +3669,18 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         return NULL;
     }
 
-    uint64_t sequence;
-    if ( !rocketnet_client_protocol_start_payload( &client_transport->protocol, &sequence ) )
+    // a start outside the connection takes no ring slot (start_payload checks
+    // the same state again below)
+
+    if ( client_transport->protocol.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         return NULL;
     }
 
     // a real wire frame, written in place, sealed in place, zero copies, in
-    // the ring send_fill names (RNClientIo Write)
+    // the ring send_fill names (RNClientIo Write). The slot is claimed before
+    // the sequence is taken, so a start the full ring refuses spends no
+    // sequence (proofs/tla/SessionAcks.tla BurnOne)
 
     struct rocketnet_client_payload_ring_t * ring = rocketnet_client_fill_ring( client_transport );
 
@@ -3665,6 +3694,14 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     }
 
     ring->info[slot].wire_bytes = 0;
+
+    // a slot whose start is refused stays empty, as an aborted one does
+
+    uint64_t sequence;
+    if ( !rocketnet_client_protocol_start_payload( &client_transport->protocol, &sequence ) )
+    {
+        return NULL;
+    }
 
     uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
