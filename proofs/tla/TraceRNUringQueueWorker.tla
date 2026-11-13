@@ -15,7 +15,7 @@
 (* mechanism; this is TraceRNUringQueueSend with this model's VarsRec.     *)
 (***************************************************************************)
 (***************************************************************************)
-EXTENDS RNUringQueueWorker
+EXTENDS RNUringQueueWorker, Sequences
 
 CONSTANT TraceLog
 

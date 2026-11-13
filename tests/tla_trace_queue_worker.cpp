@@ -31,9 +31,9 @@
 //
 // It writes MCTraceQueueWorkerSeed<seed>, or MCTraceQueueWorkerPlantSeed<seed>
 // from tla_trace_plant, whose code is the worker with
-// ROCKETNET_URING_QUEUE_WORKER_PLANT (exit once the stop is seen and nothing
-// is left to do, whatever is still in the kernel: the witness "exit before
-// drain"). The walk prints PLANT-FIRED n, the exits with anything of the
+// ROCKETNET_URING_QUEUE_WORKER_PLANT (exit at the first step after the stop
+// is seen, whatever is still in the kernel: ExitRule "early", the witness
+// "exit before drain"). The walk prints PLANT-FIRED n, the exits with anything of the
 // worker's still in the kernel or waiting: the planted code's own act, so the
 // clean code's count is 0.
 

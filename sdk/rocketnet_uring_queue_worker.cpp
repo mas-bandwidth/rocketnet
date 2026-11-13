@@ -277,13 +277,8 @@ static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_urin
 
 static bool rocketnet_uring_queue_worker_drained( const struct rocketnet_uring_queue_worker_t * worker )
 {
-#if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
-    (void) worker;
-    return true;                                    // the plant: ExitRule "early", the witness "exit before drain"
-#else  // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
     return worker->in_kernel == 0 && !worker->wake_armed && !worker->poll_armed &&
            !rocketnet_uring_queue_worker_receive_armed( worker ) && rocketnet_uring_queue_send_held( worker->config.send, worker->config.queue_index ) < 0;
-#endif // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
 }
 
 // RNUringQueueWorker.tla Submit, Split, Drop: the next run of the held bank. A
@@ -347,6 +342,16 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
         }
         return ROCKETNET_URING_WORKER_STEP_OBSERVE;
     }
+
+#if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
+    // the trace check's plant: ExitRule "early", exit once the stop is seen,
+    // whatever is still in the kernel (the witness "exit before drain");
+    // only tests/tla_trace_queue_worker.cpp in the plant build defines it
+    if ( worker->seen )
+    {
+        return ROCKETNET_URING_WORKER_STEP_EXIT;
+    }
+#endif // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
 
     // RNUringQueueWorker.tla ReapOk, ReapAgain, ReapRefused, ReapPoll,
     // ReapRecvEnd, ReapWake: the oldest ready completion

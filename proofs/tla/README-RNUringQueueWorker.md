@@ -53,8 +53,8 @@ ends on its own, a poll that fires, a wake read.
 - After the recorded steps the walk stops main and drives the worker and the kernel,
   unrecorded, until the worker exits. A worker that is stuck with nothing of the
   kernel's left to come, or that runs past the step bound, fails the walk.
-- The plant (`ROCKETNET_URING_QUEUE_WORKER_PLANT`) makes the worker's drained test
-  always true: the code's form of ExitRule "early". The handoff's own plant acts only
+- The plant (`ROCKETNET_URING_QUEUE_WORKER_PLANT`) exits at the first step after the stop
+  is seen: the code's form of ExitRule "early". The handoff's own plant acts only
   in the queue-send walk, so it cannot stand in for this one.
 - Two parts of the code are not traced:
   - `rocketnet_uring_queue_worker_pass` and `run`: the starved-continue rule, the CQE
