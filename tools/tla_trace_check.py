@@ -577,20 +577,38 @@ def node_of(kind, children, code, toks):
     return (kind, children)
 
 
-def occurrences(node, wrap, found):
-    """{action: [the formula of each disjunct of Next that takes it]}"""
+def binder_names(text):
+    """the variables an \\E binds: `w, s \\in BOOLEAN, k \\in Kinds` binds w, s and k"""
+    names, depth, fresh = [], 0, True
+    for m in TOKEN.finditer(text):
+        t = m.group(0)
+        if fresh and depth == 0 and re.fullmatch(NAME, t):
+            names.append(t)
+        fresh = depth == 0 and t == ","
+        depth += 1 if t in OPENS else -1 if t in CLOSES else 0
+    return set(names)
+
+
+def occurrences(node, wrap, found, bound=frozenset()):
+    """{action: [the formula of each disjunct of Next that takes it]}: Next's binders and the guards beside the
+    action, the record's args as the action's arguments, as many as it takes, and each argument Next passes as
+    a bound variable equal to that variable; an argument Next computes is left to the action's own text"""
     if node[0] == "act":
-        call = node[1] + (f"({', '.join(node[2])})" if node[2] else "")
-        found.setdefault(node[1], []).append(wrap(f"{BIND_ARGS} = <<{', '.join(node[2])}>> /\\ {call}"))
+        n = len(node[2])
+        args = [f"{BIND_ARGS}[{i}]" for i in range(1, n + 1)]
+        tie = [f"{BIND_ARGS}[{i}] = {a}" for i, a in enumerate(node[2], 1) if a in bound]
+        call = node[1] + (f"({', '.join(args)})" if n else "")
+        found.setdefault(node[1], []).append(wrap(" /\\ ".join([f"Len({BIND_ARGS}) = {n}"] + tie + [call])))
     elif node[0] == "or":
         for n in node[1]:
-            occurrences(n, wrap, found)
+            occurrences(n, wrap, found, bound)
     elif node[0] == "and":
         k = next(i for i, n in enumerate(node[1]) if has_action(n))
         texts = [f"({n[1]})" for n in node[1]]
-        occurrences(node[1][k], lambda inner: wrap(" /\\ ".join(texts[:k] + [f"({inner})"] + texts[k + 1:])), found)
+        occurrences(node[1][k], lambda inner: wrap(" /\\ ".join(texts[:k] + [f"({inner})"] + texts[k + 1:])), found,
+                    bound)
     elif node[0] == "exists":
-        occurrences(node[2], lambda inner: wrap(f"\\E {node[1]} : ({inner})"), found)
+        occurrences(node[2], lambda inner: wrap(f"\\E {node[1]} : ({inner})"), found, bound | binder_names(node[1]))
     return found
 
 
