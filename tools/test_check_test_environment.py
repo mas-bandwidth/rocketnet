@@ -99,6 +99,74 @@ REGISTER_UNIT_TEST( test_unguarded_after_literals );
         self.assertIn("missing from output: test_unguarded", str(raised.exception))
 
 
+class TableNameTests(unittest.TestCase):
+    def _names(self, source):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "table.cpp"
+            path.write_text(source)
+            return checker._table_names(path)
+
+    def test_null_predicate_is_every_host(self):
+        all_names, always = self._names("""\
+static const entry_t table[] = {
+    { "test_two_fields", fn_a },
+    { "test_null", fn_b, NULL },
+    { "test_nullptr", fn_c, nullptr },
+    { "test_zero", fn_d, 0 },
+    { "test_predicate", fn_e, runs_here_linux },
+#if defined(__linux__)
+    { "test_guarded", fn_f, NULL },
+#endif
+};
+""")
+        self.assertEqual(all_names, {"test_two_fields", "test_null", "test_nullptr", "test_zero",
+                                     "test_predicate", "test_guarded"})
+        self.assertEqual(always, {"test_two_fields", "test_null", "test_nullptr", "test_zero"})
+
+
+class DuplicateRegistrationTests(unittest.TestCase):
+    # registered_unit_names refuses a name registered twice: in a table and a
+    # unit file, or in two unit files under guards that can meet in one binary
+    def _registered(self, table, units):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "sdk").mkdir()
+            (root / "tests").mkdir()
+            (root / "sdk" / "rocketnet_tests.cpp").write_text(table)
+            (root / "tests" / "test_channels.cpp").write_text("")
+            for name, text in units.items():
+                (root / "tests" / name).write_text(text)
+            return checker.registered_unit_names(root=root)
+
+    TABLE = '    { "test_in_table", rocketnet_test_in_table },\n'
+
+    def test_distinct_names_pass(self):
+        all_names, always = self._registered(self.TABLE, {
+            "test_unit_a.cpp": "REGISTER_UNIT_TEST( test_a );\n",
+            "test_unit_b.cpp": "#if defined(__linux__)\nREGISTER_UNIT_TEST( test_b );\n#endif\n",
+        })
+        self.assertEqual(all_names, {"test_in_table", "test_a", "test_b"})
+        self.assertEqual(always, {"test_in_table", "test_a"})
+
+    def test_a_table_name_registered_again_is_refused(self):
+        with self.assertRaisesRegex(SystemExit, r"registered more than once: test_in_table \(registry table, test_unit_a\.cpp\)"):
+            self._registered(self.TABLE, {"test_unit_a.cpp": "REGISTER_UNIT_TEST( test_in_table );\n"})
+
+    def test_a_repeat_under_compatible_guards_is_refused(self):
+        with self.assertRaisesRegex(SystemExit, r"registered more than once: test_twice \(test_unit_a\.cpp, test_unit_b\.cpp\)"):
+            self._registered(self.TABLE, {
+                "test_unit_a.cpp": "#if ROCKETNET_DEV\nREGISTER_UNIT_TEST( test_twice );\n#endif\n",
+                "test_unit_b.cpp": "#if defined(__linux__)\nREGISTER_UNIT_TEST( test_twice );\n#endif\n",
+            })
+
+    def test_exclusive_guard_twins_pass(self):
+        all_names, _ = self._registered(self.TABLE, {
+            "test_unit_a.cpp": "#if ROCKETNET_DEV\nREGISTER_UNIT_TEST( test_twin );\n#endif\n",
+            "test_unit_b.cpp": "#if !ROCKETNET_DEV\nREGISTER_UNIT_TEST( test_twin );\n#endif\n",
+        })
+        self.assertIn("test_twin", all_names)
+
+
 class ShapeTests(unittest.TestCase):
     def test_names_then_passed_line(self):
         self.assertEqual(checker.check_shape(["test_a", "test_b", "", checker.PASSED_LINE, ""], "suite"),

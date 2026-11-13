@@ -23,9 +23,11 @@ from nightly_timeout import execution_timeout
 REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# Registry rows name every functional test, including harness and client_io
-# cases; a third field is a runs_here predicate (tests/functional/rocketnet_functional_tests.cpp).
-TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,\s*(?:"[^"]*"\s*,\s*\w+|\w+(\s*,\s*\w+)?)\s*\}')
+# A registry table row: { "name", function } or { "name", function, predicate },
+# where the predicate is a runs_here function and NULL (or nullptr, or 0) means
+# every host, the same as no predicate.
+TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,\s*(?:"[^"]*"\s*,\s*\w+|\w+(?:\s*,\s*(\w+))?)\s*\}')
+NO_PREDICATE = (None, "NULL", "nullptr", "0")
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_%]+)(?:\\n)?"')
 TEST_NAME_RE = re.compile(r"test_[a-z0-9]+(?:_[a-z0-9]+)*")
@@ -53,7 +55,7 @@ def _table_names(path):
         m = TABLE_ENTRY_RE.match(line)
         if m:
             all_names.add(m.group(1))
-            if depth == 0 and not m.group(2):
+            if depth == 0 and m.group(2) in NO_PREDICATE:
                 always.add(m.group(1))
     return all_names, always
 
@@ -213,11 +215,14 @@ def production_absent():
     return absent
 
 
-def registered_unit_names(production=False):
+def registered_unit_names(production=False, root=None):
+    # root: the tree whose tables and tests/test_unit_*.cpp are read (default
+    # this repository; the self-test passes a fixture tree)
+    root = REPO if root is None else Path(root)
     all_names = set()
     always = set()
     for rel in (("sdk", "rocketnet_tests.cpp"), ("tests", "test_channels.cpp")):
-        a, p = _table_names(REPO.joinpath(*rel))
+        a, p = _table_names(root.joinpath(*rel))
         all_names |= a
         if not production:
             always |= p
@@ -232,7 +237,7 @@ def registered_unit_names(production=False):
     table_names = set(all_names)
     seen = {}
     duplicates = []
-    for path in sorted(REPO.glob("tests/test_unit_*.cpp")):
+    for path in sorted(root.glob("tests/test_unit_*.cpp")):
         for name, unconditional in _register_names(path):
             all_names.add(name)
             if unconditional and path.name not in absent:
@@ -247,10 +252,6 @@ def registered_unit_names(production=False):
     if duplicates:
         sys.exit("unit test names registered more than once: " + "; ".join(duplicates))
     return all_names, always
-
-
-def registered_functional_names():
-    return _table_names(REPO / "tests" / "functional" / "rocketnet_functional_tests.cpp")
 
 
 # ROCKETNET_FUNCTIONAL_REGISTRY names another registry source in place of the
