@@ -2607,6 +2607,11 @@ static void test_rio_transport_stop_sends_handed_burst()
 // returns at once; the I/O worker retries the commit on each stop pass and
 // closes the socket and drains only after a commit succeeds, so stopped stays
 // false until then and the registered storage is never retired early.
+//
+// The burst is held handed until after the stop, so no worker pass posts or
+// commits it first: every one of the four refused commits is a stop pass's
+// (the post's own commit, then the close's retries), and the burst still
+// reaches the client whole.
 
 static void test_rio_stop_retries_refused_deferred_commit()
 {
@@ -2617,18 +2622,26 @@ static void test_rio_stop_retries_refused_deferred_commit()
     rocketnet_address_t client_address;
     rocketnet_platform_socket_t * client = fault_client( &client_address );
 
-    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 50, WSAENOBUFS );
-    rio_stage( rio, &client_address, ++fault_round & 0xFF, 10 );
-    rocketnet_server_rio_send_packets( rio );
-    wait_until( "RIO deferred sends posted", [&]()
+    rocketnet_server_rio_test_hold_send( rio, true );
+    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 4, WSAENOBUFS );
+    const int round = ++fault_round & 0xFF;
+    rio_stage( rio, &client_address, round, 10 );
+    wait_until( "RIO burst handed", [&]()
                 {
         rocketnet_server_rio_send_packets(rio);
-        return rocketnet_server_rio_test_faults_left(rio, ROCKETNET_RIO_TEST_FAULT_COMMIT) < 50; } );
+        return rocketnet_server_rio_test_handed_phases(rio) == 1; } );
+    CHECK( rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) == 4 );
+
     rocketnet_server_rio_stop( rio );
+    CHECK( !rocketnet_server_rio_stopped( rio ) );
+    CHECK( rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) == 4 );
+
+    rocketnet_server_rio_test_hold_send( rio, false );
     wait_until( "RIO stopped after the commit", [&]()
                 { return rocketnet_server_rio_stopped( rio ); } );
     CHECK( rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) == 0 );
     CHECK( rocketnet_server_rio_pending( rio ) == 0 );
+    CHECK( fault_client_receive( client, round, 10 ) == 10 );
 
     rn_native_backend_stop_and_destroy( rio, rocketnet_server_rio_stop, rocketnet_server_rio_stopped, rocketnet_server_rio_destroy );
     rocketnet_platform_socket_destroy( client );
@@ -2914,6 +2927,40 @@ static void send_pin_log( void *, rocketnet_log_level_t, const char * message, s
     }
 }
 
+// A pin the host can honour: a processor group that exists and one logical
+// processor inside it, whatever the placement read
+static void iocp_check_pin_target( uint64_t mask, int group )
+{
+    CHECK( group >= 0 && group < (int) GetActiveProcessorGroupCount() );
+    CHECK( mask != 0 && ( mask & ( mask - 1 ) ) == 0 );
+    int bit = 0;
+    while ( ( mask >> bit ) != 1 )
+    {
+        ++bit;
+    }
+    CHECK( (DWORD) bit < GetActiveProcessorCount( (WORD) group ) );
+}
+
+// Every pin is owed only when the process may run on every processor of the
+// machine (no job or start affinity narrows it) and the threads have a
+// logical processor each; otherwise a pin may be refused, or threads past
+// the last processor share one, and the case says so by name and checks
+// only that each pin it does report is one the host can honour.
+static bool iocp_every_pin_owed( int threads, const char * what )
+{
+    DWORD_PTR process_mask = 0;
+    DWORD_PTR system_mask = 0;
+    const bool whole = GetProcessAffinityMask( GetCurrentProcess(), &process_mask, &system_mask ) && process_mask != 0 && process_mask == system_mask;
+    const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
+    if ( whole && logical >= (DWORD) threads )
+    {
+        return true;
+    }
+    printf( "test_iocp_send_threads_pinned_and_refusal: %s pinned check skipped, process affinity 0x%llx of 0x%llx, %lu logical processors, %d needed\n", what,
+            (unsigned long long) process_mask, (unsigned long long) system_mask, (unsigned long) logical, threads );
+    return false;
+}
+
 static void test_iocp_send_threads_pinned_and_refusal()
 {
     const int lanes = rocketnet_server_iocp_send_lanes( ROCKETNET_DEFAULT_MAX_CLIENTS );
@@ -2926,10 +2973,11 @@ static void test_iocp_send_threads_pinned_and_refusal()
     // processor of its own
     {
         rocketnet_address_t bind = address( "127.0.0.1:0" );
+        const bool owed = iocp_every_pin_owed( 2 + expected, "two workers" );
         rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
         CHECK( transport );
         CHECK( rocketnet_server_iocp_send_thread_count( transport ) == expected );
-        CHECK( rocketnet_server_iocp_send_pin_refusals( transport ) == 0 );
+        CHECK( !owed || rocketnet_server_iocp_send_pin_refusals( transport ) == 0 );
         uint64_t seen[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
         int groups[ROCKETNET_IOCP_MAX_SEND_THREADS + 2] = {};
         int num_seen = 0;
@@ -2938,18 +2986,28 @@ static void test_iocp_send_threads_pinned_and_refusal()
             uint64_t mask = 0;
             int group = -1;
             unsigned long error = 0;
-            CHECK( rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
-            seen[num_seen] = mask;
-            groups[num_seen++] = group;
+            const int placement = rocketnet_server_iocp_worker_placement( transport, w, &mask, &group, &error );
+            CHECK( placement == ROCKETNET_IOCP_PLACEMENT_PINNED || ( !owed && placement == ROCKETNET_IOCP_PLACEMENT_REFUSED ) );
+            if ( placement == ROCKETNET_IOCP_PLACEMENT_PINNED )
+            {
+                iocp_check_pin_target( mask, group );
+                seen[num_seen] = mask;
+                groups[num_seen++] = group;
+            }
         }
         for ( int t = 0; t < expected; ++t )
         {
             uint64_t mask = 0;
             int group = -1;
             unsigned long error = 7;
-            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, &error ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
-            CHECK( mask != 0 && ( mask & ( mask - 1 ) ) == 0 && group >= 0 ); // one logical processor
-            for ( int i = 0; i < num_seen; ++i )
+            const int placement = rocketnet_server_iocp_send_placement( transport, t, &mask, &group, &error );
+            CHECK( placement == ROCKETNET_IOCP_PLACEMENT_PINNED || ( !owed && placement == ROCKETNET_IOCP_PLACEMENT_REFUSED ) );
+            if ( placement != ROCKETNET_IOCP_PLACEMENT_PINNED )
+            {
+                continue;
+            }
+            iocp_check_pin_target( mask, group ); // one logical processor the host has
+            for ( int i = 0; owed && i < num_seen; ++i )
             {
                 CHECK( !( groups[i] == group && seen[i] == mask ) ); // its own: no worker's, no earlier send thread's
             }
@@ -2965,17 +3023,28 @@ static void test_iocp_send_threads_pinned_and_refusal()
     // one worker (not pinned): the send threads still take cores of their own, after it
     {
         rocketnet_address_t bind = address( "127.0.0.1:0" );
+        const bool owed = iocp_every_pin_owed( 1 + expected, "one worker" );
         rocketnet_server_iocp_t * transport = rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS );
         CHECK( transport );
         uint64_t first_mask = 0;
+        int first_group = -1;
         for ( int t = 0; t < expected; ++t )
         {
             uint64_t mask = 0;
             int group = -1;
-            CHECK( rocketnet_server_iocp_send_placement( transport, t, &mask, &group, NULL ) == ROCKETNET_IOCP_PLACEMENT_PINNED );
-            CHECK( mask != 0 );
-            CHECK( t == 0 || mask != first_mask );
-            first_mask = t == 0 ? mask : first_mask;
+            const int placement = rocketnet_server_iocp_send_placement( transport, t, &mask, &group, NULL );
+            CHECK( placement == ROCKETNET_IOCP_PLACEMENT_PINNED || ( !owed && placement == ROCKETNET_IOCP_PLACEMENT_REFUSED ) );
+            if ( placement != ROCKETNET_IOCP_PLACEMENT_PINNED )
+            {
+                continue;
+            }
+            iocp_check_pin_target( mask, group );
+            CHECK( !owed || t == 0 || !( mask == first_mask && group == first_group ) );
+            if ( t == 0 )
+            {
+                first_mask = mask;
+                first_group = group;
+            }
         }
         wait_stopped( transport );
         rn_native_backend_stop_and_destroy( transport, rocketnet_server_iocp_stop, rocketnet_server_iocp_stopped, rocketnet_server_iocp_destroy );
