@@ -193,7 +193,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsequencedholdpool` | The code-1 hold pool at the code's layout, two holds and two channels, the free stack and the delivered list as one array (README-RNSequencedHoldPool.md). |
 | `rnmessageviews` | The message object's receive views at the code's layout, a table of three and a batch of two (README-RNMessageViews.md). |
 | `rnchannelqueueslayout` | The channel FIFOs and the ready list at the code's links, three descriptors and two channels (README-RNChannelQueuesLayout.md). |
-| `rnorderingwrap` | The 24-bit ordering against the 32-bit read index and the sequenced hold's reservation term, W = 2, wire modulo 8, counter modulo 32, a table of three and Du = 1 (README-RNOrderingWrap.md). |
+| `rnorderingwrap` | The 24-bit ordering against the 32-bit read index and the sequenced hold's reservation term, a duplicate and an in-turn fragment that completes nothing each reserving one, W = 2, wire modulo 8, counter modulo 32, a table of three and Du = 1 (README-RNOrderingWrap.md). |
 | `rnreplaylayout` | The replay window's words at the code's layout, three words of four bits and sequences to 30 (README-RNReplayLayout.md). |
 | `rnackbuildlayout` | The ack block builder's descending word pass, three words of three bits, every window (README-RNAckBuildLayout.md). |
 | `rnackwalklayout` | The acknowledged-run walk over the sent ring's words, six slots in three words (README-RNAckWalkLayout.md). |

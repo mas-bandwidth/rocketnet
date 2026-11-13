@@ -1035,6 +1035,13 @@ struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int
 // error, a value from rocketnet_platform_socket_error. No reservation outlives
 // the call.
 int rocketnet_platform_bind_dual_stack( int handle, const struct rocketnet_address_t * address, uint16_t * bound_port );
+
+// SO_SNDBUF or SO_RCVBUF (option) of requested_bytes on handle. Darwin
+// refuses a size above its limit (kern.ipc.maxsockbuf) with ENOBUFS and
+// leaves the default: on a refusal this walks down by halves to what the
+// kernel takes, warning with what was asked and granted when warn is set.
+// False only when no size can be set.
+bool rocketnet_platform_set_socket_buffer_size( int handle, int option, int requested_bytes, const char * direction, bool warn );
 #endif // #if defined( __APPLE__ )
 
 #endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

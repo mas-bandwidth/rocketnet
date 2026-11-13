@@ -64,11 +64,21 @@ struct rocketnet_server_msgx_t;
 // one sendmsg_x carries at most this many datagrams of one client's run
 #define ROCKETNET_MSGX_SEND_BATCH                                       64
 
-// the receive worker's bank and its recvmsg_x batch
-#define ROCKETNET_MSGX_RECV_QUEUE_SIZE                                8192
+// the receive worker's bank and its recvmsg_x batch. One bank holds one
+// update's whole receive budget at the most clients a build allows
+// (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients), as
+// the io_uring transport's does, so main takes an update's budget in one
+// claim. The worker reads only into room (sdk/rocketnet_msgx_receive_fill.h):
+// with its bank full and the last one not yet taken by main it stops reading,
+// the kernel's socket buffers hold the rest, and it sleeps HOLD_SECONDS
+// before it looks again
+#define ROCKETNET_MSGX_RECV_QUEUE_SIZE                                ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 #define ROCKETNET_MSGX_RECV_BATCH                                       32
 #define ROCKETNET_MSGX_RECV_EVENTS                                     256
 #define ROCKETNET_MSGX_RECV_SOCKET_BUDGET                              256
+#define ROCKETNET_MSGX_RECV_HOLD_SECONDS                            0.0005
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MSGX_RECV_QUEUE_SIZE >= ROCKETNET_MSGX_RECV_BATCH, "a msgx receive bank holds one recvmsg_x batch" );
 
 // sockets opened in one update at most: a connect storm of 1000 clients
 // opens over 16 updates instead of one long frame. Chosen, not measured.
@@ -106,7 +116,7 @@ struct rocketnet_server_msgx_stats_t
     uint64_t staging_full;                    // starts refused: the worker's producer bank was full
     uint64_t packets_received;                // datagrams banked for main
     uint64_t receive_calls;
-    uint64_t receive_refused;                 // ECONNREFUSED on a read of a connected socket
+    uint64_t receive_refused;                 // an ICMP error (ECONNREFUSED, host or network unreachable or down) on a read of a client's or the shared socket, read past
     uint64_t sockets_opened;
     uint64_t sockets_closed;
     uint64_t sockets_open;                    // now
@@ -117,6 +127,7 @@ struct rocketnet_server_msgx_stats_t
     uint64_t sockets_retired_dead;
     uint64_t socket_cooldown;
     uint64_t sockets_in_quarantine;           // now
+    uint64_t shared_receive_buffer;           // SO_RCVBUF bytes the kernel granted the shared socket (after any halving)
 };
 
 // bind_address as rocketnet_platform_socket_create's: written back with the

@@ -102,8 +102,11 @@ TypeOK ==
     /\ dropped \in Nat
     /\ \A i \in 1 .. Len(socket) : socket[i] \in 1 .. Seg
 
-(* nothing read is dropped for want of room: a message is read only when   *)
-(* every segment it can carry has a slot                                   *)
+(* nothing the worker reads is dropped for want of room: a message is read *)
+(* only when every segment it can carry has a slot.  It is not that no     *)
+(* datagram is lost: while the worker cannot read, the kernel drops what   *)
+(* its full socket cannot hold.  Here Arrive waits for room instead; the   *)
+(* code counts those drops from SO_RXQ_OVFL in GSO_RECEIVE_DROPPED_OVERFLOW *)
 NoOverflow == dropped = 0
 
 =============================================================================

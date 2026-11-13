@@ -35,11 +35,9 @@
     It also requires every message to arrive. A client row in a DEV build also
     requires that the clients' update opened no session packet on its own
     thread (rocketnet_crypto_tally): once connected, the I/O thread opens
-    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads).
-    ROCKETNET_RECEIVE_LATENCY_REPORT
-    names a file each run appends its counts to, for a repeated run (a passing
-    case's output is not shown). To add a transport, add a row to
-    receive_latency_rows and register its case in rocketnet_functional_tests.cpp.
+    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads). To add a
+    transport, add a row to receive_latency_rows and register its case in
+    rocketnet_functional_tests.cpp.
 */
 
 #include "../../examples/shutdown.h"
@@ -329,7 +327,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         if ( row->direction == RECEIVE_LATENCY_SERVER )
         {
             // each frame: every client sends at each phase, timed from the
-            // server's update
+            // server's update. A frame the thread missed (the host stalled it
+            // past an update) is sent at once, so every message is still
+            // sent; its lateness is measured from its own send time
             int sent_frame = -1;
             while ( !stop.load() )
             {
@@ -338,18 +338,22 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                     receive_latency_pump( clients[c] );
                 }
                 const int k = server_updates.load() - 1;
-                if ( k > sent_frame && k < frames )
+                const int last = k < frames ? k : frames - 1;
+                for ( int f = sent_frame + 1; f <= last; f++ )
                 {
                     const double begun = last_update.load();
                     for ( int phase = 0; phase < RECEIVE_LATENCY_PHASES; phase++ )
                     {
-                        receive_latency_wait_until( begun + receive_latency_phase[phase] / rate );
+                        if ( f == k )
+                        {
+                            receive_latency_wait_until( begun + receive_latency_phase[phase] / rate );
+                        }
                         for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
                         {
-                            receive_latency_check( receive_latency_send( clients[c], receive_latency_sequence( k, phase, c ) ), name, "client send refused" );
+                            receive_latency_check( receive_latency_send( clients[c], receive_latency_sequence( f, phase, c ) ), name, "client send refused" );
                         }
                     }
-                    sent_frame = k;
+                    sent_frame = f;
                 }
                 rocketnet_sleep( 0.0005 );
             }
@@ -470,24 +474,9 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
     // wait is in updates; reported in milliseconds at the rate run, updates after
     const double mean = total > lost ? sum / ( total - lost ) : 0.0;
-    char line[256];
-    snprintf( line, sizeof( line ), "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n",
-              name, total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
-    printf( "%s", line );
+    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name, total,
+            late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
     fflush( stdout );
-
-    // a passing case's output is not shown (tests/suite_runner.h): a repeated
-    // run that wants the counts names a file to append them to
-    char report[512];
-    if ( rocketnet_test_getenv( "ROCKETNET_RECEIVE_LATENCY_REPORT", report, sizeof( report ) ) && report[0] != '\0' )
-    {
-        FILE * file = rocketnet_test_fopen( report, "a" );
-        if ( file )
-        {
-            fputs( line, file );
-            fclose( file );
-        }
-    }
 
     for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
     {

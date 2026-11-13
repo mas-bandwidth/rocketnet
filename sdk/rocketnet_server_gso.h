@@ -61,9 +61,11 @@ struct rocketnet_server_gso_t;
 // receive staging per queue per buffer: twice the send staging, gso's own
 // size (the shared per-update receive budget does not size it). One update
 // takes at most that budget from the queues into the process array; the rest
-// waits in the queue buffers, so a single flooded queue fills its pair
-// between drains and drops counted -- correct behaviour under flood, ample
-// at design load where the reuseport hash spreads flows
+// waits in the queue buffers. A single flooded queue fills its buffers
+// between drains; its worker then stops reading and the kernel drops at the
+// queue's socket, counted from SO_RXQ_OVFL in GSO_RECEIVE_DROPPED_OVERFLOW --
+// correct behaviour under flood, ample at design load where the reuseport
+// hash spreads flows
 
 #define ROCKETNET_GSO_RECV_QUEUE_SIZE                                    32768
 
@@ -390,6 +392,8 @@ void rocketnet_server_gso_test_fail_receives( struct rocketnet_server_gso_t * gs
 void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, int count, int error );
 // Observe publication without consuming it; returns false on lock contention.
 bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gso, int queue_index );
+// The count the worker last committed in the buffer it fills; -1 on lock contention.
+int rocketnet_server_gso_test_receive_committed( struct rocketnet_server_gso_t * gso, int queue_index );
 // Main thread: no staged packet, no ready bank, no bank held by a queue worker.
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
@@ -416,6 +420,7 @@ bool rocketnet_server_gso_test_send_retry_quit();
 bool rocketnet_server_gso_test_send_queues();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
+bool rocketnet_server_gso_test_socket_overflow_counted();
 bool rocketnet_server_gso_test_drain_room();
 // Receives whose UDP_GRO control is truncated reach the GRO_CMSG_FAULTS
 // counter once each, through the drain, the publish and main's fold.

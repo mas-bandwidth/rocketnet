@@ -547,7 +547,9 @@ static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * cl
 }
 
 // The family race closes its losing family here, on the reading thread
-// (proofs/tla/RNClientRace.tla ReaderStep): the socket closes and the receives it
+// (proofs/tla/RNClientRace.tla ReaderStep), and the I/O thread's exit closes
+// the transport, or every race family still open (ReaderExit), the same way:
+// the socket closes and the receives it
 // aborted are taken as far as they have already completed, with no wait,
 // so the kept family's I/O never stalls behind the drain; the port stays
 // open until they all have, and destroy, on the caller's thread, drains

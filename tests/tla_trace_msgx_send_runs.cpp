@@ -191,7 +191,7 @@ static int sr_send( void * user, int fd, const int * packets, int num_packets )
     {
         aborted_inside = aborted_inside || walk->info[walk->order[p]].packet_bytes <= 0;
     }
-    if ( ( pick == 3 || pick == 4 || pick == 5 ) && num_packets >= 2 && sr_may_stall( walk ) )
+    if ( ( pick == 3 || pick == 4 || pick == 5 ) && num_packets >= 2 )
     {
         answer = 1 + walk->random.below( num_packets - 1 );
     }
@@ -706,7 +706,7 @@ static int trace_msgx_send_runs( uint64_t seed, int steps, const char * out )
     snprintf( constants, sizeof( constants ),
               "    Size = %d\n    Batch = %d\n    Cap = %d\n    Gens = {0, 1}\n    Clients = {1, 2, 3}\n"
               "    Claims = {%d}\n    MultiStamp = TRUE\n    MaxStalls = %d\n    MaxRetires = %d\n    RetriesAfterQuit = %d\n"
-              "    StableSort = TRUE\n    GenBreak = TRUE\n    PartialSkipsAborted = TRUE\n    DeadResends = TRUE\n"
+              "    StableSort = TRUE\n    GenBreak = TRUE\n    PartialSkipsAborted = TRUE\n    DeadResends = TRUE\n    PartialContinues = TRUE\n"
               "    OpenGenAt = %s\n    Bank = %s\n",
               SR_SIZE, batch, SR_CAP, walk->claimed, SR_MAX_STALLS, SR_MAX_RETIRES, SR_RETRIES_AFTER_QUIT, open_gen_at.c_str(), bank.c_str() );
     const bool written = tla_write_trace( out, "MCTraceMsgxSendRuns", seed, "TraceRNMsgxSendRuns", "", constants, records );

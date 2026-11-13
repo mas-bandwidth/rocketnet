@@ -313,6 +313,16 @@ static void test_client_io_handoff_never_waits()
     rocketnet_client_transport_stats( transport, &stats );
     check( stats.packets_sent_per_second == 4 );
 
+    // the sent rate is the window's wire bytes in kbps with its fraction,
+    // computed as the server's is. Every packet of the connection is in the
+    // window, so its bytes are the connection's; they make a rate that is not
+    // a whole number, which a narrowing through int would cut
+
+    check( stats.packets_sent == 4 );
+    const uint64_t bytes = stats.bytes_sent;
+    check( ( bytes * 8 ) % 1000 != 0 );
+    check( (double) stats.bandwidth_sent_kbps == (double) (float) ( ( (double) bytes * 8.0 ) / 1000.0 ) );
+
     rn_test_client_transport_stop_and_destroy( transport );
     check( fake->num_sent == 4 );
     delete fake;
