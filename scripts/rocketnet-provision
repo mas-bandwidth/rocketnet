@@ -69,8 +69,10 @@
 #                             instance on this host is live (the sweep's rule
 #                             4): it would stop a running server receiving,
 #                             and while which program is attached cannot be
-#                             read (the refusal fails closed).
-#                             ROCKETNET_PROVISION_UNLOAD_LIVE=1 unloads anyway.
+#                             read (the refusal fails closed). Stop the
+#                             server, then provision; a pin root whose pid
+#                             is gone or recycled is not live and does not
+#                             block (the sweep removes it).
 #   R4. irq pinning           each of the interface's queue IRQs pinned to
 #                             the cpu its xdp thread pins to: <iface>-TxRx-<k>
 #                             to cpu num_os_cpus + k (ROCKETNET_SERVER_NUM_OS_CPUS,
@@ -718,10 +720,10 @@ r3_enforce()
 
                     if [ $VERIFY -eq 1 ]; then
                         fail "an XDP program is attached to $INTERFACE (R3): run without verify to unload"
-                    elif [ $IDENTITY_KNOWN -eq 0 ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
-                        fail "an XDP program is attached to $INTERFACE but a second xdp-loader status read failed, printed nothing, or no longer showed it (R3): which program it is cannot be told, so nothing is unloaded. run again; to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
-                    elif [ -n "$LIVE_PIDS" ] && [ "${ROCKETNET_PROVISION_UNLOAD_LIVE:-}" != "1" ]; then
-                        fail "rocketnet's server_xdp_filter is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): if that server is on $INTERFACE, unloading would stop it receiving. stop the server first; if it is on another interface, or to unload anyway, run again with ROCKETNET_PROVISION_UNLOAD_LIVE=1"
+                    elif [ $IDENTITY_KNOWN -eq 0 ]; then
+                        fail "an XDP program is attached to $INTERFACE but a second xdp-loader status read failed, printed nothing, or no longer showed it (R3): which program it is cannot be told, so nothing is unloaded. run provision again; if it keeps failing, check xdp-loader status $INTERFACE by hand"
+                    elif [ -n "$LIVE_PIDS" ]; then
+                        fail "rocketnet's server_xdp_filter is attached to $INTERFACE and a rocketnet server is running on this host (pid $LIVE_PIDS) (R3): unloading could stop it receiving, so nothing is unloaded. stop the rocketnet server (every one on this host: the pin roots do not say which interface each uses), then run provision again. if no rocketnet server is running, these pids belong to other processes: run scripts/rocketnet-provision sweep, which names each pin root it keeps and why, remove those by hand once you have judged them stale, then run provision again"
                     else
                         # the act half of R3 lives under the same law as its
                         # query half: a failed unload is UNMET, and the slot is
@@ -1339,7 +1341,7 @@ STUB
     OUT="$(run_r3 0 live0)"; expect_case "r3 provision refuses a live server's program" $? 1 "$OUT" "a rocketnet server is running on this host (pid $$) (R3)" 1 "unloading XDP programs"
     expect_case "r3 provision live refusal leaves it attached" "$(cat "$STUB_STATE_DIR/state.live0")" rocketnet "" ""
     echo rocketnet > "$STUB_STATE_DIR/state.live1"
-    OUT="$(ROCKETNET_PROVISION_UNLOAD_LIVE=1 run_r3 0 live1)"; expect_case "r3 provision unloads a live server's program when told to" $? 0 "$OUT" "confirmed clear after unload"
+    OUT="$(ROCKETNET_PROVISION_UNLOAD_LIVE=1 run_r3 0 live1)"; expect_case "r3 provision has no override for a live server" $? 1 "$OUT" "stop the rocketnet server" 1 "unloading XDP programs"
     echo foreign > "$STUB_STATE_DIR/state.live2"
     OUT="$(run_r3 0 live2)"; expect_case "r3 provision unloads a foreign program beside a live server" $? 0 "$OUT" "confirmed clear after unload"
     echo rocketnet > "$STUB_STATE_DIR/state.live3"
@@ -1367,13 +1369,21 @@ STUB
               query_xdp_slot_stdout() { return 1; }
               ROCKETNET_PROVISION_UNLOAD_LIVE=1; UNMET=0; VERIFY=0; INTERFACE=live7; PATH="$STUB_DIR:$PATH"; export STUB_STATE_DIR
               r3_enforce; exit $UNMET ) 2>&1 )"
-    expect_case "r3 provision unreadable identity unloads when told to" $? 0 "$OUT" "confirmed clear after unload"
+    expect_case "r3 provision unreadable identity has no override" $? 1 "$OUT" "which program it is cannot be told, so nothing is unloaded" 1 "unloading XDP programs"
     rm -f "$STUB_STATE_DIR/live7_graded"
     rm -rf "$R3_PIN_ROOTS/rocketnet_xdp_7_$$_${SELF_START}_${SELF_BOOT}"
 
-    mkdir -p "$R3_PIN_ROOTS/rocketnet_xdp_7_999999999_12345_${SELF_BOOT}"
-    echo rocketnet > "$STUB_STATE_DIR/state.dead0"
-    OUT="$(run_r3 0 dead0)"; expect_case "r3 provision unloads a crashed server's program" $? 0 "$OUT" "confirmed clear after unload"
+    # a crashed server's leftover never strands the operator: a pin root
+    # whose pid is gone, whose pid was recycled (another start time), or
+    # from another boot is not live, and provision unloads with no option
+    for STALE_ROOT in "rocketnet_xdp_7_999999999_12345_${SELF_BOOT}" \
+                      "rocketnet_xdp_7_$$_1${SELF_START}_${SELF_BOOT}" \
+                      "rocketnet_xdp_7_$$_${SELF_START}_0123456789abcdef0123456789abcdef"; do
+        mkdir -p "$R3_PIN_ROOTS/$STALE_ROOT"
+        echo rocketnet > "$STUB_STATE_DIR/state.dead0"
+        OUT="$(run_r3 0 dead0)"; expect_case "r3 provision unloads a crashed server's program ($STALE_ROOT)" $? 0 "$OUT" "confirmed clear after unload"
+        rm -rf "$R3_PIN_ROOTS/$STALE_ROOT"
+    done
     rm -rf "$R3_PIN_ROOTS"
     unset R3_PIN_ROOTS
 

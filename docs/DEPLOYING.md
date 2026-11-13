@@ -233,8 +233,13 @@ after the interface name for more):
     #
     #    Provision refuses to unload rocketnet's own program while a
     #    rocketnet server on this host is live (R3), on any interface (the
-    #    pin roots do not record one): stop the server first, or set
-    #    ROCKETNET_PROVISION_UNLOAD_LIVE=1 to unload it anyway.
+    #    pin roots do not record one): stop every rocketnet server on the
+    #    host, then run provision. A crashed server does not block it: its
+    #    pin root names a pid that is gone, or that was recycled (another
+    #    start time), or another boot, and provision unloads its program as
+    #    before (step 5). If provision still names a pid and no rocketnet
+    #    server is running, run the sweep below: it prints each pin root it
+    #    keeps and why; remove one by hand once you have judged it stale.
 
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every
