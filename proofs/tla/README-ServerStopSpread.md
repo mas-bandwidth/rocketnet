@@ -34,7 +34,7 @@ already spent. `Idle` is `inflight = 0 \/ jammed`: the transport's
 | `Stop` | `rocketnet_server_stop`: every connected slot's burst appended (`rocketnet_server_transport_disconnect_client_shutdown`), then STOPPING |
 | `SealOne` | one position of the drain's pass: a complete entry passed over, an unreachable start abandoning its burst, or one packet sealed while `Room > 0`; a completed head leaves with the cursor |
 | `Flush` | the stop step's or the update's flush |
-| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop`; with the development link simulator the step also drains it (`rocketnet_server_link_drain` with `shutdown`) and waits until it holds nothing, so a packet the simulator holds is a flushed send not yet finished (`inflight`) and its drain is `Complete` |
+| `RequestIoStop` | the stop step that finds the ring empty, its seals flushed and the transport's `send_idle` true (every flushed send finished) calls `rocketnet_server_transport_io_stop`; with the development link simulator the step also drains it (`rocketnet_server_link_drain` with `shutdown`) and waits until it holds nothing, so a packet the simulator holds is a flushed send not yet finished (`inflight`) and its drain is `Complete`. That abstraction holds only while the packet's queue can take it: a queue full through the stop never takes it, and the drain that sends a held packet by its own queue's room and discards it (counted `SEND_RING_FULL`) once the transport is idle is modelled on its own in `RNServerLinkStop.tla` (README-RNServerLinkStop.md) |
 | `AbandonNoRoom` | the stop step after its flush (`rocketnet_server_transport_stop_step`) that finds bursts waiting, `send_room` 0, `send_idle` true and `send_room` still 0: every waiting burst is abandoned (key wiped, popped from the head, cursor reset), each one not yet complete counted once as `SEND_RING_FULL`. The reads are not one atomic look: the transport may finish some of its flushed frames before `send_idle` reads idle (the portable transport's `send_idle` publishes its producer and its worker may send it first), which frees room only the second read sees |
 | `IoStopped` | the workers exit; `rocketnet_server_stopped` is true |
 | `Connect(i)` | environment: a client takes a free slot |
@@ -116,6 +116,19 @@ room, and the stop step abandons only when the room summed over the queues is
 happens: the stop never finishes. This is the stop hang the unit test
 `test_server_stop_finishes_past_a_jammed_queue`
 (`tests/test_unit_server_send_queues.cpp`) shows red on the code before.
+
+`QueueCount` is a constant from `Init`: the model has no state in which the
+server judges room by a queue count other than the transport's. The code had
+one: `send_queues` was 1 from create until the first opening of the send
+budget, at the end of the first update, so the first update's drains and a
+stop before any update judged room as one queue: the transport's `send_room`,
+the fewest free frames of any queue, so with one queue full the stop dropped
+the bursts of the queues with room too (what `OnlyJammedQueuesDrop` forbids);
+on iocp, whose `send_room` sums its lanes, it waited forever instead, as
+`pooledroom` does. The code now reads the count
+when the io opens (and when a unit test swaps an io in), so the constant holds
+from the start; `test_server_stop_before_any_update_finishes_past_a_jammed_queue`
+is that window, red on the code before.
 
 ## The reversed witnesses
 

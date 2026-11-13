@@ -215,6 +215,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
 | `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
+| `rnserverlinkstop` | The stop's drain of the packets the development link simulator holds, judged by each packet's own send queue, one and two queues (README-RNServerLinkStop.md). |
 | `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
 | `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
 | `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
