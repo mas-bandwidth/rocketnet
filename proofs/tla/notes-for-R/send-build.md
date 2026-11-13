@@ -63,24 +63,24 @@ function lists.
 
 ## Comment re-citations for package C (comment-only, sdk/)
 
-1. `sdk/rocketnet_message_server.cpp:1459` (MM059). Now: "proofs/tla/RNWriterFinish.tla
+1. `sdk/rocketnet_message_server.cpp` (rn_message_object_start, the comment above it, line 1459) (MM059). Now: "proofs/tla/RNWriterFinish.tla
    StartSmall, StartLarge and StartReliable: in place when the update has
    capacity, otherwise marked as having none." New text: "proofs/tla/RNWriterFinish.tla
    StartSmall, StartLarge and StartReliable: in place when the update has
    capacity; held behind an unreliable message already queued on the client,
    queued for send_packets; with no capacity, queued on a buffered
    transport's ring or marked as having none."
-2. `sdk/rocketnet_message_server.cpp:2159-2160` (MM056). Now: "only an ended
+2. `sdk/rocketnet_message_server.cpp` (rn_message_connection_write, lines 2159-2160) (MM056). Now: "only an ended
    connection gets here: exhausted, a channel error or a reliable message past
    its timeout, once". New text: "only an ended connection gets here:
    exhausted, a channel error or a reliable message past its timeout; the
    reliable path ends, so once a flush, until the update kicks it
    (proofs/tla/RNSendRotation.tla vain, AbortsBounded)".
-3. `sdk/rocketnet_endpoint.cpp:1139` (MM056). Now: "a long acked prefix: let the
+3. `sdk/rocketnet_endpoint.cpp` (rn_endpoint_fifo_due, line 1139) (MM056). Now: "a long acked prefix: let the
    write walk it". New text: "not reached: an ack unlinks its number from the
    resend FIFO before marking it acked, so the walk meets no acked number
    (rocketnet_channel.cpp, the write walk's assert); kept as a bound".
-4. `sdk/rocketnet_message_server.cpp:2127-2134` (MM052), add above the
+4. `sdk/rocketnet_message_server.cpp` (rn_message_connection_write, lines 2127-2134) (MM052), add above the
    `if ( !frame )` branch: "proofs/tla/RNOutgoingBuild.tla WriteNoFrame: no
    frame cuts the pass (the reliable phase, or the whole pass in the
    unreliable phase)."
@@ -94,7 +94,7 @@ function lists.
    sent (refused at finish, or a reliable packet written first that found no
    frame): counted against the allowance; an ordered packet is due again and
    the reliable phase ends, unreliable records are dropped and counted."
-6. `sdk/rocketnet_server_transport.cpp:1554` (MM057), add above
+6. `sdk/rocketnet_server_transport.cpp` (line 1554) (MM057), add above
    `rocketnet_server_transport_send_capacity_available`: "proofs/tla/RNServerSendFair.tla
    room and Grow: the capacity the send pass reads live at each visit."
 7. MM059's citation at `message_server.cpp:2130` named in the table is now at

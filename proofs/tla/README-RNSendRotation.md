@@ -163,6 +163,7 @@ Measured on the Linux bench, two workers:
 | `MCRNSendRotationRounds.cfg` | 3, 4, 1 | stalls, refusals | 822,853 |
 | `MCRNSendRotationRoundsRotate.cfg` | 3, 2, 3 | none | 310,317 |
 | `MCRNSendRotationFair.cfg` | 3, 1, 5 | none | 1,149,208 |
+| `MCRNSendRotationVain.cfg` | 2, 3, 3 | ended connections, refusals | 377,887 |
 
 ## Reversed witnesses
 
@@ -275,11 +276,17 @@ environment action `Grow` adds one unit once inside the flush. `RoomMin`
 defaults to `K` (the fixed capacity), so every earlier case is unchanged.
 
 `FairService` keeps its bound, `ceil(|Conn on q| / Kq)`, over the flushes
-that had the full capacity: a flush with less room serves fewer slots and
-is not counted (`CountsAllFlushes = FALSE`), and the cursor it leaves is
-still the walk's, so it never sends a waiting slot back to the end. No
-bound in flushes is owed under a live room: a transport whose room stays at
-0 sends nothing.
+that had the full capacity from their start: a flush that began with less
+room serves fewer slots and is not counted (`CountsAllFlushes = FALSE`),
+even when its room grew back inside it. That last clause is needed: with
+two queues (`MCRNServerSendFairQueuesLive.cfg`, a first version counted a
+flush whose room ended full), the first queue's room is 0 when the walk
+reaches slot 2, so slot 2 is held and the walk goes past it; the room then
+grows to 1, and the next flush, at full room from slot 0, spends the first
+queue on slot 0 and holds slot 2 again, two counted flushes. No bound in
+flushes is owed under a live room: a transport whose room stays at 0 sends
+nothing. The second queue's capacity `K1` stays fixed in the model; only the
+first queue's room is read live.
 
 | Case | Expected | Distinct | Seconds |
 |---|---|---:|---:|

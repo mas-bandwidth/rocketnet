@@ -93,9 +93,9 @@
 (* and Grow adds one unit, once, inside the flush.  RoomMin = K (the       *)
 (* default) is the fixed capacity; MCRNServerSendFairLive.cfg overrides it *)
 (* with 0.  FairService's window is ceil(|Conn on q| / Kq) flushes that    *)
-(* had the full capacity: a flush with less room serves fewer slots and    *)
-(* does not count (CountsAllFlushes FALSE); the cursor it leaves is still  *)
-(* the walk's, so it never sends a waiting slot back.  The reversed        *)
+(* had the full capacity from their start: a flush that began with less   *)
+(* room serves fewer slots and does not count, even when its room grew     *)
+(* back inside it (CountsAllFlushes FALSE).  The reversed                  *)
 (* witness MCRNServerSendFairBrokenFixedWindow.cfg counts every flush and  *)
 (* fails FairService: the fixed-capacity window is not owed under a live   *)
 (* room.                                                                   *)
@@ -293,8 +293,10 @@ BeginFlush ==
 
 \* The flush ends (a capacity cut, or a round with no writer): the transport
 \* sends and its count resets.  A slot left waiting counts the flush only
-\* when its queue had the full capacity (CountsAllFlushes: every flush).
-Counts(s) == CountsAllFlushes \/ QOf(s) = 1 \/ room = K
+\* when its queue had the full capacity for the whole flush: from its start,
+\* not grown to it after the walk passed the slot (CountsAllFlushes: every
+\* flush).
+Counts(s) == CountsAllFlushes \/ QOf(s) = 1 \/ (room = K /\ ~grown)
 EndFlush(sncNext, okNext, wr, wk, ws) ==
     /\ pc' = "between"
     /\ snc' = sncNext
