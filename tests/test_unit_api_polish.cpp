@@ -14,10 +14,10 @@
 //   2. the dev connect-token writer takes connect_token_bytes and returns a status
 //   3. typed enums replace the #defines, named ROCKETNET_<SET>_<VALUE>; the
 //      updates return void, and the client state carries the disconnect reason
-//   4. pure questions return bool; step_driven is an int flag (0/1)
+//   4. pure questions return bool; step_driven is a bool flag
 //   5. Next SDK naming: rocketnet_log_level, rocketnet_assert_function
 //   6. one log sink: rocketnet_log_function; the log level is an enum
-//   7. every lookup ends in _name and returns "unknown" for an unknown value
+//   7. every lookup ends in _name and returns "UNKNOWN" for an unknown value
 //   8. memory and buffer sizes are size_t; create takes the config alone
 //   9. a NULL client's state is ROCKETNET_CLIENT_STATE_DISCONNECTED, counted as misuse
 
@@ -85,6 +85,12 @@ static_assert( rn_same<decltype( rocketnet_client_connect( NULL, NULL ) ), rocke
 static_assert( rn_same<decltype( rocketnet_server_start( NULL ) ), rocketnet_status_t>::value, "ruling 1: start" );
 static_assert( rn_same<decltype( &rocketnet_status_name ), const char * (*) ( rocketnet_status_t )>::value, "ruling 1 and 7: status_name takes the enum" );
 
+// --- ruling 2: the dev token writer takes the buffer's size and returns a status
+
+static_assert( rn_same<decltype( &rocketnet_write_test_connect_token ),
+                       rocketnet_status_t ( * )( const char *, uint64_t, uint64_t, uint8_t *, size_t )>::value,
+               "ruling 2: the dev token writer takes connect_token_bytes and returns a status" );
+
 // the published development keys, set by hand after the defaults
 
 static void api_polish_dev_server_config( struct rocketnet_server_config_t * config )
@@ -134,6 +140,13 @@ static void test_api_polish_status_returns()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( backend_secret, public_key, 0x1234ULL, addresses, 1, 7, 1000, 2000, 10, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
     check( rocketnet_write_production_connect_token( backend_secret, public_key, 0x1234ULL, addresses, 1, 7, 1000, 2000, 10, NULL, token, sizeof( token ) - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    // ruling 2: the dev token writer reads the buffer's size, where the old
+    // form wrote a whole token into any buffer: one byte short is refused
+    // with a status, and a whole token's buffer is written
+
+    check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 7, 1000, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 7, 1000, token, sizeof( token ) - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // the default config and create's status: OK is 0, where the old form's success was 1
 
@@ -215,7 +228,7 @@ static void test_api_polish_bool_field_abi()
 }
 REGISTER_UNIT_TEST( test_api_polish_bool_field_abi );
 
-// --- ruling 5 and 6: set_/get_ naming, one log sink, an enum level -------------
+// --- ruling 5 and 6: Next SDK naming, one log sink, an enum level -------------
 
 static_assert( rn_same<decltype( &rocketnet_log_level ), void ( * )( rocketnet_log_level_t )>::value, "ruling 5: rocketnet_log_level" );
 static_assert( rn_same<decltype( rocketnet_log_level_current() ), rocketnet_log_level_t>::value, "ruling 5: the internal rocketnet_log_level_current" );
@@ -266,7 +279,7 @@ static void test_api_polish_log_callback_receives_a_message()
 }
 REGISTER_UNIT_TEST( test_api_polish_log_callback_receives_a_message );
 
-// --- ruling 7: every lookup is _name and says "unknown" ------------------------
+// --- ruling 7: every lookup is _name and says "UNKNOWN" ------------------------
 
 static_assert( rn_same<decltype( &rocketnet_log_level_name ), const char * (*) ( rocketnet_log_level_t )>::value, "ruling 7: log level name" );
 static_assert( rn_same<decltype( &rocketnet_client_state_name ), const char * (*) ( rocketnet_client_state_t )>::value, "ruling 7: client state name" );
