@@ -18,8 +18,14 @@
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_message_object.h"
+#include "rocketnet_wire.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_constants.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_server_protocol.h"
 #include "rocketnet_config.h"
+#include "rocketnet_connect_token.h"
 #include "rocketnet_layers.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_test_vectors.h"
@@ -43,8 +49,10 @@ static struct
     int queue_for_all;            // the queue every address hashes to
     int room[SR_MAX_QUEUES];      // free frames per queue, as start takes them
     int starts;
-    alignas( 16 ) uint8_t pool[SR_POOL][ROCKETNET_FRAME_STRIDE];
 } sr;
+
+// the frames start hands out, outside sr so the struct carries no alignment padding (MSVC C4324)
+alignas( 16 ) static uint8_t sr_pool[SR_POOL][ROCKETNET_FRAME_STRIDE];
 
 static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
 {
@@ -56,7 +64,7 @@ static uint8_t * sr_start( void *, const rocketnet_address_t *, uint64_t * id )
     }
     sr.room[queue]--;
     *id = (uint64_t) ++sr.starts;
-    return sr.pool[sr.starts - 1];
+    return sr_pool[sr.starts - 1];
 }
 
 static void sr_finish( void *, uint64_t, uint8_t *, int ) {}
@@ -262,7 +270,50 @@ static void test_server_send_reserve_per_queue()
     sr_teardown( &rig );
 }
 
+// A connected client whose keep-alive is acknowledged owns its reserved
+// frame: the fill's first frame to it each phase takes that frame, not the
+// queue's budget, and its later frames claim the budget. Not acknowledged,
+// the frame stays the protocol's.
+static void test_server_send_reserve_own_frame()
+{
+    struct sr_rig_t rig;
+    sr_connect( &rig, 4 );
+    memset( sr.room, 0, sizeof( sr.room ) );
+    sr.starts = 0;
+    sr.queue_for_all = 0;
+    sr_swap_in_fake( &rig, 0 );
+
+    const uint64_t reserve =
+        (uint64_t) rig.config.handshakes_per_update + (uint64_t) rig.config.disconnect_packets_per_update + 3 + 1;
+
+    // not acknowledged: the budget alone
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 0 );
+    sr.room[0] = (int) reserve + 6;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) == 6 );
+    check( sr_fill( &rig, 1000 ) == 6 );
+
+    // acknowledged: the budget and the client's own frame
+    rocketnet_server_transport_set_keep_alive_acked_for_test( rig.server, 0, 1 );
+    sr.room[0] = (int) reserve + 6;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( rocketnet_server_transport_fill_budget_for_test( rig.server, 0 ) == 6 );
+    check( rocketnet_server_transport_send_capacity_available( rig.server ) == 7 );
+    const uint64_t refused_before = rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED];
+    check( sr_fill( &rig, 1000 ) == 7 );
+    check( rocketnet_server_transport_counters( rig.server )->values[ROCKETNET_COUNTER_SEND_RESERVE_REFUSED] == refused_before + 1 );
+    check( sr.room[0] == (int) reserve - 1 );
+
+    // the own frame is one per phase: the next phase has it again
+    sr.room[0] = (int) reserve;
+    rocketnet_server_transport_send_packets( rig.server );
+    check( sr_fill( &rig, 1000 ) == 1 );
+
+    sr_teardown( &rig );
+}
+
 REGISTER_UNIT_TEST( test_server_send_reserve_one_queue );
+REGISTER_UNIT_TEST( test_server_send_reserve_own_frame );
 REGISTER_UNIT_TEST( test_server_send_reserve_per_queue );
 
 #endif // #if ROCKETNET_DEV
