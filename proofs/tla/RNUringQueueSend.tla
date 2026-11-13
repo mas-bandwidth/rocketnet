@@ -89,10 +89,11 @@ VARIABLES producer,   \* the bank the fill stages into
           eagains,    \* eagain completions so far
           demand,     \* claims in this fill
           flushes,    \* flushes so far
-          kernelWrite \* the fill wrote a kernel-owned slot
+          kernelWrite,\* the fill wrote a kernel-owned slot
+          pids        \* the server's packet id counter: starts so far
 
 vars == <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
-          status, nextId, eagains, demand, flushes, kernelWrite>>
+          status, nextId, eagains, demand, flushes, kernelWrite, pids>>
 
 Ids == 1..(MaxFlush + 1) * Demand
 
@@ -117,66 +118,94 @@ Init ==
     /\ demand = 0
     /\ flushes = 0
     /\ kernelWrite = FALSE
+    /\ pids = 0
 
-\* start_packet then finish_packet (staged) or abort_packet (aborted) on
-\* one slot of the producer; a claim past the bank is refused and stages
-\* nothing
-Stage(d, finished) ==
+\* start_packet, which returned slot s of the producer and the id pid (one
+\* queue: the server's counter), then finish_packet (f: staged) or
+\* abort_packet (aborted) on it
+Stage(d, f, s, pid) ==
     /\ demand < Demand
+    /\ s = num[producer]
+    /\ s < S
+    /\ pid = pids
     /\ demand' = demand + 1
+    /\ pids' = pids + 1
     /\ LET b == producer
-           s == num[b]
-       IN IF s < S
-            THEN /\ num' = [num EXCEPT ![b] = @ + 1]
-                 /\ kernelWrite' = (kernelWrite \/ <<b, s>> \in Kern)
-                 /\ IF finished
-                      THEN /\ st' = [st EXCEPT ![b][s] = "staged"]
-                           /\ dest' = [dest EXCEPT ![b][s] = d]
-                           /\ pkt' = [pkt EXCEPT ![b][s] = nextId]
-                           /\ status' = [status EXCEPT ![nextId] = "staged"]
-                           /\ nextId' = nextId + 1
-                      ELSE /\ st' = [st EXCEPT ![b][s] = "aborted"]
-                           /\ UNCHANGED <<dest, pkt, status, nextId>>
-            ELSE UNCHANGED <<num, st, dest, pkt, status, nextId, kernelWrite>>
+       IN /\ num' = [num EXCEPT ![b] = @ + 1]
+          /\ kernelWrite' = (kernelWrite \/ <<b, s>> \in Kern)
+          /\ IF f
+               THEN /\ st' = [st EXCEPT ![b][s] = "staged"]
+                    /\ dest' = [dest EXCEPT ![b][s] = d]
+                    /\ pkt' = [pkt EXCEPT ![b][s] = nextId]
+                    /\ status' = [status EXCEPT ![nextId] = "staged"]
+                    /\ nextId' = nextId + 1
+               ELSE /\ st' = [st EXCEPT ![b][s] = "aborted"]
+                    /\ UNCHANGED <<dest, pkt, status, nextId>>
     /\ UNCHANGED <<producer, ready, worker, free, runs, cq, pend, eagains, flushes>>
 
-\* send_packets with the fill joined: publish the producer if it staged
-\* anything and a free bank can replace it; otherwise keep it
+\* start_packet past the producer's slots: it returned no slot, only the
+\* id; nothing is staged
+StageFull(d, f, pid) ==
+    /\ demand < Demand
+    /\ num[producer] >= S
+    /\ pid = pids
+    /\ demand' = demand + 1
+    /\ pids' = pids + 1
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, flushes, kernelWrite>>
+
+\* send_packets with the fill joined: it returned true, the producer staged
+\* something and a free bank replaces it
 Publish ==
     /\ flushes < MaxFlush
+    /\ num[producer] # 0
+    /\ free # <<>>
     /\ flushes' = flushes + 1
     /\ demand' = 0
-    /\ IF num[producer] # 0 /\ free # <<>>
-         THEN /\ ready' = Append(ready, producer)
-              /\ producer' = Head(free)
-              /\ free' = Tail(free)
-              /\ num' = [num EXCEPT ![Head(free)] = 0]
-         ELSE UNCHANGED <<ready, producer, free, num>>
-    /\ UNCHANGED <<worker, st, dest, pkt, runs, cq, pend, status, nextId, eagains, kernelWrite>>
+    /\ ready' = Append(ready, producer)
+    /\ producer' = Head(free)
+    /\ free' = Tail(free)
+    /\ num' = [num EXCEPT ![Head(free)] = 0]
+    /\ UNCHANGED <<worker, st, dest, pkt, runs, cq, pend, status, nextId, eagains, kernelWrite, pids>>
 
-\* the worker takes the oldest ready bank
-WorkerClaim ==
+\* send_packets returned false: the producer staged nothing or no free bank
+\* can replace it, and it is kept
+PublishKept ==
+    /\ flushes < MaxFlush
+    /\ num[producer] = 0 \/ free = <<>>
+    /\ flushes' = flushes + 1
+    /\ demand' = 0
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                   status, nextId, eagains, kernelWrite, pids>>
+
+\* the worker takes the oldest ready bank, b, the bank the claim returned
+WorkerClaim(b) ==
     /\ worker = NoBank
     /\ ready # <<>>
-    /\ worker' = Head(ready)
+    /\ b = Head(ready)
+    /\ worker' = b
     /\ ready' = Tail(ready)
-    /\ UNCHANGED <<producer, free, num, st, dest, pkt, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite>>
+    /\ UNCHANGED <<producer, free, num, st, dest, pkt, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids>>
 
 \* the staged slots of destination d in the worker's bank
 StagedOf(d) == {s \in Sl : st[worker][s] = "staged" /\ dest[worker][s] = d}
 
-\* one run: the earliest k staged slots of one destination, one SENDMSG
-WorkerSubmit(d, k) ==
+\* the earliest k staged slots of destination d
+Earliest(d, k) == {s \in StagedOf(d) : Cardinality({u \in StagedOf(d) : u < s}) < k}
+
+\* one run, one SENDMSG: the run the code handed out, to destination d with
+\* k slots, R, the earliest k staged slots of d
+WorkerSubmit(d, k, R) ==
     /\ worker # NoBank
     /\ k \in 1..MaxSeg
     /\ Cardinality(StagedOf(d)) >= k
-    /\ LET R == {s \in StagedOf(d) : Cardinality({u \in StagedOf(d) : u < s}) < k}
-           b == worker
+    /\ R = Earliest(d, k)
+    /\ LET b == worker
        IN /\ st' = [st EXCEPT ![b] = [s \in Sl |-> IF s \in R THEN "run" ELSE st[b][s]]]
           /\ runs' = runs \cup {[b |-> b, slots |-> R, ids |-> {pkt[b][s] : s \in R}]}
           /\ pend' = [pend EXCEPT ![b] = @ + 1]
           /\ status' = [i \in Ids |-> IF \E s \in R : pkt[b][s] = i THEN "kernel" ELSE status[i]]
-    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, cq, nextId, eagains, demand, flushes, kernelWrite>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, cq, nextId, eagains, demand, flushes, kernelWrite, pids>>
 
 \* the kernel posts a run's completion (environment)
 KernelComplete(r, res) ==
@@ -185,14 +214,16 @@ KernelComplete(r, res) ==
     /\ runs' = runs \ {r}
     /\ cq' = Append(cq, [run |-> r, res |-> res])
     /\ eagains' = IF res = "eagain" THEN eagains + 1 ELSE eagains
-    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, pend, status, nextId, demand, flushes, kernelWrite>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, st, dest, pkt, pend, status, nextId, demand, flushes, kernelWrite, pids>>
 
 SetSt(b, R, v) == [st EXCEPT ![b] = [s \in Sl |-> IF s \in R THEN v ELSE st[b][s]]]
 SetStatus(I, v) == [i \in Ids |-> IF i \in I THEN v ELSE status[i]]
 
-\* the worker reaps the oldest completion
-WorkerReap ==
+\* the worker reaps the oldest completion; the reap returned n, its run's
+\* packets
+WorkerReap(n) ==
     /\ cq # <<>>
+    /\ n = Cardinality(Head(cq).run.slots)
     /\ LET c == Head(cq)
            r == c.run
        IN /\ cq' = Tail(cq)
@@ -216,7 +247,7 @@ WorkerReap ==
                     /\ st' = SetSt(r.b, r.slots, "staged")
                     /\ status' = SetStatus(r.ids, "staged")
                     /\ UNCHANGED pend
-    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, runs, nextId, eagains, demand, flushes, kernelWrite>>
+    /\ UNCHANGED <<producer, ready, worker, free, num, dest, pkt, runs, nextId, eagains, demand, flushes, kernelWrite, pids>>
 
 \* the worker retires its bank: nothing staged or in a run, and (RetireRule
 \* "cqe") no run of it pending
@@ -224,6 +255,7 @@ Retirable(b) ==
     /\ \A s \in Sl : st[b][s] \notin {"staged", "run"} \/ (RetireRule = "submitted" /\ st[b][s] = "run")
     /\ (RetireRule = "cqe" => pend[b] = 0)
 
+\* the retire returned true
 WorkerRetire ==
     /\ worker # NoBank
     /\ Retirable(worker)
@@ -232,7 +264,13 @@ WorkerRetire ==
     /\ st' = [st EXCEPT ![worker] = [s \in Sl |-> "empty"]]
     /\ dest' = [dest EXCEPT ![worker] = [s \in Sl |-> 0]]
     /\ pkt' = [pkt EXCEPT ![worker] = [s \in Sl |-> 0]]
-    /\ UNCHANGED <<producer, ready, num, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite>>
+    /\ UNCHANGED <<producer, ready, num, runs, cq, pend, status, nextId, eagains, demand, flushes, kernelWrite, pids>>
+
+\* the retire returned false: the worker's bank is not yet retirable
+WorkerRetireRefused ==
+    /\ worker # NoBank
+    /\ ~Retirable(worker)
+    /\ UNCHANGED vars
 
 \* the bound on flushes is reached and the worker has nothing left: stutter
 Done ==
@@ -241,16 +279,25 @@ Done ==
     /\ ready = <<>> /\ worker = NoBank /\ runs = {} /\ cq = <<>>
     /\ UNCHANGED vars
 
+\* a step of the worker: each is one call of the code, the action its result
+\* names (the trace check takes the actions Next names itself)
 WorkerStep ==
-    \/ WorkerClaim
-    \/ \E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k)
-    \/ WorkerReap
+    \/ \E b \in Bs : WorkerClaim(b)
+    \/ \E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k, Earliest(d, k))
+    \/ \E n \in 1..MaxSeg : WorkerReap(n)
     \/ WorkerRetire
+    \/ WorkerRetireRefused
 
 Next ==
-    \/ \E d \in Dests, f \in BOOLEAN : Stage(d, f)
+    \/ \E d \in Dests, f \in BOOLEAN : Stage(d, f, num[producer], pids)
+    \/ \E d \in Dests, f \in BOOLEAN : StageFull(d, f, pids)
     \/ Publish
-    \/ WorkerStep
+    \/ PublishKept
+    \/ \E b \in Bs : WorkerClaim(b)
+    \/ \E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k, Earliest(d, k))
+    \/ \E n \in 1..MaxSeg : WorkerReap(n)
+    \/ WorkerRetire
+    \/ WorkerRetireRefused
     \/ \E r \in runs, res \in Results : KernelComplete(r, res)
     \/ Done
 
@@ -258,9 +305,9 @@ Spec == Init /\ [][Next]_vars
 
 \* the worker and the kernel keep going; the fill and main may stop
 Fairness ==
-    /\ WF_vars(WorkerClaim)
-    /\ WF_vars(\E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k))
-    /\ WF_vars(WorkerReap)
+    /\ WF_vars(\E b \in Bs : WorkerClaim(b))
+    /\ WF_vars(\E d \in Dests, k \in 1..MaxSeg : WorkerSubmit(d, k, Earliest(d, k)))
+    /\ WF_vars(\E n \in 1..MaxSeg : WorkerReap(n))
     /\ WF_vars(WorkerRetire)
     /\ WF_vars(\E r \in runs, res \in Results : KernelComplete(r, res))
 
@@ -279,6 +326,7 @@ TypeOK ==
     /\ eagains \in 0..MaxEagain
     /\ demand \in 0..Demand
     /\ flushes \in 0..MaxFlush
+    /\ pids \in Nat
 
 NoWriteWhileKernelOwned == ~kernelWrite
 

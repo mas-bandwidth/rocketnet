@@ -12,25 +12,21 @@
 #include <new>
 #include <string.h>
 
-// proofs/tla/RNUringQueueSend.tla models one queue of this code: Publish,
-// WorkerClaim, WorkerSubmit, WorkerReap and WorkerRetire (WorkerStep is any
-// one of them) are cited at the functions that are them, and KernelComplete is the kernel's (the trace
-// walk's fake one, tests/tla_trace_queue_send.cpp). The model's run is a set
+// proofs/tla/RNUringQueueSend.tla models one queue of this code: Publish
+// and PublishKept, WorkerClaim(b), WorkerSubmit(d, k, R), WorkerReap(n) and
+// WorkerRetire and WorkerRetireRefused (WorkerStep is any of the worker's)
+// are cited at the functions that are them, each by the value it returns,
+// and KernelComplete is the kernel's (the trace walk's fake one,
+// tests/tla_trace_queue_send.cpp). The model's run is a set
 // of staged slots of one destination, the earliest of them first; here the
 // gather cuts the runs (proofs/tla/RNSendGatherLayout.tla) and next hands
 // them out by order position, so a destination's runs leave in staged
 // order, and a run handed back is the earliest of its destination again.
 // ROCKETNET_URING_QUEUE_SEND_PLANT is the trace check's plant (the reversed
 // witness RetireAtSubmit: retire once every slot is submitted, runs still in
-// the kernel): only tests/tla_trace_queue_send.cpp in the plant build
-// defines it, and its traces must fail TraceConsistent. The plant binary
-// walks other layers over this code too (the worker's), so the plant acts
-// only while rocketnet_uring_queue_send_plant is set: the queue-send walk
-// sets it for its own walk and clears it after.
-
-#if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
-bool rocketnet_uring_queue_send_plant = false;
-#endif // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
+// the kernel): only tests/tla_trace_queue_send.cpp defines it, in its own
+// plant binary (tla_trace_plant_queue_send), and its traces must fail
+// TraceConsistent.
 
 #if defined( __linux__ )
 #include "rocketnet_uring_codec.h"
@@ -210,10 +206,10 @@ static inline void rocketnet_uring_queue_send_count( struct rocketnet_uring_queu
     queue->counters[counter].store( queue->counters[counter].load( std::memory_order_relaxed ) + amount, std::memory_order_relaxed );
 }
 
-// RNUringQueueSend Publish: the producer goes to the ready FIFO only when it
-// staged anything and a free bank replaces it; the replacement is reset
-// before any fill sees it (L0's turn_to, outside the mutex: no one else
-// holds that bank)
+// RNUringQueueSend Publish when it returns true: the producer goes to the
+// ready FIFO only when it staged anything and a free bank replaces it; the
+// replacement is reset before any fill sees it (L0's turn_to, outside the
+// mutex: no one else holds that bank). PublishKept when it returns false
 
 bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * send, int queue_index )
 {
@@ -258,7 +254,7 @@ bool rocketnet_uring_queue_send_idle( struct rocketnet_uring_queue_send_t * send
     return idle;
 }
 
-// RNUringQueueSend WorkerClaim: the oldest ready bank. Its staged slots are
+// RNUringQueueSend WorkerClaim(b): the oldest ready bank, b, returned. Its staged slots are
 // the first min(count, slots) (L0 StagedMatches); a finished one (bytes > 0)
 // is staged and an aborted one is in no run. The gather groups the staged
 // slots by destination in staged order and cuts the runs, each kept at its
@@ -344,9 +340,9 @@ int rocketnet_uring_queue_send_held( const struct rocketnet_uring_queue_send_t *
     return send->queue[queue_index].held;
 }
 
-// RNUringQueueSend WorkerSubmit(d, k): the run at the lowest order position
-// that waits, its slots now the kernel's and one more run of the bank
-// pending
+// RNUringQueueSend WorkerSubmit(d, k, R): the run at the lowest order
+// position that waits, handed out in run (its destination d, k slots R),
+// its slots now the kernel's and one more run of the bank pending
 
 bool rocketnet_uring_queue_send_next( struct rocketnet_uring_queue_send_t * send, int queue_index, struct rocketnet_uring_queue_send_run_t * run )
 {
@@ -459,7 +455,8 @@ static void rocketnet_uring_queue_send_cut_plain( struct rocketnet_uring_queue_s
     }
 }
 
-// RNUringQueueSend WorkerReap: one completion, by its tag. ok and failed
+// RNUringQueueSend WorkerReap(n): one completion, by its tag; it returns n,
+// the run's packets. ok and failed
 // finish the run's slots (sent, dropped); again hands them back to be
 // submitted as the same run; refused hands them back as one run per packet,
 // sent plain (RNSegmentRefusal, the refused run resent plain: the model's
@@ -580,8 +577,9 @@ bool rocketnet_uring_queue_send_split( struct rocketnet_uring_queue_send_t * sen
     return true;
 }
 
-// RNUringQueueSend WorkerRetire, RetireRule "cqe": nothing of the bank waits
-// to be submitted and none of its runs is pending
+// RNUringQueueSend WorkerRetire, RetireRule "cqe", when it returns true:
+// nothing of the bank waits to be submitted and none of its runs is
+// pending; WorkerRetireRefused when it returns false
 
 bool rocketnet_uring_queue_send_retire( struct rocketnet_uring_queue_send_t * send, int queue_index )
 {
@@ -596,10 +594,11 @@ bool rocketnet_uring_queue_send_retire( struct rocketnet_uring_queue_send_t * se
     }
 
 #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
-    if ( queue->pending[b] != 0 && !rocketnet_uring_queue_send_plant )
+    const bool waits = false; // the plant: its runs may still be the kernel's
 #else  // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
-    if ( queue->pending[b] != 0 )
+    const bool waits = queue->pending[b] != 0;
 #endif // #if defined( ROCKETNET_URING_QUEUE_SEND_PLANT )
+    if ( waits )
     {
         return false;
     }

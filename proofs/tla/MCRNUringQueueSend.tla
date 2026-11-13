@@ -12,4 +12,14 @@ EXTENDS RNUringQueueSend
 MCSpec == Spec
 MCLiveSpec == LiveSpec
 
+\* the safety quotient: every variable but pids. pids is the server's id
+\* counter, a trace argument: no guard but Stage's and StageFull's pid = pids
+\* reads it, and it is no invariant's but TypeOK's pids \in Nat, so two
+\* states that differ only in it have the same futures and the same verdicts
+\* (it counts aborted and refused starts, which the control's other
+\* variables forget, and without the view the control does not finish in
+\* the 110 s budget)
+MCSafetyView == <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
+                  status, nextId, eagains, demand, flushes, kernelWrite>>
+
 =============================================================================

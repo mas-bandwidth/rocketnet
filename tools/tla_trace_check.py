@@ -94,7 +94,12 @@ LAYERS = {
     },
     "queue-send": {
         "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
-        "quiet": True,
+        "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
+                             "length, so it never gets there"},
+        "reach": ["Full", "AgainPosted"],
+        # the model's Ids grow with MaxFlush, the walk's length: each record
+        # carries (steps + 1) * 4 statuses
+        "steps": 200,
     },
     "queue-worker": {
         "modules": ["RNUringQueueWorker.tla", "TraceRNUringQueueWorker.tla"],

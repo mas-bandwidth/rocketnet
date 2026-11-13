@@ -21,8 +21,8 @@ The queues share nothing but main's loop, so one queue is the machine. Related m
 
 `TraceRNUringQueueSend.tla` binds the code to this model (README-TraceCheck.md).
 
-Status: the model and its trace module are written and checked; the code (L1) is not
-yet built.
+Status: the model, its trace module and the code are written; the trace check binds
+the code to the model (tools/tla_trace_check.py, layer queue-send).
 
 ## The small instance (MCRNUringQueueSend.tla)
 
@@ -32,17 +32,26 @@ yet built.
 - 3 flushes, so every bank is reused (2 flushes for the liveness cfgs).
 - 1 eagain.
 
-## Results (captain, pinned jar 936a2620..., TLC 2.19, 2026-11-12)
+## Results (bench-nyc-5, pinned jar 936a2620..., TLC 2.19, 2 workers, 2026-11-13)
 
 | cfg | expected | result | states (distinct) |
 |---|---|---|---|
-| MCRNUringQueueSend.cfg | pass | pass | 9,037,998 (2,147,440), depth 40, 52 s |
-| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 1,024,152 (258,610), 14 s |
-| MCRNUringQueueSendBrokenRetireAtSubmit.cfg | NoWriteWhileKernelOwned | violated | 156,334 (51,131) |
-| MCRNUringQueueSendBrokenEagainLost.cfg | Accounted | violated | 4,077 (2,130) |
-| MCRNUringQueueSendBrokenEagainStuck.cfg | Drains | violated (stuttering) | 125,641 (41,413) |
+| MCRNUringQueueSend.cfg | pass | pass | 10,820,982 (2,147,440), 54.5 s, under MCSafetyView |
+| MCRNUringQueueSendLive.cfg | pass (Drains) | pass | 3,225,151 (671,550), 59.7 s |
+| MCRNUringQueueSendBrokenRetireAtSubmit.cfg | NoWriteWhileKernelOwned | violated | 164,961 (58,664) |
+| MCRNUringQueueSendBrokenEagainLost.cfg | Accounted | violated | 2,871 (1,531) |
+| MCRNUringQueueSendBrokenEagainStuck.cfg | Drains | violated (stuttering) | 3,193,565 (661,518) |
 | MCTraceRNUringQueueSendSelf.cfg | pass | pass | 9 (8): all 8 records accepted |
 | MCTraceRNUringQueueSendSelfBrokenRetire.cfg | TraceConsistent | violated: ti = 5, record 6 rejected | 6 (6) |
+
+The trace check's arguments (the slot and packet id start returned, the bank a
+claim took, the runs a submit made, the count a reap returned) are action
+arguments, and `pids`, the server's id counter, is a variable. `pids` counts the
+aborted and refused starts the other variables forget, so the control runs under
+`MCSafetyView`, every variable but `pids`: no guard but the pid binding reads it
+and no invariant but TypeOK names it. The view gives the control exactly the
+distinct states it had before `pids` (2,147,440); without it the control times out
+at 110 s. The liveness cases run without a view.
 
 ## The witnesses, as TLC printed them
 
@@ -67,5 +76,5 @@ Each was checked by hand against the broken rule.
 
 ## Records
 
-These cases are not yet in CASES.tsv, RUNS.tsv or COVERAGE.tsv. Their rows are added
-with the code they bind, through the pinned tlacheck, when L0 and L1 are built.
+The cases are in CASES.tsv and COVERAGE.tsv; RUNS.tsv holds the run in the table
+above, merged through the pinned tlacheck.

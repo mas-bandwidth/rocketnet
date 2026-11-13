@@ -9,19 +9,30 @@
 // proofs/tla/RNUringQueueSend.tla), checked by
 // proofs/tla/TraceRNUringQueueSend.tla (proofs/tla/README-TraceCheck.md).
 // No socket, no ring, no clock, no thread: the walk is the fill, main, the
-// worker and the kernel, one call per step. The kernel is a fake completion
-// source: each run the worker hands out is in it until the walk posts the
-// run's completion, as its own step, in any order, with a result that is
-// sent (a byte count, short or whole), failed, -EAGAIN or a segment refusal;
-// the worker reaps the posted completions oldest first. Every record carries
-// the kernel's runs and its posted completions with their results.
+// worker and the kernel, one call per step, and one record per step
+// (tla_step): the call, what it took and gave back, the action its own
+// result says it took, and every model variable after it. A stage (start,
+// then finish or abort) is Stage(d, f, s, pid) with the slot of the pointer
+// start returned and the id it wrote, or StageFull(d, f, pid) when start
+// returned NULL; a publish is Publish when it returned true, PublishKept
+// when false; a claim is WorkerClaim(b) with the bank it returned; a submit
+// is WorkerSubmit(d, k, R) with the run next handed out (its destination,
+// count and slots); a reap is WorkerReap(n) with the count complete
+// returned; a retire is WorkerRetire when it returned true,
+// WorkerRetireRefused when false.
 //
-// It writes MCTraceQueueSendSeed<seed>, or MCTraceQueueSendPlantSeed<seed>
-// from tla_trace_plant, whose code is the handoff with
+// The kernel is a fake completion source: each run the worker hands out is
+// in it until the walk posts the run's completion, as its own step
+// (KernelComplete), in any order, with a result that is sent (a byte count,
+// short or whole), failed, -EAGAIN or a segment refusal; the model's result
+// is what rocketnet_uring_queue_send_result makes of it. The worker reaps
+// the posted completions oldest first.
+//
+// The plant binary's code is the handoff with
 // ROCKETNET_URING_QUEUE_SEND_PLANT (a bank retired once every slot is
-// submitted, its runs still in the kernel). The walk prints PLANT-FIRED n,
-// the retires with a run of the bank still in the kernel: the planted code's
-// own act, so the clean code's count is 0.
+// submitted, its runs still in the kernel). The walk reports (tla_report_t)
+// the planted effect where it shows: a retire that returned true with a run
+// of the bank still pending, which the clean code refuses.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_URING_QUEUE_SEND_PLANT 1
@@ -36,6 +47,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,17 +59,15 @@
 // the instance: one queue (the queues share nothing but main's loop), its
 // three banks of three slots, two destinations, runs of at most two
 // packets, four claims a fill (so a full bank refuses one), every bank
-// reused, and handed-back runs
+// reused, and handed-back runs. The model's bound on flushes is the walk's
+// length, which no walk reaches, so a step is always enabled
 
 #define QSEND_NB ROCKETNET_URING_SEND_BANKS
 #define QSEND_SLOTS 3
 #define QSEND_DESTS 2
 #define QSEND_MAX_SEG 2
 #define QSEND_DEMAND 4
-#define QSEND_MAX_FLUSH 10
 #define QSEND_MAX_EAGAIN 4
-#define QSEND_MAX_STEPS 160
-#define QSEND_IDS ( ( QSEND_MAX_FLUSH + 1 ) * QSEND_DEMAND )
 
 // a run in the fake kernel: the code's run, its slots and the model's ids
 struct qsend_run_t
@@ -81,7 +91,7 @@ struct qsend_walk_t
     struct rocketnet_uring_queue_send_t * send;
     struct rocketnet_address_t dest[QSEND_DESTS + 1];          // destinations 1..QSEND_DESTS
     int pkt[QSEND_NB][QSEND_SLOTS];                             // the model's packet id of each slot, 0 for none
-    const char * status[QSEND_IDS + 1];                         // each model id: its last status
+    std::vector<const char *> status;                           // each model id 1..: its last status; [0] unused
     std::vector<qsend_run_t> kernel;
     std::vector<qsend_cqe_t> cq;
     int next_id;
@@ -89,7 +99,6 @@ struct qsend_walk_t
     int demand;
     int flushes;
     bool kernel_write;
-    int plant_fired;
 };
 
 static int qsend_dest_index( const qsend_walk_t & walk, const struct rocketnet_address_t * to )
@@ -256,22 +265,22 @@ static tla_record_t qsend_record( qsend_walk_t & walk )
             }
             if ( role == 1 )
             {
-                walk.status[id] = "staged";
+                walk.status[(size_t) id] = "staged";
                 continue;
             }
             switch ( queue->state[b * QSEND_SLOTS + s] )
             {
                 case ROCKETNET_URING_QUEUE_SEND_SLOT_STAGED:
-                    walk.status[id] = "staged";
+                    walk.status[(size_t) id] = "staged";
                     break;
                 case ROCKETNET_URING_QUEUE_SEND_SLOT_RUN:
-                    walk.status[id] = "kernel";
+                    walk.status[(size_t) id] = "kernel";
                     break;
                 case ROCKETNET_URING_QUEUE_SEND_SLOT_SENT:
-                    walk.status[id] = "sent";
+                    walk.status[(size_t) id] = "sent";
                     break;
                 case ROCKETNET_URING_QUEUE_SEND_SLOT_DROPPED:
-                    walk.status[id] = "dropped";
+                    walk.status[(size_t) id] = "dropped";
                     break;
                 default:
                     break;
@@ -279,11 +288,11 @@ static tla_record_t qsend_record( qsend_walk_t & walk )
         }
     }
 
-    std::vector<std::string> id_keys;
+    // status is a function on 1..Ids, a sequence: written as one, TLC
+    // reads it in one pass where k :> v @@ ... rebuilds it per key
     std::vector<std::string> status;
-    for ( int i = 1; i <= QSEND_IDS; i++ )
+    for ( size_t i = 1; i < walk.status.size(); i++ )
     {
-        id_keys.push_back( tla_int( i ) );
         status.push_back( qsend_string( walk.status[i] ) );
     }
 
@@ -313,12 +322,13 @@ static tla_record_t qsend_record( qsend_walk_t & walk )
     record.add( "runs", runs );
     record.add( "cq", cq );
     record.add( "pend", tla_function( bank_keys, pend ) );
-    record.add( "status", tla_function( id_keys, status ) );
+    record.add( "status", tla_sequence( status ) );
     record.add( "nextId", tla_int( walk.next_id ) );
     record.add( "eagains", tla_int( walk.eagains ) );
     record.add( "demand", tla_int( walk.demand ) );
     record.add( "flushes", tla_int( walk.flushes ) );
     record.add( "kernelWrite", tla_bool( walk.kernel_write ) );
+    record.add( "pids", tla_int( (int64_t) walk.banks->packet_id.load() ) );
     return record;
 }
 
@@ -347,16 +357,20 @@ static bool qsend_kernel_owns( const qsend_walk_t & walk, int b, int s )
     return false;
 }
 
-// RNUringQueueSend Stage(d, finished): start, then finish or abort, on the
-// producer; a refused start stages nothing
-static void qsend_stage( qsend_walk_t & walk, int d, bool finished, int packet_bytes )
+// RNUringQueueSend Stage(d, f, s, pid): start, then finish (f) or abort, on
+// the producer, with s the slot of the pointer start returned and pid the
+// id it wrote; StageFull(d, f, pid) when start returned NULL. NULL, the
+// walk fails, when the finish or abort through start's own pointer is
+// refused
+static const char * qsend_stage( qsend_walk_t & walk, int d, bool finished, int packet_bytes, std::string & args )
 {
     walk.demand++;
     uint64_t packet_id = 0;
     uint8_t * frame = rocketnet_uring_send_queues_start( walk.banks, &walk.dest[d], &packet_id );
     if ( !frame )
     {
-        return;
+        args = tla_sequence( { tla_int( d ), tla_bool( finished ), tla_int( (int64_t) packet_id ) } );
+        return "StageFull";
     }
 
     const int b = walk.banks->queue[0].producer;
@@ -366,27 +380,32 @@ static void qsend_stage( qsend_walk_t & walk, int d, bool finished, int packet_b
         walk.kernel_write = true;
     }
 
+    bool done = false;
     if ( finished )
     {
-        (void) rocketnet_uring_send_queues_finish( walk.banks, packet_id, frame, packet_bytes );
+        done = rocketnet_uring_send_queues_finish( walk.banks, packet_id, frame, packet_bytes );
         walk.pkt[b][s] = walk.next_id;
-        walk.status[walk.next_id] = "staged";
+        walk.status[(size_t) walk.next_id] = "staged";
         walk.next_id++;
     }
     else
     {
-        (void) rocketnet_uring_send_queues_abort( walk.banks, packet_id, frame );
+        done = rocketnet_uring_send_queues_abort( walk.banks, packet_id, frame );
         walk.pkt[b][s] = 0;
     }
+    args = tla_sequence( { tla_int( d ), tla_bool( finished ), tla_int( s ), tla_int( (int64_t) packet_id ) } );
+    return done ? "Stage" : NULL;
 }
 
-// RNUringQueueSend WorkerSubmit: the code's next run goes into the kernel
-static void qsend_submit( qsend_walk_t & walk )
+// RNUringQueueSend WorkerSubmit(d, k, R): the run next handed out goes into
+// the kernel; next returning false is no model step, recorded with
+// arguments no WorkerSubmit takes
+static std::string qsend_submit( qsend_walk_t & walk )
 {
     qsend_run_t run;
     if ( !rocketnet_uring_queue_send_next( walk.send, 0, &run.run ) )
     {
-        return;
+        return tla_sequence( { tla_int( 0 ), tla_int( 0 ), "{}" } );
     }
     const int * order = walk.send->queue[0].order + run.run.bank * QSEND_SLOTS;
     for ( int i = 0; i < run.run.count; i++ )
@@ -396,12 +415,13 @@ static void qsend_submit( qsend_walk_t & walk )
         run.ids.push_back( walk.pkt[run.run.bank][s] );
     }
     walk.kernel.push_back( run );
+    return tla_sequence( { tla_int( qsend_dest_index( walk, run.run.to ) ), tla_int( run.run.count ), qsend_set( run.slots ) } );
 }
 
 // RNUringQueueSend KernelComplete(r, res): the kernel posts one run's
 // completion, any run in it, with the res the walk picks; the model's result
 // is what the code makes of that res
-static void qsend_post( qsend_walk_t & walk, tla_random_t & random )
+static std::string qsend_post( qsend_walk_t & walk, tla_random_t & random )
 {
     const int index = random.below( (int) walk.kernel.size() );
     qsend_cqe_t cqe;
@@ -445,15 +465,17 @@ static void qsend_post( qsend_walk_t & walk, tla_random_t & random )
 
     walk.kernel.erase( walk.kernel.begin() + index );
     walk.cq.push_back( cqe );
+    return tla_sequence( { qsend_run_text( cqe.run ), qsend_string( cqe.result ) } );
 }
 
-// RNUringQueueSend WorkerReap: the oldest posted completion
-static void qsend_reap( qsend_walk_t & walk )
+// RNUringQueueSend WorkerReap(n): the oldest posted completion; n is the
+// count complete returned
+static int qsend_reap( qsend_walk_t & walk )
 {
     const qsend_cqe_t cqe = walk.cq.front();
     walk.cq.erase( walk.cq.begin() );
     const int result = rocketnet_uring_queue_send_result( cqe.res, cqe.run.run.count > 1 );
-    (void) rocketnet_uring_queue_send_complete( walk.send, 0, cqe.run.run.tag, result );
+    return rocketnet_uring_queue_send_complete( walk.send, 0, cqe.run.run.tag, result );
 }
 
 static int trace_queue_send( uint64_t seed, int steps, const char * out )
@@ -466,20 +488,16 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         rocketnet_uring_send_queues_destroy( walk.banks );
         return 1;
     }
-#if defined( ROCKETNET_TLA_PLANT )
-    rocketnet_uring_queue_send_plant = true;        // this walk's plant only
-#endif // #if defined( ROCKETNET_TLA_PLANT )
+
+    // the model's Ids: (MaxFlush + 1) * Demand, MaxFlush the walk's length
+    const int ids = ( steps + 1 ) * QSEND_DEMAND;
     memset( walk.pkt, 0, sizeof( walk.pkt ) );
-    for ( int i = 0; i <= QSEND_IDS; i++ )
-    {
-        walk.status[i] = "none";
-    }
+    walk.status.assign( (size_t) ids + 1, "none" );
     walk.next_id = 1;
     walk.eagains = 0;
     walk.demand = 0;
     walk.flushes = 0;
     walk.kernel_write = false;
-    walk.plant_fired = 0;
 
     for ( int d = 1; d <= QSEND_DESTS; d++ )
     {
@@ -492,14 +510,15 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
-    records.push_back( qsend_record( walk ) );
+    tla_report_t report;
+    records.push_back( tla_step( "init", "init", "<<>>", qsend_record( walk ) ) );
 
-    const int limit = steps < QSEND_MAX_STEPS ? steps : QSEND_MAX_STEPS;
-    for ( int step = 0; (int) records.size() <= limit && step < 20 * limit; step++ )
+    for ( int step = 0; step < steps; step++ )
     {
         struct rocketnet_uring_queue_send_queue_t * queue = &walk.send->queue[0];
 
-        // the enabled actions, as the model's guards say
+        // the enabled actions, as the model's guards say; publish always is
+        // (the bound on flushes is the walk's length), so a step always is
         enum
         {
             STAGE,
@@ -516,7 +535,7 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
             can.push_back( STAGE );
             can.push_back( STAGE );
         }
-        if ( walk.flushes < QSEND_MAX_FLUSH && ( walk.demand == QSEND_DEMAND || random.below( 4 ) == 0 ) )
+        if ( walk.demand == QSEND_DEMAND || random.below( 4 ) == 0 )
         {
             can.push_back( PUBLISH );
         }
@@ -542,40 +561,66 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         }
         if ( can.empty() )
         {
-            break;
+            can.push_back( PUBLISH );
         }
 
-        bool stepped = true;
+        const char * op = "";
+        const char * act = "";
+        std::string args = "<<>>";
+        bool planted = false;
         switch ( can[(size_t) random.below( (int) can.size() )] )
         {
             case STAGE:
-                qsend_stage( walk, 1 + random.below( QSEND_DESTS ), random.below( 4 ) != 0, 1 + random.below( ROCKETNET_RECEIVE_CEILING ) );
+            {
+                const int d = 1 + random.below( QSEND_DESTS );
+                const bool finished = random.below( 4 ) != 0;
+                op = "stage";
+                act = qsend_stage( walk, d, finished, 1 + random.below( ROCKETNET_RECEIVE_CEILING ), args );
+                if ( !act )
+                {
+                    fprintf( stderr, "tla_trace queue-send: the finish or abort through start's own pointer was refused\n" );
+                    rocketnet_uring_queue_send_destroy( walk.send );
+                    rocketnet_uring_send_queues_destroy( walk.banks );
+                    return 1;
+                }
                 break;
+            }
             case PUBLISH:
-                (void) rocketnet_uring_queue_send_publish( walk.send, 0 );
+                op = "publish";
+                act = rocketnet_uring_queue_send_publish( walk.send, 0 ) ? "Publish" : "PublishKept";
                 walk.flushes++;
                 walk.demand = 0;
                 break;
             case CLAIM:
-                stepped = rocketnet_uring_queue_send_claim( walk.send, 0 ) >= 0;
+                op = "claim";
+                act = "WorkerClaim";
+                args = tla_sequence( { tla_int( rocketnet_uring_queue_send_claim( walk.send, 0 ) ) } );
                 break;
             case SUBMIT:
-                qsend_submit( walk );
+                op = "submit";
+                act = "WorkerSubmit";
+                args = qsend_submit( walk );
                 break;
             case POST:
-                qsend_post( walk, random );
+                op = "post";
+                act = "KernelComplete";
+                args = qsend_post( walk, random );
                 break;
             case REAP:
-                qsend_reap( walk );
+                op = "reap";
+                act = "WorkerReap";
+                args = tla_sequence( { tla_int( qsend_reap( walk ) ) } );
                 break;
             default:
             {
                 const int held = queue->held;
                 const bool pending = queue->pending[held] != 0;
-                stepped = rocketnet_uring_queue_send_retire( walk.send, 0 );
-                if ( stepped )
+                op = "retire";
+                const bool retired = rocketnet_uring_queue_send_retire( walk.send, 0 );
+                act = retired ? "WorkerRetire" : "WorkerRetireRefused";
+                if ( retired )
                 {
-                    walk.plant_fired += pending ? 1 : 0;
+                    planted = pending;
                     for ( int s = 0; s < QSEND_SLOTS; s++ )
                     {
                         walk.pkt[held][s] = 0;
@@ -585,33 +630,26 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
             }
         }
 
-        if ( stepped )
+        report.act( act );
+        records.push_back( tla_step( op, act, args, qsend_record( walk ) ) );
+        if ( planted )
         {
-            records.push_back( qsend_record( walk ) );
+            report.planted( (int) records.size() );
         }
     }
 
     rocketnet_uring_queue_send_destroy( walk.send );
     rocketnet_uring_send_queues_destroy( walk.banks );
-#if defined( ROCKETNET_TLA_PLANT )
-    rocketnet_uring_queue_send_plant = false;
-#endif // #if defined( ROCKETNET_TLA_PLANT )
 
-    printf( "PLANT-FIRED %d\n", walk.plant_fired );
+    report.print();
 
     char constants[512];
     snprintf( constants, sizeof( constants ),
               "    NB = %d\n    S = %d\n    Dests = {1, 2}\n    MaxSeg = %d\n    Demand = %d\n    MaxFlush = %d\n    MaxEagain = %d\n"
               "    RetireRule = \"cqe\"\n    EagainRule = \"retry\"\n",
-              QSEND_NB, QSEND_SLOTS, QSEND_MAX_SEG, QSEND_DEMAND, QSEND_MAX_FLUSH, QSEND_MAX_EAGAIN );
+              QSEND_NB, QSEND_SLOTS, QSEND_MAX_SEG, QSEND_DEMAND, steps, QSEND_MAX_EAGAIN );
 
-#if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceQueueSendPlantSeed" + tla_int( (int64_t) seed );
-#else  // #if defined( ROCKETNET_TLA_PLANT )
-    const std::string name = "MCTraceQueueSendSeed" + tla_int( (int64_t) seed );
-#endif // #if defined( ROCKETNET_TLA_PLANT )
-
-    return tla_write_trace( out, name, "TraceRNUringQueueSend", "", constants, records ) ? 0 : 1;
+    return tla_write_trace( out, "MCTraceQueueSend", seed, "TraceRNUringQueueSend", "", constants, records ) ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "queue-send", trace_queue_send );
