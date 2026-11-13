@@ -413,8 +413,8 @@ static int rocketnet_server_msgx_table_open( void * user, const rocketnet_addres
 // close. Later datagrams of that address reach the shared socket. The count
 // is one syscall, getsockopt (SO_NUMRCVPKT, the datagrams in the receive
 // buffer), not a read of each on main (R70); the kernel still walks the
-// queued records to answer it, so it is not constant time. It is a snapshot
-// taken before the close, not accounting atomic with concurrent arrivals: a
+// queued records to answer it, so it is not constant time. It is a count
+// taken once before the close, not accounting atomic with concurrent arrivals: a
 // datagram the kernel queues between the count and the close goes uncounted,
 // the same boundary the bounded drain had. Only if the kernel refuses the
 // option are they read and counted, bounded
