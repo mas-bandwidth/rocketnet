@@ -11,19 +11,25 @@
 (* code's 32-bit indices) over RingSize entries.  The NIC takes one        *)
 (* descriptor at a time (Consume); it may stop taking them for good (Die:  *)
 (* carrier lost on a zero-copy queue, a copy-mode device queue that stays  *)
-(* stopped) with no errno to say so.  A healthy NIC takes one within       *)
-(* SlowGap worker passes while frames wait.                                *)
+(* stopped) with no errno to say so.  A healthy NIC pauses at most SlowGap *)
+(* ticks of the worker's clock with frames waiting: at most SlowGap + 1    *)
+(* passes in a row find frames pending and nothing taken, so two passes    *)
+(* that see the consumer in the same place are at most SlowGap ticks       *)
+(* apart.                                                                  *)
 (*                                                                         *)
 (* Each worker pass (Pass) submits the batch when the ring has room, then  *)
-(* runs the stall watch: pending is the batch or descriptors past the      *)
-(* consumer; during a stop (draining, set by BeginShutdown) still is the   *)
-(* time since the consumer index last moved while frames were pending, or  *)
-(* since the stop began, up to Bound, and a time at Bound sets stalled;    *)
-(* outside a stop nothing is timed.  Time is counted in passes: a pass is  *)
-(* one tick of the platform clock the worker reads (the code's bound is    *)
-(* ROCKETNET_XDP_SEND_STALL_SECONDS of that clock).  The main thread's stop *)
-(* drain (SendIdle) releases the queue when it is stalled or nothing is    *)
-(* pending.                                                                *)
+(* runs the stall watch as rocketnet_xdp_send_stall_pass does: pending is  *)
+(* the batch or descriptors past the consumer; the consumer moving, or     *)
+(* nothing pending, stops the timing and clears stalled.  During a stop    *)
+(* (draining, from BeginShutdown on) the first pass that finds frames      *)
+(* pending and the consumer where it was starts the timing (timing, still  *)
+(* = 0: the code's since = now); each later such pass is one tick more,    *)
+(* up to Bound, and a pass at still = Bound sets stalled (the code's       *)
+(* now - since < bound_seconds failing).  Outside a stop nothing is timed. *)
+(* Time is counted in passes: a pass is one tick of the platform clock the *)
+(* worker reads (the code's bound is ROCKETNET_XDP_SEND_STALL_SECONDS of   *)
+(* that clock).  The main thread's stop drain (SendIdle) releases the      *)
+(* queue when it is stalled or nothing is pending.                         *)
 (*                                                                         *)
 (* Reversed witnesses, one constant: Defect = "norelease" is the drain     *)
 (* before this model, deaf to a stall, and a ring that never drains keeps  *)
@@ -32,8 +38,10 @@
 (* up on (NeverAbandonDraining).  "noring" is the stop drain that looked   *)
 (* at the handoff but not at the TX ring, and cuts off what the ring still *)
 (* holds (NeverAbandonDraining).  A configuration witness: a Bound equal   *)
-(* to SlowGap gives up on a healthy ring (NeverAbandonDraining), which is  *)
-(* why the bound must sit far above the longest pause a live NIC takes.   *)
+(* to SlowGap gives up on a healthy ring (NeverAbandonDraining), because a *)
+(* stillness equal to the bound is a stall (the code compares with <),     *)
+(* which is why the bound must sit far above the longest pause a live NIC  *)
+(* takes.                                                                  *)
 (* The indices are free running (RingSize < Modulus), as libxdp's are, so  *)
 (* the consumer cannot move a whole Modulus between two passes.            *)
 (***************************************************************************)
@@ -45,7 +53,7 @@ CONSTANTS
     BatchMax,       \* frames the worker holds before the ring takes them (ROCKETNET_XDP_SEND_BATCH_SIZE)
     MaxFrames,      \* exploration bound: frames loaded over the run
     Bound,          \* ROCKETNET_XDP_SEND_STALL_SECONDS, in ticks
-    SlowGap,        \* the most ticks a healthy NIC lets pass with frames waiting
+    SlowGap,        \* the most ticks of the worker's clock a healthy NIC lets pass with frames waiting
     Defect
 
 ASSUME Defect \in {"none", "norelease", "noreset", "noring"}
@@ -62,14 +70,15 @@ VARIABLES
     batch,          \* frames in the worker's batch
     loaded,         \* ghost: frames loaded so far
     watchCons,      \* rocketnet_xdp_send_stall_t consumer
-    still,          \* rocketnet_xdp_send_stall_t timing and since: the ticks timed, 0 when not timing
+    timing,         \* rocketnet_xdp_send_stall_t timing
+    still,          \* now - rocketnet_xdp_send_stall_t since, in ticks, up to Bound; 0 when not timing
     stalled,        \* send_stalled
     pendingFlag,    \* send_pending as the last pass published it
     dead,           \* environment: the NIC takes no more descriptors
     gap,            \* environment: passes since the NIC last took a descriptor while frames waited
     cutLive         \* ghost: the queue was released while a live NIC still had frames to take
 
-vars == <<phase, prod, cons, batch, loaded, watchCons, still, stalled, pendingFlag, dead, gap, cutLive>>
+vars == <<phase, prod, cons, batch, loaded, watchCons, timing, still, stalled, pendingFlag, dead, gap, cutLive>>
 
 OnRing == (prod + Modulus - cons) % Modulus
 
@@ -79,7 +88,7 @@ Init ==
     /\ phase = "RUNNING"
     /\ prod = 0 /\ cons = 0
     /\ batch = 0 /\ loaded = 0
-    /\ watchCons = 0 /\ still = 0
+    /\ watchCons = 0 /\ timing = FALSE /\ still = 0
     /\ stalled = FALSE /\ pendingFlag = FALSE
     /\ dead = FALSE /\ gap = 0
     /\ cutLive = FALSE
@@ -93,7 +102,7 @@ Load ==
     /\ batch' = batch + 1
     /\ loaded' = loaded + 1
     /\ pendingFlag' = TRUE
-    /\ UNCHANGED <<phase, prod, cons, watchCons, still, stalled, dead, gap, cutLive>>
+    /\ UNCHANGED <<phase, prod, cons, watchCons, timing, still, stalled, dead, gap, cutLive>>
 
 \* Environment: the NIC takes the descriptor at the consumer.
 Consume ==
@@ -101,40 +110,50 @@ Consume ==
     /\ OnRing > 0
     /\ cons' = (cons + 1) % Modulus
     /\ gap' = 0
-    /\ UNCHANGED <<phase, prod, batch, loaded, watchCons, still, stalled, pendingFlag, dead, cutLive>>
+    /\ UNCHANGED <<phase, prod, batch, loaded, watchCons, timing, still, stalled, pendingFlag, dead, cutLive>>
 
 \* Environment: the NIC stops taking descriptors, with no errno to say so.
 Die ==
     /\ ~dead
     /\ dead' = TRUE
-    /\ UNCHANGED <<phase, prod, cons, batch, loaded, watchCons, still, stalled, pendingFlag, gap, cutLive>>
+    /\ UNCHANGED <<phase, prod, cons, batch, loaded, watchCons, timing, still, stalled, pendingFlag, gap, cutLive>>
 
 \* rocketnet_server_socket_begin_shutdown: the transport's stop began.
 BeginShutdown ==
     /\ phase = "RUNNING"
     /\ phase' = "DRAINING"
-    /\ UNCHANGED <<prod, cons, batch, loaded, watchCons, still, stalled, pendingFlag, dead, gap, cutLive>>
+    /\ UNCHANGED <<prod, cons, batch, loaded, watchCons, timing, still, stalled, pendingFlag, dead, gap, cutLive>>
 
 \* One worker pass: the batch goes on the ring when it all fits, then the
 \* stall watch (rocketnet_xdp_send_stall_pass) runs on the consumer it reads
 \* and the pending it computes, and send_pending is published. A healthy NIC
-\* takes a descriptor before SlowGap passes go by with frames waiting.
+\* takes a descriptor before SlowGap + 1 passes go by with frames waiting.
+\* The watch, step for step (sdk/rocketnet_server_socket.h):
+\* rocketnet_xdp_send_stall_pass resets on nothing pending or a moved
+\* consumer (reset); outside a stop it does nothing (draining is
+\* send_draining, set by begin_shutdown and never cleared); the first timed
+\* pass sets since = now (timing, still = 0) and reports nothing; a later
+\* pass is one tick more, and stalls once now - since < bound_seconds fails,
+\* that is still = Bound.
 Pass ==
-    /\ dead \/ ~Pending \/ gap < SlowGap
+    /\ dead \/ ~Pending \/ gap <= SlowGap
     /\ LET fits == batch > 0 /\ OnRing + batch <= RingSize
            p == IF fits THEN (prod + batch) % Modulus ELSE prod
            b == IF fits THEN 0 ELSE batch
            pending == b > 0 \/ (p + Modulus - cons) % Modulus > 0
            moved == cons # watchCons /\ Defect # "noreset"
-           s == IF ~pending \/ moved \/ phase # "DRAINING" THEN 0
+           reset == ~pending \/ moved
+           draining == phase # "RUNNING"
+           s == IF reset \/ ~draining \/ ~timing THEN 0
                 ELSE IF still < Bound THEN still + 1 ELSE still
        IN /\ prod' = p
           /\ batch' = b
           /\ pendingFlag' = pending
-          /\ watchCons' = IF ~pending \/ moved THEN cons ELSE watchCons
+          /\ watchCons' = IF reset THEN cons ELSE watchCons
+          /\ timing' = IF reset THEN FALSE ELSE timing \/ draining
           /\ still' = s
-          /\ stalled' = IF ~pending \/ moved THEN FALSE
-                        ELSE stalled \/ (s = Bound /\ phase = "DRAINING")
+          /\ stalled' = IF reset THEN FALSE
+                        ELSE stalled \/ s = Bound
           /\ gap' = IF pending /\ ~dead THEN gap + 1 ELSE 0
     /\ UNCHANGED <<phase, cons, loaded, dead, cutLive>>
 
@@ -150,7 +169,7 @@ SendIdle ==
     /\ Released
     /\ phase' = "RELEASED"
     /\ cutLive' = (cutLive \/ (~dead /\ Pending))
-    /\ UNCHANGED <<prod, cons, batch, loaded, watchCons, still, stalled, pendingFlag, dead, gap>>
+    /\ UNCHANGED <<prod, cons, batch, loaded, watchCons, timing, still, stalled, pendingFlag, dead, gap>>
 
 Next ==
     \/ Load
@@ -173,9 +192,10 @@ TypeOK ==
     /\ prod \in 0..Modulus - 1 /\ cons \in 0..Modulus - 1
     /\ OnRing <= RingSize
     /\ batch \in 0..BatchMax /\ loaded \in 0..MaxFrames
-    /\ watchCons \in 0..Modulus - 1 /\ still \in 0..Bound
+    /\ watchCons \in 0..Modulus - 1
+    /\ timing \in BOOLEAN /\ still \in 0..Bound /\ (~timing => still = 0)
     /\ stalled \in BOOLEAN /\ pendingFlag \in BOOLEAN
-    /\ dead \in BOOLEAN /\ gap \in 0..SlowGap
+    /\ dead \in BOOLEAN /\ gap \in 0..SlowGap + 1
     /\ cutLive \in BOOLEAN
 
 \* A queue whose NIC still takes descriptors is never given up on while it
