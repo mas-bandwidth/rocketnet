@@ -73,13 +73,18 @@ Two modules:
 
 | Action | Call | RNSendReserve steps it stands for |
 |---|---|---|
-| `Open(used, acked)` | `send_packets` after an update whose protocol frames took `used` frames | `OpenFill` |
+| `Open(used, acked)` | `send_packets` after an update whose protocol frames took `used[q]` frames of each queue `q`; each queue's reserve is the formula cut to half the largest room seen on it | `OpenFill` |
 | `StartStaged(c)` | `start_packet` gave a frame | `OwnClaim`, `OwnIo`, `OwnCount`; or `Claim`, `Check`, `Read1-3`, `Stage`, `Count` |
 | `StartIoRefused(c)` | `start_packet` gave nothing: the transport refused the frame | `OwnClaim`, `OwnIo` refused; or `Claim`, `Check`, `Read1-3`, `Stage` refused |
 | `StartRefused(c)` | `start_packet` gave nothing: past the budget, counted | `Claim`, `Check`, `Read1-3`, `TakeBack`, `Retest` |
 | `Finish`, `Abort` | `finish_packet`, `abort_packet` | none: the reserve's words stay; an aborted frame's claim is not given back |
 | `Capacity(n)` | `send_capacity_available` returned `n` | none: a read of the room, the budget as it would be raised, the claims and the own frames left |
-| `Retire(n)` | the transport frees `n` frames | `Retire`, `n` times |
+| `CapacityTo(c, n)` | `send_capacity_to(c)` returned `n`: the client's own queue's room and budget left, with its own frame | none: a read |
+| `CapacityAll(n)` | `send_capacity_to(-1)` returned `n`: the room summed over the queues, within the whole budget left (0 with one queue) | none: a read |
+| `Retire(q, n)` | the transport frees `n` frames of queue `q` | `Retire`, `n` times |
+
+Every word but the own frames is per send queue (`NQ` queues, client `c` on
+queue `(c % NQ) + 1`); with `NQ = 1` the module is the one-queue model it was.
 
 The refinement is stated in the module's header and argued, not checked by
 TLC: each action is a run of RNSendReserve steps by one thread with no other
@@ -99,6 +104,12 @@ and `OwnLeftCounts`.
   when it is refused, nor refused for good while the claims left after its
   take back leave a frame under the budget. Room that comes back after the
   read, or that a thread claiming after the read takes, is not starvation.
+- **`NoHiddenRoom`** (RNSendReserveCalls): a client's capacity is never
+  answered 0 while a start to it would stage, so one full queue never hides
+  another's room from the send pass and the sweep.
+- **`ReserveRestored`** (RNSendReserveCalls): each queue's reserve is the
+  formula cut to half the largest room seen on it, so a reserve cut while a
+  queue's room was small grows back once larger room is seen.
 
 ## Configs
 
@@ -130,12 +141,17 @@ a guard of three.
 | `MCRNSendReserveCallsBrokenAbortReturns.cfg` | `ReserveKept` | an aborted packet gives its claim back though its frame left the room |
 | `MCRNSendReserveCallsChunk.cfg` | pass | the code with chunked claims: a chunk while the guard holds, its tail taken a frame a start, given back on a refused frame and at the next opening |
 | `MCRNSendReserveCallsBrokenTailLeak.cfg` | `NeverStarved` | a refused frame gives back its own claim and not the tail held with it |
+| `MCRNSendReserveCallsQueues.cfg` | pass | two queues, two clients, a reserve of 1 in queues of 3, a first room seen of 1: every invariant with `NoHiddenRoom` and `ReserveRestored` |
+| `MCRNSendReserveCallsBrokenMinRoom.cfg` | `NoHiddenRoom` | the fewest room of any queue answers for every client, as `send_capacity_available` did for the send pass and the sweep |
+| `MCRNSendReserveCallsBrokenStickyReserve.cfg` | `ReserveRestored` | a reserve cut by a small room seen never grows back |
 
 ## The trace check
 
 `tests/tla_trace_send_reserve.cpp` drives a server transport with three seated
-clients and a fake staged transport of one queue, one call per step, and
-writes the reserve's words after each. TLC checks each record is the
+clients and a fake staged transport of one queue (seeds 1 and 2 modulo 4), or
+four clients on two queues (seeds 3 and 4), one call per step, and writes the
+reserve's words after each, every queue's as a sequence. The two-queue walks
+reach QueueStall: one queue's room run out while the other has room. TLC checks each record is the
 RNSendReserveCalls action its call's result names. An odd seed's queue is the
 reserve and six frames, so every claim is one frame; an even seed's is the
 reserve, the chunk guard (a chunk of 8 for each of 64 lines) and 200 frames,
@@ -153,7 +169,9 @@ OwnCountFirst, NoReread, IndexTest and NoRetry have no call-level form.
 ## What it does not cover
 
 The size of the reserve, which is the formula and the half above, checked by the unit tests
-in `tests/test_unit_server_send_reserve.cpp`; several queues, which are
-independent (each its own fields), checked by the same tests; and the C++
+in `tests/test_unit_server_send_reserve.cpp` (the calls model carries only the
+cut to half the room seen); several queues in RNSendReserve, whose steps are
+per queue and independent (each its own fields), checked by the same tests
+and by RNSendReserveCalls at the call level; and the C++
 memory order, beyond what the atomics the code uses
 (`rocketnet_platform_atomic_add_u64`, `_max_u64`, `_load_u64`) give.

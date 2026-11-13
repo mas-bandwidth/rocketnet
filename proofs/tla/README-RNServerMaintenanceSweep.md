@@ -31,6 +31,19 @@ each update has room for at least one frame.
 | `MCRNServerMaintenanceSweep.cfg` | `N = 4`, `MaxRoom = 2`, `Unreachable = {1}`, `Refused = {2}`, `SkipUnreachable = TRUE`, `SkipRefused = TRUE` | pass |
 | `MCRNServerMaintenanceSweepBrokenBreak.cfg` | the same, `SkipUnreachable = FALSE` | `BoundedWait` violated |
 | `MCRNServerMaintenanceSweepBrokenRefused.cfg` | the same, `SkipRefused = FALSE` | `BoundedWait` violated |
+| `MCRNServerMaintenanceSweepQueues.cfg` | `N = 4`, `MaxRoom = 2`, `QueueCount = 2`, `MayJam = {0}`, `QueueRule = "perqueue"` | pass |
+| `MCRNServerMaintenanceSweepBrokenMinRoom.cfg` | the same, `QueueRule = "minroom"`: the fewest room of any queue ends the sweep | `BoundedWait` violated |
+| `MCRNServerMaintenanceSweepBrokenHoldFirst.cfg` | the same, `QueueRule = "holdfirst"`: a slot is held also before the sweep's first frame, which pins the cursor on a queue full for many updates | `BoundedWait` violated |
+| `MCRNServerMaintenanceSweepBrokenNoHold.cfg` | the same, `QueueRule = "nohold"`: the cursor moves past a held slot as past a served one, so a slot whose queue the slots before it fill is passed over every update | `BoundedWait` violated |
+
+With several send queues (`QueueCount`, slot `i` on queue `i % QueueCount`)
+each visit tests its own queue's room. A slot whose queue is full while
+another queue has room is held and passed (`Hold`); the sweep ends when no
+queue has room or the ring is walked (`EndSweep`), and the cursor settles on
+the first slot held after the sweep's first frame, so it is served first
+next update. `MayJam` names the
+queues the environment may leave full for good. `BoundedWait` is owed to the
+slots of queues with room (`Owed`).
 
 ## The reversed witness
 

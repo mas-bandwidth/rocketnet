@@ -14,5 +14,5 @@
 (***************************************************************************)
 EXTENDS RNSendReserveCalls
 
-Bound == refused <= 3 /\ started + ownUsed <= MaxFree + 2
+Bound == refused <= 3 /\ \A q \in Queues : started[q] + ownUsed[q] <= MaxFree + 2
 =============================================================================
