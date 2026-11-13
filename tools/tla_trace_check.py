@@ -40,7 +40,7 @@ reach predicate of the row, was never taken or reached in a clean trace.
 A layer is one file, tests/tla_trace_<layer>.cpp, that registers itself
 with TLA_TRACE_LAYER, plus one row of LAYERS below.
 
-  python3 tools/tla_trace_check.py --bin build/bin --tlacheck TLACHECK \\
+  python3 tools/tla_trace_check.py --bin bin --tlacheck TLACHECK \\
       --jar /opt/tla/tla2tools.jar --layer all --seeds 1-4 --jobs 8 --dir WORK
 """
 
@@ -693,6 +693,8 @@ def main():
     shard = re.fullmatch(r"([0-9]+)/([1-9][0-9]*)", args.shard)
     if not shard or int(shard.group(1)) >= int(shard.group(2)):
         parser.error(f"--shard must be I/N with I < N: {args.shard}")
+    if not names:
+        parser.error(f"--shard {args.shard} holds no layer: nothing would be checked")
     names = names[int(shard.group(1))::int(shard.group(2))]
     if args.library_config is None:
         failed.append(f"no {args.bin / 'tla_trace_config.txt'}: the library's definitions are not known")
