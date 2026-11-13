@@ -46,9 +46,13 @@ EXTENDS RNXdpReplayMarksLayout, Sequences
 
 CONSTANT TraceLog
 
+\* read through a definition, which TLC evaluates once; the overridden
+\* constant it rebuilds at every reference
+Records == TraceLog
+
 \* checked once, when TLC starts
-ASSUME /\ Len(TraceLog) >= 2
-       /\ \A n \in DOMAIN TraceLog : DOMAIN TraceLog[n] = {"op", "act", "args", "state"}
+ASSUME /\ Len(Records) >= 2
+       /\ \A n \in DOMAIN Records : DOMAIN Records[n] = {"op", "act", "args", "state"}
 
 VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
@@ -78,12 +82,12 @@ Matches(r) == IF DOMAIN r.state = {} THEN TRUE ELSE VarsRec' = r.state
 TraceInit ==
     /\ Init
     /\ ti = 1
-    /\ rejected = (TraceLog[1].op # "init" \/ TraceLog[1].act # "init" \/ VarsRec # TraceLog[1].state)
+    /\ rejected = (Records[1].op # "init" \/ Records[1].act # "init" \/ VarsRec # Records[1].state)
 
 TraceStep ==
     /\ ~rejected
-    /\ ti < Len(TraceLog)
-    /\ LET r == TraceLog[ti + 1]
+    /\ ti < Len(Records)
+    /\ LET r == Records[ti + 1]
        IN /\ r.op \in DOMAIN OpActs
           /\ r.act \in OpActs[r.op]
           /\ Act(r.act, r.args)
@@ -93,13 +97,13 @@ TraceStep ==
 
 TraceReject ==
     /\ ~rejected
-    /\ ti < Len(TraceLog)
+    /\ ti < Len(Records)
     /\ ~ENABLED TraceStep
     /\ rejected' = TRUE
     /\ UNCHANGED <<vars, ti>>
 
 TraceDone ==
-    /\ rejected \/ ti = Len(TraceLog)
+    /\ rejected \/ ti = Len(Records)
     /\ UNCHANGED <<vars, ti, rejected>>
 
 TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, rejected>>
