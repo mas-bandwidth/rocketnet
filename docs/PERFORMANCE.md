@@ -35,7 +35,7 @@ enkiTS for these jobs; RocketNet does not create the game threads.
 | GSO | AWS c8gn.8xlarge, Graviton4, arm64, 32 vCPUs; Ubuntu 26.04, GCC 15.2 | AWS c6gn.16xlarge, 64 vCPUs; same placement, private network | Two network threads on CPUs 1–2, or one on CPU 1 in the scaling run; main thread on CPU 3; 28 game threads on CPUs 4–31; no real-time priority |
 | IOCP | AWS m7i.16xlarge, 64 vCPUs, Windows Server 2025; MSVC Release | AWS c8gn.8xlarge, 32 vCPUs, Linux; private network | Receive sockets on processors 2 and 4; receive threads on 3 and 5; send threads on 6 and 8; main thread on 10; 53 game threads on 11–63; all 54 pool threads at real-time priority |
 | RIO | AWS m7i.16xlarge, Windows Server 2025 | AWS c8gn.8xlarge, 32 vCPUs | Six lanes: receive processors 2,4,6,8,10,12 and worker processors 3,5,7,9,11,13; main processor 14; 49 game threads on 15–63; all 50 pool threads at real-time priority |
-| macOS | Owned Macs; exact models pending | Pending | Pending |
+| macOS `msgx` | Owned Mac mini M5 Pro, 18 cores (6 super + 12 performance); Release | Separate 16-CPU Linux machine, 12 client threads; direct 10 GbE LAN | Two send + one receive thread and a 14-thread pool (main + 13 game threads); four-send trial uses a 12-thread pool (main + 11 game threads); affinity is advisory |
 
 For io_uring, CPU 0 also handles NIC interrupts. The library pins each network
 thread to the number of OS CPUs plus its queue index: CPUs 1–2 in these runs.
@@ -55,6 +55,10 @@ the measured development layout selects the receive processors, and the
 send threads take separate cores after them. The baseline Linux rows use two
 network threads each; XDP and GSO also hold peak with one, as detailed below.
 IOCP clients use 16 threads. Client affinity confirmation remains pending.
+The macOS logs report `pinned=0` and affinity refusal code 46 for every pool
+thread, with user-interactive QoS accepted for all 14 (or 12) pool threads.
+The `realtime` log field counts QoS acceptance on macOS; it does not establish
+hard CPU placement or the Linux/Windows real-time scheduling policy.
 
 ## Results
 
@@ -78,12 +82,17 @@ It is not the percentage of players that connected. The rows below report
 | RIO, eight lanes | Peak | 900,000 | 60.6 | 100% | 100% |
 | RIO, six lanes | Peak | 900,319 | 60.7 | 100% | 100% |
 | RIO, six lanes | Average | 480,318 | 60.7 | 100% | 100% |
+| macOS `msgx`, two send threads | Peak | 653,000 | 45.3 | 99.3135% | 99.9999% |
+| macOS `msgx`, two send threads | Average | 476,000 | 60.6 | 99.9210% | 99.9999% |
 
 IOCP's no-game peak and average rows lost 470 and 174 client inputs,
 respectively; server-to-client delivery had no reported loss. These rows
 meet the reported rate/frame targets, but their overall reconciliation
 verdict is `FAIL`: packet accounting did not close. The final IOCP section
 below records this distinction and the separate failed handle-count check.
+macOS misses peak; its average row reaches 60 Hz and passes the player
+delivery threshold but retains nonzero loss and failed packet reconciliation.
+The dedicated macOS section records all measured configurations.
 
 Network work is reported in milliseconds per frame. The main-thread average
 is elapsed time in its network calls, including waits inside those calls.
@@ -105,10 +114,13 @@ dedicated network threads and do not describe the whole frame's duration.
 | RIO, eight lanes | Peak | 0.46 | 0.57 | 0.79 | 3.1 / 3.3 / 5.4 | 0.14 |
 | RIO, six lanes | Peak | 0.45 | 0.48 | 0.87 | 2.72 / 2.91 / 5.2 | ≈0.15 (derived) |
 | RIO, six lanes | Average | 0.45 | 0.51 | 0.85 | 1.43 / 1.59 / 3.7 | ≈0.28 (derived) |
+| macOS `msgx`, two send threads | Peak | 0.102 | Pending | Pending | 3.23 / 4.34 / 6.24 | ≈0.024 (derived) |
+| macOS `msgx`, two send threads | Average | 0.130 | Pending | Pending | 2.19 / 2.36 / 2.54 | ≈0.055 (derived) |
 
 The io_uring average-load ratio is calculated from the reported rounded means:
 0.147 / 1.81. RIO's six-lane ratios are likewise derived from 0.45 / 2.91
 and 0.45 / 1.59; IOCP's are derived from 0.17 / 3.05 and 0.15 / 1.59.
+The macOS ratios are derived from 0.102 / 4.34 and 0.130 / 2.36.
 The other ratios were supplied with their measurement rows.
 For the XDP rows above, the p99 column is the mean of the per-second p99s
 in the steady window, not a p99 computed over all frames in that window.
@@ -121,6 +133,7 @@ in the steady window, not a p99 computed over all frames in that window.
 | IOCP peak / average | [1afaabe69](https://github.com/mas-bandwidth/rocketnet/commit/1afaabe6977eaad6db4ce778ebdf10f07787eeda), `tests/v1.2/goal-iocp-send` | Rate/timing boundaries pending; overrun counts cover the complete run | `--world-ms 0 --game-load 0`; earlier frame order |
 | RIO peak / average, six lanes | [27ede60b2](https://github.com/mas-bandwidth/rocketnet/commit/27ede60b21d2407a6d5c760b48a075e8128fab87), `tests/v1.2/goal-rio` | Pending | `--world-ms 0 --game-load 0`; earlier frame order |
 | RIO earlier peak, eight lanes | Build pending; earlier frame order | Pending | No game work reported; exact world-work setting pending |
+| macOS peak / average, two send threads | [d02703aa9](https://github.com/mas-bandwidth/rocketnet/commit/d02703aa924f21fee9f5afa3590b94c8bab7f79f), `tests/v1.2/goal-macos`, both machines | Rate/timing boundaries pending | `--world-ms 0 --game-load 0 --space-split top` |
 
 The io_uring rows use the earlier frame order with no simulated game work.
 GSO starts its network task before the world update with `--space-split top`.
@@ -132,9 +145,9 @@ socket receive buffer and the OS granted 4 MB, limited by `net.core.rmem_max`.
 There was no reported loss at this load; check the requested and granted
 values in the transport log when configuring another machine.
 
-The final RIO and IOCP server and reconciliation logs were inspected; other raw
-result logs remain pending.
-the timing percentiles are reported values, not recomputed here. Confirmation
+The final RIO, IOCP, and macOS server and reconciliation logs were inspected;
+other raw result logs remain pending.
+The timing percentiles are reported values, not recomputed here. Confirmation
 of the io_uring, GSO, IOCP, and RIO percentile aggregation is pending. Different machines, builds, and
 sampling windows make these workload results unsuitable for ranking transports
 against one another.
@@ -307,6 +320,55 @@ and timings remain pending. The frame counts include the final partial
 reporting interval and have not been converted into a steady-window
 overrun rate here.
 
+#### macOS: measured peak limit
+
+On the Mac mini described above, none of the reported peak configurations
+sustains the target of about 900,000 packets/s at 60 Hz. The four final rows
+use `d02703aa9`, 1000 clients, and a quiet client machine: the run record
+reports client load averages of 3.7–6.6 before/after rows. Earlier trials
+shared that client with other work and are not interchangeable with these.
+
+| Cell | Load / game work | Send + receive threads | Server packets/s | Frames/s | Server → client delivery | Client → server delivery | Complete-run overruns / frames |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| m31 | Peak / none | 2 + 1 | 653,000 | 45.3 | 99.3135% | 99.9999% | 620 / 4,034 |
+| m32 | Peak / none | 4 + 1 | 516,000 | 36.4 | 98.5887% | 90.3005% | 735 / 3,459 |
+| m33 | Peak / half busy | 2 + 1 | 723,000 | 49.6 | 99.7655% | 99.9999% | 652 / 4,394 |
+| m34 | Average / none | 2 + 1 | 476,000 | 60.6 | 99.9210% | 99.9999% | 0 / 5,266 |
+
+| Cell | Main-thread network mean (ms/frame) | Game threads min / mean / max (ms/frame) | Lost server → client messages | Lost client → server inputs |
+| --- | ---: | --- | ---: | ---: |
+| m31 | 0.102 | 3.23 / 4.34 / 6.24 | 372,895 | 6 |
+| m32 | 0.129 | 3.78 / 5.74 / 11.36 | 644,418 | 468,525 |
+| m33 | 0.101 | 3.24 / 4.29 / 5.71 | 140,119 | 4 |
+| m34 | 0.130 | 2.19 / 2.36 / 2.54 | 30,668 | 3 |
+
+All four raw reconciliations report `verdict=FAIL chains=FAIL`. The three
+peak rows also report `players=FAIL`; m34 reports `players=PASS` against the
+99.900% delivery bound. Every row reports `frame_aim=MET`, which evaluates
+the main-call timing threshold and does not establish a sustained 60 Hz
+frame rate. Overrun/frame totals cover the complete run, including startup
+and warm-up; rate and network-time aggregation boundaries remain pending.
+The supplied m34 timing p99 is 0.258 ms, while its full-run reconciliation
+reports `work_p99_us=235`. Their metric/window relationship is unconfirmed,
+so neither is inserted as a confirmed steady-window main-network p99 above.
+
+An earlier two-send peak row reproduced roughly this limit at 655,000
+packets/s and 45.0 frames/s. The earlier loaded-average cell m16, on the
+contended client machine, reported 469,000 packets/s and 60.7 frames/s,
+main network mean 0.113 ms and game threads 1.77 / 2.25 / 2.77 ms. Its raw
+log has 18,356 server-to-client losses (99.9529% delivery), eight lost inputs
+(99.9998%), and zero overruns over 5,280 frames. It passes the player bound
+and main-call timing aim, but its overall reconciliation also reports
+`FAIL chains=FAIL`. It is not a quiet-client loaded-average measurement.
+
+The run owner attributes the measured limit to syscall cost: earlier
+profiles show `sendmsg_x` in about 84% and 83% of the two send workers'
+sampled stacks (2,436 and 2,413 of 2,901 samples). With four send workers, their corresponding shares
+fall to 49–61%, while the single receive worker spends about 73% in
+`recvmsg_x`. These observations support the diagnosis for the tested
+configurations; they do not establish a universal macOS capacity limit.
+The profiles are from separate, disturbed runs, detailed below.
+
 ### Network threads needed at peak
 
 These are the smallest counts meeting the rate/frame target so far on each
@@ -321,6 +383,7 @@ separately.
 | io_uring | 2 | Loaded peak: one thread misses the target, two pass |
 | RIO | 6 | Five lanes miss peak target; six pass all four rows, with loaded peak repeated; over-budget frame counts above |
 | IOCP | 4 (2 receive + 2 send) | All four performance rows reach target; measured input loss and failed reconciliation remain explicit; profiled handle growth is a tool artifact |
+| macOS `msgx` | None established | Two-send and four-send quiet-client trials miss peak; the four-send trial also changes the game pool |
 
 IOCP's loaded-peak thread-count sweep reported:
 
@@ -400,7 +463,8 @@ final six-lane rows at `27ede60b2`.
 | RIO exact Windows build/RSS setup, historical launcher, and sampling windows | Pending |
 | IOCP complete packet-accounting acceptance | Open; original recordings report FAIL |
 | IOCP exact Windows build/RSS setup and rate/timing sampling windows | Pending |
-| macOS peak and average | Pending |
+| macOS quiet-client loaded average, rate/timing windows, exact build command and compiler | Pending |
+| macOS complete packet-accounting acceptance | Open; all five inspected reconciliations report FAIL |
 
 ### XDP under hostile traffic
 
@@ -725,6 +789,34 @@ and retain the io_uring peak arguments, changing the server to
 --world-ms 10 --space-split top`. This reproduces its observed layout;
 the passing two-thread row uses a different pool size and main-thread CPU.
 
+### macOS workload commands
+
+The recorded macOS rows use `d02703aa9` on both machines, `msgx` on the
+server, and 12 client threads. The server was built in Release; the exact
+compiler and build invocation remain pending. With the same common
+`END_AT` stop timestamp on both hosts, the m31 server workload is:
+
+```sh
+./bin/harden_load server --address "${SERVER_IP}:40000" --transport msgx \
+  --max-clients 1000 --end-at "$END_AT" --quiet-seconds 1.5 --dev en0 \
+  --warm-seconds 20 --sample-seconds 60 --payload copy \
+  --frame-shape space --load peak --game-threads 14 --pin-first-cpu 3 \
+  --game-load 0 --world-ms 0 --space-send wide --space-update split \
+  --space-net task --space-split top --num-xdp-queues 2 > server.log 2>&1
+```
+
+Here `--num-xdp-queues 2` requests two send workers, with one additional
+receive worker; it is not the total network-thread count. The pool size of
+14 includes the main thread. `--pin-first-cpu 3` records the requested
+affinity, not a successful CPU placement: the logs show all tags refused.
+Use `--num-xdp-queues 4 --game-threads 12` for m32; use
+`--game-load 0.5 --world-ms 10` with the original pool/count for m33; change
+`--load peak` to `--load average` with no simulated work for m34.
+The client log confirms 1000 clients, 12 threads, 60 Hz, a join rate of
+100/s, one 256-byte input per tick, and nominal `--seconds 60`.
+The complete historical client command and orchestration are still pending;
+retain the common stop-time and final drain when reconstructing a row.
+
 ### Command flags
 
 | Flag | Meaning |
@@ -739,7 +831,7 @@ the passing two-thread row uses a different pool size and main-thread CPU.
 | `--warm-seconds 20` | Delay before the server's first long-run sample; separate from the reported steady window. |
 | `--sample-seconds 60` | Interval between long-run server samples. |
 | `--payload` | `pattern` generates a verifiable body; `copy` copies a prebuilt body. |
-| `--num-xdp-queues` | Requested queue/lane count: 2 for baseline Linux rows, 1 for the XDP/GSO one-thread runs, 6 for final RIO rows; in the final IOCP build, 2 selects two receive/completion workers. |
+| `--num-xdp-queues` | Requested queue/lane count: 2 for baseline Linux rows, 1 for the XDP/GSO one-thread runs, 6 for final RIO rows; in the final IOCP build, 2 selects two receive/completion workers; on macOS `msgx`, it selects two send workers plus a separate receive worker. |
 | `--frame-shape` | Select the test's job-based frame loop. |
 | `--load` | Set the peak or average server traffic from the workload table. |
 | `--game-threads` | Pool size including the main thread. |
@@ -752,7 +844,7 @@ the passing two-thread row uses a different pool size and main-thread CPU.
 | `--space-net task` | Run network update and send work in the scheduled network task. |
 | `--space-split top` | Start the network task before the main thread's world update so they can overlap. |
 | `--key` | Server public key printed by `harden_ready`. |
-| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux and RIO server rows, 16 for IOCP. |
+| `--threads` | Number of client-machine threads, independent of the server pool: 32 for Linux and RIO server rows, 16 for IOCP, 12 for macOS. |
 | `--messages 1` | One client input message per player per tick. |
 | `--reliable-every 1` | Preserved client command setting; the server's reliable cadence is set separately by `--load`. |
 | `--join-rate 100` | Connect approximately 100 players per second. |
@@ -1065,4 +1157,29 @@ are preserved as supplied; their exact exported symbol names are pending.
 | `rocketnet_uring_send_queues_finish` | 0.101 | Not supplied | — |
 | `rocketnet_next_packet_lease_id` | 0.083 | Not supplied | — |
 
-Profiles for GSO, RIO, IOCP, macOS, and rows with game work remain pending.
+### macOS sampling observations
+
+The inspected m03 and m26 `sample.txt` headers identify `/usr/bin/sample`,
+a 1 ms sampling interval, ARM64, and macOS 27.2 (26B118). The run record
+reports 10-second captures starting around t=30 s for m03 and t=45 s for
+m26. Profiling disturbed these rows; their throughput is excluded from
+the result tables. m03 precedes the final measurement build; its exact
+binary identity remains pending. m26 follows the `d02703aa9` rebuild in
+the run record. The exact capture command remains pending.
+
+| Profile | Network thread | Samples in named function / thread samples | Share |
+| --- | --- | --- | --- |
+| m03, two send workers | Send 1, `sendmsg_x` | 2,436 / 2,901 | ≈84% |
+| m03, two send workers | Send 2, `sendmsg_x` | 2,413 / 2,901 | ≈83% |
+| m26, four send workers | Send workers, `sendmsg_x` | 1,587 / 1,262 / 1,500 / 1,473, each out of 2,598 | ≈49–61% |
+| m26, four send workers | Receive worker, `recvmsg_x` | 1,886 / 2,598 | ≈73% |
+
+The originally supplied 87%/84% values refer to inclusive worker stack
+branches (2,521/2,448 samples), not the syscall itself; the table uses the
+raw syscall samples. These are sampled stack shares, not Linux `perf` self-time estimates or
+measured CPU utilization. The owner's roughly 2.6 microseconds per packet
+estimate for the two-send case is an interpretation of its throughput and
+profile, not a directly timed syscall latency. Do not convert these stack
+shares to per-frame self milliseconds using the Linux procedure above.
+
+Full function profiles for GSO, RIO, IOCP, and rows with game work remain pending.
