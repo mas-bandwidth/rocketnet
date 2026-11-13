@@ -388,6 +388,7 @@ struct rocketnet_server_transport_t
     rocketnet_platform_mutex_t link_simulator_mutex;
 #if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
+    int refuse_fill_chunks_for_test; // the next reserve chunk claims refused as if past the budget
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
@@ -1243,7 +1244,15 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     if ( budget >= claims && budget - claims >= chunk * ROCKETNET_FILL_PHASE_FILL_LINES )
     {
         rocketnet_platform_atomic_add_u64( tails, held );
-        if ( rocketnet_server_transport_claim_frames( server_transport, queue, chunk ) )
+        bool refuse = false;
+#if ROCKETNET_DEV
+        if ( server_transport->refuse_fill_chunks_for_test > 0 )
+        {
+            server_transport->refuse_fill_chunks_for_test--;
+            refuse = true;
+        }
+#endif // #if ROCKETNET_DEV
+        if ( !refuse && rocketnet_server_transport_claim_frames( server_transport, queue, chunk ) )
         {
             rocketnet_platform_atomic_add_u64( tails, ( chunk - 1 ) - held );
             return queue;
@@ -1584,6 +1593,48 @@ uint64_t rocketnet_server_transport_fill_own_frames_for_test( const struct rocke
 {
     rocketnet_assert( server_transport );
     return rocketnet_server_transport_load_u64( &server_transport->fill_own_frames_left );
+}
+
+uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet_server_transport_t * server_transport, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
+}
+
+uint64_t rocketnet_server_transport_fill_tail_for_test( const struct rocketnet_server_transport_t * server_transport, int line, int queue )
+{
+    rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    if ( line < 0 )
+    {
+        line = rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() );
+    }
+    rocketnet_assert( line < ROCKETNET_FILL_PHASE_FILL_LINES );
+    return rocketnet_server_transport_load_u64( &server_transport->fill_lines[line].tails[queue] );
+}
+
+void rocketnet_server_transport_set_fill_tail_for_test( struct rocketnet_server_transport_t * server_transport, int line, int queue, uint64_t word )
+{
+    rocketnet_assert( server_transport && line >= 0 && line < ROCKETNET_FILL_PHASE_FILL_LINES );
+    rocketnet_assert( queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
+    server_transport->fill_lines[line].tails[queue] = word;
+}
+
+void rocketnet_server_transport_refuse_fill_chunks_for_test( struct rocketnet_server_transport_t * server_transport, int chunks )
+{
+    rocketnet_assert( server_transport );
+    server_transport->refuse_fill_chunks_for_test = chunks;
+}
+
+uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &server_transport->payload_ring.num_packets ) );
+}
+
+uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return rocketnet_server_transport_load_u64( &rocketnet_server_fill_line_of_caller( server_transport )->ring );
 }
 
 // See rocketnet_dev_fail_disconnect_sealed_writes in rocketnet_test_seams.h.

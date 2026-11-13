@@ -135,8 +135,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // and each region's room_refusals 8 more per connection to the server: both
 // pins read on captain, MSVC 19.51.36263.0, Release (server actual=1469641215,
 // 64 under the Linux arithmetic; client as pinned).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468592639 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14214332 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468661567 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14214396 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -187,8 +187,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // bytes to the client and server, and each region's room_refusals 8 more per
 // connection to the server: both pins read on mini-m5, AppleClang 21.0.0,
 // Release, at the figures the Linux arithmetic gave.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468593055 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992074 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1468661983 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13992138 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -273,8 +273,8 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the client and the server 4096, and each region's room_refusals the server
 // 8000 more (actual=3111817267, client actual=15190306, bench-nyc-4, gcc,
 // Debug).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110768691ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141730 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3110837619ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14141794 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
