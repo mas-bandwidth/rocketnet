@@ -2415,7 +2415,8 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 | sequenced hold data bytes | `1416` | bytes | the data capacity of one code 1 hold slot |
 | counter modulus | `16777216` | values | the modulus of the ordering and sequencing indexes |
 
-The hold slots of rule 7 and the delivery allowance of rule 4 are
+The hold slots of rule 7 and the delivery allowance of rule 4 of
+[m6.1 Rule](#m6.1) are
 configuration fields, declared in the shape of
 [RN-1 t2.3 Configuration surface](TRANSPORT.md#t2.3).
 
@@ -3055,7 +3056,7 @@ fields, declared in the shape of
 milliseconds. An endpoint refuses to create, naming the field, when one is
 outside its range, by rule 5 of that section, so a nonzero `reliable_message_timeout_ms`
 below 1000, or below `min_resend_attempts` times
-`message_resend_delay_initial_ms` (8000 at the defaults), is refused.
+`message_resend_delay_initial_ms`, is refused.
 
 | Name | Value | Type | Environment variable | Valid range |
 |---|---|---|---|---|
@@ -3210,6 +3211,13 @@ budget a value of 0 selects, which is also the default.
 | client send_kbps | `1000` | integer | `ROCKETNET_CLIENT_SEND_KBPS` | 0, which selects this default; `send_kbps_min` to `send_kbps_max`; or 2147483647, no send budget |
 | server per_client_send_kbps | `10000` | integer | `ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` | 0, which selects this default; `send_kbps_min` to `send_kbps_max`; or 2147483647, no send budget |
 | packets_per_update | `256` | integer | `ROCKETNET_CLIENT_PACKETS_PER_UPDATE` and `ROCKETNET_SERVER_PACKETS_PER_UPDATE` | 1 to 1024 |
+
+The reference implementation also refuses at create a send budget and
+`message_resend_delay_max_ms` whose resend reserve
+([RN-1 tc.7 Create-time maximum-resend delay message reserve](TRANSPORT.md#tc.7))
+does not fit the 32-bit sizes of its send memory. At the default
+`message_resend_delay_max_ms` that refuses a budget above about 16.95 million
+kbps, well inside the range above.
 
 The client's budget to the server defaults to the row `client send_kbps` and
 the server's budget to each client defaults to the row

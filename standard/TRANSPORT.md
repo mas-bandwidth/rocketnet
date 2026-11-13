@@ -540,8 +540,9 @@ before any other field. Its size is the row named prefilter header in
    filter epoch, the row named unkeyed filter epoch in
    [t3 Constants and registries](#t3), as a wrong epoch. A receiver that
    implements [t5.1 Keyed epochs (optional extension)](#t5.1) applies the
-   epoch and filter value rules of that subsection in place of this rule and
-   rule 7.
+   epoch rules of that subsection in place of this rule, and for a keyed
+   epoch compares the filter value with the value that subsection computes
+   in place of the unkeyed filter value of rule 7.
 7. A receiver MUST refuse a packet whose filter value does not equal the
    receiver's unkeyed filter value as a wrong value.
 8. A receiver MUST return the packet type byte of a packet that passes every
@@ -590,7 +591,8 @@ This subsection is an optional extension. It is not part of conformance: an
 implementation that omits it conforms to this standard. The reference
 implementation does not implement it: it writes the unkeyed filter epoch and
 refuses every keyed epoch as a wrong epoch by rule 6 of
-[t5 Prefilter header](#t5). No vector covers this subsection.
+[t5 Prefilter header](#t5). No vector covers keyed epochs; the vectors below
+are those of the unkeyed rules of [t5 Prefilter header](#t5).
 
 An implementation MAY accept filter epochs from the row named first keyed
 filter epoch through the row named last keyed filter epoch in the table above.

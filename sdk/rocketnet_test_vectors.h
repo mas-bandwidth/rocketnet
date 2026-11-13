@@ -12,9 +12,10 @@
 
 // Known-answer test vectors, mirroring the vectors printed in their defining
 // sections of standard/TRANSPORT.md (its Appendix A, ta, explains the vector
-// identifiers). Generated from the vectors harness; never edited by hand. The
-// fixed inputs are stated in those sections; the outputs here are what a
-// conforming implementation must reproduce exactly.
+// identifiers).
+// Generated from the vectors harness; never edited by hand. The fixed inputs
+// are stated in those sections; the outputs here are what a conforming
+// implementation must reproduce exactly.
 
 #define ROCKETNET_TEST_PROTOCOL_ID    0x1122334455667788ULL
 #define ROCKETNET_TEST_CLIENT_ID      0x0123456789abcdefULL
@@ -343,8 +344,8 @@ static const uint8_t rocketnet_test_response_sealed[40] =
 };
 
 // The four session vectors: the sealed plaintext of every session type
-// begins with the ack block, and the sealed outputs are the appendix's
-// frozen bytes for this wire revision -- keep-alive at session s2c
+// begins with the ack block, and the sealed outputs are the frozen bytes of
+// the standard's t9 vectors for this wire revision -- keep-alive at session s2c
 // sequence 1, then payload, disconnect and ack at session c2s sequences 3
 // through 5.
 
@@ -420,7 +421,8 @@ static const uint8_t rocketnet_test_ack_sealed[27] =
     0xf7, 0x9a, 0xe2
 };
 
-// The ack block encodings, frozen in the appendix with no key involved.
+// The ack block encodings, frozen in the standard's t15 vectors with no key
+// involved.
 
 static const uint8_t rocketnet_test_ack_block_fresh[7] =
 {
@@ -443,7 +445,8 @@ static const uint8_t rocketnet_test_ack_block_two_losses[15] =
     0x03, 0xd0, 0x07
 };
 
-// Connect token vector inputs, outside Appendix A: the fixed ephemeral X25519
+// Connect token vector inputs, not among the fenced vectors of the standard's
+// sections: the fixed ephemeral X25519
 // secrets the test-only rocketnet_write_connect_token_deterministic seals with
 // for standard/vectors/connect_token_v1.json (test_unit_connect_token_vectors.cpp).
 // A real token's sealed box always draws a fresh ephemeral key.
