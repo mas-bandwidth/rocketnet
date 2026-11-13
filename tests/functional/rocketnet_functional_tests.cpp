@@ -13889,6 +13889,14 @@ extern void rocketnet_test_receive_latency_server_io_uring();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// receive latency (tests/functional/receive_latency.cpp) on the Windows
+// server transports and the iocp client
+extern void rocketnet_test_receive_latency_server_rio();
+extern void rocketnet_test_receive_latency_server_iocp();
+extern void rocketnet_test_receive_latency_client_iocp();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // oversize, runt and garbage datagrams at every Windows receive path (tests/functional/windows_socket_errors.cpp)
 extern void windows_server_drops_oversize_datagram_portable_ipv4();
 extern void windows_server_drops_oversize_datagram_portable_ipv6();
@@ -16091,6 +16099,10 @@ static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketn
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
+static bool rocketnet_test_server_and_client_pins_allow_iocp()
+{
+    return rocketnet_test_server_pin_allows_iocp() && rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", "iocp" );
+}
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 static bool rocketnet_test_server_pin_allows_gso() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "gso" ); }
@@ -16647,6 +16659,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_loopback_transport_live_message_matrix_late_probes", live_message_matrix_late_probes, rocketnet_test_server_pin_is_not_xdp },
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_receive_latency_server_rio", rocketnet_test_receive_latency_server_rio, rocketnet_test_server_pin_allows_rio },
+    { "test_receive_latency_server_iocp", rocketnet_test_receive_latency_server_iocp, rocketnet_test_server_pin_allows_iocp },
+    { "test_receive_latency_client_iocp", rocketnet_test_receive_latency_client_iocp, rocketnet_test_server_and_client_pins_allow_iocp },
 #if ROCKETNET_DEV
     // These files use development-only socket seams and the resource ledger.
     // Production omits their cases; it must not replace them with empty bodies.
@@ -16973,6 +16988,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     if ( predicate == rocketnet_test_server_pin_allows_rio )
     {
         return "rocketnet_test_server_pin_allows_rio";
+    }
+    if ( predicate == rocketnet_test_server_and_client_pins_allow_iocp )
+    {
+        return "rocketnet_test_server_and_client_pins_allow_iocp";
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
