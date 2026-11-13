@@ -286,10 +286,10 @@
    :text "posix_hk_quiesce (tests/functional/posix_hard_killed_client.cpp) updates the clients, then the server, then sends the server's packets, so a datagram the server sends in the last pass is counted sent at posix_hk_wire_mark and received after it. That datagram hides one real loss in lost_down, and a payload lost on the way then fails posix_hk_require_accounted with lost 0. Seen once on a parallel macOS run (send_to_closed_port, server portable, ipv6, client msgx: down 79/80, lost 0). Fix: end the quiesce with a client-only read pass before the mark, or mark the client and server reads at the same point."
    :date "2026-11-13" :origin "Piece P CI read")
 
-  (item "msgx-port-exclusive" :group "audit-remaining" :area "rocketnet"
+  (item "msgx-port-exclusive" :group "review-v1-2" :area "sdk"
    :title "macOS msgx: keep the server's port from other local sockets"
    :text "The msgx shared socket sets SO_REUSEPORT so its per-client connected sockets can join the port, and so any later local socket that sets SO_REUSEPORT can bind the port too; a more specific one (the server's own address, or AF_INET beside a dual-stack [::] server) then receives every datagram meant for the shared socket, handshakes included, uncounted (measured, one user; docs/MACOS.md, Who else can bind a server's port). Darwin has no exclusive option that still lets the server's own sockets share the port. A real fix: drop the per-client connected sockets and demultiplex every client on the shared socket, so the shared socket needs no SO_REUSEPORT; with a specific bind address no later socket then receives its datagrams, as measured for a plain socket on a specific address. Costs: the per-client sockets' receive split and send path, to be measured against the load test row before it is taken. Also owed: run the intruder cases as a second user on a bench Mac (not measured)."
-   :date "2026-11-13" :origin "Rowan's review before v1.2.0, P2")
+   :date "2026-11-13" :origin "Review before v1.2.0, macOS reader, finding P2 (run, one user)")
 
   (item "rio-destroy-stuck-lane" :group "audit-remaining" :area "rocketnet"
    :title "rio destroy: free the stopped lanes when one lane is stuck"
