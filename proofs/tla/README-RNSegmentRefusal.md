@@ -86,6 +86,7 @@ two workers). Every case has `Threshold = 2` and six runs.
 | `MCRNSegmentRefusalShared.cfg` | the code on a kernel that refuses both destinations, which share one entry | pass | 0 | 23 | 1.0 |
 | `MCRNSegmentRefusalBrokenFillCount.cfg` | `Mode = "fillcount"`: the table before, counting only a refusal that filled an empty entry | `KernelFallback` | 12 | 5 | 1.0 |
 | `MCRNSegmentRefusalQueues.cfg` | the code on two queues: `d1` (queue 0) accepts; on queue 1 `d2` and `d3` refuse and `d4` accepts | pass | 0 | 81 | 0.7 |
+| `MCRNSegmentRefusalQueuesKernel.cfg` | the code on two queues and a kernel that refuses every destination: queue 1 (`d2`, `d3`, `d4`) turns off at two refusals, queue 0 (`d1` alone) keeps segmenting | pass | 0 | 67 | 0.7 |
 | `MCRNSegmentRefusalBrokenQueueAccepted.cfg` | `AcceptedRule = "queue"`: the io_uring code before, the accepted flag each queue's alone | `NoFallbackAfterAccepted` | 12 | 22 | 0.6 |
 
 ## Counterexamples, checked by hand against the code
