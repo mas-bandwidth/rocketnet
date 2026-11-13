@@ -72,7 +72,8 @@ extern uint64_t rocketnet_server_cookie_mac_count();
 
 #if ROCKETNET_DEV
 // visit counter for testing: defined in rocketnet_ack.cpp
-extern thread_local unsigned long long g_ack_visit_count;
+extern unsigned long long rocketnet_ack_visit_count();
+extern void rocketnet_ack_visit_count_reset();
 #endif // #if ROCKETNET_DEV
 
 // Sockets, select, and the raw chaff injector live in tests/functional/.
@@ -3400,15 +3401,15 @@ void rocketnet_test_request_path_state_refusals()
     rocketnet_test_pass_cookie_gate( &test, replayed );
 
     before = test.counters;
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     rocketnet_check( rocketnet_test_process( &test, replayed, sizeof( replayed ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
 
-    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
-    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
-    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().seal_open == 0 );
     rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
 
     // a second client from another address with a fresh token for the same
@@ -3630,15 +3631,15 @@ void rocketnet_test_one_token_many_addresses_refused_cheaply()
     test.client_address = first_address;
     rocketnet_test_pass_cookie_gate( &test, request );
 
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     rocketnet_check( rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
-    rocketnet_check( rocketnet_crypto_tally.signature_verify == 1 );
-    rocketnet_check( rocketnet_crypto_tally.seal_open == 1 );
-    rocketnet_check( rocketnet_crypto_tally.keypair == 1 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult > 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 1 );
+    rocketnet_check( rocketnet_crypto_tally_get().seal_open == 1 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 1 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult > 0 );
 
     // the same token from six other ports is refused with no crypto spent
     // and no second mapping. at BASE every one of these was answered with a
@@ -3659,15 +3660,15 @@ void rocketnet_test_one_token_many_addresses_refused_cheaply()
         rocketnet_test_pass_cookie_gate( &test, replay );
 
         before = test.counters;
-        memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+        rocketnet_crypto_tally_reset();
 
         rocketnet_check( rocketnet_test_process( &test, replay, sizeof( replay ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
 
-        rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
-        rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
-        rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-        rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+        rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 0 );
+        rocketnet_check( rocketnet_crypto_tally_get().seal_open == 0 );
+        rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+        rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
         rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
     }
 
@@ -3710,7 +3711,7 @@ void rocketnet_test_one_token_many_addresses_refused_cheaply()
     rocketnet_test_pass_cookie_gate( &test, overflow_request );
 
     before = test.counters;
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     rocketnet_check( rocketnet_test_process( &test, overflow_request, sizeof( overflow_request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
@@ -3728,10 +3729,10 @@ void rocketnet_test_one_token_many_addresses_refused_cheaply()
         rocketnet_check( test.counters.values[i] == expected );
     }
 
-    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
-    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
-    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().seal_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
     rocketnet_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 8 );
 
     rocketnet_test_server_teardown( &test );
@@ -3759,15 +3760,15 @@ void rocketnet_test_full_server_refuses_before_keypair()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     struct rocketnet_counters_t before = test.counters;
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     int result = rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes );
 
     rocketnet_check( result == ROCKETNET_SERVER_PROCESS_SEND_DENIED );
     rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS );
-    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
-    rocketnet_check( rocketnet_crypto_tally.aead_seal == 1 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().aead_seal == 1 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -3786,30 +3787,30 @@ void rocketnet_test_request_path_cheap_refusals_spend_no_crypto()
 
     rocketnet_test_build_request( request, 0x0B0B, rocketnet_test_salt );
     request[signed_offset + ROCKETNET_SIGNED_OFFSET_VERSION] ^= 1;
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     rocketnet_check( rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
-    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
-    rocketnet_check( rocketnet_crypto_tally.aead_seal == 0 );
-    rocketnet_check( rocketnet_crypto_tally.aead_open == 0 );
-    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
-    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().aead_seal == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().aead_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().seal_open == 0 );
 
     // no cookie: refused at the cookie gate, before any cryptography
 
     rocketnet_test_build_request( request, 0x0A0A, rocketnet_test_salt );
-    memset( &rocketnet_crypto_tally, 0, sizeof( rocketnet_crypto_tally ) );
+    rocketnet_crypto_tally_reset();
 
     rocketnet_check( rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
-    rocketnet_check( rocketnet_crypto_tally.keypair == 0 );
-    rocketnet_check( rocketnet_crypto_tally.scalarmult == 0 );
-    rocketnet_check( rocketnet_crypto_tally.aead_seal == 0 );
-    rocketnet_check( rocketnet_crypto_tally.aead_open == 0 );
-    rocketnet_check( rocketnet_crypto_tally.signature_verify == 0 );
-    rocketnet_check( rocketnet_crypto_tally.seal_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().keypair == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().scalarmult == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().aead_seal == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().aead_open == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().signature_verify == 0 );
+    rocketnet_check( rocketnet_crypto_tally_get().seal_open == 0 );
 
     rocketnet_test_server_teardown( &test );
 }
@@ -9552,10 +9553,10 @@ void rocketnet_test_ack_apply_skips_acked_range()
 
     // first apply: should visit and ack all 11 records
 
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 30.0, acked, 64, &acked_count, &unknown, &batch_full ) == 11 );
     rocketnet_check( acked_count == 11 );
-    rocketnet_check( g_ack_visit_count == 11 );
+    rocketnet_check( rocketnet_ack_visit_count() == 11 );
 
     // reset counters for second apply
 
@@ -9568,12 +9569,12 @@ void rocketnet_test_ack_apply_skips_acked_range()
     // and the walk visits no record in the range (an acknowledged record is
     // not visited)
 
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &block, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == 0 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 0 );
+    rocketnet_check( rocketnet_ack_visit_count() == 0 );
 
     rocketnet_free( NULL, endpoint );
 }
@@ -9629,12 +9630,12 @@ void rocketnet_test_ack_apply_counts_unknown_in_acked_run()
     uint64_t unknown_before = unknown;
     acked_count = 0;
     batch_full = 0;
-    g_ack_visit_count = 0;
+    rocketnet_ack_visit_count_reset();
     rocketnet_check( rocketnet_ack_endpoint_process_block( endpoint, &full, 31.0, acked, 64, &acked_count, &unknown, &batch_full ) == 0 );
     rocketnet_check( acked_count == 0 );
     rocketnet_check( unknown == unknown_before + 1 );
     rocketnet_check( batch_full == 0 );
-    rocketnet_check( g_ack_visit_count == 0 );
+    rocketnet_check( rocketnet_ack_visit_count() == 0 );
 
     // a run naming only the already-acked 100 does not move the counter
 

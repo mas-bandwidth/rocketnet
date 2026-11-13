@@ -314,11 +314,11 @@ static void test_server_refuses_a_token_connected_now()
         tc_client_init( &b, "198.51.100.22:56789" );
         check( rocketnet_client_protocol_connect( &b.client, token_data, t.time, TC_NOW ) );
 
-        const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
+        const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally_get();
         check( tc_drive( &t, &b, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] > 0 );
-        check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
-        check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
+        check( rocketnet_crypto_tally_get().signature_verify == tally_before.signature_verify );
+        check( rocketnet_crypto_tally_get().seal_open == tally_before.seal_open );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 1 );
 
         tc_client_destroy( &b );
@@ -376,7 +376,7 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
     // the server's token clock has reached the token's expire timestamp
 
     const uint64_t expired_now = ROCKETNET_TEST_CREATE_TS + TC_TOKEN_LIFETIME;
-    const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
+    const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally_get();
 
     uint8_t out_packet[ROCKETNET_RECEIVE_CEILING];
     int out_bytes = 0;
@@ -394,9 +394,9 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
     check( response_bytes == 0 );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE] == 0 );
-    check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
-    check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
-    check( rocketnet_crypto_tally.aead_open == tally_before.aead_open );
+    check( rocketnet_crypto_tally_get().signature_verify == tally_before.signature_verify );
+    check( rocketnet_crypto_tally_get().seal_open == tally_before.seal_open );
+    check( rocketnet_crypto_tally_get().aead_open == tally_before.aead_open );
     check( rocketnet_encryption_map_num_mappings( t.server.encryption_map ) == 0 );
 
     // one second earlier the same request is answered with a cookie
