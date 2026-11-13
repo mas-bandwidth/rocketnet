@@ -1806,6 +1806,7 @@ uint64_t rocketnet_server_transport_payload_ring_count_for_test( const struct ro
     return rocketnet_platform_atomic_load_u64( const_cast<volatile uint64_t *>( &server_transport->payload_ring.num_packets ) );
 }
 
+#if ROCKETNET_DEV
 uint64_t rocketnet_server_transport_payload_ring_sealed_for_test( const struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
@@ -1822,6 +1823,7 @@ uint64_t rocketnet_server_transport_payload_ring_sealed_for_test( const struct r
     }
     return sealed;
 }
+#endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_server_transport_fill_ring_chunk_for_test( const struct rocketnet_server_transport_t * server_transport )
 {
