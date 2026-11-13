@@ -101,6 +101,43 @@ static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
     return messages < ROCKETNET_GSO_RECV_BATCH ? messages : ROCKETNET_GSO_RECV_BATCH;
 }
 
+// socket buffers. linux clamps an SO_SNDBUF / SO_RCVBUF request to
+// net.core.wmem_max / net.core.rmem_max without an error; SO_SNDBUFFORCE /
+// SO_RCVBUFFORCE pass that limit for a process with CAP_NET_ADMIN and are
+// refused (EPERM) for any other. every queue socket asks with the plain
+// option, reads the grant back, and when the grant is short asks once more
+// with the force option. a grant still short is not fatal: the transport
+// runs, the kernel drops what arrives past a short receive grant (UDP
+// RcvbufErrors) and a short send grant makes sends wait on a full socket, so
+// the transport names it at start with the sysctl the operator sets.
+//
+// rocketnet_server_gso_buffer_step is that decision for one buffer: the
+// request, the grant read back (halved: linux reports double), and whether
+// the force option was already tried.
+
+#define ROCKETNET_SERVER_GSO_BUFFER_GRANTED                         0       // the grant meets the request
+#define ROCKETNET_SERVER_GSO_BUFFER_FORCE                           1       // short, force not tried: ask again with the force option
+#define ROCKETNET_SERVER_GSO_BUFFER_SHORT                           2       // short after the force option: name the sysctl at start
+
+static inline int rocketnet_server_gso_buffer_step( int requested_bytes, int granted_bytes, bool force_tried )
+{
+    if ( granted_bytes >= requested_bytes )
+    {
+        return ROCKETNET_SERVER_GSO_BUFFER_GRANTED;
+    }
+    return force_tried ? ROCKETNET_SERVER_GSO_BUFFER_SHORT : ROCKETNET_SERVER_GSO_BUFFER_FORCE;
+}
+
+// the start line for one socket buffer (receive or send), written into line
+// and always terminated: asked, got, how, and when the grant is short the
+// sysctl and the value the operator sets (the request itself: linux compares
+// the request, not its doubled charge, against the limit). force_error is
+// the errno the force option was refused with, 0 when it was taken or never
+// tried. Returns true when the line is a warning (the grant is short).
+
+bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive, int requested_bytes, int granted_bytes, bool force_tried,
+                                       int force_error );
+
 // send batching geometry: sendmmsg messages per call, GSO segments per
 // super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
 // cap keeping every super-datagram inside the 16-bit UDP payload space
