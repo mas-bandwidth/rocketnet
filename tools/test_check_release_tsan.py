@@ -96,6 +96,14 @@ class CheckReleaseTsan(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("linux / Debug / unit: cancelled (125 s)", text)
 
+    def test_no_ruleset_at_the_commit_fails_by_name(self):
+        # the required job names are judged or the release refuses: never skipped in silence
+        api = green_release(FakeApi(), branch_ruleset=False)
+        api.tags[VERSION] = SHA
+        code, text = verdict(api)
+        self.assertEqual(code, 1, text)
+        self.assertIn(".github/rulesets/main.json is not at the commit", text)
+
     def test_tag_that_is_not_the_header_version_fails(self):
         code, text = verdict(green_release(FakeApi()), version="v1.1.9")
         self.assertEqual(code, 1)

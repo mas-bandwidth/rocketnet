@@ -586,6 +586,10 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
             say(True, f"tag {version} does not exist yet")
 
     contexts = required_contexts(api, repo, sha)
+    if contexts is None:
+        # fail closed, by name: with no ruleset at the commit the required
+        # job names could not be judged, and a skipped check is not a pass
+        say(False, f"{RULESET_PATH} is not at the commit: no list of required job names to hold it to")
     point = is_point_release(version)
     verdicts, not_in_force = evaluate(ctx, gates, ("push",) if point else ("push", "nightly"), version, contexts,
                                       f"{RULESET_PATH} at the commit", light=point)
