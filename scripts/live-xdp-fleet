@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
-# live-xdp-fleet -- orchestrate one live XDP fleet run (docs/LIVE-XDP.md
-# sections 6, 9, 11, 12 and 15; RULINGS (a)-(d) of 2026-10-18).
+# live-xdp-fleet -- orchestrate one live XDP fleet run (the design's
+# sections 6, 9, 11, 12 and 15; RULINGS (a)-(d) of 2026-10-18; docs/LIVE-XDP.md
+# now keeps only the evidence). The run's lifecycle is modelled by
+# proofs/tla/RNLiveFleetRun.tla (ArmDeadman, LoadServer, SshCheckPasses,
+# ListenSeen, BeginTeardown, StopClients, StopServer, DetachXdp, Finish).
 #
 # The coordinator's machine runs only ssh, scp and this file. Every remote
 # step is a subcommand of scripts/live-xdp-fleet-remote, copied to the host

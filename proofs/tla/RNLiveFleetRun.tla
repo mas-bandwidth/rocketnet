@@ -1,28 +1,32 @@
 --------------------------- MODULE RNLiveFleetRun ---------------------------
 (***************************************************************************)
-(* rocketnet: the lifecycle of one live fleet run (docs/LIVE-XDP.md).      *)
+(* rocketnet: the lifecycle of one live fleet run, as scripts/live-xdp-fleet *)
+(* (the orchestrator) and scripts/live-xdp-fleet-remote (each host's       *)
+(* steps) make it.                                                         *)
 (*                                                                         *)
 (* One orchestrator on the coordinator's machine drives, over ssh, one     *)
-(* server on the test server (the xdp transport, so loading the server        *)
+(* server on the test server (the xdp transport, so loading the server     *)
 (* attaches the XDP program to the NIC) and one client per bench.  Before  *)
-(* the load it arms a dead-man timer and a watchdog on the test server.    *)
-(* The watchdog detaches XDP and kills the server when the orchestrator's *)
-(* heartbeat over ssh goes stale (ssh down, teardown begun, or the         *)
-(* orchestrator dead without its trap) or when the server dies with XDP   *)
-(* still attached.  The heartbeat loop runs from the arm until teardown.  *)
-(* Each client runs a cycle: connect, a stress                             *)
-(* window, a disconnect (clean, then a silent drop, alternating), a wait   *)
-(* of 2 x the connection timeout, a reconnect with a fresh token, and so   *)
-(* on; the last window ends with a clean disconnect.                       *)
+(* the load, arm starts a dead-man timer and a watchdog on the test        *)
+(* server.  The watchdog detaches XDP and kills the server when the        *)
+(* orchestrator's heartbeat over ssh goes stale (ssh down, teardown begun, *)
+(* or the orchestrator gone) or when the server dies with XDP still        *)
+(* attached, and then exits.  The heartbeat loop runs from the arm until   *)
+(* teardown.  Each client (tests/client_server/client.c --matrix) runs a   *)
+(* cycle: connect, a stress window, a clean disconnect (every window), a   *)
+(* wait of 2 x the connection timeout, a reconnect with a fresh token, and *)
+(* so on; the last window also ends with a clean disconnect.               *)
 (*                                                                         *)
 (* Time is a discrete tick.  The timers that must fire on time (the        *)
 (* server's slot timeout, the dead-man timer, the watchdog) are urgent:    *)
 (* Tick is disabled while one of them is due, so the action fires before   *)
-(* time moves on.  The outside events (ssh drop and return, a server      *)
-(* crash, a client crash, the orchestrator interrupted with its trap, the  *)
-(* orchestrator killed without it) are bounded by MaxFaults over the run   *)
-(* and carry no fairness.  The 10 s bound on the ssh check after the load  *)
-(* is not modelled; the check's place in the order is.                     *)
+(* time moves on; Tick is also disabled between the arm and the start.     *)
+(* The outside events (ssh drop and return, a server crash, a client       *)
+(* crash, the orchestrator interrupted with its trap, the orchestrator     *)
+(* killed without it, a teardown step that fails) are bounded by MaxFaults *)
+(* over the run and carry no fairness.  The 10 s bound on the ssh check    *)
+(* after the load and the 30 s bound on the listen line are not modelled;  *)
+(* their places in the order are.                                          *)
 (*                                                                         *)
 (* Left out: the message matrix itself (RNChannel, RNChannelTypes,         *)
 (* RNReceipts), the handshake (ClientConnection, ServerConnection), the    *)
@@ -78,7 +82,7 @@ NoHost     == "none"
 OrchStates == {"preflight", "armed", "loading", "checked", "serving", "teardown", "done", "dead"}
 ServerStates == {"absent", "starting", "listening", "stopped"}
 Phases     == {"built", "connecting", "running", "disconnected_clean",
-               "dropped_silent", "waiting", "failed", "done"}
+               "waiting", "failed", "done"}
 OldSlots   == {"none", "freeing", "timing_out"}
 DeadmanStates == {"unarmed", "armed", "fired", "cancelled"}
 
@@ -172,7 +176,7 @@ Init ==
     /\ wdKill = FALSE
 
 -----------------------------------------------------------------------------
-(* The orchestrator's steps, in order (docs/LIVE-XDP.md section 12).       *)
+(* The orchestrator's steps, in order (scripts/live-xdp-fleet, steps 4-9). *)
 
 \* live-xdp-fleet-remote arm: truncate the heartbeat file, then systemd-run
 \* the dead-man timer and the watchdog, before anything touches the NIC
@@ -213,9 +217,12 @@ SshCheckPasses ==
                     deadmanAge, listened, crashed, faults, phase, cycle, wait,
                     lastWait, live, old, oldAge, denied, collected, wdKill >>
 
+\* the check failed: the script stops its heartbeat and exits with no
+\* teardown (teardown_allowed=0), leaving the detach to the watchdog and
+\* the dead-man timer
 SshCheckFails ==
     /\ orch = "loading" /\ ssh = "down"
-    /\ orch' = "teardown"
+    /\ orch' = "dead"
     /\ UNCHANGED << server, host, xdp, ssh, hbAge, orphan, watchdog, deadman,
                     deadmanAge, listened, crashed, faults, phase, cycle, wait,
                     lastWait, live, old, oldAge, denied, collected, wdKill >>
@@ -326,8 +333,9 @@ ServerTimesOut(c) ==
                     deadman, deadmanAge, listened, crashed, faults, phase, cycle,
                     wait, lastWait, live, denied, collected, wdKill >>
 
-\* the heartbeat is stale, or the server is gone with XDP attached
-WatchdogDue == watchdog /\ xdp /\ (orphan >= WatchdogBound \/ hbAge >= WatchdogBound)
+\* the heartbeat is stale (whatever is attached), or the server is gone with
+\* XDP attached (live-xdp-fleet-remote cmd_watchdog)
+WatchdogDue == watchdog /\ (hbAge >= WatchdogBound \/ (xdp /\ orphan >= WatchdogBound))
 
 \* the orchestrator's heartbeat loop is not running: teardown stops it first
 \* (stop_heartbeat), and a dead orchestrator runs nothing; with the witness
@@ -340,15 +348,17 @@ LoopStopped ==
 
 HeartbeatStopped == ssh = "down" \/ LoopStopped
 
-\* the watchdog kills the server and runs ip link set dev <nic> xdp off
+\* the watchdog kills the server, runs ip link set dev <nic> xdp off, and
+\* exits: it fires once
 WatchdogFires ==
     /\ WatchdogDue
     /\ server' = IF ServerUp THEN "stopped" ELSE server
     /\ xdp' = FALSE /\ orphan' = 0
+    /\ watchdog' = FALSE
     /\ SlotsVanish
     /\ wdKill' = (wdKill \/ (ServerUp /\ faults = 0 /\
                              orch \in {"armed", "loading", "checked", "serving"}))
-    /\ UNCHANGED << orch, host, ssh, hbAge, watchdog, deadman, deadmanAge,
+    /\ UNCHANGED << orch, host, ssh, hbAge, deadman, deadmanAge,
                     listened, crashed, faults, phase, cycle, wait, lastWait,
                     denied, collected >>
 
@@ -365,7 +375,7 @@ DeadmanFires ==
                     collected, wdKill >>
 
 -----------------------------------------------------------------------------
-(* Each client's cycle (docs/LIVE-XDP.md section 6).                       *)
+(* Each client's cycle (tests/client_server/client.c, --matrix).           *)
 
 StartClient(c) ==
     /\ orch = "serving" /\ phase[c] = "built"
@@ -388,19 +398,21 @@ Connected(c) ==
                     deadman, deadmanAge, listened, crashed, faults, cycle, wait,
                     lastWait, old, oldAge, collected, wdKill >>
 
-\* the window ends: even cycles disconnect clean, odd ones drop silently
+\* the window ends with an orderly disconnect, every cycle (client.c: "Every
+\* in-process cycle uses orderly request/completion shutdown"); a silent
+\* loss is only a client crash
 EndWindow(c) ==
     /\ phase[c] = "running" /\ server = "listening" /\ cycle[c] < Cycles
-    /\ phase' = [ phase EXCEPT ![c] = IF cycle[c] % 2 = 0 THEN "disconnected_clean" ELSE "dropped_silent" ]
+    /\ phase' = [ phase EXCEPT ![c] = "disconnected_clean" ]
     /\ live' = [ live EXCEPT ![c] = FALSE ]
-    /\ old' = [ old EXCEPT ![c] = IF cycle[c] % 2 = 0 THEN "freeing" ELSE "timing_out" ]
+    /\ old' = [ old EXCEPT ![c] = "freeing" ]
     /\ oldAge' = [ oldAge EXCEPT ![c] = 0 ]
     /\ UNCHANGED << orch, server, host, xdp, ssh, hbAge, orphan, watchdog,
                     deadman, deadmanAge, listened, crashed, faults, cycle, wait,
                     lastWait, denied, collected, wdKill >>
 
 BeginWait(c) ==
-    /\ phase[c] \in {"disconnected_clean", "dropped_silent"}
+    /\ phase[c] = "disconnected_clean"
     /\ phase' = [ phase EXCEPT ![c] = "waiting" ]
     /\ wait' = [ wait EXCEPT ![c] = 0 ]
     /\ UNCHANGED << orch, server, host, xdp, ssh, hbAge, orphan, watchdog,
