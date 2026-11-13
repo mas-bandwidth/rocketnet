@@ -93,6 +93,23 @@
 // threads' ids hash to one fills_in line. Per main operation: two adds, two
 // stores and 64 loads, independent of max_clients.
 //
+// The ack phase (SERVER-UPDATE-ACK.md P3; proofs/tla/RNAckPhase.tla). The
+// split update (update_begin, the per-client ack calls, update_end) is one
+// main-thread operation in three pieces: update_begin's main operation opens
+// an ack phase (rocketnet_fill_phase_open_ack_phase) and update_end's closes
+// it. ack_phase is written only inside a main operation, before its epoch
+// moves, and read by a call after its FillLook, so a call reads the value of
+// the phase it is in.
+//   - Inside an ack phase only ack calls (ack_begin, ack_end) are taken, one
+//     thread per client as for fills (the same word, owner and epoch). A fill
+//     call there is a fill inside update: refused, FILL_PHASE_OVERLAP. Any
+//     main operation but the one that ends the phase (main_begin with
+//     ends_ack_phase) is refused the same way: two main operations at once.
+//   - Outside an ack phase an ack call is refused (FILL_PHASE_OVERLAP: it is
+//     update's work, made outside update), and so is a main operation that
+//     claims to end one.
+//   - Nested calls are their outer call's own work and are not checked again.
+//
 // What the check does not see: an id is reused after its thread exits, so a
 // thread that ends and a new thread that gets its id are one filler to the
 // check. The epoch is 56 bits and does not wrap in practice (2^56 main
@@ -130,6 +147,7 @@ struct alignas( 64 ) rocketnet_fill_phase_t
     std::atomic<uint32_t> main_calls;
     std::atomic<uint64_t> epoch;
     std::atomic<uint64_t> main_owner;           // the thread inside a main operation, 0: none
+    std::atomic<uint32_t> ack_phase;            // 1 between update_begin and update_end: only ack calls run
     int main_depth;                             // written and read only by main_owner
     int num_clients;
     uint64_t * overlap_counter;                 // FILL_PHASE_OVERLAP, NULL: not counted
@@ -152,14 +170,26 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
                                 uint64_t * overlap_counter, uint64_t * two_fillers_counter );
 
 // false: refused and counted (and asserted): the operation must not run.
-// Every true is matched by one main_end on the same thread.
-bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase );
+// Every true is matched by one main_end on the same thread. ends_ack_phase:
+// the operation is update_end, the one main operation an ack phase takes
+// (and the only one it refuses outside an ack phase).
+bool rocketnet_fill_phase_main_begin( struct rocketnet_fill_phase_t * fill_phase, bool ends_ack_phase = false );
 void rocketnet_fill_phase_main_end( struct rocketnet_fill_phase_t * fill_phase );
+
+// inside a main operation only: the phase that follows it is an ack phase
+// (open) or not (close)
+void rocketnet_fill_phase_open_ack_phase( struct rocketnet_fill_phase_t * fill_phase );
+void rocketnet_fill_phase_close_ack_phase( struct rocketnet_fill_phase_t * fill_phase );
 
 // false: refused and counted (and asserted): the call must do nothing. Every
 // true is matched by one fill_end for the same client on the same thread.
 bool rocketnet_fill_phase_fill_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index );
 void rocketnet_fill_phase_fill_end( struct rocketnet_fill_phase_t * fill_phase, int client_index );
+
+// the per-client ack call's check: as fill_begin and fill_end, taken only
+// inside an ack phase
+bool rocketnet_fill_phase_ack_begin( struct rocketnet_fill_phase_t * fill_phase, int client_index );
+void rocketnet_fill_phase_ack_end( struct rocketnet_fill_phase_t * fill_phase, int client_index );
 
 // RAII forms for the call sites
 struct rocketnet_fill_phase_main_scope_t
@@ -167,8 +197,8 @@ struct rocketnet_fill_phase_main_scope_t
     struct rocketnet_fill_phase_t * fill_phase;
     bool entered;
 
-    explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase )
-        : fill_phase( phase ), entered( phase ? rocketnet_fill_phase_main_begin( phase ) : true ) {}
+    explicit rocketnet_fill_phase_main_scope_t( struct rocketnet_fill_phase_t * phase, bool ends_ack_phase = false )
+        : fill_phase( phase ), entered( phase ? rocketnet_fill_phase_main_begin( phase, ends_ack_phase ) : true ) {}
     ~rocketnet_fill_phase_main_scope_t()
     {
         if ( fill_phase && entered )
@@ -197,6 +227,25 @@ struct rocketnet_fill_phase_fill_scope_t
     }
     rocketnet_fill_phase_fill_scope_t( const rocketnet_fill_phase_fill_scope_t & ) = delete;
     rocketnet_fill_phase_fill_scope_t & operator=( const rocketnet_fill_phase_fill_scope_t & ) = delete;
+};
+
+struct rocketnet_fill_phase_ack_scope_t
+{
+    struct rocketnet_fill_phase_t * fill_phase;
+    int client_index;
+    bool entered;
+
+    rocketnet_fill_phase_ack_scope_t( struct rocketnet_fill_phase_t * phase, int client )
+        : fill_phase( phase ), client_index( client ), entered( phase ? rocketnet_fill_phase_ack_begin( phase, client ) : true ) {}
+    ~rocketnet_fill_phase_ack_scope_t()
+    {
+        if ( fill_phase && entered )
+        {
+            rocketnet_fill_phase_ack_end( fill_phase, client_index );
+        }
+    }
+    rocketnet_fill_phase_ack_scope_t( const rocketnet_fill_phase_ack_scope_t & ) = delete;
+    rocketnet_fill_phase_ack_scope_t & operator=( const rocketnet_fill_phase_ack_scope_t & ) = delete;
 };
 
 #if ROCKETNET_DEV

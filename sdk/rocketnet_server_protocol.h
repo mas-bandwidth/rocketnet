@@ -262,6 +262,17 @@ void rocketnet_server_protocol_prefetch_received( struct rocketnet_server_protoc
                                                   const uint8_t * packet_data,
                                                   int packet_bytes );
 
+// The ack phase (sdk/rocketnet_ack.h, proofs/tla/RNAckPhase.tla). The
+// receive loop defers each session packet's ack block once begin_acks has
+// run; apply_acks is a client's ack call (any thread, one per client); the
+// gather (main) applies any client left, builds the acked batch in arrival
+// order with its tags and adds the per-client counts. A protocol without
+// acks does nothing in any of them.
+
+void rocketnet_server_protocol_begin_acks( struct rocketnet_server_protocol_t * server, double current_time );
+void rocketnet_server_protocol_apply_acks( struct rocketnet_server_protocol_t * server, int client_index );
+void rocketnet_server_protocol_ack_gather( struct rocketnet_server_protocol_t * server );
+
 int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol_t * server,
                                                 const struct rocketnet_address_t * from,
                                                 int known_mapping_index,

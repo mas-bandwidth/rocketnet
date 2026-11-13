@@ -65,11 +65,22 @@ struct rn_link_forward<R ( * )( T *, A... ), F>
 // so it cannot take the parentheses clang-tidy asks for
 #define RN_LINK_FORWARD( F ) rn_link_forward<decltype( &F ), &F> // NOLINT(bugprone-macro-parentheses)
 
+struct rocketnet_server_transport_client_acks_t;
+
 struct rn_message_link_t
 {
     void * transport;
 
     void ( *update )( void * transport, double time );
+
+    // the split update (proofs/tla/RNAckPhase.tla): update_begin, one
+    // update_acks per client (any thread), update_end leave what update does.
+    // The server's link reads rocketnet_server_transport_update_begin,
+    // _update_acks and _update_end. NULL (the client's link, the unit suite's
+    // fakes): update_begin runs update whole, and there are no ack calls.
+    void ( *update_begin )( void * transport, double time );
+    bool ( *update_acks )( void * transport, int client_index, struct rocketnet_server_transport_client_acks_t * out );
+    void ( *update_end )( void * transport );
 
     // the update's payload batch, valid until the next update. The client's
     // link leaves *client_index NULL.
@@ -184,7 +195,8 @@ struct rn_message_link_t
     X( views, uint8_t * views ) \
     X( receive_cursor, uint32_t receive_cursor ) \
     X( held, uint32_t held ) \
-    X( state, int state )
+    X( state, int state ) \
+    X( acks_taken, int acks_taken )
 
 struct rn_message_connection_hot_t
 {
@@ -286,6 +298,7 @@ struct rn_message_object_t
     double time_offset;                         // the backwards offset, exactly 0.0 until the first step
     double clock_origin;                        // the game's time the transport's 0.0 stands for
     int clock_started;                          // 1 from the first update on
+    int update_open;                            // 1 from an update_begin that reached the transport to its update_end
     // the messages open across the connections, a line per thread hash: the
     // one-thread finish and abort that name no connection act on the calling
     // thread's last open while exactly one is open (rn_message_open_count,
@@ -355,6 +368,14 @@ void rn_message_object_destroy( struct rn_message_object_t * object );
 // the update, RNSlots BeginUpdate to EndUpdate. ROCKETNET_OK, or
 // ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED when a received message was held.
 int rn_message_object_update( struct rn_message_object_t * object, double time );
+
+// the same update split (proofs/tla/RNAckPhase.tla): begin (main), one ack
+// call per client (any thread, one per client, the handoffs a join or a
+// barrier), end (main). Begin returns what update would; an ack call false
+// when refused or out of range.
+int rn_message_object_update_begin( struct rn_message_object_t * object, double time );
+bool rn_message_object_update_acks( struct rn_message_object_t * object, int client_index );
+int rn_message_object_update_end( struct rn_message_object_t * object );
 
 void rn_message_object_send_packets( struct rn_message_object_t * object );
 

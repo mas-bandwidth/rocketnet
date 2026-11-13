@@ -73,6 +73,9 @@ rocketnet_server_stop
 rocketnet_server_stopped
 rocketnet_server_transport_name
 rocketnet_server_update
+rocketnet_server_update_acks
+rocketnet_server_update_begin
+rocketnet_server_update_end
 rocketnet_sleep
 rocketnet_status_name
 rocketnet_term

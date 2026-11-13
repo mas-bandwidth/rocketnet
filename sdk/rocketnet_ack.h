@@ -544,6 +544,70 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
 // game once per update. Storage is allocated once at create, to the
 // deployment's own max_clients.
 
+// The ack phase (SERVER-UPDATE-ACK.md P3; proofs/tla/RNAckPhase.tla). The
+// receive loop does not apply a session packet's ack block: it defers it,
+// appending an entry in arrival order and linking it onto its client's list.
+// Each client's blocks are then applied by that client's ack call, in arrival
+// order, into a segment of its own (any thread, one thread per client), and
+// the gather, on main, copies every entry's ids into the public batch in
+// arrival order and sums the per-client counts. The batch, the counters and
+// every endpoint end as the serial apply leaves them:
+//   - everything process_block writes is the client's own endpoint, its
+//     segment and its counts; the batch never fills on the server (a client
+//     surfaces at most ROCKETNET_SENT_PACKET_BUFFER_SIZE ids in an update,
+//     the segment's size), so no apply defers;
+//   - nothing between the receive loop and the ack phase sends to a client
+//     with a deferred block (the only session send of the receive loop is
+//     the first keep-alive of a slot assigned in it, and a slot freed in the
+//     update is held until publish), and record_received touches the
+//     received side only;
+//   - a reset of a client inside the receive loop (its disconnect, the
+//     integrity limit) applies that client's deferred blocks first
+//     (rocketnet_server_acks_reset_slot), as the serial loop had.
+// When the entries or the block storage run out, the update spills: every
+// deferred block is applied and gathered there, on main, and the rest of the
+// update's blocks are applied in the receive loop as before.
+
+// one deferred block, in arrival order
+struct rocketnet_server_ack_entry_t
+{
+    uint64_t connection_id;                     // the connection the block was received for (the batch's tag)
+    int client_index;
+    int next;                                   // the client's next entry, -1: none
+    int block_offset;                           // the block in the store
+    int acked_first;                            // its ids in the client's segment, written by the apply
+    int acked_count;
+    int padding;
+};
+
+// one client's ack-phase state: written by the receive loop (main), then by
+// the client's ack call alone, then read by the gather (main); a line of its
+// own, so ack calls of neighbouring clients never share one
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
+struct alignas( 64 ) rocketnet_server_ack_client_t
+{
+    int head;                                   // the first entry not yet applied, -1: none
+    int tail;                                   // the last entry deferred, -1: none
+    int segment_count;                          // ids in the client's segment
+    int listed;                                 // 1: in pending_clients this update
+    uint64_t connection_id;                     // the tag of the client's entries this update
+    uint64_t unknown_sequence;                  // this update's ACK_UNKNOWN_SEQUENCE
+    uint64_t batch_full;                        // this update's ACKED_BATCH_FULL
+};
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
+
+#define ROCKETNET_SERVER_ACK_ENTRIES_PER_CLIENT         16
+#define ROCKETNET_SERVER_ACK_STORE_BYTES_PER_CLIENT     512
+
+// the deferring modes of an update
+#define ROCKETNET_SERVER_ACKS_DIRECT            0       // blocks are applied in the receive loop (outside an update, or spilled)
+#define ROCKETNET_SERVER_ACKS_DEFERRING         1       // blocks are deferred to the ack calls
+
 struct rocketnet_server_acks_t
 {
     void * context;
@@ -554,14 +618,59 @@ struct rocketnet_server_acks_t
     int * acked_client_index;
     uint64_t * acked_packet_ids;
     struct rocketnet_ack_endpoint_t * endpoints;
+
+    // the ack phase
+    int mode;
+    double time;                                // the update's time, which every deferred block applies at
+    int num_entries;
+    int entry_capacity;
+    struct rocketnet_server_ack_entry_t * entries;
+    int store_bytes;
+    int store_capacity;
+    uint8_t * store;                            // the deferred blocks, 8-aligned records
+    int num_pending_clients;
+    int * pending_clients;                      // the clients with an entry this update, in first-arrival order
+    struct rocketnet_server_ack_client_t * clients;
+    uint64_t * segments;                        // ROCKETNET_SENT_PACKET_BUFFER_SIZE ids a client
 };
 
 struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, int max_clients );
 
 void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks );
 
-// resets one slot's endpoint when a client connects into it
+// resets one slot's endpoint when a client connects into it, or its
+// connection ends; a client with deferred blocks has them applied first
 
 void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, int client_index );
+
+// the update's start: deferring from here (main)
+
+void rocketnet_server_acks_begin_update( struct rocketnet_server_acks_t * acks, double time );
+
+// defers a client's block (main, the receive loop). false: no room, or not
+// deferring: the caller spills (rocketnet_server_acks_gather) if deferring
+// and applies the block itself
+
+bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks, int client_index,
+                                  const struct rocketnet_ack_block_t * block, uint64_t connection_id );
+
+// the ack call's work: applies the client's deferred blocks in arrival order
+// (any thread, one per client, between the receive loop and the gather)
+
+void rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, int client_index );
+
+// the client's ids of this update so far, in arrival order, and the
+// connection they were received for (0: none deferred); after its apply
+
+int rocketnet_server_acks_client_acked( const struct rocketnet_server_acks_t * acks, int client_index,
+                                        const uint64_t ** packet_ids, uint64_t * connection_id );
+
+// main: applies every client not yet applied, copies each entry's ids into
+// the batch in arrival order with its client and tag (connection_ids may be
+// NULL), adds the per-client counts to the counters, and stops deferring.
+// Nothing when not deferring.
+
+void rocketnet_server_acks_gather( struct rocketnet_server_acks_t * acks, uint64_t * connection_ids,
+                                   uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter );
 
 #endif // ROCKETNET_SDK_ROCKETNET_ACK_H

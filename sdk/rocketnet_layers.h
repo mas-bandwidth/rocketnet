@@ -1044,6 +1044,56 @@ void rocketnet_forbid_xdp_commit( void );
  * @return Nothing. Call on the main thread, outside concurrent packet-fill phases.
  */
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time );
+
+/**
+ * @brief One client's acked ids of this update, as the ack call leaves them.
+ *
+ * packet_ids holds num_acked ids in arrival order, valid until update_end.
+ * connection_id is the connection they were received for (0: none, or more
+ * than one). settled is 1 when that connection still holds the slot and
+ * nothing before the message layer's observe can end it: the slot's
+ * connection id is connection_id and the client's ack endpoint holds no
+ * internal error. A client with no ids reads num_acked 0.
+ */
+struct rocketnet_server_transport_client_acks_t
+{
+    const uint64_t * packet_ids;
+    int num_acked;
+    int settled;
+    uint64_t connection_id;
+};
+
+/** @brief The split update, first piece: update_begin, the per-client ack calls, then update_end leave exactly what one update leaves (proofs/tla/RNAckPhase.tla).
+ *
+ * update_begin is a main-thread operation: everything an update does up to the
+ * end of the receive loop, with each received ack block deferred to its
+ * client. It opens an ack phase, which update_end closes; between them only
+ * ack calls are taken (a fill call or another main-thread operation is
+ * refused, FILL_PHASE_OVERLAP).
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ * @param time [in] As rocketnet_server_transport_update.
+ */
+void rocketnet_server_transport_update_begin( struct rocketnet_server_transport_t * server_transport, double time );
+
+/** @brief The split update, the ack call: applies one client's deferred ack blocks in arrival order.
+ *
+ * Any thread, between update_begin and update_end, with the handoff both
+ * ways a synchronizing operation (a join or a barrier); every call for a
+ * client in one ack phase from one thread (FILL_TWO_FILLERS otherwise). A
+ * client whose call is not made is applied by update_end. A second call for a
+ * client applies nothing more.
+ * @param server_transport [in,out] Created transport.
+ * @param client_index [in] The client slot.
+ * @param out [out] The client's acked ids (may be NULL).
+ * @return false when refused (outside an ack phase, a second thread on the client) or the index is out of range.
+ */
+bool rocketnet_server_transport_update_acks( struct rocketnet_server_transport_t * server_transport, int client_index,
+                                             struct rocketnet_server_transport_client_acks_t * out );
+
+/** @brief The split update, last piece: the rest of the update, a main-thread operation that ends the ack phase.
+ * @param server_transport [in,out] Created transport; NULL is a counted no-op.
+ */
+void rocketnet_server_transport_update_end( struct rocketnet_server_transport_t * server_transport );
 // internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 
@@ -1857,6 +1907,15 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 
 // ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. a NULL server is a counted no-op that returns ROCKETNET_UPDATE_OK
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time );
+
+// the same update split (proofs/tla/RNAckPhase.tla): update_begin (main),
+// update_acks for any client (any thread, one thread per client, between
+// begin and end, the handoffs a join or a barrier; a client not called is
+// applied by end), update_end (main). Begin returns what update returns;
+// update_acks false when refused or out of range. NULL server: a counted no-op
+int rocketnet_message_server_update_begin( struct rocketnet_message_server_t * server, double time );
+bool rocketnet_message_server_update_acks( struct rocketnet_message_server_t * server, int client_index );
+int rocketnet_message_server_update_end( struct rocketnet_message_server_t * server );
 
 // a NULL server is a counted no-op
 /**

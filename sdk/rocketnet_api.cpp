@@ -3280,6 +3280,51 @@ void rocketnet_server_update( struct rocketnet_server_t * server, double time )
     (void) rocketnet_message_server_update( server->running, time );
 }
 
+// proofs/tla/RNAckPhase.tla: the same update in three calls
+
+void rocketnet_server_update_begin( struct rocketnet_server_t * server, double time )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+
+    // a stopped server has nothing to update: a plain no-op
+
+    if ( !server->running )
+    {
+        return;
+    }
+
+    (void) rocketnet_message_server_update_begin( server->running, time );
+}
+
+bool rocketnet_server_update_acks( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return false;
+    }
+    if ( !server->running )
+    {
+        return false;
+    }
+    return rocketnet_message_server_update_acks( server->running, client_index );
+}
+
+void rocketnet_server_update_end( struct rocketnet_server_t * server )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+    if ( !server->running )
+    {
+        return;
+    }
+    (void) rocketnet_message_server_update_end( server->running );
+}
+
 void rocketnet_server_send_packets( struct rocketnet_server_t * server )
 {
     if ( !rocketnet_api_null_guard( server ) )

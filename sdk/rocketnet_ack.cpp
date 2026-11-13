@@ -2315,7 +2315,12 @@ uint64_t rocketnet_server_acks_allocation_bytes( int clients )
     const uint64_t n = (uint64_t) clients;
     return rocketnet_memory_allocations( { sizeof( rocketnet_server_acks_t ),
                                            n * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( int ), n * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ),
-                                           n * sizeof( rocketnet_ack_endpoint_t ) } );
+                                           n * sizeof( rocketnet_ack_endpoint_t ),
+                                           n * ROCKETNET_SERVER_ACK_ENTRIES_PER_CLIENT * sizeof( rocketnet_server_ack_entry_t ),
+                                           n * ROCKETNET_SERVER_ACK_STORE_BYTES_PER_CLIENT,
+                                           n * sizeof( int ),
+                                           n * sizeof( rocketnet_server_ack_client_t ),
+                                           n * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) } );
 }
 
 struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, int max_clients )
@@ -2346,7 +2351,21 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
     acks->acked_packet_ids = (uint64_t *) rocketnet_malloc( context, (size_t) acks->acked_capacity * sizeof( uint64_t ) );
     acks->endpoints = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_ack_endpoint_t ) );
 
-    if ( !acks->acked_client_index || !acks->acked_packet_ids || !acks->endpoints )
+    // the ack phase: entries and block store sized by the receive budget a
+    // client (an update past them spills), one segment of retained records a
+    // client
+
+    acks->mode = ROCKETNET_SERVER_ACKS_DIRECT;
+    acks->entry_capacity = ROCKETNET_SERVER_ACK_ENTRIES_PER_CLIENT * max_clients;
+    acks->store_capacity = ROCKETNET_SERVER_ACK_STORE_BYTES_PER_CLIENT * max_clients;
+    acks->entries = (struct rocketnet_server_ack_entry_t *) rocketnet_malloc( context, (size_t) acks->entry_capacity * sizeof( struct rocketnet_server_ack_entry_t ) );
+    acks->store = (uint8_t *) rocketnet_malloc( context, (size_t) acks->store_capacity );
+    acks->pending_clients = (int *) rocketnet_malloc( context, (size_t) max_clients * sizeof( int ) );
+    acks->clients = (struct rocketnet_server_ack_client_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_server_ack_client_t ) );
+    acks->segments = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) );
+
+    if ( !acks->acked_client_index || !acks->acked_packet_ids || !acks->endpoints ||
+         !acks->entries || !acks->store || !acks->pending_clients || !acks->clients || !acks->segments )
     {
         rocketnet_server_acks_destroy( acks );
         return NULL;
@@ -2355,6 +2374,13 @@ struct rocketnet_server_acks_t * rocketnet_server_acks_create( void * context, i
     for ( int i = 0; i < max_clients; i++ )
     {
         rocketnet_ack_endpoint_reset( &acks->endpoints[i] );
+        acks->clients[i].head = -1;
+        acks->clients[i].tail = -1;
+        acks->clients[i].segment_count = 0;
+        acks->clients[i].listed = 0;
+        acks->clients[i].connection_id = 0;
+        acks->clients[i].unknown_sequence = 0;
+        acks->clients[i].batch_full = 0;
     }
 
     return acks;
@@ -2376,6 +2402,26 @@ void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks )
     {
         rocketnet_free( acks->context, acks->endpoints );
     }
+    if ( acks->entries )
+    {
+        rocketnet_free( acks->context, acks->entries );
+    }
+    if ( acks->store )
+    {
+        rocketnet_free( acks->context, acks->store );
+    }
+    if ( acks->pending_clients )
+    {
+        rocketnet_free( acks->context, acks->pending_clients );
+    }
+    if ( acks->clients )
+    {
+        rocketnet_free( acks->context, acks->clients );
+    }
+    if ( acks->segments )
+    {
+        rocketnet_free( acks->context, acks->segments );
+    }
 
     rocketnet_free( acks->context, acks );
 }
@@ -2384,5 +2430,239 @@ void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, in
 {
     rocketnet_assert( acks );
     rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+
+    // proofs/tla/RNAckPhase.tla ResetFlush: the serial receive loop applied
+    // a client's blocks as they came, so a reset in the loop finds them
+    // applied; a deferred client's blocks are applied here, first
+
+    rocketnet_server_acks_apply_client( acks, client_index );
+
     rocketnet_ack_endpoint_reset( &acks->endpoints[client_index] );
+}
+
+// -----------------------------------------
+//                    the ack phase
+// -----------------------------------------
+
+// a deferred block in the store: the parsed header, then num_ranges pairs of
+// (gap, length), padded to 8 bytes
+
+struct rocketnet_server_ack_stored_block_t
+{
+    uint64_t largest;
+    uint32_t first_range_length;
+    int32_t num_ranges;
+};
+
+static int rocketnet_server_ack_stored_bytes( int num_ranges )
+{
+    const int bytes = (int) sizeof( struct rocketnet_server_ack_stored_block_t ) + num_ranges * 4;
+    return ( bytes + 7 ) & ~7;
+}
+
+void rocketnet_server_acks_begin_update( struct rocketnet_server_acks_t * acks, double time )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( acks->num_pending_clients == 0 );
+
+    acks->mode = ROCKETNET_SERVER_ACKS_DEFERRING;
+    acks->time = time;
+    acks->num_entries = 0;
+    acks->store_bytes = 0;
+}
+
+bool rocketnet_server_acks_defer( struct rocketnet_server_acks_t * acks, int client_index,
+                                  const struct rocketnet_ack_block_t * block, uint64_t connection_id )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( block );
+    rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+
+    if ( acks->mode != ROCKETNET_SERVER_ACKS_DEFERRING )
+    {
+        return false;
+    }
+
+    const int num_ranges = block->num_ranges < 0 ? 0 : block->num_ranges;
+    const int bytes = rocketnet_server_ack_stored_bytes( num_ranges );
+    if ( acks->num_entries >= acks->entry_capacity || acks->store_bytes + bytes > acks->store_capacity )
+    {
+        return false;
+    }
+
+    // proofs/tla/RNAckPhase.tla Defer: the entry in arrival order, on its client's list
+
+    uint8_t * record = acks->store + acks->store_bytes;
+    struct rocketnet_server_ack_stored_block_t header;
+    header.largest = block->largest;
+    header.first_range_length = block->first_range_length;
+    header.num_ranges = num_ranges;
+    memcpy( record, &header, sizeof( header ) );
+    uint8_t * ranges = record + sizeof( header );
+    for ( int i = 0; i < num_ranges; i++ )
+    {
+        memcpy( ranges + i * 4, &block->range_gap[i], 2 );
+        memcpy( ranges + i * 4 + 2, &block->range_length[i], 2 );
+    }
+
+    const int index = acks->num_entries++;
+    struct rocketnet_server_ack_entry_t * entry = &acks->entries[index];
+    entry->connection_id = connection_id;
+    entry->client_index = client_index;
+    entry->next = -1;
+    entry->block_offset = acks->store_bytes;
+    entry->acked_first = 0;
+    entry->acked_count = 0;
+    entry->padding = 0;
+    acks->store_bytes += bytes;
+
+    struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    if ( !client->listed )
+    {
+        client->listed = 1;
+        client->connection_id = connection_id;
+        acks->pending_clients[acks->num_pending_clients++] = client_index;
+    }
+    else if ( client->connection_id != connection_id )
+    {
+        client->connection_id = 0;                  // mixed tags: never the slot's binding
+    }
+
+    if ( client->head < 0 )
+    {
+        client->head = index;
+    }
+    else
+    {
+        acks->entries[client->tail].next = index;
+    }
+    client->tail = index;
+
+    return true;
+}
+
+void rocketnet_server_acks_apply_client( struct rocketnet_server_acks_t * acks, int client_index )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+
+    struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    if ( client->head < 0 )
+    {
+        return;
+    }
+
+    // proofs/tla/RNAckPhase.tla Apply: the client's blocks in arrival order,
+    // into its own segment and counts; the segment holds every id a client
+    // can surface in an update, so nothing defers
+
+    struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[client_index];
+    uint64_t * segment = acks->segments + (size_t) client_index * ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+
+    struct rocketnet_ack_block_t block;
+    for ( int index = client->head; index >= 0; index = acks->entries[index].next )
+    {
+        struct rocketnet_server_ack_entry_t * entry = &acks->entries[index];
+        const uint8_t * record = acks->store + entry->block_offset;
+        struct rocketnet_server_ack_stored_block_t header;
+        memcpy( &header, record, sizeof( header ) );
+        block.largest = header.largest;
+        block.first_range_length = header.first_range_length;
+        block.num_ranges = header.num_ranges;
+        const uint8_t * ranges = record + sizeof( header );
+        for ( int i = 0; i < header.num_ranges; i++ )
+        {
+            memcpy( &block.range_gap[i], ranges + i * 4, 2 );
+            memcpy( &block.range_length[i], ranges + i * 4 + 2, 2 );
+        }
+
+        entry->acked_first = client->segment_count;
+        rocketnet_ack_endpoint_process_block( endpoint, &block, acks->time,
+                                              segment, ROCKETNET_SENT_PACKET_BUFFER_SIZE, &client->segment_count,
+                                              &client->unknown_sequence, &client->batch_full );
+        entry->acked_count = client->segment_count - entry->acked_first;
+    }
+
+    client->head = -1;
+}
+
+int rocketnet_server_acks_client_acked( const struct rocketnet_server_acks_t * acks, int client_index,
+                                        const uint64_t ** packet_ids, uint64_t * connection_id )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( client_index >= 0 && client_index < acks->max_clients );
+    rocketnet_assert( packet_ids );
+    rocketnet_assert( connection_id );
+
+    const struct rocketnet_server_ack_client_t * client = &acks->clients[client_index];
+    *packet_ids = acks->segments + (size_t) client_index * ROCKETNET_SENT_PACKET_BUFFER_SIZE;
+    *connection_id = client->listed ? client->connection_id : 0;
+    return client->listed ? client->segment_count : 0;
+}
+
+void rocketnet_server_acks_gather( struct rocketnet_server_acks_t * acks, uint64_t * connection_ids,
+                                   uint64_t * unknown_sequence_counter, uint64_t * batch_full_counter )
+{
+    rocketnet_assert( acks );
+    rocketnet_assert( unknown_sequence_counter );
+    rocketnet_assert( batch_full_counter );
+
+    if ( acks->mode != ROCKETNET_SERVER_ACKS_DEFERRING )
+    {
+        return;
+    }
+    acks->mode = ROCKETNET_SERVER_ACKS_DIRECT;
+
+    // proofs/tla/RNAckPhase.tla Gather: a client whose ack call was not made
+    // is applied here, on main; then every entry's ids in arrival order, which
+    // is the order the serial receive loop appended them in
+
+    for ( int k = 0; k < acks->num_pending_clients; k++ )
+    {
+        rocketnet_server_acks_apply_client( acks, acks->pending_clients[k] );
+    }
+
+    int num_acked = acks->num_acked;
+    for ( int index = 0; index < acks->num_entries; index++ )
+    {
+        const struct rocketnet_server_ack_entry_t * entry = &acks->entries[index];
+        if ( entry->acked_count == 0 )
+        {
+            continue;
+        }
+        rocketnet_assert( num_acked + entry->acked_count <= acks->acked_capacity );
+        const uint64_t * segment = acks->segments + (size_t) entry->client_index * ROCKETNET_SENT_PACKET_BUFFER_SIZE + entry->acked_first;
+        memcpy( &acks->acked_packet_ids[num_acked], segment, (size_t) entry->acked_count * sizeof( uint64_t ) );
+        for ( int i = 0; i < entry->acked_count; i++ )
+        {
+            acks->acked_client_index[num_acked + i] = entry->client_index;
+        }
+        if ( connection_ids )
+        {
+            for ( int i = 0; i < entry->acked_count; i++ )
+            {
+                connection_ids[num_acked + i] = entry->connection_id;
+            }
+        }
+        num_acked += entry->acked_count;
+    }
+    acks->num_acked = num_acked;
+
+    // the counts are sums: the order they are added in changes nothing
+
+    for ( int k = 0; k < acks->num_pending_clients; k++ )
+    {
+        struct rocketnet_server_ack_client_t * client = &acks->clients[acks->pending_clients[k]];
+        *unknown_sequence_counter += client->unknown_sequence;
+        *batch_full_counter += client->batch_full;
+        client->tail = -1;
+        client->segment_count = 0;
+        client->listed = 0;
+        client->connection_id = 0;
+        client->unknown_sequence = 0;
+        client->batch_full = 0;
+    }
+    acks->num_pending_clients = 0;
+    acks->num_entries = 0;
+    acks->store_bytes = 0;
 }
