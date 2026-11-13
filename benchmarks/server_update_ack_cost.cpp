@@ -314,11 +314,14 @@ int main( int argc, char ** argv )
             server_messages_received += (uint64_t) batch->num_messages;
         }
 
-        // the server's frame of sends: S packets to every client
+        // the server's frame of sends: S packets to every client. The
+        // loopback transport sends one packet per client per send_packets
+        // (its send capacity is max_clients), so the frame is S rounds of
+        // one message to every client, each round flushed
 
-        for ( int i = 0; i < num_clients; i++ )
+        for ( int p = 0; p < server_packets; p++ )
         {
-            for ( int p = 0; p < server_packets; p++ )
+            for ( int i = 0; i < num_clients; i++ )
             {
                 uint8_t * data = rocketnet_server_start_message( server, (uint64_t) slot_of[(size_t) i], 0, ROCKETNET_RELIABILITY_UNRELIABLE, server_bytes );
                 if ( !data )
@@ -329,9 +332,9 @@ int main( int argc, char ** argv )
                 memset( data, p, (size_t) server_bytes );
                 rocketnet_server_finish_message( server, server_bytes );
             }
-        }
 
-        rocketnet_server_send_packets( server );
+            rocketnet_server_send_packets( server );
+        }
     }
 
     CHECK( rocketnet_server_num_connected_clients( server ) == num_clients );
