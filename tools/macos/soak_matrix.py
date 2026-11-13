@@ -4,6 +4,7 @@
 usage:
   soak_matrix.py [--soak ./bin/soak] [--seconds S] [--interval N] [--out DIR]
                  [--cell NAME ...] [--wait-quiet SECONDS]
+  soak_matrix.py --self-test   the verdict rules on fixture logs (no soak run)
 
 The two scripts:
   tools/macos/resource_watch.py  samples one pid (fds, threads, rss and
@@ -14,20 +15,23 @@ The two scripts:
       cell under the watcher and under `leaks --atExit` with
       MallocStackLogging=1, and prints one table row per run.
 
-The six cells. Each server transport is paired with the matching client
+The four cells. Each server transport is paired with the matching client
 transport (ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT):
   portable-impaired       portable-clean        server portable, client portable
   msgx-impaired           msgx-clean            server msgx, client msgx
-  msgx-degraded-impaired  msgx-degraded-clean   ROCKETNET_PUMP=portable, both
-                          ends auto: each ladder absorbs the forced pump as an
-                          msgx refusal and grants its degraded rung (a pinned
-                          msgx under the forced pump is refused loudly)
+A cell is judged on the transports soak reports it was granted (its summary
+lines server_transport_io and client_transport_io), never on what it asked
+for: a cell granted anything else fails. (There is no cell for msgx's
+degraded rung: nothing the library reads from the environment forces an msgx
+refusal, so such a cell would only rerun the ladder's msgx grant.)
 The impaired cells run first, then the clean ones.
 An impaired cell turns the link simulator on at both ends
 (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, which soak writes into the
 transport configs it creates from; its "soak link simulator:" lines show what
 each end was created with): loss 5 percent, latency 30 ms, jitter 20 ms,
-duplicate 2 percent. A clean cell leaves it off. --cell picks cells by name (repeatable); the default is all six,
+duplicate 2 percent. A clean cell leaves it off; either way the cell fails
+unless soak's "soak link simulator:" lines show those values (or zero) at
+both ends. --cell picks cells by name (repeatable); the default is all four,
 one at a time. --wait-quiet waits before each run until no other functional,
 load or soak suite runs on the machine (up to that many seconds). The watcher
 samples until soak prints its "soak finished:" line; leaks then scans the
@@ -42,7 +46,10 @@ then the leaks report), <cell>.csv (the watcher samples) and <cell>.verdict.
 How to read the verdicts. A row passes only when every column passes:
   soak     soak's own verdict: its "soak finished:" line with 0 failures. soak
            counts every payload verify failure, every counter conservation
-           failure and every disconnect it did not plan, and names each.
+           failure, every disconnect it did not plan and every REFUSAL
+           counter it does not excuse (below), and names each.
+  transport  the granted transports (server_transport_io, client_transport_io)
+           are the cell's, and the link simulator lines match the cell.
   verify   the "verified" summary equals the "received" summary, and no
            "PAYLOAD VERIFY FAILED" line.
   unplanned  disconnects other than soak's own planned reconnect cycle: 0.
@@ -56,16 +63,17 @@ How to read the verdicts. A row passes only when every column passes:
            leaked bytes": 0. "not run" is a fail: leaks needs the task port
            of the process, which macOS grants only with developer tools
            access enabled for the user running it.
-  refusals soak fails a run on any REFUSAL counter, except the
-           <FAMILY>_ALREADY_RECEIVED refusals of the duplicates an impaired
-           cell plants (soak.c:142); soak
-           prints those as "planted duplicates refused at ...". The server
-           socket is bound on the wildcard address, so on a machine shared with other
-           suites a foreign packet sent to its port is refused and counted
-           too: a server WRONG_DIRECTION refusal is a CONNECTION_COOKIE,
-           CHALLENGE or DENIED packet arriving at a server, which only ever
-           sends them (sdk/rocketnet_server_protocol.cpp:1317-1325). Read the
-           sender before calling it a defect; rerun the cell on a quiet machine.
+Refusals are part of the soak column: soak fails a run on any REFUSAL
+counter, except the <FAMILY>_ALREADY_RECEIVED refusals of the duplicates an
+impaired cell plants (tests/soak/soak.c, its header's paragraph on
+refusals); soak prints those as "planted duplicates refused at ...". The
+server socket is bound on 127.0.0.1 (unless SOAK_SERVER_ADDRESS names
+another), so another suite on the same machine can still send to its port,
+and such a packet is refused and counted too: a server WRONG_DIRECTION
+refusal is a CONNECTION_COOKIE, CHALLENGE or DENIED packet arriving at a
+server, which only ever sends them (the "wrong direction" drop in
+sdk/rocketnet_server_protocol.cpp). Read the sender before calling it a
+defect; rerun the cell on a quiet machine.
 The script exits 0 when every row passes and 1 otherwise.
 """
 
@@ -88,21 +96,21 @@ IMPAIRMENT = {
     "DUPLICATE_PERCENT": "2",
 }
 
-# (cell label, server transport, client transport, ROCKETNET_PUMP). The
-# degraded cell forces the portable pump: the server ladder absorbs it as an
-# msgx refusal (a pinned msgx is refused loudly, never falls), so the server
-# runs the auto ladder and lands on its degraded grant; the client ladder
-# does the same, so the client runs auto too.
+# (cell label, server transport, client transport): each is a pin, and the
+# run must report exactly that grant at both ends
 TRANSPORTS = [
-    ("portable", "portable", "portable", None),
-    ("msgx", "msgx", "msgx", None),
-    ("msgx-degraded", "auto", "auto", "portable"),
+    ("portable", "portable", "portable"),
+    ("msgx", "msgx", "msgx"),
 ]
 
 CELLS = []
 for _impaired in (True, False):
-    for _label, _server, _client, _pump in TRANSPORTS:
-        CELLS.append(("%s-%s" % (_label, "impaired" if _impaired else "clean"), _server, _client, _pump, _impaired))
+    for _label, _server, _client in TRANSPORTS:
+        CELLS.append(("%s-%s" % (_label, "impaired" if _impaired else "clean"), _server, _client, _impaired))
+
+# soak's "soak link simulator: <end> ..." fields, in the IMPAIRMENT order
+LINK_FIELDS = (("latency_ms", "LATENCY_MS"), ("jitter_ms", "JITTER_MS"),
+               ("loss_percent", "PACKET_LOSS_PERCENT"), ("duplicate_percent", "DUPLICATE_PERCENT"))
 
 SUITES = ("functional", "load", "soak", "soak_sim", "transport_memory", "load_1000", "test_lifecycle")
 
@@ -138,7 +146,7 @@ def wait_quiet(limit):
         time.sleep(5)
 
 
-def cell_env(server, client, pump, impaired):
+def cell_env(server, client, impaired):
     env = dict(os.environ)
     for key in list(env):
         if key.startswith("ROCKETNET_SERVER_SIMULATED_") or key.startswith("ROCKETNET_CLIENT_SIMULATED_"):
@@ -147,11 +155,8 @@ def cell_env(server, client, pump, impaired):
             if key in ["ROCKETNET_DEV_%s_%s" % (end, field) for field in IMPAIRMENT]:
                 del env[key]
                 break
-    env.pop("ROCKETNET_PUMP", None)
     env["ROCKETNET_SERVER_TRANSPORT"] = server
     env["ROCKETNET_CLIENT_TRANSPORT"] = client
-    if pump:
-        env["ROCKETNET_PUMP"] = pump
     if impaired:
         for field, value in IMPAIRMENT.items():
             env["ROCKETNET_DEV_SERVER_" + field] = value
@@ -182,7 +187,15 @@ def parse(log_text):
     planned_cap = summary.get("reconnects", 0) + 1
     unplanned += max(0, summary.get("ROCKETNET_CLIENT_STATE_DISCONNECTED", 0) - planned_cap)
     unplanned += len(re.findall(r"^soak: client connection failed", log_text, re.M))
+    granted = dict(re.findall(r"^soak summary: (server_transport_io|client_transport_io) (\S+)$", log_text, re.M))
+    links = {}
+    for m in re.finditer(r"^soak link simulator: (server|client) latency_ms=(\d+) jitter_ms=(\d+)"
+                         r" loss_percent=(\d+) duplicate_percent=(\d+)$", log_text, re.M):
+        links.setdefault(m.group(1), set()).add(tuple(int(v) for v in m.groups()[1:]))
     return {
+        "server_io": granted.get("server_transport_io"),
+        "client_io": granted.get("client_transport_io"),
+        "links": links,
         "summary": summary,
         "failures": int(finished.group(4)) if finished else None,
         "verify_failed": len(re.findall(r"PAYLOAD VERIFY FAILED", log_text)),
@@ -193,15 +206,32 @@ def parse(log_text):
     }
 
 
-def run_cell(args, name, server, client, pump, impaired):
+def cell_problems(result, server, client, impaired):
+    """Why a run is not the cell it names: the granted transports and the
+    link simulator each end was created with. Empty when it is the cell."""
+    problems = []
+    if result["server_io"] != server:
+        problems.append("server granted %s, not %s" % (result["server_io"] or "nothing reported", server))
+    if result["client_io"] != client:
+        problems.append("client granted %s, not %s" % (result["client_io"] or "nothing reported", client))
+    want = tuple(int(IMPAIRMENT[key]) if impaired else 0 for _, key in LINK_FIELDS)
+    for end in ("server", "client"):
+        seen = result["links"].get(end)
+        if not seen:
+            problems.append("no %s link simulator line" % end)
+        elif seen != {want}:
+            problems.append("%s link simulator %s, not %s" % (end, sorted(seen), want))
+    return problems
+
+
+def run_cell(args, name, server, client, impaired):
     log_path = os.path.join(args.out, name + ".log")
     csv_path = os.path.join(args.out, name + ".csv")
     verdict_path = os.path.join(args.out, name + ".verdict")
-    env = cell_env(server, client, pump, impaired)
+    env = cell_env(server, client, impaired)
     command = ["leaks", "--atExit", "--", args.soak, "--seconds", str(args.seconds)]
-    print("soak_matrix: %s: %s (server %s, client %s%s, %s)" % (
-        name, " ".join(command), server, client, ", ROCKETNET_PUMP=" + pump if pump else "",
-        "impaired" if impaired else "clean"), flush=True)
+    print("soak_matrix: %s: %s (server %s, client %s, %s)" % (
+        name, " ".join(command), server, client, "impaired" if impaired else "clean"), flush=True)
     started = time.monotonic()
 
     def soak_finished():
@@ -245,6 +275,7 @@ def run_cell(args, name, server, client, pump, impaired):
     with open(log_path) as f:
         result = parse(f.read())
     s = result["summary"]
+    not_the_cell = cell_problems(result, server, client, impaired)
     row = {
         "cell": name,
         "seconds": elapsed,
@@ -264,14 +295,18 @@ def run_cell(args, name, server, client, pump, impaired):
         "leaks_rc": leaks_rc,
         "leaks_note": leaks_note,
         "samples": len(rows),
+        "transport": not not_the_cell,
+        "not_the_cell": not_the_cell,
     }
     row["pass"] = (row["soak"] and row["verify"] and row["unplanned"] == 0 and row["conserved"]
-                   and watch_verdict == "FLAT" and row["leaks"] == 0)
+                   and row["transport"] and watch_verdict == "FLAT" and row["leaks"] == 0)
     sys.stdout.write("".join("  " + line for line in lines))
     print("soak_matrix: %s: %s in %.0fs: failures %s, sent %s, received %s, verified %s, reconnects %s, unplanned %s, conservation %s, watch %s, leaks %s (%s bytes)" % (
         name, "PASS" if row["pass"] else "FAIL", elapsed, row["failures"], row["sent"], row["received"], row["verified"],
         row["reconnects"], row["unplanned"], "ok" if row["conserved"] else "FAILED", row["watch"], row["leaks"],
         row["leaked_bytes"]), flush=True)
+    for problem in not_the_cell:
+        print("soak_matrix: %s: NOT THE CELL: %s" % (name, problem), flush=True)
     if leaks_note:
         print("soak_matrix: %s: %s" % (name, leaks_note), flush=True)
     return row
@@ -279,16 +314,64 @@ def run_cell(args, name, server, client, pump, impaired):
 
 def table(rows):
     print("")
-    print("| cell | run s | result | sent | received | verified | reconnects | unplanned | conservation | watcher | leaks |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| cell | run s | result | transport | sent | received | verified | reconnects | unplanned | conservation | watcher | leaks |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in rows:
-        print("| %s | %.0f | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
-            r["cell"], r["seconds"], "PASS" if r["pass"] else "FAIL", r["sent"], r["received"], r["verified"],
+        print("| %s | %.0f | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            r["cell"], r["seconds"], "PASS" if r["pass"] else "FAIL", "ok" if r["transport"] else "NOT THE CELL",
+            r["sent"], r["received"], r["verified"],
             r["reconnects"], r["unplanned"], "ok" if r["conserved"] else "FAILED", r["watch"],
             r["leaks"] if r["leaks"] is not None else "not run"))
 
 
+def fixture_log(server_io, client_io, link):
+    lines = ["soak link simulator: %s latency_ms=%d jitter_ms=%d loss_percent=%d duplicate_percent=%d" % ((end,) + link[end])
+             for end in ("server", "client") if end in link]
+    lines += ["soak finished: 10 iterations, 1 connects, 100 payloads verified, 0 failures",
+              "soak summary: sent 100", "soak summary: received 100", "soak summary: verified 100"]
+    if server_io:
+        lines.append("soak summary: server_transport_io %s" % server_io)
+    if client_io:
+        lines.append("soak summary: client_transport_io %s" % client_io)
+    return "\n".join(lines) + "\n"
+
+
+def self_test():
+    """The cell rule on fixture logs: a run is its cell only when both granted
+    transports and both link simulator settings are the cell's."""
+    impaired = tuple(int(IMPAIRMENT[key]) for _, key in LINK_FIELDS)
+    clean = (0, 0, 0, 0)
+    cases = [
+        ("msgx cell granted msgx", ("msgx", "msgx", {"server": impaired, "client": impaired}), ("msgx", "msgx", True), []),
+        ("clean portable cell", ("portable", "portable", {"server": clean, "client": clean}), ("portable", "portable", False), []),
+        ("msgx cell granted portable", ("portable", "portable", {"server": impaired, "client": impaired}), ("msgx", "msgx", True),
+         ["server granted portable, not msgx", "client granted portable, not msgx"]),
+        ("no granted transport reported", (None, None, {"server": clean, "client": clean}), ("portable", "portable", False),
+         ["server granted nothing reported, not portable", "client granted nothing reported, not portable"]),
+        ("impaired cell with the simulator off", ("msgx", "msgx", {"server": clean, "client": impaired}), ("msgx", "msgx", True),
+         ["server link simulator [(0, 0, 0, 0)], not (30, 20, 5, 2)"]),
+        ("clean cell with no client link line", ("msgx", "msgx", {"server": clean}), ("msgx", "msgx", False),
+         ["no client link simulator line"]),
+    ]
+    failures = 0
+    for label, (server_io, client_io, link), (server, client, is_impaired), expected in cases:
+        got = cell_problems(parse(fixture_log(server_io, client_io, link)), server, client, is_impaired)
+        if got != expected:
+            print("FAIL %s: %s, expected %s" % (label, got, expected))
+            failures += 1
+    if [c[0] for c in CELLS] != ["portable-impaired", "msgx-impaired", "portable-clean", "msgx-clean"]:
+        print("FAIL cells: %s" % [c[0] for c in CELLS])
+        failures += 1
+    if failures:
+        print("soak_matrix self-test: %d failed" % failures)
+        return 1
+    print("soak_matrix self-test: %d cases passed" % (len(cases) + 1))
+    return 0
+
+
 def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
     parser = argparse.ArgumentParser(description="the macOS soak matrix under the resource watcher and leaks")
     parser.add_argument("--soak", default="./bin/soak")
     parser.add_argument("--seconds", type=int, default=1800)
@@ -310,13 +393,13 @@ def main(argv):
     os.makedirs(args.out, exist_ok=True)
 
     rows = []
-    for name, server, client, pump, impaired in CELLS:
+    for name, server, client, impaired in CELLS:
         if args.cell and name not in args.cell:
             continue
         if args.wait_quiet > 0 and not wait_quiet(args.wait_quiet):
             print("soak_matrix: %s: NOT RUN: another suite kept the machine busy" % name, flush=True)
             continue
-        rows.append(run_cell(args, name, server, client, pump, impaired))
+        rows.append(run_cell(args, name, server, client, impaired))
     table(rows)
     return 0 if rows and all(r["pass"] for r in rows) else 1
 
