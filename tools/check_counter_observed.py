@@ -62,6 +62,7 @@ KNOWN_FAMILIES = {
     "rocketnet_server_iocp_counter_t", "rocketnet_server_rio_counter_t",
 }
 CHECK_CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+DECLARATION_END = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_*&")
 CHECK_WORD = re.compile(r"(?:^|_)(?:check|assert|expect|require|verify)(?:_|$)", re.I)
 IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 TEST_EXTS = (".c", ".cpp", ".h", ".hpp", ".inc")
@@ -301,8 +302,13 @@ def check_spans(code, helpers=frozenset()):
         name = m.group(1)
         if not (CHECK_WORD.search(name) or name in helpers):
             continue
-        before = code[:m.start()].rstrip()
-        if re.search(r"[A-Za-z0-9_*&]$", before) and not before.endswith(("return", "else")):
+        # the text before the name, its trailing whitespace dropped, read in
+        # place: a copy of the prefix per call made the check quadratic in a
+        # file's length (56 s of a Linux unit row's 120 s budget)
+        end = m.start()
+        while end > 0 and code[end - 1].isspace():
+            end -= 1
+        if end > 0 and code[end - 1] in DECLARATION_END and not code.endswith(("return", "else"), 0, end):
             continue  # a declaration or definition, not a call
         spans.append(balanced(code, m.end() - 1))
     return spans
