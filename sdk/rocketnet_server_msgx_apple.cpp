@@ -616,19 +616,16 @@ bool rocketnet_server_msgx_send_idle( struct rocketnet_server_msgx_t * msgx )
     for ( int w = 0; w < msgx->num_workers; w++ )
     {
         struct rocketnet_server_msgx_worker_t * worker = msgx->workers[w];
-        if ( worker->producer < 0 )
-        {
-            continue;
-        }
-        if ( worker->banks[worker->producer].num_packets.load( std::memory_order_relaxed ) != 0 )
-        {
-            return false;
-        }
+        // the producer is read under the mutex: after stop the worker takes
+        // it as its final bank and writes it there
         if ( !rocketnet_platform_mutex_try_acquire( &worker->mutex ) )
         {
             return false;
         }
-        const bool idle = worker->handoff.ready_count == 0 && worker->handoff.free_count == ROCKETNET_MSGX_TX_BANKS - 1;
+        const int producer = worker->producer;
+        const bool idle = producer < 0 ||
+                          ( worker->banks[producer].num_packets.load( std::memory_order_relaxed ) == 0 &&
+                            worker->handoff.ready_count == 0 && worker->handoff.free_count == ROCKETNET_MSGX_TX_BANKS - 1 );
         rocketnet_platform_mutex_release( &worker->mutex );
         if ( !idle )
         {
@@ -1020,6 +1017,13 @@ static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *,
             const uintptr_t udata = (uintptr_t) event->udata;
             const int slot = (int) (uint32_t) ( udata & 0xFFFFFFFFu ) - 1;
             const uint32_t generation = (uint32_t) ( (uint64_t) udata >> 32 );
+            // RxResolve: a connected socket's event is read only while its
+            // slot still holds that descriptor at that generation; a retired
+            // one is skipped (the shared socket has no slot)
+            if ( slot >= 0 && rocketnet_msgx_socket_table_resolve( msgx->table, slot, generation ) != (int) event->ident )
+            {
+                continue;
+            }
             // a bounded read per socket per round, so one flooded socket
             // (the shared one under a blast) cannot hold the others back;
             // what it leaves stays readable for the next round
@@ -1155,18 +1159,21 @@ bool rocketnet_server_msgx_mark( struct rocketnet_server_msgx_t * msgx, const st
     return done;
 }
 
-// proofs/tla/RNMsgxSocketTable.tla Forget: the poller forgets the descriptor
-// first, then the table retires it (the order the model's Retire takes)
+// proofs/tla/RNMsgxSocketTable.tla Forget then ForgetDereg: the table retires
+// the socket first (its generation moves), then the poller forgets the
+// descriptor. An event the receive worker takes in between fails its
+// resolve (RxResolve) and is not read; the descriptor stays open until the
+// sweep sees that pass end
 bool rocketnet_server_msgx_forget( struct rocketnet_server_msgx_t * msgx, const struct rocketnet_address_t * address )
 {
     rocketnet_assert( msgx );
-    const int slot = rocketnet_msgx_socket_table_lookup( msgx->table, address );
-    if ( slot >= 0 )
-    {
-        rocketnet_server_msgx_deregister( msgx, msgx->table->slots[slot].fd );
-    }
     int retired_fd = -1;
-    return rocketnet_msgx_socket_table_forget( msgx->table, address, &retired_fd );
+    const bool done = rocketnet_msgx_socket_table_forget( msgx->table, address, &retired_fd );
+    if ( retired_fd >= 0 )
+    {
+        rocketnet_server_msgx_deregister( msgx, retired_fd );
+    }
+    return done;
 }
 
 // proofs/tla/RNMsgxSocketTable.tla RetireDead, Close and BeginUpdate

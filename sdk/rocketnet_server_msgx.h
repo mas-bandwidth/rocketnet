@@ -27,7 +27,10 @@
 // groups a bank by client socket, keeping staged order, and sends each
 // client's run with one sendmsg_x on its connected socket. A destination
 // with no socket (a handshake, a client whose socket is not open yet or was
-// retired) leaves through the shared unconnected socket.
+// retired) leaves through the shared unconnected socket. One exception to
+// the staged order: a bank whose publish was deferred across the client's
+// socket opening or retiring holds that client under two stamps, and the
+// shared socket's packets leave first (proofs/tla/MCRNMsgxSendRunsRestampOrder.cfg).
 //
 // Receive: once a client has its socket the kernel delivers its datagrams to
 // that socket only, so the one receive worker reads every socket through a
