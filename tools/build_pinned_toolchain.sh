@@ -72,6 +72,13 @@ fi
 
 jobs=$(nproc)
 
+# a prefix that does not hold this toolchain-id is rebuilt from empty, so no
+# file from an earlier build (another version, another script) stays in it
+case "$prefix" in
+    ""|/) echo "build_pinned_toolchain: refusing prefix '$prefix'" >&2; exit 1 ;;
+esac
+rm -rf "$prefix"
+
 # gcc: C and C++ only, one stage (the host compiler builds it directly), no
 # multilib, no sanitizer or OpenMP runtimes the gate does not link
 gcc_tarball="gcc-$gcc_version.tar.xz"
@@ -119,7 +126,15 @@ tar -xjf "$work/$valgrind_tarball" -C "$work"
     make install
 )
 
-[ "$("$prefix/bin/g++" -dumpfullversion)" = "$gcc_version" ]
-[ "$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version)" = "valgrind-$valgrind_version" ]
+got_gcc=$("$prefix/bin/g++" -dumpfullversion 2>&1 || true)
+if [ "$got_gcc" != "$gcc_version" ]; then
+    echo "build_pinned_toolchain: built g++ reports '$got_gcc', not $gcc_version" >&2
+    exit 1
+fi
+got_valgrind=$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version 2>&1 || true)
+if [ "$got_valgrind" != "valgrind-$valgrind_version" ]; then
+    echo "build_pinned_toolchain: built valgrind reports '$got_valgrind', not valgrind-$valgrind_version" >&2
+    exit 1
+fi
 echo "$toolchain_id" > "$prefix/toolchain-id"
 echo "build_pinned_toolchain: built $toolchain_id"

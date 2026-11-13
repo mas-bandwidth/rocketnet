@@ -14,8 +14,9 @@
 #
 # Usage: bash tools/build_msan_libcxx.sh [prefix]
 #   prefix defaults to /opt/msan-libcxx-$(clang++ -dumpversion); writing it
-#   needs sudo when it is not writable; a prefix already holding the build
-#   is left as it is. The download is the release's source
+#   needs sudo when it is not writable; a prefix whose toolchain-id file
+#   names this clang version and this script (the first 12 hex digits of its
+#   sha256) is left as it is, and any other is rebuilt. The download is the release's source
 #   tarball over HTTPS, checked against the sha256 pinned below; a clang
 #   version with no pin here is refused. About ten minutes on a 16-core bench.
 #
@@ -23,19 +24,43 @@
 # provisioning; run_msan.sh prints TOOL-MISSING naming this script
 # when the prefix for the active clang is absent, and the fuzz-nightly MSan
 # job builds into a cached prefix of its own on a runner that lacks it.
+#
+# bash tools/build_msan_libcxx.sh --sha256 <clang version>
+#   prints the pinned sha256 of that release's llvm-project source and exits
+#   (1 with no pin): the one place the pins live, which the fuzz-nightly
+#   libFuzzer engine step reads.
 set -euo pipefail
+
+pinned_sha256() {
+    case "$1" in
+        18.1.3) echo 2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651 ;;
+        21.1.8) echo 4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142 ;;
+        *) return 1 ;;
+    esac
+}
+
+if [ "${1:-}" = "--sha256" ]; then
+    if [ "$#" -ne 2 ] || ! pinned_sha256 "$2"; then
+        echo "build_msan_libcxx: no pinned llvm-project source for clang ${2:-<none>}; add its release sha256 to tools/build_msan_libcxx.sh" >&2
+        exit 1
+    fi
+    exit 0
+fi
 
 version=$(clang++ -dumpversion)
 prefix=${1:-/opt/msan-libcxx-$version}
 
-case "$version" in
-    18.1.3) sha256=2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651 ;;
-    21.1.8) sha256=4633a23617fa31a3ea51242586ea7fb1da7140e426bd62fc164261fe036aa142 ;;
-    *) echo "build_msan_libcxx: no pinned llvm-project source for clang $version; add its release sha256 here"; exit 1 ;;
-esac
+if ! sha256=$(pinned_sha256 "$version"); then
+    echo "build_msan_libcxx: no pinned llvm-project source for clang $version; add its release sha256 here"
+    exit 1
+fi
 
-if [ -f "$prefix/lib/libc++.so" ] && [ -f "$prefix/include/c++/v1/__config_site" ]; then
-    echo "build_msan_libcxx: $prefix already holds the instrumented libc++ for clang $version"
+script_sha256=$(sha256sum "${BASH_SOURCE[0]}" | cut -c1-12)
+toolchain_id="msan-libcxx-clang-$version-script-$script_sha256"
+
+if [ -f "$prefix/lib/libc++.so" ] && [ -f "$prefix/include/c++/v1/__config_site" ] \
+    && [ "$(cat "$prefix/toolchain-id" 2>/dev/null)" = "$toolchain_id" ]; then
+    echo "build_msan_libcxx: $prefix already holds $toolchain_id"
     exit 0
 fi
 
@@ -69,9 +94,12 @@ cmake -G "$generator" -S "$work/llvm-project-$version.src/runtimes" -B "$work/bu
 jobs=$(( $(nproc) / 2 )); [ "$jobs" -ge 1 ] || jobs=1
 nice -n 10 cmake --build "$work/build" --parallel "$jobs"
 
+echo "$toolchain_id" > "$work/toolchain-id"
 if [ -w "$(dirname "$prefix")" ] || [ -w "$prefix" ]; then
     cmake --install "$work/build"
+    cp "$work/toolchain-id" "$prefix/toolchain-id"
 else
     sudo cmake --install "$work/build"
+    sudo cp "$work/toolchain-id" "$prefix/toolchain-id"
 fi
-echo "build_msan_libcxx: installed the instrumented libc++ for clang $version in $prefix"
+echo "build_msan_libcxx: installed $toolchain_id in $prefix"
