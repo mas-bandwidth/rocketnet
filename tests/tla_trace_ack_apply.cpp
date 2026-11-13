@@ -423,8 +423,9 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         {
             // the client's next sequence, with ranges over sequences acknowledged already
             const int b = next_block[client]++;
-            const int small = random.below( AA_SMALL_RANGES + 1 );
-            const int ranges = random.below( 10 ) < 3 ? AA_BIG_RANGES : small;
+            // (not named small: that is a macro in the Windows headers)
+            const int few = random.below( AA_SMALL_RANGES + 1 );
+            const int ranges = random.below( 10 ) < 3 ? AA_BIG_RANGES : few;
             struct rocketnet_ack_block_t block;
             memset( &block, 0, sizeof( block ) );
             block.largest = (uint64_t) b;
