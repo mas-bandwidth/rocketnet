@@ -17,7 +17,15 @@
 // map's high-water, so the window's size costs no map memory and no
 // verifier work. The embedded program is compiled with the library's
 // ROCKETNET_HISTORY_PACKETS (cmake/EmbedXdp.cmake).
+// ROCKETNET_TLA_XDP_REPLAY_WINDOW is defined only for the host-C filter and the
+// walk of the xdp-replay trace check (CMakeLists.txt, rocketnet_xdp_filter_host_trace),
+// so its 400 steps reach the drop rule; the library and the BPF program never
+// define it (static_assert in sdk/rocketnet_server_socket_linux.cpp).
+#if defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
+#define ROCKETNET_XDP_REPLAY_WINDOW ROCKETNET_TLA_XDP_REPLAY_WINDOW
+#else // #if defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
 #define ROCKETNET_XDP_REPLAY_WINDOW ROCKETNET_HISTORY_PACKETS
+#endif // #if defined( ROCKETNET_TLA_XDP_REPLAY_WINDOW )
 
 // The replay map's entry budget, one per live source address and port: every
 // client the server holds, rounded up to a multiple of 1024 (1024 at 1000

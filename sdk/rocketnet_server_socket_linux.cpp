@@ -62,6 +62,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_pending_frames.h"
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_replay_marks.h"
+#include "rocketnet_xdp_replay_sink.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_xdp_free_list.h"
 #include "rocketnet_xdp_receive_pass.h"
@@ -3075,17 +3076,7 @@ bool rocketnet_server_socket_replay_forget( struct rocketnet_server_socket_t * s
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
-    // proofs/tla/RNXdpReplay.tla Walk (pendingMacForget' = accepted): only a
-    // queued forget drops the learned reply MAC; a refused one leaves it with
-    // the slot that still owes the forget
-
-    const bool queued = rocketnet_xdp_replay_marks_forget( server_socket->replay_marks, address );
-    if ( queued )
-    {
-        rocketnet_xdp_reply_macs_forget( &server_socket->reply_macs, address );
-    }
-
-    return queued;
+    return rocketnet_xdp_replay_sink_forget( server_socket->replay_marks, &server_socket->reply_macs, address );
 }
 
 void rocketnet_server_socket_client_accepted( struct rocketnet_server_socket_t * server_socket, int view_index )
@@ -3104,17 +3095,7 @@ bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * ser
     rocketnet_assert( address );
     rocketnet_assert( server_socket->replay_marks );
 
-    const bool queued = rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
-
-    // a new session's zero mark the buffer refused: its key is not held
-    // anywhere, so the next publish holds every keep-alive (proofs/tla/RNXdpReplay.tla
-    // HoldGreetingUntilMarked, markOwed); the walk owes the mark and asks again
-
-    if ( !queued && high_water == 0 )
-    {
-        server_socket->replay_zero_mark_refused = true;
-    }
-    return queued;
+    return rocketnet_xdp_replay_sink_mark( server_socket->replay_marks, address, high_water, &server_socket->replay_zero_mark_refused );
 }
 
 static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_server_socket_t * server_socket, const char * call )
@@ -3181,46 +3162,14 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
     rocketnet_assert( server_socket );
     rocketnet_assert( server_socket->replay_marks );
 
-    struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
+    // the calls below count each kernel refusal in replay_commit_failures as
+    // they make it; the buffer's own refusals are added after
 
-    // proofs/tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
-    // in one commit; this is the only writer of the kernel map. A forget the
-    // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
-    // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark);
-    // a mark the kernel refuses stays pending too (MarkOwedUntilApplied), so a
-    // reconnect's refused zero mark is retried rather than lost.
-
-    // a batch the kernel stops (at a missing key, or a refusal) goes on past
-    // the entry it stopped at, which takes one single call so its outcome is
-    // known; a kernel without the batch command is walked one call an entry
-    // (rocketnet_xdp_replay_apply). An applied mark supersedes a refused
-    // forget of the same key (RetryNeverDeletesNewerMark).
-
-    bool * forget_failed = server_socket->replay_forget_failed;
-    memset( forget_failed, 0, marks->capacity * sizeof( bool ) );
-    rocketnet_xdp_replay_apply( marks->forget_count, rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single, server_socket,
-                                forget_failed );
-
-    bool * mark_applied = server_socket->replay_mark_applied;
-    memset( mark_applied, 0, marks->capacity * sizeof( bool ) );
-    rocketnet_xdp_replay_apply( marks->mark_count, rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single, server_socket,
-                                mark_applied );
-    for ( uint32_t i = 0; i < marks->mark_count; i++ )
-    {
-        mark_applied[i] = !mark_applied[i];
-    }
-
-    // a full buffer's refusals land in the commit failure count; a refused
-    // forget is kept unless an applied mark of its key superseded it, and a
-    // refused mark is kept for the next commit
-
-    server_socket->replay_commit_failures += rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
-
-    // the publish after this commit holds the greeting of every session whose
-    // zero mark is kept or was not queued (rocketnet_server_socket_hold_greetings)
-
-    server_socket->replay_hold_all_greetings = server_socket->replay_zero_mark_refused;
-    server_socket->replay_zero_mark_refused = false;
+    const uint64_t refused = rocketnet_xdp_replay_commit( server_socket->replay_marks, server_socket->replay_forget_failed, server_socket->replay_mark_applied,
+                                                          rocketnet_server_socket_replay_delete_batch, rocketnet_server_socket_replay_delete_single,
+                                                          rocketnet_server_socket_replay_update_batch, rocketnet_server_socket_replay_update_single,
+                                                          server_socket, &server_socket->replay_zero_mark_refused, &server_socket->replay_hold_all_greetings );
+    server_socket->replay_commit_failures += refused;
 }
 
 uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server_socket_t * server_socket )
