@@ -195,9 +195,9 @@ bounded per receive call by the read budget below.
 | portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
-| gso | 4096 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
+| gso | 16384 in the current shared producer bank (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
 | io_uring | 2048 shared send slots per phase, two phases; 10240 completion reaps per send call (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `ROCKETNET_URING_SEND_PHASES`, `ROCKETNET_URING_SEND_BUDGET`) | 4096 receive buffers of 66 KiB per queue; 16000 in each shared receive bank (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
-| xdp | 4096 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 16384 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
+| xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
 | iocp | 2048 (`rocketnet_server_iocp_send_queue_size`) | 4096 queue (`rocketnet_server_iocp_receive_queue_size`) |
 | rio | 2048 per phase (`rocketnet_server_rio_send_queue_size`) | 4096 posted receives (`rocketnet_server_rio_receives`) |
 
@@ -209,7 +209,7 @@ GSO's three send banks are shared across all sockets. Only its current
 producer bank can be filled; the transmit worker consumes published banks.
 io_uring likewise has two shared 2048-slot send phases, and an incomplete send
 continues to occupy its phase. `num_xdp_queues` adds receive queues and changes socket
-rotation; it does not multiply the 4096-slot GSO or 2048-slot io_uring send
+rotation; it does not multiply the 16384-slot GSO or 2048-slot io_uring send
 capacity (`sdk/rocketnet_server_gso_linux.cpp`,
 `sdk/rocketnet_server_uring_linux.cpp`).
 
@@ -242,7 +242,7 @@ budget is its `max_packets`; a single-packet call's is `ROCKETNET_PLATFORM_RECEI
 generic batch pump and the Windows per-packet loop (`sdk/rocketnet_platform.cpp`).
 The Linux GSO server worker's drain (`rocketnet_server_gso_drain`,
 `sdk/rocketnet_server_gso_linux.cpp`) counts each message and interrupted call
-against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (8192). It checks that threshold before
+against `ROCKETNET_GSO_RECV_QUEUE_SIZE` (32768). It checks that threshold before
 each receive batch; the final batch can take the count past it by at most
 `ROCKETNET_GSO_RECV_BATCH - 1` (63).
 The Linux GSO client's plain fallback uses the platform helpers; its GRO path

@@ -129,7 +129,7 @@ development key must not be used for production.
     It is a preprocessor definition, not a CMake option: an embedding build
     defines it for the library and for every file that includes
     `rocketnet.h`, with the same value.
-  - `-DROCKETNET_XDP_MEMORY_MIB` (default `4096` MiB) bounds planned AF_XDP
+  - `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB) bounds planned AF_XDP
     transport + UMEM memory across `num_xdp_queues`.
 
 ## Operational tuning with environment overrides
@@ -148,8 +148,8 @@ include:
   `ROCKETNET_SERVER_NUM_OS_CPUS` (`1 .. 256`) overrides. The same queue count
   applies to `gso` and `io_uring`, but `gso` and `io_uring` refuse a value
   above `32`. Preserve the pinned
-  AF_XDP geometry: 4,096-byte frames, a 4,096-entry send queue, 16,384-entry
-  receive queue and fill set, a 32,768-entry fill ring, and 49,152 UMEM frames
+  AF_XDP geometry: 4,096-byte frames, a 16,384-entry send queue, 32,768-entry
+  receive queue and fill set, a 65,536-entry fill ring, and 98,304 UMEM frames
   per queue.
 - **Right-sizing server match capacity**: set `ROCKETNET_SERVER_MAX_CLIENTS` to
   the server instance's actual player cap (`1 .. ROCKETNET_MAX_CLIENTS`),
