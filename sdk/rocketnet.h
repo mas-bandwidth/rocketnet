@@ -1071,8 +1071,9 @@ struct rocketnet_client_t;
 /// refused or counted. From that call on, in every build, the three calls,
 /// rocketnet_server_update_client and the main thread calls that change
 /// the server (update, the split update's receive and finish, send_packets,
-/// receive_messages, receipts, a client's send rate, the disconnects and
-/// stop) are checked, and between rocketnet_server_update_receive and
+/// receive_messages, receipts, a client's send rate, the disconnects, stop
+/// and rocketnet_server_stopped, whose poll takes a stop step) are checked,
+/// and between rocketnet_server_update_receive and
 /// rocketnet_server_update_finish only rocketnet_server_update_client and
 /// the update calls may run (see rocketnet_server_update_receive). One that
 /// breaks a rule is refused: it does nothing, it is counted
@@ -1082,8 +1083,9 @@ struct rocketnet_client_t;
 /// finish 0; a refused abort leaves its message for the next update to
 /// cancel; a refused main thread call returns as if it had found nothing to
 /// do (rocketnet_server_set_send_kbps returns
-/// ROCKETNET_STATUS_INVALID_ARGUMENT), and a refused stop leaves the server
-/// running. The calls that only
+/// ROCKETNET_STATUS_INVALID_ARGUMENT), a refused stop leaves the server
+/// running, and a refused rocketnet_server_stopped returns false. The calls
+/// that only
 /// read the server are main thread calls too and are not checked: one made
 /// while game threads send is not refused, counted or safe. Nor is
 /// rocketnet_server_destroy: join the game threads before it.

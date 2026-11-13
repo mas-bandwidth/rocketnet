@@ -414,7 +414,7 @@ REGISTER_UNIT_TEST( test_server_set_send_kbps_checked_on_an_empty_slot );
 
 // The header's lifetime of an open message (rocketnet_server_start_message):
 // a disconnect of its client aborts it at once, and the finish that would
-// have followed is refused (0), the abort counted as a refused send.
+// have followed is refused (0), as is a new start on the emptied slot.
 
 static void test_server_disconnect_aborts_an_open_message()
 {
