@@ -6,4 +6,4 @@ MCServerSessionTwoClientsLive.cfg	160	75.401	75.401	aws-mut-3
 MCServerSessionTwoClientsBursts.cfg	180	89.923	89.923	aws-mut-3
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
 MCServerStopSpreadBrokenNoAbandon.cfg	150	71.883	72.586	bench-xdp-9
-MCServerStopSpreadLive.cfg	140	66.20067.861	aws-mut-3
+MCServerStopSpreadLive.cfg	140	66.200	67.861	aws-mut-3
