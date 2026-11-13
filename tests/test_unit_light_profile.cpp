@@ -210,10 +210,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 64-byte rounding: 34160412 and 64 above (studio, AppleClang, Debug, DEV=ON).
 // The staged msgx server is a candidate of the planned peak: ROCKETNET_MSGX_DEFAULT_WORKERS (3)
 // send workers, each with ROCKETNET_MSGX_TX_BANKS banks of ROCKETNET_MSGX_SEND_QUEUE_SIZE (16384)
-// frames, plus the receive banks, add 121665576 bytes to the server over the figure above
-// (measured on the studio, Apple clang, Release, DEV=ON; the probe's actual= line is 1591178887).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1590130439 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13988874 )
+// frames, plus the receive banks, with the two appended receive drop counters, add 121665192
+// bytes to the server over the update in three calls (1502863099) and nothing to the client
+// (their 16 bytes fit the client's 64-byte rounding) (measured on the studio, Apple clang, Release,
+// DEV=ON; the probe's actual= lines are 1625576867 and 15041674).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1624528291 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13993098 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
