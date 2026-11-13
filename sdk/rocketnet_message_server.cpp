@@ -1373,8 +1373,8 @@ struct rn_diag_t
     ~rn_diag_t()
     {
         static const char * names[16] = { "unrel_starts", "packed_in_place", "whole_in_place", "elig_negative", "pk_frame_unavail", "pk_not_affordable",
-                                          "pk_start_null", "wf_cap_le_conn", "wf_not_affordable", "wf_start_null_or_small", "wf_header_neg", "fallback", "queued_after", "x13", "x14", "x15" };
-        for ( int i = 0; i < 13; i++ )
+                                          "pk_start_null", "wf_cap_le_conn", "wf_not_affordable", "wf_start_null_or_small", "wf_header_neg", "fallback", "elig_neg_unreliable_count_gt0", "elig_neg_queued_other", "elig_neg_NO", "x15" };
+        for ( int i = 0; i < 15; i++ )
         {
             fprintf( stderr, "rn_diag: %s=%llu\n", names[i], (unsigned long long) n[i].load() );
         }
@@ -1466,7 +1466,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
 
         rn_message_packet_build_t * build = &connection->unreliable_build;
         const int room = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
-        if ( eligible < 0 ) { RN_DIAG( 3 ); }
+        if ( eligible < 0 ) { RN_DIAG( 3 ); if ( connection->unreliable_count > 0 ) { RN_DIAG( 12 ); } else if ( eligible == RN_ENDPOINT_IN_PLACE_QUEUED ) { RN_DIAG( 13 ); } else { RN_DIAG( 14 ); } }
         if ( eligible >= 0 && bytes <= room - header )
         {
             const bool receipt = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;

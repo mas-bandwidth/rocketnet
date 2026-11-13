@@ -1416,6 +1416,26 @@ static int rocketnet_server_transport_fill_budget_left( const rocketnet_server_t
 // (rocketnet_server_fill_line_t), so a thread filling alone reads the exact
 // figure.
 // proofs/tla/RNServerSendFair.tla FirstVisit and LaterVisit: the shared cap each visit tests, charged per frame start, kept on abort.
+// DIAGNOSTIC ONLY (tests/v1.2/goal-rio-diag): which of the two limits made the send capacity 1000 or less
+#include <atomic>
+#include <stdio.h>
+struct rn_diag_cap_t
+{
+    std::atomic<uint64_t> calls{ 0 }, room_le{ 0 }, left_le{ 0 }, both_le{ 0 };
+    ~rn_diag_cap_t()
+    {
+        fprintf( stderr, "rn_diag_cap: calls=%llu room_le_1000=%llu budget_left_le_1000=%llu both=%llu\n", (unsigned long long) calls.load(), (unsigned long long) room_le.load(), (unsigned long long) left_le.load(), (unsigned long long) both_le.load() );
+    }
+};
+static rn_diag_cap_t rn_diag_cap_state;
+static void rn_diag_capacity( int room, int left )
+{
+    rn_diag_cap_state.calls.fetch_add( 1, std::memory_order_relaxed );
+    if ( room <= 1000 && left > 1000 ) { rn_diag_cap_state.room_le.fetch_add( 1, std::memory_order_relaxed ); }
+    if ( left <= 1000 && room > 1000 ) { rn_diag_cap_state.left_le.fetch_add( 1, std::memory_order_relaxed ); }
+    if ( left <= 1000 && room <= 1000 ) { rn_diag_cap_state.both_le.fetch_add( 1, std::memory_order_relaxed ); }
+}
+
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )
@@ -1426,6 +1446,7 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
     {
         const int room = rocketnet_server_transport_io_send_room( server_transport );
         const int left = rocketnet_server_transport_fill_budget_left( server_transport );
+        rn_diag_capacity( room, left );
         return room < left ? room : left;
     }
     // num_packets is moved by fetch-add in start_packet on job threads during
