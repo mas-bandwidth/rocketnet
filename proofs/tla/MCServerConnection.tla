@@ -19,6 +19,7 @@ SafetyInvariants ==
     /\ TypeOK
     /\ OneClientPerSlot /\ OneSlotPerClientId
     /\ SlotMappingBijection /\ NoSlotBeforeResponse /\ MappingsBounded
+    /\ HeldSlotNotReused
     /\ OneConnectionPerToken /\ NonceFresh
     /\ StoredChallengeNeverReplaced
     /\ TimeoutHonoured /\ DeadlineHonoured /\ HalfOpenIdleHonoured
@@ -41,6 +42,11 @@ MCConfiguredBoth == {"ipv4", "ipv6"}
 MCServeFirstOnly == TRUE
 
 MCRefreshConnectedOnResponse == TRUE
+
+\* the reversed witness MCServerConnectionBrokenHeldSlotTaken.cfg: a
+\* response takes a slot freed in the same update, before the update
+\* publishes it
+MCResponseTakesHeld == TRUE
 
 \* the family race (MCServerConnectionRace.cfg, MCServerConnectionRaceIpv6.cfg
 \* and the reversed witness MCServerConnectionBrokenCommitEarly.cfg): a token

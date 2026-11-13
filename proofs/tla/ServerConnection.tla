@@ -282,9 +282,16 @@ Mapping == [live : BOOLEAN, est : BOOLEAN, salt : Salts \cup {NoSalt}, nonce : N
             age : 0..HandshakeDeadline, sinceRecv : 0..Timeout, sinceKA : 0..SendInterval,
             acked : BOOLEAN]
 
-FreeSlot == [used |-> FALSE, addr |-> 0, tok |-> 0, confirmed |-> FALSE]
+\* held: a slot released since the last update, free but not yet assignable
+\* (rocketnet_client_slots_release holds it above the free stack's top
+\* until rocketnet_client_slots_publish at the end of
+\* rocketnet_server_protocol_update, so the update that ended the
+\* connection reports the end before the slot is reused)
+FreeSlot == [used |-> FALSE, addr |-> 0, tok |-> 0, confirmed |-> FALSE, held |-> FALSE]
+HeldSlot == [FreeSlot EXCEPT !.held = TRUE]
 
-SlotRec == [used : BOOLEAN, addr : Addrs \cup {0}, tok : Tokens \cup {0}, confirmed : BOOLEAN]
+SlotRec == [used : BOOLEAN, addr : Addrs \cup {0}, tok : Tokens \cup {0}, confirmed : BOOLEAN,
+            held : BOOLEAN]
 
 NoPkt == [type |-> "none"]
 
@@ -300,9 +307,15 @@ FreeSlots   == MaxSlots - Cardinality(UsedSlots)
 LiveAddrs   == {a \in Addrs : smap[a].live}
 NumMappings == Cardinality(LiveAddrs)
 
-\* the lowest free slot: the model's choice of a free slot (the code pops
-\* its LIFO free stack, RNClientSlotsLayout.tla)
-LowestFree == CHOOSE i \in Slots \ UsedSlots : \A j \in Slots \ UsedSlots : i <= j
+\* a response may take a free slot that is not held
+\* (rocketnet_client_slots_assign pops only the published part of the free
+\* stack); the reversed witness lets it take a held one
+ResponseTakesHeldSlot == FALSE
+Assignable == {i \in Slots \ UsedSlots : ~slot[i].held \/ ResponseTakesHeldSlot}
+
+\* the lowest assignable slot: the model's choice of a free slot (the code
+\* pops its LIFO free stack, RNClientSlotsLayout.tla)
+LowestFree == CHOOSE i \in Assignable : \A j \in Assignable : i <= j
 
 \* a client with this id holds a slot (rocketnet_client_slots_find)
 ClientIdConnectedAtRequest(t) ==
@@ -542,14 +555,21 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 \* through and replaces that mapping if the check sequence accepts it, reusing the
 \* map entry; no cookie (or a cookie issued to another address) -> a cookie;
 \* an expired token is refused before cookie/decrypt; a token bound
-\* elsewhere or a connected client id is silent; history binds only when a
+\* elsewhere (any bound token, when the request would replace a half-open
+\* mapping) or a connected client id is silent; history binds only when a
 \* response opens; a full map is silent before any slot denial; else
 \* map+challenge
 ServerRecvRequest(p) ==
     /\ p.type = "request"
     /\ C2S!Deliver(p)
     /\ LET m == smap[p.from]
-           boundElsewhere == History = "kept" /\ bound[p.tok] \notin {0, p.from}
+           \* the used rung: a token bound to another address, or, on a
+           \* request that would replace this address's half-open mapping
+           \* (the CASE below reaches the replace branch only with m.live),
+           \* a token bound to any address, its own included (the second
+           \* rocketnet_used_token_history_check, against the zero address)
+           boundElsewhere == History = "kept"
+                             /\ (bound[p.tok] \notin {0, p.from} \/ (m.live /\ bound[p.tok] # 0))
            heldFull == HoldUntilExpire /\ bound[p.tok] = 0
                        /\ Cardinality({t \in Tokens : bound[t] # 0}) >= HeldCapacity
            fresh == Fresh(p.tok)
@@ -632,9 +652,18 @@ ServerRecvResponse(p) ==
                         /\ ServerSendPacket([type |-> "denied", to |-> p.from, salt |-> m.salt, nonce |-> m.nonce])
                         /\ UNCHANGED churnDenied
                         /\ UNCHANGED slot
+                   [] Assignable = {} ->
+                        \* every free slot was freed this update and is held
+                        \* until publish: ignored, not denied; the client's
+                        \* next response takes a slot from the next update on
+                        \* (rocketnet_client_slots_assign returns -1)
+                        /\ smap' = [smap EXCEPT ![a] = m1]
+                        /\ bound' = bound1
+                        /\ ServerSilent /\ UNCHANGED <<slot, churnDenied>>
                    [] OTHER ->
                         LET i == LowestFree IN
-                        /\ slot' = [slot EXCEPT ![i] = [used |-> TRUE, addr |-> a, tok |-> m.tok, confirmed |-> FALSE]]
+                        /\ slot' = [slot EXCEPT ![i] = [used |-> TRUE, addr |-> a, tok |-> m.tok, confirmed |-> FALSE,
+                                                        held |-> slot[i].held]]
                         /\ smap' = [smap EXCEPT ![a] = [m EXCEPT !.est = TRUE, !.slot = i, !.age = 0,
                                                                   !.sinceRecv = 0, !.sinceKA = 0, !.acked = FALSE]]
                         /\ bound' = bound1
@@ -643,11 +672,12 @@ ServerRecvResponse(p) ==
             ELSE ServerSilent /\ UNCHANGED <<smap, slot, bound, churnDenied>>
     /\ UNCHANGED serverRecvUnchanged
 
-\* The slot and mapping are released together. A same-address reconnect
-\* remains permitted while the history is live.
+\* The slot and mapping are released together; the slot is held until the
+\* next update publishes it. A same-address reconnect remains permitted
+\* while the history is live.
 Release(a) ==
     /\ smap' = [smap EXCEPT ![a] = NoMap]
-    /\ slot' = [slot EXCEPT ![smap[a].slot] = FreeSlot]
+    /\ slot' = [slot EXCEPT ![smap[a].slot] = HeldSlot]
     /\ UNCHANGED churnDenied
 
 \* a sealed session packet that opens for a mapping with a slot: a
@@ -739,7 +769,11 @@ Tick ==
                     [] TimedOut(m) /\ SweepRemovesMapping -> NoMap
                     [] OTHER -> [m EXCEPT !.sinceRecv = Sat(m.sinceRecv, Timeout),
                                           !.sinceKA = Sat(m.sinceKA, SendInterval)]]
-    /\ slot' = [i \in Slots |-> IF slot[i].used /\ TimedOut(smap[slot[i].addr]) THEN FreeSlot ELSE slot[i]]
+    \* the sweep releases a timed-out slot, and the update's end publishes it
+    \* with every slot held since the last update
+    \* (rocketnet_client_slots_publish)
+    /\ slot' = [i \in Slots |-> IF (slot[i].used /\ TimedOut(smap[slot[i].addr])) \/ slot[i].held
+                                  THEN FreeSlot ELSE slot[i]]
     /\ UNCHANGED <<cstate, cAtt, cTok, cAddr, cCookieAddr, cKeys, cMoves, cDiscPending, cDiscPkt,
                    cLostKinds, cFam, bound, churnDenied, sDiscPending, sDiscPkt, sLostKinds>>
 
@@ -839,6 +873,11 @@ SlotMappingBijection ==
     /\ \A a \in Addrs : smap[a].est => /\ smap[a].live /\ smap[a].slot # 0
                                        /\ slot[smap[a].slot].used /\ slot[smap[a].slot].addr = a
     /\ \A a \in Addrs : smap[a].live /\ ~smap[a].est => smap[a].slot = 0
+
+\* a slot freed since the last update is not given to a new connection
+\* before the update publishes it, so the end of its old connection is
+\* reported first (RNSlots.tla EveryEndSeen at this model's grain)
+HeldSlotNotReused == \A i \in Slots : slot[i].held => ~slot[i].used
 
 \* a slot is assigned only on an opened response: a live mapping holds a
 \* slot only once established, so no amount of requests consumes one

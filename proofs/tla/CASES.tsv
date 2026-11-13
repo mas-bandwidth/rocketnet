@@ -409,6 +409,7 @@ MCServerConnectionLossy.cfg	MCServerConnection.tla	pass	-	ignore-terminal	server
 MCServerConnectionLossyTimers.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionLossyBrokenRefresh.cfg	MCServerConnection.tla	action	ResponseNeverRefreshesConnected	ignore-terminal	serverconnection	required	-
 MCServerConnectionLossyBrokenSweep.cfg	MCServerConnection.tla	invariant	SlotMappingBijection	ignore-terminal	serverconnection	required	-
+MCServerConnectionBrokenHeldSlotTaken.cfg	MCServerConnection.tla	invariant	HeldSlotNotReused	ignore-terminal	serverconnection	required	-
 MCRNClientIoShutdown.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
 MCRNClientIoShutdownStuck.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
 MCRNClientReceiveQuitShutdown.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
