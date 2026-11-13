@@ -4742,3 +4742,31 @@ void rocketnet_client_transport_layout_for_test( size_t * past_rings_count_offse
 }
 #endif // #if ROCKETNET_DEV
 // mutation gaps ct-memory end
+
+// mutation gaps r2-ct begin
+#if ROCKETNET_DEV
+// A production library creates no link simulator, and on a platform with no
+// client wake (no ROCKETNET_PLATFORM_HAS_WAKE) every built-in client
+// transport runs the BASE path; no platform CI builds is one. A development
+// connection always owns a simulator, so this drops a step-driven
+// transport's idle simulator before anything is sent: the unit cases of
+// tests/test_unit_gaps_r2_ct_rings.cpp then run the production BASE path's
+// branches for a transport with none. It refuses a transport that is not
+// step-driven, is stopping, has no simulator or one with a setting or a
+// packet, and changes nothing else.
+
+bool rocketnet_client_transport_drop_link_simulator_for_test( rocketnet_client_transport_t * client_transport )
+{
+    if ( !client_transport || !client_transport->step_driven || client_transport->stop_requested || !client_transport->link_simulator ||
+         rocketnet_network_simulator_created_active( client_transport->link_simulator ) ||
+         rocketnet_network_simulator_holds_any( client_transport->link_simulator ) )
+    {
+        return false;
+    }
+
+    rocketnet_network_simulator_destroy( client_transport->link_simulator );
+    client_transport->link_simulator = NULL;
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+// mutation gaps r2-ct end
