@@ -23,7 +23,11 @@
 (* descriptors in the order they were allocated, which the links must     *)
 (* spell out (ListInAllocationOrder).                                      *)
 (*                                                                         *)
-(* Two constants flip one rule each for the reversed witnesses:            *)
+(* The region reset (Reset, rn_region_carve) clears the roots only: the    *)
+(* descriptors keep their span fields and links as dead bytes, and a span  *)
+(* linked later writes every one of its own before anything reads it.     *)
+(*                                                                         *)
+(* These constants flip one rule each for the reversed witnesses:          *)
 (*   FloorAtOldest = FALSE  the floor (head) follows the newest span's     *)
 (*                          start instead of the oldest's;                 *)
 (*   PadOnWrap     = FALSE  a span that does not fit before the end goes   *)
@@ -38,7 +42,12 @@
 (*                          no room undoes it with rn_span_unlink;         *)
 (*   UndoTail       = FALSE  freeing the newest span leaves the tail where  *)
 (*                          it was (v1.0.0 to v1.1.3): an aborted start's  *)
-(*                          bytes stay taken until the older spans go.     *)
+(*                          bytes stay taken until the older spans go;     *)
+(*   LinkClearsNext = FALSE  the link leaves the new span's span_next as   *)
+(*                          the descriptor held it, as if the pool were    *)
+(*                          clear; a carve leaves a span live at it with   *)
+(*                          its links (Reset), so the new newest span      *)
+(*                          names a dead next.                             *)
 (*                                                                         *)
 (* A refused start runs the code's steps in the code's order:              *)
 (* rn_region_send_fit_span takes a const region (exhausted, then           *)
@@ -60,12 +69,13 @@ CONSTANTS
     RefuseExhausts, \* FALSE in the code (TRUE: v1.0's send-side kick)
     LinkFirst,      \* FALSE in the code (TRUE: link before the floor test, unlink on no room)
     CountMod,       \* the refusal counter and the calls ghost run 0..CountMod-1
-    UndoTail        \* TRUE in the code (FALSE: v1.0.0 to v1.1.3)
+    UndoTail,       \* TRUE in the code (FALSE: v1.0.0 to v1.1.3)
+    LinkClearsNext  \* TRUE in the code: rn_span_link writes span_next = RN_DESCRIPTOR_NONE
 
 ASSUME SR > 0 /\ SR % 16 = 0
 ASSUME Lengths \subseteq 1..SR
 ASSUME Q \in Nat \ {0}
-ASSUME LinkFirst \in BOOLEAN /\ CountMod \in Nat \ {0}
+ASSUME LinkFirst \in BOOLEAN /\ CountMod \in Nat \ {0} /\ LinkClearsNext \in BOOLEAN
 
 NONE == 0
 D == 1..Q
@@ -94,12 +104,14 @@ VARIABLES
 vars == <<head, tail, first, last, start, len, prv, nxt, live, order, exhausted, refused, calls,
           tailUndo, fresh, admitted>>
 
-\* The ring as the code reads it: a start, a link and a free read start and
-\* len of live spans only (a descriptor's span fields are written by the
-\* link before any read), so those of a descriptor that is not live are
-\* left out.
-Ring == <<head, tail, first, last, live, order, prv, nxt,
-          [d \in live |-> start[d]], [d \in live |-> len[d]], exhausted>>
+\* The ring as the code reads it: a start, a link and a free read start,
+\* len and the links of live spans only (a descriptor's span fields are
+\* written by the take's memset and the link before any read), so those of
+\* a descriptor that is not live are left out; span_tail_undo is the
+\* region's too.
+Ring == <<head, tail, first, last, live, order,
+          [d \in live |-> prv[d]], [d \in live |-> nxt[d]],
+          [d \in live |-> start[d]], [d \in live |-> len[d]], exhausted, tailUndo>>
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -152,7 +164,8 @@ Alloc(l, d) ==
     /\ start' = [start EXCEPT ![d] = s]
     /\ len'   = [len EXCEPT ![d] = l16]
     /\ prv' = [prv EXCEPT ![d] = last]
-    /\ nxt' = [x \in D |-> IF x = d THEN NONE ELSE IF x = last THEN d ELSE nxt[x]]
+    /\ nxt' = [x \in D |-> IF x = d THEN (IF LinkClearsNext THEN NONE ELSE nxt[d])
+                           ELSE IF x = last THEN d ELSE nxt[x]]
     /\ first' = IF last = NONE THEN d ELSE first
     /\ head'  = IF last = NONE THEN s
                 ELSE IF FloorAtOldest THEN head ELSE s
@@ -174,30 +187,41 @@ Alloc(l, d) ==
 \* LinkFirst (broken): with a descriptor free, the start links its span at
 \* the place it would take without the floor test (rn_span_link: the tail,
 \* or 0 when the span would cross the end), then finds no room and undoes
-\* the link with rn_span_unlink, which splices the newest span out but
-\* leaves span_tail where the link put it (the unlink without UndoTail).
+\* the link with rn_span_unlink, the same unlink Free is: the link keeps
+\* the tail in span_tail_undo and moves the tail past the span; the unlink
+\* splices the newest span out and, the ring not empty, gives the tail back
+\* from span_tail_undo and spends it (UndoTail), or leaves the tail where
+\* the link put it (UndoTail = FALSE).  The tail undo of the start before
+\* is spent either way.
 LinkThenUnlink(l, d) ==
     LET l16 == Round16(l)
         s   == IF first = NONE \/ l16 > SR - tail THEN 0 ELSE tail
         e   == s + l16
-        p   == last
     IN /\ start' = [start EXCEPT ![d] = s]
        /\ len'   = [len EXCEPT ![d] = l16]
-       /\ tail'  = IF first = NONE THEN 0 ELSE IF e = SR THEN 0 ELSE e
-       /\ head'  = IF first = NONE THEN 0 ELSE head
-       /\ prv' = [x \in D |-> IF x = d THEN NONE ELSE prv[x]]
-       /\ nxt' = [x \in D |-> IF x = d THEN NONE ELSE IF x = p THEN NONE ELSE nxt[x]]
+       /\ prv' = [prv EXCEPT ![d] = NONE]
+       /\ nxt' = [nxt EXCEPT ![d] = NONE]
+       /\ IF first = NONE
+            THEN /\ head' = 0                       \* the unlink empties the ring
+                 /\ tail' = 0
+                 /\ tailUndo' = tail
+            ELSE /\ UNCHANGED head
+                 /\ IF UndoTail
+                      THEN /\ tail' = tail          \* given back from span_tail_undo
+                           /\ tailUndo' = NoUndo
+                      ELSE /\ tail' = IF e = SR THEN 0 ELSE e
+                           /\ tailUndo' = tail
        /\ UNCHANGED <<first, last, live, order>>
 
 Refuse(l) ==
     /\ ~FitOK(l)
     /\ IF LinkFirst /\ ~exhausted /\ D \ live # {}
          THEN \E d \in D \ live : LinkThenUnlink(l, d)
-         ELSE UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order>>
+         ELSE UNCHANGED <<head, tail, first, last, start, len, prv, nxt, live, order, tailUndo>>
     /\ exhausted' = (exhausted \/ RefuseExhausts)
     /\ refused' = (refused + 1) % CountMod
     /\ calls' = (calls + 1) % CountMod
-    /\ UNCHANGED <<tailUndo, fresh, admitted>>
+    /\ UNCHANGED <<fresh, admitted>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
 \* rn_region_send_free_fragment; any live span, in any order.  The span
@@ -230,23 +254,25 @@ Free(d) ==
           /\ fresh' = FALSE
           /\ UNCHANGED <<start, len, exhausted, refused, calls, admitted>>
 
-\* the region reset (rocketnet_allocator.cpp, "the send spans: empty")
+\* the region reset, rn_region_carve ("the send spans: empty, nothing
+\* live"): the roots (span_head, span_tail, span_tail_undo, span_first,
+\* span_last) and the exhausted flag only.  The descriptors keep their
+\* bytes: a span live at the carve keeps its span_start and its links as
+\* dead values, and the carve's descriptors_fresh = 0 forgets every
+\* descriptor, so none is live; a later take memsets its descriptor and the
+\* link writes every span field before any read.
 Reset ==
     /\ head' = 0
     /\ tail' = 0
     /\ first' = NONE
     /\ last' = NONE
-    /\ start' = [d \in D |-> 0]
-    /\ len' = [d \in D |-> 0]
-    /\ prv' = [d \in D |-> NONE]
-    /\ nxt' = [d \in D |-> NONE]
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
     /\ tailUndo' = NoUndo
     /\ fresh' = FALSE
     /\ admitted' = {}
-    /\ UNCHANGED <<refused, calls>>
+    /\ UNCHANGED <<start, len, prv, nxt, refused, calls>
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
@@ -320,8 +346,9 @@ HeadIsOldestStart ==
     first # NONE => head = start[first]
 
 \* The links spell out the live spans in allocation order: first and last
-\* are its ends, each live span's prev and next are its neighbours in the
-\* ghost order, and a span that is not live has no links.
+\* are its ends, and each live span's prev and next are its neighbours in
+\* the ghost order.  A span that is not live may keep dead links (a span
+\* live at a carve keeps them; an unlinked one has none): nothing reads them.
 ListInAllocationOrder ==
     /\ { order[i] : i \in 1..Len(order) } = live
     /\ first = IF order = <<>> THEN NONE ELSE order[1]
@@ -329,7 +356,6 @@ ListInAllocationOrder ==
     /\ \A i \in 1..Len(order) :
           /\ prv[order[i]] = IF i = 1 THEN NONE ELSE order[i - 1]
           /\ nxt[order[i]] = IF i = Len(order) THEN NONE ELSE order[i + 1]
-    /\ \A d \in D \ live : prv[d] = NONE /\ nxt[d] = NONE
 
 \* An empty ring is all zero (the reset in rn_span_unlink).
 EmptyIsZero ==

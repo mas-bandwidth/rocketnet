@@ -46,8 +46,9 @@
 (*   PlaceRule   "forward" places the slots first to last (the code);      *)
 (*               "reverse" places them last to first, reversing each       *)
 (*               destination's slots (Grouped).                            *)
-(*   CapRule     "bytes" keeps MaxBytes (the code); "none" ignores it      *)
-(*               (RunCaps).                                                *)
+(*   CapRule     "bytes" keeps MaxBytes and MaxSeg (the code); "none"      *)
+(*               ignores MaxBytes and "nosegments" ignores MaxSeg          *)
+(*               (RunCaps each).                                           *)
 (*   ShortRule   "close" ends a run at a smaller packet (the code);        *)
 (*               "open" lets the run go on past it (RunShape).             *)
 (***************************************************************************)
@@ -65,7 +66,7 @@ CONSTANTS S,          \* slots in the bank
 ASSUME S >= 1 /\ Buckets >= S + 1 /\ MaxSeg >= 1 /\ MaxBytes >= 1
 ASSUME 0 \in Sizes /\ \A d \in Dests : Hash(d) \in 0..(Buckets - 1)
 ASSUME ProbeRule \in {"mod", "nomod"} /\ MatchRule \in {"dest", "any"}
-ASSUME PlaceRule \in {"forward", "reverse"} /\ CapRule \in {"bytes", "none"}
+ASSUME PlaceRule \in {"forward", "reverse"} /\ CapRule \in {"bytes", "none", "nosegments"}
 ASSUME ShortRule \in {"close", "open"}
 
 Slots == 0..(S - 1)
@@ -184,7 +185,7 @@ Emit ==
 Fits(b) ==
     /\ run.count > 0
     /\ ~run.closed
-    /\ run.count < MaxSeg
+    /\ (CapRule = "nosegments" \/ run.count < MaxSeg)
     /\ (CapRule = "none" \/ run.total + b <= MaxBytes)
     /\ b <= run.seg
 

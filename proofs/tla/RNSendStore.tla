@@ -20,17 +20,28 @@
 (* descriptor's handle is dropped at its free, layer 1; the per-number     *)
 (* table never names a freed descriptor, layer 3).                         *)
 (*                                                                         *)
-(* GuardDoubleFree = FALSE removes the guard; it must fail, and is the     *)
-(* reversed witness.                                                       *)
+(* The take tags the chunk with the next generation, (meta + 1) masked to  *)
+(* GenMod values (2^31 in the code), skipping 0, which is never a live     *)
+(* name; a chunk never taken is tagged 1 (gen 0 here stands for "never     *)
+(* taken", so the first take gives 1 as the code does).  The handle the    *)
+(* take returns is ( class << 30 ) | index and carries no generation, so  *)
+(* the free checks the live bit only; the tag is the rule this model      *)
+(* checks for the tag itself (HeldGenerationPositive), and                 *)
+(* RNSendStoreLayout.tla checks it with the code's watermark.              *)
+(*                                                                         *)
+(* Reversed witnesses: GuardDoubleFree = FALSE removes the guard (NoLeak); *)
+(* SkipZero = FALSE lets the tag wrap to 0 (HeldGenerationPositive).      *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS Chunks,           \* the class's chunk count, N
           Senders,          \* the descriptors that may hold a chunk
-          GuardDoubleFree   \* free_checked's LIVE test
+          GuardDoubleFree,  \* free_checked's LIVE test
+          GenMod,           \* the tag's values, RN_META_GENERATION + 1 (2^31)
+          SkipZero          \* the take skips tag 0 (TRUE in the code)
 
 ASSUME Chunks \in Nat \ {0} /\ Senders # {}
-ASSUME GuardDoubleFree \in BOOLEAN
+ASSUME GuardDoubleFree \in BOOLEAN /\ SkipZero \in BOOLEAN /\ GenMod \in Nat \ {0, 1}
 
 ChunkIds == 1..Chunks
 NONE == 0
@@ -38,7 +49,7 @@ NONE == 0
 VARIABLES free,     \* the free chunks (meta live bit clear)
           held,     \* held[s]: the chunk s holds, NONE when none
           stale,    \* stale[s]: the chunk s last freed, kept for a second free
-          gen,      \* gen[i]: chunk i's generation tag (1 once a take has tagged it)
+          gen,      \* gen[i]: chunk i's generation tag (0: never taken)
           freeCount \* the class's free_count
 
 vars == <<free, held, stale, gen, freeCount>>
@@ -52,6 +63,9 @@ Init ==
     /\ gen = [ i \in ChunkIds |-> 0 ]
     /\ freeCount = Chunks
 
+\* rn_send_store_take's tag: ( meta + 1 ) & RN_META_GENERATION, then 1 for 0
+NextGen(g) == IF (g + 1) % GenMod = 0 /\ SkipZero THEN 1 ELSE (g + 1) % GenMod
+
 \* rn_send_store_take of the chunk rn_send_store_find returned
 Alloc(s) ==
     /\ held[s] = NONE
@@ -59,7 +73,7 @@ Alloc(s) ==
         /\ held' = [ held EXCEPT ![s] = i ]
         /\ free' = free \ {i}
         /\ stale' = [ stale EXCEPT ![s] = NONE ]
-        /\ gen' = [ gen EXCEPT ![i] = 1 ]   \* the take tags the slot (the code's counter, bounded for the model)
+        /\ gen' = [ gen EXCEPT ![i] = NextGen(gen[i]) ]
         /\ freeCount' = freeCount - 1
 
 \* rn_send_store_free_checked, through the live handle
@@ -95,7 +109,7 @@ TypeOK ==
     /\ free \subseteq ChunkIds
     /\ held \in [ Senders -> ChunkIds \cup {NONE} ]
     /\ stale \in [ Senders -> ChunkIds \cup {NONE} ]
-    /\ gen \in [ ChunkIds -> 0..1 ]
+    /\ gen \in [ ChunkIds -> 0..(GenMod - 1) ]
     /\ freeCount \in Nat
 
 \* no chunk is free and held, or held by two senders

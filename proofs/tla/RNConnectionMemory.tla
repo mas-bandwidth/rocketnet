@@ -12,7 +12,8 @@
 (* reason, and the set of clients whose records it still holds.            *)
 (*                                                                         *)
 (* Actions:                                                                *)
-(*   Connect(s, c)  a client takes a Free slot                             *)
+(*   Connect(s, c)  a client takes a Free slot, whose region is carved     *)
+(*                  first (rn_endpoint_reset, rn_region_reset)             *)
 (*   Use(s)         a send, receive or hold takes room in the region       *)
 (*   UseSpan(s, n)  a large send takes n records of room at once (a span)  *)
 (*   Release(s)     an acked send, an abort or a released delivery gives   *)
@@ -28,18 +29,26 @@
 (*                  that reason (the server kicks the slot; a client       *)
 (*                  disconnects itself)                                    *)
 (*   Leave(s)       an ordinary disconnect, not from exhaustion            *)
-(*   Reuse(s)       the slot is freed and its region reset                 *)
+(*   Reuse(s)       the slot is freed in O(1), its region as the ended     *)
+(*                  connection left it (rn_message_connection_release);    *)
+(*                  the carve is the next Connect's (the lazy reset)       *)
 (*                                                                         *)
 (* A start runs the code's steps in the code's order: the fit              *)
 (* (rn_region_send_fit_store or rn_region_send_fit_span, a const region)   *)
-(* decides before any take, then the take (Use, UseSpan) or the count      *)
-(* (Refuse: rn_region_send_refuse, and the connection's send_refused in    *)
-(* rn_endpoint_start).  refused[s] is that count for the slot's            *)
+(* decides before any take, then the take (Use, UseSpan) or the refusal    *)
+(* (Refuse: rn_region_send_refuse).  A refusal for no room moves the       *)
+(* region's room_refusals, and rn_endpoint_start counts the connection's   *)
+(* send_refused only when it sees room_refusals move across the start; a   *)
+(* refusal of an exhausted region moves neither (the endpoint records      *)
+(* send_error instead).  refused[s] is send_refused for the slot's         *)
 (* connection, modulo CountMod as the code's counters wrap, zeroed with    *)
-(* the connection (rn_endpoint_init, rn_endpoint_reset); CountMod = 1      *)
-(* drops it.                                                               *)
+(* the connection (rn_endpoint_init, rn_endpoint_reset, so at Connect);    *)
+(* CountMod = 1 drops it.  room_refusals itself is a counter the endpoint  *)
+(* only compares across one start, so the model needs no variable for it.  *)
 (*                                                                         *)
-(* Reset = FALSE makes Reuse skip the reset; CarryOn = TRUE lets an        *)
+(* Reset = FALSE makes Connect skip the carve; CountExhausted = TRUE       *)
+(* counts a refusal of an exhausted region in send_refused; CarryOn = TRUE *)
+(* lets an                                                                 *)
 (* exhausted connection keep taking room (Use, UseSpan); SendExhausts =    *)
 (* TRUE makes a refused send exhaust the region, the send-side kick of     *)
 (* v1.0; TakeBeforeFit = TRUE makes a span start take its descriptor (one  *)
@@ -51,15 +60,16 @@ EXTENDS Naturals, FiniteSets
 CONSTANTS Slots,        \* the server's client slots (one for a client)
           Clients,      \* the clients that may connect
           Capacity,     \* the region's room, in abstract records
-          Reset,        \* Reuse runs rn_region_carve
+          Reset,        \* Connect runs rn_region_carve on the slot's region
           CarryOn,      \* an exhausted connection keeps working (broken)
           SendExhausts, \* a send with no room exhausts the region (broken)
           TakeBeforeFit,\* a span start takes its descriptor before its room is known (broken)
+          CountExhausted,\* a refusal of an exhausted region counts in send_refused (broken)
           CountMod      \* the refusal count runs 0..CountMod-1
 
 ASSUME Slots # {} /\ Clients # {} /\ Capacity \in Nat \ {0}
 ASSUME Reset \in BOOLEAN /\ CarryOn \in BOOLEAN /\ SendExhausts \in BOOLEAN
-ASSUME TakeBeforeFit \in BOOLEAN /\ CountMod \in Nat \ {0}
+ASSUME TakeBeforeFit \in BOOLEAN /\ CountExhausted \in BOOLEAN /\ CountMod \in Nat \ {0}
 
 NoClient == "none"
 Exhausted == "MESSAGE_MEMORY_EXHAUSTED"
@@ -100,13 +110,22 @@ Init ==
     /\ records = [s \in Slots |-> {}]
     /\ refused = [s \in Slots |-> 0]
 
-\* the transport admits a client to a free slot; the region is as Reuse left it
+\* the transport admits a client to a free slot: the binding carves the
+\* slot's region before anything else touches it (rn_endpoint_reset, which
+\* runs rn_region_reset and zeroes the connection's send_refused; on the
+\* server the Observe that binds the slot, RNSlots), then the connection is up
 Connect(s, c) ==
     /\ state[s] = "Free"
     /\ c \notin OnSlot
     /\ state' = [state EXCEPT ![s] = "Connected"]
     /\ owner' = [owner EXCEPT ![s] = c]
-    /\ UNCHANGED <<used, exhausted, reason, records, refused>>
+    /\ IF Reset
+         THEN /\ used' = [used EXCEPT ![s] = 0]
+              /\ exhausted' = [exhausted EXCEPT ![s] = FALSE]
+              /\ reason' = [reason EXCEPT ![s] = "none"]
+              /\ records' = [records EXCEPT ![s] = {}]
+              /\ refused' = [refused EXCEPT ![s] = 0]
+         ELSE UNCHANGED <<used, exhausted, reason, records, refused>>
 
 \* rn_region_send_fit_store's and rn_region_send_fit_span's decision for a
 \* send of n records, read off a const region before any take: not
@@ -164,7 +183,11 @@ Refuse(s, n) ==
          THEN /\ exhausted' = [exhausted EXCEPT ![s] = TRUE]
               /\ reason' = [reason EXCEPT ![s] = Exhausted]
          ELSE UNCHANGED <<exhausted, reason>>
-    /\ refused' = [refused EXCEPT ![s] = (@ + 1) % CountMod]
+    \* send_refused moves when room_refusals moved across the start: a room
+    \* refusal; an exhausted region's refusal moves neither
+    /\ refused' = IF ~exhausted[s] \/ CountExhausted
+                  THEN [refused EXCEPT ![s] = (@ + 1) % CountMod]
+                  ELSE refused
     /\ UNCHANGED <<state, owner>>
 
 \* rn_region_exhaust from the receive side: a receive placement that cannot
@@ -196,18 +219,15 @@ Leave(s) ==
     /\ reason' = [reason EXCEPT ![s] = Left]
     /\ UNCHANGED <<owner, used, exhausted, records, refused>>
 
-\* rn_region_reset: the slot is freed and its region carved before reuse
+\* rn_message_connection_release: the slot is freed in O(1), its binding
+\* cleared and its region left as the ended connection left it (used room,
+\* exhaustion, reason, records); the next Connect carves it. A Free slot's
+\* region is touched by no action until then.
 Reuse(s) ==
     /\ state[s] = "Disconnected"
     /\ state' = [state EXCEPT ![s] = "Free"]
     /\ owner' = [owner EXCEPT ![s] = NoClient]
-    /\ IF Reset
-         THEN /\ used' = [used EXCEPT ![s] = 0]
-              /\ exhausted' = [exhausted EXCEPT ![s] = FALSE]
-              /\ reason' = [reason EXCEPT ![s] = "none"]
-              /\ records' = [records EXCEPT ![s] = {}]
-              /\ refused' = [refused EXCEPT ![s] = 0]
-         ELSE UNCHANGED <<used, exhausted, reason, records, refused>>
+    /\ UNCHANGED <<used, exhausted, reason, records, refused>
 
 Next ==
     \E s \in Slots :
@@ -234,17 +254,16 @@ UsedBounded == \A s \in Slots : used[s] <= Capacity
 ExhaustedReasonNamed ==
     \A s \in Slots : exhausted[s] <=> reason[s] = Exhausted
 
-\* a Free slot is a freshly carved region, so the Connect that takes it sees
-\* used = 0, no exhaustion and no record of the previous client; a connected
-\* slot holds records of its own client only
+\* A Free slot's region may still hold the ended connection's room,
+\* exhaustion, reason and records (the lazy reset); the Connect that takes
+\* the slot carves it, so a connected slot holds records of its own client
+\* only, and its reason is its own: none, or the receive side's exhaustion,
+\* never the previous connection's end
 ReusedSlotStartsClean ==
     \A s \in Slots :
-        /\ state[s] = "Free" => /\ used[s] = 0
-                                /\ ~exhausted[s]
-                                /\ reason[s] = "none"
-                                /\ records[s] = {}
-                                /\ refused[s] = 0
-        /\ state[s] = "Connected" => records[s] \subseteq {owner[s]}
+        state[s] = "Connected" =>
+            /\ records[s] \subseteq {owner[s]}
+            /\ reason[s] \in {"none", Exhausted}
 
 \* A send start of n records: the take with room (Use for one record,
 \* UseSpan for a span), or the start the region refuses.
@@ -269,13 +288,17 @@ SendNeverEnds ==
 \* (exhausted, or no room for n), leaves its slot exactly as it was: state,
 \* owner, room, exhaustion, reason and records (standard/MESSAGES.md m1.7,
 \* rule 2), whatever the start did on the way; the slot's refusal count
-\* alone moves, by one (design (L)1). Reversed by TakeBeforeFit (room),
-\* SendExhausts (exhaustion) and CarryOn (room taken while exhausted).
+\* alone moves, by one for a refusal for no room and not at all for a
+\* refusal of an exhausted region (design (L)1; rn_endpoint_start counts
+\* send_refused only when room_refusals moved). Reversed by TakeBeforeFit
+\* (room), SendExhausts (exhaustion), CarryOn (room taken while exhausted)
+\* and CountExhausted (an exhausted region's refusal counted).
 RefusalLeavesStateUnchanged ==
     [][\A s \in Slots, n \in 1..Capacity :
           StartStep(s, n) /\ ~FitOK(s, n) =>
               /\ Slot(s)' = Slot(s)
-              /\ refused'[s] = (refused[s] + 1) % CountMod]_vars
+              /\ refused'[s] = IF exhausted[s] THEN refused[s]
+                               ELSE (refused[s] + 1) % CountMod]_vars
 
 \* the receive side's exhaustion (the only one there is): from exhausted, the
 \* slot takes no further room: the steps that change it

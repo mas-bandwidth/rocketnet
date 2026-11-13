@@ -14,8 +14,9 @@
 (* place.                                                                  *)
 (*                                                                         *)
 (* insert counts an attempt in used (refusing at Capacity / 2), takes a   *)
-(* ticket, probes from the frame's hash for the first entry not of the    *)
-(* current epoch, claims it by compare-and-swap to writing, writes the    *)
+(* ticket (refusing ticket 0: the process counter is exhausted), probes  *)
+(* from the frame's hash for the first entry not of the current epoch,    *)
+(* claims it by compare-and-swap to writing, writes the                   *)
 (* backend id and the context fields in any order, and stores active.     *)
 (* resolve probes from the same hash: an entry of another epoch ends the  *)
 (* chain; an entry in phase 1 is skipped, not read (the code before the  *)
@@ -50,6 +51,7 @@
 (*   ProbeBound      the entries of the current epoch never exceed         *)
 (*                   Capacity / 2.                                         *)
 (*   InsertFindsSlot insert never runs out of probes.                      *)
+(*   TicketsUnique   no two published leases carry one ticket.             *)
 (*   NoRacyRead      no thread's read of an entry's fields is a data race *)
 (*                   with another thread's stores to them.                 *)
 (*   SpinBounded, ResolveCompletes, InsertCompletes  (liveness) see the    *)
@@ -58,6 +60,8 @@
 (*                                                                         *)
 (* Rule switches, each changed in a reversed witness or a finding:        *)
 (*   UsedLimit       Capacity / 2 in the code.                             *)
+(*   TicketLimit     the last ticket before 0 (UINT64_MAX - 1 in the code) *)
+(*   ZeroRefused     insert refuses ticket 0.                              *)
 (*   UseCas          insert claims its entry by compare-and-swap.          *)
 (*   ConsumeCas      take consumes by compare-and-swap.                    *)
 (*   OnWriting       a set of one mode: {"skip"} is the code, which      *)
@@ -89,6 +93,8 @@ CONSTANTS Capacity,      \* ROCKETNET_SERVER_PACKET_LEASES-style table size, a p
           MaxOps2,       \* operations thread 2 performs
           MaxResets,     \* resets the harness performs
           EpochLimit,    \* the largest epoch before 0 (UINT64_MAX >> 2)
+          TicketLimit,   \* the last ticket the process counter gives before 0 (UINT64_MAX - 1)
+          ZeroRefused,   \* insert refuses ticket 0 (TRUE in the code)
           UsedLimit,
           UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, OnWriting,
           ValidCallers,  \* resolve and take are given only leases of the current fill
@@ -98,26 +104,27 @@ ASSUME Threads = {1, 2}
 ASSUME Capacity \in {2, 4, 8} /\ HashSpread \in 1..Capacity
 ASSUME OnWriting \in {{"spin"}, {"skip"}, {"read"}}
 ASSUME {UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, ValidCallers,
-        AtomicFields} \subseteq BOOLEAN
+        AtomicFields, ZeroRefused} \subseteq BOOLEAN
+ASSUME TicketLimit \in Nat
 
 Slots == 0..Capacity - 1
 OpsMax(t) == IF t = 1 THEN MaxOps1 ELSE MaxOps2
 MaxTickets == MaxOps1 + MaxOps2
-Tickets == 1..MaxTickets
+Tickets == 0..MaxTickets      \* 0 only when ZeroRefused = FALSE lets it through
 WordMod == 4 * (EpochLimit + 1)
 NoLease == <<>>
 
 VARIABLES st, fr, tk, vl, bk,         \* per entry: state word, frame, ticket, value, backend id
           used, epoch, nextTicket,    \* the table's used count and epoch; the ticket counter
           pc, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm, \* per thread
-          issued, takes, gen, wrong, racy, exhausted                 \* ghost
+          issued, takes, gen, wrong, racy, exhausted, dup            \* ghost
 
 entryVars == <<st, fr, tk, vl, bk>>
 tableVars == <<used, epoch, nextTicket>>
 tvars == <<pc, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm>>
-ghostVars == <<issued, takes, gen, wrong, racy, exhausted>>
+ghostVars == <<issued, takes, gen, wrong, racy, exhausted, dup>>
 vars == <<st, fr, tk, vl, bk, used, epoch, nextTicket, pc, slot, probe, seen, mode, af, av,
-          at, myT, todo, ops, tm, issued, takes, gen, wrong, racy, exhausted>>
+          at, myT, todo, ops, tm, issued, takes, gen, wrong, racy, exhausted, dup>>
 
 Word(e, p) == (e * 4 + p) % WordMod
 EpochOf(w) == w \div 4
@@ -153,6 +160,7 @@ Init ==
     /\ wrong = FALSE
     /\ racy = FALSE
     /\ exhausted = FALSE
+    /\ dup = FALSE
 
 \* a lease of the current generation that has not been consumed holds this
 \* frame, or an insert is in flight on it.  A consumed lease no longer holds
@@ -187,14 +195,22 @@ IUsed(t) ==
     /\ UNCHANGED <<entryVars, epoch, nextTicket, ghostVars, slot, probe, seen, mode, af, av,
                    at, myT, todo, ops, tm>>
 
-\* rocketnet_next_packet_lease_id, then the probe starts at the frame's hash
+\* rocketnet_next_packet_lease_id, then the probe starts at the frame's hash.
+\* The process-wide counter gives tickets up to TicketLimit (UINT64_MAX - 1)
+\* and then 0, which means exhausted: insert refuses it (if ( !ticket ) return
+\* false), its attempt still counted in used.  ZeroRefused = FALSE goes on
+\* with ticket 0.
 ITicket(t) ==
     /\ pc[t] = "i_ticket"
-    /\ myT' = [myT EXCEPT ![t] = nextTicket]
-    /\ nextTicket' = nextTicket + 1
-    /\ slot' = [slot EXCEPT ![t] = Hash(af[t])]
-    /\ probe' = [probe EXCEPT ![t] = 0]
-    /\ pc' = [pc EXCEPT ![t] = "i_load"]
+    /\ LET k == IF nextTicket <= TicketLimit THEN nextTicket ELSE 0
+       IN /\ nextTicket' = IF k # 0 THEN nextTicket + 1 ELSE nextTicket
+          /\ IF k = 0 /\ ZeroRefused
+               THEN /\ pc' = [pc EXCEPT ![t] = "idle"]
+                    /\ UNCHANGED <<myT, slot, probe>>
+               ELSE /\ myT' = [myT EXCEPT ![t] = k]
+                    /\ slot' = [slot EXCEPT ![t] = Hash(af[t])]
+                    /\ probe' = [probe EXCEPT ![t] = 0]
+                    /\ pc' = [pc EXCEPT ![t] = "i_load"]
     /\ UNCHANGED <<entryVars, used, epoch, ghostVars, seen, mode, af, av, at, todo, ops, tm>>
 
 \* load the entry's state; an entry of the current epoch is skipped
@@ -212,7 +228,7 @@ ILoad(t) ==
          ELSE /\ pc' = [pc EXCEPT ![t] = "i_cas"]
               /\ UNCHANGED <<slot, probe, exhausted>>
     /\ UNCHANGED <<entryVars, tableVars, mode, af, av, at, myT, todo, ops, tm, issued, takes, gen,
-                   wrong, racy>>
+                   wrong, racy, dup>>
 
 \* compare-and-swap the loaded state to writing; a lost race continues the probe
 ICas(t) ==
@@ -232,7 +248,7 @@ ICas(t) ==
                         /\ probe' = [probe EXCEPT ![t] = @ + 1]
                         /\ UNCHANGED exhausted
     /\ UNCHANGED <<fr, tk, vl, bk, tableVars, seen, mode, af, av, at, myT, ops, tm, issued, takes,
-                   gen, wrong, racy>>
+                   gen, wrong, racy, dup>>
 
 \* the backend id and the context fields, in any order
 IWrite(t) ==
@@ -252,6 +268,7 @@ IPublish(t) ==
     /\ todo[t] = {}
     /\ st' = [st EXCEPT ![slot[t]] = Word(epoch, 2)]
     /\ issued' = [issued EXCEPT ![myT[t]] = [f |-> af[t], v |-> av[t], gen |-> gen, slot |-> slot[t]]]
+    /\ dup' = (dup \/ issued[myT[t]] # NoLease)
     /\ pc' = [pc EXCEPT ![t] = "idle"]
     /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm,
                    takes, gen, wrong, racy, exhausted>>
@@ -335,7 +352,7 @@ RCmp(t) ==
          ELSE /\ pc' = [pc EXCEPT ![t] = IF vl[slot[t]] # av[t] THEN "idle" ELSE "r_commit"]
               /\ UNCHANGED <<slot, probe>>
     /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, tm, issued, takes,
-                   gen, wrong, exhausted>>
+                   gen, wrong, exhausted, dup>>
 
 \* the success check against the contract
 Exact(t, s) ==
@@ -360,7 +377,7 @@ RCommit(t) ==
           /\ wrong' = (wrong \/ (ok /\ ~Exact(t, s)))
     /\ pc' = [pc EXCEPT ![t] = "idle"]
     /\ UNCHANGED <<fr, tk, vl, bk, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops, tm,
-                   issued, gen, racy, exhausted>>
+                   issued, gen, racy, exhausted, dup>>
 
 \* ------------------------------------------------------------------------
 \* retired, rocketnet_packet_leases_t::retired
@@ -409,7 +426,7 @@ TRead(t) ==
           /\ racy' = (racy \/ (~AtomicFields /\ Racy(t)))
     /\ pc' = [pc EXCEPT ![t] = "t_val"]
     /\ UNCHANGED <<entryVars, tableVars, slot, probe, seen, mode, af, av, at, myT, todo, ops,
-                   issued, takes, gen, wrong, exhausted>>
+                   issued, takes, gen, wrong, exhausted, dup>>
 
 \* fetch_add( 0, release ) reads the state again.  An insert that claimed the entry
 \* since TLoad is seen here, and its stores and the field reads are unordered: with
@@ -438,7 +455,7 @@ TValidate(t) ==
                               /\ slot' = [slot EXCEPT ![t] = Next1(@)]
                               /\ probe' = [probe EXCEPT ![t] = @ + 1]
     /\ UNCHANGED <<entryVars, tableVars, seen, mode, af, av, at, myT, todo, ops, tm, issued, takes,
-                   gen, exhausted>>
+                   gen, exhausted, dup>>
 
 \* ------------------------------------------------------------------------
 \* reset, called by the joined main thread
@@ -450,7 +467,7 @@ Reset ==
     /\ epoch' = IF ~BumpEpoch THEN epoch
                 ELSE IF epoch # 0 /\ (epoch < EpochLimit \/ ~EpochLimited) THEN epoch + 1 ELSE 0
     /\ used' = 0
-    /\ UNCHANGED <<entryVars, nextTicket, tvars, issued, takes, wrong, racy, exhausted>>
+    /\ UNCHANGED <<entryVars, nextTicket, tvars, issued, takes, wrong, racy, exhausted, dup>>
 
 \* the harness is finished: every thread has used its operations and every reset is done
 Done ==
@@ -490,9 +507,12 @@ TypeOK ==
     /\ nextTicket \in 1..MaxTickets + 1
     /\ pc \in [Threads -> {"idle", "i_used", "i_ticket", "i_load", "i_cas", "i_w", "r_load",
                            "r_spin", "r_cmp", "r_commit", "t_load", "t_cmp", "t_val"}]
-    /\ {wrong, racy, exhausted} \subseteq BOOLEAN
+    /\ {wrong, racy, exhausted, dup} \subseteq BOOLEAN
 
 NoWrongSuccess == ~wrong
+\* no two published leases carry one ticket: the ticket is what tells a
+\* re-leased frame's leases apart (resolve continues past a ticket mismatch)
+TicketsUnique == ~dup
 TakeOnce == \A k \in Tickets : takes[k] <= 1
 NoRacyRead == ~racy
 InsertFindsSlot == ~exhausted
@@ -527,6 +547,21 @@ Relet ==
 \* this, which proves its state space reaches a re-lease while ChainIntact,
 \* TakeOnce and NoWrongSuccess are checked at every state on the way.
 NoRelet == ~Relet
+
+\* a re-leased frame's second lease consumed: both leases of one frame in
+\* the current generation taken, so a take resolved the second lease past the
+\* first, consumed one of the same frame and the same epoch
+ReletTaken ==
+    \E k, j \in Tickets :
+        /\ k # j
+        /\ issued[k] # NoLease /\ issued[j] # NoLease
+        /\ issued[k].gen = gen /\ issued[j].gen = gen
+        /\ issued[k].f = issued[j].f
+        /\ takes[k] = 1 /\ takes[j] = 1
+
+\* the reachability witness's negation: MCRNPacketLeaseReletWrap.cfg must
+\* violate this, with every safety invariant checked on the way
+NoReletTaken == ~ReletTaken
 
 ProbeBound ==
     epoch # 0 => Cardinality({s \in Slots : EpochOf(st[s]) = epoch}) <= Capacity \div 2
