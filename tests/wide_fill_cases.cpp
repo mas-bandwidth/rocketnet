@@ -167,6 +167,15 @@ static void wide_fill_pump( wide_fill_world_t * world )
     world->time += 1.0 / 60.0;
 }
 
+// the game names a client: the thread rules are checked from here (the server
+// arms its check at the first rocketnet_server_abort_client_message or
+// rocketnet_server_finish_client_message; no message is open, so this one
+// does nothing else)
+static void wide_fill_opt_in( wide_fill_world_t * world )
+{
+    rocketnet_server_abort_client_message( world->server, 0 );
+}
+
 static void wide_fill_connect_all( wide_fill_world_t * world )
 {
     for ( int c = 0; c < world->num_clients; c++ )
@@ -350,6 +359,7 @@ static void wide_fill_run( int num_threads, int frames, int unreliable_per_frame
     wide_fill_world_t world;
     wide_fill_world_create( &world, WIDE_FILL_MAX_CLIENTS );
     wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
 
     wide_fill_slot_t slots[WIDE_FILL_MAX_CLIENTS];
     memset( slots, 0, sizeof( slots ) );
@@ -599,6 +609,7 @@ static void test_wide_fill_check_public()
     wide_fill_world_t world;
     wide_fill_world_create( &world, 2 );
     wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
     const int slot0 = rocketnet_client_index( world.clients[0] );
     const int slot1 = rocketnet_client_index( world.clients[1] );
 
@@ -767,6 +778,7 @@ static void test_wide_fill_main_refused_during_fill()
     wide_fill_world_t world;
     wide_fill_world_create( &world, 2 );
     wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
     const int slot0 = rocketnet_client_index( world.clients[0] );
     const int slot1 = rocketnet_client_index( world.clients[1] );
 
@@ -812,6 +824,7 @@ static void test_wide_fill_refused_finish_and_start()
     wide_fill_world_t world;
     wide_fill_world_create( &world, 2 );
     wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
     const int slot0 = rocketnet_client_index( world.clients[0] );
     rn_message_object_t * object = &rocketnet_server_message_server( world.server )->object;
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
@@ -927,6 +940,33 @@ static void wide_fill_start_here_close_there( bool finish )
     {
         memset( again, 0x6F, 8 );
         check( rocketnet_server_finish_message( world.server, 8 ) != 0 );
+    }
+
+    // the same once the game has named a client and the rules are checked:
+    // the call that names no client hands the client over to its thread
+    wide_fill_pump( &world );
+    wide_fill_opt_in( &world );
+    {
+        uint8_t * p = rocketnet_server_start_message( world.server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+        check( p != NULL );
+        if ( p )
+        {
+            memset( p, 0x6E, 8 );
+        }
+        uint32_t serial = 0;
+        std::thread other( [&]()
+                           {
+            if ( finish )
+            {
+                serial = rocketnet_server_finish_message( world.server, 8 );
+            }
+            else
+            {
+                rocketnet_server_abort_message( world.server );
+            } } );
+        other.join();
+        check( rn_message_open_count( object ) == 0 );
+        check( finish ? serial != 0 : serial == 0 );
     }
 
     check( g_wide_fill_asserts == 0 );

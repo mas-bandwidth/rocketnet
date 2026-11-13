@@ -43,6 +43,7 @@
 // degradation resends the remainder plain and drops nothing.
 
 #include "rocketnet_server_gso.h"
+#include "rocketnet_driver.h"
 #include "rocketnet_server_udp_linux.h"
 #include "rocketnet_gso_pin.h"
 #include "rocketnet_constants.h"
@@ -78,6 +79,9 @@
 #ifndef UDP_GRO
 #define UDP_GRO 104
 #endif // #ifndef UDP_GRO
+
+// the queue count the transport reports through send_queues (sdk/rocketnet_driver.h)
+static_assert( ROCKETNET_GSO_MAX_QUEUES <= ROCKETNET_SERVER_MAX_SEND_QUEUES, "the gso queues fit the driver's send queue limit" );
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing,
 // exactly as in the xdp transport: each field between walls is touched by a
@@ -361,6 +365,13 @@ struct rocketnet_server_gso_t
     // which fills the queue's messages and answers as recvmmsg would
     int ( *test_receive )( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user ) = NULL;
     void * test_receive_user = NULL;
+    // the claim seam: while set, start_packet calls this between its load of
+    // the producer's count and its compare-and-swap, with the queue; and every
+    // compare-and-swap that lost is counted, so a walk can interleave a second
+    // claimer there and read what the library's own loop did
+    void ( *test_claim_hook )( void * user, int queue ) = NULL;
+    void * test_claim_user = NULL;
+    std::atomic<int> test_claim_losses{ 0 };
 #endif // #if ROCKETNET_DEV
 };
 
@@ -1295,6 +1306,7 @@ static void rocketnet_server_gso_confine_refused( struct rocketnet_server_gso_t 
     const int result = pthread_setaffinity_np( pthread_self(), sizeof( cpu_set_t ), &cpuset );
     if ( result != 0 )
     {
+        gso->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         rocketnet_warn( "gso worker not confined away from the OS's cpus after its pin was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
     }
 }
@@ -1515,7 +1527,9 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
 
     gso->context = context;
     gso->num_queues = num_queues;
-    gso->num_os_cpus = num_os_cpus;
+    // the OS keeps cpu 0 on Linux: a count below 0 is read as 1, here and not
+    // only in the builtin driver; 0 stays "pin nothing" (the transport driven directly)
+    gso->num_os_cpus = num_os_cpus < 0 ? 1 : num_os_cpus;
     gso->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
     if ( packet_filter )
     {
@@ -1885,7 +1899,10 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     // that finds every worker exited), so a datagram dropped after main's last
     // claim is still counted.
 
-    // every row of the gso range is written below, and nothing outside it
+    // every row of the gso range (GSO_PACKETS_SENT .. GSO_GRO_CMSG_FAULTS) is
+    // written below, and GSO_PIN_REFUSALS, which sits after the other
+    // transports' rows; nothing else. The server copies both
+    // (rocketnet_server_transport_counters)
 
     uint64_t packets_sent = 0;
     uint64_t send_syscalls = 0;
@@ -2071,9 +2088,18 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[lane->producer];
     int slot = bank->num_packets.load( std::memory_order_relaxed );
+#if ROCKETNET_DEV
+    if ( gso->test_claim_hook )
+    {
+        gso->test_claim_hook( gso->test_claim_user, q );
+    }
+#endif // #if ROCKETNET_DEV
     while ( slot >= 0 && slot < gso->send_slots &&
             !bank->num_packets.compare_exchange_weak( slot, slot + 1, std::memory_order_relaxed ) )
     {
+#if ROCKETNET_DEV
+        gso->test_claim_losses.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
     }
 
     // the same lower bound the xdp transport learned to check: an app that
@@ -2093,6 +2119,21 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     return bank->data[slot];
 }
+
+#if ROCKETNET_DEV
+void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * gso, void ( *hook )( void * user, int queue ), void * user )
+{
+    rocketnet_assert( gso );
+    gso->test_claim_user = user;
+    gso->test_claim_hook = hook;
+}
+
+int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+    return gso->test_claim_losses.load( std::memory_order_relaxed );
+}
+#endif // #if ROCKETNET_DEV
 
 // the queue a packet id names: its low part (the id is ( turn * slots + slot ) * queues + queue)
 static int rocketnet_server_gso_id_queue( const struct rocketnet_server_gso_t * gso, uint64_t packet_id )
@@ -2699,6 +2740,13 @@ static bool rocketnet_server_gso_test_init_queue( struct rocketnet_server_gso_t 
     new ( queue ) rocketnet_server_gso_queue_t; // default-initialized, as rocketnet_server_gso_create does
     rocketnet_receive_drop_tally_reset( &queue->receive_tally );
     rocketnet_server_gso_gather_init( &queue->send );
+    // the fixture reads every slot of every bank (the trace check compares
+    // them before and after a call), so its banks' slot infos start defined;
+    // the library itself reads a slot only after it is claimed
+    for ( int b = 0; b < ROCKETNET_GSO_TX_BANKS; b++ )
+    {
+        memset( queue->send.banks[b].info, 0, sizeof( queue->send.banks[b].info ) );
+    }
     queue->fd = -1;
     queue->wake_fd = -1;
     queue->index = index;
@@ -2718,8 +2766,14 @@ static void rocketnet_server_gso_test_fail( struct rocketnet_server_gso_t * gso,
 {
     for ( int i = 0; i < constructed; i++ )
     {
-        rocketnet_platform_mutex_destroy( &gso->queues[i].receive_mutex );
-        rocketnet_platform_mutex_destroy( &gso->queues[i].send.mutex );
+        if ( gso->queues[i].receive_mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &gso->queues[i].receive_mutex );
+        }
+        if ( gso->queues[i].send.mutex.ok )
+        {
+            rocketnet_platform_mutex_destroy( &gso->queues[i].send.mutex );
+        }
         gso->queues[i].~rocketnet_server_gso_queue_t();
     }
     rocketnet_free( NULL, gso->queues );

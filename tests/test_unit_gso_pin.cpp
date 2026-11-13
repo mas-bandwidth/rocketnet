@@ -67,6 +67,16 @@ static void test_gso_pin_refused_worker_never_cpu_zero()
     check( rocketnet_gso_pin_fallback( allowed, 16, 1, 1 ) == 0 );
     // an online count past the set is cut at the set
     check( rocketnet_gso_pin_fallback( allowed, 4, 100, 1 ) == 3 );
+    // num_os_cpus at or past the online count (the refused functional case,
+    // online + 1000): every online cpu but cpu 0, not nothing
+    check( rocketnet_gso_pin_fallback( allowed, 16, 8, 8 ) == 7 );
+    check( allowed[0] == 0 && allowed[1] == 1 && allowed[7] == 1 );
+    check( rocketnet_gso_pin_fallback( allowed, 16, 8, 1000 ) == 7 );
+    check( allowed[0] == 0 );
+    check( rocketnet_gso_pin_fallback( allowed, 1024, 4, 1024 ) == 3 );
+    check( allowed[0] == 0 && allowed[3] == 1 );
+    // two cpus online: cpu 1 only
+    check( rocketnet_gso_pin_fallback( allowed, 16, 2, 5 ) == 1 && allowed[0] == 0 && allowed[1] == 1 );
 }
 
 REGISTER_UNIT_TEST( test_gso_pin_cpu_placement );

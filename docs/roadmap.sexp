@@ -276,4 +276,13 @@
    :title "Start order of one client's packets when its sending thread changes between flushes"
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
    :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
+  (item "gso-layout-model-send-step" :group "audit-remaining" :area "proofs"
+   :title "Layout model coverage of the gso send step's order, held slot and plain resend"
+   :text "proofs/tla/RNGsoQueueBankLayout.tla models the claim, the id and the slot rule. lane->order (the gather's positions), send_step's held_slot and the position it resumes from, and resend_plain's first_slot arithmetic index the banks too and have no layout model or trace layer; they are covered by unit cases only."
+   :date "2026-11-13" :origin "Piece K, cold reader")
+
+  (item "gso-packet-id-zero-queue-zero" :group "audit-remaining" :area "sdk"
+   :title "Packet id 0 names queue 0 slot 0 of turn 0"
+   :text "The gso packet id is ( turn * slots + slot ) * queues + queue, so the first packet of the first turn on queue 0 has id 0. Nothing treats 0 as no packet today (finish and abort check the pointer against the slot), but a caller that keeps 0 as its own empty value would lose that packet. Decide whether the id should start at 1."
+   :date "2026-11-13" :origin "Piece K, cold reader")
  ))

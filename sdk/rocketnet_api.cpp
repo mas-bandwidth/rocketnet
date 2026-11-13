@@ -3656,7 +3656,7 @@ static void rn_server_arm_one_thread_a_client( struct rocketnet_server_t * serve
     struct rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rn_server_transport( server ) );
     if ( phase )
     {
-        rocketnet_fill_phase_arm_one_filler( phase, true );
+        rocketnet_fill_phase_arm( phase, true );
     }
 }
 

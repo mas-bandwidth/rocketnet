@@ -650,7 +650,7 @@ static void test_server_fill_refusal_names_tails_held()
     struct sr_rig_t rig;
     sr_setup_lines( &rig );
 
-    const int own = rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() );
+    const int own = rocketnet_server_transport_fill_line_for_test( rig.server );
     const int other = ( own + 1 ) % ROCKETNET_FILL_PHASE_FILL_LINES;
     const rocketnet_counters_t * counters = rocketnet_server_transport_counters( rig.server );
 

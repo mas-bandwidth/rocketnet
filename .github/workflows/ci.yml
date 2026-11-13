@@ -1318,7 +1318,7 @@ jobs:
   # shards are. needs: build-and-test only orders it after the matrix; it
   # reads the two shards' own conclusions from the run's job list
   # (tools/check_debug_unit_shards.py), so another leg's result never decides
-  # it. Sparse checkout of that one script.
+  # it. An ordinary checkout, for the script.
   debug-unit:
     name: linux / Debug / unit
     needs: build-and-test
@@ -1330,11 +1330,32 @@ jobs:
       actions: read
       contents: read
     steps:
-      # Only the checker script is fetched, not the tree.
+      # A runner's workspace outlives the job: a sparse checkout here left its
+      # patterns in it, and the next job's plain checkout got one file
+      # (tools/check_workflow_shape.py refuses sparse-checkout on self-hosted
+      # runners). A workspace already left sparse is healed first.
+      - name: Heal a workspace an earlier sparse checkout left behind
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$GITHUB_WORKSPACE/.git" ]; then
+            # No network: the runners' partial clones cannot run `git sparse-checkout disable`
+            # (it needs blobs and a token). Turn the setting off and clear the skip-worktree
+            # bits; the checkout below restores the files.
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckout false
+            git -C "$GITHUB_WORKSPACE" config core.sparseCheckoutCone false
+            git -C "$GITHUB_WORKSPACE" ls-files -v -z | while IFS= read -r -d '' entry; do
+              if [ "${entry:0:2}" = "S " ]; then
+                git -C "$GITHUB_WORKSPACE" update-index --no-skip-worktree -- "${entry:2}"
+              fi
+            done
+            if [ "$(git -C "$GITHUB_WORKSPACE" config --get core.sparseCheckout)" != false ]; then
+              echo "WORKSPACE-SPARSE=STILL-ON core.sparseCheckout is not false after the heal"
+              exit 1
+            fi
+          fi
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
-        with:
-          sparse-checkout: tools/check_debug_unit_shards.py
-          sparse-checkout-cone-mode: false
 
       - name: Both Linux Debug unit shards succeeded
         env:

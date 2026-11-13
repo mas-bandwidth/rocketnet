@@ -764,8 +764,17 @@ static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_trans
 }
 
 // The calling thread's fill line.
+// Until the game names a client (the thread rule check not armed) it sends
+// from one thread at a time and every call uses line 0: no thread id, no
+// hash. Every word of a line is still written atomically, so the game's first
+// calls from several threads at once, made before its first call that names
+// a client arms the check, share line 0 safely.
 static struct rocketnet_server_fill_line_t * rocketnet_server_fill_line( struct rocketnet_server_transport_t * server_transport )
 {
+    if ( !rocketnet_fill_phase_armed( &server_transport->fill_phase ) )
+    {
+        return &server_transport->fill_lines[0];
+    }
     return &server_transport->fill_lines[rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() )];
 }
 
@@ -1467,6 +1476,10 @@ static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_t
 // The calling thread's fill line, read only.
 static const struct rocketnet_server_fill_line_t * rocketnet_server_fill_line_of_caller( const struct rocketnet_server_transport_t * server_transport )
 {
+    if ( !rocketnet_fill_phase_armed( &server_transport->fill_phase ) )
+    {
+        return &server_transport->fill_lines[0];
+    }
     return &server_transport->fill_lines[rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() )];
 }
 
@@ -1763,12 +1776,18 @@ uint64_t rocketnet_server_transport_fill_claims_for_test( const struct rocketnet
     return rocketnet_server_transport_load_u64( &server_transport->fill_claims[queue] );
 }
 
+int rocketnet_server_transport_fill_line_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return (int) ( rocketnet_server_fill_line_of_caller( server_transport ) - server_transport->fill_lines );
+}
+
 uint64_t rocketnet_server_transport_fill_tail_for_test( const struct rocketnet_server_transport_t * server_transport, int line, int queue )
 {
     rocketnet_assert( server_transport && queue >= 0 && queue < ROCKETNET_SERVER_MAX_SEND_QUEUES );
     if ( line < 0 )
     {
-        line = rocketnet_fill_phase_line_of( rocketnet_platform_thread_id() );
+        line = (int) ( rocketnet_server_fill_line_of_caller( server_transport ) - server_transport->fill_lines );
     }
     rocketnet_assert( line < ROCKETNET_FILL_PHASE_FILL_LINES );
     return rocketnet_server_transport_load_u64( &server_transport->fill_lines[line].tails[queue] );
@@ -3570,7 +3589,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     // it is armed by that game's first call that names a client
     // (sdk/rocketnet_api.cpp), and a game that makes today's calls only is
     // never refused for it
-    rocketnet_fill_phase_arm_one_filler( &server_transport->fill_phase, false );
+    rocketnet_fill_phase_arm( &server_transport->fill_phase, false );
 
     if ( server_transport->io.operations->replay_mark )
     {
@@ -5732,6 +5751,9 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         {
             server_transport->counters.values[i] = transport_rows[i];
         }
+        // the gso transport's pin refusals, appended after the other
+        // transports' rows
+        server_transport->counters.values[ROCKETNET_COUNTER_GSO_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_GSO_PIN_REFUSALS];
     }
 
     return &server_transport->counters;
