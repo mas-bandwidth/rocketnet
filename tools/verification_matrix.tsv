@@ -331,6 +331,10 @@ test_platform_primitives|windows|x86_64|msvc|Release|devON|none|-~-|default	-	-	
 test_production_client_lifecycle|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	build-and-test	Functional: production client lifecycle	test_production_client_lifecycle	per-commit	production-only binary
 test_production_client_lifecycle|macos|arm64|appleclang|Release|devON|none|-~-|default	ci.yml	build-and-test	Functional: production client lifecycle	test_production_client_lifecycle	per-commit	production-only binary
 test_production_client_lifecycle|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	build-and-test	Functional: production client lifecycle	test_production_client_lifecycle	per-commit	production-only binary
+test_wide_fill|linux|x86_64|gcc|Debug|devON|none|-~-|default	ci.yml	build-and-test	Run the wide fill cases	test_wide_fill	per-commit	game threads sending to their own clients at once, and the refusals of the thread rules, on the development library
+test_wide_fill|macos|arm64|appleclang|Debug|devON|none|-~-|default	ci.yml	build-and-test	Run the wide fill cases	test_wide_fill	per-commit	game threads sending to their own clients at once, and the refusals of the thread rules, on the development library
+test_wide_fill|windows|x86_64|msvc|Release|devON|none|-~-|default	ci.yml	build-and-test-windows	Run the wide fill cases	test_wide_fill	per-commit	game threads sending to their own clients at once, and the refusals of the thread rules, on the development library
+test_wide_fill|linux|x86_64|gcc|Debug|devON|tsan|-~-|default	ci.yml	tsan	The wide fill under tsan	test_wide_fill	per-commit	game threads sending to their own clients at once under ThreadSanitizer
 test_serialize|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	test_serialize	inside:functional	run inside ./bin/functional's execs table
 test_serialize|macos|arm64|appleclang|Release|devON|none|-~-|default	-	-	-	test_serialize	inside:functional	run inside ./bin/functional's execs table
 test_serialize|windows|x86_64|msvc|Release|devON|none|-~-|default	-	-	-	test_serialize	inside:functional	run inside ./bin/functional's execs table

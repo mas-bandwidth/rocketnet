@@ -79,11 +79,21 @@ LAYERS = {
         "reach": ["Full"],
         "self_contained": "the template: its code is a counter written for the example, not library code",
     },
+    "fillphase": {
+        "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
+        "untraced": {
+            "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
+            "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
+            "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
+                    "so it never gets there",
+        },
+    },
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
         "untraced": {},
         "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed"],
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
     },
 }
 
