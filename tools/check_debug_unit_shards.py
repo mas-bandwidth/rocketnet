@@ -44,6 +44,12 @@ def verdict(text, shards=SHARDS, prefix=""):
     except ValueError as error:
         return False, f"the job list is not JSON: {error}"
     jobs = data.get("jobs") if isinstance(data, dict) else data
+    # a partial list is never complete: the API's total_count, when given, is every row
+    # (tools/fetch_run_jobs.py writes it after reading every page)
+    if isinstance(data, dict) and isinstance(jobs, list) and "total_count" in data:
+        total = data["total_count"]
+        if type(total) is not int or total != len(jobs):
+            return False, f"the job list is partial: total_count {total!r}, {len(jobs)} rows"
     if not isinstance(jobs, list) or not jobs:
         return False, "the job list has no jobs"
     for shard in shards:
@@ -78,6 +84,11 @@ def self_test():
         (jobs("success", "success"), True),
         (jobs("success", "success", extra=[{"name": "macos / Debug / unit", "conclusion": "failure"}]), True),
         (json.dumps([{"name": name, "conclusion": "success"} for name in SHARDS]), True),
+        (json.dumps({"total_count": 4, "jobs": [{"name": name, "conclusion": "success"} for name in SHARDS]}), True),
+        # partial: every shard green on the rows read, but the API counted more
+        (json.dumps({"total_count": 6, "jobs": [{"name": name, "conclusion": "success"} for name in SHARDS]}), False),
+        (json.dumps({"total_count": None, "jobs": [{"name": name, "conclusion": "success"} for name in SHARDS]}), False),
+        (json.dumps({"total_count": "4", "jobs": [{"name": name, "conclusion": "success"} for name in SHARDS]}), False),
         (jobs("failure", "success"), False),
         (jobs("success", "failure"), False),
         (jobs("success", "cancelled"), False),
