@@ -74,7 +74,7 @@ registers one memory region for every send and receive buffer, and starts one
 I/O worker. Its create line names the region's size:
 
 ```text
-rio transport: port 40000, one I/O worker, 4096 receive slices, 2048 send frames per phase, <n> registered bytes
+rio transport: port 40000, one I/O worker, 4096 receive slices, 16384 send frames per phase, <n> registered bytes
 ```
 
 Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;

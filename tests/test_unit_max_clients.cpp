@@ -101,7 +101,7 @@ static void test_max_clients_derived_limits()
         check( staging >= 2 * sized && staging < 4 * sized && ( staging & ( staging - 1 ) ) == 0 );
         check( rocketnet_server_iocp_send_queue_size( n ) == staging );
         check( rocketnet_server_iocp_receive_queue_size( n ) == 2 * staging );
-        // each RIO lane's phase is the staging with a floor of 4096
+        // each RIO lane's phase is the staging with a floor of 16384
         check( rocketnet_server_rio_send_queue_size( n ) == ( staging > ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ? staging : ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ) );
         check( rocketnet_server_rio_receives( n ) == 2 * staging );
 
@@ -131,7 +131,9 @@ static void test_max_clients_derived_limits()
         check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
         check( rocketnet_server_iocp_send_queue_size( 1000 ) == 2048 );
         check( rocketnet_server_iocp_receive_queue_size( 1000 ) == 4096 );
-        check( rocketnet_server_rio_send_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_rio_send_queue_size( 1000 ) == 16384 );
+        // space load at peak: 15 packets per player per frame; one lane of two holds more than its half with the hash skew, and one lane alone holds the whole frame
+        check( rocketnet_server_rio_send_queue_size( 1000 ) >= 15 * 1000 );
         check( rocketnet_server_rio_receives( 1000 ) == 4096 );
         check( rocketnet_xdp_replay_entries( 1000 ) == 1024 );
         check( rocketnet_xdp_reply_mac_entries( 1000 ) == 4096 );

@@ -85,11 +85,16 @@
 // rocketnet_server_rio_available() is defined, and it is false.
 
 // Each lane's send phase is the server-wide send staging for the configured
-// max_clients, and at least ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE (4096 at 1000
-// clients): the rate a lane carries per flush, with room for the uneven
-// share the destination hash gives a lane. Each lane's posted receives are
-// twice the staging. Both are sized at create.
-#define ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE 4096
+// max_clients, and at least ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE (16384 at 1000
+// clients): the packets a lane starts per flush. A server of 1000 players at
+// 60 Hz writes about 15 packets per player per frame at peak (15000 a frame),
+// so two lanes carry 7500 each on average; 16384 holds the uneven share the
+// destination hash gives a lane with margin. 4096 refused 558k starts a
+// second at 2 lanes. Each lane's registered send region is three phases of
+// this many frames. Each lane's posted receives are twice the staging (the
+// input is small and arrives on the first-bound or steered lane), not the send
+// queue. Both are sized at create.
+#define ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE 16384
 
 static inline int rocketnet_server_rio_send_queue_size( int max_clients )
 {
@@ -108,8 +113,6 @@ static inline int rocketnet_server_rio_receives( int max_clients )
 // every count.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ),
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE,
-                         "receive budget twice send: server process batch holds at least twice the RIO send queue floor" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
 struct rocketnet_server_rio_t;
